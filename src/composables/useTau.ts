@@ -380,7 +380,9 @@ async function handleBridgeEvent(event: PiBridgeEvent) {
     state.streaming = false;
     state.stopping = false;
     state.status =
-      event.code === 0 ? "" : "The Pi process stopped unexpectedly.";
+      event.code === 0
+        ? ""
+        : event.message || "The Pi process stopped unexpectedly.";
   }
 }
 
