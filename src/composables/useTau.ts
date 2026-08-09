@@ -13,6 +13,8 @@ import type {
   ModelOption,
   PiBridgeEvent,
   ProjectSummary,
+  RemoteDirectoryEntry,
+  RemoteDirectoryListing,
   SessionSummary,
   ThinkingLevel,
   TranscriptEntry,
@@ -52,6 +54,16 @@ interface PendingPrompt {
   actualSessionId: string;
 }
 
+interface RemoteRetry {
+  projectPath: string;
+  sessionPath?: string;
+  preserveMessages: boolean;
+}
+
+type RemoteDialogMode = "add" | "retry";
+type RemoteDialogStep = "connection" | "directory";
+type RemoteDirectoryChoice = "back" | "select" | "forward";
+
 const state = reactive({
   workspace: null as WorkspaceSnapshot | null,
   messages: [] as TranscriptEntry[],
@@ -79,6 +91,19 @@ const state = reactive({
   models: [] as ModelOption[],
   efforts: [] as ThinkingLevel[],
   ephemeralSessions: [] as EphemeralSession[],
+  remoteDialogOpen: false,
+  remoteDialogMode: "add" as RemoteDialogMode,
+  remoteDialogStep: "connection" as RemoteDialogStep,
+  remoteConnectionString: "",
+  remoteConnectionError: "",
+  remoteConnecting: false,
+  remoteDirectoryHost: "",
+  remoteDirectoryRoot: "",
+  remoteWorkingDirectory: "",
+  remoteDirectoryHistory: [] as string[],
+  remoteDirectories: [] as RemoteDirectoryEntry[],
+  remoteDirectoryFilter: "",
+  remoteDirectorySelectedIndex: 0,
   requestSequence: 0,
   streamSequence: 0,
 });
@@ -90,6 +115,8 @@ let unlisten: UnlistenFn | undefined;
 let phantomSequence = 0;
 let pendingPrompt: PendingPrompt | undefined;
 let selectionStateRequestId = "";
+let remoteRetry: RemoteRetry | undefined;
+let connectingRemoteProjectPath = "";
 
 const activeProject = computed(() =>
   state.workspace?.projects.find(
@@ -109,12 +136,14 @@ const activeIsPhantom = computed(() =>
   isPhantomSession(state.activeProjectPath, state.activeSessionId),
 );
 
-const runtimeAvailable = computed(
-  () =>
+const runtimeAvailable = computed(() => {
+  if (activeProject.value?.connectionString) return true;
+  return (
     Boolean(state.workspace?.piPath) &&
     (!getActivePiIntegration().requiresSdk ||
-      Boolean(state.workspace?.sdkAvailable)),
-);
+      Boolean(state.workspace?.sdkAvailable))
+  );
+});
 
 const canCompose = computed(() => {
   if (!activeProject.value || !activeSession.value) return false;
@@ -171,12 +200,20 @@ export function useTau() {
     try {
       state.workspace = await invoke<WorkspaceSnapshot>("load_workspace");
       state.activeProjectPath = state.workspace.activeProjectPath;
-      if (!state.workspace.piPath) {
+      const selectedProject = state.workspace.projects.find(
+        (project) => project.selected,
+      );
+      const selectedSession = selectedProject?.sessions.find(
+        (session) => session.selected,
+      );
+      const needsLocalRuntime = !selectedProject?.connectionString;
+      if (needsLocalRuntime && !state.workspace.piPath) {
         state.status =
           "Pi was not found. Install pi or set TAU_PI_PATH, then restart Tau.";
         return;
       }
       if (
+        needsLocalRuntime &&
         getActivePiIntegration().requiresSdk &&
         !state.workspace.sdkAvailable
       ) {
@@ -184,12 +221,6 @@ export function useTau() {
           "The SDK sidecar needs an npm-installed Pi package and Node.js.";
         return;
       }
-      const selectedProject = state.workspace.projects.find(
-        (project) => project.selected,
-      );
-      const selectedSession = selectedProject?.sessions.find(
-        (session) => session.selected,
-      );
       if (selectedProject && selectedSession) {
         setActiveSessionView(selectedProject, selectedSession);
         state.switchingSession = true;
@@ -207,7 +238,7 @@ export function useTau() {
     unlisten = undefined;
   }
 
-  async function addProject() {
+  async function addLocalProject() {
     try {
       const selection = await open({
         directory: true,
@@ -224,6 +255,124 @@ export function useTau() {
       state.status = "";
     } catch (error) {
       setError(error);
+    }
+  }
+
+  function openRemoteProjectDialog() {
+    remoteRetry = undefined;
+    state.remoteDialogMode = "add";
+    state.remoteDialogStep = "connection";
+    state.remoteConnectionString = "";
+    state.remoteConnectionError = "";
+    state.remoteConnecting = false;
+    clearRemoteDirectoryBrowser();
+    state.remoteDialogOpen = true;
+  }
+
+  function closeRemoteProjectDialog() {
+    if (state.remoteConnecting) return;
+    if (state.remoteDialogMode === "retry" && pendingPrompt) {
+      cancelPendingPrompt("The remote connection was cancelled.");
+    }
+    remoteRetry = undefined;
+    connectingRemoteProjectPath = "";
+    state.remoteDialogOpen = false;
+    state.remoteConnectionError = "";
+    clearRemoteDirectoryBrowser();
+  }
+
+  async function submitRemoteConnection() {
+    if (state.remoteConnecting) return;
+    if (state.remoteDialogMode === "retry") {
+      await retryRemoteConnection();
+      return;
+    }
+
+    const connectionString = state.remoteConnectionString.trim();
+    if (!connectionString) {
+      state.remoteConnectionError = "Enter an SSH connection string.";
+      return;
+    }
+    state.remoteConnecting = true;
+    state.remoteConnectionError = "";
+    try {
+      const listing = await invoke<RemoteDirectoryListing>(
+        "probe_remote_project",
+        { connectionString },
+      );
+      applyRemoteDirectoryListing(listing, true);
+      state.remoteConnectionString = listing.connectionString;
+      state.remoteDialogStep = "directory";
+    } catch (error) {
+      state.remoteConnectionError = errorMessage(error);
+    } finally {
+      state.remoteConnecting = false;
+    }
+  }
+
+  async function chooseRemoteDirectory(
+    path: string,
+    choice: RemoteDirectoryChoice,
+  ) {
+    if (state.remoteConnecting || state.remoteDialogStep !== "directory") {
+      return;
+    }
+    state.remoteConnecting = true;
+    state.remoteConnectionError = "";
+    try {
+      if (choice === "select") {
+        state.workspace = await invoke<WorkspaceSnapshot>(
+          "import_remote_project",
+          {
+            connectionString: state.remoteConnectionString,
+            workingDirectory: state.remoteWorkingDirectory,
+            host: state.remoteDirectoryHost,
+          },
+        );
+        if (!state.activeProjectPath) {
+          state.activeProjectPath = state.workspace.activeProjectPath;
+        }
+        state.remoteDialogOpen = false;
+        state.status = "";
+        clearRemoteDirectoryBrowser();
+      } else {
+        const currentDirectory = state.remoteWorkingDirectory;
+        const listing = await invoke<RemoteDirectoryListing>(
+          "list_remote_directories",
+          {
+            connectionString: state.remoteConnectionString,
+            workingDirectory: path,
+          },
+        );
+        if (choice === "back") state.remoteDirectoryHistory.pop();
+        else state.remoteDirectoryHistory.push(currentDirectory);
+        applyRemoteDirectoryListing(listing);
+      }
+    } catch (error) {
+      state.remoteConnectionError = errorMessage(error);
+    } finally {
+      state.remoteConnecting = false;
+    }
+  }
+
+  async function retryRemoteConnection() {
+    const retry = remoteRetry;
+    const project = state.workspace?.projects.find(
+      (item) => item.path === retry?.projectPath,
+    );
+    if (!retry || !project?.connectionString) {
+      state.remoteConnectionError =
+        "The remote project is no longer available.";
+      return;
+    }
+
+    state.remoteConnecting = true;
+    state.remoteConnectionError = "";
+    try {
+      await startProject(project, retry.sessionPath, retry.preserveMessages);
+    } catch (error) {
+      state.remoteConnecting = false;
+      state.remoteConnectionError = errorMessage(error);
     }
   }
 
@@ -266,7 +415,7 @@ export function useTau() {
     }
   }
 
-  function newSession(project: ProjectSummary) {
+  async function newSession(project: ProjectSummary) {
     if (state.startingSession || state.switchingSession) return;
     if (state.streaming || state.stopping) {
       state.status = "Stop the current response before starting a new session.";
@@ -296,6 +445,16 @@ export function useTau() {
     setActiveSessionView(project, session);
     state.messages = [];
     state.status = "";
+
+    if (project.connectionString) {
+      state.startingSession = true;
+      try {
+        await startProject(project, undefined, true);
+      } catch (error) {
+        state.startingSession = false;
+        setError(error);
+      }
+    }
   }
 
   async function selectSession(
@@ -328,7 +487,9 @@ export function useTau() {
 
     state.switchingSession = true;
     try {
-      if (
+      if (project.connectionString) {
+        await startProject(project, session.path);
+      } else if (
         state.piReady &&
         state.piProjectPath === project.path &&
         state.piSessionId === session.id
@@ -436,7 +597,11 @@ export function useTau() {
     canCompose,
     initialize,
     dispose,
-    addProject,
+    addLocalProject,
+    openRemoteProjectDialog,
+    closeRemoteProjectDialog,
+    submitRemoteConnection,
+    chooseRemoteDirectory,
     toggleProject,
     removeProject,
     newSession,
@@ -474,7 +639,18 @@ async function sendPhantomMessage(message: string) {
   state.status = "";
 
   try {
-    if (state.piReady && state.piProjectPath === project.path) {
+    if (
+      project.connectionString &&
+      state.piReady &&
+      state.piProjectPath === project.path &&
+      state.piSessionId
+    ) {
+      const id = nextRequestId("remote-session-state");
+      pendingPrompt.stateRequestId = id;
+      await rpc({ id, type: "get_state" });
+    } else if (project.connectionString) {
+      await startProject(project, undefined, true);
+    } else if (state.piReady && state.piProjectPath === project.path) {
       await rpc({ id: nextRequestId("new-session"), type: "new_session" });
     } else {
       await startProject(project, undefined, true);
@@ -501,10 +677,33 @@ async function startProject(
   state.workspace = await invoke<WorkspaceSnapshot>("set_active_project", {
     path: project.path,
   });
+
+  if (project.connectionString) {
+    remoteRetry = {
+      projectPath: project.path,
+      sessionPath,
+      preserveMessages,
+    };
+    connectingRemoteProjectPath = project.path;
+    try {
+      state.activeGeneration = await invoke<number>("start_pi_remote", {
+        connectionString: project.connectionString,
+        workingDirectory: project.workingDirectory,
+        sessionPath: sessionPath ?? null,
+      });
+      await requestBootstrap();
+    } catch (error) {
+      presentRemoteConnectionError(project, error);
+    }
+    return;
+  }
+
+  remoteRetry = undefined;
+  connectingRemoteProjectPath = "";
   state.activeGeneration = await invoke<number>(
     getActivePiIntegration().startCommand,
     {
-      projectPath: project.path,
+      projectPath: project.workingDirectory,
       sessionPath: sessionPath ?? null,
     },
   );
@@ -513,8 +712,13 @@ async function startProject(
 
 async function requestBootstrap() {
   const stateRequestId = nextRequestId("state");
-  if (pendingPrompt) pendingPrompt.stateRequestId = stateRequestId;
-  else selectionStateRequestId = stateRequestId;
+  if (pendingPrompt) {
+    pendingPrompt.stateRequestId = stateRequestId;
+  } else if (connectingRemoteProjectPath && activeIsPhantom.value) {
+    selectionStateRequestId = "";
+  } else {
+    selectionStateRequestId = stateRequestId;
+  }
   await rpc({ id: stateRequestId, type: "get_state" });
   await rpc({ id: nextRequestId("models"), type: "get_available_models" });
 }
@@ -539,6 +743,11 @@ async function handleBridgeEvent(event: PiBridgeEvent) {
   if (event.kind === "stderr") return;
   if (event.kind === "error") {
     const message = event.message || "The Pi connection failed.";
+    const remoteProject = connectingRemoteProject();
+    if (remoteProject) {
+      presentRemoteConnectionError(remoteProject, message);
+      return;
+    }
     if (pendingPrompt) cancelPendingPrompt(message);
     else state.status = message;
     return;
@@ -548,6 +757,15 @@ async function handleBridgeEvent(event: PiBridgeEvent) {
       event.code === 0
         ? ""
         : event.message || "The Pi process stopped unexpectedly.";
+    const remoteProject = connectingRemoteProject();
+    if (remoteProject) {
+      presentRemoteConnectionError(
+        remoteProject,
+        message || "The remote Pi process stopped before it was ready.",
+      );
+      connectingRemoteProjectPath = "";
+      return;
+    }
     if (pendingPrompt)
       cancelPendingPrompt(message || "The Pi process stopped.");
     const key = connectedSessionKey();
@@ -682,6 +900,12 @@ async function handleResponse(response: Record<string, unknown>) {
     state.streaming = data.isStreaming === true;
     state.stopping = false;
     state.status = "";
+    const connectedRemotePhantom =
+      Boolean(connectingRemoteProjectPath) &&
+      activeIsPhantom.value &&
+      !pendingPrompt;
+    finishRemoteConnection();
+    if (connectedRemotePhantom) state.startingSession = false;
 
     const resolvesPending =
       Boolean(pendingPrompt?.stateRequestId) &&
@@ -841,7 +1065,7 @@ async function registerConnectedSession(): Promise<boolean> {
       projectPath: state.piProjectPath,
       sessionId: state.piSessionId,
       sessionPath: state.piSessionPath,
-      sessionName: state.piSessionName || null,
+      sessionName: state.piSessionName || firstUserMessage() || null,
     });
     return true;
   } catch (error) {
@@ -1103,6 +1327,72 @@ function clearPiConnection() {
   state.piSessionName = "";
 }
 
+function connectingRemoteProject(): ProjectSummary | undefined {
+  if (!connectingRemoteProjectPath) return undefined;
+  return state.workspace?.projects.find(
+    (project) => project.path === connectingRemoteProjectPath,
+  );
+}
+
+function clearRemoteDirectoryBrowser() {
+  state.remoteDirectoryHost = "";
+  state.remoteDirectoryRoot = "";
+  state.remoteWorkingDirectory = "";
+  state.remoteDirectoryHistory = [];
+  state.remoteDirectories = [];
+  state.remoteDirectoryFilter = "";
+  state.remoteDirectorySelectedIndex = 0;
+}
+
+function applyRemoteDirectoryListing(
+  listing: RemoteDirectoryListing,
+  initial = false,
+) {
+  state.remoteConnectionString = listing.connectionString;
+  state.remoteDirectoryHost = listing.host;
+  if (initial) {
+    state.remoteDirectoryRoot = listing.workingDirectory;
+    state.remoteDirectoryHistory = [];
+  }
+  state.remoteWorkingDirectory = listing.workingDirectory;
+  state.remoteDirectories = listing.directories;
+  state.remoteDirectoryFilter = "";
+  state.remoteDirectorySelectedIndex = 0;
+  state.remoteConnectionError = "";
+}
+
+function presentRemoteConnectionError(project: ProjectSummary, error: unknown) {
+  state.piReady = false;
+  state.streaming = false;
+  state.stopping = false;
+  state.startingSession = false;
+  state.switchingSession = false;
+  state.remoteDialogMode = "retry";
+  state.remoteDialogStep = "connection";
+  state.remoteConnectionString = project.connectionString || "";
+  clearRemoteDirectoryBrowser();
+  state.remoteConnectionError = errorMessage(error);
+  state.remoteConnecting = false;
+  state.remoteDialogOpen = true;
+  state.status = "";
+}
+
+function finishRemoteConnection() {
+  if (!connectingRemoteProjectPath) return;
+  connectingRemoteProjectPath = "";
+  remoteRetry = undefined;
+  state.remoteConnecting = false;
+  if (state.remoteDialogMode === "retry") {
+    state.remoteDialogOpen = false;
+    state.remoteConnectionError = "";
+    clearRemoteDirectoryBrowser();
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function setError(error: unknown) {
-  state.status = error instanceof Error ? error.message : String(error);
+  state.status = errorMessage(error);
 }

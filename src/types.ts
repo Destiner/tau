@@ -10,9 +10,23 @@ export type IntegrationKind = "rpc" | "sdk";
 export interface ProjectSummary {
   path: string;
   name: string;
+  workingDirectory: string;
+  connectionString?: string;
   collapsed: boolean;
   selected: boolean;
   sessions: SessionSummary[];
+}
+
+export interface RemoteDirectoryEntry {
+  name: string;
+  path: string;
+}
+
+export interface RemoteDirectoryListing {
+  connectionString: string;
+  workingDirectory: string;
+  host: string;
+  directories: RemoteDirectoryEntry[];
 }
 
 export interface SessionSummary {

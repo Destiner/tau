@@ -1,3 +1,4 @@
+use crate::ssh::{remote_pi_command, SshConnection};
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -199,6 +200,19 @@ pub fn start_pi(
         command.args(["--session", &path]);
     }
     spawn_command(app, state, command)
+}
+
+#[tauri::command]
+pub fn start_pi_remote(
+    app: AppHandle,
+    state: State<'_, PiState>,
+    connection_string: String,
+    working_directory: String,
+    session_path: Option<String>,
+) -> Result<u64, String> {
+    let connection = SshConnection::parse(&connection_string)?;
+    let remote_command = remote_pi_command(&working_directory, session_path.as_deref());
+    spawn_command(app, state, connection.command(&remote_command))
 }
 
 #[tauri::command]

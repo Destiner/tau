@@ -31,6 +31,49 @@ pub struct ProjectRecord {
     pub path: String,
     #[serde(default)]
     pub collapsed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<RemoteProjectRecord>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteProjectRecord {
+    pub connection_string: String,
+    pub working_directory: String,
+    pub host: String,
+    #[serde(default)]
+    pub active_session_id: String,
+    #[serde(default)]
+    pub sessions: Vec<RemoteSessionRecord>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteDirectoryEntry {
+    pub name: String,
+    pub path: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteDirectoryListing {
+    pub connection_string: String,
+    pub working_directory: String,
+    pub host: String,
+    pub directories: Vec<RemoteDirectoryEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteSessionRecord {
+    pub id: String,
+    pub path: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub archived: bool,
+    #[serde(default)]
+    pub last_active: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -47,6 +90,9 @@ pub struct WorkspaceSnapshot {
 pub struct ProjectSummary {
     pub path: String,
     pub name: String,
+    pub working_directory: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_string: Option<String>,
     pub collapsed: bool,
     pub selected: bool,
     pub sessions: Vec<SessionSummary>,

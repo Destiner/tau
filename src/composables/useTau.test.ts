@@ -7,6 +7,7 @@ describe("session drafts", () => {
     const project: ProjectSummary = {
       path: "/tmp/tau-draft-test",
       name: "tau-draft-test",
+      workingDirectory: "/tmp/tau-draft-test",
       collapsed: false,
       selected: true,
       sessions: [],

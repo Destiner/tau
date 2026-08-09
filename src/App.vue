@@ -21,6 +21,10 @@ import {
 import type { ThinkingLevel } from "./types";
 
 const transcript = ref<HTMLElement>();
+const projectMenu = ref<HTMLElement>();
+const remoteConnectionInput = ref<HTMLInputElement>();
+const remoteDirectoryFilterInput = ref<HTMLInputElement>();
+const projectMenuOpen = ref(false);
 const pinnedToBottom = ref(true);
 const transcriptWindowStart = ref(0);
 const shiftingWindow = ref(false);
@@ -33,7 +37,11 @@ const {
   canCompose,
   initialize,
   dispose,
-  addProject,
+  addLocalProject,
+  openRemoteProjectDialog,
+  closeRemoteProjectDialog,
+  submitRemoteConnection,
+  chooseRemoteDirectory,
   toggleProject,
   removeProject,
   newSession,
@@ -56,9 +64,74 @@ const visibleMessages = computed(() =>
     transcriptWindowEndIndex.value,
   ),
 );
+const remoteDirectoryOptions = computed(() => {
+  if (!state.remoteWorkingDirectory) return [];
+  const options = [] as Array<{
+    name: string;
+    path: string;
+    kind: "back" | "select" | "forward";
+  }>;
+  const previousDirectory =
+    state.remoteWorkingDirectory === state.remoteDirectoryRoot
+      ? undefined
+      : state.remoteDirectoryHistory[state.remoteDirectoryHistory.length - 1];
+  if (previousDirectory) {
+    options.push({
+      name: "Go Back",
+      path: previousDirectory,
+      kind: "back",
+    });
+  }
+  options.push({
+    name: `Select ${state.remoteWorkingDirectory}`,
+    path: state.remoteWorkingDirectory,
+    kind: "select",
+  });
+  options.push(
+    ...state.remoteDirectories.map((directory) => ({
+      ...directory,
+      kind: "forward" as const,
+    })),
+  );
 
-onMounted(() => void initialize());
-onBeforeUnmount(dispose);
+  const filter = state.remoteDirectoryFilter.trim().toLocaleLowerCase();
+  return options.filter((option) => {
+    const name = option.name.toLocaleLowerCase();
+    if (option.kind === "forward" && option.name.startsWith(".")) {
+      return filter === name;
+    }
+    return !filter || name.includes(filter);
+  });
+});
+
+onMounted(() => {
+  void initialize();
+  document.addEventListener("pointerdown", handleDocumentPointerDown);
+  document.addEventListener("keydown", handleDocumentKeydown);
+});
+onBeforeUnmount(() => {
+  dispose();
+  document.removeEventListener("pointerdown", handleDocumentPointerDown);
+  document.removeEventListener("keydown", handleDocumentKeydown);
+});
+
+watch(
+  () => [state.remoteDialogOpen, state.remoteDialogStep] as const,
+  ([open, step]) => {
+    if (!open) return;
+    void nextTick(() => {
+      if (step === "connection") remoteConnectionInput.value?.focus();
+      else remoteDirectoryFilterInput.value?.focus();
+    });
+  },
+);
+
+watch(
+  () => state.remoteDirectoryFilter,
+  () => {
+    state.remoteDirectorySelectedIndex = 0;
+  },
+);
 
 watch(
   () => state.messages,
@@ -143,7 +216,66 @@ function handleEffortChange(event: Event) {
 }
 
 function handleNewSession() {
-  if (activeProject.value) newSession(activeProject.value);
+  if (activeProject.value) void newSession(activeProject.value);
+}
+
+function handleDocumentPointerDown(event: PointerEvent) {
+  const target = event.target;
+  if (
+    projectMenuOpen.value &&
+    target instanceof Node &&
+    !projectMenu.value?.contains(target)
+  ) {
+    projectMenuOpen.value = false;
+  }
+}
+
+function handleDocumentKeydown(event: KeyboardEvent) {
+  if (event.key !== "Escape") return;
+  if (state.remoteDialogOpen) closeRemoteProjectDialog();
+  else projectMenuOpen.value = false;
+}
+
+function handleLocalProject() {
+  projectMenuOpen.value = false;
+  void addLocalProject();
+}
+
+function handleRemoteProject() {
+  projectMenuOpen.value = false;
+  openRemoteProjectDialog();
+}
+
+function handleRemoteDirectoryKeydown(event: KeyboardEvent) {
+  if (state.remoteConnecting) return;
+  const lastIndex = remoteDirectoryOptions.value.length - 1;
+  if (lastIndex < 0) return;
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    const delta = event.key === "ArrowDown" ? 1 : -1;
+    state.remoteDirectorySelectedIndex = Math.min(
+      lastIndex,
+      Math.max(0, state.remoteDirectorySelectedIndex + delta),
+    );
+    scrollSelectedRemoteDirectory();
+    return;
+  }
+  if (event.key === "Enter" && !event.isComposing) {
+    event.preventDefault();
+    const option =
+      remoteDirectoryOptions.value[state.remoteDirectorySelectedIndex];
+    if (option) void chooseRemoteDirectory(option.path, option.kind);
+  }
+}
+
+function scrollSelectedRemoteDirectory() {
+  void nextTick(() => {
+    document
+      .getElementById(
+        `remote-directory-option-${state.remoteDirectorySelectedIndex}`,
+      )
+      ?.scrollIntoView({ block: "nearest" });
+  });
 }
 
 function handleTitlebarMouseDown(event: MouseEvent) {
@@ -181,7 +313,11 @@ function handleTitlebarMouseDown(event: MouseEvent) {
             <button
               class="project-toggle"
               type="button"
-              :title="project.path"
+              :title="
+                project.connectionString
+                  ? `${project.connectionString} · ${project.workingDirectory}`
+                  : project.workingDirectory
+              "
               @click="toggleProject(project)"
             >
               <span>{{ project.name }}</span>
@@ -248,15 +384,27 @@ function handleTitlebarMouseDown(event: MouseEvent) {
       </div>
 
       <footer class="sidebar-footer">
-        <button
-          class="icon-button"
-          type="button"
-          title="Add project"
-          aria-label="Add project"
-          @click="addProject"
-        >
-          <UiIcon name="folder" />
-        </button>
+        <div ref="projectMenu" class="project-menu-wrap">
+          <button
+            class="icon-button"
+            type="button"
+            title="Open project"
+            aria-label="Open project"
+            aria-haspopup="menu"
+            :aria-expanded="projectMenuOpen"
+            @click="projectMenuOpen = !projectMenuOpen"
+          >
+            <UiIcon name="folder" />
+          </button>
+          <div v-if="projectMenuOpen" class="project-menu" role="menu">
+            <button type="button" role="menuitem" @click="handleLocalProject">
+              Open Local Project
+            </button>
+            <button type="button" role="menuitem" @click="handleRemoteProject">
+              Open Remote Project
+            </button>
+          </div>
+        </div>
       </footer>
     </aside>
 
@@ -430,5 +578,92 @@ function handleTitlebarMouseDown(event: MouseEvent) {
         </div>
       </footer>
     </main>
+
+    <div
+      v-if="state.remoteDialogOpen"
+      class="dialog-layer"
+      @mousedown.self="closeRemoteProjectDialog"
+    >
+      <form
+        v-if="state.remoteDialogStep === 'connection'"
+        class="remote-dialog remote-connection-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="SSH connection"
+        :aria-busy="state.remoteConnecting"
+        @submit.prevent="submitRemoteConnection"
+      >
+        <input
+          ref="remoteConnectionInput"
+          v-model="state.remoteConnectionString"
+          :class="{ error: state.remoteConnectionError }"
+          type="text"
+          inputmode="text"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          placeholder="ssh user@example -p 1234"
+          :aria-label="state.remoteConnectionError || 'SSH connection string'"
+          :aria-invalid="Boolean(state.remoteConnectionError)"
+          :title="state.remoteConnectionError"
+          :readonly="
+            state.remoteConnecting || state.remoteDialogMode === 'retry'
+          "
+        />
+      </form>
+
+      <div
+        v-else
+        class="remote-dialog remote-directory-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Choose remote working directory"
+        :aria-busy="state.remoteConnecting"
+      >
+        <input
+          ref="remoteDirectoryFilterInput"
+          v-model="state.remoteDirectoryFilter"
+          :class="{ error: state.remoteConnectionError }"
+          type="text"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          placeholder="Filter directories"
+          aria-label="Filter remote directories"
+          aria-controls="remote-directory-list"
+          :aria-activedescendant="`remote-directory-option-${state.remoteDirectorySelectedIndex}`"
+          :aria-invalid="Boolean(state.remoteConnectionError)"
+          :title="state.remoteConnectionError"
+          :readonly="state.remoteConnecting"
+          @keydown="handleRemoteDirectoryKeydown"
+        />
+        <div
+          id="remote-directory-list"
+          class="remote-directory-list"
+          role="listbox"
+        >
+          <button
+            v-for="(option, index) in remoteDirectoryOptions"
+            :id="`remote-directory-option-${index}`"
+            :key="option.path"
+            class="remote-directory-option"
+            :class="{
+              selected: index === state.remoteDirectorySelectedIndex,
+            }"
+            type="button"
+            role="option"
+            tabindex="-1"
+            :aria-selected="index === state.remoteDirectorySelectedIndex"
+            :disabled="state.remoteConnecting"
+            :title="option.path"
+            @mousedown.prevent
+            @mouseenter="state.remoteDirectorySelectedIndex = index"
+            @click="chooseRemoteDirectory(option.path, option.kind)"
+          >
+            {{ option.name }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>

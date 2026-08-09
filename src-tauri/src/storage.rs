@@ -1,7 +1,7 @@
 use crate::{
     models::{
-        ProjectRecord, ProjectRegistry, ProjectSummary, SessionSummary, TauSessionRecord,
-        TauSessionRegistry, WorkspaceSnapshot,
+        ProjectRecord, ProjectRegistry, ProjectSummary, RemoteProjectRecord, RemoteSessionRecord,
+        SessionSummary, TauSessionRecord, TauSessionRegistry, WorkspaceSnapshot,
     },
     pi::{resolve_pi_binary, sdk_available},
 };
@@ -30,6 +30,74 @@ pub fn import_project(path: String) -> Result<WorkspaceSnapshot, String> {
             registry.projects.push(ProjectRecord {
                 path: path.clone(),
                 collapsed: false,
+                remote: None,
+            });
+        }
+        if registry.active_project_path.is_empty() {
+            registry.active_project_path = path;
+        }
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn import_remote_project(
+    connection_string: String,
+    working_directory: String,
+    host: String,
+) -> Result<WorkspaceSnapshot, String> {
+    let connection_string = connection_string.trim().to_string();
+    let working_directory = working_directory.trim_end_matches('/').to_string();
+    let working_directory = if working_directory.is_empty() {
+        "/".to_string()
+    } else {
+        working_directory
+    };
+    let host = host.trim().to_string();
+    if connection_string.is_empty() || !working_directory.starts_with('/') || host.is_empty() {
+        return Err("The selected remote directory is invalid.".into());
+    }
+    let new_path = remote_project_path(&connection_string, &working_directory)?;
+
+    mutate_projects(|registry| {
+        let path = registry
+            .projects
+            .iter()
+            .find(|project| {
+                project.remote.as_ref().is_some_and(|remote| {
+                    remote.connection_string == connection_string
+                        && remote.working_directory == working_directory
+                })
+            })
+            .map(|project| project.path.clone())
+            .unwrap_or_else(|| new_path.clone());
+        if let Some(project) = registry
+            .projects
+            .iter_mut()
+            .find(|project| project.path == path)
+        {
+            let previous = project.remote.take();
+            project.remote = Some(RemoteProjectRecord {
+                connection_string,
+                working_directory,
+                host,
+                active_session_id: previous
+                    .as_ref()
+                    .map(|remote| remote.active_session_id.clone())
+                    .unwrap_or_default(),
+                sessions: previous.map(|remote| remote.sessions).unwrap_or_default(),
+            });
+        } else {
+            registry.projects.push(ProjectRecord {
+                path: path.clone(),
+                collapsed: false,
+                remote: Some(RemoteProjectRecord {
+                    connection_string,
+                    working_directory,
+                    host,
+                    active_session_id: String::new(),
+                    sessions: Vec::new(),
+                }),
             });
         }
         if registry.active_project_path.is_empty() {
@@ -84,6 +152,39 @@ pub fn register_session(
     if session_id.trim().is_empty() || session_id.len() > 256 {
         return Err("Pi returned an invalid session id.".into());
     }
+    let mut projects = load_project_registry()?;
+    let project = projects
+        .projects
+        .iter_mut()
+        .find(|project| project.path == project_path)
+        .ok_or_else(|| "The project is not imported in Tau.".to_string())?;
+    if let Some(remote) = project.remote.as_mut() {
+        let name = session_name.unwrap_or_default();
+        remote.active_session_id = session_id.clone();
+        if let Some(session) = remote
+            .sessions
+            .iter_mut()
+            .find(|session| session.id == session_id)
+        {
+            session.path = session_path;
+            session.last_active = unix_timestamp();
+            if !name.is_empty() {
+                session.name = Some(name);
+            }
+        } else {
+            remote.sessions.push(RemoteSessionRecord {
+                id: session_id,
+                path: session_path,
+                name: (!name.is_empty()).then_some(name),
+                archived: false,
+                last_active: unix_timestamp(),
+            });
+        }
+        projects.active_project_path = project_path;
+        write_json_atomic(&project_registry_path()?, &projects)?;
+        return snapshot(&projects);
+    }
+
     let session_path = PathBuf::from(session_path);
     let session_dir = session_path
         .parent()
@@ -126,12 +227,30 @@ fn snapshot(registry: &ProjectRegistry) -> Result<WorkspaceSnapshot, String> {
         .iter()
         .map(|project| {
             let selected = project.path == registry.active_project_path;
+            let (name, working_directory, connection_string, sessions) =
+                if let Some(remote) = project.remote.as_ref() {
+                    (
+                        remote_project_name(remote),
+                        remote.working_directory.clone(),
+                        Some(remote.connection_string.clone()),
+                        list_remote_sessions(remote),
+                    )
+                } else {
+                    (
+                        project_name(&project.path),
+                        project.path.clone(),
+                        None,
+                        list_project_sessions(&project.path)?,
+                    )
+                };
             Ok(ProjectSummary {
-                name: project_name(&project.path),
+                name,
                 path: project.path.clone(),
+                working_directory,
+                connection_string,
                 collapsed: project.collapsed,
                 selected,
-                sessions: list_project_sessions(&project.path)?,
+                sessions,
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -164,6 +283,21 @@ fn normalized_project_path(path: &str) -> Result<String, String> {
     Ok(path.to_string_lossy().trim_end_matches('/').to_string())
 }
 
+fn remote_project_path(connection_string: &str, working_directory: &str) -> Result<String, String> {
+    let identity = serde_json::to_string(&(connection_string, working_directory))
+        .map_err(|error| format!("Could not encode the remote project identity: {error}"))?;
+    Ok(format!("ssh:{identity}"))
+}
+
+fn remote_project_name(remote: &RemoteProjectRecord) -> String {
+    Path::new(&remote.working_directory)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(&remote.host)
+        .to_string()
+}
+
 fn project_name(path: &str) -> String {
     Path::new(path)
         .file_name()
@@ -189,6 +323,30 @@ fn default_session_dir(project_path: &str) -> Result<PathBuf, String> {
     Ok(pi_agent_dir()?
         .join("sessions")
         .join(format!("--{safe_path}--")))
+}
+
+fn list_remote_sessions(remote: &RemoteProjectRecord) -> Vec<SessionSummary> {
+    let mut records = remote.sessions.iter().collect::<Vec<_>>();
+    records.sort_by_key(|session| std::cmp::Reverse(session.last_active));
+    records
+        .into_iter()
+        .map(|session| SessionSummary {
+            id: session.id.clone(),
+            path: session.path.clone(),
+            title: single_line(
+                session
+                    .name
+                    .as_deref()
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or("New session"),
+            ),
+            last_active: relative_time(
+                SystemTime::UNIX_EPOCH + Duration::from_secs(session.last_active),
+            ),
+            archived: session.archived,
+            selected: session.id == remote.active_session_id,
+        })
+        .collect()
 }
 
 fn list_project_sessions(project_path: &str) -> Result<Vec<SessionSummary>, String> {
@@ -329,6 +487,13 @@ fn single_line(value: &str) -> String {
         .collect()
 }
 
+fn unix_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_secs()
+}
+
 fn relative_time(modified: SystemTime) -> String {
     let age = SystemTime::now()
         .duration_since(modified)
@@ -408,6 +573,65 @@ mod tests {
         )
         .expect("legacy registry");
         assert_eq!(registry.sessions[0].name, None);
+    }
+
+    #[test]
+    fn legacy_local_projects_remain_local() {
+        let project: ProjectRecord =
+            serde_json::from_str(r#"{"path":"/tmp/tau","collapsed":false}"#)
+                .expect("legacy project");
+        assert!(project.remote.is_none());
+    }
+
+    #[test]
+    fn remote_project_identity_includes_the_working_directory() {
+        let first =
+            remote_project_path("ssh build-box", "/home/timur/one").expect("first remote project");
+        let second =
+            remote_project_path("ssh build-box", "/home/timur/two").expect("second remote project");
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn remote_project_name_uses_the_selected_directory() {
+        let remote = RemoteProjectRecord {
+            connection_string: "ssh build-box".into(),
+            working_directory: "/users/agent/rhinestone".into(),
+            host: "build-box".into(),
+            active_session_id: String::new(),
+            sessions: Vec::new(),
+        };
+        assert_eq!(remote_project_name(&remote), "rhinestone");
+    }
+
+    #[test]
+    fn remote_sessions_are_sorted_by_recent_activity() {
+        let remote = RemoteProjectRecord {
+            connection_string: "ssh build-box".into(),
+            working_directory: "/home/timur".into(),
+            host: "build-box".into(),
+            active_session_id: "newer".into(),
+            sessions: vec![
+                RemoteSessionRecord {
+                    id: "older".into(),
+                    path: "/remote/older.jsonl".into(),
+                    name: Some("Older session".into()),
+                    archived: false,
+                    last_active: 10,
+                },
+                RemoteSessionRecord {
+                    id: "newer".into(),
+                    path: "/remote/newer.jsonl".into(),
+                    name: Some("Newer session".into()),
+                    archived: false,
+                    last_active: 20,
+                },
+            ],
+        };
+        let sessions = list_remote_sessions(&remote);
+        assert_eq!(sessions[0].id, "newer");
+        assert!(sessions[0].selected);
+        assert_eq!(sessions[1].title, "Older session");
     }
 
     #[test]

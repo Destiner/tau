@@ -44,12 +44,14 @@ body,
 }
 
 button,
+input,
 textarea,
 select {
   font: inherit;
 }
 
 button,
+input,
 select {
   color: inherit;
 }
@@ -91,6 +93,41 @@ button {
   flex: none;
   justify-content: flex-end;
   padding: 6px;
+}
+
+.project-menu-wrap {
+  position: relative;
+}
+
+.project-menu {
+  position: absolute;
+  z-index: 5;
+  right: 0;
+  bottom: calc(100% + 5px);
+  width: 176px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-raised);
+  box-shadow: 0 8px 24px color-mix(in srgb, #000 14%, transparent);
+  padding: 4px;
+}
+
+.project-menu button {
+  display: block;
+  width: 100%;
+  cursor: pointer;
+  border-radius: 5px;
+  background: transparent;
+  padding: 7px 8px;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+}
+
+.project-menu button:hover,
+.project-menu button:focus-visible {
+  outline: 0;
+  background: var(--hover);
 }
 
 .icon-button,
@@ -551,6 +588,7 @@ button {
 }
 
 button:disabled,
+input:disabled,
 select:disabled,
 textarea:disabled {
   cursor: default;
@@ -644,6 +682,90 @@ textarea:disabled {
   color: inherit;
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
+}
+
+.dialog-layer {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  background: color-mix(in srgb, #000 12%, transparent);
+  padding: 68px 18px 18px;
+}
+
+.remote-dialog {
+  display: flex;
+  width: min(440px, 100%);
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel-raised);
+  box-shadow: 0 14px 40px color-mix(in srgb, #000 18%, transparent);
+  padding: 8px;
+}
+
+.remote-dialog input {
+  width: 100%;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: 0;
+  background: var(--canvas);
+  color: var(--text);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 12px;
+  padding: 0 9px;
+}
+
+.remote-dialog input:focus {
+  border-color: var(--muted);
+}
+
+.remote-dialog input.error {
+  border-color: var(--danger);
+}
+
+.remote-dialog input::placeholder {
+  color: var(--faint);
+}
+
+.remote-dialog input:read-only {
+  color: var(--muted);
+}
+
+.remote-directory-dialog {
+  width: min(480px, 100%);
+  gap: 6px;
+}
+
+.remote-directory-list {
+  max-height: min(360px, calc(100vh - 150px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.remote-directory-option {
+  display: block;
+  overflow: hidden;
+  width: 100%;
+  height: 30px;
+  cursor: pointer;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  padding: 0 9px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-directory-option:hover,
+.remote-directory-option.selected {
+  background: var(--selected);
+  color: var(--text);
 }
 
 @keyframes spin {
