@@ -24,6 +24,8 @@ Tau includes both Pi integration routes:
 
 Both adapters use the same JSONL contract, Vue state, and project/session persistence. RPC is selected by `activePiIntegration` in `src/lib/pi-integrations.ts`; change that value to `"sdk"` to run the Node sidecar instead. The SDK adapter is available when Pi was installed as a Node package and Node is discoverable on `PATH` or through `TAU_NODE_PATH`.
 
+Each live session owns an isolated Pi runtime. Switching the visible session does not interrupt running work in other sessions; hidden idle runtimes are released and restored from their session files when selected again. Session lists are ordered by the latest user message, so background agent events do not move rows. Removing a project stops all of its runtimes, and quitting Tau stops every child process.
+
 Remote projects use the system OpenSSH client and start directory browsing from the remote account's default working directory. SSH config aliases and command-line options are supported. Authentication must work non-interactively, such as through keys or an SSH agent, and Pi must be available on the remote login shell's `PATH`.
 
 ## Checks

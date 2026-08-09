@@ -105,6 +105,7 @@ pub struct SessionSummary {
     pub path: String,
     pub title: String,
     pub last_active: String,
+    pub last_user_message_at: u64,
     pub archived: bool,
     pub selected: bool,
 }

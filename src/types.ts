@@ -34,6 +34,7 @@ export interface SessionSummary {
   path: string;
   title: string;
   lastActive: string;
+  lastUserMessageAt: number;
   archived: boolean;
   selected: boolean;
 }
@@ -59,6 +60,7 @@ export interface TranscriptEntry {
 }
 
 export interface PiBridgeEvent {
+  runtimeId: string;
   generation: number;
   kind: "started" | "rpc" | "stderr" | "error" | "exited";
   line?: string;

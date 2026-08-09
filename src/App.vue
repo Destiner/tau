@@ -31,9 +31,20 @@ const shiftingWindow = ref(false);
 const {
   state,
   activeProject,
+  messages,
+  draft,
+  status,
+  streaming,
+  stopping,
+  models,
+  efforts,
+  currentModelProvider,
+  currentModelId,
+  currentEffort,
   sessionTitle,
   effortLabels,
   settingsDisabled,
+  canDraft,
   canCompose,
   initialize,
   dispose,
@@ -47,6 +58,7 @@ const {
   newSession,
   selectSession,
   projectSessions,
+  sessionLastActive,
   isSessionSelected,
   sessionIndicator,
   sendMessage,
@@ -56,10 +68,10 @@ const {
 } = useTau();
 
 const transcriptWindowEndIndex = computed(() =>
-  transcriptWindowEnd(state.messages, transcriptWindowStart.value),
+  transcriptWindowEnd(messages.value, transcriptWindowStart.value),
 );
 const visibleMessages = computed(() =>
-  state.messages.slice(
+  messages.value.slice(
     transcriptWindowStart.value,
     transcriptWindowEndIndex.value,
   ),
@@ -133,22 +145,19 @@ watch(
   },
 );
 
-watch(
-  () => state.messages,
-  () => {
-    transcriptWindowStart.value = latestWindowStart(state.messages);
-    pinnedToBottom.value = true;
-  },
-);
+watch(messages, () => {
+  transcriptWindowStart.value = latestWindowStart(messages.value);
+  pinnedToBottom.value = true;
+});
 
 watch(
   () => [
-    state.messages.length,
-    state.messages[state.messages.length - 1]?.text,
+    messages.value.length,
+    messages.value[messages.value.length - 1]?.text,
   ],
   () => {
     if (!pinnedToBottom.value) return;
-    transcriptWindowStart.value = latestWindowStart(state.messages);
+    transcriptWindowStart.value = latestWindowStart(messages.value);
     void nextTick(() =>
       transcript.value?.scrollTo({ top: transcript.value.scrollHeight }),
     );
@@ -166,12 +175,12 @@ async function handleTranscriptScroll() {
     await loadEarlierMessages();
     return;
   }
-  if (nearBottom && transcriptWindowEndIndex.value < state.messages.length) {
+  if (nearBottom && transcriptWindowEndIndex.value < messages.value.length) {
     await loadNewerMessages();
     return;
   }
   pinnedToBottom.value =
-    nearBottom && transcriptWindowEndIndex.value >= state.messages.length;
+    nearBottom && transcriptWindowEndIndex.value >= messages.value.length;
 }
 
 async function loadEarlierMessages() {
@@ -188,12 +197,12 @@ async function loadEarlierMessages() {
 
 async function loadNewerMessages() {
   const element = transcript.value;
-  if (!element || transcriptWindowEndIndex.value >= state.messages.length)
+  if (!element || transcriptWindowEndIndex.value >= messages.value.length)
     return;
   shiftingWindow.value = true;
   transcriptWindowStart.value = newerWindowStart(
     transcriptWindowStart.value,
-    state.messages,
+    messages.value,
   );
   await nextTick();
   element.scrollTop = 1;
@@ -362,7 +371,9 @@ function handleTitlebarMouseDown(event: MouseEvent) {
               ></span>
               <span class="session-copy">
                 <span class="session-title">{{ session.title }}</span>
-                <span class="session-time">{{ session.lastActive }}</span>
+                <span class="session-time">{{
+                  sessionLastActive(project, session)
+                }}</span>
               </span>
             </button>
             <div
@@ -419,21 +430,10 @@ function handleTitlebarMouseDown(event: MouseEvent) {
           type="button"
           title="New session"
           aria-label="New session"
-          :disabled="
-            state.streaming ||
-            state.stopping ||
-            state.startingSession ||
-            state.switchingSession
-          "
           @click="handleNewSession"
         >
           <UiIcon name="plus" />
         </button>
-        <span
-          v-if="state.switchingSession || state.startingSession"
-          class="spinner"
-          aria-label="Loading"
-        ></span>
       </header>
 
       <section
@@ -442,7 +442,7 @@ function handleTitlebarMouseDown(event: MouseEvent) {
         aria-label="Tau transcript"
         @scroll="handleTranscriptScroll"
       >
-        <div v-if="state.messages.length" class="message-list">
+        <div v-if="messages.length" class="message-list">
           <button
             v-if="transcriptWindowStart > 0"
             class="transcript-boundary"
@@ -494,7 +494,7 @@ function handleTitlebarMouseDown(event: MouseEvent) {
           </article>
 
           <button
-            v-if="transcriptWindowEndIndex < state.messages.length"
+            v-if="transcriptWindowEndIndex < messages.length"
             class="transcript-boundary"
             type="button"
             @click="loadNewerMessages"
@@ -502,38 +502,36 @@ function handleTitlebarMouseDown(event: MouseEvent) {
             Load newer messages
           </button>
 
-          <div v-if="state.stopping || state.streaming" class="stream-state">
-            <PiSpinner
-              :label="state.stopping ? 'Pi is stopping' : 'Pi is working'"
-            />
+          <div v-if="stopping || streaming" class="stream-state">
+            <PiSpinner :label="stopping ? 'Pi is stopping' : 'Pi is working'" />
           </div>
         </div>
       </section>
 
       <footer class="composer-area">
-        <p v-if="state.status" class="status" role="status">
-          {{ state.status }}
+        <p v-if="status" class="status" role="status">
+          {{ status }}
         </p>
-        <div class="composer" :class="{ disabled: !canCompose }">
+        <div class="composer" :class="{ disabled: !canDraft }">
           <textarea
-            v-model="state.draft"
+            v-model="draft"
             rows="2"
             maxlength="32768"
             placeholder="Message π"
-            :disabled="!canCompose"
+            :disabled="!canDraft"
             aria-label="Message Pi"
             @keydown="handleComposerKeydown"
           ></textarea>
           <div class="composer-toolbar">
             <select
-              :value="`${state.currentModelProvider}/${state.currentModelId}`"
-              :disabled="settingsDisabled || state.models.length === 0"
+              :value="`${currentModelProvider}/${currentModelId}`"
+              :disabled="settingsDisabled || models.length === 0"
               aria-label="Model"
               @change="handleModelChange"
             >
-              <option v-if="!state.currentModelId" value="/">Model</option>
+              <option v-if="!currentModelId" value="/">Model</option>
               <option
-                v-for="model in state.models"
+                v-for="model in models"
                 :key="`${model.provider}/${model.id}`"
                 :value="`${model.provider}/${model.id}`"
               >
@@ -541,24 +539,20 @@ function handleTitlebarMouseDown(event: MouseEvent) {
               </option>
             </select>
             <select
-              :value="state.currentEffort"
-              :disabled="settingsDisabled || state.efforts.length === 0"
+              :value="currentEffort"
+              :disabled="settingsDisabled || efforts.length === 0"
               aria-label="Thinking effort"
               @change="handleEffortChange"
             >
-              <option
-                v-for="effort in state.efforts"
-                :key="effort"
-                :value="effort"
-              >
+              <option v-for="effort in efforts" :key="effort" :value="effort">
                 {{ effortLabels[effort] }}
               </option>
             </select>
             <button
-              v-if="state.streaming"
+              v-if="streaming"
               class="send-button stop"
               type="button"
-              :disabled="state.stopping"
+              :disabled="stopping"
               aria-label="Stop Pi"
               @click="stop"
             >
@@ -568,7 +562,7 @@ function handleTitlebarMouseDown(event: MouseEvent) {
               v-else
               class="send-button"
               type="button"
-              :disabled="!canCompose || !state.draft.trim()"
+              :disabled="!canCompose || !draft.trim()"
               aria-label="Send message"
               @click="sendMessage"
             >

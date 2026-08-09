@@ -22,6 +22,7 @@ pub fn run() {
             storage::register_session,
             storage::remove_project,
             storage::set_active_project,
+            storage::set_active_session,
             storage::set_project_collapsed,
         ])
         .run(tauri::generate_context!())

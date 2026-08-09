@@ -2,7 +2,7 @@ use crate::ssh::{remote_pi_command, SshConnection};
 use serde::Serialize;
 use serde_json::Value;
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     env,
     ffi::{OsStr, OsString},
     fs,
@@ -28,7 +28,7 @@ pub struct PiState {
 impl Drop for PiState {
     fn drop(&mut self) {
         if let Ok(mut manager) = self.inner.lock() {
-            stop_process(&mut manager);
+            stop_all_processes(&mut manager);
         }
     }
 }
@@ -36,7 +36,7 @@ impl Drop for PiState {
 #[derive(Default)]
 struct PiManager {
     generation: u64,
-    process: Option<PiProcess>,
+    processes: HashMap<String, PiProcess>,
 }
 
 struct PiProcess {
@@ -45,9 +45,19 @@ struct PiProcess {
     stdin: Arc<Mutex<ChildStdin>>,
 }
 
+#[derive(Clone)]
+struct PiReaderContext {
+    app: AppHandle,
+    manager: Arc<Mutex<PiManager>>,
+    child: Arc<Mutex<Child>>,
+    runtime_id: String,
+    generation: u64,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PiEvent<'a> {
+    runtime_id: &'a str,
     generation: u64,
     kind: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -181,9 +191,11 @@ fn is_executable_file(path: &Path) -> bool {
 pub fn start_pi(
     app: AppHandle,
     state: State<'_, PiState>,
+    runtime_id: String,
     project_path: String,
     session_path: Option<String>,
 ) -> Result<u64, String> {
+    validate_runtime_id(&runtime_id)?;
     validate_start_paths(&project_path, session_path.as_deref())?;
 
     let pi_path = resolve_pi_binary()
@@ -199,29 +211,33 @@ pub fn start_pi(
     if let Some(path) = session_path {
         command.args(["--session", &path]);
     }
-    spawn_command(app, state, command)
+    spawn_command(app, state, runtime_id, command)
 }
 
 #[tauri::command]
 pub fn start_pi_remote(
     app: AppHandle,
     state: State<'_, PiState>,
+    runtime_id: String,
     connection_string: String,
     working_directory: String,
     session_path: Option<String>,
 ) -> Result<u64, String> {
+    validate_runtime_id(&runtime_id)?;
     let connection = SshConnection::parse(&connection_string)?;
     let remote_command = remote_pi_command(&working_directory, session_path.as_deref());
-    spawn_command(app, state, connection.command(&remote_command))
+    spawn_command(app, state, runtime_id, connection.command(&remote_command))
 }
 
 #[tauri::command]
 pub fn start_pi_sdk(
     app: AppHandle,
     state: State<'_, PiState>,
+    runtime_id: String,
     project_path: String,
     session_path: Option<String>,
 ) -> Result<u64, String> {
+    validate_runtime_id(&runtime_id)?;
     validate_start_paths(&project_path, session_path.as_deref())?;
     let pi_path = resolve_pi_binary()
         .ok_or_else(|| "Could not find pi. Install it or set TAU_PI_PATH.".to_string())?;
@@ -243,7 +259,14 @@ pub fn start_pi_sdk(
     if let Some(path) = session_path {
         command.args(["--session", &path]);
     }
-    spawn_command(app, state, command)
+    spawn_command(app, state, runtime_id, command)
+}
+
+fn validate_runtime_id(runtime_id: &str) -> Result<(), String> {
+    if runtime_id.is_empty() || runtime_id.len() > 256 {
+        return Err("Tau supplied an invalid runtime id.".into());
+    }
+    Ok(())
 }
 
 fn validate_start_paths(project_path: &str, session_path: Option<&str>) -> Result<(), String> {
@@ -308,13 +331,14 @@ fn materialize_sdk_sidecar() -> Result<PathBuf, String> {
 fn spawn_command(
     app: AppHandle,
     state: State<'_, PiState>,
+    runtime_id: String,
     mut command: Command,
 ) -> Result<u64, String> {
     let mut manager = state
         .inner
         .lock()
         .map_err(|_| "Pi process state is unavailable.".to_string())?;
-    stop_process(&mut manager);
+    stop_runtime_process(&mut manager, &runtime_id);
     manager.generation = manager.generation.wrapping_add(1).max(1);
     let generation = manager.generation;
 
@@ -341,26 +365,29 @@ fn spawn_command(
     let child = Arc::new(Mutex::new(child));
     let stderr_tail = Arc::new(Mutex::new(VecDeque::with_capacity(STDERR_TAIL_LINES)));
 
-    let stderr_reader =
-        spawn_stderr_reader(app.clone(), generation, stderr, Arc::clone(&stderr_tail));
-    spawn_stdout_reader(
-        app.clone(),
-        Arc::clone(&state.inner),
-        Arc::clone(&child),
-        generation,
-        stdout,
-        stderr_tail,
-        stderr_reader,
+    manager.processes.insert(
+        runtime_id.clone(),
+        PiProcess {
+            generation,
+            child: Arc::clone(&child),
+            stdin: Arc::new(Mutex::new(stdin)),
+        },
     );
 
-    manager.process = Some(PiProcess {
-        generation,
+    let reader_context = PiReaderContext {
+        app: app.clone(),
+        manager: Arc::clone(&state.inner),
         child,
-        stdin: Arc::new(Mutex::new(stdin)),
-    });
+        runtime_id: runtime_id.clone(),
+        generation,
+    };
+    let stderr_reader =
+        spawn_stderr_reader(reader_context.clone(), stderr, Arc::clone(&stderr_tail));
+    spawn_stdout_reader(reader_context, stdout, stderr_tail, stderr_reader);
     let _ = app.emit(
         "pi-event",
         PiEvent {
+            runtime_id: &runtime_id,
             generation,
             kind: "started",
             line: None,
@@ -372,7 +399,11 @@ fn spawn_command(
 }
 
 #[tauri::command]
-pub fn send_pi(state: State<'_, PiState>, request: Value) -> Result<(), String> {
+pub fn send_pi(
+    state: State<'_, PiState>,
+    runtime_id: String,
+    request: Value,
+) -> Result<(), String> {
     let line = serde_json::to_vec(&request)
         .map_err(|error| format!("Could not encode the Pi request: {error}"))?;
     if line.len() > MAX_RPC_LINE_BYTES {
@@ -385,10 +416,10 @@ pub fn send_pi(state: State<'_, PiState>, request: Value) -> Result<(), String> 
             .lock()
             .map_err(|_| "Pi process state is unavailable.".to_string())?;
         manager
-            .process
-            .as_ref()
+            .processes
+            .get(&runtime_id)
             .map(|process| Arc::clone(&process.stdin))
-            .ok_or_else(|| "Pi is not running.".to_string())?
+            .ok_or_else(|| "The selected Pi runtime is not running.".to_string())?
     };
     let mut stdin = stdin
         .lock()
@@ -401,35 +432,48 @@ pub fn send_pi(state: State<'_, PiState>, request: Value) -> Result<(), String> 
 }
 
 #[tauri::command]
-pub fn stop_pi(state: State<'_, PiState>) -> Result<(), String> {
+pub fn stop_pi(state: State<'_, PiState>, runtime_id: String) -> Result<(), String> {
     let mut manager = state
         .inner
         .lock()
         .map_err(|_| "Pi process state is unavailable.".to_string())?;
-    stop_process(&mut manager);
+    stop_runtime_process(&mut manager, &runtime_id);
     Ok(())
 }
 
-fn stop_process(manager: &mut PiManager) {
-    let Some(process) = manager.process.take() else {
-        return;
-    };
+fn stop_runtime_process(manager: &mut PiManager, runtime_id: &str) {
+    if let Some(process) = manager.processes.remove(runtime_id) {
+        stop_process(process);
+    }
+}
+
+fn stop_all_processes(manager: &mut PiManager) {
+    for (_, process) in manager.processes.drain() {
+        stop_process(process);
+    }
+}
+
+fn stop_process(process: PiProcess) {
     if let Ok(mut child) = process.child.lock() {
         let _ = child.kill();
         let _ = child.wait();
-    };
+    }
 }
 
 fn spawn_stdout_reader(
-    app: AppHandle,
-    manager: Arc<Mutex<PiManager>>,
-    child: Arc<Mutex<Child>>,
-    generation: u64,
+    context: PiReaderContext,
     stdout: impl std::io::Read + Send + 'static,
     stderr_tail: StderrTail,
     stderr_reader: thread::JoinHandle<()>,
 ) {
     thread::spawn(move || {
+        let PiReaderContext {
+            app,
+            manager,
+            child,
+            runtime_id,
+            generation,
+        } = context;
         let mut reader = BufReader::new(stdout);
         let mut bytes = Vec::new();
         loop {
@@ -450,6 +494,7 @@ fn spawn_stdout_reader(
                     let _ = app.emit(
                         "pi-event",
                         PiEvent {
+                            runtime_id: &runtime_id,
                             generation,
                             kind: "rpc",
                             line: Some(&line),
@@ -463,6 +508,7 @@ fn spawn_stdout_reader(
                     let _ = app.emit(
                         "pi-event",
                         PiEvent {
+                            runtime_id: &runtime_id,
                             generation,
                             kind: "error",
                             line: None,
@@ -481,11 +527,11 @@ fn spawn_stdout_reader(
         let succeeded = status.as_ref().is_some_and(|status| status.success());
         let should_emit = manager.lock().is_ok_and(|mut current| {
             if current
-                .process
-                .as_ref()
+                .processes
+                .get(&runtime_id)
                 .is_some_and(|process| process.generation == generation)
             {
-                current.process = None;
+                current.processes.remove(&runtime_id);
                 true
             } else {
                 false
@@ -502,6 +548,7 @@ fn spawn_stdout_reader(
         let _ = app.emit(
             "pi-event",
             PiEvent {
+                runtime_id: &runtime_id,
                 generation,
                 kind: "exited",
                 line: None,
@@ -513,12 +560,17 @@ fn spawn_stdout_reader(
 }
 
 fn spawn_stderr_reader(
-    app: AppHandle,
-    generation: u64,
+    context: PiReaderContext,
     stderr: impl std::io::Read + Send + 'static,
     stderr_tail: StderrTail,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
+        let PiReaderContext {
+            app,
+            runtime_id,
+            generation,
+            ..
+        } = context;
         let reader = BufReader::new(stderr);
         for line in reader.lines().map_while(Result::ok) {
             if line.is_empty() {
@@ -534,6 +586,7 @@ fn spawn_stderr_reader(
             let _ = app.emit(
                 "pi-event",
                 PiEvent {
+                    runtime_id: &runtime_id,
                     generation,
                     kind: "stderr",
                     line: None,
@@ -624,5 +677,37 @@ mod tests {
             pi_exit_message(Some(127), "env: node: No such file or directory"),
             "Pi exited with status 127. env: node: No such file or directory",
         );
+    }
+
+    #[test]
+    fn stopping_one_runtime_keeps_other_processes() {
+        let mut manager = PiManager::default();
+        manager
+            .processes
+            .insert("first".into(), sleeping_process(1));
+        manager
+            .processes
+            .insert("second".into(), sleeping_process(2));
+
+        stop_runtime_process(&mut manager, "first");
+
+        assert!(!manager.processes.contains_key("first"));
+        assert!(manager.processes.contains_key("second"));
+        stop_all_processes(&mut manager);
+        assert!(manager.processes.is_empty());
+    }
+
+    fn sleeping_process(generation: u64) -> PiProcess {
+        let mut child = Command::new("sh")
+            .args(["-c", "sleep 60"])
+            .stdin(Stdio::piped())
+            .spawn()
+            .expect("sleep process");
+        let stdin = child.stdin.take().expect("sleep stdin");
+        PiProcess {
+            generation,
+            child: Arc::new(Mutex::new(child)),
+            stdin: Arc::new(Mutex::new(stdin)),
+        }
     }
 }

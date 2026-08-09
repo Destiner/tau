@@ -12,10 +12,12 @@ use std::{
     fs::{self, File},
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
+    sync::{Mutex, MutexGuard},
     time::{Duration, SystemTime},
 };
 
 const MAX_SESSION_LINE_BYTES: usize = 64 * 1024 * 1024;
+static STORAGE_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 #[tauri::command]
 pub fn load_workspace() -> Result<WorkspaceSnapshot, String> {
@@ -143,15 +145,61 @@ pub fn set_project_collapsed(path: String, collapsed: bool) -> Result<WorkspaceS
 }
 
 #[tauri::command]
+pub fn set_active_session(
+    project_path: String,
+    session_id: String,
+) -> Result<WorkspaceSnapshot, String> {
+    let _write_guard = lock_storage_writes()?;
+    let mut projects = load_project_registry()?;
+    let project = projects
+        .projects
+        .iter_mut()
+        .find(|project| project.path == project_path)
+        .ok_or_else(|| "The project is not imported in Tau.".to_string())?;
+
+    if let Some(remote) = project.remote.as_mut() {
+        if !remote
+            .sessions
+            .iter()
+            .any(|session| session.id == session_id)
+        {
+            return Err("The selected session is not registered in Tau.".into());
+        }
+        remote.active_session_id = session_id;
+        projects.active_project_path = project_path;
+        write_json_atomic(&project_registry_path()?, &projects)?;
+        return snapshot(&projects);
+    }
+
+    let session_dir = default_session_dir(&project_path)?;
+    let registry_path = session_dir.join(".tau.json");
+    let mut registry: TauSessionRegistry = read_json_or_default(&registry_path)?;
+    if !registry
+        .sessions
+        .iter()
+        .any(|session| session.id == session_id)
+    {
+        return Err("The selected session is not registered in Tau.".into());
+    }
+    registry.active_session_id = session_id;
+    projects.active_project_path = project_path;
+    write_json_atomic(&registry_path, &registry)?;
+    write_json_atomic(&project_registry_path()?, &projects)?;
+    snapshot(&projects)
+}
+
+#[tauri::command]
 pub fn register_session(
     project_path: String,
     session_id: String,
     session_path: String,
     session_name: Option<String>,
+    last_user_message_at: Option<u64>,
 ) -> Result<WorkspaceSnapshot, String> {
     if session_id.trim().is_empty() || session_id.len() > 256 {
         return Err("Pi returned an invalid session id.".into());
     }
+    let _write_guard = lock_storage_writes()?;
     let mut projects = load_project_registry()?;
     let project = projects
         .projects
@@ -160,14 +208,15 @@ pub fn register_session(
         .ok_or_else(|| "The project is not imported in Tau.".to_string())?;
     if let Some(remote) = project.remote.as_mut() {
         let name = session_name.unwrap_or_default();
-        remote.active_session_id = session_id.clone();
         if let Some(session) = remote
             .sessions
             .iter_mut()
             .find(|session| session.id == session_id)
         {
             session.path = session_path;
-            session.last_active = unix_timestamp();
+            if let Some(timestamp) = last_user_message_at {
+                session.last_active = timestamp;
+            }
             if !name.is_empty() {
                 session.name = Some(name);
             }
@@ -177,10 +226,9 @@ pub fn register_session(
                 path: session_path,
                 name: (!name.is_empty()).then_some(name),
                 archived: false,
-                last_active: unix_timestamp(),
+                last_active: last_user_message_at.unwrap_or_default(),
             });
         }
-        projects.active_project_path = project_path;
         write_json_atomic(&project_registry_path()?, &projects)?;
         return snapshot(&projects);
     }
@@ -191,7 +239,6 @@ pub fn register_session(
         .ok_or_else(|| "Pi returned an invalid session path.".to_string())?;
     let registry_path = session_dir.join(".tau.json");
     let mut registry: TauSessionRegistry = read_json_or_default(&registry_path)?;
-    registry.active_session_id = session_id.clone();
     let name = session_name.unwrap_or_default();
     if let Some(session) = registry
         .sessions
@@ -209,16 +256,23 @@ pub fn register_session(
         });
     }
     write_json_atomic(&registry_path, &registry)?;
-    set_active_project(project_path)
+    snapshot(&projects)
 }
 
 fn mutate_projects(
     mutation: impl FnOnce(&mut ProjectRegistry) -> Result<(), String>,
 ) -> Result<WorkspaceSnapshot, String> {
+    let _write_guard = lock_storage_writes()?;
     let mut registry = load_project_registry()?;
     mutation(&mut registry)?;
     write_json_atomic(&project_registry_path()?, &registry)?;
     snapshot(&registry)
+}
+
+fn lock_storage_writes() -> Result<MutexGuard<'static, ()>, String> {
+    STORAGE_WRITE_LOCK
+        .lock()
+        .map_err(|_| "Tau storage is unavailable.".to_string())
 }
 
 fn snapshot(registry: &ProjectRegistry) -> Result<WorkspaceSnapshot, String> {
@@ -326,27 +380,30 @@ fn default_session_dir(project_path: &str) -> Result<PathBuf, String> {
 }
 
 fn list_remote_sessions(remote: &RemoteProjectRecord) -> Vec<SessionSummary> {
-    let mut records = remote.sessions.iter().collect::<Vec<_>>();
-    records.sort_by_key(|session| std::cmp::Reverse(session.last_active));
-    records
-        .into_iter()
-        .map(|session| SessionSummary {
-            id: session.id.clone(),
-            path: session.path.clone(),
-            title: single_line(
-                session
-                    .name
-                    .as_deref()
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or("New session"),
-            ),
-            last_active: relative_time(
-                SystemTime::UNIX_EPOCH + Duration::from_secs(session.last_active),
-            ),
-            archived: session.archived,
-            selected: session.id == remote.active_session_id,
+    let mut sessions = remote
+        .sessions
+        .iter()
+        .map(|session| {
+            let last_user_message_at = timestamp_millis(session.last_active);
+            SessionSummary {
+                id: session.id.clone(),
+                path: session.path.clone(),
+                title: single_line(
+                    session
+                        .name
+                        .as_deref()
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or("New session"),
+                ),
+                last_active: relative_timestamp(last_user_message_at),
+                last_user_message_at,
+                archived: session.archived,
+                selected: session.id == remote.active_session_id,
+            }
         })
-        .collect()
+        .collect::<Vec<_>>();
+    sort_sessions(&mut sessions);
+    sessions
 }
 
 fn list_project_sessions(project_path: &str) -> Result<Vec<SessionSummary>, String> {
@@ -388,26 +445,29 @@ fn list_project_sessions(project_path: &str) -> Result<Vec<SessionSummary>, Stri
         } else {
             "New session".into()
         };
-        sessions.push((
-            modified,
-            SessionSummary {
-                id: parsed.id.clone(),
-                path: path.to_string_lossy().into_owned(),
-                title: single_line(&title),
-                last_active: relative_time(modified),
-                archived: record.archived,
-                selected: parsed.id == registry.active_session_id,
+        sessions.push(SessionSummary {
+            id: parsed.id.clone(),
+            path: path.to_string_lossy().into_owned(),
+            title: single_line(&title),
+            last_active: if parsed.last_user_message_at == 0 {
+                relative_time(modified)
+            } else {
+                relative_timestamp(parsed.last_user_message_at)
             },
-        ));
+            last_user_message_at: parsed.last_user_message_at,
+            archived: record.archived,
+            selected: parsed.id == registry.active_session_id,
+        });
     }
-    sessions.sort_by(|a, b| b.0.cmp(&a.0));
-    Ok(sessions.into_iter().map(|(_, session)| session).collect())
+    sort_sessions(&mut sessions);
+    Ok(sessions)
 }
 
 struct ParsedSession {
     id: String,
     name: String,
     first_message: String,
+    last_user_message_at: u64,
 }
 
 fn parse_session_file(path: &Path) -> Result<Option<ParsedSession>, String> {
@@ -419,6 +479,7 @@ fn parse_session_file(path: &Path) -> Result<Option<ParsedSession>, String> {
         id: String::new(),
         name: String::new(),
         first_message: String::new(),
+        last_user_message_at: 0,
     };
     loop {
         bytes.clear();
@@ -449,12 +510,18 @@ fn parse_session_file(path: &Path) -> Result<Option<ParsedSession>, String> {
                     .unwrap_or_default()
                     .to_string();
             }
-            Some("message") if parsed.first_message.is_empty() => {
+            Some("message") => {
                 let Some(message) = value.get("message") else {
                     continue;
                 };
                 if message.get("role").and_then(Value::as_str) == Some("user") {
-                    parsed.first_message = content_text(message.get("content"));
+                    if parsed.first_message.is_empty() {
+                        parsed.first_message = content_text(message.get("content"));
+                    }
+                    if let Some(timestamp) = message.get("timestamp").and_then(Value::as_u64) {
+                        parsed.last_user_message_at =
+                            parsed.last_user_message_at.max(timestamp_millis(timestamp));
+                    }
                 }
             }
             _ => {}
@@ -487,11 +554,30 @@ fn single_line(value: &str) -> String {
         .collect()
 }
 
-fn unix_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or(Duration::ZERO)
-        .as_secs()
+fn sort_sessions(sessions: &mut [SessionSummary]) {
+    sessions.sort_by(|left, right| {
+        right
+            .last_user_message_at
+            .cmp(&left.last_user_message_at)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+}
+
+fn timestamp_millis(timestamp: u64) -> u64 {
+    if timestamp == 0 {
+        0
+    } else if timestamp < 10_000_000_000 {
+        timestamp.saturating_mul(1_000)
+    } else {
+        timestamp
+    }
+}
+
+fn relative_timestamp(timestamp: u64) -> String {
+    if timestamp == 0 {
+        return String::new();
+    }
+    relative_time(SystemTime::UNIX_EPOCH + Duration::from_millis(timestamp))
 }
 
 fn relative_time(modified: SystemTime) -> String {
@@ -556,14 +642,20 @@ mod tests {
         .expect("header");
         writeln!(
             file,
-            "{{\"type\":\"message\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"Port Tau\"}}]}}}}"
+            "{{\"type\":\"message\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"Port Tau\"}}],\"timestamp\":1000}}}}"
         )
-        .expect("message");
+        .expect("first message");
+        writeln!(
+            file,
+            "{{\"type\":\"message\",\"message\":{{\"role\":\"user\",\"content\":\"Continue\",\"timestamp\":2000}}}}"
+        )
+        .expect("second message");
         let parsed = parse_session_file(&path)
             .expect("parsed file")
             .expect("session");
         assert_eq!(parsed.id, "session-1");
         assert_eq!(parsed.first_message, "Port Tau");
+        assert_eq!(parsed.last_user_message_at, 2_000_000);
     }
 
     #[test]
@@ -605,7 +697,7 @@ mod tests {
     }
 
     #[test]
-    fn remote_sessions_are_sorted_by_recent_activity() {
+    fn remote_sessions_are_sorted_by_last_user_message() {
         let remote = RemoteProjectRecord {
             connection_string: "ssh build-box".into(),
             working_directory: "/home/timur".into(),
@@ -630,6 +722,7 @@ mod tests {
         };
         let sessions = list_remote_sessions(&remote);
         assert_eq!(sessions[0].id, "newer");
+        assert_eq!(sessions[0].last_user_message_at, 20_000);
         assert!(sessions[0].selected);
         assert_eq!(sessions[1].title, "Older session");
     }
