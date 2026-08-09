@@ -17,6 +17,7 @@ pub fn run() {
             pi::stop_pi,
             ssh::list_remote_directories,
             ssh::probe_remote_project,
+            storage::archive_session,
             storage::import_project,
             storage::import_remote_project,
             storage::load_workspace,

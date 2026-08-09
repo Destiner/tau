@@ -473,6 +473,43 @@ export function useTau() {
     }
   }
 
+  async function archiveSession(
+    project: ProjectSummary,
+    session: SessionSummary,
+  ) {
+    if (!canArchiveSession(project, session)) return;
+    const controller = controllerForSession(project.path, session.id);
+
+    try {
+      state.workspace = await invoke<WorkspaceSnapshot>("archive_session", {
+        projectPath: project.path,
+        sessionId: session.id,
+      });
+      if (controller) removeRegisteredEphemeralSession(controller);
+
+      const archivedViewStillSelected =
+        state.activeProjectPath === project.path &&
+        state.activeSessionId === session.id;
+      if (!archivedViewStillSelected) {
+        maybeEvictController(controller);
+        return;
+      }
+
+      const updatedProject = state.workspace.projects.find(
+        (candidate) => candidate.path === project.path,
+      );
+      if (!updatedProject) {
+        clearActiveSession();
+        return;
+      }
+      const nextSession = projectSessions(updatedProject)[0];
+      if (nextSession) await selectSession(updatedProject, nextSession);
+      else await newSession(updatedProject);
+    } catch (error) {
+      setActiveError(error);
+    }
+  }
+
   async function newSession(project: ProjectSummary) {
     const previous = activeController.value;
     removeEmptyActivePhantom();
@@ -683,8 +720,10 @@ export function useTau() {
     chooseRemoteDirectory,
     toggleProject,
     removeProject,
+    archiveSession,
     newSession,
     selectSession,
+    canArchiveSession,
     projectSessions,
     sessionLastActive,
     isSessionSelected,
@@ -1352,6 +1391,13 @@ function appendStream(
     kind,
     text: delta,
   });
+}
+
+function canArchiveSession(
+  project: ProjectSummary,
+  session: SessionSummary,
+): boolean {
+  return ephemeralSession(project.path, session.id)?.phantom !== true;
 }
 
 function projectSessions(project: ProjectSummary): SessionSummary[] {

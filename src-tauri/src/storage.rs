@@ -162,9 +162,9 @@ pub fn set_active_session(
         if !remote
             .sessions
             .iter()
-            .any(|session| session.id == session_id)
+            .any(|session| session.id == session_id && !session.archived)
         {
-            return Err("The selected session is not registered in Tau.".into());
+            return Err("The selected session is not available in Tau.".into());
         }
         remote.active_session_id = session_id;
         projects.active_project_path = project_path;
@@ -178,14 +178,41 @@ pub fn set_active_session(
     if !registry
         .sessions
         .iter()
-        .any(|session| session.id == session_id)
+        .any(|session| session.id == session_id && !session.archived)
     {
-        return Err("The selected session is not registered in Tau.".into());
+        return Err("The selected session is not available in Tau.".into());
     }
     registry.active_session_id = session_id;
     projects.active_project_path = project_path;
     write_json_atomic(&registry_path, &registry)?;
     write_json_atomic(&project_registry_path()?, &projects)?;
+    snapshot(&projects)
+}
+
+#[tauri::command]
+pub fn archive_session(
+    project_path: String,
+    session_id: String,
+) -> Result<WorkspaceSnapshot, String> {
+    let _write_guard = lock_storage_writes()?;
+    let mut projects = load_project_registry()?;
+    let project = projects
+        .projects
+        .iter_mut()
+        .find(|project| project.path == project_path)
+        .ok_or_else(|| "The project is not imported in Tau.".to_string())?;
+
+    if let Some(remote) = project.remote.as_mut() {
+        archive_remote_session(remote, &session_id)?;
+        write_json_atomic(&project_registry_path()?, &projects)?;
+        return snapshot(&projects);
+    }
+
+    let session_dir = default_session_dir(&project_path)?;
+    let registry_path = session_dir.join(SESSION_REGISTRY_FILENAME);
+    let mut registry: TauSessionRegistry = read_json_or_default(&registry_path)?;
+    archive_local_session(&mut registry, &session_id)?;
+    write_json_atomic(&registry_path, &registry)?;
     snapshot(&projects)
 }
 
@@ -258,6 +285,38 @@ pub fn register_session(
     }
     write_json_atomic(&registry_path, &registry)?;
     snapshot(&projects)
+}
+
+fn archive_remote_session(
+    remote: &mut RemoteProjectRecord,
+    session_id: &str,
+) -> Result<(), String> {
+    let session = remote
+        .sessions
+        .iter_mut()
+        .find(|session| session.id == session_id)
+        .ok_or_else(|| "The session is not registered in Tau.".to_string())?;
+    session.archived = true;
+    if remote.active_session_id == session_id {
+        remote.active_session_id.clear();
+    }
+    Ok(())
+}
+
+fn archive_local_session(
+    registry: &mut TauSessionRegistry,
+    session_id: &str,
+) -> Result<(), String> {
+    let session = registry
+        .sessions
+        .iter_mut()
+        .find(|session| session.id == session_id)
+        .ok_or_else(|| "The session is not registered in Tau.".to_string())?;
+    session.archived = true;
+    if registry.active_session_id == session_id {
+        registry.active_session_id.clear();
+    }
+    Ok(())
 }
 
 fn mutate_projects(
@@ -399,7 +458,7 @@ fn list_remote_sessions(remote: &RemoteProjectRecord) -> Vec<SessionSummary> {
                 last_active: relative_timestamp(last_user_message_at),
                 last_user_message_at,
                 archived: session.archived,
-                selected: session.id == remote.active_session_id,
+                selected: !session.archived && session.id == remote.active_session_id,
             }
         })
         .collect::<Vec<_>>();
@@ -458,7 +517,7 @@ fn list_project_sessions(project_path: &str) -> Result<Vec<SessionSummary>, Stri
             },
             last_user_message_at: parsed.last_user_message_at,
             archived: record.archived,
-            selected: parsed.id == registry.active_session_id,
+            selected: !record.archived && parsed.id == registry.active_session_id,
         });
     }
     sort_sessions(&mut sessions);
@@ -727,6 +786,39 @@ mod tests {
         assert_eq!(sessions[0].last_user_message_at, 20_000);
         assert!(sessions[0].selected);
         assert_eq!(sessions[1].title, "Older session");
+    }
+
+    #[test]
+    fn archiving_sessions_preserves_the_record_and_clears_selection() {
+        let mut local = TauSessionRegistry {
+            active_session_id: "local-session".into(),
+            sessions: vec![TauSessionRecord {
+                id: "local-session".into(),
+                name: Some("Local session".into()),
+                archived: false,
+            }],
+            ..TauSessionRegistry::default()
+        };
+        archive_local_session(&mut local, "local-session").expect("archive local session");
+        assert!(local.sessions[0].archived);
+        assert!(local.active_session_id.is_empty());
+
+        let mut remote = RemoteProjectRecord {
+            connection_string: "ssh build-box".into(),
+            working_directory: "/home/timur".into(),
+            host: "build-box".into(),
+            active_session_id: "remote-session".into(),
+            sessions: vec![RemoteSessionRecord {
+                id: "remote-session".into(),
+                path: "/remote/session.jsonl".into(),
+                name: Some("Remote session".into()),
+                archived: false,
+                last_active: 10,
+            }],
+        };
+        archive_remote_session(&mut remote, "remote-session").expect("archive remote session");
+        assert!(remote.sessions[0].archived);
+        assert!(remote.active_session_id.is_empty());
     }
 
     #[test]

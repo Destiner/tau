@@ -57,8 +57,10 @@ const {
   chooseRemoteDirectory,
   toggleProject,
   removeProject,
+  archiveSession,
   newSession,
   selectSession,
+  canArchiveSession,
   projectSessions,
   sessionLastActive,
   isSessionSelected,
@@ -370,31 +372,48 @@ function handleTitlebarMouseDown(event: MouseEvent) {
           </div>
 
           <div v-if="!project.collapsed" class="session-list">
-            <button
+            <div
               v-for="session in projectSessions(project)"
               :key="session.id"
               class="session-row"
-              :class="{ selected: isSessionSelected(project, session) }"
-              type="button"
-              @click="selectSession(project, session)"
+              :class="{
+                selected: isSessionSelected(project, session),
+                archivable: canArchiveSession(project, session),
+              }"
             >
-              <span
-                class="session-indicator"
-                :class="sessionIndicator(project, session)"
-                aria-hidden="true"
-              ></span>
-              <span class="session-copy">
-                <span class="session-title">{{ session.title }}</span>
-                <span class="session-time">{{
-                  sessionLastActive(project, session)
-                }}</span>
-              </span>
-            </button>
+              <button
+                class="session-select"
+                type="button"
+                @click="selectSession(project, session)"
+              >
+                <span
+                  class="session-indicator"
+                  :class="sessionIndicator(project, session)"
+                  aria-hidden="true"
+                ></span>
+                <span class="session-copy">
+                  <span class="session-title">{{ session.title }}</span>
+                  <span class="session-time">{{
+                    sessionLastActive(project, session)
+                  }}</span>
+                </span>
+              </button>
+              <button
+                v-if="canArchiveSession(project, session)"
+                class="session-archive"
+                type="button"
+                :aria-label="`Archive ${session.title}`"
+                title="Archive session"
+                @click="archiveSession(project, session)"
+              >
+                <UiIcon name="archive" />
+              </button>
+            </div>
             <div
               v-if="projectSessions(project).length === 0"
               class="empty-sessions"
             >
-              No sessions yet
+              No active sessions
             </div>
           </div>
         </template>

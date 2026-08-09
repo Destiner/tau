@@ -476,6 +476,87 @@ describe("session drafts and selection", () => {
     });
   });
 
+  it("archives a session without stopping its running controller", async () => {
+    const firstSession = savedSession("first", 2_000);
+    const secondSession = savedSession("second", 1_000);
+    const project: ProjectSummary = {
+      path: "/tmp/tau-archive-test",
+      name: "tau-archive-test",
+      workingDirectory: "/tmp/tau-archive-test",
+      collapsed: false,
+      selected: true,
+      sessions: [firstSession, secondSession],
+    };
+    const workspace: WorkspaceSnapshot = {
+      activeProjectPath: project.path,
+      piPath: "/usr/local/bin/pi",
+      sdkAvailable: true,
+      projects: [project],
+    };
+    mocks.workspace = workspace;
+    mocks.generation = 0;
+    vi.mocked(invoke).mockClear();
+
+    const { archiveSession, projectSessions, selectSession, state } = useTau();
+    state.activeProjectPath = "";
+    state.activeSessionId = "";
+    state.activeSessionPath = "";
+    state.activeControllerKey = "";
+    state.controllers.splice(0);
+    state.ephemeralSessions.splice(0);
+    state.workspace = workspace;
+
+    await selectSession(project, firstSession);
+    const firstController = state.controllers.find(
+      (controller) => controller.sessionId === firstSession.id,
+    );
+    if (!firstController) throw new Error("Expected the first controller");
+    firstController.starting = false;
+    firstController.ready = true;
+    firstController.streaming = true;
+    firstController.working = true;
+
+    const archivedProject: ProjectSummary = {
+      ...project,
+      sessions: [
+        { ...firstSession, archived: true, selected: false },
+        secondSession,
+      ],
+    };
+    mocks.workspace = { ...workspace, projects: [archivedProject] };
+
+    await archiveSession(project, firstSession);
+
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.some(
+          ([command, args]) =>
+            command === "archive_session" &&
+            (args as { projectPath?: string; sessionId?: string })
+              ?.projectPath === project.path &&
+            (args as { projectPath?: string; sessionId?: string })
+              ?.sessionId === firstSession.id,
+        ),
+    ).toBe(true);
+    expect(projectSessions(archivedProject)).toEqual([secondSession]);
+    expect(
+      archivedProject.sessions.filter((session) => session.archived),
+    ).toEqual([{ ...firstSession, archived: true, selected: false }]);
+    expect(state.activeSessionId).toBe(secondSession.id);
+    expect(firstController.streaming).toBe(true);
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.some(
+          ([command, args]) =>
+            command === "stop_pi" &&
+            (args as { runtimeId?: string })?.runtimeId ===
+              firstController.runtimeId,
+        ),
+    ).toBe(false);
+  });
+
   it("reorders sessions only when the user submits a message", async () => {
     const firstSession = savedSession("first", 1_000);
     const secondSession = savedSession("second", 2_000);

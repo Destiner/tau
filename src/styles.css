@@ -233,16 +233,12 @@ button {
 }
 
 .session-row {
+  position: relative;
   display: flex;
   width: 100%;
   min-width: 0;
-  align-items: center;
-  gap: 7px;
-  cursor: pointer;
   border-radius: 7px;
   background: transparent;
-  padding: 7px 8px 7px 14px;
-  text-align: left;
 }
 
 .session-row:hover {
@@ -251,6 +247,55 @@ button {
 
 .session-row.selected {
   background: var(--selected);
+}
+
+.session-select {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  background: transparent;
+  padding: 7px 8px 7px 14px;
+  text-align: left;
+}
+
+.session-archive {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-50%);
+  place-items: center;
+  border-radius: 6px;
+  background: var(--hover);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.session-row.selected .session-archive {
+  background: var(--selected);
+}
+
+.session-row:hover .session-archive,
+.session-row:focus-within .session-archive {
+  opacity: 1;
+}
+
+.session-archive:hover,
+.session-archive:focus-visible {
+  outline: 0;
+  color: var(--text);
+}
+
+.session-row.archivable:hover .session-time,
+.session-row.archivable:focus-within .session-time {
+  opacity: 0;
 }
 
 .session-indicator {
