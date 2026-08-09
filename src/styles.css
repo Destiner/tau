@@ -118,10 +118,10 @@ button {
 .sidebar-titlebar,
 .session-header {
   display: flex;
-  height: 44px;
+  height: 28px;
   flex: none;
   align-items: center;
-  min-height: 44px;
+  min-height: 28px;
   border-bottom: 1px solid var(--border);
   cursor: default;
   user-select: none;
