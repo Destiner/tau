@@ -45,6 +45,12 @@ interface PendingPrompt {
   optimisticId: string;
   stateRequestId: string;
   messagesRequestId: string;
+  selectedModelProvider: string;
+  selectedModelId: string;
+  selectedModelName: string;
+  selectedEffort: ThinkingLevel;
+  settingsRequestId: string;
+  settingsStep: "" | "model" | "effort";
 }
 
 interface SessionController {
@@ -203,7 +209,7 @@ const sessionTitle = computed(() => {
 
 const currentModelLabel = computed(() => {
   const controller = activeController.value;
-  return controller?.currentModelId || controller?.currentModelName || "Model";
+  return controller?.currentModelName || controller?.currentModelId || "Model";
 });
 
 const currentEffortLabel = computed(
@@ -213,8 +219,8 @@ const currentEffortLabel = computed(
 const settingsDisabled = computed(() => {
   const controller = activeController.value;
   return (
-    !controller?.ready ||
-    controller.phantom ||
+    !controller ||
+    (!controller.ready && !controller.phantom) ||
     controller.streaming ||
     controller.stopping ||
     controller.starting
@@ -488,6 +494,7 @@ export function useTau() {
       phantom: true,
     };
     const controller = createController(project, session, controllerKey);
+    inheritControllerSettings(controller, previous);
     state.ephemeralSessions.push(session);
     if (project.collapsed) {
       project.collapsed = false;
@@ -497,6 +504,14 @@ export function useTau() {
     controller.status = "";
     await persistProjectSelection(project.path, controller);
     maybeEvictController(previous);
+    if (
+      runtimeAvailable(project) &&
+      (!controller.currentModelId ||
+        controller.models.length === 0 ||
+        controller.efforts.length === 0)
+    ) {
+      await startController(controller, project);
+    }
   }
 
   async function selectSession(
@@ -593,6 +608,12 @@ export function useTau() {
     );
     if (!controller || !model || settingsDisabled.value) return;
     controller.status = "";
+    if (controller.phantom) {
+      controller.currentModelProvider = model.provider;
+      controller.currentModelId = model.id;
+      controller.currentModelName = model.name;
+      return;
+    }
     try {
       await rpc(controller, {
         id: nextRequestId("set-model"),
@@ -607,9 +628,19 @@ export function useTau() {
 
   async function selectEffort(level: ThinkingLevel) {
     const controller = activeController.value;
-    if (!controller || settingsDisabled.value) return;
-    controller.pendingEffort = level;
+    if (
+      !controller ||
+      !controller.efforts.includes(level) ||
+      settingsDisabled.value
+    ) {
+      return;
+    }
     controller.status = "";
+    if (controller.phantom) {
+      controller.currentEffort = level;
+      return;
+    }
+    controller.pendingEffort = level;
     try {
       await rpc(controller, {
         id: nextRequestId("set-effort"),
@@ -680,12 +711,25 @@ async function sendPhantomMessage(
     optimisticId,
     stateRequestId: "",
     messagesRequestId: "",
+    selectedModelProvider: controller.currentModelProvider,
+    selectedModelId: controller.currentModelId,
+    selectedModelName: controller.currentModelName,
+    selectedEffort: controller.currentEffort,
+    settingsRequestId: "",
+    settingsStep: "",
   };
   controller.draft = "";
   controller.working = true;
   controller.messages.push({ id: optimisticId, kind: "user", text: message });
   controller.status = "";
 
+  if (controller.ready && controller.generation) {
+    controller.starting = true;
+    const stateRequestId = nextRequestId("state");
+    controller.pendingPrompt.stateRequestId = stateRequestId;
+    await rpc(controller, { id: stateRequestId, type: "get_state" });
+    return;
+  }
   await startController(controller, project, undefined, true);
 }
 
@@ -913,6 +957,13 @@ async function handleResponse(
       stringValue(response.error) ||
       `Pi rejected ${command || "the request"}.`;
     const pending = controller.pendingPrompt;
+    const failedPendingSetting =
+      Boolean(pending?.settingsRequestId) &&
+      responseId === pending?.settingsRequestId;
+    if (failedPendingSetting) {
+      cancelPendingPrompt(controller, controller.status);
+      return;
+    }
     const failedPendingRequest =
       Boolean(pending) &&
       ((command === "get_state" && responseId === pending?.stateRequestId) ||
@@ -968,7 +1019,7 @@ async function handleResponse(
 
     if (resolvesPending && pending) {
       materializePendingSession(controller, piSessionId, piSessionPath);
-    } else if (piSessionId) {
+    } else if (piSessionId && !controller.phantom) {
       controller.sessionId = piSessionId;
       controller.sessionPath = piSessionPath;
     }
@@ -980,10 +1031,13 @@ async function handleResponse(
     }
     if (controller.disposed) return;
 
-    const messagesRequestId = nextRequestId("messages");
     if (resolvesPending && pending) {
-      pending.messagesRequestId = messagesRequestId;
+      controller.bootstrapStateRequestId = "";
+      await applyPendingSessionSettings(controller);
+      return;
     }
+
+    const messagesRequestId = nextRequestId("messages");
     if (resolvesBootstrap) {
       controller.startMessagesRequestId = messagesRequestId;
       controller.bootstrapStateRequestId = "";
@@ -1060,6 +1114,19 @@ async function handleResponse(
   }
 
   if (command === "set_model") {
+    const pending = controller.pendingPrompt;
+    if (
+      pending?.settingsStep === "model" &&
+      responseId === pending.settingsRequestId
+    ) {
+      pending.settingsRequestId = "";
+      pending.settingsStep = "";
+      controller.currentModelProvider = pending.selectedModelProvider;
+      controller.currentModelId = pending.selectedModelId;
+      controller.currentModelName = pending.selectedModelName;
+      await applyPendingSessionEffort(controller, true);
+      return;
+    }
     await rpc(controller, {
       id: nextRequestId("model-state"),
       type: "get_state",
@@ -1068,12 +1135,80 @@ async function handleResponse(
   }
 
   if (command === "set_thinking_level") {
+    const pending = controller.pendingPrompt;
+    if (
+      pending?.settingsStep === "effort" &&
+      responseId === pending.settingsRequestId
+    ) {
+      pending.settingsRequestId = "";
+      pending.settingsStep = "";
+      controller.currentEffort = pending.selectedEffort;
+      controller.status = "";
+      await requestPendingMessages(controller);
+      return;
+    }
     if (controller.pendingEffort) {
       controller.currentEffort = controller.pendingEffort;
     }
     controller.pendingEffort = "";
     controller.status = "";
   }
+}
+
+async function applyPendingSessionSettings(controller: SessionController) {
+  const pending = controller.pendingPrompt;
+  if (!pending) return;
+  const modelChanged =
+    Boolean(pending.selectedModelProvider && pending.selectedModelId) &&
+    (pending.selectedModelProvider !== controller.currentModelProvider ||
+      pending.selectedModelId !== controller.currentModelId);
+  if (!modelChanged) {
+    await applyPendingSessionEffort(controller, false);
+    return;
+  }
+
+  const requestId = nextRequestId("initial-model");
+  pending.settingsRequestId = requestId;
+  pending.settingsStep = "model";
+  await rpc(controller, {
+    id: requestId,
+    type: "set_model",
+    provider: pending.selectedModelProvider,
+    modelId: pending.selectedModelId,
+  });
+}
+
+async function applyPendingSessionEffort(
+  controller: SessionController,
+  force: boolean,
+) {
+  const pending = controller.pendingPrompt;
+  if (!pending) return;
+  if (!force && pending.selectedEffort === controller.currentEffort) {
+    await requestPendingMessages(controller);
+    return;
+  }
+
+  const requestId = nextRequestId("initial-effort");
+  pending.settingsRequestId = requestId;
+  pending.settingsStep = "effort";
+  await rpc(controller, {
+    id: requestId,
+    type: "set_thinking_level",
+    level: pending.selectedEffort,
+  });
+}
+
+async function requestPendingMessages(controller: SessionController) {
+  const pending = controller.pendingPrompt;
+  if (!pending) return;
+  const messagesRequestId = nextRequestId("messages");
+  pending.messagesRequestId = messagesRequestId;
+  await rpc(controller, {
+    id: nextRequestId("efforts"),
+    type: "get_available_thinking_levels",
+  });
+  await rpc(controller, { id: messagesRequestId, type: "get_messages" });
 }
 
 async function dispatchPendingPrompt(controller: SessionController) {
@@ -1220,20 +1355,36 @@ function appendStream(
 }
 
 function projectSessions(project: ProjectSummary): SessionSummary[] {
-  const ephemeral = state.ephemeralSessions
-    .filter((session) => session.projectPath === project.path)
-    .sort((left, right) => right.createdAt - left.createdAt);
+  const ephemeral = state.ephemeralSessions.filter(
+    (session) => session.projectPath === project.path,
+  );
   const ephemeralIds = new Set(ephemeral.map((session) => session.id));
+  const phantomCreatedAt = new Map(
+    ephemeral
+      .filter((session) => session.phantom)
+      .map((session) => [session.id, session.createdAt]),
+  );
   return [
     ...ephemeral,
     ...project.sessions.filter(
       (session) => !session.archived && !ephemeralIds.has(session.id),
     ),
-  ].sort(
-    (left, right) =>
+  ].sort((left, right) => {
+    const leftPhantomCreatedAt = phantomCreatedAt.get(left.id);
+    const rightPhantomCreatedAt = phantomCreatedAt.get(right.id);
+    if (
+      leftPhantomCreatedAt !== undefined ||
+      rightPhantomCreatedAt !== undefined
+    ) {
+      if (leftPhantomCreatedAt === undefined) return 1;
+      if (rightPhantomCreatedAt === undefined) return -1;
+      return rightPhantomCreatedAt - leftPhantomCreatedAt;
+    }
+    return (
       sessionLastUserMessageAt(project.path, right) -
-      sessionLastUserMessageAt(project.path, left),
-  );
+      sessionLastUserMessageAt(project.path, left)
+    );
+  });
 }
 
 function sessionLastActive(
@@ -1299,7 +1450,6 @@ function removeEmptyActivePhantom() {
     !controller ||
     !session?.phantom ||
     controller.draft.trim() ||
-    controller.starting ||
     controller.working ||
     controller.messages.length > 0
   ) {
@@ -1359,6 +1509,34 @@ function ensureController(
     controllerForSession(project.path, session.id) ??
     createController(project, session, nextControllerKey())
   );
+}
+
+function inheritControllerSettings(
+  controller: SessionController,
+  preferred: SessionController | undefined,
+) {
+  const source =
+    preferred &&
+    (preferred.models.length > 0 ||
+      preferred.efforts.length > 0 ||
+      preferred.currentModelId)
+      ? preferred
+      : [...state.controllers]
+          .reverse()
+          .find(
+            (candidate) =>
+              candidate.key !== controller.key &&
+              (candidate.models.length > 0 ||
+                candidate.efforts.length > 0 ||
+                candidate.currentModelId),
+          );
+  if (!source) return;
+  controller.models = [...source.models];
+  controller.efforts = [...source.efforts];
+  controller.currentModelProvider = source.currentModelProvider;
+  controller.currentModelId = source.currentModelId;
+  controller.currentModelName = source.currentModelName;
+  controller.currentEffort = source.currentEffort;
 }
 
 function createController(

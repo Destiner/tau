@@ -203,11 +203,16 @@ describe("session drafts and selection", () => {
     mocks.workspace = workspace;
     const {
       state,
+      currentEffortLabel,
+      currentModelLabel,
       draft,
+      efforts,
       initialize,
+      models,
       newSession,
       projectSessions,
       sendMessage,
+      settingsDisabled,
     } = useTau();
     await initialize();
     state.activeControllerKey = "";
@@ -216,19 +221,84 @@ describe("session drafts and selection", () => {
     state.ephemeralSessions.splice(0);
 
     await newSession(project);
-    draft.value = "Start background work";
-    await sendMessage();
     const controller = state.controllers[0];
     if (!controller) throw new Error("Expected a pending controller");
 
+    const modelsRequest = sentRequests(controller, "get_available_models")[0];
+    emitRpc(controller, {
+      id: modelsRequest?.id,
+      type: "response",
+      command: "get_available_models",
+      success: true,
+      data: {
+        models: [
+          {
+            provider: "provider",
+            id: "alpha",
+            name: "Alpha",
+            reasoning: true,
+          },
+        ],
+      },
+    });
     emitRpc(controller, {
       id: controller.bootstrapStateRequestId,
       type: "response",
       command: "get_state",
       success: true,
       data: {
-        model: null,
-        thinkingLevel: "off",
+        model: { provider: "provider", id: "alpha", name: "Alpha" },
+        thinkingLevel: "high",
+        sessionId: "provisional",
+        sessionFile: "/tmp/provisional.jsonl",
+        sessionName: "",
+        isStreaming: false,
+      },
+    });
+    await vi.waitFor(() => {
+      expect(controller.startMessagesRequestId).not.toBe("");
+      expect(
+        sentRequests(controller, "get_available_thinking_levels"),
+      ).toHaveLength(1);
+    });
+    const effortsRequest = sentRequests(
+      controller,
+      "get_available_thinking_levels",
+    )[0];
+    emitRpc(controller, {
+      id: effortsRequest?.id,
+      type: "response",
+      command: "get_available_thinking_levels",
+      success: true,
+      data: { levels: ["off", "high"] },
+    });
+    emitRpc(controller, {
+      id: controller.startMessagesRequestId,
+      type: "response",
+      command: "get_messages",
+      success: true,
+      data: { messages: [] },
+    });
+    await vi.waitFor(() => {
+      expect(controller.starting).toBe(false);
+    });
+    expect(controller.sessionId).toMatch(/^phantom-/);
+    expect(models.value).toHaveLength(1);
+    expect(efforts.value).toEqual(["off", "high"]);
+    expect(currentModelLabel.value).toBe("Alpha");
+    expect(currentEffortLabel.value).toBe("High");
+    expect(settingsDisabled.value).toBe(false);
+
+    draft.value = "Start background work";
+    await sendMessage();
+    emitRpc(controller, {
+      id: controller.pendingPrompt?.stateRequestId,
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: {
+        model: { provider: "provider", id: "alpha", name: "Alpha" },
+        thinkingLevel: "high",
         sessionId: "materialized",
         sessionFile: "/tmp/materialized.jsonl",
         sessionName: "",
@@ -255,6 +325,155 @@ describe("session drafts and selection", () => {
     expect(
       projectSessions(project).some((session) => session.id === "materialized"),
     ).toBe(true);
+  });
+
+  it("keeps a fresh session at the top and applies inherited settings", async () => {
+    const saved = savedSession("saved", 10_000);
+    const project: ProjectSummary = {
+      path: "/tmp/tau-new-session-settings-test",
+      name: "tau-new-session-settings-test",
+      workingDirectory: "/tmp/tau-new-session-settings-test",
+      collapsed: false,
+      selected: true,
+      sessions: [saved],
+    };
+    const workspace: WorkspaceSnapshot = {
+      activeProjectPath: project.path,
+      piPath: "/usr/local/bin/pi",
+      sdkAvailable: true,
+      projects: [project],
+    };
+    mocks.workspace = workspace;
+    mocks.generation = 0;
+    vi.mocked(invoke).mockClear();
+
+    const {
+      state,
+      currentEffortLabel,
+      currentModelId,
+      currentModelLabel,
+      draft,
+      initialize,
+      models,
+      newSession,
+      projectSessions,
+      selectEffort,
+      selectModel,
+      selectSession,
+      sendMessage,
+      settingsDisabled,
+    } = useTau();
+    await initialize();
+    state.activeControllerKey = "";
+    state.activeSessionId = "";
+    state.controllers.splice(0);
+    state.ephemeralSessions.splice(0);
+    state.workspace = workspace;
+
+    await selectSession(project, saved);
+    const savedController = state.controllers[0];
+    if (!savedController) throw new Error("Expected the saved controller");
+    savedController.starting = false;
+    savedController.ready = true;
+    savedController.models = [
+      {
+        provider: "provider",
+        id: "alpha",
+        name: "Alpha",
+        reasoning: true,
+      },
+      {
+        provider: "provider",
+        id: "beta",
+        name: "Beta",
+        reasoning: true,
+      },
+    ];
+    savedController.efforts = ["off", "high", "max"];
+    savedController.currentModelProvider = "provider";
+    savedController.currentModelId = "alpha";
+    savedController.currentModelName = "Alpha";
+    savedController.currentEffort = "high";
+
+    await newSession(project);
+
+    expect(projectSessions(project)[0]?.title).toBe("New session");
+    expect(models.value).toEqual(savedController.models);
+    expect(currentModelLabel.value).toBe("Alpha");
+    expect(currentEffortLabel.value).toBe("High");
+    expect(settingsDisabled.value).toBe(false);
+
+    await selectModel("provider/beta");
+    await selectEffort("max");
+    expect(currentModelId.value).toBe("beta");
+    expect(currentModelLabel.value).toBe("Beta");
+    expect(currentEffortLabel.value).toBe("Max");
+
+    draft.value = "Use these settings";
+    await sendMessage();
+    const controller = state.controllers.find(
+      (candidate) => candidate !== savedController,
+    );
+    if (!controller) throw new Error("Expected the new controller");
+
+    emitRpc(controller, {
+      id: controller.bootstrapStateRequestId,
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: {
+        model: { provider: "provider", id: "alpha", name: "Alpha" },
+        thinkingLevel: "off",
+        sessionId: "new-session",
+        sessionFile: "/tmp/new-session.jsonl",
+        sessionName: "",
+        isStreaming: false,
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(sentRequests(controller, "set_model")).toHaveLength(1);
+    });
+    const modelRequest = sentRequests(controller, "set_model")[0];
+    expect(modelRequest).toMatchObject({
+      provider: "provider",
+      modelId: "beta",
+    });
+    expect(sentRequests(controller, "prompt")).toHaveLength(0);
+
+    emitRpc(controller, {
+      id: modelRequest?.id,
+      type: "response",
+      command: "set_model",
+      success: true,
+    });
+    await vi.waitFor(() => {
+      expect(sentRequests(controller, "set_thinking_level")).toHaveLength(1);
+    });
+    const effortRequest = sentRequests(controller, "set_thinking_level")[0];
+    expect(effortRequest).toMatchObject({ level: "max" });
+    expect(sentRequests(controller, "prompt")).toHaveLength(0);
+
+    emitRpc(controller, {
+      id: effortRequest?.id,
+      type: "response",
+      command: "set_thinking_level",
+      success: true,
+    });
+    await vi.waitFor(() => {
+      expect(sentRequests(controller, "get_messages")).toHaveLength(1);
+    });
+    const messagesRequest = sentRequests(controller, "get_messages")[0];
+    emitRpc(controller, {
+      id: messagesRequest?.id,
+      type: "response",
+      command: "get_messages",
+      success: true,
+      data: { messages: [] },
+    });
+    await vi.waitFor(() => {
+      expect(sentRequests(controller, "prompt")).toHaveLength(1);
+    });
   });
 
   it("reorders sessions only when the user submits a message", async () => {
@@ -346,6 +565,21 @@ function emitTextDelta(
       }),
     },
   });
+}
+
+function sentRequests(
+  controller: { runtimeId: string },
+  type: string,
+): Array<Record<string, unknown>> {
+  return vi
+    .mocked(invoke)
+    .mock.calls.filter(
+      ([command, args]) =>
+        command === "send_pi" &&
+        (args as { runtimeId?: string })?.runtimeId === controller.runtimeId,
+    )
+    .map(([, args]) => (args as { request: Record<string, unknown> }).request)
+    .filter((request) => request.type === type);
 }
 
 function savedSession(id: string, lastUserMessageAt = 0) {

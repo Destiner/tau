@@ -42,6 +42,8 @@ const {
   currentModelId,
   currentEffort,
   sessionTitle,
+  currentModelLabel,
+  currentEffortLabel,
   effortLabels,
   settingsDisabled,
   canDraft,
@@ -240,6 +242,18 @@ function handleDocumentPointerDown(event: PointerEvent) {
 }
 
 function handleDocumentKeydown(event: KeyboardEvent) {
+  if (
+    event.metaKey &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.shiftKey &&
+    !event.repeat &&
+    event.key.toLowerCase() === "n"
+  ) {
+    event.preventDefault();
+    handleNewSession();
+    return;
+  }
   if (event.key !== "Escape") return;
   if (state.remoteDialogOpen) closeRemoteProjectDialog();
   else projectMenuOpen.value = false;
@@ -531,6 +545,18 @@ function handleTitlebarMouseDown(event: MouseEvent) {
             >
               <option v-if="!currentModelId" value="/">Model</option>
               <option
+                v-else-if="
+                  !models.some(
+                    (model) =>
+                      model.provider === currentModelProvider &&
+                      model.id === currentModelId,
+                  )
+                "
+                :value="`${currentModelProvider}/${currentModelId}`"
+              >
+                {{ currentModelLabel }}
+              </option>
+              <option
                 v-for="model in models"
                 :key="`${model.provider}/${model.id}`"
                 :value="`${model.provider}/${model.id}`"
@@ -544,6 +570,12 @@ function handleTitlebarMouseDown(event: MouseEvent) {
               aria-label="Thinking effort"
               @change="handleEffortChange"
             >
+              <option
+                v-if="!efforts.includes(currentEffort)"
+                :value="currentEffort"
+              >
+                {{ currentEffortLabel }}
+              </option>
               <option v-for="effort in efforts" :key="effort" :value="effort">
                 {{ effortLabels[effort] }}
               </option>
