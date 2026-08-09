@@ -439,6 +439,7 @@ button {
   overflow: hidden;
   max-width: 60ch;
   margin: 0;
+  color: var(--text);
   font-size: 13px;
   font-weight: 400;
   text-overflow: ellipsis;
@@ -488,6 +489,7 @@ button {
   max-width: min(78%, 650px);
   border-radius: 7px;
   background: var(--user);
+  color: var(--text);
   line-height: 1.55;
   padding: 9px 13px;
   white-space: pre-wrap;
