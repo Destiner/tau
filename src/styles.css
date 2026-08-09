@@ -269,6 +269,7 @@ button {
 }
 
 .session-new-button {
+  flex: none;
   color: var(--muted);
 }
 
@@ -279,6 +280,7 @@ button {
 
 .session-heading h1 {
   overflow: hidden;
+  max-width: 60ch;
   margin: 0;
   font-size: 13px;
   font-weight: 400;
