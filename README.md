@@ -17,12 +17,12 @@ bun install
 bun tauri dev
 ```
 
-Tau exposes both Pi integration routes from the selector in the session header:
+Tau includes both Pi integration routes:
 
 - **RPC · Rust process** (default) starts `pi --mode rpc` directly from Rust.
 - **SDK · Node sidecar** starts a bundled sidecar script with Node and imports the SDK from the installed Pi package.
 
-Both adapters use the same JSONL contract, Vue state, and project/session persistence. The SDK option is available when Pi was installed as a Node package and Node is discoverable on `PATH` or through `TAU_NODE_PATH`.
+Both adapters use the same JSONL contract, Vue state, and project/session persistence. RPC is selected by `activePiIntegration` in `src/lib/pi-integrations.ts`; change that value to `"sdk"` to run the Node sidecar instead. The SDK adapter is available when Pi was installed as a Node package and Node is discoverable on `PATH` or through `TAU_NODE_PATH`.
 
 ## Checks
 

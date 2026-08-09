@@ -38,7 +38,7 @@ export function hydrateTranscript(messages: unknown[]): TranscriptEntry[] {
           entries.push({
             id: nextId("tool"),
             kind: "tool",
-            text: toolSummary(toolName, part.arguments),
+            text: toolArgument(part.arguments),
             toolCallId,
             toolName,
             toolRunning: true,
@@ -64,7 +64,7 @@ export function hydrateTranscript(messages: unknown[]): TranscriptEntry[] {
         entries.push({
           id: nextId("tool"),
           kind: "tool",
-          text: toolName,
+          text: "",
           toolCallId,
           toolName,
           toolRunning: false,
@@ -89,15 +89,15 @@ export function hydrateTranscript(messages: unknown[]): TranscriptEntry[] {
   return entries;
 }
 
-export function toolSummary(name: string, args: unknown): string {
+export function toolArgument(args: unknown): string {
   const record = asRecord(args);
-  const detail =
+  return (
     stringValue(record?.command) ||
     stringValue(record?.path) ||
     stringValue(record?.file_path) ||
     stringValue(record?.query) ||
-    compactJson(args);
-  return detail ? `${name} ${detail}` : name;
+    compactJson(args)
+  );
 }
 
 export function contentText(value: unknown): string {

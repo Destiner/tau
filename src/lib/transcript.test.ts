@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hydrateTranscript, toolSummary } from "./transcript";
+import { hydrateTranscript, toolArgument } from "./transcript";
 
 describe("hydrateTranscript", () => {
   it("keeps assistant content order and resolves tool outcomes", () => {
@@ -33,7 +33,8 @@ describe("hydrateTranscript", () => {
       "assistant",
     ]);
     expect(result[2]).toMatchObject({
-      text: "bash ls",
+      text: "ls",
+      toolName: "bash",
       toolRunning: false,
       toolErrored: false,
     });
@@ -47,10 +48,8 @@ describe("hydrateTranscript", () => {
   });
 });
 
-describe("toolSummary", () => {
+describe("toolArgument", () => {
   it("prefers a recognizable path", () => {
-    expect(toolSummary("read", { path: "src/main.ts" })).toBe(
-      "read src/main.ts",
-    );
+    expect(toolArgument({ path: "src/main.ts" })).toBe("src/main.ts");
   });
 });

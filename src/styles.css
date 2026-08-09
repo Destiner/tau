@@ -23,10 +23,7 @@
   --text: #292a2d;
   --muted: #777872;
   --faint: #a4a49d;
-  --accent: #242523;
-  --accent-text: #ffffff;
   --danger: #a6433c;
-  --thinking: #f3f1eb;
   --user: #ecece8;
 }
 
@@ -136,10 +133,6 @@ button {
   border-radius: 7px;
 }
 
-.project-row.selected {
-  background: color-mix(in srgb, var(--selected) 45%, transparent);
-}
-
 .project-row:hover {
   background: var(--hover);
 }
@@ -153,6 +146,7 @@ button {
   padding: 7px 5px;
   cursor: pointer;
   background: transparent;
+  color: var(--muted);
   text-align: left;
 }
 
@@ -170,9 +164,13 @@ button {
 .project-toggle span {
   overflow: hidden;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.project-row.selected .project-toggle span {
+  color: var(--text);
 }
 
 .row-action {
@@ -191,6 +189,10 @@ button {
 
 .row-action.danger:hover {
   color: var(--danger);
+}
+
+.row-action.new-session-action:hover {
+  color: var(--text);
 }
 
 .session-list {
@@ -243,6 +245,7 @@ button {
   padding: 5px 8px 8px 27px;
   color: var(--faint);
   font-size: 11px;
+  user-select: none;
 }
 
 .empty-projects {
@@ -293,39 +296,9 @@ button {
   overflow: hidden;
   margin: 0;
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.project-path {
-  display: block;
-  overflow: hidden;
-  margin-top: 2px;
-  color: var(--faint);
-  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
-  font-size: 9px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.backend-picker {
-  appearance: none;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  outline: 0;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
-  font-size: 9px;
-  letter-spacing: 0.06em;
-  padding: 4px 8px;
-  text-transform: uppercase;
-}
-
-.backend-picker:hover:not(:disabled) {
-  background: var(--panel);
 }
 
 .transcript {
@@ -362,12 +335,14 @@ button {
 
 .message.user {
   display: flex;
-  justify-content: flex-end;
+  justify-content: flex-start;
+  margin-right: 20px;
+  margin-left: 8px;
 }
 
 .user-bubble {
   max-width: min(78%, 650px);
-  border-radius: 16px 16px 5px 16px;
+  border-radius: 7px;
   background: var(--user);
   line-height: 1.55;
   padding: 9px 13px;
@@ -383,22 +358,25 @@ button {
 }
 
 .thinking-block {
-  border-left: 2px solid var(--border);
-  color: var(--muted);
-  padding: 1px 0 1px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel-raised);
+  padding: 9px 10px;
 }
 
-.thinking-block summary {
-  cursor: pointer;
+.thinking-label {
+  color: var(--muted);
   font-size: 11px;
-  font-weight: 650;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
+  font-weight: 500;
 }
 
 .thinking-block .markdown {
-  margin-top: 8px;
+  margin-top: 6px;
   font-size: 12px;
+}
+
+.message.tool:has(+ .message.tool) {
+  margin-bottom: 7px;
 }
 
 .tool-row {
@@ -415,16 +393,26 @@ button {
   padding: 8px 10px;
 }
 
-.tool-row > svg {
-  width: 13px;
-  flex: none;
+.tool-copy {
+  display: flex;
+  overflow: hidden;
+  min-width: 0;
+  flex: 1;
+  align-items: baseline;
+  gap: 8px;
 }
 
-.tool-row > span:nth-child(2) {
+.tool-argument {
   overflow: hidden;
-  flex: 1;
+  color: var(--text);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tool-name {
+  flex: none;
+  color: var(--muted);
+  font-size: 9px;
 }
 
 .tool-row.error,
@@ -440,52 +428,13 @@ button {
 .stream-state {
   display: flex;
   align-items: center;
-  gap: 8px;
   color: var(--muted);
-  font-size: 11px;
-}
-
-.transcript-empty {
-  display: flex;
-  height: 100%;
-  min-height: 280px;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  color: var(--muted);
-  text-align: center;
-}
-
-.tau-mark {
-  display: grid;
-  width: 48px;
-  height: 48px;
-  place-items: center;
-  border: 1px solid var(--border);
-  border-radius: 15px;
-  background: var(--panel-raised);
-  color: var(--text);
-  font-family: Georgia, serif;
-  font-size: 27px;
-  box-shadow: 0 8px 30px rgb(0 0 0 / 6%);
-}
-
-.transcript-empty h2 {
-  margin: 15px 0 5px;
-  color: var(--text);
-  font-size: 16px;
-}
-
-.transcript-empty p {
-  max-width: 340px;
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.5;
 }
 
 .composer-area {
-  background: linear-gradient(transparent, var(--canvas) 20%);
-  padding: 8px clamp(20px, 5vw, 60px) 18px;
+  border-top: 1px solid var(--border);
+  background: var(--canvas);
+  padding: 10px clamp(20px, 5vw, 60px) 16px;
 }
 
 .status {
@@ -498,16 +447,7 @@ button {
 .composer {
   width: min(100%, 760px);
   margin: 0 auto;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--panel-raised);
-  box-shadow: 0 8px 28px rgb(0 0 0 / 7%);
-}
-
-.composer:focus-within {
-  border-color: color-mix(in srgb, var(--text) 45%, var(--border));
-  box-shadow: 0 8px 28px rgb(0 0 0 / 8%);
+  background: transparent;
 }
 
 .composer.disabled {
@@ -561,28 +501,29 @@ button {
   max-width: 110px;
 }
 
-.composer-hint {
-  flex: 1;
-  color: var(--faint);
-  font-size: 9px;
-  text-align: right;
-}
-
 .send-button {
   width: 29px;
   height: 29px;
   flex: none;
-  background: var(--accent);
-  color: var(--accent-text);
+  margin-left: auto;
+  background: transparent;
+  color: var(--muted);
   font-size: 15px;
 }
 
 .send-button:hover:not(:disabled) {
-  transform: translateY(-1px);
+  background: var(--hover);
+  color: var(--text);
 }
 
 .send-button.stop {
-  background: var(--danger);
+  background: transparent;
+  color: var(--danger);
+}
+
+.send-button.stop:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
 }
 
 .send-button:disabled,
@@ -691,10 +632,6 @@ textarea:disabled {
   .app-shell {
     grid-template-columns: 200px minmax(0, 1fr);
   }
-
-  .composer-hint {
-    display: none;
-  }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -708,10 +645,7 @@ textarea:disabled {
     --text: #e5e5e2;
     --muted: #a0a19c;
     --faint: #73746f;
-    --accent: #e8e8e4;
-    --accent-text: #202122;
     --danger: #e07971;
-    --thinking: #292a2b;
     --user: #343536;
   }
 }

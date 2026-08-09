@@ -1,6 +1,6 @@
 <script setup lang="ts">
 defineProps<{
-  name: "chevron" | "folder" | "plus" | "send" | "stop" | "trash" | "tool";
+  name: "chevron" | "folder" | "plus" | "send" | "stop" | "trash";
 }>();
 </script>
 
@@ -14,10 +14,6 @@ defineProps<{
     <path
       v-else-if="name === 'trash'"
       d="M4 6h12M8 3h4l1 3H7zm-2 3 1 11h6l1-11"
-    />
-    <path
-      v-else
-      d="M12 3a4 4 0 0 0-4.8 5.8L3 13l4 4 4.2-4.2A4 4 0 0 0 17 8l-3 3-3-3z"
     />
   </svg>
 </template>

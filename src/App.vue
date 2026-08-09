@@ -8,6 +8,7 @@ import {
   watch,
 } from "vue";
 import MarkdownText from "./components/MarkdownText.vue";
+import PiSpinner from "./components/PiSpinner.vue";
 import UiIcon from "./components/UiIcon.vue";
 import { useTau } from "./composables/useTau";
 import {
@@ -16,7 +17,7 @@ import {
   olderWindowStart,
   transcriptWindowEnd,
 } from "./lib/transcript-window";
-import type { IntegrationKind, ThinkingLevel } from "./types";
+import type { ThinkingLevel } from "./types";
 
 const transcript = ref<HTMLElement>();
 const pinnedToBottom = ref(true);
@@ -38,7 +39,6 @@ const {
   stop,
   selectModel,
   selectEffort,
-  selectIntegration,
 } = useTau();
 
 const transcriptWindowEndIndex = computed(() =>
@@ -135,12 +135,6 @@ function handleModelChange(event: Event) {
 function handleEffortChange(event: Event) {
   void selectEffort((event.target as HTMLSelectElement).value as ThinkingLevel);
 }
-
-function handleIntegrationChange(event: Event) {
-  void selectIntegration(
-    (event.target as HTMLSelectElement).value as IntegrationKind,
-  );
-}
 </script>
 
 <template>
@@ -171,14 +165,14 @@ function handleIntegrationChange(event: Event) {
               :title="project.path"
               @click="toggleProject(project)"
             >
+              <span>{{ project.name }}</span>
               <UiIcon
                 name="chevron"
                 :class="{ expanded: !project.collapsed }"
               />
-              <span>{{ project.name }}</span>
             </button>
             <button
-              class="row-action"
+              class="row-action new-session-action"
               type="button"
               :aria-label="`New session in ${project.name}`"
               title="New session"
@@ -234,23 +228,7 @@ function handleIntegrationChange(event: Event) {
       <header class="session-header" data-tauri-drag-region>
         <div class="session-heading" data-tauri-drag-region>
           <h1>{{ sessionTitle }}</h1>
-          <span v-if="state.activeProjectPath" class="project-path">{{
-            state.activeProjectPath
-          }}</span>
         </div>
-        <select
-          class="backend-picker"
-          :value="state.integration"
-          :disabled="state.streaming || state.stopping"
-          title="Choose how Tau integrates with Pi"
-          aria-label="Pi integration"
-          @change="handleIntegrationChange"
-        >
-          <option value="rpc">RPC · Rust process</option>
-          <option value="sdk" :disabled="!state.workspace?.sdkAvailable">
-            SDK · Node sidecar
-          </option>
-        </select>
         <span
           v-if="state.switchingSession || state.startingSession"
           class="spinner"
@@ -286,21 +264,21 @@ function handleIntegrationChange(event: Event) {
               v-else-if="message.kind === 'assistant'"
               :source="message.text"
             />
-            <details
-              v-else-if="message.kind === 'thinking'"
-              class="thinking-block"
-              open
-            >
-              <summary>Thinking</summary>
+            <div v-else-if="message.kind === 'thinking'" class="thinking-block">
+              <div class="thinking-label">Thinking</div>
               <MarkdownText :source="message.text" />
-            </details>
+            </div>
             <div
               v-else
               class="tool-row"
               :class="{ error: message.toolErrored }"
             >
-              <UiIcon name="tool" />
-              <span>{{ message.text }}</span>
+              <span class="tool-copy">
+                <span v-if="message.text" class="tool-argument">{{
+                  message.text
+                }}</span>
+                <span class="tool-name">{{ message.toolName || "tool" }}</span>
+              </span>
               <span
                 v-if="message.toolRunning"
                 class="spinner small"
@@ -322,25 +300,10 @@ function handleIntegrationChange(event: Event) {
           </button>
 
           <div v-if="state.stopping || state.streaming" class="stream-state">
-            <span class="spinner small"></span>
-            <span>{{
-              state.stopping ? "Stopping Pi…" : "Pi is working…"
-            }}</span>
+            <PiSpinner
+              :label="state.stopping ? 'Pi is stopping' : 'Pi is working'"
+            />
           </div>
-        </div>
-
-        <div v-else class="transcript-empty">
-          <div class="tau-mark">τ</div>
-          <h2>
-            {{ state.activeProjectPath ? "New session" : "Welcome to Tau" }}
-          </h2>
-          <p>
-            {{
-              state.activeProjectPath
-                ? "Send a message to start working with Pi in this project."
-                : "Add a project, then start a Pi coding session."
-            }}
-          </p>
         </div>
       </section>
 
@@ -388,7 +351,6 @@ function handleIntegrationChange(event: Event) {
                 {{ effortLabels[effort] }}
               </option>
             </select>
-            <span class="composer-hint">↵ send · ⇧↵ newline</span>
             <button
               v-if="state.streaming"
               class="send-button stop"
