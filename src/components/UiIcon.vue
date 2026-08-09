@@ -1,12 +1,13 @@
 <script setup lang="ts">
 defineProps<{
-  name: "chevron" | "folder" | "plus" | "send" | "stop" | "trash";
+  name: "chevron" | "cross" | "folder" | "plus" | "send" | "stop" | "trash";
 }>();
 </script>
 
 <template>
   <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
     <path v-if="name === 'chevron'" d="m7 5 5 5-5 5" />
+    <path v-else-if="name === 'cross'" d="m5.5 5.5 9 9m0-9-9 9" />
     <path v-else-if="name === 'folder'" d="M2.5 5.5h5l1.5 2h8.5v8h-15z" />
     <path v-else-if="name === 'plus'" d="M10 4v12M4 10h12" />
     <path v-else-if="name === 'send'" d="m3 3 14 7-14 7 2-7zm2 7h7" />

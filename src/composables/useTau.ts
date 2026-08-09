@@ -1,4 +1,4 @@
-import { computed, reactive } from "vue";
+import { computed, reactive, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -29,6 +29,29 @@ const effortLabels: Record<ThinkingLevel, string> = {
   max: "Max",
 };
 
+type SessionIndicator = "new" | "draft" | "working" | "";
+
+interface EphemeralSession extends SessionSummary {
+  projectPath: string;
+  createdAt: number;
+  phantom: boolean;
+}
+
+interface SessionActivity {
+  unread: boolean;
+  working: boolean;
+}
+
+interface PendingPrompt {
+  projectPath: string;
+  phantomId: string;
+  message: string;
+  optimisticId: string;
+  stateRequestId: string;
+  messagesRequestId: string;
+  actualSessionId: string;
+}
+
 const state = reactive({
   workspace: null as WorkspaceSnapshot | null,
   messages: [] as TranscriptEntry[],
@@ -44,6 +67,10 @@ const state = reactive({
   activeSessionId: "",
   activeSessionPath: "",
   sessionName: "",
+  piProjectPath: "",
+  piSessionId: "",
+  piSessionPath: "",
+  piSessionName: "",
   currentModelProvider: "",
   currentModelId: "",
   currentModelName: "",
@@ -51,11 +78,18 @@ const state = reactive({
   pendingEffort: "" as ThinkingLevel | "",
   models: [] as ModelOption[],
   efforts: [] as ThinkingLevel[],
+  ephemeralSessions: [] as EphemeralSession[],
   requestSequence: 0,
   streamSequence: 0,
 });
 
+const sessionDrafts = reactive<Record<string, string>>({});
+const sessionActivity = reactive<Record<string, SessionActivity>>({});
+
 let unlisten: UnlistenFn | undefined;
+let phantomSequence = 0;
+let pendingPrompt: PendingPrompt | undefined;
+let selectionStateRequestId = "";
 
 const activeProject = computed(() =>
   state.workspace?.projects.find(
@@ -64,10 +98,29 @@ const activeProject = computed(() =>
 );
 
 const activeSession = computed(() =>
-  activeProject.value?.sessions.find(
-    (session) => session.id === state.activeSessionId,
-  ),
+  activeProject.value
+    ? projectSessions(activeProject.value).find(
+        (session) => session.id === state.activeSessionId,
+      )
+    : undefined,
 );
+
+const activeIsPhantom = computed(() =>
+  isPhantomSession(state.activeProjectPath, state.activeSessionId),
+);
+
+const runtimeAvailable = computed(
+  () =>
+    Boolean(state.workspace?.piPath) &&
+    (!getActivePiIntegration().requiresSdk ||
+      Boolean(state.workspace?.sdkAvailable)),
+);
+
+const canCompose = computed(() => {
+  if (!activeProject.value || !activeSession.value) return false;
+  if (state.startingSession || state.switchingSession) return false;
+  return activeIsPhantom.value ? runtimeAvailable.value : state.piReady;
+});
 
 const sessionTitle = computed(
   () =>
@@ -86,10 +139,26 @@ const currentEffortLabel = computed(() => effortLabels[state.currentEffort]);
 const settingsDisabled = computed(
   () =>
     !state.piReady ||
+    activeIsPhantom.value ||
     state.streaming ||
     state.stopping ||
     state.startingSession ||
     state.switchingSession,
+);
+
+watch(
+  () => state.draft,
+  (draft) => {
+    const key = activeSessionKey();
+    if (!key) return;
+    sessionDrafts[key] = draft;
+    const session = ephemeralSession(
+      state.activeProjectPath,
+      state.activeSessionId,
+    );
+    if (session?.phantom) session.title = draftTitle(draft);
+  },
+  { flush: "sync" },
 );
 
 export function useTau() {
@@ -122,9 +191,13 @@ export function useTau() {
         (session) => session.selected,
       );
       if (selectedProject && selectedSession) {
+        setActiveSessionView(selectedProject, selectedSession);
+        state.switchingSession = true;
         await startProject(selectedProject, selectedSession.path);
       }
     } catch (error) {
+      state.startingSession = false;
+      state.switchingSession = false;
       setError(error);
     }
   }
@@ -145,7 +218,9 @@ export function useTau() {
       state.workspace = await invoke<WorkspaceSnapshot>("import_project", {
         path: selection,
       });
-      state.activeProjectPath = state.workspace.activeProjectPath;
+      if (!state.activeProjectPath) {
+        state.activeProjectPath = state.workspace.activeProjectPath;
+      }
       state.status = "";
     } catch (error) {
       setError(error);
@@ -167,65 +242,101 @@ export function useTau() {
   }
 
   async function removeProject(project: ProjectSummary) {
-    if (project.path === state.activeProjectPath && state.streaming) {
+    if (project.path === state.piProjectPath && state.streaming) {
       state.status = "Stop the current response before removing this project.";
       return;
     }
     try {
-      if (project.path === state.activeProjectPath) {
+      const removingActiveView = project.path === state.activeProjectPath;
+      if (project.path === state.piProjectPath) {
         await invoke("stop_pi");
-        clearSession();
+        clearPiConnection();
       }
+      removeProjectUiState(project.path);
       state.workspace = await invoke<WorkspaceSnapshot>("remove_project", {
         path: project.path,
       });
-      state.activeProjectPath = state.workspace.activeProjectPath;
+      if (removingActiveView) clearActiveSession();
+      if (!state.activeProjectPath) {
+        state.activeProjectPath = state.workspace.activeProjectPath;
+      }
       state.status = "";
     } catch (error) {
       setError(error);
     }
   }
 
-  async function newSession(project: ProjectSummary) {
+  function newSession(project: ProjectSummary) {
     if (state.startingSession || state.switchingSession) return;
     if (state.streaming || state.stopping) {
       state.status = "Stop the current response before starting a new session.";
       return;
     }
-    state.messages = [];
-    state.sessionName = "";
-    state.activeSessionId = "";
-    state.activeSessionPath = "";
-    state.startingSession = true;
-    state.status = "";
-    try {
-      if (state.piReady && state.activeProjectPath === project.path) {
-        await rpc({ id: nextRequestId("new-session"), type: "new_session" });
-      } else {
-        await startProject(project);
-      }
-    } catch (error) {
-      state.startingSession = false;
-      setError(error);
+
+    removeEmptyActivePhantom();
+    phantomSequence += 1;
+    const now = Date.now();
+    const id = `phantom-${now}-${phantomSequence}`;
+    const session: EphemeralSession = {
+      id,
+      path: "",
+      title: "New session",
+      lastActive: "now",
+      archived: false,
+      selected: true,
+      projectPath: project.path,
+      createdAt: now * 1000 + phantomSequence,
+      phantom: true,
+    };
+    state.ephemeralSessions.push(session);
+    if (project.collapsed) {
+      project.collapsed = false;
+      void persistExpandedProject(project.path);
     }
+    setActiveSessionView(project, session);
+    state.messages = [];
+    state.status = "";
   }
 
   async function selectSession(
     project: ProjectSummary,
     session: SessionSummary,
   ) {
+    const alreadySelected =
+      project.path === state.activeProjectPath &&
+      session.id === state.activeSessionId;
+    if (alreadySelected) {
+      markSessionRead(project.path, session.id);
+      return;
+    }
     if (
-      session.id === state.activeSessionId ||
       state.streaming ||
       state.stopping ||
+      state.startingSession ||
       state.switchingSession
     ) {
       return;
     }
-    state.switchingSession = true;
+
+    removeEmptyActivePhantom();
+    setActiveSessionView(project, session);
+    state.messages = [];
     state.status = "";
+    markSessionRead(project.path, session.id);
+
+    if (isPhantomSession(project.path, session.id)) return;
+
+    state.switchingSession = true;
     try {
-      if (state.piReady && state.activeProjectPath === project.path) {
+      if (
+        state.piReady &&
+        state.piProjectPath === project.path &&
+        state.piSessionId === session.id
+      ) {
+        const id = nextRequestId("selected-state");
+        selectionStateRequestId = id;
+        await rpc({ id, type: "get_state" });
+      } else if (state.piReady && state.piProjectPath === project.path) {
         await rpc({
           id: nextRequestId("switch-session"),
           type: "switch_session",
@@ -242,8 +353,18 @@ export function useTau() {
 
   async function sendMessage() {
     const message = state.draft.trim();
-    if (!message || !state.piReady || state.streaming || state.stopping) return;
+    if (!message || !canCompose.value || state.streaming || state.stopping) {
+      return;
+    }
+
+    if (activeIsPhantom.value) {
+      await sendPhantomMessage(message);
+      return;
+    }
+
+    const key = activeSessionKey();
     state.draft = "";
+    if (key) ensureSessionActivity(key).working = true;
     state.messages.push({
       id: `optimistic-user-${Date.now()}`,
       kind: "user",
@@ -253,6 +374,7 @@ export function useTau() {
     try {
       await rpc({ id: nextRequestId("prompt"), type: "prompt", message });
     } catch (error) {
+      if (key) ensureSessionActivity(key).working = false;
       setError(error);
     }
   }
@@ -311,6 +433,7 @@ export function useTau() {
     currentEffortLabel,
     effortLabels,
     settingsDisabled,
+    canCompose,
     initialize,
     dispose,
     addProject,
@@ -318,6 +441,9 @@ export function useTau() {
     removeProject,
     newSession,
     selectSession,
+    projectSessions,
+    isSessionSelected,
+    sessionIndicator,
     sendMessage,
     stop,
     selectModel,
@@ -325,11 +451,50 @@ export function useTau() {
   };
 }
 
-async function startProject(project: ProjectSummary, sessionPath?: string) {
+async function sendPhantomMessage(message: string) {
+  const project = activeProject.value;
+  const phantomId = state.activeSessionId;
+  if (!project || !isPhantomSession(project.path, phantomId)) return;
+
+  const optimisticId = `optimistic-user-${Date.now()}`;
+  pendingPrompt = {
+    projectPath: project.path,
+    phantomId,
+    message,
+    optimisticId,
+    stateRequestId: "",
+    messagesRequestId: "",
+    actualSessionId: "",
+  };
+  selectionStateRequestId = "";
+  state.draft = "";
+  ensureSessionActivity(sessionKey(project.path, phantomId)).working = true;
+  state.messages.push({ id: optimisticId, kind: "user", text: message });
+  state.startingSession = true;
+  state.status = "";
+
+  try {
+    if (state.piReady && state.piProjectPath === project.path) {
+      await rpc({ id: nextRequestId("new-session"), type: "new_session" });
+    } else {
+      await startProject(project, undefined, true);
+    }
+  } catch (error) {
+    cancelPendingPrompt(error);
+  }
+}
+
+async function startProject(
+  project: ProjectSummary,
+  sessionPath?: string,
+  preserveMessages = false,
+) {
   state.piReady = false;
-  state.activeProjectPath = project.path;
-  state.activeSessionPath = sessionPath ?? "";
-  state.messages = [];
+  state.piProjectPath = project.path;
+  state.piSessionId = "";
+  state.piSessionPath = "";
+  state.piSessionName = "";
+  if (!preserveMessages) state.messages = [];
   state.models = [];
   state.efforts = [];
   state.status = "";
@@ -347,7 +512,10 @@ async function startProject(project: ProjectSummary, sessionPath?: string) {
 }
 
 async function requestBootstrap() {
-  await rpc({ id: nextRequestId("state"), type: "get_state" });
+  const stateRequestId = nextRequestId("state");
+  if (pendingPrompt) pendingPrompt.stateRequestId = stateRequestId;
+  else selectionStateRequestId = stateRequestId;
+  await rpc({ id: stateRequestId, type: "get_state" });
   await rpc({ id: nextRequestId("models"), type: "get_available_models" });
 }
 
@@ -368,21 +536,28 @@ async function handleBridgeEvent(event: PiBridgeEvent) {
     await handleRpc(value);
     return;
   }
-  if (event.kind === "stderr") {
-    return;
-  }
+  if (event.kind === "stderr") return;
   if (event.kind === "error") {
-    state.status = event.message || "The Pi connection failed.";
+    const message = event.message || "The Pi connection failed.";
+    if (pendingPrompt) cancelPendingPrompt(message);
+    else state.status = message;
     return;
   }
   if (event.kind === "exited") {
-    state.piReady = false;
-    state.streaming = false;
-    state.stopping = false;
-    state.status =
+    const message =
       event.code === 0
         ? ""
         : event.message || "The Pi process stopped unexpectedly.";
+    if (pendingPrompt)
+      cancelPendingPrompt(message || "The Pi process stopped.");
+    const key = connectedSessionKey();
+    if (key) ensureSessionActivity(key).working = false;
+    state.piReady = false;
+    state.streaming = false;
+    state.stopping = false;
+    state.startingSession = false;
+    state.switchingSession = false;
+    state.status = message;
   }
 }
 
@@ -398,15 +573,21 @@ async function handleRpc(value: unknown) {
     state.streaming = true;
     state.stopping = false;
     state.status = "";
+    const key = connectedSessionKey();
+    if (key) ensureSessionActivity(key).working = true;
     return;
   }
   if (type === "message_update") {
     const delta = asRecord(event.assistantMessageEvent);
     const deltaType = stringValue(delta?.type);
-    if (deltaType === "text_delta")
+    if (deltaType === "text_delta") {
       appendStream("assistant", stringValue(delta?.delta));
-    if (deltaType === "thinking_delta")
+      const key = connectedSessionKey();
+      if (key) ensureSessionActivity(key).unread = true;
+    }
+    if (deltaType === "thinking_delta") {
       appendStream("thinking", stringValue(delta?.delta));
+    }
     return;
   }
   if (type === "tool_execution_start") {
@@ -437,6 +618,8 @@ async function handleRpc(value: unknown) {
     return;
   }
   if (type === "agent_settled") {
+    const key = connectedSessionKey();
+    if (key) ensureSessionActivity(key).working = false;
     state.streaming = false;
     state.stopping = false;
     state.status = "";
@@ -454,13 +637,34 @@ async function handleRpc(value: unknown) {
 
 async function handleResponse(response: Record<string, unknown>) {
   const command = stringValue(response.command);
+  const responseId = stringValue(response.id);
   if (response.success !== true) {
     const error = asRecord(response.error);
     state.status =
-      stringValue(error?.message) || `Pi rejected ${command || "the request"}.`;
-    state.startingSession = false;
-    state.switchingSession = false;
-    state.stopping = false;
+      stringValue(error?.message) ||
+      stringValue(response.error) ||
+      `Pi rejected ${command || "the request"}.`;
+    const failedPendingRequest =
+      Boolean(pendingPrompt) &&
+      (command === "new_session" ||
+        (command === "get_state" &&
+          responseId === pendingPrompt?.stateRequestId) ||
+        (command === "get_messages" &&
+          responseId === pendingPrompt?.messagesRequestId));
+    if (failedPendingRequest) cancelPendingPrompt(state.status);
+
+    const key = connectedSessionKey();
+    if (command === "prompt" && key) {
+      ensureSessionActivity(key).working = false;
+    }
+    if (
+      command === "switch_session" ||
+      (command === "get_state" && responseId === selectionStateRequestId)
+    ) {
+      state.switchingSession = false;
+      selectionStateRequestId = "";
+    }
+    if (command === "abort") state.stopping = false;
     return;
   }
   const data = asRecord(response.data);
@@ -471,18 +675,64 @@ async function handleResponse(response: Record<string, unknown>) {
     state.currentModelId = stringValue(model?.id);
     state.currentModelName = stringValue(model?.name);
     state.currentEffort = normalizeEffort(data.thinkingLevel);
-    state.activeSessionId = stringValue(data.sessionId);
-    state.activeSessionPath = stringValue(data.sessionFile);
-    state.sessionName = stringValue(data.sessionName);
+    state.piSessionId = stringValue(data.sessionId);
+    state.piSessionPath = stringValue(data.sessionFile);
+    state.piSessionName = stringValue(data.sessionName);
     state.piReady = true;
     state.streaming = data.isStreaming === true;
-    state.startingSession = false;
-    state.switchingSession = false;
+    state.stopping = false;
     state.status = "";
-    if (state.activeSessionId && state.activeSessionPath) {
-      void registerActiveSession();
+
+    const resolvesPending =
+      Boolean(pendingPrompt?.stateRequestId) &&
+      responseId === pendingPrompt?.stateRequestId;
+    const resolvesSelection =
+      Boolean(selectionStateRequestId) &&
+      responseId === selectionStateRequestId;
+    const updatesCurrentView =
+      resolvesPending ||
+      resolvesSelection ||
+      (!pendingPrompt &&
+        !selectionStateRequestId &&
+        !activeIsPhantom.value &&
+        !state.startingSession &&
+        !state.switchingSession);
+
+    if (updatesCurrentView) {
+      if (resolvesPending && pendingPrompt) {
+        materializePendingSession(
+          pendingPrompt,
+          state.piSessionId,
+          state.piSessionPath,
+        );
+      } else {
+        state.activeProjectPath = state.piProjectPath;
+        state.activeSessionId = state.piSessionId;
+        state.activeSessionPath = state.piSessionPath;
+      }
+      state.sessionName = state.piSessionName;
+      if (resolvesSelection) selectionStateRequestId = "";
+      state.switchingSession = false;
+      if (!pendingPrompt) state.startingSession = false;
     }
-    await rpc({ id: nextRequestId("messages"), type: "get_messages" });
+
+    const connectedKey = connectedSessionKey();
+    if (connectedKey) {
+      const activity = ensureSessionActivity(connectedKey);
+      if (state.streaming) activity.working = true;
+      else if (!pendingPrompt) activity.working = false;
+    }
+
+    if (updatesCurrentView && state.piSessionId && state.piSessionPath) {
+      const registered = await registerConnectedSession();
+      if (registered && !pendingPrompt) removeRegisteredEphemeralSession();
+    }
+
+    const messagesRequestId = nextRequestId("messages");
+    if (resolvesPending && pendingPrompt) {
+      pendingPrompt.messagesRequestId = messagesRequestId;
+    }
+    await rpc({ id: messagesRequestId, type: "get_messages" });
     await rpc({
       id: nextRequestId("efforts"),
       type: "get_available_thinking_levels",
@@ -491,9 +741,19 @@ async function handleResponse(response: Record<string, unknown>) {
   }
 
   if (command === "get_messages" && data) {
+    const resolvesPending =
+      Boolean(pendingPrompt?.messagesRequestId) &&
+      responseId === pendingPrompt?.messagesRequestId;
+    const viewingConnectedSession =
+      state.activeProjectPath === state.piProjectPath &&
+      state.activeSessionId === state.piSessionId &&
+      !activeIsPhantom.value;
+    if (!resolvesPending && !viewingConnectedSession) return;
+
     state.messages = hydrateTranscript(
       Array.isArray(data.messages) ? data.messages : [],
     );
+    if (resolvesPending) await dispatchPendingPrompt();
     return;
   }
 
@@ -523,8 +783,11 @@ async function handleResponse(response: Record<string, unknown>) {
   }
 
   if (command === "new_session" || command === "switch_session") {
-    state.messages = [];
-    await rpc({ id: nextRequestId("changed-state"), type: "get_state" });
+    if (!pendingPrompt) state.messages = [];
+    const id = nextRequestId("changed-state");
+    if (pendingPrompt) pendingPrompt.stateRequestId = id;
+    else selectionStateRequestId = id;
+    await rpc({ id, type: "get_state" });
     return;
   }
 
@@ -540,17 +803,112 @@ async function handleResponse(response: Record<string, unknown>) {
   }
 }
 
-async function registerActiveSession() {
+async function dispatchPendingPrompt() {
+  const prompt = pendingPrompt;
+  if (!prompt) return;
+  pendingPrompt = undefined;
+  state.startingSession = false;
+  if (!state.messages.some((message) => message.id === prompt.optimisticId)) {
+    state.messages.push({
+      id: prompt.optimisticId,
+      kind: "user",
+      text: prompt.message,
+    });
+  }
+  const key = connectedSessionKey();
+  if (key) ensureSessionActivity(key).working = true;
+  try {
+    await rpc({
+      id: nextRequestId("prompt"),
+      type: "prompt",
+      message: prompt.message,
+    });
+  } catch (error) {
+    if (key) ensureSessionActivity(key).working = false;
+    if (
+      state.activeProjectPath === prompt.projectPath &&
+      state.activeSessionId === prompt.actualSessionId
+    ) {
+      state.draft = prompt.message;
+    }
+    setError(error);
+  }
+}
+
+async function registerConnectedSession(): Promise<boolean> {
   try {
     state.workspace = await invoke<WorkspaceSnapshot>("register_session", {
-      projectPath: state.activeProjectPath,
-      sessionId: state.activeSessionId,
-      sessionPath: state.activeSessionPath,
-      sessionName: state.sessionName || null,
+      projectPath: state.piProjectPath,
+      sessionId: state.piSessionId,
+      sessionPath: state.piSessionPath,
+      sessionName: state.piSessionName || null,
+    });
+    return true;
+  } catch (error) {
+    setError(error);
+    return false;
+  }
+}
+
+async function persistExpandedProject(projectPath: string) {
+  try {
+    state.workspace = await invoke<WorkspaceSnapshot>("set_project_collapsed", {
+      path: projectPath,
+      collapsed: false,
     });
   } catch (error) {
     setError(error);
   }
+}
+
+function materializePendingSession(
+  prompt: PendingPrompt,
+  sessionId: string,
+  sessionPath: string,
+) {
+  const session = ephemeralSession(prompt.projectPath, prompt.phantomId);
+  const previousKey = sessionKey(prompt.projectPath, prompt.phantomId);
+  const nextKey = sessionKey(prompt.projectPath, sessionId);
+  const activity = ensureSessionActivity(previousKey);
+
+  prompt.actualSessionId = sessionId;
+  if (session) {
+    session.id = sessionId;
+    session.path = sessionPath;
+    session.title = draftTitle(prompt.message);
+    session.phantom = false;
+  }
+  sessionDrafts[nextKey] = "";
+  sessionActivity[nextKey] = activity;
+  delete sessionDrafts[previousKey];
+  delete sessionActivity[previousKey];
+  state.activeSessionId = sessionId;
+  state.activeSessionPath = sessionPath;
+}
+
+function cancelPendingPrompt(error: unknown) {
+  const prompt = pendingPrompt;
+  if (!prompt) {
+    setError(error);
+    return;
+  }
+  pendingPrompt = undefined;
+  state.startingSession = false;
+  const sessionId = prompt.actualSessionId || prompt.phantomId;
+  const key = sessionKey(prompt.projectPath, sessionId);
+  ensureSessionActivity(key).working = false;
+  state.messages = state.messages.filter(
+    (message) => message.id !== prompt.optimisticId,
+  );
+  if (
+    state.activeProjectPath === prompt.projectPath &&
+    state.activeSessionId === sessionId
+  ) {
+    state.draft = prompt.message;
+  } else {
+    sessionDrafts[key] = prompt.message;
+  }
+  setError(error);
 }
 
 function appendStream(kind: "assistant" | "thinking", delta: string) {
@@ -565,6 +923,143 @@ function appendStream(kind: "assistant" | "thinking", delta: string) {
     kind,
     text: delta,
   });
+}
+
+function projectSessions(project: ProjectSummary): SessionSummary[] {
+  const ephemeral = state.ephemeralSessions
+    .filter((session) => session.projectPath === project.path)
+    .sort((left, right) => right.createdAt - left.createdAt);
+  const ephemeralIds = new Set(ephemeral.map((session) => session.id));
+  return [
+    ...ephemeral,
+    ...project.sessions.filter(
+      (session) => !session.archived && !ephemeralIds.has(session.id),
+    ),
+  ];
+}
+
+function isSessionSelected(
+  project: ProjectSummary,
+  session: SessionSummary,
+): boolean {
+  return (
+    project.path === state.activeProjectPath &&
+    session.id === state.activeSessionId
+  );
+}
+
+function sessionIndicator(
+  project: ProjectSummary,
+  session: SessionSummary,
+): SessionIndicator {
+  const key = sessionKey(project.path, session.id);
+  const activity = sessionActivity[key];
+  if (activity?.working) return "working";
+  if (sessionDrafts[key]?.trim()) return "draft";
+  return activity?.unread ? "new" : "";
+}
+
+function setActiveSessionView(
+  project: ProjectSummary,
+  session: SessionSummary,
+) {
+  state.activeProjectPath = project.path;
+  state.activeSessionId = session.id;
+  state.activeSessionPath = session.path;
+  state.sessionName = isPhantomSession(project.path, session.id)
+    ? ""
+    : session.title === "New session"
+      ? ""
+      : session.title;
+  state.draft = sessionDrafts[sessionKey(project.path, session.id)] || "";
+}
+
+function markSessionRead(projectPath: string, sessionId: string) {
+  const activity = sessionActivity[sessionKey(projectPath, sessionId)];
+  if (activity) activity.unread = false;
+}
+
+function removeEmptyActivePhantom() {
+  const session = ephemeralSession(
+    state.activeProjectPath,
+    state.activeSessionId,
+  );
+  if (!session?.phantom || state.draft.trim()) return;
+  removeEphemeralSession(session);
+}
+
+function removeRegisteredEphemeralSession() {
+  const session = state.ephemeralSessions.find(
+    (item) =>
+      !item.phantom &&
+      item.projectPath === state.piProjectPath &&
+      item.id === state.piSessionId,
+  );
+  if (session) removeEphemeralSession(session, false);
+}
+
+function removeEphemeralSession(
+  session: EphemeralSession,
+  removeUiState = true,
+) {
+  const index = state.ephemeralSessions.indexOf(session);
+  if (index >= 0) state.ephemeralSessions.splice(index, 1);
+  if (removeUiState) {
+    const key = sessionKey(session.projectPath, session.id);
+    delete sessionDrafts[key];
+    delete sessionActivity[key];
+  }
+}
+
+function removeProjectUiState(projectPath: string) {
+  state.ephemeralSessions = state.ephemeralSessions.filter(
+    (session) => session.projectPath !== projectPath,
+  );
+  const prefix = `${projectPath}\u0000`;
+  for (const key of Object.keys(sessionDrafts)) {
+    if (key.startsWith(prefix)) delete sessionDrafts[key];
+  }
+  for (const key of Object.keys(sessionActivity)) {
+    if (key.startsWith(prefix)) delete sessionActivity[key];
+  }
+}
+
+function ephemeralSession(
+  projectPath: string,
+  sessionId: string,
+): EphemeralSession | undefined {
+  return state.ephemeralSessions.find(
+    (session) =>
+      session.projectPath === projectPath && session.id === sessionId,
+  );
+}
+
+function isPhantomSession(projectPath: string, sessionId: string): boolean {
+  return ephemeralSession(projectPath, sessionId)?.phantom === true;
+}
+
+function ensureSessionActivity(key: string): SessionActivity {
+  return (sessionActivity[key] ??= { unread: false, working: false });
+}
+
+function activeSessionKey(): string {
+  return state.activeProjectPath && state.activeSessionId
+    ? sessionKey(state.activeProjectPath, state.activeSessionId)
+    : "";
+}
+
+function connectedSessionKey(): string {
+  return state.piProjectPath && state.piSessionId
+    ? sessionKey(state.piProjectPath, state.piSessionId)
+    : "";
+}
+
+function sessionKey(projectPath: string, sessionId: string): string {
+  return `${projectPath}\u0000${sessionId}`;
+}
+
+function draftTitle(value: string): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, 240) || "New session";
 }
 
 function normalizeEffort(value: unknown): ThinkingLevel {
@@ -587,15 +1082,25 @@ function firstUserMessage(): string {
   return state.messages.find((message) => message.kind === "user")?.text || "";
 }
 
-function clearSession() {
+function clearActiveSession() {
   state.messages = [];
-  state.piReady = false;
-  state.streaming = false;
-  state.stopping = false;
+  state.draft = "";
   state.activeProjectPath = "";
   state.activeSessionId = "";
   state.activeSessionPath = "";
   state.sessionName = "";
+}
+
+function clearPiConnection() {
+  const key = connectedSessionKey();
+  if (key) ensureSessionActivity(key).working = false;
+  state.piReady = false;
+  state.streaming = false;
+  state.stopping = false;
+  state.piProjectPath = "";
+  state.piSessionId = "";
+  state.piSessionPath = "";
+  state.piSessionName = "";
 }
 
 function setError(error: unknown) {

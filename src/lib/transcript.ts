@@ -79,7 +79,7 @@ export function hydrateTranscript(messages: unknown[]): TranscriptEntry[] {
       entries.push({
         id: nextId("tool"),
         kind: "tool",
-        text: command ? `bash ${command}` : "bash",
+        text: command,
         toolName: "bash",
         toolRunning: false,
         toolErrored: numberValue(message.exitCode) !== 0,

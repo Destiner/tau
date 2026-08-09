@@ -24,6 +24,9 @@
   --muted: #777872;
   --faint: #a4a49d;
   --danger: #a6433c;
+  --status-new: #4e84d8;
+  --status-draft: #d2aa62;
+  --status-working: #b7b8b4;
   --user: #ecece8;
 }
 
@@ -79,6 +82,8 @@ button {
   align-items: center;
   min-height: 44px;
   border-bottom: 1px solid var(--border);
+  cursor: default;
+  user-select: none;
 }
 
 .sidebar-footer {
@@ -143,12 +148,13 @@ button {
 .project-toggle svg {
   width: 13px;
   flex: none;
+  transform: translateY(1px);
   color: var(--muted);
   transition: transform 120ms ease;
 }
 
 .project-toggle svg.expanded {
-  transform: rotate(90deg);
+  transform: translateY(1px) rotate(90deg);
 }
 
 .project-toggle span {
@@ -193,10 +199,12 @@ button {
   display: flex;
   width: 100%;
   min-width: 0;
+  align-items: center;
+  gap: 7px;
   cursor: pointer;
   border-radius: 7px;
   background: transparent;
-  padding: 7px 8px 7px 26px;
+  padding: 7px 8px 7px 14px;
   text-align: left;
 }
 
@@ -206,6 +214,29 @@ button {
 
 .session-row.selected {
   background: var(--selected);
+}
+
+.session-indicator {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  opacity: 0;
+}
+
+.session-indicator.new {
+  background: var(--status-new);
+  opacity: 1;
+}
+
+.session-indicator.draft {
+  background: var(--status-draft);
+  opacity: 1;
+}
+
+.session-indicator.working {
+  background: var(--status-working);
+  opacity: 1;
 }
 
 .session-copy {
@@ -372,12 +403,11 @@ button {
   gap: 8px;
   min-width: 0;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: 6px;
   background: var(--panel-raised);
   color: var(--muted);
   font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
-  font-size: 11px;
-  padding: 8px 10px;
+  padding: 7px 9px;
 }
 
 .tool-copy {
@@ -385,31 +415,37 @@ button {
   overflow: hidden;
   min-width: 0;
   flex: 1;
-  align-items: baseline;
-  gap: 8px;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .tool-argument {
   overflow: hidden;
   color: var(--text);
+  font-size: 11px;
+  line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .tool-name {
-  flex: none;
+  overflow: hidden;
   color: var(--muted);
   font-size: 9px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tool-row.error,
-.tool-status {
+.tool-error-icon {
   color: var(--danger);
 }
 
-.tool-status {
-  font-family: inherit;
-  font-size: 10px;
+.tool-error-icon {
+  width: 11px;
+  height: 11px;
+  flex: none;
 }
 
 .stream-state {
@@ -462,21 +498,21 @@ button {
 .composer-toolbar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 0 0;
+  gap: 4px;
+  padding: 0;
 }
 
 .composer-toolbar select {
   max-width: 210px;
-  height: 28px;
+  height: 24px;
   cursor: pointer;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: 6px;
   outline: 0;
   background: transparent;
   color: var(--muted);
   font-size: 11px;
-  padding: 0 5px;
+  padding: 0 3px;
 }
 
 .composer-toolbar select:hover:not(:disabled) {
@@ -489,10 +525,11 @@ button {
 }
 
 .send-button {
-  width: 29px;
-  height: 29px;
+  width: 25px;
+  height: 25px;
   flex: none;
   margin-left: auto;
+  border-radius: 6px;
   background: transparent;
   color: var(--muted);
   font-size: 15px;
@@ -633,6 +670,9 @@ textarea:disabled {
     --muted: #a0a19c;
     --faint: #73746f;
     --danger: #e07971;
+    --status-new: #70a4ee;
+    --status-draft: #d0aa68;
+    --status-working: #858782;
     --user: #343536;
   }
 }

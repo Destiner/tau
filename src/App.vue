@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   computed,
   nextTick,
@@ -29,6 +30,7 @@ const {
   sessionTitle,
   effortLabels,
   settingsDisabled,
+  canCompose,
   initialize,
   dispose,
   addProject,
@@ -36,6 +38,9 @@ const {
   removeProject,
   newSession,
   selectSession,
+  projectSessions,
+  isSessionSelected,
+  sessionIndicator,
   sendMessage,
   stop,
   selectModel,
@@ -138,21 +143,41 @@ function handleEffortChange(event: Event) {
 }
 
 function handleNewSession() {
-  if (activeProject.value) void newSession(activeProject.value);
+  if (activeProject.value) newSession(activeProject.value);
+}
+
+function handleTitlebarMouseDown(event: MouseEvent) {
+  if (event.button !== 0) return;
+  const target = event.target;
+  if (
+    !(target instanceof Element) ||
+    target.closest("button, a, input, select, textarea")
+  ) {
+    return;
+  }
+  void getCurrentWindow()
+    .startDragging()
+    .catch(() => undefined);
 }
 </script>
 
 <template>
   <div class="app-shell">
     <aside class="sidebar">
-      <header class="sidebar-titlebar" data-tauri-drag-region></header>
+      <header
+        class="sidebar-titlebar"
+        @mousedown="handleTitlebarMouseDown"
+      ></header>
 
       <div class="project-list">
         <template
           v-for="project in state.workspace?.projects"
           :key="project.path"
         >
-          <div class="project-row" :class="{ selected: project.selected }">
+          <div
+            class="project-row"
+            :class="{ selected: project.path === state.activeProjectPath }"
+          >
             <button
               class="project-toggle"
               type="button"
@@ -187,21 +212,27 @@ function handleNewSession() {
 
           <div v-if="!project.collapsed" class="session-list">
             <button
-              v-for="session in project.sessions.filter(
-                (item) => !item.archived,
-              )"
+              v-for="session in projectSessions(project)"
               :key="session.id"
               class="session-row"
-              :class="{ selected: session.id === state.activeSessionId }"
+              :class="{ selected: isSessionSelected(project, session) }"
               type="button"
               @click="selectSession(project, session)"
             >
+              <span
+                class="session-indicator"
+                :class="sessionIndicator(project, session)"
+                aria-hidden="true"
+              ></span>
               <span class="session-copy">
                 <span class="session-title">{{ session.title }}</span>
                 <span class="session-time">{{ session.lastActive }}</span>
               </span>
             </button>
-            <div v-if="project.sessions.length === 0" class="empty-sessions">
+            <div
+              v-if="projectSessions(project).length === 0"
+              class="empty-sessions"
+            >
               No sessions yet
             </div>
           </div>
@@ -230,8 +261,8 @@ function handleNewSession() {
     </aside>
 
     <main class="session-pane">
-      <header class="session-header" data-tauri-drag-region>
-        <div class="session-heading" data-tauri-drag-region>
+      <header class="session-header" @mousedown="handleTitlebarMouseDown">
+        <div class="session-heading">
           <h1>{{ sessionTitle }}</h1>
         </div>
         <button
@@ -295,19 +326,22 @@ function handleNewSession() {
               :class="{ error: message.toolErrored }"
             >
               <span class="tool-copy">
+                <span class="tool-name">{{ message.toolName || "tool" }}</span>
                 <span v-if="message.text" class="tool-argument">{{
                   message.text
                 }}</span>
-                <span class="tool-name">{{ message.toolName || "tool" }}</span>
               </span>
               <span
                 v-if="message.toolRunning"
                 class="spinner small"
                 aria-label="Running"
               ></span>
-              <span v-else-if="message.toolErrored" class="tool-status"
-                >Failed</span
-              >
+              <UiIcon
+                v-else-if="message.toolErrored"
+                class="tool-error-icon"
+                name="cross"
+                aria-label="Failed"
+              />
             </div>
           </article>
 
@@ -332,13 +366,13 @@ function handleNewSession() {
         <p v-if="state.status" class="status" role="status">
           {{ state.status }}
         </p>
-        <div class="composer" :class="{ disabled: !state.piReady }">
+        <div class="composer" :class="{ disabled: !canCompose }">
           <textarea
             v-model="state.draft"
             rows="2"
             maxlength="32768"
             placeholder="Message π"
-            :disabled="!state.piReady"
+            :disabled="!canCompose"
             aria-label="Message Pi"
             @keydown="handleComposerKeydown"
           ></textarea>
@@ -386,7 +420,7 @@ function handleNewSession() {
               v-else
               class="send-button"
               type="button"
-              :disabled="!state.piReady || !state.draft.trim()"
+              :disabled="!canCompose || !state.draft.trim()"
               aria-label="Send message"
               @click="sendMessage"
             >
