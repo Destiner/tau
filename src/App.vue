@@ -25,6 +25,7 @@ const transcriptWindowStart = ref(0);
 const shiftingWindow = ref(false);
 const {
   state,
+  activeProject,
   sessionTitle,
   effortLabels,
   settingsDisabled,
@@ -135,23 +136,16 @@ function handleModelChange(event: Event) {
 function handleEffortChange(event: Event) {
   void selectEffort((event.target as HTMLSelectElement).value as ThinkingLevel);
 }
+
+function handleNewSession() {
+  if (activeProject.value) void newSession(activeProject.value);
+}
 </script>
 
 <template>
   <div class="app-shell">
     <aside class="sidebar">
-      <div class="titlebar-drag" data-tauri-drag-region></div>
-      <header class="sidebar-header">
-        <span>Projects</span>
-        <button
-          class="icon-button"
-          type="button"
-          title="Add project"
-          @click="addProject"
-        >
-          <UiIcon name="folder" />
-        </button>
-      </header>
+      <header class="sidebar-titlebar" data-tauri-drag-region></header>
 
       <div class="project-list">
         <template
@@ -219,9 +213,20 @@ function handleEffortChange(event: Event) {
         >
           <UiIcon name="folder" />
           <span>No projects yet</span>
-          <button type="button" @click="addProject">Add project</button>
         </div>
       </div>
+
+      <footer class="sidebar-footer">
+        <button
+          class="icon-button"
+          type="button"
+          title="Add project"
+          aria-label="Add project"
+          @click="addProject"
+        >
+          <UiIcon name="folder" />
+        </button>
+      </footer>
     </aside>
 
     <main class="session-pane">
@@ -229,6 +234,22 @@ function handleEffortChange(event: Event) {
         <div class="session-heading" data-tauri-drag-region>
           <h1>{{ sessionTitle }}</h1>
         </div>
+        <button
+          v-if="activeProject"
+          class="icon-button session-new-button"
+          type="button"
+          title="New session"
+          aria-label="New session"
+          :disabled="
+            state.streaming ||
+            state.stopping ||
+            state.startingSession ||
+            state.switchingSession
+          "
+          @click="handleNewSession"
+        >
+          <UiIcon name="plus" />
+        </button>
         <span
           v-if="state.switchingSession || state.startingSession"
           class="spinner"

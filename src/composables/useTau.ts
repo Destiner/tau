@@ -33,7 +33,7 @@ const state = reactive({
   workspace: null as WorkspaceSnapshot | null,
   messages: [] as TranscriptEntry[],
   draft: "",
-  status: "Loading projects…",
+  status: "",
   piReady: false,
   streaming: false,
   stopping: false,
@@ -123,10 +123,6 @@ export function useTau() {
       );
       if (selectedProject && selectedSession) {
         await startProject(selectedProject, selectedSession.path);
-      } else {
-        state.status = selectedProject
-          ? "Start a new session for this project."
-          : "Add a project to begin.";
       }
     } catch (error) {
       setError(error);
@@ -150,7 +146,7 @@ export function useTau() {
         path: selection,
       });
       state.activeProjectPath = state.workspace.activeProjectPath;
-      state.status = "Start a new session for this project.";
+      state.status = "";
     } catch (error) {
       setError(error);
     }
@@ -184,15 +180,14 @@ export function useTau() {
         path: project.path,
       });
       state.activeProjectPath = state.workspace.activeProjectPath;
-      state.status = state.workspace.projects.length
-        ? "Choose a session."
-        : "Add a project to begin.";
+      state.status = "";
     } catch (error) {
       setError(error);
     }
   }
 
   async function newSession(project: ProjectSummary) {
+    if (state.startingSession || state.switchingSession) return;
     if (state.streaming || state.stopping) {
       state.status = "Stop the current response before starting a new session.";
       return;
@@ -202,7 +197,7 @@ export function useTau() {
     state.activeSessionId = "";
     state.activeSessionPath = "";
     state.startingSession = true;
-    state.status = "Starting a new session…";
+    state.status = "";
     try {
       if (state.piReady && state.activeProjectPath === project.path) {
         await rpc({ id: nextRequestId("new-session"), type: "new_session" });
@@ -228,7 +223,7 @@ export function useTau() {
       return;
     }
     state.switchingSession = true;
-    state.status = "Switching session…";
+    state.status = "";
     try {
       if (state.piReady && state.activeProjectPath === project.path) {
         await rpc({
@@ -265,7 +260,7 @@ export function useTau() {
   async function stop() {
     if (!state.streaming || state.stopping) return;
     state.stopping = true;
-    state.status = "Stopping…";
+    state.status = "";
     try {
       await rpc({ id: nextRequestId("abort"), type: "abort" });
     } catch (error) {
@@ -279,7 +274,7 @@ export function useTau() {
       (option) => `${option.provider}/${option.id}` === value,
     );
     if (!model || settingsDisabled.value) return;
-    state.status = "Switching model…";
+    state.status = "";
     try {
       await rpc({
         id: nextRequestId("set-model"),
@@ -295,7 +290,7 @@ export function useTau() {
   async function selectEffort(level: ThinkingLevel) {
     if (settingsDisabled.value) return;
     state.pendingEffort = level;
-    state.status = "Changing effort…";
+    state.status = "";
     try {
       await rpc({
         id: nextRequestId("set-effort"),
@@ -337,7 +332,7 @@ async function startProject(project: ProjectSummary, sessionPath?: string) {
   state.messages = [];
   state.models = [];
   state.efforts = [];
-  state.status = sessionPath ? "Opening session…" : "Starting a new session…";
+  state.status = "";
   state.workspace = await invoke<WorkspaceSnapshot>("set_active_project", {
     path: project.path,
   });
@@ -374,7 +369,6 @@ async function handleBridgeEvent(event: PiBridgeEvent) {
     return;
   }
   if (event.kind === "stderr") {
-    if (!state.piReady && event.message) state.status = event.message;
     return;
   }
   if (event.kind === "error") {
@@ -386,7 +380,7 @@ async function handleBridgeEvent(event: PiBridgeEvent) {
     state.streaming = false;
     state.stopping = false;
     state.status =
-      event.code === 0 ? "Pi stopped." : "The Pi process stopped unexpectedly.";
+      event.code === 0 ? "" : "The Pi process stopped unexpectedly.";
   }
 }
 
