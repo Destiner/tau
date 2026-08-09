@@ -375,6 +375,10 @@ button {
   grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
+.session-pane.empty-session {
+  grid-template-rows: minmax(0, 1fr);
+}
+
 .session-header {
   gap: 6px;
   padding: 0 8px 0 12px;
@@ -539,7 +543,24 @@ button {
 .composer-area {
   border-top: 1px solid var(--border);
   background: var(--canvas);
-  padding: 8px;
+  padding: 4px;
+}
+
+.empty-session .composer-area,
+.empty-session .composer {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.empty-session .composer-area {
+  border-top: 0;
+}
+
+.empty-session .composer textarea {
+  max-height: none;
+  flex: 1;
 }
 
 .status {
@@ -562,15 +583,15 @@ button {
 .composer textarea {
   display: block;
   width: 100%;
-  min-height: 68px;
-  max-height: 220px;
+  min-height: calc(4lh + 7px);
+  max-height: calc(10lh + 7px);
   resize: none;
   border: 0;
   outline: 0;
   background: transparent;
   color: var(--text);
   line-height: 1.45;
-  padding: 8px 8px 6px;
+  padding: 4px 4px 3px;
 }
 
 .composer textarea::placeholder {
@@ -580,41 +601,87 @@ button {
 .composer-toolbar {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   padding: 0;
 }
 
-.composer-toolbar select {
+.composer-selector {
+  position: relative;
+  display: inline-grid;
+  min-width: 0;
   max-width: 210px;
-  height: 24px;
+  grid-template-areas: "selector";
+  color: var(--muted);
+}
+
+.composer-selector::after {
+  z-index: 1;
+  width: 5px;
+  height: 5px;
+  align-self: center;
+  justify-self: end;
+  margin-right: 3px;
+  transform: translateY(-1px) rotate(45deg);
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  content: "";
+  grid-area: selector;
+  pointer-events: none;
+}
+
+.composer-selector select,
+.composer-selector-measure {
+  min-width: 0;
+  font-size: 11px;
+  grid-area: selector;
+  padding: 0 12px 0 2px;
+}
+
+.composer-selector select {
+  width: 100%;
+  height: 20px;
+  appearance: none;
   cursor: pointer;
+  overflow: hidden;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 4px;
   outline: 0;
   background: transparent;
   color: var(--muted);
-  font-size: 11px;
-  padding: 0 3px;
+  text-overflow: ellipsis;
 }
 
-.composer-toolbar select:hover:not(:disabled) {
+.composer-selector-measure {
+  visibility: hidden;
+  overflow: hidden;
+  border: 1px solid transparent;
+  white-space: pre;
+}
+
+.composer-selector select:hover:not(:disabled),
+.composer-selector select:focus-visible {
   border-color: var(--border);
   background: var(--panel);
 }
 
-.composer-toolbar select:nth-of-type(2) {
+.composer-selector:has(select:disabled)::after {
+  opacity: 0.45;
+}
+
+.effort-selector {
   max-width: 110px;
 }
 
 .send-button {
-  width: 25px;
-  height: 25px;
+  width: 20px;
+  height: 20px;
   flex: none;
   margin-left: auto;
-  border-radius: 6px;
+  border-radius: 4px;
   background: transparent;
   color: var(--muted);
   font-size: 15px;
+  padding: 0;
 }
 
 .send-button:hover:not(:disabled) {

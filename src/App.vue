@@ -21,6 +21,7 @@ import {
 import type { ThinkingLevel } from "./types";
 
 const transcript = ref<HTMLElement>();
+const composerInput = ref<HTMLTextAreaElement>();
 const projectMenu = ref<HTMLElement>();
 const remoteConnectionInput = ref<HTMLInputElement>();
 const remoteDirectoryFilterInput = ref<HTMLInputElement>();
@@ -80,6 +81,22 @@ const visibleMessages = computed(() =>
     transcriptWindowEndIndex.value,
   ),
 );
+const sessionIsEmpty = computed(
+  () =>
+    canDraft.value &&
+    !messages.value.some(
+      (message) => message.kind === "user" || message.kind === "assistant",
+    ),
+);
+const modelSelectorLabel = computed(() => {
+  if (!currentModelId.value) return "Model";
+  const model = models.value.find(
+    (option) =>
+      option.provider === currentModelProvider.value &&
+      option.id === currentModelId.value,
+  );
+  return model ? `${model.name} · ${model.provider}` : currentModelLabel.value;
+});
 const remoteDirectoryOptions = computed(() => {
   if (!state.remoteWorkingDirectory) return [];
   const options = [] as Array<{
@@ -122,6 +139,7 @@ const remoteDirectoryOptions = computed(() => {
 
 onMounted(() => {
   void initialize();
+  void nextTick(resizeComposer);
   document.addEventListener("pointerdown", handleDocumentPointerDown);
   document.addEventListener("keydown", handleDocumentKeydown);
 });
@@ -148,6 +166,10 @@ watch(
     state.remoteDirectorySelectedIndex = 0;
   },
 );
+
+watch([draft, sessionIsEmpty], () => {
+  void nextTick(resizeComposer);
+});
 
 watch(messages, () => {
   transcriptWindowStart.value = latestWindowStart(messages.value);
@@ -211,6 +233,25 @@ async function loadNewerMessages() {
   await nextTick();
   element.scrollTop = 1;
   shiftingWindow.value = false;
+}
+
+function resizeComposer() {
+  const element = composerInput.value;
+  if (!element) return;
+  element.style.height = "auto";
+  if (sessionIsEmpty.value) {
+    element.style.overflowY = "auto";
+    return;
+  }
+  const maxHeight = Number.parseFloat(getComputedStyle(element).maxHeight);
+  const height = Number.isFinite(maxHeight)
+    ? Math.min(element.scrollHeight, maxHeight)
+    : element.scrollHeight;
+  element.style.height = `${Math.ceil(height)}px`;
+  element.style.overflowY =
+    Number.isFinite(maxHeight) && element.scrollHeight > maxHeight
+      ? "auto"
+      : "hidden";
 }
 
 function handleComposerKeydown(event: KeyboardEvent) {
@@ -452,8 +493,12 @@ function handleTitlebarMouseDown(event: MouseEvent) {
       </footer>
     </aside>
 
-    <main class="session-pane">
-      <header class="session-header" @mousedown="handleTitlebarMouseDown">
+    <main class="session-pane" :class="{ 'empty-session': sessionIsEmpty }">
+      <header
+        v-if="!sessionIsEmpty"
+        class="session-header"
+        @mousedown="handleTitlebarMouseDown"
+      >
         <div class="session-heading">
           <h1>{{ sessionTitle }}</h1>
         </div>
@@ -470,6 +515,7 @@ function handleTitlebarMouseDown(event: MouseEvent) {
       </header>
 
       <section
+        v-if="!sessionIsEmpty"
         ref="transcript"
         class="transcript"
         aria-label="Tau transcript"
@@ -547,8 +593,9 @@ function handleTitlebarMouseDown(event: MouseEvent) {
         </p>
         <div class="composer" :class="{ disabled: !canDraft }">
           <textarea
+            ref="composerInput"
             v-model="draft"
-            rows="2"
+            rows="4"
             maxlength="32768"
             placeholder="Message π"
             :disabled="!canDraft"
@@ -556,49 +603,63 @@ function handleTitlebarMouseDown(event: MouseEvent) {
             @keydown="handleComposerKeydown"
           ></textarea>
           <div class="composer-toolbar">
-            <select
-              :value="`${currentModelProvider}/${currentModelId}`"
-              :disabled="settingsDisabled || models.length === 0"
-              aria-label="Model"
-              @change="handleModelChange"
-            >
-              <option v-if="!currentModelId" value="/">Model</option>
-              <option
-                v-else-if="
-                  !models.some(
-                    (model) =>
-                      model.provider === currentModelProvider &&
-                      model.id === currentModelId,
-                  )
-                "
+            <span class="composer-selector model-selector">
+              <select
                 :value="`${currentModelProvider}/${currentModelId}`"
+                :disabled="settingsDisabled || models.length === 0"
+                aria-label="Model"
+                @change="handleModelChange"
               >
-                {{ currentModelLabel }}
-              </option>
-              <option
-                v-for="model in models"
-                :key="`${model.provider}/${model.id}`"
-                :value="`${model.provider}/${model.id}`"
-              >
-                {{ model.name }} · {{ model.provider }}
-              </option>
-            </select>
-            <select
-              :value="currentEffort"
-              :disabled="settingsDisabled || efforts.length === 0"
-              aria-label="Thinking effort"
-              @change="handleEffortChange"
-            >
-              <option
-                v-if="!efforts.includes(currentEffort)"
+                <option v-if="!currentModelId" value="/">Model</option>
+                <option
+                  v-else-if="
+                    !models.some(
+                      (model) =>
+                        model.provider === currentModelProvider &&
+                        model.id === currentModelId,
+                    )
+                  "
+                  :value="`${currentModelProvider}/${currentModelId}`"
+                >
+                  {{ currentModelLabel }}
+                </option>
+                <option
+                  v-for="model in models"
+                  :key="`${model.provider}/${model.id}`"
+                  :value="`${model.provider}/${model.id}`"
+                >
+                  {{ model.name }} · {{ model.provider }}
+                </option>
+              </select>
+              <span
+                class="composer-selector-measure"
+                aria-hidden="true"
+                v-text="modelSelectorLabel"
+              ></span>
+            </span>
+            <span class="composer-selector effort-selector">
+              <select
                 :value="currentEffort"
+                :disabled="settingsDisabled || efforts.length === 0"
+                aria-label="Thinking effort"
+                @change="handleEffortChange"
               >
-                {{ currentEffortLabel }}
-              </option>
-              <option v-for="effort in efforts" :key="effort" :value="effort">
-                {{ effortLabels[effort] }}
-              </option>
-            </select>
+                <option
+                  v-if="!efforts.includes(currentEffort)"
+                  :value="currentEffort"
+                >
+                  {{ currentEffortLabel }}
+                </option>
+                <option v-for="effort in efforts" :key="effort" :value="effort">
+                  {{ effortLabels[effort] }}
+                </option>
+              </select>
+              <span
+                class="composer-selector-measure"
+                aria-hidden="true"
+                v-text="currentEffortLabel"
+              ></span>
+            </span>
             <button
               v-if="streaming"
               class="send-button stop"
@@ -617,7 +678,7 @@ function handleTitlebarMouseDown(event: MouseEvent) {
               aria-label="Send message"
               @click="sendMessage"
             >
-              <UiIcon name="send" />
+              <UiIcon name="triangle" />
             </button>
           </div>
         </div>
