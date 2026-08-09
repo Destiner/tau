@@ -454,11 +454,15 @@ button {
 }
 
 .message.assistant,
-.message.thinking,
-.message.tool,
 .stream-state {
   margin-right: 20px;
   margin-left: 8px;
+}
+
+.message.thinking,
+.message.tool {
+  margin-right: 32px;
+  margin-left: 20px;
 }
 
 .thinking-block {
@@ -479,7 +483,7 @@ button {
   font-size: 12px;
 }
 
-.message.tool:has(+ .message.tool) {
+.message:is(.thinking, .tool):has(+ .message:is(.thinking, .tool)) {
   margin-bottom: 7px;
 }
 
@@ -532,6 +536,14 @@ button {
   width: 11px;
   height: 11px;
   flex: none;
+}
+
+.tool-running-indicator {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--status-working);
 }
 
 .stream-state {
@@ -707,21 +719,6 @@ textarea:disabled {
   opacity: 0.45;
 }
 
-.spinner {
-  width: 14px;
-  height: 14px;
-  flex: none;
-  animation: spin 0.8s linear infinite;
-  border: 1.5px solid var(--border);
-  border-top-color: var(--muted);
-  border-radius: 50%;
-}
-
-.spinner.small {
-  width: 11px;
-  height: 11px;
-}
-
 .markdown {
   overflow-wrap: anywhere;
   color: var(--text);
@@ -878,12 +875,6 @@ textarea:disabled {
 .remote-directory-option.selected {
   background: var(--selected);
   color: var(--text);
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 @media (max-width: 720px) {

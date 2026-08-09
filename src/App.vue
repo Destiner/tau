@@ -88,6 +88,11 @@ const sessionIsEmpty = computed(
       (message) => message.kind === "user" || message.kind === "assistant",
     ),
 );
+const showWorkingIndicator = computed(() => {
+  if (stopping.value) return true;
+  if (!streaming.value) return false;
+  return messages.value[messages.value.length - 1]?.kind !== "assistant";
+});
 const modelSelectorLabel = computed(() => {
   if (!currentModelId.value) return "Model";
   const model = models.value.find(
@@ -560,7 +565,8 @@ function handleTitlebarMouseDown(event: MouseEvent) {
               </span>
               <span
                 v-if="message.toolRunning"
-                class="spinner small"
+                class="tool-running-indicator"
+                role="status"
                 aria-label="Running"
               ></span>
               <UiIcon
@@ -581,7 +587,7 @@ function handleTitlebarMouseDown(event: MouseEvent) {
             Load newer messages
           </button>
 
-          <div v-if="stopping || streaming" class="stream-state">
+          <div v-if="showWorkingIndicator" class="stream-state">
             <PiSpinner :label="stopping ? 'Pi is stopping' : 'Pi is working'" />
           </div>
         </div>

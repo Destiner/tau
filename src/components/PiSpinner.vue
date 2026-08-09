@@ -13,7 +13,7 @@ withDefaults(
       v-for="index in 8"
       :key="index"
       class="pi-spinner-dot"
-      :style="{ animationDelay: `${(index - 1) * -80}ms` }"
+      :style="{ animationDelay: `${(8 - index) * -80}ms` }"
     ></span>
   </span>
 </template>
@@ -21,12 +21,12 @@ withDefaults(
 <style scoped>
 .pi-spinner {
   display: grid;
-  width: 7px;
-  height: 12px;
+  width: 8px;
+  height: 8px;
   flex: none;
-  grid-template-columns: repeat(2, 2px);
-  grid-template-rows: repeat(4, 2px);
-  gap: 1px 3px;
+  grid-template-columns: repeat(3, 2px);
+  grid-template-rows: repeat(3, 2px);
+  gap: 1px;
   color: var(--muted);
 }
 
@@ -47,19 +47,19 @@ withDefaults(
 }
 
 .pi-spinner-dot:nth-child(3) {
-  grid-area: 2 / 2;
+  grid-area: 1 / 3;
 }
 
 .pi-spinner-dot:nth-child(4) {
-  grid-area: 3 / 2;
+  grid-area: 2 / 3;
 }
 
 .pi-spinner-dot:nth-child(5) {
-  grid-area: 4 / 2;
+  grid-area: 3 / 3;
 }
 
 .pi-spinner-dot:nth-child(6) {
-  grid-area: 4 / 1;
+  grid-area: 3 / 2;
 }
 
 .pi-spinner-dot:nth-child(7) {
