@@ -344,6 +344,22 @@ button {
   margin: 0 0 22px;
 }
 
+.transcript-boundary {
+  display: block;
+  margin: 0 auto 20px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-raised);
+  color: var(--muted);
+  font-size: 10px;
+  padding: 5px 10px;
+}
+
+.transcript-boundary:hover {
+  background: var(--panel);
+}
+
 .message.user {
   display: flex;
   justify-content: flex-end;

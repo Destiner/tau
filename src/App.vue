@@ -1,12 +1,27 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from "vue";
 import MarkdownText from "./components/MarkdownText.vue";
 import UiIcon from "./components/UiIcon.vue";
 import { useTau } from "./composables/useTau";
+import {
+  latestWindowStart,
+  newerWindowStart,
+  olderWindowStart,
+  transcriptWindowEnd,
+} from "./lib/transcript-window";
 import type { IntegrationKind, ThinkingLevel } from "./types";
 
 const transcript = ref<HTMLElement>();
 const pinnedToBottom = ref(true);
+const transcriptWindowStart = ref(0);
+const shiftingWindow = ref(false);
 const {
   state,
   sessionTitle,
@@ -26,8 +41,26 @@ const {
   selectIntegration,
 } = useTau();
 
+const transcriptWindowEndIndex = computed(() =>
+  transcriptWindowEnd(state.messages, transcriptWindowStart.value),
+);
+const visibleMessages = computed(() =>
+  state.messages.slice(
+    transcriptWindowStart.value,
+    transcriptWindowEndIndex.value,
+  ),
+);
+
 onMounted(() => void initialize());
 onBeforeUnmount(dispose);
+
+watch(
+  () => state.messages,
+  () => {
+    transcriptWindowStart.value = latestWindowStart(state.messages);
+    pinnedToBottom.value = true;
+  },
+);
 
 watch(
   () => [
@@ -36,17 +69,56 @@ watch(
   ],
   () => {
     if (!pinnedToBottom.value) return;
+    transcriptWindowStart.value = latestWindowStart(state.messages);
     void nextTick(() =>
       transcript.value?.scrollTo({ top: transcript.value.scrollHeight }),
     );
   },
 );
 
-function handleTranscriptScroll() {
+async function handleTranscriptScroll() {
   const element = transcript.value;
-  if (!element) return;
+  if (!element || shiftingWindow.value) return;
+  const nearTop = element.scrollTop < 16;
+  const nearBottom =
+    element.scrollHeight - element.scrollTop - element.clientHeight < 32;
+
+  if (nearTop && transcriptWindowStart.value > 0) {
+    await loadEarlierMessages();
+    return;
+  }
+  if (nearBottom && transcriptWindowEndIndex.value < state.messages.length) {
+    await loadNewerMessages();
+    return;
+  }
   pinnedToBottom.value =
-    element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+    nearBottom && transcriptWindowEndIndex.value >= state.messages.length;
+}
+
+async function loadEarlierMessages() {
+  const element = transcript.value;
+  if (!element || transcriptWindowStart.value === 0) return;
+  shiftingWindow.value = true;
+  const previousHeight = element.scrollHeight;
+  transcriptWindowStart.value = olderWindowStart(transcriptWindowStart.value);
+  await nextTick();
+  element.scrollTop = element.scrollHeight - previousHeight + 1;
+  pinnedToBottom.value = false;
+  shiftingWindow.value = false;
+}
+
+async function loadNewerMessages() {
+  const element = transcript.value;
+  if (!element || transcriptWindowEndIndex.value >= state.messages.length)
+    return;
+  shiftingWindow.value = true;
+  transcriptWindowStart.value = newerWindowStart(
+    transcriptWindowStart.value,
+    state.messages,
+  );
+  await nextTick();
+  element.scrollTop = 1;
+  shiftingWindow.value = false;
 }
 
 function handleComposerKeydown(event: KeyboardEvent) {
@@ -193,8 +265,16 @@ function handleIntegrationChange(event: Event) {
         @scroll="handleTranscriptScroll"
       >
         <div v-if="state.messages.length" class="message-list">
+          <button
+            v-if="transcriptWindowStart > 0"
+            class="transcript-boundary"
+            type="button"
+            @click="loadEarlierMessages"
+          >
+            Load earlier messages
+          </button>
           <article
-            v-for="message in state.messages"
+            v-for="message in visibleMessages"
             :key="message.id"
             class="message"
             :class="message.kind"
@@ -231,6 +311,15 @@ function handleIntegrationChange(event: Event) {
               >
             </div>
           </article>
+
+          <button
+            v-if="transcriptWindowEndIndex < state.messages.length"
+            class="transcript-boundary"
+            type="button"
+            @click="loadNewerMessages"
+          >
+            Load newer messages
+          </button>
 
           <div v-if="state.stopping || state.streaming" class="stream-state">
             <span class="spinner small"></span>
