@@ -98,12 +98,12 @@ pub fn register_session(
         .find(|session| session.id == session_id)
     {
         if !name.is_empty() {
-            session.name = name;
+            session.name = Some(name);
         }
     } else {
         registry.sessions.push(TauSessionRecord {
             id: session_id,
-            name,
+            name: (!name.is_empty()).then_some(name),
             archived: false,
         });
     }
@@ -220,8 +220,8 @@ fn list_project_sessions(project_path: &str) -> Result<Vec<SessionSummary>, Stri
             .ok()
             .and_then(|metadata| metadata.modified().ok())
             .unwrap_or(SystemTime::UNIX_EPOCH);
-        let title = if !record.name.is_empty() {
-            record.name.clone()
+        let title = if let Some(name) = record.name.as_ref().filter(|name| !name.is_empty()) {
+            name.clone()
         } else if !parsed.name.is_empty() {
             parsed.name
         } else if !parsed.first_message.is_empty() {
@@ -398,5 +398,20 @@ mod tests {
             .expect("session");
         assert_eq!(parsed.id, "session-1");
         assert_eq!(parsed.first_message, "Port Tau");
+    }
+
+    #[test]
+    fn accepts_legacy_null_session_names() {
+        let registry: TauSessionRegistry = serde_json::from_str(
+            r#"{"version":1,"activeSessionId":"session-1","sessions":[{"id":"session-1","name":null,"archived":false}]}"#,
+        )
+        .expect("legacy registry");
+        assert_eq!(registry.sessions[0].name, None);
+    }
+
+    #[test]
+    fn new_registries_start_at_version_one() {
+        assert_eq!(ProjectRegistry::default().version, 1);
+        assert_eq!(TauSessionRegistry::default().version, 1);
     }
 }

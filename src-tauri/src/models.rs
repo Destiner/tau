@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectRegistry {
     #[serde(default = "registry_version")]
@@ -9,6 +9,16 @@ pub struct ProjectRegistry {
     pub active_project_path: String,
     #[serde(default)]
     pub projects: Vec<ProjectRecord>,
+}
+
+impl Default for ProjectRegistry {
+    fn default() -> Self {
+        Self {
+            version: registry_version(),
+            active_project_path: String::new(),
+            projects: Vec::new(),
+        }
+    }
 }
 
 fn registry_version() -> u8 {
@@ -52,7 +62,7 @@ pub struct SessionSummary {
     pub selected: bool,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TauSessionRegistry {
     #[serde(default = "registry_version")]
@@ -63,12 +73,22 @@ pub struct TauSessionRegistry {
     pub sessions: Vec<TauSessionRecord>,
 }
 
+impl Default for TauSessionRegistry {
+    fn default() -> Self {
+        Self {
+            version: registry_version(),
+            active_session_id: String::new(),
+            sessions: Vec::new(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TauSessionRecord {
     pub id: String,
     #[serde(default)]
-    pub name: String,
+    pub name: Option<String>,
     #[serde(default)]
     pub archived: bool,
 }

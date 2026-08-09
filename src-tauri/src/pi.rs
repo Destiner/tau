@@ -17,6 +17,14 @@ pub struct PiState {
     inner: Arc<Mutex<PiManager>>,
 }
 
+impl Drop for PiState {
+    fn drop(&mut self) {
+        if let Ok(mut manager) = self.inner.lock() {
+            stop_process(&mut manager);
+        }
+    }
+}
+
 #[derive(Default)]
 struct PiManager {
     generation: u64,
