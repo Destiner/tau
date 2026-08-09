@@ -1273,7 +1273,9 @@ function sessionIndicator(
   const controller = controllerForSession(project.path, session.id);
   if (controller?.working) return "working";
   if (controller?.draft.trim()) return "draft";
-  return controller?.unread ? "new" : "";
+  return controller?.unread && !isSessionSelected(project, session)
+    ? "new"
+    : "";
 }
 
 function setActiveSessionView(

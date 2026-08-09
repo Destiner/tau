@@ -122,7 +122,7 @@ describe("session drafts and selection", () => {
     mocks.generation = 0;
     vi.mocked(invoke).mockClear();
 
-    const { state, initialize, selectSession } = useTau();
+    const { state, initialize, selectSession, sessionIndicator } = useTau();
     await initialize();
     state.activeProjectPath = "";
     state.activeSessionId = "";
@@ -180,6 +180,9 @@ describe("session drafts and selection", () => {
     });
     expect(firstController.unread).toBe(true);
     expect(secondController.unread).toBe(false);
+
+    secondController.unread = true;
+    expect(sessionIndicator(project, secondSession)).toBe("");
   });
 
   it("keeps a submitted new session visible until its file is listed", async () => {
