@@ -1,12 +1,12 @@
 [package]
-name = "tau-ri"
+name = "tau"
 version = "0.1.0"
 description = "A desktop UI for the Pi coding agent"
 authors = ["Timur Badretdinov"]
 edition = "2021"
 
 [lib]
-name = "tau_ri_lib"
+name = "tau_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
