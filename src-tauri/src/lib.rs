@@ -1,5 +1,6 @@
 mod models;
 mod pi;
+mod profile;
 mod ssh;
 mod storage;
 

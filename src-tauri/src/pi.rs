@@ -1,4 +1,7 @@
-use crate::ssh::{remote_pi_command, SshConnection};
+use crate::{
+    profile::APP_DIRECTORY_NAME,
+    ssh::{remote_pi_command, SshConnection},
+};
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -317,7 +320,7 @@ fn materialize_sdk_sidecar() -> Result<PathBuf, String> {
     const SOURCE: &[u8] = include_bytes!("../../sidecar/pi-sdk.mjs");
     let directory = dirs::cache_dir()
         .ok_or_else(|| "Could not locate the cache folder.".to_string())?
-        .join("tau");
+        .join(APP_DIRECTORY_NAME);
     fs::create_dir_all(&directory)
         .map_err(|error| format!("Could not create the Tau sidecar cache: {error}"))?;
     let path = directory.join("pi-sdk-sidecar.mjs");

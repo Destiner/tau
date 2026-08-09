@@ -4,6 +4,7 @@ use crate::{
         SessionSummary, TauSessionRecord, TauSessionRegistry, WorkspaceSnapshot,
     },
     pi::{resolve_pi_binary, sdk_available},
+    profile::{APP_DIRECTORY_NAME, SESSION_REGISTRY_FILENAME},
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -172,7 +173,7 @@ pub fn set_active_session(
     }
 
     let session_dir = default_session_dir(&project_path)?;
-    let registry_path = session_dir.join(".tau.json");
+    let registry_path = session_dir.join(SESSION_REGISTRY_FILENAME);
     let mut registry: TauSessionRegistry = read_json_or_default(&registry_path)?;
     if !registry
         .sessions
@@ -237,7 +238,7 @@ pub fn register_session(
     let session_dir = session_path
         .parent()
         .ok_or_else(|| "Pi returned an invalid session path.".to_string())?;
-    let registry_path = session_dir.join(".tau.json");
+    let registry_path = session_dir.join(SESSION_REGISTRY_FILENAME);
     let mut registry: TauSessionRegistry = read_json_or_default(&registry_path)?;
     let name = session_name.unwrap_or_default();
     if let Some(session) = registry
@@ -318,7 +319,7 @@ fn snapshot(registry: &ProjectRegistry) -> Result<WorkspaceSnapshot, String> {
 
 fn project_registry_path() -> Result<PathBuf, String> {
     dirs::data_dir()
-        .map(|path| path.join("tau/projects.json"))
+        .map(|path| path.join(APP_DIRECTORY_NAME).join("projects.json"))
         .ok_or_else(|| "Could not locate the application data folder.".into())
 }
 
@@ -408,7 +409,8 @@ fn list_remote_sessions(remote: &RemoteProjectRecord) -> Vec<SessionSummary> {
 
 fn list_project_sessions(project_path: &str) -> Result<Vec<SessionSummary>, String> {
     let session_dir = default_session_dir(project_path)?;
-    let registry: TauSessionRegistry = read_json_or_default(&session_dir.join(".tau.json"))?;
+    let registry: TauSessionRegistry =
+        read_json_or_default(&session_dir.join(SESSION_REGISTRY_FILENAME))?;
     if registry.sessions.is_empty() || !session_dir.is_dir() {
         return Ok(Vec::new());
     }

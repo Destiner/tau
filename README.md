@@ -2,7 +2,7 @@
 
 A Tauri desktop UI for the [Pi coding agent](https://pi.dev), built with Vue and Rust.
 
-Tau keeps the original app's project and session layout while replacing the Native SDK frontend. Projects are stored in `~/Library/Application Support/tau/projects.json`; Tau-created Pi sessions remain registered in each Pi project session directory's `.tau.json` file.
+Tau keeps the original app's project and session layout while replacing the Native SDK frontend. Production projects are stored in `~/Library/Application Support/tau/projects.json`; development builds use an isolated `tau-dev` app profile and `.tau-dev.json` session metadata. Both profiles keep the underlying Pi session files in the same Pi project session directories.
 
 ## Development
 
