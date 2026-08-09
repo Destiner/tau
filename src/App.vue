@@ -20,12 +20,20 @@ import {
 } from "./lib/transcript-window";
 import type { ThinkingLevel } from "./types";
 
+const SIDEBAR_WIDTH_STORAGE_KEY = "tau.sidebar-width";
+const DEFAULT_SIDEBAR_WIDTH = 260;
+const MIN_SIDEBAR_WIDTH = 200;
+const MAX_SIDEBAR_WIDTH = 480;
+
 const transcript = ref<HTMLElement>();
 const composerInput = ref<HTMLTextAreaElement>();
 const projectMenu = ref<HTMLElement>();
+const sidebar = ref<HTMLElement>();
 const remoteConnectionInput = ref<HTMLInputElement>();
 const remoteDirectoryFilterInput = ref<HTMLInputElement>();
 const projectMenuOpen = ref(false);
+const sidebarWidth = ref(loadSidebarWidth());
+const resizingSidebar = ref(false);
 const pinnedToBottom = ref(true);
 const transcriptWindowStart = ref(0);
 const shiftingWindow = ref(false);
@@ -278,6 +286,73 @@ function handleNewSession() {
   if (activeProject.value) void newSession(activeProject.value);
 }
 
+function startSidebarResize(event: PointerEvent) {
+  if (event.button !== 0) return;
+  const handle = event.currentTarget;
+  if (!(handle instanceof HTMLElement)) return;
+
+  event.preventDefault();
+  resizingSidebar.value = true;
+  handle.setPointerCapture(event.pointerId);
+  handle.focus({ preventScroll: true });
+  updateSidebarWidth(event.clientX);
+}
+
+function handleSidebarResize(event: PointerEvent) {
+  if (resizingSidebar.value) updateSidebarWidth(event.clientX);
+}
+
+function finishSidebarResize(event: PointerEvent) {
+  if (!resizingSidebar.value) return;
+  updateSidebarWidth(event.clientX);
+  stopSidebarResize();
+}
+
+function stopSidebarResize() {
+  if (!resizingSidebar.value) return;
+  resizingSidebar.value = false;
+  persistSidebarWidth();
+}
+
+function handleSidebarResizeKeydown(event: KeyboardEvent) {
+  const step = event.shiftKey ? 40 : 10;
+  let nextWidth: number;
+
+  switch (event.key) {
+    case "ArrowLeft":
+      nextWidth = sidebarWidth.value - step;
+      break;
+    case "ArrowRight":
+      nextWidth = sidebarWidth.value + step;
+      break;
+    case "Home":
+      nextWidth = MIN_SIDEBAR_WIDTH;
+      break;
+    case "End":
+      nextWidth = MAX_SIDEBAR_WIDTH;
+      break;
+    default:
+      return;
+  }
+
+  event.preventDefault();
+  sidebarWidth.value = clampSidebarWidth(nextWidth);
+  persistSidebarWidth();
+}
+
+function updateSidebarWidth(pointerX: number) {
+  const left = sidebar.value?.getBoundingClientRect().left ?? 0;
+  sidebarWidth.value = clampSidebarWidth(pointerX - left);
+}
+
+function persistSidebarWidth() {
+  try {
+    localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth.value));
+  } catch {
+    return;
+  }
+}
+
 function handleDocumentPointerDown(event: PointerEvent) {
   const target = event.target;
   if (
@@ -362,11 +437,34 @@ function handleTitlebarMouseDown(event: MouseEvent) {
     .startDragging()
     .catch(() => undefined);
 }
+
+function loadSidebarWidth(): number {
+  try {
+    const storedWidth = Number.parseFloat(
+      localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY) ?? "",
+    );
+    if (Number.isFinite(storedWidth)) return clampSidebarWidth(storedWidth);
+  } catch {
+    return DEFAULT_SIDEBAR_WIDTH;
+  }
+  return DEFAULT_SIDEBAR_WIDTH;
+}
+
+function clampSidebarWidth(width: number): number {
+  return Math.min(
+    MAX_SIDEBAR_WIDTH,
+    Math.max(MIN_SIDEBAR_WIDTH, Math.round(width)),
+  );
+}
 </script>
 
 <template>
-  <div class="app-shell">
-    <aside class="sidebar">
+  <div
+    class="app-shell"
+    :class="{ 'resizing-sidebar': resizingSidebar }"
+    :style="{ '--sidebar-width': `${sidebarWidth}px` }"
+  >
+    <aside ref="sidebar" class="sidebar">
       <header
         class="sidebar-titlebar"
         @mousedown="handleTitlebarMouseDown"
@@ -496,6 +594,23 @@ function handleTitlebarMouseDown(event: MouseEvent) {
           </div>
         </div>
       </footer>
+
+      <div
+        class="sidebar-resize-handle"
+        role="separator"
+        aria-label="Resize sidebar"
+        aria-orientation="vertical"
+        :aria-valuemin="MIN_SIDEBAR_WIDTH"
+        :aria-valuemax="MAX_SIDEBAR_WIDTH"
+        :aria-valuenow="sidebarWidth"
+        tabindex="0"
+        @pointerdown="startSidebarResize"
+        @pointermove="handleSidebarResize"
+        @pointerup="finishSidebarResize"
+        @pointercancel="stopSidebarResize"
+        @lostpointercapture="stopSidebarResize"
+        @keydown="handleSidebarResizeKeydown"
+      ></div>
     </aside>
 
     <main class="session-pane" :class="{ 'empty-session': sessionIsEmpty }">
