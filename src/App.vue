@@ -3,7 +3,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import MarkdownText from "./components/MarkdownText.vue";
 import UiIcon from "./components/UiIcon.vue";
 import { useTau } from "./composables/useTau";
-import type { ThinkingLevel } from "./types";
+import type { IntegrationKind, ThinkingLevel } from "./types";
 
 const transcript = ref<HTMLElement>();
 const pinnedToBottom = ref(true);
@@ -23,6 +23,7 @@ const {
   stop,
   selectModel,
   selectEffort,
+  selectIntegration,
 } = useTau();
 
 onMounted(() => void initialize());
@@ -61,6 +62,12 @@ function handleModelChange(event: Event) {
 
 function handleEffortChange(event: Event) {
   void selectEffort((event.target as HTMLSelectElement).value as ThinkingLevel);
+}
+
+function handleIntegrationChange(event: Event) {
+  void selectIntegration(
+    (event.target as HTMLSelectElement).value as IntegrationKind,
+  );
 }
 </script>
 
@@ -159,11 +166,19 @@ function handleEffortChange(event: Event) {
             state.activeProjectPath
           }}</span>
         </div>
-        <span
-          class="backend-badge"
-          title="Pi is connected as a Rust-managed RPC process"
-          >RPC</span
+        <select
+          class="backend-picker"
+          :value="state.integration"
+          :disabled="state.streaming || state.stopping"
+          title="Choose how Tau integrates with Pi"
+          aria-label="Pi integration"
+          @change="handleIntegrationChange"
         >
+          <option value="rpc">RPC · Rust process</option>
+          <option value="sdk" :disabled="!state.workspace?.sdkAvailable">
+            SDK · Node sidecar
+          </option>
+        </select>
         <span
           v-if="state.switchingSession || state.startingSession"
           class="spinner"

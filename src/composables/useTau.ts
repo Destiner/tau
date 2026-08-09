@@ -9,6 +9,7 @@ import {
   toolSummary,
 } from "../lib/transcript";
 import type {
+  IntegrationKind,
   ModelOption,
   PiBridgeEvent,
   ProjectSummary,
@@ -52,6 +53,9 @@ const state = reactive({
   efforts: [] as ThinkingLevel[],
   requestSequence: 0,
   streamSequence: 0,
+  integration: (localStorage.getItem("tau.piIntegration") === "sdk"
+    ? "sdk"
+    : "rpc") as IntegrationKind,
 });
 
 let unlisten: UnlistenFn | undefined;
@@ -105,6 +109,10 @@ export function useTau() {
         state.status =
           "Pi was not found. Install pi or set TAU_PI_PATH, then restart Tau.";
         return;
+      }
+      if (state.integration === "sdk" && !state.workspace.sdkAvailable) {
+        state.integration = "rpc";
+        localStorage.setItem("tau.piIntegration", "rpc");
       }
       const selectedProject = state.workspace.projects.find(
         (project) => project.selected,
@@ -299,6 +307,32 @@ export function useTau() {
     }
   }
 
+  async function selectIntegration(integration: IntegrationKind) {
+    if (integration === state.integration) return;
+    if (state.streaming || state.stopping) {
+      state.status =
+        "Stop the current response before changing the Pi integration.";
+      return;
+    }
+    if (integration === "sdk" && !state.workspace?.sdkAvailable) {
+      state.status =
+        "The SDK sidecar needs an npm-installed Pi package and Node.js.";
+      return;
+    }
+    state.integration = integration;
+    localStorage.setItem("tau.piIntegration", integration);
+    if (activeProject.value) {
+      try {
+        await startProject(
+          activeProject.value,
+          state.activeSessionPath || undefined,
+        );
+      } catch (error) {
+        setError(error);
+      }
+    }
+  }
+
   return {
     state,
     activeProject,
@@ -318,6 +352,7 @@ export function useTau() {
     stop,
     selectModel,
     selectEffort,
+    selectIntegration,
   };
 }
 
@@ -332,7 +367,8 @@ async function startProject(project: ProjectSummary, sessionPath?: string) {
   state.workspace = await invoke<WorkspaceSnapshot>("set_active_project", {
     path: project.path,
   });
-  state.activeGeneration = await invoke<number>("start_pi", {
+  const command = state.integration === "sdk" ? "start_pi_sdk" : "start_pi";
+  state.activeGeneration = await invoke<number>(command, {
     projectPath: project.path,
     sessionPath: sessionPath ?? null,
   });

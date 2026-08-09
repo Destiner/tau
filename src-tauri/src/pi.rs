@@ -1,7 +1,7 @@
 use serde::Serialize;
 use serde_json::Value;
 use std::{
-    env,
+    env, fs,
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
@@ -90,6 +90,81 @@ pub fn resolve_pi_binary() -> Option<PathBuf> {
     is_executable_file(&path).then_some(path)
 }
 
+pub fn sdk_available() -> bool {
+    let Some(pi_path) = resolve_pi_binary() else {
+        return false;
+    };
+    resolve_node_binary().is_some() && resolve_pi_sdk_entry(&pi_path).is_some()
+}
+
+fn resolve_node_binary() -> Option<PathBuf> {
+    resolve_executable(
+        "TAU_NODE_PATH",
+        "node",
+        &[
+            "/opt/homebrew/bin/node",
+            "/usr/local/bin/node",
+            "/usr/bin/node",
+        ],
+        &[
+            ".local/bin/node",
+            ".nvm/current/bin/node",
+            ".volta/bin/node",
+        ],
+    )
+}
+
+fn resolve_pi_sdk_entry(pi_path: &Path) -> Option<PathBuf> {
+    let resolved = pi_path.canonicalize().ok()?;
+    let entry = resolved.parent()?.join("index.js");
+    entry.is_file().then_some(entry)
+}
+
+fn resolve_executable(
+    environment_variable: &str,
+    executable: &str,
+    absolute_candidates: &[&str],
+    home_candidates: &[&str],
+) -> Option<PathBuf> {
+    if let Some(path) = env::var_os(environment_variable).map(PathBuf::from) {
+        if is_executable_file(&path) {
+            return Some(path);
+        }
+    }
+    if let Ok(output) = Command::new("which").arg(executable).output() {
+        if output.status.success() {
+            let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+            if is_executable_file(&path) {
+                return Some(path);
+            }
+        }
+    }
+    for candidate in absolute_candidates {
+        let path = PathBuf::from(candidate);
+        if is_executable_file(&path) {
+            return Some(path);
+        }
+    }
+    if let Some(home) = dirs::home_dir() {
+        for candidate in home_candidates {
+            let path = home.join(candidate);
+            if is_executable_file(&path) {
+                return Some(path);
+            }
+        }
+    }
+    let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let output = Command::new(shell)
+        .args(["-lc", &format!("command -v {executable}")])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    is_executable_file(&path).then_some(path)
+}
+
 fn is_executable_file(path: &Path) -> bool {
     path.is_file()
 }
@@ -101,18 +176,78 @@ pub fn start_pi(
     project_path: String,
     session_path: Option<String>,
 ) -> Result<u64, String> {
-    let project = PathBuf::from(&project_path);
-    if !project.is_dir() {
-        return Err("The project folder no longer exists.".into());
-    }
-    if let Some(path) = session_path.as_deref() {
-        if !Path::new(path).is_file() {
-            return Err("The selected session file no longer exists.".into());
-        }
-    }
+    validate_start_paths(&project_path, session_path.as_deref())?;
 
     let pi_path = resolve_pi_binary()
         .ok_or_else(|| "Could not find pi. Install it or set TAU_PI_PATH.".to_string())?;
+    let mut command = Command::new(pi_path);
+    command.args(["--mode", "rpc"]).current_dir(&project_path);
+    if let Some(path) = session_path {
+        command.args(["--session", &path]);
+    }
+    spawn_command(app, state, command)
+}
+
+#[tauri::command]
+pub fn start_pi_sdk(
+    app: AppHandle,
+    state: State<'_, PiState>,
+    project_path: String,
+    session_path: Option<String>,
+) -> Result<u64, String> {
+    validate_start_paths(&project_path, session_path.as_deref())?;
+    let pi_path = resolve_pi_binary()
+        .ok_or_else(|| "Could not find pi. Install it or set TAU_PI_PATH.".to_string())?;
+    let sdk_entry = resolve_pi_sdk_entry(&pi_path).ok_or_else(|| {
+        "The installed Pi executable does not expose its Node SDK. Use RPC or install Pi with npm."
+            .to_string()
+    })?;
+    let node_path = resolve_node_binary()
+        .ok_or_else(|| "Could not find Node.js. Install it or set TAU_NODE_PATH.".to_string())?;
+    let sidecar_path = materialize_sdk_sidecar()?;
+
+    let mut command = Command::new(node_path);
+    command
+        .arg(sidecar_path)
+        .args(["--sdk-entry", sdk_entry.to_string_lossy().as_ref()])
+        .args(["--cwd", &project_path])
+        .current_dir(&project_path);
+    if let Some(path) = session_path {
+        command.args(["--session", &path]);
+    }
+    spawn_command(app, state, command)
+}
+
+fn validate_start_paths(project_path: &str, session_path: Option<&str>) -> Result<(), String> {
+    if !Path::new(project_path).is_dir() {
+        return Err("The project folder no longer exists.".into());
+    }
+    if session_path.is_some_and(|path| !Path::new(path).is_file()) {
+        return Err("The selected session file no longer exists.".into());
+    }
+    Ok(())
+}
+
+fn materialize_sdk_sidecar() -> Result<PathBuf, String> {
+    const SOURCE: &[u8] = include_bytes!("../../sidecar/pi-sdk.mjs");
+    let directory = dirs::cache_dir()
+        .ok_or_else(|| "Could not locate the cache folder.".to_string())?
+        .join("tau");
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("Could not create the Tau sidecar cache: {error}"))?;
+    let path = directory.join("pi-sdk-sidecar.mjs");
+    if fs::read(&path).ok().as_deref() != Some(SOURCE) {
+        fs::write(&path, SOURCE)
+            .map_err(|error| format!("Could not prepare the Pi SDK sidecar: {error}"))?;
+    }
+    Ok(path)
+}
+
+fn spawn_command(
+    app: AppHandle,
+    state: State<'_, PiState>,
+    mut command: Command,
+) -> Result<u64, String> {
     let mut manager = state
         .inner
         .lock()
@@ -121,16 +256,10 @@ pub fn start_pi(
     manager.generation = manager.generation.wrapping_add(1).max(1);
     let generation = manager.generation;
 
-    let mut command = Command::new(pi_path);
     command
-        .args(["--mode", "rpc"])
-        .current_dir(project)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    if let Some(path) = session_path {
-        command.args(["--session", &path]);
-    }
 
     let mut child = command
         .spawn()
@@ -340,5 +469,20 @@ mod tests {
         std::env::set_var("TAU_PI_PATH", &current);
         assert_eq!(resolve_pi_binary(), Some(current));
         std::env::remove_var("TAU_PI_PATH");
+    }
+
+    #[test]
+    fn resolves_sdk_entry_next_to_the_pi_cli() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let dist = directory.path().join("dist");
+        std::fs::create_dir(&dist).expect("dist directory");
+        let cli = dist.join("cli.js");
+        let index = dist.join("index.js");
+        std::fs::write(&cli, "").expect("cli entry");
+        std::fs::write(&index, "").expect("sdk entry");
+        assert_eq!(
+            resolve_pi_sdk_entry(&cli),
+            Some(index.canonicalize().expect("canonical SDK entry")),
+        );
     }
 }

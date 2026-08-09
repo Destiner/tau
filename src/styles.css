@@ -309,14 +309,23 @@ button {
   white-space: nowrap;
 }
 
-.backend-badge {
+.backend-picker {
+  appearance: none;
   border: 1px solid var(--border);
   border-radius: 999px;
+  outline: 0;
+  background: transparent;
   color: var(--muted);
+  cursor: pointer;
   font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
   font-size: 9px;
   letter-spacing: 0.06em;
-  padding: 3px 6px;
+  padding: 4px 8px;
+  text-transform: uppercase;
+}
+
+.backend-picker:hover:not(:disabled) {
+  background: var(--panel);
 }
 
 .transcript {

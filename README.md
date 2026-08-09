@@ -17,7 +17,12 @@ bun install
 bun tauri dev
 ```
 
-The default integration starts `pi --mode rpc` directly from Rust. Rust owns the child process and JSONL transport; Vue handles Pi protocol state and rendering.
+Tau exposes both Pi integration routes from the selector in the session header:
+
+- **RPC · Rust process** (default) starts `pi --mode rpc` directly from Rust.
+- **SDK · Node sidecar** starts a bundled sidecar script with Node and imports the SDK from the installed Pi package.
+
+Both adapters use the same JSONL contract, Vue state, and project/session persistence. The SDK option is available when Pi was installed as a Node package and Node is discoverable on `PATH` or through `TAU_NODE_PATH`.
 
 ## Checks
 

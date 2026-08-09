@@ -10,6 +10,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             pi::send_pi,
             pi::start_pi,
+            pi::start_pi_sdk,
             pi::stop_pi,
             storage::import_project,
             storage::load_workspace,
