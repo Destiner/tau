@@ -618,23 +618,6 @@ button {
   flex: 1;
 }
 
-.extension-status-list {
-  display: flex;
-  width: 100%;
-  flex-wrap: wrap;
-  gap: 4px 10px;
-  margin: 0 0 6px;
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.extension-status-list span {
-  overflow: hidden;
-  max-width: min(100%, 52ch);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .status {
   width: 100%;
   margin: 0 0 6px;
@@ -934,8 +917,8 @@ textarea:disabled {
 .extension-notification-stack {
   position: fixed;
   z-index: 30;
-  top: 40px;
   right: 12px;
+  bottom: 12px;
   display: flex;
   width: min(360px, calc(100vw - 24px));
   flex-direction: column;
@@ -944,32 +927,26 @@ textarea:disabled {
 }
 
 .extension-notification {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
   border: 1px solid var(--border);
-  border-left: 3px solid var(--status-new);
-  border-radius: 8px;
+  border-radius: 5px;
   background: var(--panel-raised);
   box-shadow: 0 10px 30px color-mix(in srgb, #000 16%, transparent);
-  padding: 9px 8px 9px 10px;
+  padding: 7px 8px;
   pointer-events: auto;
-}
-
-.extension-notification.warning {
-  border-left-color: var(--status-draft);
-}
-
-.extension-notification.error {
-  border-left-color: var(--danger);
 }
 
 .extension-notification-copy {
   display: flex;
   min-width: 0;
-  flex: 1;
   flex-direction: column;
   gap: 3px;
+}
+
+.extension-notification-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
 }
 
 .extension-notification-context,
@@ -989,21 +966,23 @@ textarea:disabled {
   white-space: pre-wrap;
 }
 
-.extension-notification > button {
+.extension-notification-header > button {
   display: grid;
-  width: 22px;
-  height: 22px;
+  width: 16px;
+  height: 16px;
   flex: none;
+  margin-left: auto;
   cursor: pointer;
   place-items: center;
-  border-radius: 5px;
+  border-radius: 3px;
   background: transparent;
   color: var(--muted);
-  padding: 5px;
+  font-size: 10px;
+  padding: 2px;
 }
 
-.extension-notification > button:hover,
-.extension-notification > button:focus-visible {
+.extension-notification-header > button:hover,
+.extension-notification-header > button:focus-visible {
   outline: 0;
   background: var(--hover);
   color: var(--text);
@@ -1020,22 +999,18 @@ textarea:disabled {
   padding: 68px 18px 18px;
 }
 
-.extension-dialog-layer {
-  z-index: 25;
-  background: color-mix(in srgb, #000 18%, transparent);
+.extension-composer {
+  display: flex;
+  width: min(720px, 100%);
+  max-height: min(520px, 60vh);
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 auto;
+  padding: 3px;
 }
 
-.extension-dialog {
-  display: flex;
-  width: min(520px, 100%);
-  max-height: calc(100vh - 100px);
-  flex-direction: column;
-  gap: 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel-raised);
-  box-shadow: 0 18px 50px color-mix(in srgb, #000 22%, transparent);
-  padding: 14px;
+.empty-session .composer-area:has(.extension-composer) {
+  justify-content: flex-end;
 }
 
 .extension-dialog-header {
@@ -1048,7 +1023,7 @@ textarea:disabled {
 .extension-dialog-header h2 {
   margin: 0;
   color: var(--text);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   line-height: 1.35;
 }
@@ -1063,7 +1038,7 @@ textarea:disabled {
 
 .extension-dialog-options {
   min-height: 32px;
-  max-height: min(360px, calc(100vh - 220px));
+  max-height: min(240px, 35vh);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -1072,12 +1047,12 @@ textarea:disabled {
   display: block;
   width: 100%;
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: 5px;
   background: transparent;
   color: var(--text);
   font-size: 12px;
   line-height: 1.4;
-  padding: 8px 9px;
+  padding: 5px 7px;
   text-align: left;
   white-space: pre-wrap;
 }
@@ -1092,29 +1067,29 @@ textarea:disabled {
 .extension-dialog-empty {
   color: var(--muted);
   font-size: 12px;
-  padding: 8px 9px;
+  padding: 5px 7px;
 }
 
 .extension-dialog-input,
 .extension-dialog-editor {
   width: 100%;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 5px;
   outline: 0;
   background: var(--canvas);
   color: var(--text);
   font-size: 12px;
   line-height: 1.45;
-  padding: 8px 9px;
+  padding: 5px 7px;
 }
 
 .extension-dialog-input {
-  height: 36px;
+  height: 30px;
 }
 
 .extension-dialog-editor {
-  min-height: 180px;
-  max-height: min(420px, calc(100vh - 230px));
+  min-height: 120px;
+  max-height: min(300px, 35vh);
   resize: vertical;
 }
 
@@ -1129,18 +1104,18 @@ textarea:disabled {
 
 .extension-dialog-actions {
   display: flex;
-  justify-content: flex-end;
-  gap: 6px;
+  justify-content: flex-start;
+  gap: 4px;
 }
 
 .extension-dialog-button {
-  min-width: 64px;
-  height: 30px;
+  min-width: 54px;
+  height: 26px;
   cursor: pointer;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 5px;
   font-size: 11px;
-  padding: 0 10px;
+  padding: 0 7px;
 }
 
 .extension-dialog-button.secondary {

@@ -15,7 +15,6 @@ import type {
   ExtensionDialogMethod,
   ExtensionNotification,
   ExtensionNotificationType,
-  ExtensionStatus,
   ModelOption,
   PiBridgeEvent,
   ProjectSummary,
@@ -78,7 +77,6 @@ interface SessionController {
   messages: TranscriptEntry[];
   draft: string;
   status: string;
-  extensionStatuses: ExtensionStatus[];
   currentModelProvider: string;
   currentModelId: string;
   currentModelName: string;
@@ -90,6 +88,7 @@ interface SessionController {
   commandsLoaded: boolean;
   pendingPrompt?: PendingPrompt;
   bootstrapStateRequestId: string;
+  runStateRequestId: string;
   startMessagesRequestId: string;
   connectingRemote: boolean;
   syncing: boolean;
@@ -197,11 +196,14 @@ const efforts = computed(() => activeController.value?.efforts ?? emptyEfforts);
 const commands = computed(
   () => activeController.value?.commands ?? emptyCommands,
 );
-const activeExtensionDialog = computed(() => state.extensionDialogs[0]);
+const activeExtensionDialog = computed(() => {
+  const controller = activeController.value;
+  if (!controller) return undefined;
+  return state.extensionDialogs.find(
+    (dialog) => dialog.controllerKey === controller.key,
+  );
+});
 const extensionNotifications = computed(() => state.extensionNotifications);
-const extensionStatuses = computed(
-  () => activeController.value?.extensionStatuses ?? [],
-);
 const currentModelProvider = computed(
   () => activeController.value?.currentModelProvider ?? "",
 );
@@ -734,7 +736,6 @@ export function useTau() {
     commands,
     activeExtensionDialog,
     extensionNotifications,
-    extensionStatuses,
     currentModelProvider,
     currentModelId,
     currentEffort,
@@ -821,6 +822,7 @@ async function startController(
   controller.stopping = false;
   controller.connectingRemote = Boolean(project.connectionString);
   controller.bootstrapStateRequestId = "";
+  controller.runStateRequestId = "";
   controller.startMessagesRequestId = "";
   controller.evictAfterHydration = false;
   if (!preserveMessages && controller.messages.length === 0) {
@@ -831,7 +833,6 @@ async function startController(
   controller.commands = [];
   controller.commandsLoaded = false;
   controller.status = "";
-  controller.extensionStatuses = [];
   discardControllerDialogs(controller);
 
   try {
@@ -893,7 +894,7 @@ async function rpc(
 }
 
 async function submitExtensionDialog(value: string | boolean) {
-  const dialog = state.extensionDialogs[0];
+  const dialog = activeExtensionDialog.value;
   if (!dialog) return;
   const response =
     dialog.method === "confirm" && typeof value === "boolean"
@@ -913,7 +914,7 @@ async function submitExtensionDialog(value: string | boolean) {
 }
 
 async function cancelExtensionDialog() {
-  const dialog = state.extensionDialogs[0];
+  const dialog = activeExtensionDialog.value;
   if (!dialog) return;
   await respondToExtensionDialog(dialog, {
     type: "extension_ui_response",
@@ -969,6 +970,7 @@ function handleExtensionUIRequest(
       generation: controller.generation,
       projectName: origin.projectName,
       sessionName: origin.sessionName,
+      draft: typeof request.prefill === "string" ? request.prefill : "",
       ...(typeof request.message === "string"
         ? { message: request.message }
         : {}),
@@ -989,6 +991,7 @@ function handleExtensionUIRequest(
     };
     if (state.extensionDialogs.some((item) => item.key === dialog.key)) return;
     state.extensionDialogs.push(dialog);
+    controller.evictAfterHydration = false;
     if (timeout) {
       extensionDialogTimeouts.set(
         dialog.key,
@@ -1021,21 +1024,7 @@ function handleExtensionUIRequest(
     return;
   }
 
-  if (method === "setStatus") {
-    const key = stringValue(request.statusKey);
-    if (!key) return;
-    const index = controller.extensionStatuses.findIndex(
-      (status) => status.key === key,
-    );
-    if (typeof request.statusText !== "string") {
-      if (index >= 0) controller.extensionStatuses.splice(index, 1);
-      return;
-    }
-    const status = { key, text: request.statusText };
-    if (index >= 0) controller.extensionStatuses.splice(index, 1, status);
-    else controller.extensionStatuses.push(status);
-    return;
-  }
+  if (method === "setStatus") return;
 
   if (method === "set_editor_text" && typeof request.text === "string") {
     controller.draft = request.text;
@@ -1143,7 +1132,6 @@ async function handleBridgeEvent(event: PiBridgeEvent) {
   if (event.kind === "started") {
     if (event.generation > controller.generation) {
       discardControllerDialogs(controller);
-      controller.extensionStatuses = [];
       controller.generation = event.generation;
     }
     return;
@@ -1173,7 +1161,6 @@ async function handleBridgeEvent(event: PiBridgeEvent) {
   }
   if (event.kind === "exited") {
     discardControllerDialogs(controller, event.generation);
-    controller.extensionStatuses = [];
     const message =
       event.code === 0
         ? ""
@@ -1193,6 +1180,7 @@ async function handleBridgeEvent(event: PiBridgeEvent) {
     controller.stopping = false;
     controller.starting = false;
     controller.working = false;
+    controller.runStateRequestId = "";
     controller.generation = 0;
     controller.status = message;
   }
@@ -1215,6 +1203,9 @@ async function handleRpc(controller: SessionController, value: unknown) {
     controller.stopping = false;
     controller.working = true;
     controller.status = "";
+    const stateRequestId = nextRequestId("run-state");
+    controller.runStateRequestId = stateRequestId;
+    await rpc(controller, { id: stateRequestId, type: "get_state" });
     return;
   }
   if (type === "message_update") {
@@ -1287,6 +1278,11 @@ async function handleResponse(
 ) {
   const command = stringValue(response.command);
   const responseId = stringValue(response.id);
+  const resolvesRunState =
+    command === "get_state" &&
+    Boolean(controller.runStateRequestId) &&
+    responseId === controller.runStateRequestId;
+  if (resolvesRunState) controller.runStateRequestId = "";
   if (response.success !== true) {
     const error = asRecord(response.error);
     controller.status =
@@ -1339,6 +1335,11 @@ async function handleResponse(
     controller.currentEffort = normalizeEffort(data.thinkingLevel);
     const piSessionId = stringValue(data.sessionId);
     const piSessionPath = stringValue(data.sessionFile);
+    const sessionChanged =
+      !controller.phantom &&
+      Boolean(piSessionId && piSessionPath) &&
+      (controller.sessionId !== piSessionId ||
+        controller.sessionPath !== piSessionPath);
     controller.sessionName = stringValue(data.sessionName);
     controller.ready = true;
     controller.streaming = data.isStreaming === true;
@@ -1361,9 +1362,22 @@ async function handleResponse(
       controller.sessionPath = piSessionPath;
     }
 
+    if (sessionChanged) {
+      controller.messages = [];
+      controller.models = [];
+      controller.efforts = [];
+      controller.commands = [];
+      controller.commandsLoaded = false;
+      controller.pendingEffort = "";
+      controller.syncing = true;
+    }
     controller.working = controller.streaming || Boolean(pending);
 
-    if (controller.sessionId && controller.sessionPath) {
+    if (
+      controller.sessionId &&
+      controller.sessionPath &&
+      (!resolvesRunState || sessionChanged)
+    ) {
       await registerConnectedSession(controller);
     }
     if (controller.disposed) return;
@@ -1372,6 +1386,18 @@ async function handleResponse(
       controller.bootstrapStateRequestId = "";
       await applyPendingSessionSettings(controller);
       return;
+    }
+    if (resolvesRunState && !sessionChanged) return;
+
+    if (sessionChanged) {
+      await rpc(controller, {
+        id: nextRequestId("replacement-models"),
+        type: "get_available_models",
+      });
+      await rpc(controller, {
+        id: nextRequestId("replacement-commands"),
+        type: "get_commands",
+      });
     }
 
     const messagesRequestId = nextRequestId("messages");
@@ -1417,7 +1443,8 @@ async function handleResponse(
       controller.evictAfterHydration &&
       !isControllerSelected(controller) &&
       !controller.streaming &&
-      !controller.working
+      !controller.working &&
+      !controllerHasPendingDialog(controller)
     ) {
       controller.evictAfterHydration = false;
       await stopControllerProcess(controller);
@@ -1780,6 +1807,7 @@ function sessionIndicator(
 ): SessionIndicator {
   const controller = controllerForSession(project.path, session.id);
   if (controller?.working) return "working";
+  if (controller && controllerHasPendingDialog(controller)) return "draft";
   if (controller?.draft.trim()) return "draft";
   return controller?.unread && !isSessionSelected(project, session)
     ? "new"
@@ -1808,6 +1836,7 @@ function removeEmptyActivePhantom() {
     !session?.phantom ||
     controller.draft.trim() ||
     controller.working ||
+    controllerHasPendingDialog(controller) ||
     controller.messages.length > 0
   ) {
     return;
@@ -1937,7 +1966,6 @@ function createController(
     messages: [],
     draft: "",
     status: "",
-    extensionStatuses: [],
     currentModelProvider: "",
     currentModelId: "",
     currentModelName: "",
@@ -1949,6 +1977,7 @@ function createController(
     commandsLoaded: false,
     pendingPrompt: undefined,
     bootstrapStateRequestId: "",
+    runStateRequestId: "",
     startMessagesRequestId: "",
     connectingRemote: false,
     syncing: false,
@@ -2007,6 +2036,12 @@ function isControllerSelected(controller: SessionController): boolean {
   return controller.key === state.activeControllerKey;
 }
 
+function controllerHasPendingDialog(controller: SessionController): boolean {
+  return state.extensionDialogs.some(
+    (dialog) => dialog.controllerKey === controller.key,
+  );
+}
+
 function runtimeAvailable(project: ProjectSummary): boolean {
   if (project.connectionString) return true;
   return (
@@ -2024,7 +2059,8 @@ function maybeEvictController(controller: SessionController | undefined) {
     controller.streaming ||
     controller.working ||
     controller.starting ||
-    controller.syncing
+    controller.syncing ||
+    controllerHasPendingDialog(controller)
   ) {
     return;
   }
@@ -2035,7 +2071,6 @@ async function stopControllerProcess(controller: SessionController) {
   if (!controller.generation && !controller.starting) return;
   const generation = controller.generation;
   discardControllerDialogs(controller, generation);
-  controller.extensionStatuses = [];
   try {
     await invoke("stop_pi", { runtimeId: controller.runtimeId });
   } catch (error) {
@@ -2050,6 +2085,7 @@ async function stopControllerProcess(controller: SessionController) {
   controller.working = false;
   controller.connectingRemote = false;
   controller.syncing = false;
+  controller.runStateRequestId = "";
 
   if (
     isControllerSelected(controller) &&
@@ -2179,6 +2215,7 @@ function presentRemoteConnectionError(
   controller.working = false;
   controller.connectingRemote = false;
   controller.syncing = false;
+  controller.runStateRequestId = "";
   controller.status = errorMessage(error);
   if (!isControllerSelected(controller)) return;
 

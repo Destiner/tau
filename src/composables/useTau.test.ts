@@ -646,10 +646,222 @@ describe("session drafts and selection", () => {
   });
 });
 
-describe("extension UI protocol", () => {
-  it("routes a global FIFO dialog queue back to each originating runtime", async () => {
-    const { firstController, secondController, tau } =
+describe("session replacement hardening", () => {
+  it("rebinds a background workflow controller without stealing the selected session", async () => {
+    const {
+      firstController,
+      firstSession,
+      secondController,
+      secondSession,
+      project,
+      tau,
+    } = await setupExtensionControllers();
+    firstController.messages.push({
+      id: "old-phase-message",
+      kind: "assistant",
+      text: "Old phase",
+    });
+
+    emitRpc(firstController, { type: "agent_start" });
+    await vi.waitFor(() => {
+      expect(sentRequests(firstController, "get_state")).toHaveLength(1);
+    });
+    const runStateRequest = sentRequests(firstController, "get_state")[0];
+    const replacementSession = {
+      ...savedSession("plan-phase"),
+      title: "Plan phase",
+    };
+    const workspace = mocks.workspace;
+    if (!workspace) throw new Error("Expected the extension workspace");
+    mocks.workspace = {
+      ...workspace,
+      projects: [
+        {
+          ...project,
+          sessions: [
+            firstSession,
+            { ...secondSession, selected: true },
+            replacementSession,
+          ],
+        },
+      ],
+    };
+
+    emitRpc(firstController, {
+      id: runStateRequest?.id,
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: {
+        model: { provider: "provider", id: "beta", name: "Beta" },
+        thinkingLevel: "xhigh",
+        sessionId: replacementSession.id,
+        sessionFile: replacementSession.path,
+        sessionName: replacementSession.title,
+        isStreaming: true,
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(firstController.sessionId).toBe(replacementSession.id);
+      expect(
+        sentRequests(firstController, "get_available_models"),
+      ).toHaveLength(1);
+      expect(sentRequests(firstController, "get_commands")).toHaveLength(1);
+      expect(
+        sentRequests(firstController, "get_available_thinking_levels"),
+      ).toHaveLength(1);
+      expect(sentRequests(firstController, "get_messages")).toHaveLength(1);
+    });
+
+    expect(firstController.key).not.toBe(secondController.key);
+    expect(firstController.messages).toEqual([]);
+    expect(firstController.commandsLoaded).toBe(false);
+    expect(tau.state.activeControllerKey).toBe(secondController.key);
+    expect(tau.state.activeSessionId).toBe(secondSession.id);
+    expect(
+      tau.state.workspace?.projects[0]?.sessions.map((session) => session.id),
+    ).toEqual([firstSession.id, secondSession.id, replacementSession.id]);
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.some(
+          ([command, args]) =>
+            command === "register_session" &&
+            (args as { sessionId?: string })?.sessionId ===
+              replacementSession.id,
+        ),
+    ).toBe(true);
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.some(([command]) => command === "set_active_session"),
+    ).toBe(false);
+
+    const commandsRequest = sentRequests(firstController, "get_commands")[0];
+    emitRpc(firstController, {
+      id: commandsRequest?.id,
+      type: "response",
+      command: "get_commands",
+      success: true,
+      data: {
+        commands: [
+          {
+            name: "workflow-next",
+            description: "Continue the workflow",
+            source: "extension",
+          },
+        ],
+      },
+    });
+    const messagesRequest = sentRequests(firstController, "get_messages")[0];
+    emitRpc(firstController, {
+      id: messagesRequest?.id,
+      type: "response",
+      command: "get_messages",
+      success: true,
+      data: {
+        messages: [{ role: "user", content: "Review the plan" }],
+      },
+    });
+    await vi.waitFor(() => {
+      expect(firstController.commands).toEqual([
+        {
+          name: "workflow-next",
+          description: "Continue the workflow",
+          source: "extension",
+        },
+      ]);
+      expect(firstController.messages).toEqual([
+        { id: "user-0", kind: "user", text: "Review the plan" },
+      ]);
+    });
+
+    emitRpc(firstController, {
+      type: "extension_ui_request",
+      id: "replacement-approval",
+      method: "confirm",
+      title: "Approve the plan?",
+      message: "The replacement session is waiting.",
+    });
+    expect(tau.activeExtensionDialog.value).toBeUndefined();
+    const replacementProject = tau.state.workspace?.projects[0];
+    const replacementView = replacementProject?.sessions.find(
+      (session) => session.id === replacementSession.id,
+    );
+    if (!replacementProject || !replacementView) {
+      throw new Error("Expected the registered replacement session");
+    }
+
+    await tau.selectSession(replacementProject, replacementView);
+    expect(tau.activeExtensionDialog.value).toMatchObject({
+      controllerKey: firstController.key,
+      runtimeId: firstController.runtimeId,
+      sessionName: "Plan phase",
+    });
+    await tau.submitExtensionDialog(true);
+    expect(sentRequests(firstController, "extension_ui_response")).toEqual([
+      {
+        type: "extension_ui_response",
+        id: "replacement-approval",
+        confirmed: true,
+      },
+    ]);
+    tau.dispose();
+  });
+
+  it("uses an identity-only state request for an unchanged agent run", async () => {
+    const { secondController, secondSession, tau } =
       await setupExtensionControllers();
+
+    emitRpc(secondController, { type: "agent_start" });
+    await vi.waitFor(() => {
+      expect(sentRequests(secondController, "get_state")).toHaveLength(1);
+    });
+    const runStateRequest = sentRequests(secondController, "get_state")[0];
+    emitRpc(secondController, {
+      id: runStateRequest?.id,
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: {
+        model: { provider: "provider", id: "alpha", name: "Alpha" },
+        thinkingLevel: "high",
+        sessionId: secondSession.id,
+        sessionFile: secondSession.path,
+        sessionName: secondSession.title,
+        isStreaming: true,
+      },
+    });
+    await vi.waitFor(() => {
+      expect(secondController.runStateRequestId).toBe("");
+    });
+
+    expect(sentRequests(secondController, "get_available_models")).toEqual([]);
+    expect(sentRequests(secondController, "get_commands")).toEqual([]);
+    expect(
+      sentRequests(secondController, "get_available_thinking_levels"),
+    ).toEqual([]);
+    expect(sentRequests(secondController, "get_messages")).toEqual([]);
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.some(([command]) => command === "register_session"),
+    ).toBe(false);
+    tau.dispose();
+  });
+});
+
+describe("extension UI protocol", () => {
+  it("keeps dialogs in their originating session while users switch freely", async () => {
+    const {
+      firstController,
+      firstSession,
+      secondController,
+      secondSession,
+      project,
+      tau,
+    } = await setupExtensionControllers();
 
     emitRpc(firstController, {
       type: "extension_ui_request",
@@ -668,14 +880,19 @@ describe("extension UI protocol", () => {
 
     expect(tau.state.extensionDialogs).toHaveLength(2);
     expect(tau.activeExtensionDialog.value).toMatchObject({
+      requestId: "merge-1",
+      method: "confirm",
+      sessionName: "second",
+    });
+
+    await tau.selectSession(project, firstSession);
+    expect(tau.activeExtensionDialog.value).toMatchObject({
       requestId: "reviewer-1",
       method: "select",
       projectName: "extension-ui-test",
       sessionName: "first",
     });
-
     await tau.submitExtensionDialog("[ ] Claude");
-
     expect(sentRequests(firstController, "extension_ui_response")).toEqual([
       {
         type: "extension_ui_response",
@@ -683,14 +900,10 @@ describe("extension UI protocol", () => {
         value: "[ ] Claude",
       },
     ]);
-    expect(tau.activeExtensionDialog.value).toMatchObject({
-      requestId: "merge-1",
-      method: "confirm",
-      sessionName: "second",
-    });
 
+    await tau.selectSession(project, secondSession);
+    expect(tau.activeExtensionDialog.value?.requestId).toBe("merge-1");
     await tau.submitExtensionDialog(false);
-
     expect(sentRequests(secondController, "extension_ui_response")).toEqual([
       {
         type: "extension_ui_response",
@@ -707,6 +920,8 @@ describe("extension UI protocol", () => {
       title: "Choose a reviewer",
       options: ["[x] Claude", "Done"],
     });
+    expect(tau.activeExtensionDialog.value).toBeUndefined();
+    await tau.selectSession(project, firstSession);
     await tau.submitExtensionDialog("Done");
 
     expect(sentRequests(firstController, "extension_ui_response")).toEqual([
@@ -725,7 +940,9 @@ describe("extension UI protocol", () => {
   });
 
   it("returns input values and explicit cancellations with the RPC shapes", async () => {
-    const { firstController, tau } = await setupExtensionControllers();
+    const { firstController, firstSession, secondSession, project, tau } =
+      await setupExtensionControllers();
+    await tau.selectSession(project, firstSession);
 
     emitRpc(firstController, {
       type: "extension_ui_request",
@@ -734,7 +951,17 @@ describe("extension UI protocol", () => {
       title: "Linear issue ID",
       placeholder: "ENG-123",
     });
-    await tau.submitExtensionDialog("ENG-42");
+    if (!tau.activeExtensionDialog.value) {
+      throw new Error("Expected the input prompt");
+    }
+    tau.activeExtensionDialog.value.draft = "ENG-42";
+    await tau.selectSession(project, secondSession);
+    expect(tau.activeExtensionDialog.value).toBeUndefined();
+    await tau.selectSession(project, firstSession);
+    expect(tau.activeExtensionDialog.value?.draft).toBe("ENG-42");
+    await tau.submitExtensionDialog(
+      tau.activeExtensionDialog.value?.draft ?? "",
+    );
 
     emitRpc(firstController, {
       type: "extension_ui_request",
@@ -760,7 +987,7 @@ describe("extension UI protocol", () => {
     tau.dispose();
   });
 
-  it("keeps extension drafts and keyed statuses on their hidden session", async () => {
+  it("keeps extension drafts on their hidden session and ignores TUI statuses", async () => {
     const { firstController, firstSession, project, tau } =
       await setupExtensionControllers();
     firstController.status = "Tau connection warning";
@@ -775,21 +1002,8 @@ describe("extension UI protocol", () => {
       type: "extension_ui_request",
       id: "status-1",
       method: "setStatus",
-      statusKey: "workflow",
-      statusText: "Waiting for approval",
-    });
-    emitRpc(firstController, {
-      type: "extension_ui_request",
-      id: "status-2",
-      method: "setStatus",
-      statusKey: "phase",
-      statusText: "Plan review",
-    });
-    emitRpc(firstController, {
-      type: "extension_ui_request",
-      id: "status-3",
-      method: "setStatus",
-      statusKey: "phase",
+      statusKey: "mcp",
+      statusText: "\u001b[38;2;138;190;183mMCP ready\u001b[39m",
     });
     emitRpc(firstController, {
       type: "extension_ui_request",
@@ -801,10 +1015,6 @@ describe("extension UI protocol", () => {
 
     expect(firstController.draft).toBe("/implement");
     expect(firstController.status).toBe("Tau connection warning");
-    expect(firstController.extensionStatuses).toEqual([
-      { key: "workflow", text: "Waiting for approval" },
-    ]);
-    expect(tau.extensionStatuses.value).toEqual([]);
     expect(tau.extensionNotifications.value).toEqual([
       expect.objectContaining({
         message: "Approval is ready",
@@ -818,14 +1028,13 @@ describe("extension UI protocol", () => {
 
     expect(tau.draft.value).toBe("/implement");
     expect(tau.status.value).toBe("");
-    expect(tau.extensionStatuses.value).toEqual([
-      { key: "workflow", text: "Waiting for approval" },
-    ]);
     tau.dispose();
   });
 
   it("discards dialogs after their timeout, generation change, or process exit", async () => {
-    const { firstController, tau } = await setupExtensionControllers();
+    const { firstController, firstSession, project, tau } =
+      await setupExtensionControllers();
+    await tau.selectSession(project, firstSession);
     vi.useFakeTimers();
 
     try {

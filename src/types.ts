@@ -94,6 +94,7 @@ export interface ExtensionDialog {
   options?: string[];
   placeholder?: string;
   prefill?: string;
+  draft: string;
   timeout?: number;
   controllerKey: string;
   runtimeId: string;
@@ -110,9 +111,4 @@ export interface ExtensionNotification {
   type: ExtensionNotificationType;
   projectName: string;
   sessionName: string;
-}
-
-export interface ExtensionStatus {
-  key: string;
-  text: string;
 }
