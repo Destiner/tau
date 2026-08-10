@@ -36,8 +36,12 @@ const projectMenu = ref<HTMLElement>();
 const sidebar = ref<HTMLElement>();
 const remoteConnectionInput = ref<HTMLInputElement>();
 const remoteDirectoryFilterInput = ref<HTMLInputElement>();
+const extensionDialogInput = ref<HTMLInputElement | HTMLTextAreaElement>();
+const extensionDialogPrimaryAction = ref<HTMLButtonElement>();
 const projectMenuOpen = ref(false);
 const commandSelectedIndex = ref(0);
+const extensionDialogSelectedIndex = ref(0);
+const extensionDialogValue = ref("");
 const sidebarWidth = ref(loadSidebarWidth());
 const resizingSidebar = ref(false);
 const pinnedToBottom = ref(true);
@@ -54,6 +58,9 @@ const {
   models,
   efforts,
   commands,
+  activeExtensionDialog,
+  extensionNotifications,
+  extensionStatuses,
   currentModelProvider,
   currentModelId,
   currentEffort,
@@ -83,6 +90,9 @@ const {
   sessionIndicator,
   sendMessage,
   stop,
+  submitExtensionDialog,
+  cancelExtensionDialog,
+  dismissExtensionNotification,
   selectModel,
   selectEffort,
 } = useTau();
@@ -198,6 +208,21 @@ watch(
     state.remoteDirectorySelectedIndex = 0;
   },
 );
+
+watch(activeExtensionDialog, (dialog) => {
+  extensionDialogSelectedIndex.value = 0;
+  extensionDialogValue.value = dialog?.prefill ?? "";
+  if (!dialog) return;
+  void nextTick(() => {
+    if (dialog.method === "select") {
+      document.getElementById("extension-dialog-option-0")?.focus();
+    } else if (dialog.method === "confirm") {
+      extensionDialogPrimaryAction.value?.focus();
+    } else {
+      extensionDialogInput.value?.focus();
+    }
+  });
+});
 
 watch([commandQuery, commands], () => {
   commandSelectedIndex.value = 0;
@@ -440,8 +465,45 @@ function handleDocumentKeydown(event: KeyboardEvent) {
     return;
   }
   if (event.key !== "Escape") return;
-  if (state.remoteDialogOpen) closeRemoteProjectDialog();
+  if (activeExtensionDialog.value) {
+    event.preventDefault();
+    void cancelExtensionDialog();
+  } else if (state.remoteDialogOpen) closeRemoteProjectDialog();
   else projectMenuOpen.value = false;
+}
+
+function chooseExtensionDialogOption(value: string) {
+  void submitExtensionDialog(value);
+}
+
+function respondToExtensionConfirmation(confirmed: boolean) {
+  void submitExtensionDialog(confirmed);
+}
+
+function handleExtensionDialogSubmit() {
+  const dialog = activeExtensionDialog.value;
+  if (!dialog || (dialog.method !== "input" && dialog.method !== "editor")) {
+    return;
+  }
+  void submitExtensionDialog(extensionDialogValue.value);
+}
+
+function handleExtensionSelectKeydown(event: KeyboardEvent) {
+  const dialog = activeExtensionDialog.value;
+  const options = dialog?.options ?? [];
+  if (dialog?.method !== "select" || options.length === 0) return;
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    const delta = event.key === "ArrowDown" ? 1 : -1;
+    extensionDialogSelectedIndex.value =
+      (extensionDialogSelectedIndex.value + delta + options.length) %
+      options.length;
+    document
+      .getElementById(
+        `extension-dialog-option-${extensionDialogSelectedIndex.value}`,
+      )
+      ?.focus();
+  }
 }
 
 function handleLocalProject() {
@@ -771,6 +833,19 @@ function clampSidebarWidth(width: number): number {
       </section>
 
       <footer class="composer-area">
+        <div
+          v-if="extensionStatuses.length"
+          class="extension-status-list"
+          role="status"
+        >
+          <span
+            v-for="extensionStatus in extensionStatuses"
+            :key="extensionStatus.key"
+            :title="extensionStatus.key"
+          >
+            {{ extensionStatus.text }}
+          </span>
+        </div>
         <p v-if="status" class="status" role="status">
           {{ status }}
         </p>
@@ -908,6 +983,150 @@ function clampSidebarWidth(width: number): number {
         </div>
       </footer>
     </main>
+
+    <div
+      v-if="extensionNotifications.length"
+      class="extension-notification-stack"
+      aria-live="polite"
+    >
+      <div
+        v-for="notification in extensionNotifications"
+        :key="notification.key"
+        class="extension-notification"
+        :class="notification.type"
+      >
+        <div class="extension-notification-copy">
+          <span class="extension-notification-context">
+            {{ notification.projectName }} · {{ notification.sessionName }}
+          </span>
+          <span class="extension-notification-message">{{
+            notification.message
+          }}</span>
+        </div>
+        <button
+          type="button"
+          aria-label="Dismiss notification"
+          @click="dismissExtensionNotification(notification.key)"
+        >
+          <UiIcon name="cross" />
+        </button>
+      </div>
+    </div>
+
+    <div
+      v-if="activeExtensionDialog"
+      class="dialog-layer extension-dialog-layer"
+    >
+      <form
+        class="extension-dialog"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="activeExtensionDialog.title"
+        @submit.prevent="handleExtensionDialogSubmit"
+      >
+        <header class="extension-dialog-header">
+          <span class="extension-dialog-context">
+            {{ activeExtensionDialog.projectName }} ·
+            {{ activeExtensionDialog.sessionName }}
+          </span>
+          <h2>{{ activeExtensionDialog.title }}</h2>
+        </header>
+
+        <p
+          v-if="activeExtensionDialog.message"
+          class="extension-dialog-message"
+        >
+          {{ activeExtensionDialog.message }}
+        </p>
+
+        <div
+          v-if="activeExtensionDialog.method === 'select'"
+          class="extension-dialog-options"
+          role="listbox"
+          @keydown="handleExtensionSelectKeydown"
+        >
+          <button
+            v-for="(option, index) in activeExtensionDialog.options"
+            :id="`extension-dialog-option-${index}`"
+            :key="`${index}:${option}`"
+            class="extension-dialog-option"
+            :class="{ selected: index === extensionDialogSelectedIndex }"
+            type="button"
+            role="option"
+            :aria-selected="index === extensionDialogSelectedIndex"
+            @mouseenter="extensionDialogSelectedIndex = index"
+            @click="chooseExtensionDialogOption(option)"
+          >
+            {{ option }}
+          </button>
+          <div
+            v-if="activeExtensionDialog.options?.length === 0"
+            class="extension-dialog-empty"
+          >
+            No options available
+          </div>
+        </div>
+
+        <input
+          v-else-if="activeExtensionDialog.method === 'input'"
+          ref="extensionDialogInput"
+          v-model="extensionDialogValue"
+          class="extension-dialog-input"
+          type="text"
+          autocomplete="off"
+          :placeholder="activeExtensionDialog.placeholder"
+          :aria-label="activeExtensionDialog.title"
+        />
+
+        <textarea
+          v-else-if="activeExtensionDialog.method === 'editor'"
+          ref="extensionDialogInput"
+          v-model="extensionDialogValue"
+          class="extension-dialog-editor"
+          rows="10"
+          :aria-label="activeExtensionDialog.title"
+          @keydown.meta.enter.prevent="handleExtensionDialogSubmit"
+          @keydown.ctrl.enter.prevent="handleExtensionDialogSubmit"
+        ></textarea>
+
+        <footer class="extension-dialog-actions">
+          <button
+            class="extension-dialog-button secondary"
+            type="button"
+            @click="cancelExtensionDialog"
+          >
+            Cancel
+          </button>
+          <template v-if="activeExtensionDialog.method === 'confirm'">
+            <button
+              class="extension-dialog-button secondary"
+              type="button"
+              @click="respondToExtensionConfirmation(false)"
+            >
+              No
+            </button>
+            <button
+              ref="extensionDialogPrimaryAction"
+              class="extension-dialog-button primary"
+              type="button"
+              @click="respondToExtensionConfirmation(true)"
+            >
+              Confirm
+            </button>
+          </template>
+          <button
+            v-else-if="
+              activeExtensionDialog.method === 'input' ||
+              activeExtensionDialog.method === 'editor'
+            "
+            class="extension-dialog-button primary"
+            type="submit"
+          >
+            Submit
+          </button>
+        </footer>
+      </form>
+    </div>
 
     <div
       v-if="state.remoteDialogOpen"

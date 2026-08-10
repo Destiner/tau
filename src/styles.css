@@ -618,6 +618,23 @@ button {
   flex: 1;
 }
 
+.extension-status-list {
+  display: flex;
+  width: 100%;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.extension-status-list span {
+  overflow: hidden;
+  max-width: min(100%, 52ch);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .status {
   width: 100%;
   margin: 0 0 6px;
@@ -914,6 +931,84 @@ textarea:disabled {
   text-underline-offset: 2px;
 }
 
+.extension-notification-stack {
+  position: fixed;
+  z-index: 30;
+  top: 40px;
+  right: 12px;
+  display: flex;
+  width: min(360px, calc(100vw - 24px));
+  flex-direction: column;
+  gap: 7px;
+  pointer-events: none;
+}
+
+.extension-notification {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--status-new);
+  border-radius: 8px;
+  background: var(--panel-raised);
+  box-shadow: 0 10px 30px color-mix(in srgb, #000 16%, transparent);
+  padding: 9px 8px 9px 10px;
+  pointer-events: auto;
+}
+
+.extension-notification.warning {
+  border-left-color: var(--status-draft);
+}
+
+.extension-notification.error {
+  border-left-color: var(--danger);
+}
+
+.extension-notification-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.extension-notification-context,
+.extension-dialog-context {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.extension-notification-message {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
+.extension-notification > button {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  cursor: pointer;
+  place-items: center;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  padding: 5px;
+}
+
+.extension-notification > button:hover,
+.extension-notification > button:focus-visible {
+  outline: 0;
+  background: var(--hover);
+  color: var(--text);
+}
+
 .dialog-layer {
   position: fixed;
   z-index: 20;
@@ -923,6 +1018,146 @@ textarea:disabled {
   justify-content: center;
   background: color-mix(in srgb, #000 12%, transparent);
   padding: 68px 18px 18px;
+}
+
+.extension-dialog-layer {
+  z-index: 25;
+  background: color-mix(in srgb, #000 18%, transparent);
+}
+
+.extension-dialog {
+  display: flex;
+  width: min(520px, 100%);
+  max-height: calc(100vh - 100px);
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-raised);
+  box-shadow: 0 18px 50px color-mix(in srgb, #000 22%, transparent);
+  padding: 14px;
+}
+
+.extension-dialog-header {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.extension-dialog-header h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.extension-dialog-message {
+  margin: -4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.extension-dialog-options {
+  min-height: 32px;
+  max-height: min(360px, calc(100vh - 220px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.extension-dialog-option {
+  display: block;
+  width: 100%;
+  cursor: pointer;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 8px 9px;
+  text-align: left;
+  white-space: pre-wrap;
+}
+
+.extension-dialog-option:hover,
+.extension-dialog-option:focus-visible,
+.extension-dialog-option.selected {
+  outline: 0;
+  background: var(--selected);
+}
+
+.extension-dialog-empty {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 8px 9px;
+}
+
+.extension-dialog-input,
+.extension-dialog-editor {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: 0;
+  background: var(--canvas);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 8px 9px;
+}
+
+.extension-dialog-input {
+  height: 36px;
+}
+
+.extension-dialog-editor {
+  min-height: 180px;
+  max-height: min(420px, calc(100vh - 230px));
+  resize: vertical;
+}
+
+.extension-dialog-input:focus,
+.extension-dialog-editor:focus {
+  border-color: var(--muted);
+}
+
+.extension-dialog-input::placeholder {
+  color: var(--faint);
+}
+
+.extension-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.extension-dialog-button {
+  min-width: 64px;
+  height: 30px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 11px;
+  padding: 0 10px;
+}
+
+.extension-dialog-button.secondary {
+  background: transparent;
+  color: var(--muted);
+}
+
+.extension-dialog-button.primary {
+  border-color: var(--text);
+  background: var(--text);
+  color: var(--canvas);
+}
+
+.extension-dialog-button:hover,
+.extension-dialog-button:focus-visible {
+  outline: 0;
+  filter: brightness(0.96);
 }
 
 .remote-dialog {

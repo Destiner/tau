@@ -11,6 +11,11 @@ import {
 import { getActivePiIntegration } from "../lib/pi-integrations";
 import type {
   CommandOption,
+  ExtensionDialog,
+  ExtensionDialogMethod,
+  ExtensionNotification,
+  ExtensionNotificationType,
+  ExtensionStatus,
   ModelOption,
   PiBridgeEvent,
   ProjectSummary,
@@ -73,6 +78,7 @@ interface SessionController {
   messages: TranscriptEntry[];
   draft: string;
   status: string;
+  extensionStatuses: ExtensionStatus[];
   currentModelProvider: string;
   currentModelId: string;
   currentModelName: string;
@@ -112,6 +118,8 @@ const state = reactive({
   workspaceStatus: "",
   controllers: [] as SessionController[],
   ephemeralSessions: [] as EphemeralSession[],
+  extensionDialogs: [] as ExtensionDialog[],
+  extensionNotifications: [] as ExtensionNotification[],
   remoteDialogOpen: false,
   remoteDialogMode: "add" as RemoteDialogMode,
   remoteDialogStep: "connection" as RemoteDialogStep,
@@ -132,6 +140,14 @@ let unlisten: UnlistenFn | undefined;
 let phantomSequence = 0;
 let controllerSequence = 0;
 let remoteRetry: RemoteRetry | undefined;
+const extensionDialogTimeouts = new Map<
+  string,
+  ReturnType<typeof setTimeout>
+>();
+const extensionNotificationTimeouts = new Map<
+  string,
+  ReturnType<typeof setTimeout>
+>();
 
 const emptyMessages: TranscriptEntry[] = [];
 const emptyModels: ModelOption[] = [];
@@ -180,6 +196,11 @@ const models = computed(() => activeController.value?.models ?? emptyModels);
 const efforts = computed(() => activeController.value?.efforts ?? emptyEfforts);
 const commands = computed(
   () => activeController.value?.commands ?? emptyCommands,
+);
+const activeExtensionDialog = computed(() => state.extensionDialogs[0]);
+const extensionNotifications = computed(() => state.extensionNotifications);
+const extensionStatuses = computed(
+  () => activeController.value?.extensionStatuses ?? [],
 );
 const currentModelProvider = computed(
   () => activeController.value?.currentModelProvider ?? "",
@@ -293,6 +314,7 @@ export function useTau() {
   function dispose() {
     unlisten?.();
     unlisten = undefined;
+    clearExtensionUiState();
   }
 
   async function addLocalProject() {
@@ -710,6 +732,9 @@ export function useTau() {
     models,
     efforts,
     commands,
+    activeExtensionDialog,
+    extensionNotifications,
+    extensionStatuses,
     currentModelProvider,
     currentModelId,
     currentEffort,
@@ -739,6 +764,9 @@ export function useTau() {
     sessionIndicator,
     sendMessage,
     stop,
+    submitExtensionDialog,
+    cancelExtensionDialog,
+    dismissExtensionNotification,
     selectModel,
     selectEffort,
   };
@@ -803,6 +831,8 @@ async function startController(
   controller.commands = [];
   controller.commandsLoaded = false;
   controller.status = "";
+  controller.extensionStatuses = [];
+  discardControllerDialogs(controller);
 
   try {
     if (project.connectionString) {
@@ -862,11 +892,258 @@ async function rpc(
   await invoke("send_pi", { runtimeId: controller.runtimeId, request });
 }
 
+async function submitExtensionDialog(value: string | boolean) {
+  const dialog = state.extensionDialogs[0];
+  if (!dialog) return;
+  const response =
+    dialog.method === "confirm" && typeof value === "boolean"
+      ? {
+          type: "extension_ui_response",
+          id: dialog.requestId,
+          confirmed: value,
+        }
+      : typeof value === "string"
+        ? { type: "extension_ui_response", id: dialog.requestId, value }
+        : {
+            type: "extension_ui_response",
+            id: dialog.requestId,
+            cancelled: true,
+          };
+  await respondToExtensionDialog(dialog, response);
+}
+
+async function cancelExtensionDialog() {
+  const dialog = state.extensionDialogs[0];
+  if (!dialog) return;
+  await respondToExtensionDialog(dialog, {
+    type: "extension_ui_response",
+    id: dialog.requestId,
+    cancelled: true,
+  });
+}
+
+async function respondToExtensionDialog(
+  dialog: ExtensionDialog,
+  response: Record<string, unknown>,
+) {
+  discardExtensionDialog(dialog.key);
+  const controller = controllerByKey(dialog.controllerKey);
+  if (
+    !controller ||
+    controller.disposed ||
+    controller.runtimeId !== dialog.runtimeId ||
+    controller.generation !== dialog.generation
+  ) {
+    return;
+  }
+  try {
+    await rpc(controller, response);
+  } catch (error) {
+    setControllerError(controller, error);
+  }
+}
+
+function handleExtensionUIRequest(
+  controller: SessionController,
+  request: Record<string, unknown>,
+) {
+  const requestId = stringValue(request.id);
+  const method = stringValue(request.method);
+  if (!requestId || !method) return;
+
+  if (isExtensionDialogMethod(method)) {
+    const origin = extensionRequestOrigin(controller);
+    const timeout =
+      typeof request.timeout === "number" &&
+      Number.isFinite(request.timeout) &&
+      request.timeout > 0
+        ? request.timeout
+        : undefined;
+    const dialog: ExtensionDialog = {
+      key: extensionRequestKey(controller, requestId),
+      requestId,
+      method,
+      title: stringValue(request.title) || extensionDialogTitle(method),
+      controllerKey: controller.key,
+      runtimeId: controller.runtimeId,
+      generation: controller.generation,
+      projectName: origin.projectName,
+      sessionName: origin.sessionName,
+      ...(typeof request.message === "string"
+        ? { message: request.message }
+        : {}),
+      ...(Array.isArray(request.options)
+        ? {
+            options: request.options.filter(
+              (option): option is string => typeof option === "string",
+            ),
+          }
+        : {}),
+      ...(typeof request.placeholder === "string"
+        ? { placeholder: request.placeholder }
+        : {}),
+      ...(typeof request.prefill === "string"
+        ? { prefill: request.prefill }
+        : {}),
+      ...(timeout ? { timeout } : {}),
+    };
+    if (state.extensionDialogs.some((item) => item.key === dialog.key)) return;
+    state.extensionDialogs.push(dialog);
+    if (timeout) {
+      extensionDialogTimeouts.set(
+        dialog.key,
+        setTimeout(() => discardExtensionDialog(dialog.key), timeout),
+      );
+    }
+    return;
+  }
+
+  if (method === "notify" && typeof request.message === "string") {
+    const origin = extensionRequestOrigin(controller);
+    const type = extensionNotificationType(request.notifyType);
+    const notification: ExtensionNotification = {
+      key: extensionRequestKey(controller, requestId),
+      message: request.message,
+      type,
+      projectName: origin.projectName,
+      sessionName: origin.sessionName,
+    };
+    dismissExtensionNotification(notification.key);
+    state.extensionNotifications.push(notification);
+    while (state.extensionNotifications.length > 4) {
+      const oldest = state.extensionNotifications[0];
+      if (oldest) dismissExtensionNotification(oldest.key);
+    }
+    extensionNotificationTimeouts.set(
+      notification.key,
+      setTimeout(() => dismissExtensionNotification(notification.key), 8_000),
+    );
+    return;
+  }
+
+  if (method === "setStatus") {
+    const key = stringValue(request.statusKey);
+    if (!key) return;
+    const index = controller.extensionStatuses.findIndex(
+      (status) => status.key === key,
+    );
+    if (typeof request.statusText !== "string") {
+      if (index >= 0) controller.extensionStatuses.splice(index, 1);
+      return;
+    }
+    const status = { key, text: request.statusText };
+    if (index >= 0) controller.extensionStatuses.splice(index, 1, status);
+    else controller.extensionStatuses.push(status);
+    return;
+  }
+
+  if (method === "set_editor_text" && typeof request.text === "string") {
+    controller.draft = request.text;
+    const session = ephemeralSessionByController(controller.key);
+    if (session?.phantom) session.title = draftTitle(request.text);
+  }
+}
+
+function isExtensionDialogMethod(
+  method: string,
+): method is ExtensionDialogMethod {
+  return (
+    method === "select" ||
+    method === "confirm" ||
+    method === "input" ||
+    method === "editor"
+  );
+}
+
+function extensionDialogTitle(method: ExtensionDialogMethod): string {
+  if (method === "select") return "Choose an option";
+  if (method === "confirm") return "Confirm";
+  if (method === "input") return "Enter a value";
+  return "Edit text";
+}
+
+function extensionNotificationType(value: unknown): ExtensionNotificationType {
+  return value === "warning" || value === "error" ? value : "info";
+}
+
+function extensionRequestOrigin(controller: SessionController) {
+  const project = state.workspace?.projects.find(
+    (item) => item.path === controller.projectPath,
+  );
+  const ephemeral = ephemeralSessionByController(controller.key);
+  const saved = project?.sessions.find(
+    (session) => session.id === controller.sessionId,
+  );
+  return {
+    projectName: project?.name || controller.projectPath,
+    sessionName:
+      controller.sessionName ||
+      ephemeral?.title ||
+      saved?.title ||
+      firstUserMessage(controller) ||
+      "New session",
+  };
+}
+
+function extensionRequestKey(
+  controller: SessionController,
+  requestId: string,
+): string {
+  return `${controller.runtimeId}:${controller.generation}:${requestId}`;
+}
+
+function discardExtensionDialog(key: string) {
+  const timeout = extensionDialogTimeouts.get(key);
+  if (timeout) clearTimeout(timeout);
+  extensionDialogTimeouts.delete(key);
+  const index = state.extensionDialogs.findIndex(
+    (dialog) => dialog.key === key,
+  );
+  if (index >= 0) state.extensionDialogs.splice(index, 1);
+}
+
+function discardControllerDialogs(
+  controller: SessionController,
+  generation?: number,
+) {
+  for (const dialog of [...state.extensionDialogs]) {
+    if (
+      dialog.controllerKey === controller.key &&
+      (generation === undefined || dialog.generation === generation)
+    ) {
+      discardExtensionDialog(dialog.key);
+    }
+  }
+}
+
+function dismissExtensionNotification(key: string) {
+  const timeout = extensionNotificationTimeouts.get(key);
+  if (timeout) clearTimeout(timeout);
+  extensionNotificationTimeouts.delete(key);
+  const index = state.extensionNotifications.findIndex(
+    (notification) => notification.key === key,
+  );
+  if (index >= 0) state.extensionNotifications.splice(index, 1);
+}
+
+function clearExtensionUiState() {
+  for (const timeout of extensionDialogTimeouts.values()) clearTimeout(timeout);
+  extensionDialogTimeouts.clear();
+  state.extensionDialogs.splice(0);
+  for (const timeout of extensionNotificationTimeouts.values()) {
+    clearTimeout(timeout);
+  }
+  extensionNotificationTimeouts.clear();
+  state.extensionNotifications.splice(0);
+}
+
 async function handleBridgeEvent(event: PiBridgeEvent) {
   const controller = controllerByRuntimeId(event.runtimeId);
   if (!controller) return;
   if (event.kind === "started") {
-    if (event.generation >= controller.generation) {
+    if (event.generation > controller.generation) {
+      discardControllerDialogs(controller);
+      controller.extensionStatuses = [];
       controller.generation = event.generation;
     }
     return;
@@ -895,6 +1172,8 @@ async function handleBridgeEvent(event: PiBridgeEvent) {
     return;
   }
   if (event.kind === "exited") {
+    discardControllerDialogs(controller, event.generation);
+    controller.extensionStatuses = [];
     const message =
       event.code === 0
         ? ""
@@ -923,6 +1202,10 @@ async function handleRpc(controller: SessionController, value: unknown) {
   const event = asRecord(value);
   if (!event) return;
   const type = stringValue(event.type);
+  if (type === "extension_ui_request") {
+    handleExtensionUIRequest(controller, event);
+    return;
+  }
   if (type === "response") {
     await handleResponse(controller, event);
     return;
@@ -1654,6 +1937,7 @@ function createController(
     messages: [],
     draft: "",
     status: "",
+    extensionStatuses: [],
     currentModelProvider: "",
     currentModelId: "",
     currentModelName: "",
@@ -1750,6 +2034,8 @@ function maybeEvictController(controller: SessionController | undefined) {
 async function stopControllerProcess(controller: SessionController) {
   if (!controller.generation && !controller.starting) return;
   const generation = controller.generation;
+  discardControllerDialogs(controller, generation);
+  controller.extensionStatuses = [];
   try {
     await invoke("stop_pi", { runtimeId: controller.runtimeId });
   } catch (error) {

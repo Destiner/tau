@@ -82,3 +82,37 @@ export interface PiBridgeEvent {
   message?: string;
   code?: number;
 }
+
+export type ExtensionDialogMethod = "select" | "confirm" | "input" | "editor";
+
+export interface ExtensionDialog {
+  key: string;
+  requestId: string;
+  method: ExtensionDialogMethod;
+  title: string;
+  message?: string;
+  options?: string[];
+  placeholder?: string;
+  prefill?: string;
+  timeout?: number;
+  controllerKey: string;
+  runtimeId: string;
+  generation: number;
+  projectName: string;
+  sessionName: string;
+}
+
+export type ExtensionNotificationType = "info" | "warning" | "error";
+
+export interface ExtensionNotification {
+  key: string;
+  message: string;
+  type: ExtensionNotificationType;
+  projectName: string;
+  sessionName: string;
+}
+
+export interface ExtensionStatus {
+  key: string;
+  text: string;
+}

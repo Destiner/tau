@@ -646,6 +646,233 @@ describe("session drafts and selection", () => {
   });
 });
 
+describe("extension UI protocol", () => {
+  it("routes a global FIFO dialog queue back to each originating runtime", async () => {
+    const { firstController, secondController, tau } =
+      await setupExtensionControllers();
+
+    emitRpc(firstController, {
+      type: "extension_ui_request",
+      id: "reviewer-1",
+      method: "select",
+      title: "Choose a reviewer",
+      options: ["[ ] Claude", "Done"],
+    });
+    emitRpc(secondController, {
+      type: "extension_ui_request",
+      id: "merge-1",
+      method: "confirm",
+      title: "Merge the pull request?",
+      message: "This requires manual approval.",
+    });
+
+    expect(tau.state.extensionDialogs).toHaveLength(2);
+    expect(tau.activeExtensionDialog.value).toMatchObject({
+      requestId: "reviewer-1",
+      method: "select",
+      projectName: "extension-ui-test",
+      sessionName: "first",
+    });
+
+    await tau.submitExtensionDialog("[ ] Claude");
+
+    expect(sentRequests(firstController, "extension_ui_response")).toEqual([
+      {
+        type: "extension_ui_response",
+        id: "reviewer-1",
+        value: "[ ] Claude",
+      },
+    ]);
+    expect(tau.activeExtensionDialog.value).toMatchObject({
+      requestId: "merge-1",
+      method: "confirm",
+      sessionName: "second",
+    });
+
+    await tau.submitExtensionDialog(false);
+
+    expect(sentRequests(secondController, "extension_ui_response")).toEqual([
+      {
+        type: "extension_ui_response",
+        id: "merge-1",
+        confirmed: false,
+      },
+    ]);
+    expect(tau.activeExtensionDialog.value).toBeUndefined();
+
+    emitRpc(firstController, {
+      type: "extension_ui_request",
+      id: "reviewer-2",
+      method: "select",
+      title: "Choose a reviewer",
+      options: ["[x] Claude", "Done"],
+    });
+    await tau.submitExtensionDialog("Done");
+
+    expect(sentRequests(firstController, "extension_ui_response")).toEqual([
+      {
+        type: "extension_ui_response",
+        id: "reviewer-1",
+        value: "[ ] Claude",
+      },
+      {
+        type: "extension_ui_response",
+        id: "reviewer-2",
+        value: "Done",
+      },
+    ]);
+    tau.dispose();
+  });
+
+  it("returns input values and explicit cancellations with the RPC shapes", async () => {
+    const { firstController, tau } = await setupExtensionControllers();
+
+    emitRpc(firstController, {
+      type: "extension_ui_request",
+      id: "issue-id",
+      method: "input",
+      title: "Linear issue ID",
+      placeholder: "ENG-123",
+    });
+    await tau.submitExtensionDialog("ENG-42");
+
+    emitRpc(firstController, {
+      type: "extension_ui_request",
+      id: "task-notes",
+      method: "editor",
+      title: "Task notes",
+      prefill: "Keep the API stable.",
+    });
+    await tau.cancelExtensionDialog();
+
+    expect(sentRequests(firstController, "extension_ui_response")).toEqual([
+      {
+        type: "extension_ui_response",
+        id: "issue-id",
+        value: "ENG-42",
+      },
+      {
+        type: "extension_ui_response",
+        id: "task-notes",
+        cancelled: true,
+      },
+    ]);
+    tau.dispose();
+  });
+
+  it("keeps extension drafts and keyed statuses on their hidden session", async () => {
+    const { firstController, firstSession, project, tau } =
+      await setupExtensionControllers();
+    firstController.status = "Tau connection warning";
+
+    emitRpc(firstController, {
+      type: "extension_ui_request",
+      id: "editor-text-1",
+      method: "set_editor_text",
+      text: "/implement",
+    });
+    emitRpc(firstController, {
+      type: "extension_ui_request",
+      id: "status-1",
+      method: "setStatus",
+      statusKey: "workflow",
+      statusText: "Waiting for approval",
+    });
+    emitRpc(firstController, {
+      type: "extension_ui_request",
+      id: "status-2",
+      method: "setStatus",
+      statusKey: "phase",
+      statusText: "Plan review",
+    });
+    emitRpc(firstController, {
+      type: "extension_ui_request",
+      id: "status-3",
+      method: "setStatus",
+      statusKey: "phase",
+    });
+    emitRpc(firstController, {
+      type: "extension_ui_request",
+      id: "notify-1",
+      method: "notify",
+      message: "Approval is ready",
+      notifyType: "warning",
+    });
+
+    expect(firstController.draft).toBe("/implement");
+    expect(firstController.status).toBe("Tau connection warning");
+    expect(firstController.extensionStatuses).toEqual([
+      { key: "workflow", text: "Waiting for approval" },
+    ]);
+    expect(tau.extensionStatuses.value).toEqual([]);
+    expect(tau.extensionNotifications.value).toEqual([
+      expect.objectContaining({
+        message: "Approval is ready",
+        type: "warning",
+        projectName: "extension-ui-test",
+        sessionName: "first",
+      }),
+    ]);
+
+    await tau.selectSession(project, firstSession);
+
+    expect(tau.draft.value).toBe("/implement");
+    expect(tau.status.value).toBe("");
+    expect(tau.extensionStatuses.value).toEqual([
+      { key: "workflow", text: "Waiting for approval" },
+    ]);
+    tau.dispose();
+  });
+
+  it("discards dialogs after their timeout, generation change, or process exit", async () => {
+    const { firstController, tau } = await setupExtensionControllers();
+    vi.useFakeTimers();
+
+    try {
+      emitRpc(firstController, {
+        type: "extension_ui_request",
+        id: "timed-1",
+        method: "input",
+        title: "Optional issue ID",
+        timeout: 25,
+      });
+      expect(tau.activeExtensionDialog.value?.requestId).toBe("timed-1");
+
+      vi.advanceTimersByTime(25);
+      expect(tau.activeExtensionDialog.value).toBeUndefined();
+      expect(sentRequests(firstController, "extension_ui_response")).toEqual(
+        [],
+      );
+
+      emitRpc(firstController, {
+        type: "extension_ui_request",
+        id: "old-generation",
+        method: "editor",
+        title: "Task notes",
+        prefill: "Initial notes",
+      });
+      const nextGeneration = firstController.generation + 1;
+      emitBridge(firstController.runtimeId, nextGeneration, "started");
+      expect(tau.activeExtensionDialog.value).toBeUndefined();
+      expect(firstController.generation).toBe(nextGeneration);
+
+      emitRpc(firstController, {
+        type: "extension_ui_request",
+        id: "exiting",
+        method: "confirm",
+        title: "Continue?",
+        message: "The process is about to exit.",
+      });
+      expect(tau.activeExtensionDialog.value?.requestId).toBe("exiting");
+      emitBridge(firstController.runtimeId, nextGeneration, "exited", 0);
+      expect(tau.activeExtensionDialog.value).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+      tau.dispose();
+    }
+  });
+});
+
 function emitRpc(
   controller: { runtimeId: string; generation: number },
   value: unknown,
@@ -657,6 +884,17 @@ function emitRpc(
       kind: "rpc",
       line: JSON.stringify(value),
     },
+  });
+}
+
+function emitBridge(
+  runtimeId: string,
+  generation: number,
+  kind: PiBridgeEvent["kind"],
+  code?: number,
+) {
+  mocks.listener?.({
+    payload: { runtimeId, generation, kind, code },
   });
 }
 
@@ -690,6 +928,66 @@ function sentRequests(
     )
     .map(([, args]) => (args as { request: Record<string, unknown> }).request)
     .filter((request) => request.type === type);
+}
+
+async function setupExtensionControllers() {
+  const firstSession = savedSession("first");
+  const secondSession = savedSession("second");
+  const project: ProjectSummary = {
+    path: "/tmp/extension-ui-test",
+    name: "extension-ui-test",
+    workingDirectory: "/tmp/extension-ui-test",
+    collapsed: false,
+    selected: true,
+    sessions: [firstSession, secondSession],
+  };
+  const workspace: WorkspaceSnapshot = {
+    activeProjectPath: project.path,
+    piPath: "/usr/local/bin/pi",
+    sdkAvailable: true,
+    projects: [project],
+  };
+  mocks.workspace = workspace;
+  mocks.generation = 0;
+
+  const tau = useTau();
+  tau.dispose();
+  tau.state.activeProjectPath = "";
+  tau.state.activeSessionId = "";
+  tau.state.activeSessionPath = "";
+  tau.state.activeControllerKey = "";
+  tau.state.controllers.splice(0);
+  tau.state.ephemeralSessions.splice(0);
+  await tau.initialize();
+  tau.state.workspace = workspace;
+
+  await tau.selectSession(project, firstSession);
+  const firstController = tau.state.controllers.find(
+    (controller) => controller.sessionId === firstSession.id,
+  );
+  if (!firstController) throw new Error("Expected the first controller");
+  firstController.starting = false;
+  firstController.ready = true;
+  firstController.streaming = true;
+  firstController.working = true;
+
+  await tau.selectSession(project, secondSession);
+  const secondController = tau.state.controllers.find(
+    (controller) => controller.sessionId === secondSession.id,
+  );
+  if (!secondController) throw new Error("Expected the second controller");
+  secondController.starting = false;
+  secondController.ready = true;
+  vi.mocked(invoke).mockClear();
+
+  return {
+    tau,
+    project,
+    firstSession,
+    secondSession,
+    firstController,
+    secondController,
+  };
 }
 
 function savedSession(id: string, lastUserMessageAt = 0) {
