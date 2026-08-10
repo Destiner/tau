@@ -203,6 +203,7 @@ describe("session drafts and selection", () => {
     mocks.workspace = workspace;
     const {
       state,
+      commands,
       currentEffortLabel,
       currentModelLabel,
       draft,
@@ -238,6 +239,24 @@ describe("session drafts and selection", () => {
             name: "Alpha",
             reasoning: true,
           },
+        ],
+      },
+    });
+    const commandsRequest = sentRequests(controller, "get_commands")[0];
+    emitRpc(controller, {
+      id: commandsRequest?.id,
+      type: "response",
+      command: "get_commands",
+      success: true,
+      data: {
+        commands: [
+          {
+            name: "session-name",
+            description: "Name this session",
+            source: "extension",
+          },
+          { name: "skill:review", source: "skill" },
+          { name: "ignored", source: "unknown" },
         ],
       },
     });
@@ -285,6 +304,14 @@ describe("session drafts and selection", () => {
     expect(controller.sessionId).toMatch(/^phantom-/);
     expect(models.value).toHaveLength(1);
     expect(efforts.value).toEqual(["off", "high"]);
+    expect(commands.value).toEqual([
+      {
+        name: "session-name",
+        description: "Name this session",
+        source: "extension",
+      },
+      { name: "skill:review", source: "skill" },
+    ]);
     expect(currentModelLabel.value).toBe("Alpha");
     expect(currentEffortLabel.value).toBe("High");
     expect(settingsDisabled.value).toBe(false);
@@ -390,6 +417,8 @@ describe("session drafts and selection", () => {
       },
     ];
     savedController.efforts = ["off", "high", "max"];
+    savedController.commands = [{ name: "session-name", source: "extension" }];
+    savedController.commandsLoaded = true;
     savedController.currentModelProvider = "provider";
     savedController.currentModelId = "alpha";
     savedController.currentModelName = "Alpha";

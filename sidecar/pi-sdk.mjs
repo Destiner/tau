@@ -115,6 +115,9 @@ async function handleCommand(command) {
       case "get_available_models":
         respond(id, type, { models: modelRuntime.getAvailableSnapshot() });
         return;
+      case "get_commands":
+        respond(id, type, { commands: availableCommands() });
+        return;
       case "set_model": {
         const model = modelRuntime
           .getAvailableSnapshot()
@@ -147,6 +150,30 @@ async function handleCommand(command) {
   } catch (error) {
     reject(id, type || "unknown", errorMessage(error));
   }
+}
+
+function availableCommands() {
+  const extensionCommands = session.extensionRunner
+    .getRegisteredCommands()
+    .map((command) => ({
+      name: command.invocationName,
+      description: command.description,
+      source: "extension",
+      sourceInfo: command.sourceInfo,
+    }));
+  const templates = session.promptTemplates.map((template) => ({
+    name: template.name,
+    description: template.description,
+    source: "prompt",
+    sourceInfo: template.sourceInfo,
+  }));
+  const skills = session.resourceLoader.getSkills().skills.map((skill) => ({
+    name: `skill:${skill.name}`,
+    description: skill.description,
+    source: "skill",
+    sourceInfo: skill.sourceInfo,
+  }));
+  return [...extensionCommands, ...templates, ...skills];
 }
 
 function sessionState() {

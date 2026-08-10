@@ -13,12 +13,17 @@ import PiSpinner from "./components/PiSpinner.vue";
 import UiIcon from "./components/UiIcon.vue";
 import { useTau } from "./composables/useTau";
 import {
+  commandCompletion,
+  filterCommands,
+  slashCommandQuery,
+} from "./lib/commands";
+import {
   latestWindowStart,
   newerWindowStart,
   olderWindowStart,
   transcriptWindowEnd,
 } from "./lib/transcript-window";
-import type { ThinkingLevel } from "./types";
+import type { CommandOption, ThinkingLevel } from "./types";
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "tau.sidebar-width";
 const DEFAULT_SIDEBAR_WIDTH = 260;
@@ -32,6 +37,7 @@ const sidebar = ref<HTMLElement>();
 const remoteConnectionInput = ref<HTMLInputElement>();
 const remoteDirectoryFilterInput = ref<HTMLInputElement>();
 const projectMenuOpen = ref(false);
+const commandSelectedIndex = ref(0);
 const sidebarWidth = ref(loadSidebarWidth());
 const resizingSidebar = ref(false);
 const pinnedToBottom = ref(true);
@@ -47,6 +53,7 @@ const {
   stopping,
   models,
   efforts,
+  commands,
   currentModelProvider,
   currentModelId,
   currentEffort,
@@ -101,6 +108,18 @@ const showWorkingIndicator = computed(() => {
   if (!streaming.value) return false;
   return messages.value[messages.value.length - 1]?.kind !== "assistant";
 });
+const commandQuery = computed(() => slashCommandQuery(draft.value));
+const commandMenuActive = computed(
+  () => canDraft.value && commandQuery.value !== null,
+);
+const filteredCommands = computed(() =>
+  commandQuery.value === null
+    ? []
+    : filterCommands(commands.value, commandQuery.value),
+);
+const selectedCommand = computed(
+  () => filteredCommands.value[commandSelectedIndex.value],
+);
 const modelSelectorLabel = computed(() => {
   if (!currentModelId.value) return "Model";
   const model = models.value.find(
@@ -179,6 +198,10 @@ watch(
     state.remoteDirectorySelectedIndex = 0;
   },
 );
+
+watch([commandQuery, commands], () => {
+  commandSelectedIndex.value = 0;
+});
 
 watch([draft, sessionIsEmpty], () => {
   void nextTick(resizeComposer);
@@ -268,10 +291,49 @@ function resizeComposer() {
 }
 
 function handleComposerKeydown(event: KeyboardEvent) {
+  if (commandMenuActive.value && !event.isComposing) {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const lastIndex = filteredCommands.value.length - 1;
+      if (lastIndex < 0) return;
+      const delta = event.key === "ArrowDown" ? 1 : -1;
+      commandSelectedIndex.value = Math.min(
+        lastIndex,
+        Math.max(0, commandSelectedIndex.value + delta),
+      );
+      scrollSelectedCommand();
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (selectedCommand.value) applyCommand(selectedCommand.value);
+      return;
+    }
+  }
+
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
     void sendMessage();
   }
+}
+
+function applyCommand(command: CommandOption) {
+  draft.value = commandCompletion(command);
+  commandSelectedIndex.value = 0;
+  void nextTick(() => {
+    const input = composerInput.value;
+    input?.focus();
+    input?.setSelectionRange(draft.value.length, draft.value.length);
+    resizeComposer();
+  });
+}
+
+function scrollSelectedCommand() {
+  void nextTick(() => {
+    document
+      .getElementById(`command-option-${commandSelectedIndex.value}`)
+      ?.scrollIntoView({ block: "nearest" });
+  });
 }
 
 function handleModelChange(event: Event) {
@@ -713,6 +775,39 @@ function clampSidebarWidth(width: number): number {
           {{ status }}
         </p>
         <div class="composer" :class="{ disabled: !canDraft }">
+          <div
+            v-if="commandMenuActive"
+            id="command-menu"
+            class="command-menu"
+            role="listbox"
+            aria-label="Commands"
+          >
+            <button
+              v-for="(command, index) in filteredCommands"
+              :id="`command-option-${index}`"
+              :key="`${command.source}:${command.name}`"
+              class="command-option"
+              :class="{ selected: index === commandSelectedIndex }"
+              type="button"
+              role="option"
+              tabindex="-1"
+              :aria-selected="index === commandSelectedIndex"
+              @mousedown.prevent
+              @mouseenter="commandSelectedIndex = index"
+              @click="applyCommand(command)"
+            >
+              <span class="command-copy">
+                <span class="command-name">/{{ command.name }}</span>
+                <span v-if="command.description" class="command-description">
+                  {{ command.description }}
+                </span>
+              </span>
+              <span class="command-source">{{ command.source }}</span>
+            </button>
+            <div v-if="filteredCommands.length === 0" class="empty-commands">
+              No matching commands
+            </div>
+          </div>
           <textarea
             ref="composerInput"
             v-model="draft"
@@ -720,6 +815,14 @@ function clampSidebarWidth(width: number): number {
             maxlength="32768"
             placeholder="Message π"
             :disabled="!canDraft"
+            :aria-expanded="commandMenuActive"
+            :aria-controls="commandMenuActive ? 'command-menu' : undefined"
+            :aria-activedescendant="
+              commandMenuActive && selectedCommand
+                ? `command-option-${commandSelectedIndex}`
+                : undefined
+            "
+            aria-autocomplete="list"
             aria-label="Message Pi"
             @keydown="handleComposerKeydown"
           ></textarea>

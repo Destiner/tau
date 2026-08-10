@@ -10,6 +10,7 @@ import {
 } from "../lib/transcript";
 import { getActivePiIntegration } from "../lib/pi-integrations";
 import type {
+  CommandOption,
   ModelOption,
   PiBridgeEvent,
   ProjectSummary,
@@ -79,6 +80,8 @@ interface SessionController {
   pendingEffort: ThinkingLevel | "";
   models: ModelOption[];
   efforts: ThinkingLevel[];
+  commands: CommandOption[];
+  commandsLoaded: boolean;
   pendingPrompt?: PendingPrompt;
   bootstrapStateRequestId: string;
   startMessagesRequestId: string;
@@ -133,6 +136,7 @@ let remoteRetry: RemoteRetry | undefined;
 const emptyMessages: TranscriptEntry[] = [];
 const emptyModels: ModelOption[] = [];
 const emptyEfforts: ThinkingLevel[] = [];
+const emptyCommands: CommandOption[] = [];
 
 const activeProject = computed(() =>
   state.workspace?.projects.find(
@@ -174,6 +178,9 @@ const streaming = computed(() => activeController.value?.streaming === true);
 const stopping = computed(() => activeController.value?.stopping === true);
 const models = computed(() => activeController.value?.models ?? emptyModels);
 const efforts = computed(() => activeController.value?.efforts ?? emptyEfforts);
+const commands = computed(
+  () => activeController.value?.commands ?? emptyCommands,
+);
 const currentModelProvider = computed(
   () => activeController.value?.currentModelProvider ?? "",
 );
@@ -545,7 +552,8 @@ export function useTau() {
       runtimeAvailable(project) &&
       (!controller.currentModelId ||
         controller.models.length === 0 ||
-        controller.efforts.length === 0)
+        controller.efforts.length === 0 ||
+        !controller.commandsLoaded)
     ) {
       await startController(controller, project);
     }
@@ -701,6 +709,7 @@ export function useTau() {
     stopping,
     models,
     efforts,
+    commands,
     currentModelProvider,
     currentModelId,
     currentEffort,
@@ -791,6 +800,8 @@ async function startController(
   }
   controller.models = [];
   controller.efforts = [];
+  controller.commands = [];
+  controller.commandsLoaded = false;
   controller.status = "";
 
   try {
@@ -831,6 +842,10 @@ async function requestBootstrap(controller: SessionController) {
   await rpc(controller, {
     id: nextRequestId("models"),
     type: "get_available_models",
+  });
+  await rpc(controller, {
+    id: nextRequestId("commands"),
+    type: "get_commands",
   });
   const stateRequestId = nextRequestId("state");
   controller.bootstrapStateRequestId = stateRequestId;
@@ -1149,6 +1164,19 @@ async function handleResponse(
     controller.efforts = (Array.isArray(data.levels) ? data.levels : [])
       .map(normalizeEffort)
       .filter((level, index, levels) => levels.indexOf(level) === index);
+    return;
+  }
+
+  if (command === "get_commands" && data) {
+    controller.commands = (Array.isArray(data.commands) ? data.commands : [])
+      .map(commandOption)
+      .filter((command): command is CommandOption => Boolean(command));
+    controller.commandsLoaded = true;
+    return;
+  }
+
+  if (command === "prompt") {
+    controller.working = controller.streaming;
     return;
   }
 
@@ -1576,13 +1604,27 @@ function inheritControllerSettings(
                 candidate.efforts.length > 0 ||
                 candidate.currentModelId),
           );
-  if (!source) return;
-  controller.models = [...source.models];
-  controller.efforts = [...source.efforts];
-  controller.currentModelProvider = source.currentModelProvider;
-  controller.currentModelId = source.currentModelId;
-  controller.currentModelName = source.currentModelName;
-  controller.currentEffort = source.currentEffort;
+  if (source) {
+    controller.models = [...source.models];
+    controller.efforts = [...source.efforts];
+    controller.currentModelProvider = source.currentModelProvider;
+    controller.currentModelId = source.currentModelId;
+    controller.currentModelName = source.currentModelName;
+    controller.currentEffort = source.currentEffort;
+  }
+
+  const commandSource = [...state.controllers]
+    .reverse()
+    .find(
+      (candidate) =>
+        candidate.key !== controller.key &&
+        candidate.projectPath === controller.projectPath &&
+        candidate.commandsLoaded,
+    );
+  if (commandSource) {
+    controller.commands = [...commandSource.commands];
+    controller.commandsLoaded = true;
+  }
 }
 
 function createController(
@@ -1619,6 +1661,8 @@ function createController(
     pendingEffort: "",
     models: [],
     efforts: [],
+    commands: [],
+    commandsLoaded: false,
     pendingPrompt: undefined,
     bootstrapStateRequestId: "",
     startMessagesRequestId: "",
@@ -1756,6 +1800,25 @@ function relativeTimestamp(timestamp: number): string {
 
 function draftTitle(value: string): string {
   return value.replace(/\s+/g, " ").trim().slice(0, 240) || "New session";
+}
+
+function commandOption(value: unknown): CommandOption | undefined {
+  const command = asRecord(value);
+  const name = stringValue(command?.name);
+  const source = stringValue(command?.source);
+  if (
+    !name ||
+    (source !== "extension" && source !== "prompt" && source !== "skill")
+  ) {
+    return undefined;
+  }
+
+  const description = stringValue(command?.description);
+  return {
+    name,
+    ...(description ? { description } : {}),
+    source,
+  };
 }
 
 function normalizeEffort(value: unknown): ThinkingLevel {

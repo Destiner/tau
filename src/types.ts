@@ -46,6 +46,21 @@ export interface ModelOption {
   reasoning: boolean;
 }
 
+export type CommandSource = "extension" | "prompt" | "skill";
+
+export interface CommandOption {
+  name: string;
+  description?: string;
+  source: CommandSource;
+  sourceInfo?: {
+    path: string;
+    source: string;
+    scope: "user" | "project" | "temporary";
+    origin: "package" | "top-level";
+    baseDir?: string;
+  };
+}
+
 export type ThinkingLevel =
   "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 

@@ -626,9 +626,87 @@ button {
 }
 
 .composer {
+  position: relative;
   width: 100%;
   margin: 0;
   background: transparent;
+}
+
+.command-menu {
+  position: absolute;
+  z-index: 8;
+  bottom: calc(100% + 5px);
+  left: 4px;
+  width: min(540px, calc(100% - 8px));
+  max-height: min(300px, calc(100vh - 90px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-raised);
+  box-shadow: 0 10px 30px color-mix(in srgb, #000 16%, transparent);
+  padding: 4px;
+}
+
+.empty-session .command-menu {
+  position: static;
+  flex: none;
+  align-self: flex-start;
+  margin: 0 4px 5px;
+}
+
+.command-option {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  cursor: pointer;
+  align-items: baseline;
+  gap: 10px;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  padding: 6px 7px;
+  text-align: left;
+}
+
+.command-option:hover,
+.command-option.selected {
+  background: var(--selected);
+}
+
+.command-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.command-name,
+.command-description {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-name {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 12px;
+}
+
+.command-description,
+.command-source,
+.empty-commands {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.command-source {
+  flex: none;
+}
+
+.empty-commands {
+  padding: 9px 8px;
 }
 
 .composer.disabled {
