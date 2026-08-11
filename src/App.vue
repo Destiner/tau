@@ -336,8 +336,13 @@ function handleComposerKeydown(event: KeyboardEvent) {
 
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
-    void sendMessage();
+    handleSendMessage();
   }
+}
+
+function handleSendMessage() {
+  pinnedToBottom.value = true;
+  void sendMessage();
 }
 
 function applyCommand(command: CommandOption) {
@@ -1066,7 +1071,7 @@ function clampSidebarWidth(width: number): number {
               type="button"
               :disabled="!canCompose || !draft.trim()"
               aria-label="Send message"
-              @click="sendMessage"
+              @click="handleSendMessage"
             >
               <UiIcon name="triangle" />
             </button>
