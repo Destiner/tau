@@ -213,6 +213,18 @@ watch(activeExtensionDialog, (dialog) => {
   });
 });
 
+watch(
+  () => state.activeControllerKey,
+  (controllerKey) => {
+    if (!controllerKey) return;
+    void nextTick(() => {
+      if (!state.remoteDialogOpen && !activeExtensionDialog.value) {
+        composerInput.value?.focus();
+      }
+    });
+  },
+);
+
 watch([commandQuery, commands], () => {
   commandSelectedIndex.value = 0;
 });
