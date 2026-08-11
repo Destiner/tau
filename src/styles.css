@@ -759,7 +759,7 @@ button {
   height: 5px;
   align-self: center;
   justify-self: end;
-  margin-right: 3px;
+  margin-right: 8px;
   transform: translateY(-1px) rotate(45deg);
   border-right: 1px solid currentColor;
   border-bottom: 1px solid currentColor;
@@ -768,18 +768,13 @@ button {
   pointer-events: none;
 }
 
-.composer-selector select,
-.composer-selector-measure {
-  min-width: 0;
-  font-size: 11px;
-  grid-area: selector;
-  padding: 0 12px 0 2px;
-}
-
 .composer-selector select {
-  width: 100%;
-  height: 20px;
+  width: auto;
+  height: 22px;
+  min-width: 0;
+  max-width: 210px;
   appearance: none;
+  field-sizing: content;
   cursor: pointer;
   overflow: hidden;
   border: 1px solid transparent;
@@ -787,14 +782,10 @@ button {
   outline: 0;
   background: transparent;
   color: var(--muted);
+  font-size: 11px;
+  grid-area: selector;
+  padding: 0 24px 0 5px;
   text-overflow: ellipsis;
-}
-
-.composer-selector-measure {
-  visibility: hidden;
-  overflow: hidden;
-  border: 1px solid transparent;
-  white-space: pre;
 }
 
 .composer-selector select:hover:not(:disabled),
@@ -807,7 +798,8 @@ button {
   opacity: 0.45;
 }
 
-.effort-selector {
+.effort-selector,
+.effort-selector select {
   max-width: 110px;
 }
 

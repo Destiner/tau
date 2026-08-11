@@ -128,15 +128,6 @@ const filteredCommands = computed(() =>
 const selectedCommand = computed(
   () => filteredCommands.value[commandSelectedIndex.value],
 );
-const modelSelectorLabel = computed(() => {
-  if (!currentModelId.value) return "Model";
-  const model = models.value.find(
-    (option) =>
-      option.provider === currentModelProvider.value &&
-      option.id === currentModelId.value,
-  );
-  return model ? `${model.name} · ${model.provider}` : currentModelLabel.value;
-});
 const remoteDirectoryOptions = computed(() => {
   if (!state.remoteWorkingDirectory) return [];
   const options = [] as Array<{
@@ -1026,11 +1017,6 @@ function clampSidebarWidth(width: number): number {
                   {{ model.name }} · {{ model.provider }}
                 </option>
               </select>
-              <span
-                class="composer-selector-measure"
-                aria-hidden="true"
-                v-text="modelSelectorLabel"
-              ></span>
             </span>
             <span class="composer-selector effort-selector">
               <select
@@ -1049,11 +1035,6 @@ function clampSidebarWidth(width: number): number {
                   {{ effortLabels[effort] }}
                 </option>
               </select>
-              <span
-                class="composer-selector-measure"
-                aria-hidden="true"
-                v-text="currentEffortLabel"
-              ></span>
             </span>
             <button
               v-if="streaming"
