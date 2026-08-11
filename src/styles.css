@@ -427,7 +427,10 @@ button {
 }
 
 .session-new-button {
+  width: 24px;
+  height: 24px;
   flex: none;
+  padding: 4px;
   color: var(--muted);
 }
 
