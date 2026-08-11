@@ -601,7 +601,7 @@ button {
 .composer-area {
   border-top: 1px solid var(--border);
   background: var(--canvas);
-  padding: 6px;
+  padding: 6px 8px 8px 6px;
 }
 
 .empty-session .composer-area,
