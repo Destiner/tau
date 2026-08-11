@@ -417,7 +417,7 @@ button {
 }
 
 .session-pane.empty-session {
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .session-header {
@@ -616,6 +616,7 @@ button {
 .empty-session .composer textarea {
   max-height: none;
   flex: 1;
+  padding-top: 16px;
 }
 
 .status {

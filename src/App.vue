@@ -736,11 +736,7 @@ function clampSidebarWidth(width: number): number {
     </aside>
 
     <main class="session-pane" :class="{ 'empty-session': sessionIsEmpty }">
-      <header
-        v-if="!sessionIsEmpty"
-        class="session-header"
-        @mousedown="handleTitlebarMouseDown"
-      >
+      <header class="session-header" @mousedown="handleTitlebarMouseDown">
         <div class="session-heading">
           <h1>{{ sessionTitle }}</h1>
         </div>
