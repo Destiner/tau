@@ -480,6 +480,35 @@ export function useTau() {
     }
   }
 
+  async function reorderProjects(fromIndex: number, toIndex: number) {
+    const workspace = state.workspace;
+    if (
+      !workspace ||
+      fromIndex < 0 ||
+      fromIndex >= workspace.projects.length ||
+      toIndex < 0 ||
+      toIndex >= workspace.projects.length ||
+      fromIndex === toIndex
+    ) {
+      return;
+    }
+
+    const projects = [...workspace.projects];
+    const [project] = projects.splice(fromIndex, 1);
+    if (!project) return;
+    projects.splice(toIndex, 0, project);
+    state.workspace = { ...workspace, projects };
+
+    try {
+      state.workspace = await invoke<WorkspaceSnapshot>("reorder_projects", {
+        projectPaths: projects.map((candidate) => candidate.path),
+      });
+    } catch (error) {
+      state.workspace = workspace;
+      setActiveError(error);
+    }
+  }
+
   async function removeProject(project: ProjectSummary) {
     const projectControllers = state.controllers.filter(
       (controller) => controller.projectPath === project.path,
@@ -754,6 +783,7 @@ export function useTau() {
     submitRemoteConnection,
     chooseRemoteDirectory,
     toggleProject,
+    reorderProjects,
     removeProject,
     archiveSession,
     newSession,

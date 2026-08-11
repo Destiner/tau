@@ -1082,6 +1082,47 @@ describe("extension UI protocol", () => {
   });
 });
 
+describe("project ordering", () => {
+  it("persists the complete reordered project path list", async () => {
+    const projects = ["alpha", "beta", "gamma"].map(
+      (name, index): ProjectSummary => ({
+        path: `/tmp/${name}`,
+        name,
+        workingDirectory: `/tmp/${name}`,
+        collapsed: false,
+        selected: index === 0,
+        sessions: [],
+      }),
+    );
+    const workspace: WorkspaceSnapshot = {
+      activeProjectPath: projects[0]?.path ?? "",
+      piPath: "/usr/local/bin/pi",
+      sdkAvailable: true,
+      projects,
+    };
+    const reordered = {
+      ...workspace,
+      projects: [projects[1], projects[2], projects[0]].filter(
+        (project): project is ProjectSummary => Boolean(project),
+      ),
+    };
+    mocks.workspace = workspace;
+    const tau = useTau();
+    tau.state.workspace = workspace;
+    vi.mocked(invoke).mockClear();
+    vi.mocked(invoke).mockResolvedValueOnce(reordered);
+
+    await tau.reorderProjects(0, 2);
+
+    expect(
+      tau.state.workspace?.projects.map((project) => project.name),
+    ).toEqual(["beta", "gamma", "alpha"]);
+    expect(invoke).toHaveBeenCalledWith("reorder_projects", {
+      projectPaths: ["/tmp/beta", "/tmp/gamma", "/tmp/alpha"],
+    });
+  });
+});
+
 function emitRpc(
   controller: { runtimeId: string; generation: number },
   value: unknown,

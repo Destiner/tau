@@ -5,6 +5,7 @@ defineProps<{
     | "chevron"
     | "cross"
     | "folder"
+    | "grip"
     | "plus"
     | "stop"
     | "triangle"
@@ -18,6 +19,10 @@ defineProps<{
     <path v-else-if="name === 'chevron'" d="m7 5 5 5-5 5" />
     <path v-else-if="name === 'cross'" d="m5.5 5.5 9 9m0-9-9 9" />
     <path v-else-if="name === 'folder'" d="M2.5 5.5h5l1.5 2h8.5v8h-15z" />
+    <path
+      v-else-if="name === 'grip'"
+      d="M7 5h.01M13 5h.01M7 10h.01M13 10h.01M7 15h.01M13 15h.01"
+    />
     <path v-else-if="name === 'plus'" d="M10 4v12M4 10h12" />
     <path v-else-if="name === 'stop'" d="M5 5h10v10H5z" />
     <path v-else-if="name === 'triangle'" d="M5 4.5 15.5 10 5 15.5Z" />

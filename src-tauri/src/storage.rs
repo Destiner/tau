@@ -9,7 +9,7 @@ use crate::{
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::{self, File},
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
@@ -143,6 +143,11 @@ pub fn set_project_collapsed(path: String, collapsed: bool) -> Result<WorkspaceS
         project.collapsed = collapsed;
         Ok(())
     })
+}
+
+#[tauri::command]
+pub fn reorder_projects(project_paths: Vec<String>) -> Result<WorkspaceSnapshot, String> {
+    mutate_projects(|registry| reorder_project_records(&mut registry.projects, &project_paths))
 }
 
 #[tauri::command]
@@ -316,6 +321,42 @@ fn archive_local_session(
     if registry.active_session_id == session_id {
         registry.active_session_id.clear();
     }
+    Ok(())
+}
+
+fn reorder_project_records(
+    projects: &mut Vec<ProjectRecord>,
+    project_paths: &[String],
+) -> Result<(), String> {
+    const INVALID_ORDER: &str = "Project order must include every imported project exactly once.";
+    if projects.len() != project_paths.len() {
+        return Err(INVALID_ORDER.into());
+    }
+
+    let reordered = {
+        let projects_by_path = projects
+            .iter()
+            .map(|project| (project.path.as_str(), project))
+            .collect::<HashMap<_, _>>();
+        if projects_by_path.len() != projects.len() {
+            return Err(INVALID_ORDER.into());
+        }
+
+        let mut seen = HashSet::with_capacity(project_paths.len());
+        let mut reordered = Vec::with_capacity(project_paths.len());
+        for path in project_paths {
+            if !seen.insert(path.as_str()) {
+                return Err(INVALID_ORDER.into());
+            }
+            let project = projects_by_path
+                .get(path.as_str())
+                .ok_or_else(|| INVALID_ORDER.to_string())?;
+            reordered.push((*project).clone());
+        }
+        reordered
+    };
+
+    *projects = reordered;
     Ok(())
 }
 
@@ -819,6 +860,52 @@ mod tests {
         archive_remote_session(&mut remote, "remote-session").expect("archive remote session");
         assert!(remote.sessions[0].archived);
         assert!(remote.active_session_id.is_empty());
+    }
+
+    #[test]
+    fn project_order_requires_every_project_exactly_once() {
+        let mut projects = vec![
+            ProjectRecord {
+                path: "/tmp/alpha".into(),
+                collapsed: false,
+                remote: None,
+            },
+            ProjectRecord {
+                path: "/tmp/beta".into(),
+                collapsed: true,
+                remote: None,
+            },
+            ProjectRecord {
+                path: "/tmp/gamma".into(),
+                collapsed: false,
+                remote: None,
+            },
+        ];
+
+        reorder_project_records(
+            &mut projects,
+            &["/tmp/gamma".into(), "/tmp/alpha".into(), "/tmp/beta".into()],
+        )
+        .expect("valid project order");
+        assert_eq!(
+            projects
+                .iter()
+                .map(|project| project.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["/tmp/gamma", "/tmp/alpha", "/tmp/beta"]
+        );
+        assert!(projects[2].collapsed);
+
+        let previous = projects.clone();
+        let error = reorder_project_records(
+            &mut projects,
+            &["/tmp/gamma".into(), "/tmp/gamma".into(), "/tmp/beta".into()],
+        )
+        .expect_err("duplicate project order");
+        assert!(error.contains("exactly once"));
+        assert_eq!(projects[0].path, previous[0].path);
+        assert_eq!(projects[1].path, previous[1].path);
+        assert_eq!(projects[2].path, previous[2].path);
     }
 
     #[test]

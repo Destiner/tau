@@ -24,6 +24,7 @@ pub fn run() {
             storage::load_workspace,
             storage::register_session,
             storage::remove_project,
+            storage::reorder_projects,
             storage::set_active_project,
             storage::set_active_session,
             storage::set_project_collapsed,

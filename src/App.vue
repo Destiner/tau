@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import Sortable, { type SortableEvent } from "sortablejs";
 import {
   computed,
   nextTick,
@@ -33,12 +34,14 @@ const MAX_SIDEBAR_WIDTH = 480;
 const transcript = ref<HTMLElement>();
 const composerInput = ref<HTMLTextAreaElement>();
 const projectMenu = ref<HTMLElement>();
+const projectList = ref<HTMLElement>();
 const sidebar = ref<HTMLElement>();
 const remoteConnectionInput = ref<HTMLInputElement>();
 const remoteDirectoryFilterInput = ref<HTMLInputElement>();
 const extensionDialogInput = ref<HTMLInputElement | HTMLTextAreaElement>();
 const extensionDialogPrimaryAction = ref<HTMLButtonElement>();
 const projectMenuOpen = ref(false);
+const projectDragging = ref(false);
 const commandSelectedIndex = ref(0);
 const extensionDialogSelectedIndex = ref(0);
 const sidebarWidth = ref(loadSidebarWidth());
@@ -46,6 +49,7 @@ const resizingSidebar = ref(false);
 const pinnedToBottom = ref(true);
 const transcriptWindowStart = ref(0);
 const shiftingWindow = ref(false);
+let projectSortable: Sortable | undefined;
 const {
   state,
   activeProject,
@@ -77,6 +81,7 @@ const {
   submitRemoteConnection,
   chooseRemoteDirectory,
   toggleProject,
+  reorderProjects,
   removeProject,
   archiveSession,
   newSession,
@@ -170,11 +175,13 @@ const remoteDirectoryOptions = computed(() => {
 
 onMounted(() => {
   void initialize();
+  setupProjectReordering();
   void nextTick(resizeComposer);
   document.addEventListener("pointerdown", handleDocumentPointerDown);
   document.addEventListener("keydown", handleDocumentKeydown);
 });
 onBeforeUnmount(() => {
+  projectSortable?.destroy();
   dispose();
   document.removeEventListener("pointerdown", handleDocumentPointerDown);
   document.removeEventListener("keydown", handleDocumentKeydown);
@@ -372,6 +379,31 @@ function handleEffortChange(event: Event) {
 
 function handleNewSession() {
   if (activeProject.value) void newSession(activeProject.value);
+}
+
+function setupProjectReordering() {
+  if (!projectList.value) return;
+  projectSortable = Sortable.create(projectList.value, {
+    animation: 180,
+    handle: ".project-drag-handle",
+    draggable: ".project-group",
+    ghostClass: "project-sortable-ghost",
+    chosenClass: "project-sortable-chosen",
+    dragClass: "project-sortable-drag",
+    forceFallback: true,
+    fallbackOnBody: true,
+    fallbackTolerance: 3,
+    onStart: () => {
+      projectDragging.value = true;
+    },
+    onEnd: finishProjectReordering,
+  });
+}
+
+function finishProjectReordering(event: SortableEvent) {
+  projectDragging.value = false;
+  if (event.oldIndex === undefined || event.newIndex === undefined) return;
+  void reorderProjects(event.oldIndex, event.newIndex);
 }
 
 function startSidebarResize(event: PointerEvent) {
@@ -610,15 +642,28 @@ function clampSidebarWidth(width: number): number {
         @dblclick="handleTitlebarDoubleClick"
       ></header>
 
-      <div class="project-list">
-        <template
+      <div
+        ref="projectList"
+        class="project-list"
+        :class="{ 'project-dragging': projectDragging }"
+      >
+        <div
           v-for="project in state.workspace?.projects"
           :key="project.path"
+          class="project-group"
+          :data-id="project.path"
         >
           <div
             class="project-row"
             :class="{ selected: project.path === state.activeProjectPath }"
           >
+            <span
+              class="project-drag-handle"
+              title="Drag to reorder"
+              aria-hidden="true"
+            >
+              <UiIcon name="grip" />
+            </span>
             <button
               class="project-toggle"
               type="button"
@@ -700,7 +745,7 @@ function clampSidebarWidth(width: number): number {
               No active sessions
             </div>
           </div>
-        </template>
+        </div>
 
         <div
           v-if="state.workspace && state.workspace.projects.length === 0"
