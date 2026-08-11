@@ -550,17 +550,31 @@ function scrollSelectedRemoteDirectory() {
 }
 
 function handleTitlebarMouseDown(event: MouseEvent) {
-  if (event.button !== 0) return;
-  const target = event.target;
   if (
-    !(target instanceof Element) ||
-    target.closest("button, a, input, select, textarea")
+    event.button !== 0 ||
+    event.detail > 1 ||
+    isTitlebarControl(event.target)
   ) {
     return;
   }
   void getCurrentWindow()
     .startDragging()
     .catch(() => undefined);
+}
+
+function handleTitlebarDoubleClick(event: MouseEvent) {
+  if (event.button !== 0 || isTitlebarControl(event.target)) return;
+  event.preventDefault();
+  void getCurrentWindow()
+    .toggleMaximize()
+    .catch(() => undefined);
+}
+
+function isTitlebarControl(target: EventTarget | null): boolean {
+  return (
+    !(target instanceof Element) ||
+    Boolean(target.closest("button, a, input, select, textarea"))
+  );
 }
 
 function loadSidebarWidth(): number {
@@ -593,6 +607,7 @@ function clampSidebarWidth(width: number): number {
       <header
         class="sidebar-titlebar"
         @mousedown="handleTitlebarMouseDown"
+        @dblclick="handleTitlebarDoubleClick"
       ></header>
 
       <div class="project-list">
@@ -739,7 +754,11 @@ function clampSidebarWidth(width: number): number {
     </aside>
 
     <main class="session-pane" :class="{ 'empty-session': sessionIsEmpty }">
-      <header class="session-header" @mousedown="handleTitlebarMouseDown">
+      <header
+        class="session-header"
+        @mousedown="handleTitlebarMouseDown"
+        @dblclick="handleTitlebarDoubleClick"
+      >
         <div class="session-heading">
           <h1>{{ sessionTitle }}</h1>
         </div>
