@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CommandOption } from "../types";
 import {
-  commandCompletion,
+  commandInvocation,
   filterCommands,
   slashCommandQuery,
 } from "./commands";
@@ -42,7 +42,7 @@ describe("slash command completion", () => {
     ]);
   });
 
-  it("expands a command with a trailing space instead of submitting it", () => {
-    expect(commandCompletion(commands[0])).toBe("/session-name ");
+  it("formats a command for immediate invocation", () => {
+    expect(commandInvocation(commands[0])).toBe("/session-name");
   });
 });

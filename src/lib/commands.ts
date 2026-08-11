@@ -30,8 +30,8 @@ export function filterCommands(
     .map(({ command }) => command);
 }
 
-export function commandCompletion(command: CommandOption): string {
-  return `/${command.name} `;
+export function commandInvocation(command: CommandOption): string {
+  return `/${command.name}`;
 }
 
 function fuzzyScore(value: string, query: string): number | null {

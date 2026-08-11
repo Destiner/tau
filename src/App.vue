@@ -13,7 +13,7 @@ import PiSpinner from "./components/PiSpinner.vue";
 import UiIcon from "./components/UiIcon.vue";
 import { useTau } from "./composables/useTau";
 import {
-  commandCompletion,
+  commandInvocation,
   filterCommands,
   slashCommandQuery,
 } from "./lib/commands";
@@ -332,7 +332,7 @@ function handleComposerKeydown(event: KeyboardEvent) {
     }
     if (event.key === "Enter") {
       event.preventDefault();
-      if (selectedCommand.value) applyCommand(selectedCommand.value);
+      if (selectedCommand.value) executeCommand(selectedCommand.value);
       return;
     }
   }
@@ -348,15 +348,10 @@ function handleSendMessage() {
   void sendMessage();
 }
 
-function applyCommand(command: CommandOption) {
-  draft.value = commandCompletion(command);
+function executeCommand(command: CommandOption) {
+  draft.value = commandInvocation(command);
   commandSelectedIndex.value = 0;
-  void nextTick(() => {
-    const input = composerInput.value;
-    input?.focus();
-    input?.setSelectionRange(draft.value.length, draft.value.length);
-    resizeComposer();
-  });
+  handleSendMessage();
 }
 
 function scrollSelectedCommand() {
@@ -968,7 +963,7 @@ function clampSidebarWidth(width: number): number {
               :aria-selected="index === commandSelectedIndex"
               @mousedown.prevent
               @mouseenter="commandSelectedIndex = index"
-              @click="applyCommand(command)"
+              @click="executeCommand(command)"
             >
               <span class="command-copy">
                 <span class="command-name">/{{ command.name }}</span>
