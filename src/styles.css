@@ -452,6 +452,7 @@ button {
 
 .transcript {
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -490,6 +491,7 @@ button {
 }
 
 .user-bubble {
+  overflow-wrap: anywhere;
   max-width: min(78%, 650px);
   border-radius: 7px;
   background: var(--user);
