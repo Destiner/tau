@@ -25,7 +25,7 @@
   --faint: #a4a49d;
   --danger: #a6433c;
   --status-new: #4e84d8;
-  --status-draft: #d2aa62;
+  --status-draft: #b7b8b4;
   --status-working: #b7b8b4;
   --user: #ecece8;
 }
@@ -417,7 +417,7 @@ button {
 }
 
 .session-indicator.draft {
-  background: var(--status-draft);
+  border: 1.5px solid var(--status-draft);
   opacity: 1;
 }
 
@@ -1288,7 +1288,7 @@ textarea:disabled {
     --faint: #73746f;
     --danger: #e07971;
     --status-new: #70a4ee;
-    --status-draft: #d0aa68;
+    --status-draft: #858782;
     --status-working: #858782;
     --user: #343536;
   }
