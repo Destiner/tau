@@ -76,6 +76,76 @@ test("keeps streaming output pinned to the end", async ({ page }) => {
   await expect(page.locator('[data-index="4999"]')).toBeVisible();
 });
 
+test("stops following output once the reader scrolls back", async ({
+  page,
+}) => {
+  const transcript = page.getByLabel("Tau transcript");
+  await page.evaluate(() => {
+    window.__TAU_TRANSCRIPT_FIXTURE__?.scrollToEnd();
+  });
+  await expect.poll(() => transcript.evaluate(distanceFromEnd)).toBeLessThan(2);
+
+  await transcript.hover();
+  await page.mouse.wheel(0, -400);
+  await page.waitForTimeout(150);
+
+  const before = await transcript.evaluate(anchorSnapshot);
+  expect(before).not.toBeNull();
+
+  await page.evaluate(() => {
+    window.__TAU_TRANSCRIPT_FIXTURE__?.appendMessage();
+  });
+  await page.evaluate(() =>
+    window.__TAU_TRANSCRIPT_FIXTURE__?.streamLatest(18),
+  );
+  await page.waitForTimeout(150);
+
+  const after = await transcript.evaluate(anchorSnapshot);
+  expect(after?.id).toBe(before?.id);
+  expect(Math.abs((after?.offset ?? 0) - (before?.offset ?? 0))).toBeLessThan(
+    2,
+  );
+  expect(await transcript.evaluate(distanceFromEnd)).toBeGreaterThan(100);
+});
+
+test("follows output again once the reader returns to the end", async ({
+  page,
+}) => {
+  const transcript = page.getByLabel("Tau transcript");
+  await transcript.hover();
+  await page.mouse.wheel(0, -400);
+  await page.waitForTimeout(150);
+  expect(await transcript.evaluate(distanceFromEnd)).toBeGreaterThan(100);
+
+  await page.mouse.wheel(0, 2000);
+  await expect.poll(() => transcript.evaluate(distanceFromEnd)).toBeLessThan(2);
+
+  await page.evaluate(() =>
+    window.__TAU_TRANSCRIPT_FIXTURE__?.streamLatest(18),
+  );
+
+  await expect.poll(() => transcript.evaluate(distanceFromEnd)).toBeLessThan(2);
+});
+
+test("follows output again after the reader sends", async ({ page }) => {
+  const transcript = page.getByLabel("Tau transcript");
+  await transcript.hover();
+  await page.mouse.wheel(0, -400);
+  await page.waitForTimeout(150);
+  expect(await transcript.evaluate(distanceFromEnd)).toBeGreaterThan(100);
+
+  await page.evaluate(() => {
+    window.__TAU_TRANSCRIPT_FIXTURE__?.scrollToEnd();
+  });
+  await expect.poll(() => transcript.evaluate(distanceFromEnd)).toBeLessThan(2);
+
+  await page.evaluate(() =>
+    window.__TAU_TRANSCRIPT_FIXTURE__?.streamLatest(18),
+  );
+
+  await expect.poll(() => transcript.evaluate(distanceFromEnd)).toBeLessThan(2);
+});
+
 test("keeps frame delivery and mounted rows bounded during a full sweep", async ({
   page,
   browserName,
