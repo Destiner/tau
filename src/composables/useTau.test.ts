@@ -810,6 +810,280 @@ describe("session replacement hardening", () => {
     tau.dispose();
   });
 
+  it("registers a session an extension command spawns without echoing the command", async () => {
+    const { secondController, secondSession, project, tau } =
+      await setupExtensionControllers();
+    secondController.commands = [{ name: "mock", source: "extension" }];
+    secondController.commandsLoaded = true;
+
+    tau.draft.value = "/mock 42";
+    await tau.sendMessage();
+
+    expect(secondController.messages).toEqual([]);
+    expect(secondController.lastUserMessageAt).toBe(0);
+    const promptRequest = sentRequests(secondController, "prompt")[0];
+    expect(promptRequest?.message).toBe("/mock 42");
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.some(([command]) => command === "register_session"),
+    ).toBe(false);
+
+    const phaseSession = { ...savedSession("plan-phase"), title: "42 • plan" };
+    mocks.workspace = {
+      ...(mocks.workspace as WorkspaceSnapshot),
+      projects: [{ ...project, sessions: [secondSession, phaseSession] }],
+    };
+    emitRpc(secondController, {
+      id: promptRequest?.id,
+      type: "response",
+      command: "prompt",
+      success: true,
+    });
+    await vi.waitFor(() => {
+      expect(sentRequests(secondController, "get_state")).toHaveLength(1);
+    });
+
+    emitRpc(secondController, {
+      id: sentRequests(secondController, "get_state")[0]?.id,
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: {
+        model: { provider: "provider", id: "alpha", name: "Alpha" },
+        thinkingLevel: "high",
+        sessionId: phaseSession.id,
+        sessionFile: phaseSession.path,
+        sessionName: phaseSession.title,
+        isStreaming: false,
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(secondController.sessionId).toBe(phaseSession.id);
+      expect(tau.state.activeSessionId).toBe(phaseSession.id);
+    });
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.some(
+          ([command, args]) =>
+            command === "register_session" &&
+            (args as { sessionId?: string })?.sessionId === phaseSession.id,
+        ),
+    ).toBe(true);
+    expect(secondController.messages).toEqual([]);
+    tau.dispose();
+  });
+
+  it("registers only the spawned session when a command starts a new session", async () => {
+    const { project, tau } = await setupExtensionControllers();
+    await tau.newSession(project);
+    const controller = tau.state.controllers.find(
+      (candidate) => candidate.phantom,
+    );
+    if (!controller) throw new Error("Expected a phantom controller");
+    controller.starting = false;
+    controller.ready = true;
+    controller.commands = [{ name: "mock", source: "extension" }];
+    controller.commandsLoaded = true;
+    controller.currentEffort = "high";
+    vi.mocked(invoke).mockClear();
+
+    tau.draft.value = "/mock 42";
+    await tau.sendMessage();
+
+    expect(controller.messages).toEqual([]);
+    emitRpc(controller, {
+      id: controller.pendingPrompt?.stateRequestId,
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: {
+        model: { provider: "provider", id: "alpha", name: "Alpha" },
+        thinkingLevel: "high",
+        sessionId: "unwritten",
+        sessionFile: "/tmp/unwritten.jsonl",
+        sessionName: "",
+        isStreaming: false,
+      },
+    });
+    await vi.waitFor(() => {
+      expect(controller.pendingPrompt?.messagesRequestId).not.toBe("");
+    });
+
+    // Pi never writes a session that holds no assistant message, so the
+    // session the command replaces must not reach the workspace.
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.some(([command]) => command === "register_session"),
+    ).toBe(false);
+
+    emitRpc(controller, {
+      id: controller.pendingPrompt?.messagesRequestId,
+      type: "response",
+      command: "get_messages",
+      success: true,
+      data: { messages: [] },
+    });
+    await vi.waitFor(() => {
+      expect(sentRequests(controller, "prompt")).toHaveLength(1);
+    });
+    expect(controller.messages).toEqual([]);
+
+    const phaseSession = { ...savedSession("plan-phase"), title: "42 • plan" };
+    mocks.workspace = {
+      ...(mocks.workspace as WorkspaceSnapshot),
+      projects: [{ ...project, sessions: [...project.sessions, phaseSession] }],
+    };
+    emitRpc(controller, {
+      id: sentRequests(controller, "prompt")[0]?.id,
+      type: "response",
+      command: "prompt",
+      success: true,
+    });
+    await vi.waitFor(() => {
+      expect(sentRequests(controller, "get_state")).toHaveLength(2);
+    });
+    emitRpc(controller, {
+      id: sentRequests(controller, "get_state")[1]?.id,
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: {
+        model: { provider: "provider", id: "alpha", name: "Alpha" },
+        thinkingLevel: "high",
+        sessionId: phaseSession.id,
+        sessionFile: phaseSession.path,
+        sessionName: phaseSession.title,
+        isStreaming: false,
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.filter(([command]) => command === "register_session"),
+      ).toHaveLength(1);
+    });
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.find(([command]) => command === "register_session")?.[1],
+    ).toMatchObject({ sessionId: phaseSession.id });
+    expect(controller.sessionId).toBe(phaseSession.id);
+    expect(controller.phantom).toBe(false);
+
+    // The row for the replaced session must not outlive the command that
+    // replaced it, or it lingers as a session nobody can open.
+    const registered = tau.state.workspace?.projects[0];
+    if (!registered) throw new Error("Expected the registered project");
+    const titles = tau.projectSessions(registered).map((item) => item.title);
+    expect(titles).toContain("42 • plan");
+    expect(titles).not.toContain("/mock 42");
+    tau.dispose();
+  });
+
+  it("detects a phase session opened after the run settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const { firstController, firstSession, secondController, project, tau } =
+        await setupExtensionControllers();
+      firstController.streaming = true;
+      firstController.working = true;
+
+      emitRpc(firstController, { type: "agent_settled" });
+      await vi.waitFor(() => {
+        expect(sentRequests(firstController, "get_state")).toHaveLength(1);
+      });
+      emitRpc(firstController, {
+        id: sentRequests(firstController, "get_state")[0]?.id,
+        type: "response",
+        command: "get_state",
+        success: true,
+        data: {
+          model: { provider: "provider", id: "alpha", name: "Alpha" },
+          thinkingLevel: "high",
+          sessionId: firstSession.id,
+          sessionFile: firstSession.path,
+          sessionName: firstSession.title,
+          isStreaming: false,
+        },
+      });
+      await vi.waitFor(() => {
+        expect(sentRequests(firstController, "get_messages")).toHaveLength(1);
+      });
+      emitRpc(firstController, {
+        id: sentRequests(firstController, "get_messages")[0]?.id,
+        type: "response",
+        command: "get_messages",
+        success: true,
+        data: { messages: [] },
+      });
+
+      // The runtime stays alive while the workflow may still open its next
+      // session, even though nothing is selecting this hidden controller.
+      await vi.advanceTimersByTimeAsync(140);
+      expect(
+        vi.mocked(invoke).mock.calls.some(([command]) => command === "stop_pi"),
+      ).toBe(false);
+
+      const phaseSession = {
+        ...savedSession("execute-phase"),
+        title: "42 • execute",
+      };
+      mocks.workspace = {
+        ...(mocks.workspace as WorkspaceSnapshot),
+        projects: [{ ...project, sessions: [firstSession, phaseSession] }],
+      };
+      await vi.advanceTimersByTimeAsync(60);
+      const probeRequest = sentRequests(firstController, "get_state")[1];
+      expect(probeRequest).toBeDefined();
+
+      emitRpc(firstController, {
+        id: probeRequest?.id,
+        type: "response",
+        command: "get_state",
+        success: true,
+        data: {
+          model: { provider: "provider", id: "alpha", name: "Alpha" },
+          thinkingLevel: "high",
+          sessionId: phaseSession.id,
+          sessionFile: phaseSession.path,
+          sessionName: phaseSession.title,
+          isStreaming: false,
+        },
+      });
+      await vi.waitFor(() => {
+        expect(firstController.sessionId).toBe(phaseSession.id);
+      });
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.some(
+            ([command, args]) =>
+              command === "register_session" &&
+              (args as { sessionId?: string })?.sessionId === phaseSession.id,
+          ),
+      ).toBe(true);
+      expect(tau.state.activeControllerKey).toBe(secondController.key);
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.some(([command]) => command === "set_active_session"),
+      ).toBe(false);
+
+      // A detected replacement ends the watch instead of polling it out.
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(sentRequests(firstController, "get_state")).toHaveLength(2);
+      tau.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("uses an identity-only state request for an unchanged agent run", async () => {
     const { secondController, secondSession, tau } =
       await setupExtensionControllers();

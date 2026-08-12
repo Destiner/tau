@@ -48,6 +48,7 @@ interface EphemeralSession extends SessionSummary {
 interface PendingPrompt {
   message: string;
   optimisticId: string;
+  command: boolean;
   stateRequestId: string;
   messagesRequestId: string;
   selectedModelProvider: string;
@@ -90,6 +91,9 @@ interface SessionController {
   bootstrapStateRequestId: string;
   runStateRequestId: string;
   startMessagesRequestId: string;
+  commandPromptRequestId: string;
+  commandSyncRequestId: string;
+  replacementProbeRequestId: string;
   connectingRemote: boolean;
   syncing: boolean;
   evictAfterHydration: boolean;
@@ -135,6 +139,15 @@ const state = reactive({
   requestSequence: 0,
 });
 
+/**
+ * Pi has no session-replacement event, and a `get_state` sent the moment a run
+ * settles still reports the outgoing session because extensions swap sessions
+ * from a deferred callback. These delays re-check session identity after the
+ * moments a replacement can happen, so a spawned phase session is registered
+ * without waiting for its first user message.
+ */
+const replacementProbeDelays = [150, 450, 1_000, 2_000, 3_200];
+
 let unlisten: UnlistenFn | undefined;
 let phantomSequence = 0;
 let controllerSequence = 0;
@@ -142,6 +155,10 @@ let remoteRetry: RemoteRetry | undefined;
 const extensionDialogTimeouts = new Map<
   string,
   ReturnType<typeof setTimeout>
+>();
+const replacementProbeTimers = new Map<
+  string,
+  ReturnType<typeof setTimeout>[]
 >();
 const extensionNotificationTimeouts = new Map<
   string,
@@ -316,6 +333,9 @@ export function useTau() {
   function dispose() {
     unlisten?.();
     unlisten = undefined;
+    for (const controller of state.controllers) {
+      clearSessionReplacementWatch(controller);
+    }
     clearExtensionUiState();
   }
 
@@ -658,30 +678,32 @@ export function useTau() {
       return;
     }
 
-    markUserMessageSubmitted(controller);
+    const command = invokesExtensionCommand(controller, message);
+    if (!command) markUserMessageSubmitted(controller);
 
     if (controller.phantom) {
-      await sendPhantomMessage(controller, message);
+      await sendPhantomMessage(controller, message, command);
       return;
     }
 
     controller.draft = "";
     controller.working = true;
-    controller.messages.push({
-      id: `optimistic-user-${Date.now()}`,
-      kind: "user",
-      text: message,
-    });
+    if (!command) {
+      controller.messages.push({
+        id: `optimistic-user-${Date.now()}`,
+        kind: "user",
+        text: message,
+      });
+    }
     controller.status = "";
     try {
-      await rpc(controller, {
-        id: nextRequestId("prompt"),
-        type: "prompt",
-        message,
-      });
-      await registerConnectedSession(controller);
+      const requestId = nextRequestId("prompt");
+      if (command) controller.commandPromptRequestId = requestId;
+      await rpc(controller, { id: requestId, type: "prompt", message });
+      if (!command) await registerConnectedSession(controller);
     } catch (error) {
       controller.working = false;
+      controller.commandPromptRequestId = "";
       setControllerError(controller, error);
     }
   }
@@ -806,6 +828,7 @@ export function useTau() {
 async function sendPhantomMessage(
   controller: SessionController,
   message: string,
+  command: boolean,
 ) {
   const project = state.workspace?.projects.find(
     (item) => item.path === controller.projectPath,
@@ -816,6 +839,7 @@ async function sendPhantomMessage(
   controller.pendingPrompt = {
     message,
     optimisticId,
+    command,
     stateRequestId: "",
     messagesRequestId: "",
     selectedModelProvider: controller.currentModelProvider,
@@ -827,7 +851,9 @@ async function sendPhantomMessage(
   };
   controller.draft = "";
   controller.working = true;
-  controller.messages.push({ id: optimisticId, kind: "user", text: message });
+  if (!command) {
+    controller.messages.push({ id: optimisticId, kind: "user", text: message });
+  }
   controller.status = "";
 
   if (controller.ready && controller.generation) {
@@ -854,7 +880,11 @@ async function startController(
   controller.bootstrapStateRequestId = "";
   controller.runStateRequestId = "";
   controller.startMessagesRequestId = "";
+  controller.commandPromptRequestId = "";
+  controller.commandSyncRequestId = "";
+  controller.replacementProbeRequestId = "";
   controller.evictAfterHydration = false;
+  clearSessionReplacementWatch(controller);
   if (!preserveMessages && controller.messages.length === 0) {
     controller.messages = [];
   }
@@ -969,6 +999,9 @@ async function respondToExtensionDialog(
   }
   try {
     await rpc(controller, response);
+    // An answered dialog is a common point for a workflow to open its next
+    // session, and that swap is not reported by any event.
+    watchSessionReplacement(controller);
   } catch (error) {
     setControllerError(controller, error);
   }
@@ -1190,6 +1223,7 @@ async function handleBridgeEvent(event: PiBridgeEvent) {
     return;
   }
   if (event.kind === "exited") {
+    clearSessionReplacementWatch(controller);
     discardControllerDialogs(controller, event.generation);
     const message =
       event.code === 0
@@ -1229,6 +1263,7 @@ async function handleRpc(controller: SessionController, value: unknown) {
     return;
   }
   if (type === "agent_start") {
+    clearSessionReplacementWatch(controller);
     controller.streaming = true;
     controller.stopping = false;
     controller.working = true;
@@ -1287,6 +1322,7 @@ async function handleRpc(controller: SessionController, value: unknown) {
       controller.unread = true;
       controller.evictAfterHydration = true;
     }
+    watchSessionReplacement(controller);
     await rpc(controller, {
       id: nextRequestId("settled-state"),
       type: "get_state",
@@ -1313,6 +1349,28 @@ async function handleResponse(
     Boolean(controller.runStateRequestId) &&
     responseId === controller.runStateRequestId;
   if (resolvesRunState) controller.runStateRequestId = "";
+  const resolvesReplacementProbe =
+    command === "get_state" &&
+    Boolean(controller.replacementProbeRequestId) &&
+    responseId === controller.replacementProbeRequestId;
+  if (resolvesReplacementProbe) controller.replacementProbeRequestId = "";
+  const resolvesCommandSync =
+    command === "get_state" &&
+    Boolean(controller.commandSyncRequestId) &&
+    responseId === controller.commandSyncRequestId;
+  if (resolvesCommandSync) controller.commandSyncRequestId = "";
+  if (
+    command === "prompt" &&
+    Boolean(controller.commandPromptRequestId) &&
+    responseId === controller.commandPromptRequestId
+  ) {
+    controller.commandPromptRequestId = "";
+    if (response.success === true) {
+      controller.working = controller.streaming;
+      await syncAfterCommand(controller);
+      return;
+    }
+  }
   if (response.success !== true) {
     const error = asRecord(response.error);
     controller.status =
@@ -1393,6 +1451,7 @@ async function handleResponse(
     }
 
     if (sessionChanged) {
+      clearSessionReplacementWatch(controller);
       controller.messages = [];
       controller.models = [];
       controller.efforts = [];
@@ -1406,7 +1465,11 @@ async function handleResponse(
     if (
       controller.sessionId &&
       controller.sessionPath &&
-      (!resolvesRunState || sessionChanged)
+      (!resolvesRunState || sessionChanged) &&
+      // A command's session is not final until Pi finishes handling it, so
+      // registering now would record a session the command is about to
+      // replace, and Pi never writes one that holds no assistant message.
+      !(resolvesPending && pending?.command)
     ) {
       await registerConnectedSession(controller);
     }
@@ -1418,6 +1481,13 @@ async function handleResponse(
       return;
     }
     if (resolvesRunState && !sessionChanged) return;
+    if (resolvesReplacementProbe && !sessionChanged) {
+      if (!watchingSessionReplacement(controller)) {
+        maybeEvictController(controller);
+      }
+      return;
+    }
+    if (resolvesCommandSync && controller.streaming && !sessionChanged) return;
 
     if (sessionChanged) {
       await rpc(controller, {
@@ -1474,6 +1544,7 @@ async function handleResponse(
       !isControllerSelected(controller) &&
       !controller.streaming &&
       !controller.working &&
+      !watchingSessionReplacement(controller) &&
       !controllerHasPendingDialog(controller)
     ) {
       controller.evictAfterHydration = false;
@@ -1624,6 +1695,7 @@ async function dispatchPendingPrompt(controller: SessionController) {
   controller.pendingPrompt = undefined;
   controller.starting = false;
   if (
+    !prompt.command &&
     !controller.messages.some((message) => message.id === prompt.optimisticId)
   ) {
     controller.messages.push({
@@ -1634,16 +1706,107 @@ async function dispatchPendingPrompt(controller: SessionController) {
   }
   controller.working = true;
   try {
+    const requestId = nextRequestId("prompt");
+    if (prompt.command) controller.commandPromptRequestId = requestId;
     await rpc(controller, {
-      id: nextRequestId("prompt"),
+      id: requestId,
       type: "prompt",
       message: prompt.message,
     });
   } catch (error) {
     controller.working = false;
+    controller.commandPromptRequestId = "";
     controller.draft = prompt.message;
     setControllerError(controller, error);
   }
+}
+
+/**
+ * Pi resolves an extension command's `prompt` only after the handler returns,
+ * so any session it opened already exists by the time this runs. Nothing else
+ * reports the swap, and the command itself never lands in the transcript.
+ */
+async function syncAfterCommand(controller: SessionController) {
+  if (controller.disposed || !controller.generation) return;
+  const requestId = nextRequestId("command-sync");
+  controller.commandSyncRequestId = requestId;
+  try {
+    await rpc(controller, { id: requestId, type: "get_state" });
+  } catch (error) {
+    controller.commandSyncRequestId = "";
+    setControllerError(controller, error);
+  }
+}
+
+function watchSessionReplacement(controller: SessionController) {
+  clearSessionReplacementWatch(controller);
+  if (controller.disposed || !controller.generation) return;
+  replacementProbeTimers.set(
+    controller.key,
+    replacementProbeDelays.map((delay, index) =>
+      setTimeout(() => {
+        void probeSessionReplacement(
+          controller,
+          index === replacementProbeDelays.length - 1,
+        );
+      }, delay),
+    ),
+  );
+}
+
+async function probeSessionReplacement(
+  controller: SessionController,
+  last: boolean,
+) {
+  if (last) replacementProbeTimers.delete(controller.key);
+  if (
+    controller.disposed ||
+    !controller.generation ||
+    controller.starting ||
+    controller.streaming ||
+    controller.working
+  ) {
+    return;
+  }
+  const requestId = nextRequestId("replacement-probe");
+  controller.replacementProbeRequestId = requestId;
+  try {
+    await rpc(controller, { id: requestId, type: "get_state" });
+  } catch {
+    controller.replacementProbeRequestId = "";
+  }
+}
+
+function clearSessionReplacementWatch(controller: SessionController) {
+  const timers = replacementProbeTimers.get(controller.key);
+  if (!timers) return;
+  replacementProbeTimers.delete(controller.key);
+  for (const timer of timers) clearTimeout(timer);
+}
+
+function watchingSessionReplacement(controller: SessionController): boolean {
+  return replacementProbeTimers.has(controller.key);
+}
+
+/**
+ * Extension commands are executed by Pi instead of being sent to the model, so
+ * they never become session entries and must not be shown as user messages.
+ */
+function invokesExtensionCommand(
+  controller: SessionController,
+  message: string,
+): boolean {
+  if (!message.startsWith("/")) return false;
+  // Pi takes the command name from the first space, so anything else is a
+  // prompt for the model even when it opens with a slash.
+  const space = message.indexOf(" ");
+  const name = space < 0 ? message.slice(1) : message.slice(1, space);
+  return (
+    Boolean(name) &&
+    controller.commands.some(
+      (command) => command.name === name && command.source === "extension",
+    )
+  );
 }
 
 async function registerConnectedSession(controller: SessionController) {
@@ -1897,6 +2060,7 @@ function removeEphemeralSession(
     const controller = controllerByKey(session.controllerKey);
     if (controller) {
       controller.disposed = true;
+      clearSessionReplacementWatch(controller);
       void stopControllerProcess(controller);
       const controllerIndex = state.controllers.indexOf(controller);
       if (controllerIndex >= 0) state.controllers.splice(controllerIndex, 1);
@@ -1910,7 +2074,9 @@ function removeProjectUiState(projectPath: string) {
     (session) => session.projectPath !== projectPath,
   );
   for (const controller of state.controllers) {
-    if (controller.projectPath === projectPath) controller.disposed = true;
+    if (controller.projectPath !== projectPath) continue;
+    controller.disposed = true;
+    clearSessionReplacementWatch(controller);
   }
   state.controllers = state.controllers.filter(
     (controller) => controller.projectPath !== projectPath,
@@ -2009,6 +2175,9 @@ function createController(
     bootstrapStateRequestId: "",
     runStateRequestId: "",
     startMessagesRequestId: "",
+    commandPromptRequestId: "",
+    commandSyncRequestId: "",
+    replacementProbeRequestId: "",
     connectingRemote: false,
     syncing: false,
     evictAfterHydration: false,
@@ -2100,6 +2269,7 @@ function maybeEvictController(controller: SessionController | undefined) {
 async function stopControllerProcess(controller: SessionController) {
   if (!controller.generation && !controller.starting) return;
   const generation = controller.generation;
+  clearSessionReplacementWatch(controller);
   discardControllerDialogs(controller, generation);
   try {
     await invoke("stop_pi", { runtimeId: controller.runtimeId });
