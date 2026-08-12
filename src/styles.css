@@ -763,18 +763,13 @@ button {
 }
 
 .command-description,
-.command-source,
-.empty-commands {
+.command-source {
   color: var(--muted);
   font-size: 10px;
 }
 
 .command-source {
   flex: none;
-}
-
-.empty-commands {
-  padding: 9px 8px;
 }
 
 .composer.disabled {

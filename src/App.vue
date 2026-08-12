@@ -111,13 +111,13 @@ const showWorkingIndicator = computed(() => {
   return messages.value[messages.value.length - 1]?.kind !== "assistant";
 });
 const commandQuery = computed(() => slashCommandQuery(draft.value));
-const commandMenuActive = computed(
-  () => canDraft.value && commandQuery.value !== null,
-);
 const filteredCommands = computed(() =>
   commandQuery.value === null
     ? []
     : filterCommands(commands.value, commandQuery.value),
+);
+const commandMenuActive = computed(
+  () => canDraft.value && filteredCommands.value.length > 0,
 );
 const selectedCommand = computed(
   () => filteredCommands.value[commandSelectedIndex.value],
@@ -945,9 +945,6 @@ function clampSidebarWidth(width: number): number {
               </span>
               <span class="command-source">{{ command.source }}</span>
             </button>
-            <div v-if="filteredCommands.length === 0" class="empty-commands">
-              No matching commands
-            </div>
           </div>
           <textarea
             ref="composerInput"
