@@ -13,7 +13,9 @@ import TranscriptView from "./components/TranscriptView.vue";
 import UiIcon from "./components/UiIcon.vue";
 import { useTau } from "./composables/useTau";
 import {
+  type CommandMenuPlacement,
   commandInvocation,
+  commandMenuLayout,
   filterCommands,
   slashCommandQuery,
 } from "./lib/commands";
@@ -25,7 +27,10 @@ const MIN_SIDEBAR_WIDTH = 200;
 const MAX_SIDEBAR_WIDTH = 480;
 
 const transcriptView = ref<InstanceType<typeof TranscriptView>>();
+const sessionHeader = ref<HTMLElement>();
+const composer = ref<HTMLElement>();
 const composerInput = ref<HTMLTextAreaElement>();
+const commandMenu = ref<HTMLElement>();
 const projectMenu = ref<HTMLElement>();
 const projectList = ref<HTMLElement>();
 const sidebar = ref<HTMLElement>();
@@ -36,6 +41,9 @@ const extensionDialogPrimaryAction = ref<HTMLButtonElement>();
 const projectMenuOpen = ref(false);
 const projectDragging = ref(false);
 const commandSelectedIndex = ref(0);
+const commandMenuPlacement = ref<CommandMenuPlacement>("above");
+const commandMenuMaxHeight = ref<number>();
+const commandMenuOffset = ref(0);
 const extensionDialogSelectedIndex = ref(0);
 const sidebarWidth = ref(loadSidebarWidth());
 const resizingSidebar = ref(false);
@@ -114,6 +122,16 @@ const filteredCommands = computed(() =>
 const selectedCommand = computed(
   () => filteredCommands.value[commandSelectedIndex.value],
 );
+const commandMenuStyle = computed(() => ({
+  maxHeight:
+    commandMenuMaxHeight.value === undefined
+      ? undefined
+      : `${commandMenuMaxHeight.value}px`,
+  top:
+    commandMenuPlacement.value === "below"
+      ? `${commandMenuOffset.value}px`
+      : undefined,
+}));
 const remoteDirectoryOptions = computed(() => {
   if (!state.remoteWorkingDirectory) return [];
   const options = [] as Array<{
@@ -160,12 +178,14 @@ onMounted(() => {
   void nextTick(resizeComposer);
   document.addEventListener("pointerdown", handleDocumentPointerDown);
   document.addEventListener("keydown", handleDocumentKeydown);
+  window.addEventListener("resize", updateCommandMenuLayout);
 });
 onBeforeUnmount(() => {
   projectSortable?.destroy();
   dispose();
   document.removeEventListener("pointerdown", handleDocumentPointerDown);
   document.removeEventListener("keydown", handleDocumentKeydown);
+  window.removeEventListener("resize", updateCommandMenuLayout);
 });
 
 watch(
@@ -217,6 +237,11 @@ watch([commandQuery, commands], () => {
   commandSelectedIndex.value = 0;
 });
 
+watch([commandMenuActive, filteredCommands, status], () => {
+  if (!commandMenuActive.value) return;
+  void nextTick(updateCommandMenuLayout);
+});
+
 watch([draft, sessionIsEmpty], () => {
   void nextTick(resizeComposer);
 });
@@ -238,6 +263,28 @@ function resizeComposer() {
     Number.isFinite(maxHeight) && element.scrollHeight > maxHeight
       ? "auto"
       : "hidden";
+}
+
+function updateCommandMenuLayout() {
+  const menu = commandMenu.value;
+  const anchor = composerInput.value;
+  const container = composer.value;
+  if (!menu || !anchor || !container) return;
+
+  const anchorStyle = getComputedStyle(anchor);
+  const anchorRect = anchor.getBoundingClientRect();
+  const layout = commandMenuLayout({
+    contentHeight: menu.scrollHeight + menu.offsetHeight - menu.clientHeight,
+    composerTop: container.getBoundingClientRect().top,
+    textTop: anchorRect.top + (Number.parseFloat(anchorStyle.paddingTop) || 0),
+    textLineHeight: Number.parseFloat(anchorStyle.lineHeight) || 0,
+    topBoundary: sessionHeader.value?.getBoundingClientRect().bottom ?? 0,
+    bottomBoundary: window.innerHeight,
+  });
+
+  commandMenuPlacement.value = layout.placement;
+  commandMenuMaxHeight.value = layout.maxHeight;
+  commandMenuOffset.value = layout.offset;
 }
 
 function handleComposerKeydown(event: KeyboardEvent) {
@@ -717,6 +764,7 @@ function clampSidebarWidth(width: number): number {
 
     <main class="session-pane" :class="{ 'empty-session': sessionIsEmpty }">
       <header
+        ref="sessionHeader"
         class="session-header"
         @mousedown="handleTitlebarMouseDown"
         @dblclick="handleTitlebarDoubleClick"
@@ -859,11 +907,19 @@ function clampSidebarWidth(width: number): number {
             </button>
           </footer>
         </form>
-        <div v-else class="composer" :class="{ disabled: !canDraft }">
+        <div
+          v-else
+          ref="composer"
+          class="composer"
+          :class="{ disabled: !canDraft }"
+        >
           <div
             v-if="commandMenuActive"
             id="command-menu"
+            ref="commandMenu"
             class="command-menu"
+            :class="commandMenuPlacement"
+            :style="commandMenuStyle"
             role="listbox"
             aria-label="Commands"
           >

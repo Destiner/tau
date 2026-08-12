@@ -707,7 +707,6 @@ button {
 .command-menu {
   position: absolute;
   z-index: 8;
-  bottom: calc(100% + 5px);
   left: 4px;
   width: min(540px, calc(100% - 8px));
   max-height: min(300px, calc(100vh - 90px));
@@ -720,11 +719,8 @@ button {
   padding: 4px;
 }
 
-.empty-session .command-menu {
-  position: static;
-  flex: none;
-  align-self: flex-start;
-  margin: 0 4px 5px;
+.command-menu.above {
+  bottom: calc(100% + 5px);
 }
 
 .command-option {

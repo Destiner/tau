@@ -1,5 +1,62 @@
 import type { CommandOption } from "../types";
 
+const MENU_GAP = 5;
+const MENU_MAX_HEIGHT = 300;
+const MENU_MIN_HEIGHT = 96;
+
+export type CommandMenuPlacement = "above" | "below";
+
+export type CommandMenuLayout = {
+  placement: CommandMenuPlacement;
+  maxHeight: number;
+  /** Distance from the composer top, used by the "below" placement. */
+  offset: number;
+};
+
+export type CommandMenuGeometry = {
+  /** Height the menu wants, including its own border and padding. */
+  contentHeight: number;
+  /** Viewport offset of the box the menu is positioned against. */
+  composerTop: number;
+  /** Viewport offset of the first line of draft text. */
+  textTop: number;
+  /** Height of one line of draft text. */
+  textLineHeight: number;
+  /** Lowest viewport offset the menu may cover, i.e. the header bottom. */
+  topBoundary: number;
+  /** Highest viewport offset the menu may cover, i.e. the window bottom. */
+  bottomBoundary: number;
+};
+
+/**
+ * Places the menu above the composer when it fits there, and below the draft
+ * text otherwise. The menu always overlays its surroundings so that opening it
+ * never shifts the composer.
+ */
+export function commandMenuLayout({
+  contentHeight,
+  composerTop,
+  textTop,
+  textLineHeight,
+  topBoundary,
+  bottomBoundary,
+}: CommandMenuGeometry): CommandMenuLayout {
+  const desiredHeight = Math.min(contentHeight, MENU_MAX_HEIGHT);
+  const belowTop = textTop + textLineHeight + MENU_GAP;
+  const spaceAbove = composerTop - MENU_GAP - topBoundary;
+  const spaceBelow = bottomBoundary - MENU_GAP - belowTop;
+  const below = desiredHeight > spaceAbove && spaceBelow > spaceAbove;
+  const available = below ? spaceBelow : spaceAbove;
+
+  return {
+    placement: below ? "below" : "above",
+    maxHeight: Math.round(
+      Math.max(MENU_MIN_HEIGHT, Math.min(desiredHeight, available)),
+    ),
+    offset: Math.round(belowTop - composerTop),
+  };
+}
+
 export function slashCommandQuery(draft: string): string | null {
   const match = /^\/([^\s/]*)$/.exec(draft);
   return match?.[1] ?? null;

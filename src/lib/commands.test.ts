@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { CommandOption } from "../types";
 import {
+  type CommandMenuGeometry,
   commandInvocation,
+  commandMenuLayout,
   filterCommands,
   slashCommandQuery,
 } from "./commands";
@@ -44,5 +46,64 @@ describe("slash command completion", () => {
 
   it("formats a command for immediate invocation", () => {
     expect(commandInvocation(commands[0])).toBe("/session-name");
+  });
+});
+
+describe("command menu placement", () => {
+  // A composer docked at the bottom of a 800px tall window.
+  const docked: CommandMenuGeometry = {
+    contentHeight: 200,
+    composerTop: 660,
+    textTop: 664,
+    textLineHeight: 20,
+    topBoundary: 40,
+    bottomBoundary: 800,
+  };
+
+  it("opens above the composer when the content fits there", () => {
+    expect(commandMenuLayout(docked)).toMatchObject({
+      placement: "above",
+      maxHeight: 200,
+    });
+  });
+
+  it("opens below the draft text when the space above is smaller", () => {
+    // An empty session composer filling the pane below the header.
+    const layout = commandMenuLayout({
+      ...docked,
+      composerTop: 40,
+      textTop: 56,
+    });
+
+    expect(layout.placement).toBe("below");
+    expect(layout.maxHeight).toBe(200);
+    expect(layout.offset).toBe(41);
+  });
+
+  it("caps the height at the space it was given", () => {
+    expect(commandMenuLayout({ ...docked, contentHeight: 900 }).maxHeight).toBe(
+      300,
+    );
+    // The same composer in a 320px tall window: still above, but shorter.
+    expect(
+      commandMenuLayout({
+        ...docked,
+        contentHeight: 900,
+        composerTop: 180,
+        textTop: 184,
+        bottomBoundary: 320,
+      }),
+    ).toMatchObject({ placement: "above", maxHeight: 135 });
+  });
+
+  it("keeps a usable height when neither side has room", () => {
+    expect(
+      commandMenuLayout({
+        ...docked,
+        composerTop: 60,
+        textTop: 64,
+        bottomBoundary: 120,
+      }).maxHeight,
+    ).toBe(96);
   });
 });
