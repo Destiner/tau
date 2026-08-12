@@ -9,6 +9,7 @@ import {
   ref,
   watch,
 } from "vue";
+import PiSpinner from "./components/PiSpinner.vue";
 import TranscriptView from "./components/TranscriptView.vue";
 import UiIcon from "./components/UiIcon.vue";
 import { useTau } from "./composables/useTau";
@@ -71,6 +72,7 @@ const {
   settingsDisabled,
   canDraft,
   canCompose,
+  sessionLoading,
   initialize,
   dispose,
   addLocalProject,
@@ -101,6 +103,7 @@ const {
 const sessionIsEmpty = computed(
   () =>
     canDraft.value &&
+    !sessionLoading.value &&
     !messages.value.some(
       (message) => message.kind === "user" || message.kind === "assistant",
     ),
@@ -244,6 +247,16 @@ watch([commandMenuActive, filteredCommands, status], () => {
 
 watch([draft, sessionIsEmpty], () => {
   void nextTick(resizeComposer);
+});
+
+watch(sessionLoading, (loading) => {
+  if (loading) return;
+  void nextTick(() => {
+    resizeComposer();
+    if (!state.remoteDialogOpen && !activeExtensionDialog.value) {
+      composerInput.value?.focus();
+    }
+  });
 });
 
 function resizeComposer() {
@@ -762,7 +775,13 @@ function clampSidebarWidth(width: number): number {
       ></div>
     </aside>
 
-    <main class="session-pane" :class="{ 'empty-session': sessionIsEmpty }">
+    <main
+      class="session-pane"
+      :class="{
+        'empty-session': sessionIsEmpty,
+        'loading-session': sessionLoading,
+      }"
+    >
       <header
         ref="sessionHeader"
         class="session-header"
@@ -784,8 +803,13 @@ function clampSidebarWidth(width: number): number {
         </button>
       </header>
 
+      <div v-if="sessionLoading" class="session-loading">
+        <PiSpinner label="Loading session" />
+        <span>Loading</span>
+      </div>
+
       <TranscriptView
-        v-if="!sessionIsEmpty"
+        v-else-if="!sessionIsEmpty"
         :key="state.activeControllerKey"
         ref="transcriptView"
         :messages="messages"
@@ -793,7 +817,7 @@ function clampSidebarWidth(width: number): number {
         :working-label="stopping ? 'Pi is stopping' : 'Pi is working'"
       />
 
-      <footer class="composer-area">
+      <footer v-if="!sessionLoading" class="composer-area">
         <p v-if="status" class="status" role="status">
           {{ status }}
         </p>

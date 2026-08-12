@@ -235,6 +235,18 @@ const canDraft = computed(() =>
   Boolean(activeProject.value && activeSession.value && activeController.value),
 );
 
+/**
+ * A saved session has nothing to show until its runtime hydrates the
+ * transcript, so the pane reports loading instead of rendering the empty
+ * session composer over a session that already holds messages.
+ */
+const sessionLoading = computed(() => {
+  const controller = activeController.value;
+  if (!controller || controller.phantom) return false;
+  if (controller.messages.length > 0 || controller.status) return false;
+  return !controller.ready || controller.starting || controller.syncing;
+});
+
 const canCompose = computed(() => {
   const controller = activeController.value;
   if (!activeProject.value || !activeSession.value || !controller) return false;
@@ -797,6 +809,7 @@ export function useTau() {
     settingsDisabled,
     canDraft,
     canCompose,
+    sessionLoading,
     initialize,
     dispose,
     addLocalProject,

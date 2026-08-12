@@ -644,6 +644,73 @@ describe("session drafts and selection", () => {
 
     expect(projectSessions(project)[0]?.id).toBe("first");
   });
+
+  it("reports a saved session as loading until its transcript hydrates", async () => {
+    const session = savedSession("hydrating");
+    const project: ProjectSummary = {
+      path: "/tmp/tau-loading-test",
+      name: "tau-loading-test",
+      workingDirectory: "/tmp/tau-loading-test",
+      collapsed: false,
+      selected: true,
+      sessions: [session],
+    };
+    const workspace: WorkspaceSnapshot = {
+      activeProjectPath: project.path,
+      piPath: "/usr/local/bin/pi",
+      sdkAvailable: true,
+      projects: [project],
+    };
+    mocks.workspace = workspace;
+    const { state, initialize, newSession, selectSession, sessionLoading } =
+      useTau();
+    await initialize();
+    state.activeControllerKey = "";
+    state.activeSessionId = "";
+    state.controllers.splice(0);
+    state.ephemeralSessions.splice(0);
+
+    await selectSession(project, session);
+    const controller = state.controllers[0];
+    if (!controller) throw new Error("Expected a controller");
+    expect(sessionLoading.value).toBe(true);
+
+    emitRpc(controller, {
+      id: controller.bootstrapStateRequestId,
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: {
+        model: { provider: "provider", id: "alpha", name: "Alpha" },
+        thinkingLevel: "high",
+        sessionId: session.id,
+        sessionFile: session.path,
+        sessionName: "",
+        isStreaming: false,
+      },
+    });
+    await vi.waitFor(() => {
+      expect(controller.startMessagesRequestId).not.toBe("");
+    });
+    expect(sessionLoading.value).toBe(true);
+
+    emitRpc(controller, {
+      id: controller.startMessagesRequestId,
+      type: "response",
+      command: "get_messages",
+      success: true,
+      data: {
+        messages: [{ role: "user", content: "Restored from the session file" }],
+      },
+    });
+    await vi.waitFor(() => {
+      expect(controller.starting).toBe(false);
+    });
+    expect(sessionLoading.value).toBe(false);
+
+    await newSession(project);
+    expect(sessionLoading.value).toBe(false);
+  });
 });
 
 describe("session replacement hardening", () => {
