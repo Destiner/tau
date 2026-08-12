@@ -1,0 +1,166 @@
+import { expect, test } from "@playwright/test";
+
+const fixtureUrl = "/?fixture=long-transcript";
+
+test.beforeEach(async ({ page }) => {
+  await page.goto(fixtureUrl);
+  await expect(page.getByTestId("fixture-count")).toHaveText("5000 messages");
+  await expect(page.locator('[data-index="4999"]')).toBeVisible();
+});
+
+test("renders a long transcript without pagination controls or an oversized DOM", async ({
+  page,
+}) => {
+  await expect(page.getByText(/Load (earlier|newer) messages/)).toHaveCount(0);
+
+  const renderedRows = await page.locator(".message").count();
+  expect(renderedRows).toBeGreaterThan(0);
+  expect(renderedRows).toBeLessThan(50);
+
+  const transcript = page.getByLabel("Tau transcript");
+  await transcript.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await expect(page.locator('[data-index="0"]')).toBeVisible();
+  expect(await page.locator(".message").count()).toBeLessThan(50);
+});
+
+test("does not move a reader in history when output changes", async ({
+  page,
+}) => {
+  const transcript = page.getByLabel("Tau transcript");
+  await transcript.evaluate((element) => {
+    element.scrollTop = element.scrollHeight * 0.45;
+  });
+  await page.waitForTimeout(150);
+
+  const before = await transcript.evaluate(anchorSnapshot);
+  expect(before).not.toBeNull();
+
+  await page.evaluate(() => {
+    window.__TAU_TRANSCRIPT_FIXTURE__?.appendMessage();
+  });
+  await expect(page.getByTestId("fixture-count")).toHaveText("5001 messages");
+  await page.waitForTimeout(150);
+
+  const afterAppend = await transcript.evaluate(anchorSnapshot);
+  expect(afterAppend?.id).toBe(before?.id);
+  expect(
+    Math.abs((afterAppend?.offset ?? 0) - (before?.offset ?? 0)),
+  ).toBeLessThan(2);
+
+  await page.evaluate(() => {
+    window.__TAU_TRANSCRIPT_FIXTURE__?.replaceLatestMessage();
+  });
+  await page.waitForTimeout(150);
+
+  const afterReplacement = await transcript.evaluate(anchorSnapshot);
+  expect(afterReplacement?.id).toBe(before?.id);
+  expect(
+    Math.abs((afterReplacement?.offset ?? 0) - (before?.offset ?? 0)),
+  ).toBeLessThan(2);
+});
+
+test("keeps streaming output pinned to the end", async ({ page }) => {
+  const transcript = page.getByLabel("Tau transcript");
+  await page.evaluate(() => {
+    window.__TAU_TRANSCRIPT_FIXTURE__?.scrollToEnd();
+  });
+  await expect.poll(() => transcript.evaluate(distanceFromEnd)).toBeLessThan(2);
+
+  await page.evaluate(() =>
+    window.__TAU_TRANSCRIPT_FIXTURE__?.streamLatest(18),
+  );
+
+  await expect.poll(() => transcript.evaluate(distanceFromEnd)).toBeLessThan(2);
+  await expect(page.locator('[data-index="4999"]')).toBeVisible();
+});
+
+test("keeps frame delivery and mounted rows bounded during a full sweep", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== "chromium", "Frame timing is asserted in Chromium");
+
+  const transcript = page.getByLabel("Tau transcript");
+  const metrics = await transcript.evaluate(async (element) => {
+    const intervals: number[] = [];
+    let maximumRows = 0;
+    let longTaskDuration = 0;
+    let previousFrame = performance.now();
+    const startTop = element.scrollTop;
+    const duration = 2_500;
+
+    const observer =
+      typeof PerformanceObserver !== "undefined" &&
+      PerformanceObserver.supportedEntryTypes.includes("longtask")
+        ? new PerformanceObserver((list) => {
+            for (const entry of list.getEntries()) {
+              longTaskDuration += entry.duration;
+            }
+          })
+        : undefined;
+    observer?.observe({ entryTypes: ["longtask"] });
+
+    await new Promise<void>((resolve) => {
+      const startedAt = performance.now();
+      const frame = (now: number) => {
+        intervals.push(now - previousFrame);
+        previousFrame = now;
+        const progress = Math.min((now - startedAt) / duration, 1);
+        const eased = progress * progress * (3 - 2 * progress);
+        element.scrollTop = startTop * (1 - eased);
+        maximumRows = Math.max(
+          maximumRows,
+          document.querySelectorAll(".message").length,
+        );
+        if (progress < 1) requestAnimationFrame(frame);
+        else resolve();
+      };
+      requestAnimationFrame(frame);
+    });
+
+    observer?.disconnect();
+    intervals.sort((left, right) => left - right);
+    const percentile95 = intervals[Math.floor(intervals.length * 0.95)] ?? 0;
+    const slowFrames = intervals.filter((interval) => interval > 50).length;
+
+    return {
+      frameCount: intervals.length,
+      longTaskDuration,
+      maximumRows,
+      percentile95,
+      slowFrameRatio: slowFrames / intervals.length,
+    };
+  });
+
+  expect(metrics.frameCount).toBeGreaterThan(90);
+  expect(metrics.maximumRows).toBeLessThan(50);
+  expect(metrics.percentile95).toBeLessThan(67);
+  expect(metrics.slowFrameRatio).toBeLessThan(0.08);
+  expect(metrics.longTaskDuration).toBeLessThan(500);
+  await expect(page.locator('[data-index="0"]')).toBeVisible();
+});
+
+function distanceFromEnd(element: HTMLElement): number {
+  return element.scrollHeight - element.scrollTop - element.clientHeight;
+}
+
+function anchorSnapshot(element: HTMLElement): {
+  id: string;
+  offset: number;
+} | null {
+  const viewport = element.getBoundingClientRect();
+  const rows = Array.from(
+    element.querySelectorAll<HTMLElement>("[data-message-id]"),
+  );
+  const anchor = rows.find(
+    (row) => row.getBoundingClientRect().bottom > viewport.top,
+  );
+  if (!anchor) return null;
+
+  return {
+    id: anchor.dataset.messageId ?? "",
+    offset: anchor.getBoundingClientRect().top - viewport.top,
+  };
+}

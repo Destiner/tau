@@ -37,9 +37,12 @@ Remote projects use the system OpenSSH client and start directory browsing from 
 ```sh
 bun run format
 bun run test
+bun run test:e2e
 bun run build
 cargo fmt --check --manifest-path src-tauri/Cargo.toml
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path src-tauri/Cargo.toml
 bun tauri build
 ```
+
+The Playwright suite runs the UI against a development-only 5,000-message transcript fixture in Chromium and WebKit. Install its browsers once with `bun x playwright install chromium webkit`.

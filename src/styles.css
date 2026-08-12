@@ -518,33 +518,31 @@ button {
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  overflow-anchor: none;
   overscroll-behavior: contain;
 }
 
-.message-list {
+.message-list-shell {
   width: min(100%, 880px);
   margin: 0 auto;
-  padding: 28px clamp(20px, 5vw, 60px) 30px;
+  padding: 0 clamp(20px, 5vw, 60px);
+}
+
+.message-list {
+  position: relative;
+  width: 100%;
+}
+
+.message-window {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
 }
 
 .message {
-  margin: 0 0 22px;
-}
-
-.transcript-boundary {
-  display: block;
-  margin: 0 auto 20px;
-  cursor: pointer;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--panel-raised);
-  color: var(--muted);
-  font-size: 10px;
-  padding: 5px 10px;
-}
-
-.transcript-boundary:hover {
-  background: var(--panel);
+  margin: 0;
+  padding-bottom: 22px;
 }
 
 .message.user {
@@ -595,8 +593,8 @@ button {
   font-size: 12px;
 }
 
-.message:is(.thinking, .tool):has(+ .message:is(.thinking, .tool)) {
-  margin-bottom: 7px;
+.message.compact {
+  padding-bottom: 7px;
 }
 
 .tool-row {
@@ -662,6 +660,10 @@ button {
   display: flex;
   align-items: center;
   color: var(--muted);
+}
+
+.transcript-stream-state {
+  padding-bottom: 22px;
 }
 
 .composer-area {

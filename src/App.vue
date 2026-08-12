@@ -9,8 +9,7 @@ import {
   ref,
   watch,
 } from "vue";
-import MarkdownText from "./components/MarkdownText.vue";
-import PiSpinner from "./components/PiSpinner.vue";
+import TranscriptView from "./components/TranscriptView.vue";
 import UiIcon from "./components/UiIcon.vue";
 import { useTau } from "./composables/useTau";
 import {
@@ -18,12 +17,6 @@ import {
   filterCommands,
   slashCommandQuery,
 } from "./lib/commands";
-import {
-  latestWindowStart,
-  newerWindowStart,
-  olderWindowStart,
-  transcriptWindowEnd,
-} from "./lib/transcript-window";
 import type { CommandOption, ThinkingLevel } from "./types";
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "tau.sidebar-width";
@@ -31,7 +24,7 @@ const DEFAULT_SIDEBAR_WIDTH = 260;
 const MIN_SIDEBAR_WIDTH = 200;
 const MAX_SIDEBAR_WIDTH = 480;
 
-const transcript = ref<HTMLElement>();
+const transcriptView = ref<InstanceType<typeof TranscriptView>>();
 const composerInput = ref<HTMLTextAreaElement>();
 const projectMenu = ref<HTMLElement>();
 const projectList = ref<HTMLElement>();
@@ -46,9 +39,6 @@ const commandSelectedIndex = ref(0);
 const extensionDialogSelectedIndex = ref(0);
 const sidebarWidth = ref(loadSidebarWidth());
 const resizingSidebar = ref(false);
-const pinnedToBottom = ref(true);
-const transcriptWindowStart = ref(0);
-const shiftingWindow = ref(false);
 let projectSortable: Sortable | undefined;
 const {
   state,
@@ -100,15 +90,6 @@ const {
   selectEffort,
 } = useTau();
 
-const transcriptWindowEndIndex = computed(() =>
-  transcriptWindowEnd(messages.value, transcriptWindowStart.value),
-);
-const visibleMessages = computed(() =>
-  messages.value.slice(
-    transcriptWindowStart.value,
-    transcriptWindowEndIndex.value,
-  ),
-);
 const sessionIsEmpty = computed(
   () =>
     canDraft.value &&
@@ -240,70 +221,6 @@ watch([draft, sessionIsEmpty], () => {
   void nextTick(resizeComposer);
 });
 
-watch(messages, () => {
-  transcriptWindowStart.value = latestWindowStart(messages.value);
-  pinnedToBottom.value = true;
-});
-
-watch(
-  () => [
-    messages.value.length,
-    messages.value[messages.value.length - 1]?.text,
-  ],
-  () => {
-    if (!pinnedToBottom.value) return;
-    transcriptWindowStart.value = latestWindowStart(messages.value);
-    void nextTick(() =>
-      transcript.value?.scrollTo({ top: transcript.value.scrollHeight }),
-    );
-  },
-);
-
-async function handleTranscriptScroll() {
-  const element = transcript.value;
-  if (!element || shiftingWindow.value) return;
-  const nearTop = element.scrollTop < 16;
-  const nearBottom =
-    element.scrollHeight - element.scrollTop - element.clientHeight < 32;
-
-  if (nearTop && transcriptWindowStart.value > 0) {
-    await loadEarlierMessages();
-    return;
-  }
-  if (nearBottom && transcriptWindowEndIndex.value < messages.value.length) {
-    await loadNewerMessages();
-    return;
-  }
-  pinnedToBottom.value =
-    nearBottom && transcriptWindowEndIndex.value >= messages.value.length;
-}
-
-async function loadEarlierMessages() {
-  const element = transcript.value;
-  if (!element || transcriptWindowStart.value === 0) return;
-  shiftingWindow.value = true;
-  const previousHeight = element.scrollHeight;
-  transcriptWindowStart.value = olderWindowStart(transcriptWindowStart.value);
-  await nextTick();
-  element.scrollTop = element.scrollHeight - previousHeight + 1;
-  pinnedToBottom.value = false;
-  shiftingWindow.value = false;
-}
-
-async function loadNewerMessages() {
-  const element = transcript.value;
-  if (!element || transcriptWindowEndIndex.value >= messages.value.length)
-    return;
-  shiftingWindow.value = true;
-  transcriptWindowStart.value = newerWindowStart(
-    transcriptWindowStart.value,
-    messages.value,
-  );
-  await nextTick();
-  element.scrollTop = 1;
-  shiftingWindow.value = false;
-}
-
 function resizeComposer() {
   const element = composerInput.value;
   if (!element) return;
@@ -351,7 +268,7 @@ function handleComposerKeydown(event: KeyboardEvent) {
 }
 
 function handleSendMessage() {
-  pinnedToBottom.value = true;
+  transcriptView.value?.scrollToEnd();
   void sendMessage();
 }
 
@@ -819,79 +736,14 @@ function clampSidebarWidth(width: number): number {
         </button>
       </header>
 
-      <section
+      <TranscriptView
         v-if="!sessionIsEmpty"
-        ref="transcript"
-        class="transcript"
-        aria-label="Tau transcript"
-        @scroll="handleTranscriptScroll"
-      >
-        <div v-if="messages.length" class="message-list">
-          <button
-            v-if="transcriptWindowStart > 0"
-            class="transcript-boundary"
-            type="button"
-            @click="loadEarlierMessages"
-          >
-            Load earlier messages
-          </button>
-          <article
-            v-for="message in visibleMessages"
-            :key="message.id"
-            class="message"
-            :class="message.kind"
-          >
-            <div v-if="message.kind === 'user'" class="user-bubble">
-              {{ message.text }}
-            </div>
-            <MarkdownText
-              v-else-if="message.kind === 'assistant'"
-              :source="message.text"
-            />
-            <div v-else-if="message.kind === 'thinking'" class="thinking-block">
-              <div class="thinking-label">Thinking</div>
-              <MarkdownText :source="message.text" />
-            </div>
-            <div
-              v-else
-              class="tool-row"
-              :class="{ error: message.toolErrored }"
-            >
-              <span class="tool-copy">
-                <span class="tool-name">{{ message.toolName || "tool" }}</span>
-                <span v-if="message.text" class="tool-argument">{{
-                  message.text
-                }}</span>
-              </span>
-              <span
-                v-if="message.toolRunning"
-                class="tool-running-indicator"
-                role="status"
-                aria-label="Running"
-              ></span>
-              <UiIcon
-                v-else-if="message.toolErrored"
-                class="tool-error-icon"
-                name="cross"
-                aria-label="Failed"
-              />
-            </div>
-          </article>
-
-          <button
-            v-if="transcriptWindowEndIndex < messages.length"
-            class="transcript-boundary"
-            type="button"
-            @click="loadNewerMessages"
-          >
-            Load newer messages
-          </button>
-
-          <div v-if="showWorkingIndicator" class="stream-state">
-            <PiSpinner :label="stopping ? 'Pi is stopping' : 'Pi is working'" />
-          </div>
-        </div>
-      </section>
+        :key="state.activeControllerKey"
+        ref="transcriptView"
+        :messages="messages"
+        :show-working-indicator="showWorkingIndicator"
+        :working-label="stopping ? 'Pi is stopping' : 'Pi is working'"
+      />
 
       <footer class="composer-area">
         <p v-if="status" class="status" role="status">
