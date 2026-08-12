@@ -1464,6 +1464,120 @@ describe("project ordering", () => {
   });
 });
 
+describe("transcript continuity", () => {
+  it("keeps streamed row ids when a settled turn rehydrates", async () => {
+    const session = savedSession("continuity");
+    const project: ProjectSummary = {
+      path: "/tmp/tau-continuity-test",
+      name: "tau-continuity-test",
+      workingDirectory: "/tmp/tau-continuity-test",
+      collapsed: false,
+      selected: true,
+      sessions: [session],
+    };
+    const workspace: WorkspaceSnapshot = {
+      activeProjectPath: project.path,
+      piPath: "/usr/local/bin/pi",
+      sdkAvailable: true,
+      projects: [project],
+    };
+    mocks.workspace = workspace;
+    const { state, initialize, selectSession } = useTau();
+    await initialize();
+    state.activeControllerKey = "";
+    state.activeSessionId = "";
+    state.controllers.splice(0);
+    state.ephemeralSessions.splice(0);
+
+    await selectSession(project, session);
+    const controller = state.controllers[0];
+    if (!controller) throw new Error("Expected a controller");
+    const sessionState = (isStreaming: boolean) => ({
+      model: { provider: "provider", id: "alpha", name: "Alpha" },
+      thinkingLevel: "high",
+      sessionId: session.id,
+      sessionFile: session.path,
+      sessionName: "",
+      isStreaming,
+    });
+
+    emitRpc(controller, {
+      id: controller.bootstrapStateRequestId,
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: sessionState(false),
+    });
+    await vi.waitFor(() => {
+      expect(controller.startMessagesRequestId).not.toBe("");
+    });
+    emitRpc(controller, {
+      id: controller.startMessagesRequestId,
+      type: "response",
+      command: "get_messages",
+      success: true,
+      data: { messages: [{ role: "user", content: "Inspect the project" }] },
+    });
+    await vi.waitFor(() => {
+      expect(controller.messages).toHaveLength(1);
+    });
+
+    emitRpc(controller, { type: "agent_start" });
+    await vi.waitFor(() => {
+      expect(sentRequests(controller, "get_state")).toHaveLength(2);
+    });
+    emitRpc(controller, {
+      id: sentRequests(controller, "get_state")[1]?.id,
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: sessionState(true),
+    });
+    emitTextDelta(controller, "Partial");
+    await vi.waitFor(() => {
+      expect(controller.messages).toHaveLength(2);
+    });
+    const streamed = controller.messages.map((message) => message.id);
+
+    emitRpc(controller, { type: "agent_settled" });
+    await vi.waitFor(() => {
+      expect(sentRequests(controller, "get_state")).toHaveLength(3);
+    });
+    emitRpc(controller, {
+      id: sentRequests(controller, "get_state")[2]?.id,
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: sessionState(false),
+    });
+    await vi.waitFor(() => {
+      expect(sentRequests(controller, "get_messages")).toHaveLength(2);
+    });
+    emitRpc(controller, {
+      id: sentRequests(controller, "get_messages")[1]?.id,
+      type: "response",
+      command: "get_messages",
+      success: true,
+      data: {
+        messages: [
+          { role: "user", content: "Inspect the project" },
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "Partial reply, completed." }],
+          },
+        ],
+      },
+    });
+
+    // A settled turn rewrites rows the reader may be scrolled into, so the
+    // virtualizer has to recognize them or it loses their measured heights.
+    await vi.waitFor(() => {
+      expect(controller.messages[1]?.text).toBe("Partial reply, completed.");
+    });
+    expect(controller.messages.map((message) => message.id)).toEqual(streamed);
+  });
+});
+
 function emitRpc(
   controller: { runtimeId: string; generation: number },
   value: unknown,

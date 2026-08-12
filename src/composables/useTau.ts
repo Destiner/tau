@@ -1530,6 +1530,7 @@ async function handleResponse(
     controller.syncing = false;
     controller.messages = hydrateTranscript(
       Array.isArray(data.messages) ? data.messages : [],
+      controller.messages,
     );
     const pending = controller.pendingPrompt;
     const resolvesPending =
