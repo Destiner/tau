@@ -553,18 +553,13 @@ button.session-name:focus-visible {
   display: block;
   width: 100%;
   max-width: 60ch;
-  padding: 1px 4px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
+  padding: 2px 5px;
+  border: 0;
   outline: 0;
-  background: var(--canvas);
+  background: transparent;
   color: var(--text);
   font-size: 13px;
   user-select: text;
-}
-
-.session-name-input:focus {
-  border-color: var(--muted);
 }
 
 .transcript {
