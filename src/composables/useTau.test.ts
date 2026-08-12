@@ -1611,6 +1611,146 @@ describe("transcript continuity", () => {
   });
 });
 
+describe("session naming", () => {
+  it("renames the selected session through Pi and stores the echoed name", async () => {
+    const { tau, controller } = await setupNamedSession();
+    expect(tau.canRenameSession.value).toBe(true);
+
+    await tau.renameSession("  Migration   plan  ");
+    expect(sentRequests(controller, "set_session_name")).toEqual([
+      {
+        id: expect.any(String),
+        type: "set_session_name",
+        name: "Migration plan",
+      },
+    ]);
+    expect(tau.sessionTitle.value).toBe("Migration plan");
+
+    emitRpc(controller, {
+      type: "session_info_changed",
+      name: "Migration plan",
+    });
+    await vi.waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        "register_session",
+        expect.objectContaining({ sessionName: "Migration plan" }),
+      );
+    });
+  });
+
+  it("adopts a name Pi reports without being asked", async () => {
+    const { tau, controller } = await setupNamedSession();
+
+    emitRpc(controller, {
+      type: "session_info_changed",
+      name: "Named by an extension",
+    });
+
+    await vi.waitFor(() => {
+      expect(tau.sessionTitle.value).toBe("Named by an extension");
+    });
+    expect(invoke).toHaveBeenCalledWith(
+      "register_session",
+      expect.objectContaining({ sessionName: "Named by an extension" }),
+    );
+  });
+
+  it("reads the name back from Pi when it rejects a rename", async () => {
+    const { tau, controller, session } = await setupNamedSession();
+    emitRpc(controller, { type: "session_info_changed", name: "Named in Pi" });
+    await vi.waitFor(() => {
+      expect(controller.sessionName).toBe("Named in Pi");
+    });
+
+    await tau.renameSession("Named in Tau");
+    expect(tau.sessionTitle.value).toBe("Named in Tau");
+    emitRpc(controller, {
+      id: sentRequests(controller, "set_session_name")[0]?.id,
+      type: "response",
+      command: "set_session_name",
+      success: false,
+      error: { message: "Session name cannot be empty" },
+    });
+
+    await vi.waitFor(() => {
+      expect(controller.status).toBe("Session name cannot be empty");
+      expect(sentRequests(controller, "get_state")).toHaveLength(1);
+    });
+    emitRpc(controller, {
+      id: sentRequests(controller, "get_state")[0]?.id,
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: {
+        model: { provider: "provider", id: "alpha", name: "Alpha" },
+        thinkingLevel: "high",
+        sessionId: session.id,
+        sessionFile: session.path,
+        sessionName: "Named in Pi",
+        isStreaming: false,
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(tau.sessionTitle.value).toBe("Named in Pi");
+    });
+  });
+
+  it("leaves a session Pi has no file for unnamed", async () => {
+    const { tau, project } = await setupNamedSession();
+    await tau.newSession(project);
+    const controller = tau.state.controllers.find(
+      (candidate) => candidate.phantom,
+    );
+    if (!controller) throw new Error("Expected a phantom controller");
+
+    expect(tau.canRenameSession.value).toBe(false);
+    await tau.renameSession("Too early");
+    expect(sentRequests(controller, "set_session_name")).toEqual([]);
+  });
+});
+
+async function setupNamedSession() {
+  const session = savedSession("naming-target");
+  const project: ProjectSummary = {
+    path: "/tmp/tau-naming-test",
+    name: "tau-naming-test",
+    workingDirectory: "/tmp/tau-naming-test",
+    collapsed: false,
+    selected: true,
+    sessions: [session],
+  };
+  const workspace: WorkspaceSnapshot = {
+    activeProjectPath: project.path,
+    piPath: "/usr/local/bin/pi",
+    sdkAvailable: true,
+    projects: [project],
+  };
+  mocks.workspace = workspace;
+  mocks.generation = 0;
+
+  const tau = useTau();
+  tau.dispose();
+  tau.state.activeProjectPath = "";
+  tau.state.activeSessionId = "";
+  tau.state.activeSessionPath = "";
+  tau.state.activeControllerKey = "";
+  tau.state.controllers.splice(0);
+  tau.state.ephemeralSessions.splice(0);
+  await tau.initialize();
+  tau.state.workspace = workspace;
+
+  await tau.selectSession(project, session);
+  const controller = tau.state.controllers.find(
+    (candidate) => candidate.sessionId === session.id,
+  );
+  if (!controller) throw new Error("Expected the named session controller");
+  controller.starting = false;
+  controller.ready = true;
+  vi.mocked(invoke).mockClear();
+  return { tau, project, session, controller };
+}
+
 function emitRpc(
   controller: { runtimeId: string; generation: number },
   value: unknown,

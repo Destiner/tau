@@ -28,6 +28,8 @@ Both adapters use the same JSONL contract, Vue state, and project/session persis
 
 Tau uses Pi's native extension runtime and supports workflow-critical non-modal prompts, custom tools and hooks, session replacement, notifications, and editor prefill. See the [extension support matrix and compatibility fixture](docs/extensions.md) for supported and deferred APIs.
 
+Session names are shared with Pi. Clicking the name in the session header edits it and applies the new name on blur or Enter, which renames the session inside Pi itself, and names that Pi or one of its extensions sets appear in Tau without a reload.
+
 Each live session owns an isolated Pi runtime. Switching the visible session does not interrupt running work in other sessions; hidden idle runtimes are released and restored from their session files when selected again. Session lists are ordered by the latest user message, so background agent events do not move rows. Removing a project stops all of its runtimes, and quitting Tau stops every child process.
 
 Remote projects use the system OpenSSH client and start directory browsing from the remote account's default working directory. SSH config aliases and command-line options are supported. Authentication must work non-interactively, such as through keys or an SSH agent, and Pi must be available on the remote login shell's `PATH`.

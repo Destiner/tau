@@ -538,15 +538,7 @@ fn list_project_sessions(project_path: &str) -> Result<Vec<SessionSummary>, Stri
             .ok()
             .and_then(|metadata| metadata.modified().ok())
             .unwrap_or(SystemTime::UNIX_EPOCH);
-        let title = if let Some(name) = record.name.as_ref().filter(|name| !name.is_empty()) {
-            name.clone()
-        } else if !parsed.name.is_empty() {
-            parsed.name
-        } else if !parsed.first_message.is_empty() {
-            parsed.first_message
-        } else {
-            "New session".into()
-        };
+        let title = session_title(&parsed.name, record.name.as_deref(), &parsed.first_message);
         sessions.push(SessionSummary {
             id: parsed.id.clone(),
             path: path.to_string_lossy().into_owned(),
@@ -563,6 +555,18 @@ fn list_project_sessions(project_path: &str) -> Result<Vec<SessionSummary>, Stri
     }
     sort_sessions(&mut sessions);
     Ok(sessions)
+}
+
+/// Pi owns the session name: it only writes `session_info` when someone names
+/// the session, so a name in the session file outranks Tau's own copy, which
+/// also holds titles derived from the first user message.
+fn session_title(pi_name: &str, tau_name: Option<&str>, first_message: &str) -> String {
+    for candidate in [pi_name, tau_name.unwrap_or_default(), first_message] {
+        if !candidate.is_empty() {
+            return candidate.to_string();
+        }
+    }
+    "New session".into()
 }
 
 struct ParsedSession {
@@ -758,6 +762,20 @@ mod tests {
         assert_eq!(parsed.id, "session-1");
         assert_eq!(parsed.first_message, "Port Tau");
         assert_eq!(parsed.last_user_message_at, 2_000_000);
+    }
+
+    #[test]
+    fn session_titles_prefer_the_name_pi_recorded() {
+        assert_eq!(
+            session_title("Renamed in Pi", Some("Stale Tau title"), "Port Tau"),
+            "Renamed in Pi"
+        );
+        assert_eq!(
+            session_title("", Some("Renamed in Tau"), "Port Tau"),
+            "Renamed in Tau"
+        );
+        assert_eq!(session_title("", None, "Port Tau"), "Port Tau");
+        assert_eq!(session_title("", Some(""), ""), "New session");
     }
 
     #[test]

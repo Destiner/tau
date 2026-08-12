@@ -512,6 +512,8 @@ button {
 
 .session-heading {
   min-width: 0;
+  /* Offsets the padding the name carries so it lines up with the transcript. */
+  margin-left: -5px;
   flex: 1;
 }
 
@@ -524,6 +526,45 @@ button {
   font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-name {
+  display: block;
+  overflow: hidden;
+  max-width: 100%;
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: transparent;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+button.session-name {
+  cursor: text;
+}
+
+button.session-name:hover,
+button.session-name:focus-visible {
+  background: var(--hover);
+}
+
+.session-name-input {
+  display: block;
+  width: 100%;
+  max-width: 60ch;
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  outline: 0;
+  background: var(--canvas);
+  color: var(--text);
+  font-size: 13px;
+  user-select: text;
+}
+
+.session-name-input:focus {
+  border-color: var(--muted);
 }
 
 .transcript {

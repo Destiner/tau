@@ -292,6 +292,16 @@ const settingsDisabled = computed(() => {
   );
 });
 
+/**
+ * Pi keeps the name inside the session it is running, so renaming needs a live
+ * runtime and a session Pi has already opened. An unsent session shows a
+ * preview of its draft instead of a name, so it has nothing to rename yet.
+ */
+const canRenameSession = computed(() => {
+  const controller = activeController.value;
+  return Boolean(controller && !controller.phantom && controller.ready);
+});
+
 export function useTau() {
   async function initialize() {
     if (!unlisten) {
@@ -764,6 +774,24 @@ export function useTau() {
     }
   }
 
+  async function renameSession(name: string) {
+    const controller = activeController.value;
+    if (!controller || !canRenameSession.value) return;
+    const next = normalizeSessionName(name);
+    if (!next || next === controller.sessionName) return;
+    controller.status = "";
+    applySessionName(controller, next);
+    try {
+      await rpc(controller, {
+        id: nextRequestId("session-name"),
+        type: "set_session_name",
+        name: next,
+      });
+    } catch (error) {
+      setControllerError(controller, error);
+    }
+  }
+
   async function selectEffort(level: ThinkingLevel) {
     const controller = activeController.value;
     if (
@@ -815,6 +843,7 @@ export function useTau() {
     settingsDisabled,
     canDraft,
     canCompose,
+    canRenameSession,
     sessionLoading,
     initialize,
     dispose,
@@ -841,6 +870,7 @@ export function useTau() {
     submitExtensionDialog,
     cancelExtensionDialog,
     dismissExtensionNotification,
+    renameSession,
     selectModel,
     selectEffort,
   };
@@ -1351,6 +1381,13 @@ async function handleRpc(controller: SessionController, value: unknown) {
     });
     return;
   }
+  // Pi announces every rename, whether it came from Tau's header, one of Pi's
+  // own commands, or an extension, so the name is only ever read back from Pi.
+  if (type === "session_info_changed") {
+    applySessionName(controller, stringValue(event.name));
+    await persistSessionName(controller);
+    return;
+  }
   if (type === "auto_retry_start") {
     controller.status = `Retrying (${String(event.attempt ?? "")})…`;
     return;
@@ -1433,6 +1470,14 @@ async function handleResponse(
     }
     if (command === "prompt") controller.working = false;
     if (command === "abort") controller.stopping = false;
+    // A rejected rename leaves the optimistic name on screen, so Pi's name is
+    // read back instead of being guessed.
+    if (command === "set_session_name") {
+      await rpc(controller, {
+        id: nextRequestId("session-name-state"),
+        type: "get_state",
+      });
+    }
     return;
   }
   const data = asRecord(response.data);
@@ -1830,6 +1875,19 @@ function invokesExtensionCommand(
       (command) => command.name === name && command.source === "extension",
     )
   );
+}
+
+function applySessionName(controller: SessionController, name: string) {
+  controller.sessionName = name;
+  const session = ephemeralSessionByController(controller.key);
+  if (name && session && !session.phantom) session.title = name;
+}
+
+async function persistSessionName(controller: SessionController) {
+  if (controller.phantom || !controller.sessionId || !controller.sessionPath) {
+    return;
+  }
+  await registerConnectedSession(controller);
 }
 
 async function registerConnectedSession(controller: SessionController) {
@@ -2370,7 +2428,11 @@ function relativeTimestamp(timestamp: number): string {
 }
 
 function draftTitle(value: string): string {
-  return value.replace(/\s+/g, " ").trim().slice(0, 240) || "New session";
+  return normalizeSessionName(value) || "New session";
+}
+
+function normalizeSessionName(value: string): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, 240);
 }
 
 function commandOption(value: unknown): CommandOption | undefined {

@@ -48,6 +48,9 @@ const commandMenuOffset = ref(0);
 const extensionDialogSelectedIndex = ref(0);
 const sidebarWidth = ref(loadSidebarWidth());
 const resizingSidebar = ref(false);
+const sessionTitleInput = ref<HTMLInputElement>();
+const renamingSession = ref(false);
+const sessionNameDraft = ref("");
 let projectSortable: Sortable | undefined;
 const {
   state,
@@ -72,6 +75,7 @@ const {
   settingsDisabled,
   canDraft,
   canCompose,
+  canRenameSession,
   sessionLoading,
   initialize,
   dispose,
@@ -98,6 +102,7 @@ const {
   submitExtensionDialog,
   cancelExtensionDialog,
   dismissExtensionNotification,
+  renameSession,
   selectModel,
   selectEffort,
 } = useTau();
@@ -237,9 +242,14 @@ watch(activeExtensionDialog, (dialog) => {
   });
 });
 
+watch(canRenameSession, (renamable) => {
+  if (!renamable) cancelSessionRename();
+});
+
 watch(
   () => state.activeControllerKey,
   (controllerKey) => {
+    cancelSessionRename();
     if (!controllerKey) return;
     void nextTick(() => {
       if (!state.remoteDialogOpen && !activeExtensionDialog.value) {
@@ -271,6 +281,40 @@ watch(sessionLoading, (loading) => {
     }
   });
 });
+
+function beginSessionRename() {
+  if (!canRenameSession.value) return;
+  sessionNameDraft.value = sessionTitle.value;
+  renamingSession.value = true;
+  void nextTick(() => {
+    sessionTitleInput.value?.focus();
+    sessionTitleInput.value?.select();
+  });
+}
+
+function commitSessionRename() {
+  // Escape and a lost runtime both close the field before its blur arrives,
+  // and neither should apply the name that was left in it.
+  if (!renamingSession.value) return;
+  closeSessionRename();
+  void renameSession(sessionNameDraft.value);
+}
+
+function cancelSessionRename() {
+  if (!renamingSession.value) return;
+  closeSessionRename();
+}
+
+/**
+ * Committing on blur means focus has already moved on, so the composer is only
+ * refocused when the field itself still holds focus, as it does after Enter,
+ * Escape, or a runtime that stopped mid-rename.
+ */
+function closeSessionRename() {
+  const focused = document.activeElement === sessionTitleInput.value;
+  renamingSession.value = false;
+  if (focused) void nextTick(() => composerInput.value?.focus());
+}
 
 function resizeComposer() {
   const element = composerInput.value;
@@ -806,7 +850,31 @@ function clampSidebarWidth(width: number): number {
         @dblclick="handleTitlebarDoubleClick"
       >
         <div class="session-heading">
-          <h1>{{ sessionTitle }}</h1>
+          <input
+            v-if="renamingSession"
+            ref="sessionTitleInput"
+            v-model="sessionNameDraft"
+            class="session-name-input"
+            type="text"
+            maxlength="240"
+            spellcheck="false"
+            aria-label="Session name"
+            @blur="commitSessionRename"
+            @keydown.enter.prevent="commitSessionRename"
+            @keydown.escape.prevent="cancelSessionRename"
+          />
+          <h1 v-else>
+            <button
+              v-if="canRenameSession"
+              class="session-name"
+              type="button"
+              title="Rename session"
+              @click="beginSessionRename"
+            >
+              {{ sessionTitle }}
+            </button>
+            <span v-else class="session-name">{{ sessionTitle }}</span>
+          </h1>
         </div>
         <button
           v-if="activeProject"
