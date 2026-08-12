@@ -36,7 +36,13 @@ const effortLabels: Record<ThinkingLevel, string> = {
   max: "Max",
 };
 
-type SessionIndicator = "new" | "draft" | "working" | "";
+export type SessionIndicator = "new" | "draft" | "working" | "";
+
+const indicatorLabels: Record<Exclude<SessionIndicator, "">, string> = {
+  new: "Unread",
+  draft: "Unsent draft",
+  working: "Working",
+};
 
 interface EphemeralSession extends SessionSummary {
   projectPath: string;
@@ -828,6 +834,8 @@ export function useTau() {
     sessionLastActive,
     isSessionSelected,
     sessionIndicator,
+    projectIndicator,
+    indicatorLabel,
     sendMessage,
     stop,
     submitExtensionDialog,
@@ -1068,6 +1076,7 @@ function handleExtensionUIRequest(
     if (state.extensionDialogs.some((item) => item.key === dialog.key)) return;
     state.extensionDialogs.push(dialog);
     controller.evictAfterHydration = false;
+    if (!isControllerSelected(controller)) controller.unread = true;
     if (timeout) {
       extensionDialogTimeouts.set(
         dialog.key,
@@ -2008,17 +2017,43 @@ function isSessionSelected(
   );
 }
 
+/**
+ * A waiting prompt reads as unread rather than working: it arrives mid-turn,
+ * so the working state would otherwise bury the one thing that needs an
+ * answer before the session can move.
+ */
 function sessionIndicator(
   project: ProjectSummary,
   session: SessionSummary,
 ): SessionIndicator {
   const controller = controllerForSession(project.path, session.id);
-  if (controller?.working) return "working";
-  if (controller && controllerHasPendingDialog(controller)) return "draft";
-  if (controller?.draft.trim()) return "draft";
-  return controller?.unread && !isSessionSelected(project, session)
-    ? "new"
-    : "";
+  if (!controller) return "";
+  const selected = isSessionSelected(project, session);
+  if (!selected && controllerHasPendingDialog(controller)) return "new";
+  if (controller.working) return "working";
+  if (controller.draft.trim()) return "draft";
+  return controller.unread && !selected ? "new" : "";
+}
+
+function indicatorLabel(indicator: SessionIndicator): string {
+  return indicator ? indicatorLabels[indicator] : "";
+}
+
+/**
+ * Collapsed projects hide their sessions, so the rolled-up indicator is the
+ * only place an unread session or a waiting prompt can surface.
+ */
+function projectIndicator(project: ProjectSummary): SessionIndicator {
+  if (!project.collapsed) return "";
+  const indicators = new Set(
+    projectSessions(project).map((session) =>
+      sessionIndicator(project, session),
+    ),
+  );
+  for (const indicator of ["new", "draft", "working"] as const) {
+    if (indicators.has(indicator)) return indicator;
+  }
+  return "";
 }
 
 function setActiveSessionView(

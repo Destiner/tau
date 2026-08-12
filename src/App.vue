@@ -12,7 +12,7 @@ import {
 import PiSpinner from "./components/PiSpinner.vue";
 import TranscriptView from "./components/TranscriptView.vue";
 import UiIcon from "./components/UiIcon.vue";
-import { useTau } from "./composables/useTau";
+import { type SessionIndicator, useTau } from "./composables/useTau";
 import {
   type CommandMenuPlacement,
   commandInvocation,
@@ -91,6 +91,8 @@ const {
   sessionLastActive,
   isSessionSelected,
   sessionIndicator,
+  projectIndicator,
+  indicatorLabel,
   sendMessage,
   stop,
   submitExtensionDialog,
@@ -99,6 +101,17 @@ const {
   selectModel,
   selectEffort,
 } = useTau();
+
+/**
+ * An indicator without a state still reserves its slot, so it stays hidden
+ * from assistive tech until it carries a meaning worth announcing.
+ */
+function indicatorAttrs(indicator: SessionIndicator) {
+  const label = indicatorLabel(indicator);
+  return label
+    ? { class: indicator, title: label, role: "img", "aria-label": label }
+    : { "aria-hidden": true };
+}
 
 const sessionIsEmpty = computed(
   () =>
@@ -656,6 +669,11 @@ function clampSidebarWidth(width: number): number {
                 name="chevron"
                 :class="{ expanded: !project.collapsed }"
               />
+              <span
+                v-if="projectIndicator(project)"
+                class="session-indicator"
+                v-bind="indicatorAttrs(projectIndicator(project))"
+              ></span>
             </button>
             <button
               class="row-action new-session-action"
@@ -694,8 +712,7 @@ function clampSidebarWidth(width: number): number {
               >
                 <span
                   class="session-indicator"
-                  :class="sessionIndicator(project, session)"
-                  aria-hidden="true"
+                  v-bind="indicatorAttrs(sessionIndicator(project, session))"
                 ></span>
                 <span class="session-copy">
                   <span class="session-title">{{ session.title }}</span>

@@ -1372,6 +1372,39 @@ describe("extension UI protocol", () => {
     tau.dispose();
   });
 
+  it("marks a background session waiting on a prompt as unread", async () => {
+    const { firstController, firstSession, secondSession, project, tau } =
+      await setupExtensionControllers();
+
+    expect(tau.sessionIndicator(project, firstSession)).toBe("working");
+
+    emitRpc(firstController, {
+      type: "extension_ui_request",
+      id: "reviewer-1",
+      method: "select",
+      title: "Choose a reviewer",
+      options: ["Claude", "Done"],
+    });
+
+    expect(firstController.unread).toBe(true);
+    expect(tau.sessionIndicator(project, firstSession)).toBe("new");
+    expect(
+      tau.indicatorLabel(tau.sessionIndicator(project, firstSession)),
+    ).toBe("Unread");
+    expect(tau.sessionIndicator(project, secondSession)).toBe("");
+
+    project.collapsed = true;
+    expect(tau.projectIndicator(project)).toBe("new");
+    project.collapsed = false;
+    expect(tau.projectIndicator(project)).toBe("");
+
+    await tau.selectSession(project, firstSession);
+    expect(firstController.unread).toBe(false);
+    await tau.submitExtensionDialog("Claude");
+    expect(tau.sessionIndicator(project, firstSession)).toBe("working");
+    tau.dispose();
+  });
+
   it("discards dialogs after their timeout, generation change, or process exit", async () => {
     const { firstController, firstSession, project, tau } =
       await setupExtensionControllers();
