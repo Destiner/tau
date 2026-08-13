@@ -83,6 +83,10 @@ button {
   flex-direction: column;
   border-right: 1px solid var(--border);
   background: var(--panel);
+  /* Names and times here are controls, not copy. Selectable text would also
+     leave a word highlighted wherever a right click opened a menu. */
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .sidebar-resize-handle {
@@ -305,8 +309,6 @@ button {
 .project-list.project-dragging,
 .project-list.project-dragging * {
   cursor: grabbing;
-  -webkit-user-select: none;
-  user-select: none;
 }
 
 .project-sortable-ghost {
@@ -470,8 +472,6 @@ button {
   padding: 5px 7px 8px 20px;
   color: var(--faint);
   font-size: 11px;
-  -webkit-user-select: none;
-  user-select: none;
 }
 
 .empty-projects {
