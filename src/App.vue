@@ -44,6 +44,9 @@ interface ContextMenuState {
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "tau.sidebar-width";
 const CONTEXT_MENU_MARGIN = 8;
+// The rename field applies its value the moment it loses focus, so it is left
+// out: a menu that takes focus to open would end the rename it edits.
+const TEXT_FIELD_SELECTOR = "input:not(.session-name-input), textarea";
 const DEFAULT_SIDEBAR_WIDTH = 260;
 const MIN_SIDEBAR_WIDTH = 200;
 const MAX_SIDEBAR_WIDTH = 480;
@@ -326,8 +329,6 @@ function commitSessionRename() {
   // Escape and a lost runtime both close the field before its blur arrives,
   // and neither should apply the name that was left in it.
   if (!renamingSession.value) return;
-  // A context menu takes focus to open, which is not the rename finishing.
-  if (contextMenuState.value) return;
   closeSessionRename();
   void renameSession(sessionNameDraft.value);
 }
@@ -693,7 +694,7 @@ function handleDocumentContextMenu(event: MouseEvent) {
   event.preventDefault();
   const target = event.target;
   const field =
-    target instanceof Element ? target.closest("input, textarea") : null;
+    target instanceof Element ? target.closest(TEXT_FIELD_SELECTOR) : null;
   if (
     field instanceof HTMLInputElement ||
     field instanceof HTMLTextAreaElement
