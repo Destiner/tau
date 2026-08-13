@@ -76,6 +76,47 @@ test("keeps streaming output pinned to the end", async ({ page }) => {
   await expect(page.locator('[data-index="4999"]')).toBeVisible();
 });
 
+test("follows a row appended while the working indicator is shown", async ({
+  page,
+}) => {
+  const transcript = page.getByLabel("Tau transcript");
+  await page.evaluate(() => {
+    window.__TAU_TRANSCRIPT_FIXTURE__?.scrollToEnd();
+    window.__TAU_TRANSCRIPT_FIXTURE__?.setWorking(true);
+  });
+  await expect.poll(() => transcript.evaluate(distanceFromEnd)).toBeLessThan(2);
+
+  await page.evaluate(() => {
+    window.__TAU_TRANSCRIPT_FIXTURE__?.appendMessage("tool");
+  });
+  await expect(page.getByTestId("fixture-count")).toHaveText("5001 messages");
+
+  await expect.poll(() => transcript.evaluate(distanceFromEnd)).toBeLessThan(2);
+  await expect(page.locator('[data-index="5000"]')).toBeVisible();
+});
+
+test("follows the reply that replaces the working indicator", async ({
+  page,
+}) => {
+  const transcript = page.getByLabel("Tau transcript");
+  await page.evaluate(() => {
+    window.__TAU_TRANSCRIPT_FIXTURE__?.scrollToEnd();
+    window.__TAU_TRANSCRIPT_FIXTURE__?.setWorking(true);
+    window.__TAU_TRANSCRIPT_FIXTURE__?.appendMessage("tool");
+  });
+  await expect.poll(() => transcript.evaluate(distanceFromEnd)).toBeLessThan(2);
+
+  // The indicator gives way to the reply it stood in for, leaving the row count
+  // unchanged across the swap.
+  await page.evaluate(() => {
+    window.__TAU_TRANSCRIPT_FIXTURE__?.appendMessage("assistant");
+  });
+  await expect(page.getByTestId("fixture-count")).toHaveText("5002 messages");
+
+  await expect.poll(() => transcript.evaluate(distanceFromEnd)).toBeLessThan(2);
+  await expect(page.locator('[data-index="5001"]')).toBeVisible();
+});
+
 test("stops following output once the reader scrolls back", async ({
   page,
 }) => {
@@ -93,7 +134,10 @@ test("stops following output once the reader scrolls back", async ({
   expect(before).not.toBeNull();
 
   await page.evaluate(() => {
-    window.__TAU_TRANSCRIPT_FIXTURE__?.appendMessage();
+    window.__TAU_TRANSCRIPT_FIXTURE__?.setWorking(true);
+    window.__TAU_TRANSCRIPT_FIXTURE__?.appendMessage("tool");
+    window.__TAU_TRANSCRIPT_FIXTURE__?.appendMessage("assistant");
+    window.__TAU_TRANSCRIPT_FIXTURE__?.setWorking(false);
   });
   await page.evaluate(() =>
     window.__TAU_TRANSCRIPT_FIXTURE__?.streamLatest(18),

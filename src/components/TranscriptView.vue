@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useVirtualizer } from "@tanstack/vue-virtual";
 import type { ComponentPublicInstance } from "vue";
-import { computed, nextTick, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import type { TranscriptEntry } from "../types";
 import MarkdownText from "./MarkdownText.vue";
 import PiSpinner from "./PiSpinner.vue";
@@ -16,6 +16,18 @@ const props = defineProps<{
 const transcript = ref<HTMLElement>();
 const workingRowKey = "tau-working-indicator";
 
+/** How far from the end the reader may sit and still be counted as following. */
+const followThreshold = 48;
+
+/**
+ * Whether output should follow the end. The virtualizer only follows appends,
+ * which misses most of a turn: rows grow while they stream, and the working
+ * indicator is swapped for the row it was standing in for at an unchanged row
+ * count. Tracking the reader's own position instead follows every change, and
+ * leaves history alone the moment they scroll away from the end.
+ */
+let following = true;
+
 const rowVirtualizer = useVirtualizer(
   computed(() => {
     const messages = props.messages;
@@ -27,8 +39,7 @@ const rowVirtualizer = useVirtualizer(
       estimateSize: (index: number) => estimateRowSize(messages[index]),
       getItemKey: (index: number) => messages[index]?.id ?? workingRowKey,
       anchorTo: "end" as const,
-      followOnAppend: true,
-      scrollEndThreshold: 48,
+      scrollEndThreshold: followThreshold,
       overscan: 8,
       paddingStart: 28,
       paddingEnd: 30,
@@ -40,12 +51,42 @@ const virtualRows = computed(() => rowVirtualizer.value.getVirtualItems());
 const totalSize = computed(() => rowVirtualizer.value.getTotalSize());
 const firstRowOffset = computed(() => virtualRows.value[0]?.start ?? 0);
 
+/**
+ * Changes worth following, as one comparable value: rows appended or dropped,
+ * the indicator appearing, and — through the measured total — a row growing as
+ * it streams. Scrolling alone leaves it untouched.
+ */
+const contentSignature = computed(() =>
+  [
+    props.messages.length,
+    props.messages[props.messages.length - 1]?.id ?? "",
+    props.showWorkingIndicator,
+    totalSize.value,
+  ].join("|"),
+);
+
 onMounted(() => {
   void nextTick(scrollToEnd);
 });
 
+watch(contentSignature, () => {
+  if (!following) return;
+  void nextTick(() => {
+    if (following) rowVirtualizer.value.scrollToEnd();
+  });
+});
+
 function scrollToEnd() {
+  following = true;
   rowVirtualizer.value.scrollToEnd();
+}
+
+function handleScroll() {
+  const element = transcript.value;
+  if (!element) return;
+  following =
+    element.scrollHeight - element.scrollTop - element.clientHeight <=
+    followThreshold;
 }
 
 function measureRow(element: Element | ComponentPublicInstance | null) {
@@ -82,7 +123,12 @@ defineExpose({ scrollToEnd });
 </script>
 
 <template>
-  <section ref="transcript" class="transcript" aria-label="Tau transcript">
+  <section
+    ref="transcript"
+    class="transcript"
+    aria-label="Tau transcript"
+    @scroll="handleScroll"
+  >
     <div v-if="virtualRows.length" class="message-list-shell">
       <div class="message-list" :style="{ height: `${totalSize}px` }">
         <div

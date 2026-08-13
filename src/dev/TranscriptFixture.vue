@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from "vue";
+import { computed, onBeforeUnmount, ref } from "vue";
 import TranscriptView from "../components/TranscriptView.vue";
 import { createLongTranscript } from "./long-transcript";
 
 interface TranscriptFixtureApi {
-  appendMessage(): string;
+  appendMessage(kind?: "assistant" | "tool"): string;
   replaceLatestMessage(): string;
   scrollToEnd(): void;
+  setWorking(working: boolean): void;
   streamLatest(chunks?: number): Promise<void>;
 }
 
@@ -17,12 +18,31 @@ declare global {
 }
 
 const messages = ref(createLongTranscript());
-const streaming = ref(false);
+const working = ref(false);
 const transcriptView = ref<InstanceType<typeof TranscriptView>>();
 let sequence = messages.value.length;
 
-function appendMessage(): string {
+/** Mirrors the app: the indicator stands in for a reply that has yet to arrive. */
+const showWorkingIndicator = computed(
+  () =>
+    working.value &&
+    messages.value[messages.value.length - 1]?.kind !== "assistant",
+);
+
+function appendMessage(kind: "assistant" | "tool" = "assistant"): string {
   const id = `fixture-appended-${sequence++}`;
+  if (kind === "tool") {
+    messages.value.push({
+      id,
+      kind: "tool",
+      text: `/tmp/tau-fixture/appended-${id}.jsonl`,
+      toolCallId: `fixture-appended-call-${id}`,
+      toolName: "read",
+      toolRunning: true,
+      toolErrored: false,
+    });
+    return id;
+  }
   messages.value.push({
     id,
     kind: "assistant",
@@ -45,24 +65,29 @@ function replaceLatestMessage(): string {
 
 async function streamLatest(chunks = 24): Promise<void> {
   const last = messages.value[messages.value.length - 1];
-  if (!last || streaming.value) return;
+  if (!last || working.value) return;
 
-  streaming.value = true;
+  working.value = true;
   for (let index = 0; index < chunks; index += 1) {
     last.text += `\n\nStreaming fixture chunk ${index + 1}. The final row is growing to exercise ResizeObserver anchoring.`;
     await new Promise((resolve) => window.setTimeout(resolve, 16));
   }
-  streaming.value = false;
+  working.value = false;
 }
 
 function scrollToEnd() {
   transcriptView.value?.scrollToEnd();
 }
 
+function setWorking(next: boolean) {
+  working.value = next;
+}
+
 window.__TAU_TRANSCRIPT_FIXTURE__ = {
   appendMessage,
   replaceLatestMessage,
   scrollToEnd,
+  setWorking,
   streamLatest,
 };
 
@@ -81,7 +106,7 @@ onBeforeUnmount(() => {
       ref="transcriptView"
       class="fixture-transcript"
       :messages="messages"
-      :show-working-indicator="streaming"
+      :show-working-indicator="showWorkingIndicator"
       working-label="Pi is working"
     />
   </main>
