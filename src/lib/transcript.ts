@@ -3,6 +3,13 @@ import type { TranscriptEntry } from "../types";
 type JsonRecord = Record<string, unknown>;
 
 /**
+ * How much of a call's arguments and result a row carries. The expansion is a
+ * look at what the tool was asked and what came back, not a file viewer, and
+ * every tool row in a long transcript holds its own copy.
+ */
+const detailLimit = 4_000;
+
+/**
  * Rebuilds the transcript from Pi's message list. `previous` holds the entries
  * being replaced so their ids can carry over: a settled turn rewrites rows the
  * reader may be looking at, and a fresh id costs the virtualizer the height it
@@ -44,11 +51,12 @@ export function hydrateTranscript(
           entries.push({
             id: "",
             kind: "tool",
-            text: toolArgument(part.arguments),
+            text: toolSummary(part.arguments),
             toolCallId,
             toolName,
             toolRunning: true,
             toolErrored: false,
+            toolArguments: toolArgumentsText(part.arguments),
           });
         }
       }
@@ -65,6 +73,7 @@ export function hydrateTranscript(
       if (existing) {
         existing.toolRunning = false;
         existing.toolErrored = message.isError === true;
+        existing.toolResult = toolResultText(message.content);
       } else {
         const toolName = stringValue(message.toolName) || "tool";
         entries.push({
@@ -75,6 +84,7 @@ export function hydrateTranscript(
           toolName,
           toolRunning: false,
           toolErrored: message.isError === true,
+          toolResult: toolResultText(message.content),
         });
       }
       continue;
@@ -89,6 +99,7 @@ export function hydrateTranscript(
         toolName: "bash",
         toolRunning: false,
         toolErrored: numberValue(message.exitCode) !== 0,
+        toolResult: toolResultText(message.output),
       });
     }
   }
@@ -137,7 +148,8 @@ function holdsSameRow(
   return entry.toolCallId === candidate.toolCallId;
 }
 
-export function toolArgument(args: unknown): string {
+/** The single line a collapsed tool row shows: whichever argument names the call. */
+export function toolSummary(args: unknown): string {
   const record = asRecord(args);
   return (
     stringValue(record?.command) ||
@@ -146,6 +158,24 @@ export function toolArgument(args: unknown): string {
     stringValue(record?.query) ||
     compactJson(args)
   );
+}
+
+export function toolArgumentsText(args: unknown): string {
+  const record = asRecord(args);
+  if (!record || Object.keys(record).length === 0) return "";
+  try {
+    return clampDetail(JSON.stringify(record, null, 2) ?? "");
+  } catch {
+    return "";
+  }
+}
+
+export function toolResultText(content: unknown): string {
+  return clampDetail(contentText(content));
+}
+
+function clampDetail(text: string): string {
+  return text.length > detailLimit ? `${text.slice(0, detailLimit)}\n…` : text;
 }
 
 export function contentText(value: unknown): string {

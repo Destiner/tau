@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TranscriptEntry } from "../types";
-import { hydrateTranscript, toolArgument } from "./transcript";
+import { hydrateTranscript, toolSummary } from "./transcript";
 
 describe("hydrateTranscript", () => {
   it("keeps assistant content order and resolves tool outcomes", () => {
@@ -23,6 +23,7 @@ describe("hydrateTranscript", () => {
         role: "toolResult",
         toolCallId: "call-1",
         toolName: "bash",
+        content: [{ type: "text", text: "src\ntests" }],
         isError: false,
       },
     ]);
@@ -38,6 +39,25 @@ describe("hydrateTranscript", () => {
       toolName: "bash",
       toolRunning: false,
       toolErrored: false,
+      toolArguments: '{\n  "command": "ls"\n}',
+      toolResult: "src\ntests",
+    });
+  });
+
+  it("carries a bash execution's own output", () => {
+    const result = hydrateTranscript([
+      {
+        role: "bashExecution",
+        command: "ls",
+        output: "src\ntests",
+        exitCode: 0,
+      },
+    ]);
+
+    expect(result[0]).toMatchObject({
+      kind: "tool",
+      text: "ls",
+      toolResult: "src\ntests",
     });
   });
 
@@ -156,8 +176,8 @@ describe("hydrateTranscript", () => {
   });
 });
 
-describe("toolArgument", () => {
+describe("toolSummary", () => {
   it("prefers a recognizable path", () => {
-    expect(toolArgument({ path: "src/main.ts" })).toBe("src/main.ts");
+    expect(toolSummary({ path: "src/main.ts" })).toBe("src/main.ts");
   });
 });

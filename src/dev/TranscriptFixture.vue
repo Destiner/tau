@@ -32,14 +32,16 @@ const showWorkingIndicator = computed(
 function appendMessage(kind: "assistant" | "tool" = "assistant"): string {
   const id = `fixture-appended-${sequence++}`;
   if (kind === "tool") {
+    const path = `/tmp/tau-fixture/appended-${id}.jsonl`;
     messages.value.push({
       id,
       kind: "tool",
-      text: `/tmp/tau-fixture/appended-${id}.jsonl`,
+      text: path,
       toolCallId: `fixture-appended-call-${id}`,
       toolName: "read",
       toolRunning: true,
       toolErrored: false,
+      toolArguments: JSON.stringify({ path }, null, 2),
     });
     return id;
   }

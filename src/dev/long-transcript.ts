@@ -27,14 +27,20 @@ function createMessage(index: number): TranscriptEntry {
     };
   }
   if (variant === 3) {
+    const path = `/tmp/tau-fixture/session-${index}/a-very-long-command-name-${index}.jsonl`;
     return {
       id: `fixture-tool-${index}`,
       kind: "tool",
-      text: `/tmp/tau-fixture/session-${index}/a-very-long-command-name-${index}.jsonl`,
+      text: path,
       toolCallId: `fixture-call-${index}`,
       toolName: index % 12 === 3 ? "read" : "bash",
       toolRunning: index % 30 === 3,
       toolErrored: index % 42 === 3,
+      toolArguments: JSON.stringify({ path, limit: 200 }, null, 2),
+      toolResult:
+        index % 30 === 3
+          ? undefined
+          : `Read ${index} lines from the fixture file.\n${"Result line for the expanded call. ".repeat((index % 6) + 1)}`,
     };
   }
 

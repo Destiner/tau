@@ -72,6 +72,8 @@ export interface TranscriptEntry {
   toolName?: string;
   toolRunning?: boolean;
   toolErrored?: boolean;
+  toolArguments?: string;
+  toolResult?: string;
 }
 
 export interface PiBridgeEvent {

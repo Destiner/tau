@@ -6,7 +6,9 @@ import {
   asRecord,
   hydrateTranscript,
   stringValue,
-  toolArgument,
+  toolArgumentsText,
+  toolResultText,
+  toolSummary,
 } from "../lib/transcript";
 import { getActivePiIntegration } from "../lib/pi-integrations";
 import { scopeModels } from "../lib/model-scope";
@@ -1395,11 +1397,12 @@ async function handleRpc(controller: SessionController, value: unknown) {
     controller.messages.push({
       id: `stream-tool-${controller.streamSequence++}`,
       kind: "tool",
-      text: toolArgument(event.args),
+      text: toolSummary(event.args),
       toolCallId,
       toolName,
       toolRunning: true,
       toolErrored: false,
+      toolArguments: toolArgumentsText(event.args),
     });
     return;
   }
@@ -1413,6 +1416,7 @@ async function handleRpc(controller: SessionController, value: unknown) {
     if (tool) {
       tool.toolRunning = false;
       tool.toolErrored = event.isError === true;
+      tool.toolResult = toolResultText(asRecord(event.result)?.content);
     }
     return;
   }

@@ -25,6 +25,47 @@ test("renders a long transcript without pagination controls or an oversized DOM"
   expect(await page.locator(".message").count()).toBeLessThan(50);
 });
 
+test("opens a tool call in place and keeps it open across virtualization", async ({
+  page,
+}) => {
+  const transcript = page.getByLabel("Tau transcript");
+  await transcript.evaluate((element) => {
+    element.scrollTop = element.scrollHeight * 0.45;
+  });
+  await page.waitForTimeout(150);
+
+  const id = await page
+    .locator(".tool-call")
+    .first()
+    .evaluate(
+      (element) =>
+        element.closest("[data-message-id]")?.dataset.messageId ?? "",
+    );
+  const call = page.locator(`[data-message-id="${id}"]`);
+  const header = call.locator(".tool-header");
+  await expect(header).toHaveAttribute("aria-expanded", "false");
+  await expect(call.locator(".tool-details")).toHaveCount(0);
+
+  await header.click();
+  await expect(call.locator(".tool-detail-label").first()).toHaveText(
+    "Arguments",
+  );
+  await expect(header).toHaveAttribute("aria-expanded", "true");
+
+  // The row is unmounted while it is out of view, so the open state cannot live
+  // in the row itself.
+  await transcript.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await expect(page.locator('[data-index="0"]')).toBeVisible();
+  await transcript.evaluate((element) => {
+    element.scrollTop = element.scrollHeight * 0.45;
+  });
+  await page.waitForTimeout(150);
+
+  await expect(header).toHaveAttribute("aria-expanded", "true");
+});
+
 test("does not move a reader in history when output changes", async ({
   page,
 }) => {

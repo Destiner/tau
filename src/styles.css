@@ -62,7 +62,7 @@ textarea {
 }
 
 .markdown,
-.tool-copy,
+.tool-detail-body,
 .status {
   cursor: text;
   -webkit-user-select: text;
@@ -685,17 +685,35 @@ button.session-name:focus-visible {
   padding-bottom: 7px;
 }
 
-.tool-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
+.tool-call {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--panel-raised);
   color: var(--muted);
   font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+.tool-header {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  min-width: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
   padding: 7px 9px;
+  text-align: left;
+}
+
+.tool-header:enabled:hover,
+.tool-header:focus-visible {
+  outline: 0;
+  background: var(--hover);
+}
+
+/* The open block already sits under its header, which cannot round into it. */
+.tool-call.expanded .tool-header {
+  border-radius: 5px 5px 0 0;
 }
 
 .tool-copy {
@@ -705,6 +723,13 @@ button.session-name:focus-visible {
   flex: 1;
   flex-direction: column;
   gap: 2px;
+}
+
+.tool-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
 }
 
 .tool-argument {
@@ -718,6 +743,7 @@ button.session-name:focus-visible {
 
 .tool-name {
   overflow: hidden;
+  flex: 1;
   color: var(--muted);
   font-size: 9px;
   line-height: 1.2;
@@ -725,23 +751,74 @@ button.session-name:focus-visible {
   white-space: nowrap;
 }
 
-.tool-row.error,
-.tool-error-icon {
-  color: var(--danger);
-}
-
-.tool-error-icon {
-  width: 11px;
-  height: 11px;
+.tool-status-failed {
   flex: none;
+  color: var(--danger);
+  font-size: 11px;
 }
 
-.tool-running-indicator {
+.tool-status {
   width: 6px;
   height: 6px;
   flex: none;
   border-radius: 50%;
   background: var(--status-working);
+}
+
+/* The chevron points at what the click does: down to open, up to close. */
+.tool-disclosure {
+  flex: none;
+  transform: rotate(90deg);
+  opacity: 0;
+  color: var(--faint);
+  font-size: 11px;
+  transition: transform 120ms ease;
+}
+
+.tool-header:hover .tool-disclosure,
+.tool-header:focus-visible .tool-disclosure {
+  opacity: 1;
+}
+
+.tool-call.expanded .tool-disclosure {
+  transform: rotate(-90deg);
+}
+
+.tool-details {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  border-top: 1px solid var(--border);
+  padding: 9px;
+}
+
+.tool-detail {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tool-detail-label {
+  color: var(--faint);
+  font-size: 9px;
+  line-height: 1.2;
+}
+
+.tool-detail-body {
+  overflow: auto;
+  max-height: 260px;
+  margin: 0;
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.5;
+  overscroll-behavior: contain;
+  padding: 8px 9px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .stream-state {

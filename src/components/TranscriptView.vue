@@ -5,7 +5,7 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 import type { TranscriptEntry } from "../types";
 import MarkdownText from "./MarkdownText.vue";
 import PiSpinner from "./PiSpinner.vue";
-import UiIcon from "./UiIcon.vue";
+import ToolCall from "./ToolCall.vue";
 
 const props = defineProps<{
   messages: TranscriptEntry[];
@@ -15,6 +15,13 @@ const props = defineProps<{
 
 const transcript = ref<HTMLElement>();
 const workingRowKey = "tau-working-indicator";
+
+/**
+ * Which tool rows are open, held by message id rather than in the row itself:
+ * the virtualizer unmounts a row the reader scrolls away from, and an opened
+ * call should still be open when they scroll back to it.
+ */
+const expandedTools = ref(new Set<string>());
 
 /** How far from the end the reader may sit and still be counted as following. */
 const followThreshold = 48;
@@ -99,6 +106,19 @@ function messageAt(index: number): TranscriptEntry | undefined {
   return props.messages[index];
 }
 
+function isToolExpanded(index: number): boolean {
+  const id = messageAt(index)?.id;
+  return id ? expandedTools.value.has(id) : false;
+}
+
+function toggleTool(index: number) {
+  const id = messageAt(index)?.id;
+  if (!id) return;
+  const next = new Set(expandedTools.value);
+  if (!next.delete(id)) next.add(id);
+  expandedTools.value = next;
+}
+
 function isCompact(index: number): boolean {
   const current = messageAt(index)?.kind;
   const next = messageAt(index + 1)?.kind;
@@ -165,34 +185,12 @@ defineExpose({ scrollToEnd });
                   :source="messageAt(virtualRow.index)?.text ?? ''"
                 />
               </div>
-              <div
+              <ToolCall
                 v-else
-                class="tool-row"
-                :class="{ error: messageAt(virtualRow.index)?.toolErrored }"
-              >
-                <span class="tool-copy">
-                  <span class="tool-name">{{
-                    messageAt(virtualRow.index)?.toolName || "tool"
-                  }}</span>
-                  <span
-                    v-if="messageAt(virtualRow.index)?.text"
-                    class="tool-argument"
-                    >{{ messageAt(virtualRow.index)?.text }}</span
-                  >
-                </span>
-                <span
-                  v-if="messageAt(virtualRow.index)?.toolRunning"
-                  class="tool-running-indicator"
-                  role="status"
-                  aria-label="Running"
-                ></span>
-                <UiIcon
-                  v-else-if="messageAt(virtualRow.index)?.toolErrored"
-                  class="tool-error-icon"
-                  name="cross"
-                  aria-label="Failed"
-                />
-              </div>
+                :entry="messageAt(virtualRow.index)!"
+                :expanded="isToolExpanded(virtualRow.index)"
+                @toggle="toggleTool(virtualRow.index)"
+              />
             </article>
 
             <div
