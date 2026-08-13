@@ -241,13 +241,18 @@ button {
   color: var(--faint);
 }
 
+/*
+ * The user agent gives every button a padding of its own, which squeezes a
+ * fixed-size icon box until the glyph no longer sits in its middle.
+ */
 .icon-button,
 .row-action,
+.session-archive,
 .send-button {
   display: grid;
   place-items: center;
-  border-radius: 7px;
   background: transparent;
+  padding: 0;
 }
 
 .icon-button {
@@ -255,11 +260,13 @@ button {
   height: 28px;
   color: var(--muted);
   font-size: 16px;
+  opacity: 0.65;
 }
 
 .icon-button:hover,
-.row-action:hover {
-  background: var(--hover);
+.icon-button:focus-visible {
+  outline: 0;
+  opacity: 1;
 }
 
 .project-list {
@@ -377,7 +384,6 @@ button {
   width: 22px;
   height: 22px;
   flex: none;
-  border-radius: 6px;
   color: var(--muted);
   font-size: 12px;
   opacity: 0;
@@ -385,15 +391,18 @@ button {
 
 .project-row:hover .row-action,
 .project-row:focus-within .row-action {
+  opacity: 0.65;
+}
+
+.project-row .row-action:hover,
+.project-row .row-action:focus-visible {
+  outline: 0;
   opacity: 1;
 }
 
-.row-action.danger:hover {
+.row-action.danger:hover,
+.row-action.danger:focus-visible {
   color: var(--danger);
-}
-
-.row-action.new-session-action:hover {
-  color: var(--text);
 }
 
 .session-list {
@@ -428,35 +437,28 @@ button {
   text-align: left;
 }
 
+/* Shares the column and the size of the actions on a project row above it. */
 .session-archive {
   position: absolute;
   top: 50%;
-  right: 4px;
-  display: grid;
-  width: 24px;
-  height: 24px;
+  right: 0;
+  width: 22px;
+  height: 22px;
   opacity: 0;
   transform: translateY(-50%);
-  place-items: center;
-  border-radius: 6px;
-  background: var(--hover);
   color: var(--muted);
-  font-size: 13px;
-}
-
-.session-row.selected .session-archive {
-  background: var(--selected);
+  font-size: 12px;
 }
 
 .session-row:hover .session-archive,
 .session-row:focus-within .session-archive {
-  opacity: 1;
+  opacity: 0.65;
 }
 
-.session-archive:hover,
-.session-archive:focus-visible {
+.session-row .session-archive:hover,
+.session-row .session-archive:focus-visible {
   outline: 0;
-  color: var(--text);
+  opacity: 1;
 }
 
 .session-row.archivable:hover .session-time,
@@ -1057,7 +1059,6 @@ button.session-name:focus-visible {
   background: transparent;
   color: var(--muted);
   font-size: 15px;
-  padding: 0;
 }
 
 .send-button:hover:not(:disabled) {
