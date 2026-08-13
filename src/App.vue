@@ -442,8 +442,6 @@ function openSessionMenu(
   session: SessionSummary,
   event: MouseEvent,
 ) {
-  if (import.meta.env.DEV && event.altKey) return;
-  event.preventDefault();
   projectMenuOpen.value = false;
   sessionMenuState.value = {
     project,
@@ -609,8 +607,6 @@ function handleDocumentPointerDown(event: PointerEvent) {
  * the native menu so copy, paste, and lookup stay available.
  */
 function handleDocumentContextMenu(event: MouseEvent) {
-  // Inspect Element lives in that menu, so development keeps it on Alt.
-  if (import.meta.env.DEV && event.altKey) return;
   const target = event.target;
   const textual =
     target instanceof Element && target.closest("input, textarea, .transcript");
@@ -851,7 +847,7 @@ function clampSidebarWidth(width: number): number {
                 selected: isSessionSelected(project, session),
                 archivable: canArchiveSession(project, session),
               }"
-              @contextmenu="openSessionMenu(project, session, $event)"
+              @contextmenu.prevent="openSessionMenu(project, session, $event)"
             >
               <button
                 class="session-select"
