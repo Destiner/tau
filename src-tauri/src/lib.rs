@@ -18,8 +18,8 @@ const NEW_SESSION_EVENT: &str = "tau://new-session";
 /// The window paints its own background before the webview has anything to show
 /// and in the gaps a live resize opens up, so it has to carry the canvas colour
 /// of the theme it is being drawn in.
-const LIGHT_CANVAS: Color = Color(250, 250, 249, 255);
-const DARK_CANVAS: Color = Color(30, 31, 32, 255);
+const LIGHT_CANVAS: Color = Color(252, 252, 252, 255);
+const DARK_CANVAS: Color = Color(16, 20, 28, 255);
 
 /// How long the window stays hidden waiting for the frontend to show it.
 const REVEAL_TIMEOUT: Duration = Duration::from_secs(3);

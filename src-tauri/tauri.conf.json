@@ -20,7 +20,7 @@
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "visible": false,
-        "backgroundColor": "#fafaf9",
+        "backgroundColor": "#fcfcfc",
         "acceptFirstMouse": true
       }
     ],

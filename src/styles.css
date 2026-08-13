@@ -1,5 +1,18 @@
+/*
+ * Ayu is the theme, in its light and dark schemes, and the system chooses
+ * between them. The values are the palette's own, as published in ayu@9
+ * (github.com/ayu-theme/ayu-colors): its editor and ui surfaces, foreground,
+ * accent, error, and the greys its separator and selection washes are mixed
+ * from. Three are not. The dark scheme's sunk surface follows the palette's
+ * rule of a step under the base rather than a value it ships. The light
+ * scheme's secondary greys sit between ayu's ui.fg and its foreground, which
+ * text at these sizes needs and an editor's chrome does not. And a selected
+ * row carries a little more of the selection wash than ayu's 25%, or it could
+ * not be told apart from the row under the pointer.
+ */
 :root {
   color-scheme: light dark;
+  accent-color: var(--accent);
   font-family:
     "Inter Variable",
     ui-sans-serif,
@@ -7,26 +20,37 @@
     "Segoe UI",
     sans-serif;
   font-size: 14px;
-  color: #292a2d;
-  background: #f7f7f6;
+  color: var(--text);
+  background: var(--canvas);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  --canvas: #fafaf9;
-  --panel: #f0f0ee;
+  --canvas: #fcfcfc;
+  --panel: #f8f9fa;
   --panel-raised: #ffffff;
-  --hover: #e6e6e3;
-  --selected: #deded9;
-  --selected-inactive: #e3e3e0;
-  --border: #d9d9d5;
-  --text: #292a2d;
-  --muted: #777872;
-  --faint: #a4a49d;
-  --danger: #a6433c;
-  --status-new: #4e84d8;
-  --status-draft: #b7b8b4;
-  --status-working: #b7b8b4;
-  --user: #ecece8;
+  --sunk: #ebeef0;
+  --hover: rgb(107 125 143 / 10%);
+  --selected: rgb(107 125 143 / 20%);
+  --selected-inactive: rgb(107 125 143 / 11%);
+  --border: rgb(107 125 143 / 24%);
+  --text: #5c6166;
+  --muted: #6e757f;
+  --faint: #a1a8b2;
+  --accent: #f29718;
+  --link: #22a4e6;
+  --danger: #e65050;
+  --status-new: var(--accent);
+  --status-draft: var(--faint);
+  --status-working: var(--muted);
+  --user: #ebeef0;
+  --selection: rgb(3 91 214 / 15%);
+  --scrim: rgb(0 0 0 / 10%);
+  --shadow-soft: rgb(0 0 0 / 12%);
+  --shadow-strong: rgb(0 0 0 / 20%);
+}
+
+::selection {
+  background: var(--selection);
 }
 
 * {
@@ -57,6 +81,7 @@ body {
 input,
 textarea {
   cursor: auto;
+  caret-color: var(--accent);
   -webkit-user-select: text;
   user-select: text;
 }
@@ -177,7 +202,7 @@ button {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel-raised);
-  box-shadow: 0 8px 24px color-mix(in srgb, #000 14%, transparent);
+  box-shadow: 0 8px 24px var(--shadow-soft);
   padding: 4px;
 }
 
@@ -188,7 +213,7 @@ button {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel-raised);
-  box-shadow: 0 8px 24px color-mix(in srgb, #000 14%, transparent);
+  box-shadow: 0 8px 24px var(--shadow-soft);
   padding: 4px;
 }
 
@@ -343,8 +368,8 @@ button {
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--panel);
-  box-shadow: 0 15px 30px color-mix(in srgb, #000 23%, transparent);
+  background: var(--panel-raised);
+  box-shadow: 0 15px 30px var(--shadow-strong);
   opacity: 0.98;
 }
 
@@ -810,7 +835,7 @@ button.session-name:focus-visible {
   max-height: 260px;
   margin: 0;
   border-radius: 5px;
-  background: var(--panel);
+  background: var(--sunk);
   color: var(--text);
   font-family: inherit;
   font-size: 11px;
@@ -880,7 +905,7 @@ button.session-name:focus-visible {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel-raised);
-  box-shadow: 0 10px 30px color-mix(in srgb, #000 16%, transparent);
+  box-shadow: 0 10px 30px var(--shadow-soft);
   padding: 4px;
 }
 
@@ -1011,7 +1036,7 @@ button.session-name:focus-visible {
 .composer-selector select:hover:not(:disabled),
 .composer-selector select:focus-visible {
   border-color: var(--border);
-  background: var(--panel);
+  background: var(--hover);
 }
 
 .composer-selector:has(select:disabled)::after {
@@ -1101,7 +1126,7 @@ textarea:disabled {
 
 .markdown code {
   border-radius: 4px;
-  background: var(--panel);
+  background: var(--sunk);
   font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
   font-size: 0.88em;
   padding: 0.12em 0.3em;
@@ -1111,7 +1136,7 @@ textarea:disabled {
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 9px;
-  background: var(--panel);
+  background: var(--sunk);
   padding: 11px 12px;
 }
 
@@ -1129,7 +1154,7 @@ textarea:disabled {
 /* The hand belongs to links, and these are the only ones: they leave the app. */
 .markdown a {
   cursor: pointer;
-  color: inherit;
+  color: var(--link);
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
 }
@@ -1156,7 +1181,7 @@ textarea:disabled {
   border: 1px solid var(--border);
   border-radius: 5px;
   background: var(--panel-raised);
-  box-shadow: 0 10px 30px color-mix(in srgb, #000 16%, transparent);
+  box-shadow: 0 10px 30px var(--shadow-soft);
   padding: 7px 8px;
   pointer-events: auto;
 }
@@ -1220,7 +1245,7 @@ textarea:disabled {
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  background: color-mix(in srgb, #000 12%, transparent);
+  background: var(--scrim);
   padding: 68px 18px 18px;
 }
 
@@ -1319,7 +1344,7 @@ textarea:disabled {
 
 .extension-dialog-input:focus,
 .extension-dialog-editor:focus {
-  border-color: var(--muted);
+  border-color: var(--accent);
 }
 
 .extension-dialog-input::placeholder {
@@ -1365,7 +1390,7 @@ textarea:disabled {
   border: 1px solid var(--border);
   border-radius: 9px;
   background: var(--panel-raised);
-  box-shadow: 0 14px 40px color-mix(in srgb, #000 18%, transparent);
+  box-shadow: 0 14px 40px var(--shadow-strong);
   padding: 8px;
 }
 
@@ -1383,7 +1408,7 @@ textarea:disabled {
 }
 
 .remote-dialog input:focus {
-  border-color: var(--muted);
+  border-color: var(--accent);
 }
 
 .remote-dialog input.error {
@@ -1432,20 +1457,24 @@ textarea:disabled {
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --canvas: #1e1f20;
-    --panel: #262728;
-    --panel-raised: #2b2c2e;
-    --hover: #313234;
-    --selected: #3a3b3d;
-    --selected-inactive: #353638;
-    --border: #3b3c3e;
-    --text: #e5e5e2;
-    --muted: #a0a19c;
-    --faint: #73746f;
-    --danger: #e07971;
-    --status-new: #70a4ee;
-    --status-draft: #858782;
-    --status-working: #858782;
-    --user: #343536;
+    --canvas: #10141c;
+    --panel: #0d1017;
+    --panel-raised: #141821;
+    --sunk: #080b11;
+    --hover: rgb(71 82 102 / 20%);
+    --selected: rgb(71 82 102 / 30%);
+    --selected-inactive: rgb(71 82 102 / 15%);
+    --border: #1b1f29;
+    --text: #bfbdb6;
+    --muted: #6c7380;
+    --faint: #5a6378;
+    --accent: #e6b450;
+    --link: #59c2ff;
+    --danger: #d95757;
+    --user: #1b1f29;
+    --selection: rgb(51 136 255 / 25%);
+    --scrim: rgb(0 0 0 / 40%);
+    --shadow-soft: rgb(0 0 0 / 45%);
+    --shadow-strong: rgb(0 0 0 / 60%);
   }
 }
