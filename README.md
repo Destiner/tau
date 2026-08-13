@@ -32,7 +32,7 @@ Session names are shared with Pi. Clicking the name in the session header edits 
 
 The model picker offers the models Pi has scoped through its `enabledModels` setting, which is the list `/scoped-models` edits and `/model` shows. Patterns that match nothing leave the full catalogue in place.
 
-Right-clicking a session in the sidebar opens a context menu that marks it unread, reads it again, or archives it. A session marked while it is open keeps its dot until it is selected again, so it stays visible after switching away.
+Right-clicking a session in the sidebar opens a context menu that marks it unread, reads it again, or archives it. Everywhere else Tau suppresses the webview's own menu, apart from text fields and the transcript, which keep it for copy and paste. Development builds still reach it, and Inspect Element with it, on Alt-right-click. A session marked while it is open keeps its dot until it is selected again, so it stays visible after switching away.
 
 Each live session owns an isolated Pi runtime. Switching the visible session does not interrupt running work in other sessions; hidden idle runtimes are released and restored from their session files when selected again. Session lists are ordered by the latest user message, so background agent events do not move rows. Removing a project stops all of its runtimes, and quitting Tau stops every child process.
 

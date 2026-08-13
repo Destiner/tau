@@ -216,6 +216,7 @@ onMounted(() => {
   setupProjectReordering();
   void nextTick(resizeComposer);
   document.addEventListener("pointerdown", handleDocumentPointerDown);
+  document.addEventListener("contextmenu", handleDocumentContextMenu);
   document.addEventListener("keydown", handleDocumentKeydown);
   window.addEventListener("resize", updateCommandMenuLayout);
   window.addEventListener("resize", closeSessionMenu);
@@ -224,6 +225,7 @@ onBeforeUnmount(() => {
   projectSortable?.destroy();
   dispose();
   document.removeEventListener("pointerdown", handleDocumentPointerDown);
+  document.removeEventListener("contextmenu", handleDocumentContextMenu);
   document.removeEventListener("keydown", handleDocumentKeydown);
   window.removeEventListener("resize", updateCommandMenuLayout);
   window.removeEventListener("resize", closeSessionMenu);
@@ -440,6 +442,8 @@ function openSessionMenu(
   session: SessionSummary,
   event: MouseEvent,
 ) {
+  if (import.meta.env.DEV && event.altKey) return;
+  event.preventDefault();
   projectMenuOpen.value = false;
   sessionMenuState.value = {
     project,
@@ -597,6 +601,20 @@ function handleDocumentPointerDown(event: PointerEvent) {
   ) {
     closeSessionMenu();
   }
+}
+
+/**
+ * The webview's own menu offers reloads and page navigation, which a desktop
+ * app has no use for. Text is the exception: fields and the transcript keep
+ * the native menu so copy, paste, and lookup stay available.
+ */
+function handleDocumentContextMenu(event: MouseEvent) {
+  // Inspect Element lives in that menu, so development keeps it on Alt.
+  if (import.meta.env.DEV && event.altKey) return;
+  const target = event.target;
+  const textual =
+    target instanceof Element && target.closest("input, textarea, .transcript");
+  if (!textual) event.preventDefault();
 }
 
 function handleDocumentKeydown(event: KeyboardEvent) {
@@ -833,7 +851,7 @@ function clampSidebarWidth(width: number): number {
                 selected: isSessionSelected(project, session),
                 archivable: canArchiveSession(project, session),
               }"
-              @contextmenu.prevent="openSessionMenu(project, session, $event)"
+              @contextmenu="openSessionMenu(project, session, $event)"
             >
               <button
                 class="session-select"
