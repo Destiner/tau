@@ -20,9 +20,22 @@ import {
   filterCommands,
   slashCommandQuery,
 } from "./lib/commands";
-import type { CommandOption, ThinkingLevel } from "./types";
+import type {
+  CommandOption,
+  ProjectSummary,
+  SessionSummary,
+  ThinkingLevel,
+} from "./types";
+
+interface SessionMenuState {
+  project: ProjectSummary;
+  session: SessionSummary;
+  x: number;
+  y: number;
+}
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "tau.sidebar-width";
+const SESSION_MENU_MARGIN = 8;
 const DEFAULT_SIDEBAR_WIDTH = 260;
 const MIN_SIDEBAR_WIDTH = 200;
 const MAX_SIDEBAR_WIDTH = 480;
@@ -33,6 +46,7 @@ const composer = ref<HTMLElement>();
 const composerInput = ref<HTMLTextAreaElement>();
 const commandMenu = ref<HTMLElement>();
 const projectMenu = ref<HTMLElement>();
+const sessionMenu = ref<HTMLElement>();
 const projectList = ref<HTMLElement>();
 const sidebar = ref<HTMLElement>();
 const remoteConnectionInput = ref<HTMLInputElement>();
@@ -40,6 +54,7 @@ const remoteDirectoryFilterInput = ref<HTMLInputElement>();
 const extensionDialogInput = ref<HTMLInputElement | HTMLTextAreaElement>();
 const extensionDialogPrimaryAction = ref<HTMLButtonElement>();
 const projectMenuOpen = ref(false);
+const sessionMenuState = ref<SessionMenuState>();
 const projectDragging = ref(false);
 const commandSelectedIndex = ref(0);
 const commandMenuPlacement = ref<CommandMenuPlacement>("above");
@@ -95,6 +110,9 @@ const {
   sessionLastActive,
   isSessionSelected,
   sessionIndicator,
+  isSessionUnread,
+  markSessionUnread,
+  markSessionRead,
   projectIndicator,
   indicatorLabel,
   sendMessage,
@@ -200,6 +218,7 @@ onMounted(() => {
   document.addEventListener("pointerdown", handleDocumentPointerDown);
   document.addEventListener("keydown", handleDocumentKeydown);
   window.addEventListener("resize", updateCommandMenuLayout);
+  window.addEventListener("resize", closeSessionMenu);
 });
 onBeforeUnmount(() => {
   projectSortable?.destroy();
@@ -207,6 +226,7 @@ onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", handleDocumentPointerDown);
   document.removeEventListener("keydown", handleDocumentKeydown);
   window.removeEventListener("resize", updateCommandMenuLayout);
+  window.removeEventListener("resize", closeSessionMenu);
 });
 
 watch(
@@ -415,6 +435,54 @@ function handleNewSession() {
   if (activeProject.value) void newSession(activeProject.value);
 }
 
+function openSessionMenu(
+  project: ProjectSummary,
+  session: SessionSummary,
+  event: MouseEvent,
+) {
+  projectMenuOpen.value = false;
+  sessionMenuState.value = {
+    project,
+    session,
+    x: event.clientX,
+    y: event.clientY,
+  };
+  void nextTick(() => {
+    keepSessionMenuOnScreen();
+    sessionMenu.value?.querySelector("button")?.focus();
+  });
+}
+
+/**
+ * The menu opens at the pointer, which near the bottom or right edge would
+ * otherwise place part of it outside the window.
+ */
+function keepSessionMenuOnScreen() {
+  const menu = sessionMenuState.value;
+  const element = sessionMenu.value;
+  if (!menu || !element) return;
+  const { width, height } = element.getBoundingClientRect();
+  const maxX = window.innerWidth - width - SESSION_MENU_MARGIN;
+  const maxY = window.innerHeight - height - SESSION_MENU_MARGIN;
+  menu.x = Math.max(SESSION_MENU_MARGIN, Math.min(menu.x, maxX));
+  menu.y = Math.max(SESSION_MENU_MARGIN, Math.min(menu.y, maxY));
+}
+
+function closeSessionMenu() {
+  sessionMenuState.value = undefined;
+}
+
+function toggleSessionMenuRead() {
+  const menu = sessionMenuState.value;
+  if (!menu) return;
+  if (isSessionUnread(menu.project, menu.session)) {
+    markSessionRead(menu.project, menu.session);
+  } else {
+    markSessionUnread(menu.project, menu.session);
+  }
+  closeSessionMenu();
+}
+
 function setupProjectReordering() {
   if (!projectList.value) return;
   projectSortable = Sortable.create(projectList.value, {
@@ -516,6 +584,12 @@ function handleDocumentPointerDown(event: PointerEvent) {
   ) {
     projectMenuOpen.value = false;
   }
+  if (
+    sessionMenuState.value &&
+    (!(target instanceof Node) || !sessionMenu.value?.contains(target))
+  ) {
+    closeSessionMenu();
+  }
 }
 
 function handleDocumentKeydown(event: KeyboardEvent) {
@@ -532,7 +606,10 @@ function handleDocumentKeydown(event: KeyboardEvent) {
     return;
   }
   if (event.key !== "Escape") return;
-  if (activeExtensionDialog.value) {
+  if (sessionMenuState.value) {
+    event.preventDefault();
+    closeSessionMenu();
+  } else if (activeExtensionDialog.value) {
     event.preventDefault();
     void cancelExtensionDialog();
   } else if (state.remoteDialogOpen) closeRemoteProjectDialog();
@@ -680,6 +757,7 @@ function clampSidebarWidth(width: number): number {
         ref="projectList"
         class="project-list"
         :class="{ 'project-dragging': projectDragging }"
+        @scroll.passive="closeSessionMenu"
       >
         <div
           v-for="project in state.workspace?.projects"
@@ -748,6 +826,7 @@ function clampSidebarWidth(width: number): number {
                 selected: isSessionSelected(project, session),
                 archivable: canArchiveSession(project, session),
               }"
+              @contextmenu.prevent="openSessionMenu(project, session, $event)"
             >
               <button
                 class="session-select"
@@ -1145,6 +1224,25 @@ function clampSidebarWidth(width: number): number {
         </div>
       </footer>
     </main>
+
+    <div
+      v-if="sessionMenuState"
+      ref="sessionMenu"
+      class="context-menu"
+      role="menu"
+      :style="{
+        left: `${sessionMenuState.x}px`,
+        top: `${sessionMenuState.y}px`,
+      }"
+    >
+      <button type="button" role="menuitem" @click="toggleSessionMenuRead">
+        {{
+          isSessionUnread(sessionMenuState.project, sessionMenuState.session)
+            ? "Mark as Read"
+            : "Mark as Unread"
+        }}
+      </button>
+    </div>
 
     <div
       v-if="extensionNotifications.length"

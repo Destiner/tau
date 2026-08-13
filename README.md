@@ -32,6 +32,8 @@ Session names are shared with Pi. Clicking the name in the session header edits 
 
 The model picker offers the models Pi has scoped through its `enabledModels` setting, which is the list `/scoped-models` edits and `/model` shows. Patterns that match nothing leave the full catalogue in place.
 
+Right-clicking a session in the sidebar opens a context menu that marks it unread, or reads it again. A session marked while it is open keeps its dot until it is selected again, so it stays visible after switching away.
+
 Each live session owns an isolated Pi runtime. Switching the visible session does not interrupt running work in other sessions; hidden idle runtimes are released and restored from their session files when selected again. Session lists are ordered by the latest user message, so background agent events do not move rows. Removing a project stops all of its runtimes, and quitting Tau stops every child process.
 
 Remote projects use the system OpenSSH client and start directory browsing from the remote account's default working directory. SSH config aliases and command-line options are supported. Authentication must work non-interactively, such as through keys or an SSH agent, and Pi must be available on the remote login shell's `PATH`.

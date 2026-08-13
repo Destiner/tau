@@ -184,9 +184,67 @@ describe("session drafts and selection", () => {
     });
     expect(firstController.unread).toBe(true);
     expect(secondController.unread).toBe(false);
-
-    secondController.unread = true;
     expect(sessionIndicator(project, secondSession)).toBe("");
+  });
+
+  it("keeps a manually marked session unread until it is read again", async () => {
+    const firstSession = savedSession("first");
+    const secondSession = savedSession("second");
+    const unopenedSession = savedSession("unopened");
+    const project: ProjectSummary = {
+      path: "/tmp/tau-unread-test",
+      name: "tau-unread-test",
+      workingDirectory: "/tmp/tau-unread-test",
+      collapsed: false,
+      selected: true,
+      sessions: [firstSession, secondSession, unopenedSession],
+    };
+    const workspace: WorkspaceSnapshot = {
+      activeProjectPath: project.path,
+      piPath: "/usr/local/bin/pi",
+      sdkAvailable: true,
+      projects: [project],
+    };
+    mocks.workspace = workspace;
+
+    const {
+      state,
+      selectSession,
+      sessionIndicator,
+      isSessionUnread,
+      markSessionUnread,
+      markSessionRead,
+    } = useTau();
+    state.activeProjectPath = "";
+    state.activeSessionId = "";
+    state.activeSessionPath = "";
+    state.activeControllerKey = "";
+    state.controllers.splice(0);
+    state.ephemeralSessions.splice(0);
+    state.workspace = workspace;
+
+    await selectSession(project, firstSession);
+    expect(isSessionUnread(project, firstSession)).toBe(false);
+
+    // The mark has to survive on the session being read, or it would only
+    // appear once the sidebar selection moved elsewhere.
+    markSessionUnread(project, firstSession);
+    expect(isSessionUnread(project, firstSession)).toBe(true);
+    expect(sessionIndicator(project, firstSession)).toBe("new");
+
+    await selectSession(project, secondSession);
+    expect(sessionIndicator(project, firstSession)).toBe("new");
+
+    await selectSession(project, firstSession);
+    expect(isSessionUnread(project, firstSession)).toBe(false);
+    expect(sessionIndicator(project, firstSession)).toBe("");
+
+    // A session Tau never opened still has to carry the mark.
+    expect(sessionIndicator(project, unopenedSession)).toBe("");
+    markSessionUnread(project, unopenedSession);
+    expect(sessionIndicator(project, unopenedSession)).toBe("new");
+    markSessionRead(project, unopenedSession);
+    expect(sessionIndicator(project, unopenedSession)).toBe("");
   });
 
   it("keeps a submitted new session visible until its file is listed", async () => {

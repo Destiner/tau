@@ -883,6 +883,9 @@ export function useTau() {
     sessionLastActive,
     isSessionSelected,
     sessionIndicator,
+    isSessionUnread,
+    markSessionUnread,
+    markSessionRead,
     projectIndicator,
     indicatorLabel,
     sendMessage,
@@ -2188,6 +2191,10 @@ function isSessionSelected(
  * A waiting prompt reads as unread rather than working: it arrives mid-turn,
  * so the working state would otherwise bury the one thing that needs an
  * answer before the session can move.
+ *
+ * Background activity only ever marks an unselected session unread, so an
+ * unread flag on the selected session is a deliberate mark and stays visible
+ * until the session is read again.
  */
 function sessionIndicator(
   project: ProjectSummary,
@@ -2199,7 +2206,28 @@ function sessionIndicator(
   if (!selected && controllerHasPendingDialog(controller)) return "new";
   if (controller.working) return "working";
   if (controller.draft.trim()) return "draft";
-  return controller.unread && !selected ? "new" : "";
+  return controller.unread ? "new" : "";
+}
+
+function isSessionUnread(
+  project: ProjectSummary,
+  session: SessionSummary,
+): boolean {
+  return controllerForSession(project.path, session.id)?.unread === true;
+}
+
+/**
+ * Unread is otherwise a by-product of background activity, so marking a
+ * session Tau has never opened needs a controller to hold the flag. The
+ * controller stays idle until the session is selected and started.
+ */
+function markSessionUnread(project: ProjectSummary, session: SessionSummary) {
+  ensureController(project, session).unread = true;
+}
+
+function markSessionRead(project: ProjectSummary, session: SessionSummary) {
+  const controller = controllerForSession(project.path, session.id);
+  if (controller) controller.unread = false;
 }
 
 function indicatorLabel(indicator: SessionIndicator): string {
