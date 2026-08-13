@@ -72,6 +72,7 @@ button {
 .app-shell.resizing-sidebar,
 .app-shell.resizing-sidebar * {
   cursor: col-resize;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -124,6 +125,7 @@ button {
   min-height: 30px;
   border-bottom: 1px solid var(--border);
   cursor: default;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -303,6 +305,7 @@ button {
 .project-list.project-dragging,
 .project-list.project-dragging * {
   cursor: grabbing;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -467,6 +470,7 @@ button {
   padding: 5px 7px 8px 20px;
   color: var(--faint);
   font-size: 11px;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -552,6 +556,8 @@ button {
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 button.session-name {
@@ -573,6 +579,7 @@ button.session-name:focus-visible {
   background: transparent;
   color: var(--text);
   font-size: 13px;
+  -webkit-user-select: text;
   user-select: text;
 }
 

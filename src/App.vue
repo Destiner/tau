@@ -483,6 +483,13 @@ function toggleSessionMenuRead() {
   closeSessionMenu();
 }
 
+function archiveSessionFromMenu() {
+  const menu = sessionMenuState.value;
+  if (!menu) return;
+  closeSessionMenu();
+  void archiveSession(menu.project, menu.session);
+}
+
 function setupProjectReordering() {
   if (!projectList.value) return;
   projectSortable = Sortable.create(projectList.value, {
@@ -1241,6 +1248,16 @@ function clampSidebarWidth(width: number): number {
             ? "Mark as Read"
             : "Mark as Unread"
         }}
+      </button>
+      <button
+        v-if="
+          canArchiveSession(sessionMenuState.project, sessionMenuState.session)
+        "
+        type="button"
+        role="menuitem"
+        @click="archiveSessionFromMenu"
+      >
+        Archive Session
       </button>
     </div>
 
