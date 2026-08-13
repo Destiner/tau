@@ -1,11 +1,9 @@
 :root {
   color-scheme: light dark;
   font-family:
-    Inter,
+    "Inter Variable",
     ui-sans-serif,
     -apple-system,
-    BlinkMacSystemFont,
-    "SF Pro Text",
     "Segoe UI",
     sans-serif;
   font-size: 14px;
@@ -19,6 +17,7 @@
   --panel-raised: #ffffff;
   --hover: #e6e6e3;
   --selected: #deded9;
+  --selected-inactive: #e3e3e0;
   --border: #d9d9d5;
   --text: #292a2d;
   --muted: #777872;
@@ -41,6 +40,33 @@ body,
   height: 100%;
   margin: 0;
   overflow: hidden;
+}
+
+/*
+ * A desktop app is not a page. The arrow is the cursor everywhere, including
+ * over controls, and nothing is selectable until it is content worth copying:
+ * a selectable label also leaves a word highlighted wherever a right click
+ * opened a menu.
+ */
+body {
+  cursor: default;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input,
+textarea {
+  cursor: auto;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.markdown,
+.tool-copy,
+.status {
+  cursor: text;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 button,
@@ -69,6 +95,11 @@ button {
   background: var(--canvas);
 }
 
+/* Native chrome dims its selection while its window sits in the background. */
+.app-shell.window-inactive {
+  --selected: var(--selected-inactive);
+}
+
 .app-shell.resizing-sidebar,
 .app-shell.resizing-sidebar * {
   cursor: col-resize;
@@ -83,10 +114,6 @@ button {
   flex-direction: column;
   border-right: 1px solid var(--border);
   background: var(--panel);
-  /* Names and times here are controls, not copy. Selectable text would also
-     leave a word highlighted wherever a right click opened a menu. */
-  -webkit-user-select: none;
-  user-select: none;
 }
 
 .sidebar-resize-handle {
@@ -128,9 +155,6 @@ button {
   align-items: center;
   min-height: 30px;
   border-bottom: 1px solid var(--border);
-  cursor: default;
-  -webkit-user-select: none;
-  user-select: none;
 }
 
 .sidebar-footer {
@@ -172,7 +196,6 @@ button {
 .context-menu button {
   display: block;
   width: 100%;
-  cursor: pointer;
   border-radius: 5px;
   background: transparent;
   padding: 7px 8px;
@@ -190,7 +213,6 @@ button {
 }
 
 .context-menu button:disabled {
-  cursor: default;
   color: var(--faint);
 }
 
@@ -198,7 +220,6 @@ button {
 .row-action,
 .send-button {
   display: grid;
-  cursor: pointer;
   place-items: center;
   border-radius: 7px;
   background: transparent;
@@ -243,7 +264,6 @@ button {
   display: grid;
   width: 25px;
   height: 29px;
-  cursor: grab;
   touch-action: none;
   transform: translateY(-50%);
   place-items: center;
@@ -274,7 +294,6 @@ button {
   align-items: center;
   gap: 3px;
   padding: 7px 5px;
-  cursor: pointer;
   transition: padding-left 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
   background: transparent;
   color: var(--muted);
@@ -309,11 +328,6 @@ button {
 .project-sortable-chosen > .project-row .project-toggle,
 .project-sortable-drag > .project-row .project-toggle {
   padding-left: 27px;
-}
-
-.project-list.project-dragging,
-.project-list.project-dragging * {
-  cursor: grabbing;
 }
 
 .project-sortable-ghost {
@@ -384,7 +398,6 @@ button {
   min-width: 0;
   align-items: center;
   gap: 7px;
-  cursor: pointer;
   background: transparent;
   padding: 7px;
   text-align: left;
@@ -397,7 +410,6 @@ button {
   display: grid;
   width: 24px;
   height: 24px;
-  cursor: pointer;
   opacity: 0;
   transform: translateY(-50%);
   place-items: center;
@@ -561,8 +573,6 @@ button {
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
-  -webkit-user-select: none;
-  user-select: none;
 }
 
 button.session-name {
@@ -584,8 +594,6 @@ button.session-name:focus-visible {
   background: transparent;
   color: var(--text);
   font-size: 13px;
-  -webkit-user-select: text;
-  user-select: text;
 }
 
 .transcript {
@@ -807,7 +815,6 @@ button.session-name:focus-visible {
   display: flex;
   width: 100%;
   min-width: 0;
-  cursor: pointer;
   align-items: baseline;
   gap: 10px;
   border-radius: 5px;
@@ -912,7 +919,6 @@ button.session-name:focus-visible {
   max-width: 210px;
   appearance: none;
   field-sizing: content;
-  cursor: pointer;
   overflow: hidden;
   border: 1px solid transparent;
   border-radius: 4px;
@@ -1043,10 +1049,18 @@ textarea:disabled {
   padding-left: 12px;
 }
 
+/* The hand belongs to links, and these are the only ones: they leave the app. */
 .markdown a {
+  cursor: pointer;
   color: inherit;
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
+}
+
+/* Dragging content out of the transcript is a browser gesture, not an app one. */
+.markdown a,
+.markdown img {
+  -webkit-user-drag: none;
 }
 
 .extension-notification-stack {
@@ -1107,7 +1121,6 @@ textarea:disabled {
   height: 16px;
   flex: none;
   margin-left: auto;
-  cursor: pointer;
   place-items: center;
   border-radius: 3px;
   background: transparent;
@@ -1181,7 +1194,6 @@ textarea:disabled {
 .extension-dialog-option {
   display: block;
   width: 100%;
-  cursor: pointer;
   border-radius: 5px;
   background: transparent;
   color: var(--text);
@@ -1246,7 +1258,6 @@ textarea:disabled {
 .extension-dialog-button {
   min-width: 54px;
   height: 26px;
-  cursor: pointer;
   border: 1px solid var(--border);
   border-radius: 5px;
   font-size: 11px;
@@ -1326,7 +1337,6 @@ textarea:disabled {
   overflow: hidden;
   width: 100%;
   height: 30px;
-  cursor: pointer;
   border-radius: 5px;
   background: transparent;
   color: var(--text);
@@ -1350,6 +1360,7 @@ textarea:disabled {
     --panel-raised: #2b2c2e;
     --hover: #313234;
     --selected: #3a3b3d;
+    --selected-inactive: #353638;
     --border: #3b3c3e;
     --text: #e5e5e2;
     --muted: #a0a19c;

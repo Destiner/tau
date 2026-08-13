@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { type UnlistenFn, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import Sortable, { type SortableEvent } from "sortablejs";
@@ -44,9 +45,13 @@ interface ContextMenuState {
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "tau.sidebar-width";
 const CONTEXT_MENU_MARGIN = 8;
+const NEW_SESSION_EVENT = "tau://new-session";
+/** How long a session may hydrate before it is worth reporting as loading. */
+const LOADING_INDICATOR_DELAY_MS = 200;
 // The rename field applies its value the moment it loses focus, so it is left
 // out: a menu that takes focus to open would end the rename it edits.
 const TEXT_FIELD_SELECTOR = "input:not(.session-name-input), textarea";
+const EDITABLE_SELECTOR = "input, textarea, select";
 const DEFAULT_SIDEBAR_WIDTH = 260;
 const MIN_SIDEBAR_WIDTH = 200;
 const MAX_SIDEBAR_WIDTH = 480;
@@ -66,7 +71,9 @@ const extensionDialogInput = ref<HTMLInputElement | HTMLTextAreaElement>();
 const extensionDialogPrimaryAction = ref<HTMLButtonElement>();
 const projectMenuOpen = ref(false);
 const contextMenuState = ref<ContextMenuState>();
-const projectDragging = ref(false);
+const windowFocused = ref(true);
+const loadingIndicatorVisible = ref(false);
+const commandMenuDismissed = ref(false);
 const commandSelectedIndex = ref(0);
 const commandMenuPlacement = ref<CommandMenuPlacement>("above");
 const commandMenuMaxHeight = ref<number>();
@@ -78,6 +85,9 @@ const sessionTitleInput = ref<HTMLInputElement>();
 const renamingSession = ref(false);
 const sessionNameDraft = ref("");
 let projectSortable: Sortable | undefined;
+let unlistenWindowFocus: UnlistenFn | undefined;
+let unlistenNewSessionMenu: UnlistenFn | undefined;
+let loadingIndicatorTimer: ReturnType<typeof setTimeout> | undefined;
 const {
   state,
   activeProject,
@@ -167,7 +177,10 @@ const filteredCommands = computed(() =>
     : filterCommands(commands.value, commandQuery.value),
 );
 const commandMenuActive = computed(
-  () => canDraft.value && filteredCommands.value.length > 0,
+  () =>
+    canDraft.value &&
+    !commandMenuDismissed.value &&
+    filteredCommands.value.length > 0,
 );
 const selectedCommand = computed(
   () => filteredCommands.value[commandSelectedIndex.value],
@@ -225,6 +238,8 @@ const remoteDirectoryOptions = computed(() => {
 onMounted(() => {
   void initialize();
   setupProjectReordering();
+  void watchWindowFocus();
+  void watchMenuActions();
   void nextTick(resizeComposer);
   document.addEventListener("pointerdown", handleDocumentPointerDown);
   document.addEventListener("contextmenu", handleDocumentContextMenu);
@@ -235,6 +250,9 @@ onMounted(() => {
 onBeforeUnmount(() => {
   projectSortable?.destroy();
   dispose();
+  clearTimeout(loadingIndicatorTimer);
+  unlistenWindowFocus?.();
+  unlistenNewSessionMenu?.();
   document.removeEventListener("pointerdown", handleDocumentPointerDown);
   document.removeEventListener("contextmenu", handleDocumentContextMenu);
   document.removeEventListener("keydown", handleDocumentKeydown);
@@ -292,8 +310,11 @@ watch(
   },
 );
 
-watch([commandQuery, commands], () => {
+watch([commandQuery, commands], ([query]) => {
   commandSelectedIndex.value = 0;
+  // A dismissed menu stays closed until the composer leaves the command it was
+  // opened for, so Escape is not undone by the next keystroke.
+  if (query === null) commandMenuDismissed.value = false;
 });
 
 watch([commandMenuActive, filteredCommands, status], () => {
@@ -304,6 +325,25 @@ watch([commandMenuActive, filteredCommands, status], () => {
 watch([draft, sessionIsEmpty], () => {
   void nextTick(resizeComposer);
 });
+
+/**
+ * Hydration is usually quicker than a spinner takes to read, and one that
+ * arrives and leaves within a few frames reads as slower than none at all.
+ */
+watch(
+  sessionLoading,
+  (loading) => {
+    clearTimeout(loadingIndicatorTimer);
+    if (!loading) {
+      loadingIndicatorVisible.value = false;
+      return;
+    }
+    loadingIndicatorTimer = setTimeout(() => {
+      loadingIndicatorVisible.value = true;
+    }, LOADING_INDICATOR_DELAY_MS);
+  },
+  { immediate: true },
+);
 
 watch(sessionLoading, (loading) => {
   if (loading) return;
@@ -588,15 +628,11 @@ function setupProjectReordering() {
     forceFallback: true,
     fallbackOnBody: true,
     fallbackTolerance: 3,
-    onStart: () => {
-      projectDragging.value = true;
-    },
     onEnd: finishProjectReordering,
   });
 }
 
 function finishProjectReordering(event: SortableEvent) {
-  projectDragging.value = false;
   if (event.oldIndex === undefined || event.newIndex === undefined) return;
   void reorderProjects(event.oldIndex, event.newIndex);
 }
@@ -686,6 +722,30 @@ function handleDocumentPointerDown(event: PointerEvent) {
 }
 
 /**
+ * Window focus is not document focus: the document inside a webview keeps focus
+ * while the app sits in the background, so the shell has to report it instead.
+ */
+async function watchWindowFocus() {
+  try {
+    unlistenWindowFocus = await getCurrentWindow().onFocusChanged(
+      ({ payload }) => {
+        windowFocused.value = payload;
+      },
+    );
+  } catch {
+    // Running in a plain browser, which has no window to follow.
+  }
+}
+
+async function watchMenuActions() {
+  try {
+    unlistenNewSessionMenu = await listen(NEW_SESSION_EVENT, handleNewSession);
+  } catch {
+    // Running in a plain browser, which has no menu bar.
+  }
+}
+
+/**
  * The webview's own menu offers reloads and page navigation, which a desktop
  * app has no use for, so every menu in Tau is its own. Text fields still need
  * the editing actions the native menu would have carried.
@@ -704,19 +764,16 @@ function handleDocumentContextMenu(event: MouseEvent) {
 }
 
 function handleDocumentKeydown(event: KeyboardEvent) {
-  if (
-    event.metaKey &&
-    !event.altKey &&
-    !event.ctrlKey &&
-    !event.shiftKey &&
-    !event.repeat &&
-    event.key.toLowerCase() === "n"
-  ) {
-    event.preventDefault();
-    handleNewSession();
+  if (event.defaultPrevented) return;
+  if (event.key === "Escape") {
+    handleEscape(event);
     return;
   }
-  if (event.key !== "Escape") return;
+  suppressSystemBeep(event);
+}
+
+/** Escape closes the innermost surface that is open, innermost first. */
+function handleEscape(event: KeyboardEvent) {
   if (contextMenuState.value) {
     event.preventDefault();
     closeContextMenu();
@@ -724,7 +781,28 @@ function handleDocumentKeydown(event: KeyboardEvent) {
     event.preventDefault();
     void cancelExtensionDialog();
   } else if (state.remoteDialogOpen) closeRemoteProjectDialog();
-  else projectMenuOpen.value = false;
+  else if (commandMenuActive.value) {
+    event.preventDefault();
+    commandMenuDismissed.value = true;
+  } else projectMenuOpen.value = false;
+}
+
+/**
+ * WKWebView rings the system bell for a keystroke nothing can take, which is
+ * every letter typed while a button holds focus. Space is left alone because it
+ * activates the focused control.
+ */
+function suppressSystemBeep(event: KeyboardEvent) {
+  if (event.metaKey || event.ctrlKey || event.altKey) return;
+  if (event.key.length !== 1 || event.key === " ") return;
+  if (isEditableTarget(event.target)) return;
+  event.preventDefault();
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element && Boolean(target.closest(EDITABLE_SELECTOR))
+  );
 }
 
 function chooseExtensionDialogOption(value: string) {
@@ -854,7 +932,10 @@ function clampSidebarWidth(width: number): number {
 <template>
   <div
     class="app-shell"
-    :class="{ 'resizing-sidebar': resizingSidebar }"
+    :class="{
+      'resizing-sidebar': resizingSidebar,
+      'window-inactive': !windowFocused,
+    }"
     :style="{ '--sidebar-width': `${sidebarWidth}px` }"
   >
     <aside ref="sidebar" class="sidebar">
@@ -867,7 +948,6 @@ function clampSidebarWidth(width: number): number {
       <div
         ref="projectList"
         class="project-list"
-        :class="{ 'project-dragging': projectDragging }"
         @scroll.passive="closeContextMenu"
       >
         <div
@@ -1079,8 +1159,10 @@ function clampSidebarWidth(width: number): number {
       </header>
 
       <div v-if="sessionLoading" class="session-loading">
-        <PiSpinner label="Loading session" />
-        <span>Loading</span>
+        <template v-if="loadingIndicatorVisible">
+          <PiSpinner label="Loading session" />
+          <span>Loading</span>
+        </template>
       </div>
 
       <TranscriptView
