@@ -147,12 +147,11 @@ defineExpose({ scrollToEnd });
                 { compact: isCompact(virtualRow.index) },
               ]"
             >
-              <div
+              <MarkdownText
                 v-if="messageAt(virtualRow.index)?.kind === 'user'"
                 class="user-bubble"
-              >
-                {{ messageAt(virtualRow.index)?.text }}
-              </div>
+                :source="messageAt(virtualRow.index)?.text ?? ''"
+              />
               <MarkdownText
                 v-else-if="messageAt(virtualRow.index)?.kind === 'assistant'"
                 :source="messageAt(virtualRow.index)?.text ?? ''"

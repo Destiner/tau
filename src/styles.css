@@ -627,14 +627,20 @@ button.session-name:focus-visible {
 }
 
 .user-bubble {
-  overflow-wrap: anywhere;
   max-width: min(78%, 650px);
   border-radius: 7px;
   background: var(--user);
-  color: var(--text);
-  line-height: 1.55;
   padding: 9px 13px;
-  white-space: pre-wrap;
+}
+
+/*
+ * Code sits on the bubble rather than the canvas, and the shared code
+ * background is too close to it to read as a block of its own. The class is
+ * doubled to outrank the plain `.markdown` rules further down.
+ */
+.user-bubble.markdown code,
+.user-bubble.markdown pre {
+  background: var(--panel-raised);
 }
 
 .message.assistant,
