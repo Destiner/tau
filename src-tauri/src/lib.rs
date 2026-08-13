@@ -69,7 +69,6 @@ pub fn run() {
             pi::send_pi,
             pi::start_pi,
             pi::start_pi_remote,
-            pi::start_pi_sdk,
             pi::stop_pi,
             settings::read_model_scope,
             settings::read_remote_model_scope,

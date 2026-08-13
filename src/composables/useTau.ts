@@ -10,7 +10,6 @@ import {
   toolResultText,
   toolSummary,
 } from "../lib/transcript";
-import { getActivePiIntegration } from "../lib/pi-integrations";
 import { scopeModels } from "../lib/model-scope";
 import type {
   CommandOption,
@@ -351,15 +350,6 @@ export function useTau() {
         if (needsLocalRuntime && !state.workspace.piPath) {
           controller.status =
             "Pi was not found. Install pi or set TAU_PI_PATH, then restart Tau.";
-          return;
-        }
-        if (
-          needsLocalRuntime &&
-          getActivePiIntegration().requiresSdk &&
-          !state.workspace.sdkAvailable
-        ) {
-          controller.status =
-            "The SDK sidecar needs an npm-installed Pi package and Node.js.";
           return;
         }
         await startController(
@@ -983,14 +973,11 @@ async function startController(
         sessionPath: sessionPath ?? null,
       });
     } else {
-      controller.generation = await invoke<number>(
-        getActivePiIntegration().startCommand,
-        {
-          runtimeId: controller.runtimeId,
-          projectPath: project.workingDirectory,
-          sessionPath: sessionPath ?? null,
-        },
-      );
+      controller.generation = await invoke<number>("start_pi", {
+        runtimeId: controller.runtimeId,
+        projectPath: project.workingDirectory,
+        sessionPath: sessionPath ?? null,
+      });
     }
     if (controller.disposed) {
       await invoke("stop_pi", { runtimeId: controller.runtimeId });
@@ -2495,11 +2482,7 @@ function controllerHasPendingDialog(controller: SessionController): boolean {
 
 function runtimeAvailable(project: ProjectSummary): boolean {
   if (project.connectionString) return true;
-  return (
-    Boolean(state.workspace?.piPath) &&
-    (!getActivePiIntegration().requiresSdk ||
-      Boolean(state.workspace?.sdkAvailable))
-  );
+  return Boolean(state.workspace?.piPath);
 }
 
 function maybeEvictController(controller: SessionController | undefined) {

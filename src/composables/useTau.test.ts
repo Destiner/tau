@@ -53,7 +53,6 @@ describe("session drafts and selection", () => {
     const workspace: WorkspaceSnapshot = {
       activeProjectPath: project.path,
       piPath: "/usr/local/bin/pi",
-      sdkAvailable: true,
       projects: [project],
     };
     mocks.workspace = workspace;
@@ -119,7 +118,6 @@ describe("session drafts and selection", () => {
     const workspace: WorkspaceSnapshot = {
       activeProjectPath: project.path,
       piPath: "/usr/local/bin/pi",
-      sdkAvailable: true,
       projects: [project],
     };
     mocks.workspace = workspace;
@@ -202,7 +200,6 @@ describe("session drafts and selection", () => {
     const workspace: WorkspaceSnapshot = {
       activeProjectPath: project.path,
       piPath: "/usr/local/bin/pi",
-      sdkAvailable: true,
       projects: [project],
     };
     mocks.workspace = workspace;
@@ -259,7 +256,6 @@ describe("session drafts and selection", () => {
     const workspace: WorkspaceSnapshot = {
       activeProjectPath: project.path,
       piPath: "/usr/local/bin/pi",
-      sdkAvailable: true,
       projects: [project],
     };
     mocks.workspace = workspace;
@@ -429,7 +425,6 @@ describe("session drafts and selection", () => {
     const workspace: WorkspaceSnapshot = {
       activeProjectPath: project.path,
       piPath: "/usr/local/bin/pi",
-      sdkAvailable: true,
       projects: [project],
     };
     mocks.workspace = workspace;
@@ -581,7 +576,6 @@ describe("session drafts and selection", () => {
     const workspace: WorkspaceSnapshot = {
       activeProjectPath: project.path,
       piPath: "/usr/local/bin/pi",
-      sdkAvailable: true,
       projects: [project],
     };
     mocks.workspace = workspace;
@@ -662,7 +656,6 @@ describe("session drafts and selection", () => {
     const workspace: WorkspaceSnapshot = {
       activeProjectPath: project.path,
       piPath: "/usr/local/bin/pi",
-      sdkAvailable: true,
       projects: [project],
     };
     mocks.workspace = workspace;
@@ -720,7 +713,6 @@ describe("session drafts and selection", () => {
     const workspace: WorkspaceSnapshot = {
       activeProjectPath: project.path,
       piPath: "/usr/local/bin/pi",
-      sdkAvailable: true,
       projects: [project],
     };
     mocks.workspace = workspace;
@@ -1533,7 +1525,6 @@ describe("project ordering", () => {
     const workspace: WorkspaceSnapshot = {
       activeProjectPath: projects[0]?.path ?? "",
       piPath: "/usr/local/bin/pi",
-      sdkAvailable: true,
       projects,
     };
     const reordered = {
@@ -1572,7 +1563,6 @@ describe("model scope", () => {
     const workspace: WorkspaceSnapshot = {
       activeProjectPath: project.path,
       piPath: "/usr/local/bin/pi",
-      sdkAvailable: true,
       projects: [project],
     };
     mocks.workspace = workspace;
@@ -1625,7 +1615,6 @@ describe("transcript continuity", () => {
     const workspace: WorkspaceSnapshot = {
       activeProjectPath: project.path,
       piPath: "/usr/local/bin/pi",
-      sdkAvailable: true,
       projects: [project],
     };
     mocks.workspace = workspace;
@@ -1962,7 +1951,6 @@ async function setupNamedSession() {
   const workspace: WorkspaceSnapshot = {
     activeProjectPath: project.path,
     piPath: "/usr/local/bin/pi",
-    sdkAvailable: true,
     projects: [project],
   };
   mocks.workspace = workspace;
@@ -2061,7 +2049,6 @@ async function setupExtensionControllers() {
   const workspace: WorkspaceSnapshot = {
     activeProjectPath: project.path,
     piPath: "/usr/local/bin/pi",
-    sdkAvailable: true,
     projects: [project],
   };
   mocks.workspace = workspace;

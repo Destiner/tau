@@ -81,7 +81,6 @@ pub struct RemoteSessionRecord {
 pub struct WorkspaceSnapshot {
     pub active_project_path: String,
     pub pi_path: Option<String>,
-    pub sdk_available: bool,
     pub projects: Vec<ProjectSummary>,
 }
 

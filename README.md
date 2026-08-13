@@ -2,7 +2,7 @@
 
 A Tauri desktop UI for the [Pi coding agent](https://pi.dev), built with Vue and Rust.
 
-Tau keeps the original app's project and session layout while replacing the Native SDK frontend. Production projects are stored in `~/Library/Application Support/tau/projects.json`; development builds use an isolated `tau-dev` app profile and `.tau-dev.json` session metadata. Both profiles keep the underlying Pi session files in the same Pi project session directories.
+Tau keeps the original app's project and session layout while replacing Pi's own frontend. Production projects are stored in `~/Library/Application Support/tau/projects.json`; development builds use an isolated `tau-dev` app profile and `.tau-dev.json` session metadata. Both profiles keep the underlying Pi session files in the same Pi project session directories.
 
 ## Development
 
@@ -17,12 +17,7 @@ bun install
 bun tauri dev
 ```
 
-Tau includes both Pi integration routes:
-
-- **RPC · Rust process** (default) starts `pi --mode rpc` directly from Rust.
-- **SDK · Node sidecar** starts a bundled sidecar script with Node and imports the SDK from the installed Pi package.
-
-Both adapters use the same JSONL contract, Vue state, and project/session persistence. RPC is selected by `activePiIntegration` in `src/lib/pi-integrations.ts`; change that value to `"sdk"` to run the Node sidecar instead. The SDK adapter is available when Pi was installed as a Node package and Node is discoverable on `PATH` or through `TAU_NODE_PATH`.
+Tau talks to Pi over RPC: Rust starts `pi --mode rpc` directly and exchanges JSONL with it. Remote projects run the same mode over SSH.
 
 ## Workflows and extensions
 

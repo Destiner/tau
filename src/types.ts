@@ -1,11 +1,8 @@
 export interface WorkspaceSnapshot {
   activeProjectPath: string;
   piPath: string | null;
-  sdkAvailable: boolean;
   projects: ProjectSummary[];
 }
-
-export type IntegrationKind = "rpc" | "sdk";
 
 export interface ProjectSummary {
   path: string;

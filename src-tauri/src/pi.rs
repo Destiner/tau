@@ -1,14 +1,10 @@
-use crate::{
-    profile::APP_DIRECTORY_NAME,
-    ssh::{remote_pi_command, SshConnection},
-};
+use crate::ssh::{remote_pi_command, SshConnection};
 use serde::Serialize;
 use serde_json::Value;
 use std::{
     collections::{HashMap, VecDeque},
     env,
     ffi::{OsStr, OsString},
-    fs,
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
@@ -111,13 +107,6 @@ pub fn resolve_pi_binary() -> Option<PathBuf> {
     is_executable_file(&path).then_some(path)
 }
 
-pub fn sdk_available() -> bool {
-    let Some(pi_path) = resolve_pi_binary() else {
-        return false;
-    };
-    resolve_node_binary().is_some() && resolve_pi_sdk_entry(&pi_path).is_some()
-}
-
 fn resolve_node_binary() -> Option<PathBuf> {
     resolve_executable(
         "TAU_NODE_PATH",
@@ -133,12 +122,6 @@ fn resolve_node_binary() -> Option<PathBuf> {
             ".volta/bin/node",
         ],
     )
-}
-
-fn resolve_pi_sdk_entry(pi_path: &Path) -> Option<PathBuf> {
-    let resolved = pi_path.canonicalize().ok()?;
-    let entry = resolved.parent()?.join("index.js");
-    entry.is_file().then_some(entry)
 }
 
 fn resolve_executable(
@@ -232,39 +215,6 @@ pub fn start_pi_remote(
     spawn_command(app, state, runtime_id, connection.command(&remote_command))
 }
 
-#[tauri::command]
-pub fn start_pi_sdk(
-    app: AppHandle,
-    state: State<'_, PiState>,
-    runtime_id: String,
-    project_path: String,
-    session_path: Option<String>,
-) -> Result<u64, String> {
-    validate_runtime_id(&runtime_id)?;
-    validate_start_paths(&project_path, session_path.as_deref())?;
-    let pi_path = resolve_pi_binary()
-        .ok_or_else(|| "Could not find pi. Install it or set TAU_PI_PATH.".to_string())?;
-    let sdk_entry = resolve_pi_sdk_entry(&pi_path).ok_or_else(|| {
-        "The installed Pi executable does not expose its Node SDK. Use RPC or install Pi with npm."
-            .to_string()
-    })?;
-    let node_path = resolve_node_binary()
-        .ok_or_else(|| "Could not find Node.js. Install it or set TAU_NODE_PATH.".to_string())?;
-    let sidecar_path = materialize_sdk_sidecar()?;
-
-    let mut command = Command::new(&node_path);
-    configure_child_path(&mut command, &[pi_path.as_path(), node_path.as_path()])?;
-    command
-        .arg(sidecar_path)
-        .args(["--sdk-entry", sdk_entry.to_string_lossy().as_ref()])
-        .args(["--cwd", &project_path])
-        .current_dir(&project_path);
-    if let Some(path) = session_path {
-        command.args(["--session", &path]);
-    }
-    spawn_command(app, state, runtime_id, command)
-}
-
 fn validate_runtime_id(runtime_id: &str) -> Result<(), String> {
     if runtime_id.is_empty() || runtime_id.len() > 256 {
         return Err("Tau supplied an invalid runtime id.".into());
@@ -314,21 +264,6 @@ fn build_child_path(
     }
     env::join_paths(directories)
         .map_err(|error| format!("Could not prepare the Pi process PATH: {error}"))
-}
-
-fn materialize_sdk_sidecar() -> Result<PathBuf, String> {
-    const SOURCE: &[u8] = include_bytes!("../../sidecar/pi-sdk.mjs");
-    let directory = dirs::cache_dir()
-        .ok_or_else(|| "Could not locate the cache folder.".to_string())?
-        .join(APP_DIRECTORY_NAME);
-    fs::create_dir_all(&directory)
-        .map_err(|error| format!("Could not create the Tau sidecar cache: {error}"))?;
-    let path = directory.join("pi-sdk-sidecar.mjs");
-    if fs::read(&path).ok().as_deref() != Some(SOURCE) {
-        fs::write(&path, SOURCE)
-            .map_err(|error| format!("Could not prepare the Pi SDK sidecar: {error}"))?;
-    }
-    Ok(path)
 }
 
 fn spawn_command(
@@ -637,21 +572,6 @@ mod tests {
         std::env::set_var("TAU_PI_PATH", &current);
         assert_eq!(resolve_pi_binary(), Some(current));
         std::env::remove_var("TAU_PI_PATH");
-    }
-
-    #[test]
-    fn resolves_sdk_entry_next_to_the_pi_cli() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let dist = directory.path().join("dist");
-        std::fs::create_dir(&dist).expect("dist directory");
-        let cli = dist.join("cli.js");
-        let index = dist.join("index.js");
-        std::fs::write(&cli, "").expect("cli entry");
-        std::fs::write(&index, "").expect("sdk entry");
-        assert_eq!(
-            resolve_pi_sdk_entry(&cli),
-            Some(index.canonicalize().expect("canonical SDK entry")),
-        );
     }
 
     #[test]

@@ -3,7 +3,7 @@ use crate::{
         ProjectRecord, ProjectRegistry, ProjectSummary, RemoteProjectRecord, RemoteSessionRecord,
         SessionSummary, TauSessionRecord, TauSessionRegistry, WorkspaceSnapshot,
     },
-    pi::{resolve_pi_binary, sdk_available},
+    pi::resolve_pi_binary,
     profile::{APP_DIRECTORY_NAME, SESSION_REGISTRY_FILENAME},
 };
 use serde::de::DeserializeOwned;
@@ -412,7 +412,6 @@ fn snapshot(registry: &ProjectRegistry) -> Result<WorkspaceSnapshot, String> {
     Ok(WorkspaceSnapshot {
         active_project_path: registry.active_project_path.clone(),
         pi_path: resolve_pi_binary().map(|path| path.to_string_lossy().into_owned()),
-        sdk_available: sdk_available(),
         projects,
     })
 }
