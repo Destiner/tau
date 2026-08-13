@@ -102,6 +102,7 @@ interface SessionController {
   commandPromptRequestId: string;
   commandSyncRequestId: string;
   replacementProbeRequestId: string;
+  abortProbeRequestId: string;
   connectingRemote: boolean;
   syncing: boolean;
   evictAfterHydration: boolean;
@@ -156,6 +157,15 @@ const state = reactive({
  */
 const replacementProbeDelays = [150, 450, 1_000, 2_000, 3_200];
 
+/**
+ * Pi answers an abort only once the agent has gone idle, so a tool call that
+ * ignores the abort signal withholds both the acknowledgement and the settle
+ * event for as long as it keeps running. Tau re-reads Pi's own run state after
+ * this grace period rather than leaving the session locked on a stop it cannot
+ * confirm.
+ */
+const abortAcknowledgeDelay = 2_000;
+
 let unlisten: UnlistenFn | undefined;
 let phantomSequence = 0;
 let controllerSequence = 0;
@@ -168,6 +178,7 @@ const replacementProbeTimers = new Map<
   string,
   ReturnType<typeof setTimeout>[]
 >();
+const abortProbeTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const extensionNotificationTimeouts = new Map<
   string,
   ReturnType<typeof setTimeout>
@@ -369,6 +380,7 @@ export function useTau() {
     unlisten = undefined;
     for (const controller of state.controllers) {
       clearSessionReplacementWatch(controller);
+      clearAbortWatch(controller);
     }
     clearExtensionUiState();
   }
@@ -747,9 +759,11 @@ export function useTau() {
     if (!controller?.streaming || controller.stopping) return;
     controller.stopping = true;
     controller.status = "";
+    watchAbort(controller);
     try {
       await rpc(controller, { id: nextRequestId("abort"), type: "abort" });
     } catch (error) {
+      clearAbortWatch(controller);
       controller.stopping = false;
       setControllerError(controller, error);
     }
@@ -940,8 +954,10 @@ async function startController(
   controller.commandPromptRequestId = "";
   controller.commandSyncRequestId = "";
   controller.replacementProbeRequestId = "";
+  controller.abortProbeRequestId = "";
   controller.evictAfterHydration = false;
   clearSessionReplacementWatch(controller);
+  clearAbortWatch(controller);
   if (!preserveMessages && controller.messages.length === 0) {
     controller.messages = [];
   }
@@ -1307,6 +1323,7 @@ async function handleBridgeEvent(event: PiBridgeEvent) {
   }
   if (event.kind === "exited") {
     clearSessionReplacementWatch(controller);
+    clearAbortWatch(controller);
     discardControllerDialogs(controller, event.generation);
     const message =
       event.code === 0
@@ -1347,6 +1364,7 @@ async function handleRpc(controller: SessionController, value: unknown) {
   }
   if (type === "agent_start") {
     clearSessionReplacementWatch(controller);
+    clearAbortWatch(controller);
     controller.streaming = true;
     controller.stopping = false;
     controller.working = true;
@@ -1396,6 +1414,7 @@ async function handleRpc(controller: SessionController, value: unknown) {
     return;
   }
   if (type === "agent_settled") {
+    clearAbortWatch(controller);
     controller.syncing = true;
     controller.working = false;
     controller.streaming = false;
@@ -1449,6 +1468,11 @@ async function handleResponse(
     Boolean(controller.commandSyncRequestId) &&
     responseId === controller.commandSyncRequestId;
   if (resolvesCommandSync) controller.commandSyncRequestId = "";
+  const resolvesAbortProbe =
+    command === "get_state" &&
+    Boolean(controller.abortProbeRequestId) &&
+    responseId === controller.abortProbeRequestId;
+  if (resolvesAbortProbe) controller.abortProbeRequestId = "";
   if (
     command === "prompt" &&
     Boolean(controller.commandPromptRequestId) &&
@@ -1530,7 +1554,10 @@ async function handleResponse(
     controller.ready = true;
     controller.streaming = data.isStreaming === true;
     controller.stopping = false;
-    controller.status = "";
+    controller.status =
+      resolvesAbortProbe && controller.streaming
+        ? unstoppedStatus(controller)
+        : "";
     finishRemoteConnection(controller);
 
     const pending = controller.pendingPrompt;
@@ -1550,6 +1577,7 @@ async function handleResponse(
 
     if (sessionChanged) {
       clearSessionReplacementWatch(controller);
+      clearAbortWatch(controller);
       controller.messages = [];
       controller.models = [];
       controller.efforts = [];
@@ -1586,6 +1614,9 @@ async function handleResponse(
       return;
     }
     if (resolvesCommandSync && controller.streaming && !sessionChanged) return;
+    // A run that outlived its abort is still writing the transcript, so the
+    // probe only reports on it. A run that did stop falls through and syncs.
+    if (resolvesAbortProbe && controller.streaming && !sessionChanged) return;
 
     if (sessionChanged) {
       await rpc(controller, {
@@ -1885,6 +1916,53 @@ function clearSessionReplacementWatch(controller: SessionController) {
 
 function watchingSessionReplacement(controller: SessionController): boolean {
   return replacementProbeTimers.has(controller.key);
+}
+
+function watchAbort(controller: SessionController) {
+  clearAbortWatch(controller);
+  if (controller.disposed || !controller.generation) return;
+  abortProbeTimers.set(
+    controller.key,
+    setTimeout(() => {
+      void probeAbort(controller);
+    }, abortAcknowledgeDelay),
+  );
+}
+
+async function probeAbort(controller: SessionController) {
+  abortProbeTimers.delete(controller.key);
+  if (controller.disposed || !controller.generation || !controller.stopping) {
+    return;
+  }
+  const requestId = nextRequestId("abort-probe");
+  controller.abortProbeRequestId = requestId;
+  try {
+    await rpc(controller, { id: requestId, type: "get_state" });
+  } catch (error) {
+    controller.abortProbeRequestId = "";
+    controller.stopping = false;
+    setControllerError(controller, error);
+  }
+}
+
+function clearAbortWatch(controller: SessionController) {
+  const timer = abortProbeTimers.get(controller.key);
+  if (!timer) return;
+  abortProbeTimers.delete(controller.key);
+  clearTimeout(timer);
+}
+
+/**
+ * Naming the tool that is holding the run open turns a session that looks
+ * frozen into one that is visibly waiting on something.
+ */
+function unstoppedStatus(controller: SessionController): string {
+  const tool = [...controller.messages]
+    .reverse()
+    .find((entry) => entry.kind === "tool" && entry.toolRunning);
+  return tool?.toolName
+    ? `Pi is still running ${tool.toolName} and stops once it returns.`
+    : "Pi has not stopped yet and stops once its current work finishes.";
 }
 
 /**
@@ -2199,6 +2277,7 @@ function removeEphemeralSession(
     if (controller) {
       controller.disposed = true;
       clearSessionReplacementWatch(controller);
+      clearAbortWatch(controller);
       void stopControllerProcess(controller);
       const controllerIndex = state.controllers.indexOf(controller);
       if (controllerIndex >= 0) state.controllers.splice(controllerIndex, 1);
@@ -2215,6 +2294,7 @@ function removeProjectUiState(projectPath: string) {
     if (controller.projectPath !== projectPath) continue;
     controller.disposed = true;
     clearSessionReplacementWatch(controller);
+    clearAbortWatch(controller);
   }
   state.controllers = state.controllers.filter(
     (controller) => controller.projectPath !== projectPath,
@@ -2317,6 +2397,7 @@ function createController(
     commandPromptRequestId: "",
     commandSyncRequestId: "",
     replacementProbeRequestId: "",
+    abortProbeRequestId: "",
     connectingRemote: false,
     syncing: false,
     evictAfterHydration: false,
@@ -2409,6 +2490,7 @@ async function stopControllerProcess(controller: SessionController) {
   if (!controller.generation && !controller.starting) return;
   const generation = controller.generation;
   clearSessionReplacementWatch(controller);
+  clearAbortWatch(controller);
   discardControllerDialogs(controller, generation);
   try {
     await invoke("stop_pi", { runtimeId: controller.runtimeId });
@@ -2425,6 +2507,7 @@ async function stopControllerProcess(controller: SessionController) {
   controller.connectingRemote = false;
   controller.syncing = false;
   controller.runStateRequestId = "";
+  controller.abortProbeRequestId = "";
 
   if (
     isControllerSelected(controller) &&

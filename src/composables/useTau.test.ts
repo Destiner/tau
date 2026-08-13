@@ -1667,6 +1667,131 @@ describe("transcript continuity", () => {
   });
 });
 
+describe("interrupting a run", () => {
+  it("reopens a session Pi never acknowledged stopping", async () => {
+    vi.useFakeTimers();
+    try {
+      const { tau, controller, session } = await setupNamedSession();
+      controller.streaming = true;
+      controller.working = true;
+      emitRpc(controller, {
+        type: "tool_execution_start",
+        toolCallId: "call-1",
+        toolName: "bash",
+        args: { command: "sleep 600" },
+      });
+
+      await tau.stop();
+      expect(sentRequests(controller, "abort")).toHaveLength(1);
+      expect(tau.stopping.value).toBe(true);
+
+      // Pi answers the abort only once the agent is idle, so a tool call that
+      // outlives it must not hold the session in a stop that never lands.
+      await vi.advanceTimersByTimeAsync(2_000);
+      const probe = sentRequests(controller, "get_state")[0];
+      expect(probe).toBeDefined();
+      emitRpc(controller, {
+        id: probe?.id,
+        type: "response",
+        command: "get_state",
+        success: true,
+        data: {
+          model: { provider: "provider", id: "alpha", name: "Alpha" },
+          thinkingLevel: "high",
+          sessionId: session.id,
+          sessionFile: session.path,
+          sessionName: session.title,
+          isStreaming: true,
+        },
+      });
+
+      await vi.waitFor(() => {
+        expect(tau.stopping.value).toBe(false);
+      });
+      expect(tau.streaming.value).toBe(true);
+      expect(tau.status.value).toBe(
+        "Pi is still running bash and stops once it returns.",
+      );
+      // Rehydrating mid-run would drop the deltas the run is still streaming.
+      expect(sentRequests(controller, "get_messages")).toEqual([]);
+
+      // The stop the user asked for still arrives, and clears the notice.
+      emitRpc(controller, { type: "agent_settled" });
+      await vi.waitFor(() => {
+        expect(tau.streaming.value).toBe(false);
+      });
+      expect(tau.status.value).toBe("");
+      tau.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("unlocks a session whose settle event never reached Tau", async () => {
+    vi.useFakeTimers();
+    try {
+      const { tau, controller, session } = await setupNamedSession();
+      controller.streaming = true;
+      controller.working = true;
+
+      await tau.stop();
+      await vi.advanceTimersByTimeAsync(2_000);
+      const probe = sentRequests(controller, "get_state")[0];
+      emitRpc(controller, {
+        id: probe?.id,
+        type: "response",
+        command: "get_state",
+        success: true,
+        data: {
+          model: { provider: "provider", id: "alpha", name: "Alpha" },
+          thinkingLevel: "high",
+          sessionId: session.id,
+          sessionFile: session.path,
+          sessionName: session.title,
+          isStreaming: false,
+        },
+      });
+
+      await vi.waitFor(() => {
+        expect(tau.streaming.value).toBe(false);
+      });
+      expect(tau.stopping.value).toBe(false);
+      expect(tau.status.value).toBe("");
+      await vi.waitFor(() => {
+        expect(sentRequests(controller, "get_messages")).toHaveLength(1);
+      });
+      tau.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaves an acknowledged stop alone", async () => {
+    vi.useFakeTimers();
+    try {
+      const { tau, controller } = await setupNamedSession();
+      controller.streaming = true;
+      controller.working = true;
+
+      await tau.stop();
+      emitRpc(controller, { type: "agent_settled" });
+      await vi.waitFor(() => {
+        expect(tau.stopping.value).toBe(false);
+      });
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(
+        sentRequests(controller, "get_state").filter((request) =>
+          String(request.id).includes("abort-probe"),
+        ),
+      ).toEqual([]);
+      tau.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("session naming", () => {
   it("renames the selected session through Pi and stores the echoed name", async () => {
     const { tau, controller } = await setupNamedSession();
