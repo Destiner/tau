@@ -462,7 +462,7 @@ fn project_name(path: &str) -> String {
         .to_string()
 }
 
-fn pi_agent_dir() -> Result<PathBuf, String> {
+pub fn pi_agent_dir() -> Result<PathBuf, String> {
     if let Some(path) = std::env::var_os("PI_CODING_AGENT_DIR") {
         return Ok(PathBuf::from(path));
     }

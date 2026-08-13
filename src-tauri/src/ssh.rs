@@ -111,6 +111,10 @@ fn inspect_remote_directory(
     parse_directory_listing(&connection.connection_string, &output.stdout)
 }
 
+pub fn run_remote_command(connection_string: &str, remote_command: &str) -> Result<Output, String> {
+    run_ssh_command(&SshConnection::parse(connection_string)?, remote_command)
+}
+
 fn run_ssh_command(connection: &SshConnection, remote_command: &str) -> Result<Output, String> {
     let mut child = connection
         .command(remote_command)

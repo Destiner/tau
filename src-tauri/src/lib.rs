@@ -1,6 +1,7 @@
 mod models;
 mod pi;
 mod profile;
+mod settings;
 mod ssh;
 mod storage;
 
@@ -16,6 +17,8 @@ pub fn run() {
             pi::start_pi_remote,
             pi::start_pi_sdk,
             pi::stop_pi,
+            settings::read_model_scope,
+            settings::read_remote_model_scope,
             ssh::list_remote_directories,
             ssh::probe_remote_project,
             storage::archive_session,

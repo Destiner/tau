@@ -9,6 +9,7 @@ import { useTau } from "./useTau";
 
 const mocks = vi.hoisted(() => ({
   workspace: null as WorkspaceSnapshot | null,
+  modelScope: [] as string[],
   generation: 0,
   listener: undefined as
     ((event: { payload: PiBridgeEvent }) => void) | undefined,
@@ -19,6 +20,9 @@ vi.mock("@tauri-apps/api/core", () => ({
     if (command.startsWith("start_pi")) {
       mocks.generation += 1;
       return mocks.generation;
+    }
+    if (command.endsWith("model_scope")) {
+      return mocks.modelScope;
     }
     return mocks.workspace;
   }),
@@ -1494,6 +1498,58 @@ describe("project ordering", () => {
     expect(invoke).toHaveBeenCalledWith("reorder_projects", {
       projectPaths: ["/tmp/beta", "/tmp/gamma", "/tmp/alpha"],
     });
+  });
+});
+
+describe("model scope", () => {
+  it("offers only the models Pi has scoped for the project", async () => {
+    const project: ProjectSummary = {
+      path: "/tmp/tau-model-scope-test",
+      name: "tau-model-scope-test",
+      workingDirectory: "/tmp/tau-model-scope-test",
+      collapsed: false,
+      selected: true,
+      sessions: [],
+    };
+    const workspace: WorkspaceSnapshot = {
+      activeProjectPath: project.path,
+      piPath: "/usr/local/bin/pi",
+      sdkAvailable: true,
+      projects: [project],
+    };
+    mocks.workspace = workspace;
+    mocks.modelScope = ["provider/beta"];
+
+    const { state, initialize, models, newSession } = useTau();
+    await initialize();
+    state.activeControllerKey = "";
+    state.activeSessionId = "";
+    state.controllers.splice(0);
+    state.ephemeralSessions.splice(0);
+
+    await newSession(project);
+    const controller = state.controllers[0];
+    if (!controller) throw new Error("Expected a pending controller");
+
+    const modelsRequest = sentRequests(controller, "get_available_models")[0];
+    emitRpc(controller, {
+      id: modelsRequest?.id,
+      type: "response",
+      command: "get_available_models",
+      success: true,
+      data: {
+        models: [
+          { provider: "provider", id: "alpha", name: "Alpha", reasoning: true },
+          { provider: "provider", id: "beta", name: "Beta", reasoning: true },
+        ],
+      },
+    });
+
+    await vi.waitFor(() =>
+      expect(models.value.map((model) => model.id)).toEqual(["beta"]),
+    );
+
+    mocks.modelScope = [];
   });
 });
 

@@ -9,6 +9,7 @@ import {
   toolArgument,
 } from "../lib/transcript";
 import { getActivePiIntegration } from "../lib/pi-integrations";
+import { scopeModels } from "../lib/model-scope";
 import type {
   CommandOption,
   ExtensionDialog,
@@ -90,6 +91,7 @@ interface SessionController {
   currentEffort: ThinkingLevel;
   pendingEffort: ThinkingLevel | "";
   models: ModelOption[];
+  modelScope: string[];
   efforts: ThinkingLevel[];
   commands: CommandOption[];
   commandsLoaded: boolean;
@@ -214,7 +216,11 @@ const status = computed(
 );
 const streaming = computed(() => activeController.value?.streaming === true);
 const stopping = computed(() => activeController.value?.stopping === true);
-const models = computed(() => activeController.value?.models ?? emptyModels);
+const models = computed(() => {
+  const controller = activeController.value;
+  if (!controller) return emptyModels;
+  return scopeModels(controller.models, controller.modelScope);
+});
 const efforts = computed(() => activeController.value?.efforts ?? emptyEfforts);
 const commands = computed(
   () => activeController.value?.commands ?? emptyCommands,
@@ -945,6 +951,7 @@ async function startController(
   controller.commandsLoaded = false;
   controller.status = "";
   discardControllerDialogs(controller);
+  void refreshModelScope(controller, project);
 
   try {
     if (project.connectionString) {
@@ -977,6 +984,30 @@ async function startController(
       presentRemoteConnectionError(controller, error);
     else setControllerError(controller, error);
     if (controller.pendingPrompt) cancelPendingPrompt(controller, error);
+  }
+}
+
+/**
+ * Pi resolves its model scope from settings at startup, and never reports it
+ * over RPC, so Tau reads the same setting to offer the models Pi would list.
+ * A failed read leaves the picker on the full catalogue.
+ */
+async function refreshModelScope(
+  controller: SessionController,
+  project: ProjectSummary,
+) {
+  try {
+    const patterns = project.connectionString
+      ? await invoke<string[]>("read_remote_model_scope", {
+          connectionString: project.connectionString,
+        })
+      : await invoke<string[]>("read_model_scope");
+    if (controller.disposed || !Array.isArray(patterns)) return;
+    controller.modelScope = patterns.filter(
+      (pattern) => typeof pattern === "string",
+    );
+  } catch {
+    controller.modelScope = [];
   }
 }
 
@@ -2275,6 +2306,7 @@ function createController(
     currentEffort: "off",
     pendingEffort: "",
     models: [],
+    modelScope: [],
     efforts: [],
     commands: [],
     commandsLoaded: false,
