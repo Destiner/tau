@@ -183,10 +183,15 @@ button {
 
 .project-menu button:hover,
 .project-menu button:focus-visible,
-.context-menu button:hover,
-.context-menu button:focus-visible {
+.context-menu button:enabled:hover,
+.context-menu button:enabled:focus-visible {
   outline: 0;
   background: var(--hover);
+}
+
+.context-menu button:disabled {
+  cursor: default;
+  color: var(--faint);
 }
 
 .icon-button,

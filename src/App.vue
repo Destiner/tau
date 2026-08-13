@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import Sortable, { type SortableEvent } from "sortablejs";
 import {
   computed,
@@ -27,15 +28,22 @@ import type {
   ThinkingLevel,
 } from "./types";
 
-interface SessionMenuState {
-  project: ProjectSummary;
-  session: SessionSummary;
+type TextField = HTMLInputElement | HTMLTextAreaElement;
+
+interface ContextMenuItem {
+  label: string;
+  disabled?: boolean;
+  run: () => void;
+}
+
+interface ContextMenuState {
+  items: ContextMenuItem[];
   x: number;
   y: number;
 }
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "tau.sidebar-width";
-const SESSION_MENU_MARGIN = 8;
+const CONTEXT_MENU_MARGIN = 8;
 const DEFAULT_SIDEBAR_WIDTH = 260;
 const MIN_SIDEBAR_WIDTH = 200;
 const MAX_SIDEBAR_WIDTH = 480;
@@ -46,7 +54,7 @@ const composer = ref<HTMLElement>();
 const composerInput = ref<HTMLTextAreaElement>();
 const commandMenu = ref<HTMLElement>();
 const projectMenu = ref<HTMLElement>();
-const sessionMenu = ref<HTMLElement>();
+const contextMenu = ref<HTMLElement>();
 const projectList = ref<HTMLElement>();
 const sidebar = ref<HTMLElement>();
 const remoteConnectionInput = ref<HTMLInputElement>();
@@ -54,7 +62,7 @@ const remoteDirectoryFilterInput = ref<HTMLInputElement>();
 const extensionDialogInput = ref<HTMLInputElement | HTMLTextAreaElement>();
 const extensionDialogPrimaryAction = ref<HTMLButtonElement>();
 const projectMenuOpen = ref(false);
-const sessionMenuState = ref<SessionMenuState>();
+const contextMenuState = ref<ContextMenuState>();
 const projectDragging = ref(false);
 const commandSelectedIndex = ref(0);
 const commandMenuPlacement = ref<CommandMenuPlacement>("above");
@@ -219,7 +227,7 @@ onMounted(() => {
   document.addEventListener("contextmenu", handleDocumentContextMenu);
   document.addEventListener("keydown", handleDocumentKeydown);
   window.addEventListener("resize", updateCommandMenuLayout);
-  window.addEventListener("resize", closeSessionMenu);
+  window.addEventListener("resize", closeContextMenu);
 });
 onBeforeUnmount(() => {
   projectSortable?.destroy();
@@ -228,7 +236,7 @@ onBeforeUnmount(() => {
   document.removeEventListener("contextmenu", handleDocumentContextMenu);
   document.removeEventListener("keydown", handleDocumentKeydown);
   window.removeEventListener("resize", updateCommandMenuLayout);
-  window.removeEventListener("resize", closeSessionMenu);
+  window.removeEventListener("resize", closeContextMenu);
 });
 
 watch(
@@ -318,6 +326,8 @@ function commitSessionRename() {
   // Escape and a lost runtime both close the field before its blur arrives,
   // and neither should apply the name that was left in it.
   if (!renamingSession.value) return;
+  // A context menu takes focus to open, which is not the rename finishing.
+  if (contextMenuState.value) return;
   closeSessionRename();
   void renameSession(sessionNameDraft.value);
 }
@@ -442,16 +452,102 @@ function openSessionMenu(
   session: SessionSummary,
   event: MouseEvent,
 ) {
+  const unread = isSessionUnread(project, session);
+  const items: ContextMenuItem[] = [
+    {
+      label: unread ? "Mark as Read" : "Mark as Unread",
+      run: () =>
+        unread
+          ? markSessionRead(project, session)
+          : markSessionUnread(project, session),
+    },
+  ];
+  if (canArchiveSession(project, session)) {
+    items.push({
+      label: "Archive Session",
+      run: () => void archiveSession(project, session),
+    });
+  }
+  openContextMenu(event, items);
+}
+
+function openTextFieldMenu(event: MouseEvent, field: TextField) {
+  // The menu takes focus, so the range the pointer landed on is captured now
+  // and handed back to the field when an item runs.
+  const start = field.selectionStart ?? 0;
+  const end = field.selectionEnd ?? 0;
+  const selected = start !== end;
+  const editable = !field.readOnly && !field.disabled;
+  openContextMenu(event, [
+    {
+      label: "Cut",
+      disabled: !selected || !editable,
+      run: () => void copyField(field, start, end, editable),
+    },
+    {
+      label: "Copy",
+      disabled: !selected,
+      run: () => void copyField(field, start, end, false),
+    },
+    {
+      label: "Paste",
+      disabled: !editable,
+      run: () => void pasteField(field, start, end),
+    },
+  ]);
+}
+
+async function copyField(
+  field: TextField,
+  start: number,
+  end: number,
+  cut: boolean,
+) {
+  const text = field.value.slice(start, end);
+  if (!text) return;
+  try {
+    await writeText(text);
+  } catch {
+    return;
+  }
+  if (cut) replaceFieldRange(field, start, end, "");
+}
+
+async function pasteField(field: TextField, start: number, end: number) {
+  let text = "";
+  try {
+    text = await readText();
+  } catch {
+    return;
+  }
+  if (text) replaceFieldRange(field, start, end, text);
+}
+
+/**
+ * Fields are bound with v-model, so the edit is announced with an input event
+ * rather than written to the reactive state each field happens to use.
+ */
+function replaceFieldRange(
+  field: TextField,
+  start: number,
+  end: number,
+  text: string,
+) {
+  field.value = field.value.slice(0, start) + text + field.value.slice(end);
+  const caret = start + text.length;
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+  field.focus();
+  field.setSelectionRange(caret, caret);
+}
+
+function openContextMenu(event: MouseEvent, items: ContextMenuItem[]) {
   projectMenuOpen.value = false;
-  sessionMenuState.value = {
-    project,
-    session,
-    x: event.clientX,
-    y: event.clientY,
-  };
+  contextMenuState.value = { items, x: event.clientX, y: event.clientY };
   void nextTick(() => {
-    keepSessionMenuOnScreen();
-    sessionMenu.value?.querySelector("button")?.focus();
+    keepContextMenuOnScreen();
+    contextMenu.value
+      ?.querySelector<HTMLButtonElement>("button:not(:disabled)")
+      ?.focus();
   });
 }
 
@@ -459,37 +555,24 @@ function openSessionMenu(
  * The menu opens at the pointer, which near the bottom or right edge would
  * otherwise place part of it outside the window.
  */
-function keepSessionMenuOnScreen() {
-  const menu = sessionMenuState.value;
-  const element = sessionMenu.value;
+function keepContextMenuOnScreen() {
+  const menu = contextMenuState.value;
+  const element = contextMenu.value;
   if (!menu || !element) return;
   const { width, height } = element.getBoundingClientRect();
-  const maxX = window.innerWidth - width - SESSION_MENU_MARGIN;
-  const maxY = window.innerHeight - height - SESSION_MENU_MARGIN;
-  menu.x = Math.max(SESSION_MENU_MARGIN, Math.min(menu.x, maxX));
-  menu.y = Math.max(SESSION_MENU_MARGIN, Math.min(menu.y, maxY));
+  const maxX = window.innerWidth - width - CONTEXT_MENU_MARGIN;
+  const maxY = window.innerHeight - height - CONTEXT_MENU_MARGIN;
+  menu.x = Math.max(CONTEXT_MENU_MARGIN, Math.min(menu.x, maxX));
+  menu.y = Math.max(CONTEXT_MENU_MARGIN, Math.min(menu.y, maxY));
 }
 
-function closeSessionMenu() {
-  sessionMenuState.value = undefined;
+function closeContextMenu() {
+  contextMenuState.value = undefined;
 }
 
-function toggleSessionMenuRead() {
-  const menu = sessionMenuState.value;
-  if (!menu) return;
-  if (isSessionUnread(menu.project, menu.session)) {
-    markSessionRead(menu.project, menu.session);
-  } else {
-    markSessionUnread(menu.project, menu.session);
-  }
-  closeSessionMenu();
-}
-
-function archiveSessionFromMenu() {
-  const menu = sessionMenuState.value;
-  if (!menu) return;
-  closeSessionMenu();
-  void archiveSession(menu.project, menu.session);
+function runContextMenuItem(item: ContextMenuItem) {
+  closeContextMenu();
+  item.run();
 }
 
 function setupProjectReordering() {
@@ -594,23 +677,29 @@ function handleDocumentPointerDown(event: PointerEvent) {
     projectMenuOpen.value = false;
   }
   if (
-    sessionMenuState.value &&
-    (!(target instanceof Node) || !sessionMenu.value?.contains(target))
+    contextMenuState.value &&
+    (!(target instanceof Node) || !contextMenu.value?.contains(target))
   ) {
-    closeSessionMenu();
+    closeContextMenu();
   }
 }
 
 /**
  * The webview's own menu offers reloads and page navigation, which a desktop
- * app has no use for. Text is the exception: fields and the transcript keep
- * the native menu so copy, paste, and lookup stay available.
+ * app has no use for, so every menu in Tau is its own. Text fields still need
+ * the editing actions the native menu would have carried.
  */
 function handleDocumentContextMenu(event: MouseEvent) {
+  event.preventDefault();
   const target = event.target;
-  const textual =
-    target instanceof Element && target.closest("input, textarea, .transcript");
-  if (!textual) event.preventDefault();
+  const field =
+    target instanceof Element ? target.closest("input, textarea") : null;
+  if (
+    field instanceof HTMLInputElement ||
+    field instanceof HTMLTextAreaElement
+  ) {
+    openTextFieldMenu(event, field);
+  }
 }
 
 function handleDocumentKeydown(event: KeyboardEvent) {
@@ -627,9 +716,9 @@ function handleDocumentKeydown(event: KeyboardEvent) {
     return;
   }
   if (event.key !== "Escape") return;
-  if (sessionMenuState.value) {
+  if (contextMenuState.value) {
     event.preventDefault();
-    closeSessionMenu();
+    closeContextMenu();
   } else if (activeExtensionDialog.value) {
     event.preventDefault();
     void cancelExtensionDialog();
@@ -778,7 +867,7 @@ function clampSidebarWidth(width: number): number {
         ref="projectList"
         class="project-list"
         :class="{ 'project-dragging': projectDragging }"
-        @scroll.passive="closeSessionMenu"
+        @scroll.passive="closeContextMenu"
       >
         <div
           v-for="project in state.workspace?.projects"
@@ -1247,31 +1336,24 @@ function clampSidebarWidth(width: number): number {
     </main>
 
     <div
-      v-if="sessionMenuState"
-      ref="sessionMenu"
+      v-if="contextMenuState"
+      ref="contextMenu"
       class="context-menu"
       role="menu"
       :style="{
-        left: `${sessionMenuState.x}px`,
-        top: `${sessionMenuState.y}px`,
+        left: `${contextMenuState.x}px`,
+        top: `${contextMenuState.y}px`,
       }"
     >
-      <button type="button" role="menuitem" @click="toggleSessionMenuRead">
-        {{
-          isSessionUnread(sessionMenuState.project, sessionMenuState.session)
-            ? "Mark as Read"
-            : "Mark as Unread"
-        }}
-      </button>
       <button
-        v-if="
-          canArchiveSession(sessionMenuState.project, sessionMenuState.session)
-        "
+        v-for="item in contextMenuState.items"
+        :key="item.label"
         type="button"
         role="menuitem"
-        @click="archiveSessionFromMenu"
+        :disabled="item.disabled"
+        @click="runContextMenuItem(item)"
       >
-        Archive Session
+        {{ item.label }}
       </button>
     </div>
 
