@@ -1938,6 +1938,110 @@ describe("session naming", () => {
   });
 });
 
+describe("runtime retention", () => {
+  it("keeps an idle runtime warm when the user switches away", async () => {
+    const { project, sessions, tau } = await setupIdleRuntimes(2);
+
+    await tau.selectSession(project, sessions[1]!);
+
+    expect(stoppedRuntimes()).toEqual([]);
+    tau.dispose();
+  });
+
+  it("releases the least recently active runtimes past the limit", async () => {
+    const { project, sessions, tau } = await setupIdleRuntimes(8);
+    const controllerFor = (id: string) =>
+      tau.state.controllers.find((candidate) => candidate.sessionId === id);
+
+    // Selecting one of the eight leaves seven idle runtimes for six places.
+    await tau.selectSession(project, sessions[6]!);
+
+    expect(stoppedRuntimes()).toEqual([controllerFor("idle-0")?.runtimeId]);
+    expect(controllerFor("idle-1")?.ready).toBe(true);
+
+    // Reading the oldest survivor makes it the most recent, so the next
+    // sweep reaches past it to the one the user has not touched since.
+    await tau.selectSession(project, sessions[1]!);
+    await tau.newSession(project);
+
+    expect(stoppedRuntimes()).toEqual([
+      controllerFor("idle-0")?.runtimeId,
+      controllerFor("idle-2")?.runtimeId,
+    ]);
+    expect(controllerFor("idle-1")?.ready).toBe(true);
+    tau.dispose();
+  });
+
+  it("keeps a runtime that is still working, whatever its age", async () => {
+    const { project, sessions, tau } = await setupIdleRuntimes(8);
+    const oldest = tau.state.controllers.find(
+      (candidate) => candidate.sessionId === "idle-0",
+    );
+    if (!oldest) throw new Error("Expected the oldest controller");
+    oldest.streaming = true;
+    oldest.working = true;
+
+    await tau.selectSession(project, sessions[6]!);
+
+    expect(stoppedRuntimes()).toEqual([]);
+    expect(oldest.ready).toBe(true);
+    tau.dispose();
+  });
+});
+
+function stoppedRuntimes(): string[] {
+  return vi
+    .mocked(invoke)
+    .mock.calls.filter(([command]) => command === "stop_pi")
+    .map(([, args]) => (args as { runtimeId: string }).runtimeId);
+}
+
+/** Open `count` sessions in order, leaving each one ready and idle. */
+async function setupIdleRuntimes(count: number) {
+  const sessions = Array.from({ length: count }, (_, index) =>
+    savedSession(`idle-${index}`),
+  );
+  const project: ProjectSummary = {
+    path: "/tmp/tau-retention-test",
+    name: "tau-retention-test",
+    workingDirectory: "/tmp/tau-retention-test",
+    collapsed: false,
+    selected: true,
+    sessions,
+  };
+  const workspace: WorkspaceSnapshot = {
+    activeProjectPath: project.path,
+    piPath: "/usr/local/bin/pi",
+    projects: [project],
+  };
+  mocks.workspace = workspace;
+  mocks.generation = 0;
+
+  const tau = useTau();
+  tau.dispose();
+  tau.state.activeProjectPath = "";
+  tau.state.activeSessionId = "";
+  tau.state.activeSessionPath = "";
+  tau.state.activeControllerKey = "";
+  tau.state.controllers.splice(0);
+  tau.state.ephemeralSessions.splice(0);
+  await tau.initialize();
+  tau.state.workspace = workspace;
+
+  // Selection order is the activity order the retention sweep reads. The
+  // runtimes only report ready afterwards, so no sweep runs during setup.
+  for (const session of sessions) await tau.selectSession(project, session);
+  for (const controller of tau.state.controllers) {
+    controller.starting = false;
+    controller.ready = true;
+    controller.streaming = false;
+    controller.working = false;
+  }
+  vi.mocked(invoke).mockClear();
+
+  return { project, sessions, tau };
+}
+
 async function setupNamedSession() {
   const session = savedSession("naming-target");
   const project: ProjectSummary = {

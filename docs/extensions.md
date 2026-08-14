@@ -22,6 +22,7 @@ This matrix describes Tau's compatibility with Pi 0.84.1. "Supported" means Tau 
 | Persistent custom session entries                                  | Preserved | Pi owns the session file. Tau does not render custom entries in the transcript.                                                                                                 |
 | Session names (`setSessionName`)                                   | Supported | Pi owns the name. Tau renames through `set_session_name`, adopts every `session_info_changed` Pi reports, and prefers the name in the session file over its own stored title.   |
 | Session lifecycle events and extension rebinding                   | Supported | Pi's runtime tears down and rebinds extensions around replacement.                                                                                                              |
+| Extension state held across a phase                                | Supported | An idle runtime is kept warm rather than stopped with its session, so a workflow keeps the session-opening context it can only hold in its own process.                         |
 | Model registry/control and `pi.exec()`                             | Supported | These run inside Pi's normal services and credential environment.                                                                                                               |
 | `extension_error`                                                  | Supported | Tau exposes the error as session status text.                                                                                                                                   |
 | `setWidget` and `setTitle`                                         | Deferred  | Pi may emit these RPC requests, but Tau currently ignores them.                                                                                                                 |
@@ -31,6 +32,12 @@ This matrix describes Tau's compatibility with Pi 0.84.1. "Supported" means Tau 
 | Extension shortcuts, flags, and autocomplete providers             | Deferred  | Tau has no extension-facing controls for these APIs.                                                                                                                            |
 | Extension installation or management UI                            | Deferred  | Install extensions through Pi's normal global, project, package, or settings mechanisms.                                                                                        |
 | Dedicated workflow dashboard                                       | Deferred  | Workflow phases appear as ordinary Tau sessions.                                                                                                                                |
+
+## Runtime lifetime
+
+Pi hands out a session-opening context, `ExtensionCommandContext`, only to a command handler and to a `withSession` callback. Tool and event handlers get the plain `ExtensionContext`, which cannot open anything. A workflow that opens its own next phase therefore has to hold that context from the moment its phase starts until the phase ends, and the context lives in the Pi process and nowhere else.
+
+Stopping a runtime is what makes that state disappear. Reopening the session file restores the transcript, the marker entries, and the name, but not the handoff, so a phase that spans a user turn can complete in a process that has no way to open the session that comes next. Tau therefore keeps idle runtimes warm and releases only the least recently active ones past a limit, which covers the sessions a user moves between while a phase waits on them. A runtime lost with the app, with an SSH connection, or to that limit still leaves the workflow to be resumed by its own command.
 
 ## Compatibility fixture
 
@@ -44,3 +51,5 @@ The project-local fixture at [`fixtures/workflow-extension`](../fixtures/workflo
 - A custom session entry and replacement-session name
 
 Open that directory as a Tau project and follow its manual flow. It intentionally avoids modifying the real project and uses a harmless `echo` command for the blocked-tool check.
+
+The fixture at [`fixtures/workflow-handoff`](../fixtures/workflow-handoff/README.md) covers the runtime lifetime above. It runs a three-phase workflow whose phases wait on the operator, and reports whether the phase can still open its successor, so the difference between a warm runtime and a restarted one is visible without running a real workflow.

@@ -13,6 +13,7 @@ dist-ssr
 playwright-report
 test-results
 *.local
+fixtures/workflow-handoff/.mock-handoff.json
 
 # Editor directories and files
 .vscode/*

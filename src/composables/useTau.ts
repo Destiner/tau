@@ -106,7 +106,7 @@ interface SessionController {
   abortProbeRequestId: string;
   connectingRemote: boolean;
   syncing: boolean;
-  evictAfterHydration: boolean;
+  lastActiveSequence: number;
   disposed: boolean;
   streamSequence: number;
 }
@@ -167,9 +167,25 @@ const replacementProbeDelays = [150, 450, 1_000, 2_000, 3_200];
  */
 const abortAcknowledgeDelay = 2_000;
 
+/**
+ * Stopping an idle runtime is not the neutral act it looks like. Pi hands a
+ * session-opening context to extensions only inside a command handler or a
+ * `withSession` callback, so an extension that drives a multi-session workflow
+ * has to hold that context in the process it was given. The process is the
+ * only place that state exists: reopening the session file restores the
+ * transcript but not the handoff, and a workflow phase that spans a user turn
+ * then completes with nothing left to open its next session.
+ *
+ * Idle hidden runtimes are therefore kept warm, and only the least recently
+ * active ones past this limit are released. Runtimes that are still working
+ * are never released, so the live total can exceed the limit while work runs.
+ */
+const idleRuntimeLimit = 6;
+
 let unlisten: UnlistenFn | undefined;
 let phantomSequence = 0;
 let controllerSequence = 0;
+let activitySequence = 0;
 let remoteRetry: RemoteRetry | undefined;
 const extensionDialogTimeouts = new Map<
   string,
@@ -329,7 +345,7 @@ export function useTau() {
           if (!controller) return;
           controller.syncing = false;
           setControllerError(controller, error);
-          maybeEvictController(controller);
+          releaseRuntime(controller);
         });
       });
     }
@@ -609,7 +625,7 @@ export function useTau() {
         state.activeProjectPath === project.path &&
         state.activeSessionId === session.id;
       if (!archivedViewStillSelected) {
-        maybeEvictController(controller);
+        releaseRuntime(controller);
         return;
       }
 
@@ -658,7 +674,7 @@ export function useTau() {
     setActiveSessionView(project, session, controller);
     controller.status = "";
     await persistProjectSelection(project.path, controller);
-    maybeEvictController(previous);
+    releaseIdleRuntimes();
     if (
       runtimeAvailable(project) &&
       (!controller.currentModelId ||
@@ -681,7 +697,6 @@ export function useTau() {
       const controller = activeController.value;
       if (controller) {
         controller.unread = false;
-        controller.evictAfterHydration = false;
         if (!controller.phantom && !controller.ready && !controller.starting) {
           await startController(controller, project, session.path);
         }
@@ -689,15 +704,13 @@ export function useTau() {
       return;
     }
 
-    const previous = activeController.value;
     removeEmptyActivePhantom();
     const controller = ensureController(project, session);
     setActiveSessionView(project, session, controller);
     controller.status = "";
     controller.unread = false;
-    controller.evictAfterHydration = false;
     await persistProjectSelection(project.path, controller);
-    maybeEvictController(previous);
+    releaseIdleRuntimes();
 
     if (controller.phantom || controller.ready || controller.starting) return;
     await startController(controller, project, session.path);
@@ -950,7 +963,7 @@ async function startController(
   controller.commandSyncRequestId = "";
   controller.replacementProbeRequestId = "";
   controller.abortProbeRequestId = "";
-  controller.evictAfterHydration = false;
+  touchController(controller);
   clearSessionReplacementWatch(controller);
   clearAbortWatch(controller);
   if (!preserveMessages && controller.messages.length === 0) {
@@ -1144,7 +1157,6 @@ function handleExtensionUIRequest(
     };
     if (state.extensionDialogs.some((item) => item.key === dialog.key)) return;
     state.extensionDialogs.push(dialog);
-    controller.evictAfterHydration = false;
     if (!isControllerSelected(controller)) controller.unread = true;
     if (timeout) {
       extensionDialogTimeouts.set(
@@ -1283,6 +1295,7 @@ function clearExtensionUiState() {
 async function handleBridgeEvent(event: PiBridgeEvent) {
   const controller = controllerByRuntimeId(event.runtimeId);
   if (!controller) return;
+  touchController(controller);
   if (event.kind === "started") {
     if (event.generation > controller.generation) {
       discardControllerDialogs(controller);
@@ -1414,10 +1427,7 @@ async function handleRpc(controller: SessionController, value: unknown) {
     controller.streaming = false;
     controller.stopping = false;
     controller.status = "";
-    if (!isControllerSelected(controller)) {
-      controller.unread = true;
-      controller.evictAfterHydration = true;
-    }
+    if (!isControllerSelected(controller)) controller.unread = true;
     watchSessionReplacement(controller);
     await rpc(controller, {
       id: nextRequestId("settled-state"),
@@ -1507,7 +1517,7 @@ async function handleResponse(
         controller.bootstrapStateRequestId = "";
         controller.starting = false;
       }
-      maybeEvictController(controller);
+      releaseRuntime(controller);
     }
     if (
       command === "get_messages" &&
@@ -1602,9 +1612,7 @@ async function handleResponse(
     }
     if (resolvesRunState && !sessionChanged) return;
     if (resolvesReplacementProbe && !sessionChanged) {
-      if (!watchingSessionReplacement(controller)) {
-        maybeEvictController(controller);
-      }
+      releaseIdleRuntimes();
       return;
     }
     if (resolvesCommandSync && controller.streaming && !sessionChanged) return;
@@ -1651,29 +1659,10 @@ async function handleResponse(
     } else if (responseId === controller.startMessagesRequestId) {
       controller.startMessagesRequestId = "";
       controller.starting = false;
-      if (!isControllerSelected(controller)) {
-        controller.evictAfterHydration = true;
-      }
     }
-    if (
-      !isControllerSelected(controller) &&
-      !controller.starting &&
-      !controller.streaming &&
-      !controller.working
-    ) {
-      controller.evictAfterHydration = true;
-    }
-    if (
-      controller.evictAfterHydration &&
-      !isControllerSelected(controller) &&
-      !controller.streaming &&
-      !controller.working &&
-      !watchingSessionReplacement(controller) &&
-      !controllerHasPendingDialog(controller)
-    ) {
-      controller.evictAfterHydration = false;
-      await stopControllerProcess(controller);
-    }
+    // A hidden session that finishes hydrating has nothing left to wait for,
+    // so this is where a runtime the user has moved on from is accounted for.
+    releaseIdleRuntimes();
     return;
   }
 
@@ -2252,6 +2241,7 @@ function setActiveSessionView(
   state.activeSessionPath = session.path;
   state.activeControllerKey = controller.key;
   controller.unread = false;
+  touchController(controller);
 }
 
 function removeEmptyActivePhantom() {
@@ -2419,7 +2409,7 @@ function createController(
     abortProbeRequestId: "",
     connectingRemote: false,
     syncing: false,
-    evictAfterHydration: false,
+    lastActiveSequence: (activitySequence += 1),
     disposed: false,
     streamSequence: 0,
   });
@@ -2485,20 +2475,44 @@ function runtimeAvailable(project: ProjectSummary): boolean {
   return Boolean(state.workspace?.piPath);
 }
 
-function maybeEvictController(controller: SessionController | undefined) {
-  if (
-    !controller ||
-    isControllerSelected(controller) ||
-    !controller.ready ||
-    controller.streaming ||
-    controller.working ||
-    controller.starting ||
-    controller.syncing ||
-    controllerHasPendingDialog(controller)
-  ) {
-    return;
-  }
+function canReleaseRuntime(controller: SessionController): boolean {
+  return (
+    !isControllerSelected(controller) &&
+    controller.ready &&
+    !controller.streaming &&
+    !controller.working &&
+    !controller.starting &&
+    !controller.syncing &&
+    !controllerHasPendingDialog(controller) &&
+    !watchingSessionReplacement(controller)
+  );
+}
+
+/**
+ * Release a runtime whose session no longer warrants one, such as an archived
+ * session or one whose runtime just failed a request.
+ */
+function releaseRuntime(controller: SessionController | undefined) {
+  if (!controller || !canReleaseRuntime(controller)) return;
   void stopControllerProcess(controller);
+}
+
+/** Keep the most recently active idle runtimes warm and release the rest. */
+function releaseIdleRuntimes() {
+  const idle = state.controllers
+    .filter((controller) => canReleaseRuntime(controller))
+    .sort(
+      (first, second) => second.lastActiveSequence - first.lastActiveSequence,
+    );
+  for (const controller of idle.slice(idleRuntimeLimit)) {
+    void stopControllerProcess(controller);
+  }
+}
+
+/** Record a runtime as the most recently active one. */
+function touchController(controller: SessionController) {
+  activitySequence += 1;
+  controller.lastActiveSequence = activitySequence;
 }
 
 async function stopControllerProcess(controller: SessionController) {
