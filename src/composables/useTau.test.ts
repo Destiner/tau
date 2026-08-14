@@ -1245,6 +1245,110 @@ describe("session replacement hardening", () => {
     ).toBe(false);
     tau.dispose();
   });
+
+  it("retires a session Pi never saved instead of opening a copy of it", async () => {
+    const { controller, ghost, other, project, tau } =
+      await setupUnsavedSession();
+
+    // Pi answers --session for a file it cannot find by opening a fresh
+    // session under the path it was handed.
+    mocks.workspace = {
+      ...(mocks.workspace as WorkspaceSnapshot),
+      projects: [
+        { ...project, sessions: [{ ...ghost, archived: true }, other] },
+      ],
+    };
+    emitRpc(controller, {
+      id: controller.bootstrapStateRequestId,
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: {
+        model: { provider: "provider", id: "alpha", name: "Alpha" },
+        thinkingLevel: "high",
+        sessionId: "minted-by-pi",
+        sessionFile: ghost.path,
+        sessionName: "",
+        isStreaming: false,
+      },
+    });
+    await vi.waitFor(() => {
+      expect(controller.phantom).toBe(true);
+    });
+
+    // Registering the minted id would file a second session at the same path,
+    // and the row would go on minting one more on every visit.
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.some(([command]) => command === "register_session"),
+    ).toBe(false);
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.find(([command]) => command === "archive_session")?.[1],
+    ).toMatchObject({ sessionId: ghost.id });
+
+    const registered = tau.state.workspace?.projects[0];
+    if (!registered) throw new Error("Expected the registered project");
+    const rows = tau.projectSessions(registered);
+    expect(rows.map((row) => row.title)).toEqual(["New session", other.title]);
+    expect(tau.state.activeSessionId).toBe(rows[0]?.id);
+    expect(controller.status).toBe(
+      "That session was never saved by Pi, so this is a new one.",
+    );
+
+    emitRpc(controller, {
+      id: sentRequests(controller, "get_messages")[0]?.id,
+      type: "response",
+      command: "get_messages",
+      success: true,
+      data: { messages: [] },
+    });
+
+    // The replacement is unsent, so it leaves no trace once it is left.
+    await tau.selectSession(registered, other);
+    expect(tau.state.ephemeralSessions).toEqual([]);
+    tau.dispose();
+  });
+
+  it("registers a session an extension opens while Tau is connecting", async () => {
+    const { controller, ghost, tau } = await setupUnsavedSession();
+
+    emitRpc(controller, {
+      id: controller.bootstrapStateRequestId,
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: {
+        model: { provider: "provider", id: "alpha", name: "Alpha" },
+        thinkingLevel: "high",
+        sessionId: "opened-phase",
+        sessionFile: "/tmp/opened-phase.jsonl",
+        sessionName: "Phase",
+        isStreaming: false,
+      },
+    });
+    await vi.waitFor(() => {
+      expect(controller.sessionId).toBe("opened-phase");
+    });
+
+    // A replacement brings its own path, so it is a session Pi holds rather
+    // than one it could not find.
+    expect(controller.phantom).toBe(false);
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.find(([command]) => command === "register_session")?.[1],
+    ).toMatchObject({ sessionId: "opened-phase" });
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.some(([command]) => command === "archive_session"),
+    ).toBe(false);
+    expect(ghost.id).not.toBe(controller.sessionId);
+    tau.dispose();
+  });
 });
 
 describe("extension UI protocol", () => {
@@ -2040,6 +2144,49 @@ async function setupIdleRuntimes(count: number) {
   vi.mocked(invoke).mockClear();
 
   return { project, sessions, tau };
+}
+
+/**
+ * A session Tau registered from a workflow handoff, cancelled before it ever
+ * answered, so Pi never wrote its file and only Tau's sidebar holds it.
+ */
+async function setupUnsavedSession() {
+  const ghost = savedSession("unsaved-phase", 2);
+  const other = savedSession("saved-session", 1);
+  const project: ProjectSummary = {
+    path: "/tmp/tau-unsaved-test",
+    name: "tau-unsaved-test",
+    workingDirectory: "/tmp/tau-unsaved-test",
+    collapsed: false,
+    selected: false,
+    sessions: [ghost, other],
+  };
+  const workspace: WorkspaceSnapshot = {
+    activeProjectPath: project.path,
+    piPath: "/usr/local/bin/pi",
+    projects: [project],
+  };
+  mocks.workspace = workspace;
+  mocks.generation = 0;
+
+  const tau = useTau();
+  tau.dispose();
+  tau.state.activeProjectPath = "";
+  tau.state.activeSessionId = "";
+  tau.state.activeSessionPath = "";
+  tau.state.activeControllerKey = "";
+  tau.state.controllers.splice(0);
+  tau.state.ephemeralSessions.splice(0);
+  await tau.initialize();
+  tau.state.workspace = workspace;
+
+  await tau.selectSession(project, ghost);
+  const controller = tau.state.controllers.find(
+    (candidate) => candidate.sessionId === ghost.id,
+  );
+  if (!controller) throw new Error("Expected the unsaved session controller");
+  vi.mocked(invoke).mockClear();
+  return { tau, project, ghost, other, controller };
 }
 
 async function setupNamedSession() {

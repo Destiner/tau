@@ -17,7 +17,7 @@ This matrix describes Tau's compatibility with Pi 0.84.1. "Supported" means Tau 
 | `notify`                                                           | Supported | Tau shows transient bottom-right notifications with their project and session origin.                                                                                           |
 | `setStatus`                                                        | Deferred  | Tau ignores Pi TUI footer statuses; session activity and Tau errors use Tau's native presentation instead.                                                                      |
 | `setEditorText` / `set_editor_text`                                | Supported | Tau updates the originating session's draft even when that session is hidden.                                                                                                   |
-| Session replacement (`newSession`, `switchSession`, `withSession`) | Supported | Tau detects replacement identity, registers every persistent phase session, refreshes session-scoped state, and does not force UI selection to follow the runtime.              |
+| Session replacement (`newSession`, `switchSession`, `withSession`) | Supported | Tau detects replacement identity, registers the phase sessions Pi reports, retires one Pi never saved, and does not force UI selection to follow the runtime.                   |
 | Prompt reconciliation after a session replacement                  | Supported | Pi emits no replacement event, so Tau re-checks session identity when a command resolves, when a dialog is answered, and for a few seconds after a run settles.                 |
 | Persistent custom session entries                                  | Preserved | Pi owns the session file. Tau does not render custom entries in the transcript.                                                                                                 |
 | Session names (`setSessionName`)                                   | Supported | Pi owns the name. Tau renames through `set_session_name`, adopts every `session_info_changed` Pi reports, and prefers the name in the session file over its own stored title.   |
@@ -38,6 +38,14 @@ This matrix describes Tau's compatibility with Pi 0.84.1. "Supported" means Tau 
 Pi hands out a session-opening context, `ExtensionCommandContext`, only to a command handler and to a `withSession` callback. Tool and event handlers get the plain `ExtensionContext`, which cannot open anything. A workflow that opens its own next phase therefore has to hold that context from the moment its phase starts until the phase ends, and the context lives in the Pi process and nowhere else.
 
 Stopping a runtime is what makes that state disappear. Reopening the session file restores the transcript, the marker entries, and the name, but not the handoff, so a phase that spans a user turn can complete in a process that has no way to open the session that comes next. Tau therefore keeps idle runtimes warm and releases only the least recently active ones past a limit, which covers the sessions a user moves between while a phase waits on them. A runtime lost with the app, with an SSH connection, or to that limit still leaves the workflow to be resumed by its own command.
+
+## Sessions Pi never saved
+
+Pi buffers a session in memory and writes its file only once the session holds an assistant message, so a phase session cancelled before it answers is reported over RPC and exists nowhere else. Tau registers phase sessions as Pi reports them, because that is what puts a running phase in the sidebar, so such a session can outlive the runtime that held it as a row for a session that was never written. A local project lists the session directory and shows the row only once Pi writes it; a remote project lists what Tau registered, which is where the row survives.
+
+Opening one does not fail. Pi answers `--session` for a file it cannot find by starting a fresh session under the path it was given, reporting that path with a new session id, so the row reads back as an empty session wearing a different identity. Registering that identity would file a second session at the same path, and the row would mint one more on every visit.
+
+Tau treats the requested path coming back under another id as Pi reporting that the session was never saved: it archives the row and presents the empty session Pi did open as an unsent session, which leaves no trace unless it is used. A replacement always brings its own path, so it is unaffected.
 
 ## Compatibility fixture
 

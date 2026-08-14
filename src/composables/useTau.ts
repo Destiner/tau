@@ -98,6 +98,7 @@ interface SessionController {
   commandsLoaded: boolean;
   pendingPrompt?: PendingPrompt;
   bootstrapStateRequestId: string;
+  bootstrapSessionPath: string;
   runStateRequestId: string;
   startMessagesRequestId: string;
   commandPromptRequestId: string;
@@ -647,23 +648,8 @@ export function useTau() {
   async function newSession(project: ProjectSummary) {
     const previous = activeController.value;
     removeEmptyActivePhantom();
-    phantomSequence += 1;
-    const now = Date.now();
     const controllerKey = nextControllerKey();
-    const id = `phantom-${now}-${phantomSequence}`;
-    const session: EphemeralSession = {
-      id,
-      path: "",
-      title: "New session",
-      lastActive: "now",
-      lastUserMessageAt: 0,
-      archived: false,
-      selected: true,
-      projectPath: project.path,
-      controllerKey,
-      createdAt: now * 1000 + phantomSequence,
-      phantom: true,
-    };
+    const session = createPhantomSession(project.path, controllerKey);
     const controller = createController(project, session, controllerKey);
     inheritControllerSettings(controller, previous);
     state.ephemeralSessions.push(session);
@@ -957,6 +943,7 @@ async function startController(
   controller.stopping = false;
   controller.connectingRemote = Boolean(project.connectionString);
   controller.bootstrapStateRequestId = "";
+  controller.bootstrapSessionPath = sessionPath ?? "";
   controller.runStateRequestId = "";
   controller.startMessagesRequestId = "";
   controller.commandPromptRequestId = "";
@@ -1549,8 +1536,28 @@ async function handleResponse(
     controller.currentEffort = normalizeEffort(data.thinkingLevel);
     const piSessionId = stringValue(data.sessionId);
     const piSessionPath = stringValue(data.sessionFile);
+    const pending = controller.pendingPrompt;
+    const resolvesPending =
+      Boolean(pending?.stateRequestId) &&
+      responseId === pending?.stateRequestId;
+    const resolvesBootstrap =
+      Boolean(controller.bootstrapStateRequestId) &&
+      responseId === controller.bootstrapStateRequestId;
+    // Pi opens a session it cannot find as a fresh one under the very path it
+    // was handed, so a bootstrap that answers with the requested path under
+    // another id is Pi reporting that the session was never saved. Every other
+    // session Pi reports here is one it holds, replacement included, since a
+    // replacement always brings its own path.
+    const unsavedSession =
+      resolvesBootstrap &&
+      !controller.phantom &&
+      Boolean(controller.bootstrapSessionPath) &&
+      piSessionPath === controller.bootstrapSessionPath &&
+      Boolean(piSessionId) &&
+      piSessionId !== controller.sessionId;
     const sessionChanged =
       !controller.phantom &&
+      !unsavedSession &&
       Boolean(piSessionId && piSessionPath) &&
       (controller.sessionId !== piSessionId ||
         controller.sessionPath !== piSessionPath);
@@ -1564,17 +1571,9 @@ async function handleResponse(
         : "";
     finishRemoteConnection(controller);
 
-    const pending = controller.pendingPrompt;
-    const resolvesPending =
-      Boolean(pending?.stateRequestId) &&
-      responseId === pending?.stateRequestId;
-    const resolvesBootstrap =
-      Boolean(controller.bootstrapStateRequestId) &&
-      responseId === controller.bootstrapStateRequestId;
-
     if (resolvesPending && pending) {
       materializePendingSession(controller, piSessionId, piSessionPath);
-    } else if (piSessionId && !controller.phantom) {
+    } else if (piSessionId && !controller.phantom && !unsavedSession) {
       controller.sessionId = piSessionId;
       controller.sessionPath = piSessionPath;
     }
@@ -1591,6 +1590,9 @@ async function handleResponse(
       controller.syncing = true;
     }
     controller.working = controller.streaming || Boolean(pending);
+
+    if (unsavedSession) await retireUnsavedSession(controller);
+    if (controller.disposed) return;
 
     if (
       controller.sessionId &&
@@ -2244,6 +2246,72 @@ function setActiveSessionView(
   touchController(controller);
 }
 
+function createPhantomSession(
+  projectPath: string,
+  controllerKey: string,
+): EphemeralSession {
+  phantomSequence += 1;
+  const now = Date.now();
+  return {
+    id: `phantom-${now}-${phantomSequence}`,
+    path: "",
+    title: "New session",
+    lastActive: "now",
+    lastUserMessageAt: 0,
+    archived: false,
+    selected: true,
+    projectPath,
+    controllerKey,
+    createdAt: now * 1000 + phantomSequence,
+    phantom: true,
+  };
+}
+
+/**
+ * Pi writes a session file only once the session holds an assistant message,
+ * so a session Tau registered from a workflow handoff that was cancelled
+ * before it answered exists in the sidebar and nowhere else. Pi opens that
+ * path as a brand new session, and registering the id it comes back with
+ * files a second session at the same path, so the row spawns one more on
+ * every visit and none of them can ever be opened.
+ *
+ * The row is retired instead, and the empty session Pi did open is shown as
+ * what it is: an unsent session that leaves no trace unless it is used.
+ */
+async function retireUnsavedSession(controller: SessionController) {
+  const staleSessionId = controller.sessionId;
+  if (workspaceContainsSession(controller)) {
+    try {
+      state.workspace = await invoke<WorkspaceSnapshot>("archive_session", {
+        projectPath: controller.projectPath,
+        sessionId: staleSessionId,
+      });
+    } catch {
+      // A row Tau cannot retire is still worth replacing with a session that
+      // works, and the message below says why it is there.
+    }
+  }
+  if (controller.disposed) return;
+
+  const previous = ephemeralSessionByController(controller.key);
+  if (previous) removeEphemeralSession(previous, false);
+  const session = createPhantomSession(controller.projectPath, controller.key);
+  state.ephemeralSessions.push(session);
+
+  controller.phantom = true;
+  controller.sessionId = session.id;
+  controller.sessionPath = "";
+  controller.sessionName = "";
+  controller.lastUserMessageAt = 0;
+  controller.messages = [];
+  if (isControllerSelected(controller)) {
+    state.activeSessionId = session.id;
+    state.activeSessionPath = "";
+  }
+  controller.status =
+    "That session was never saved by Pi, so this is a new one.";
+}
+
 function removeEmptyActivePhantom() {
   const controller = activeController.value;
   const session = controller
@@ -2401,6 +2469,7 @@ function createController(
     commandsLoaded: false,
     pendingPrompt: undefined,
     bootstrapStateRequestId: "",
+    bootstrapSessionPath: "",
     runStateRequestId: "",
     startMessagesRequestId: "",
     commandPromptRequestId: "",
