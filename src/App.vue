@@ -390,14 +390,30 @@ function closeSessionRename() {
   if (focused) void nextTick(() => composerInput.value?.focus());
 }
 
+/**
+ * A field's auto height comes from its rows attribute rather than from its
+ * content, so measuring the text means collapsing the field back to four lines
+ * first. That hands the height it had grown by to the transcript for the length
+ * of the measurement, and a reader sitting at the end of the transcript is
+ * clamped down by that much — the scroll position does not come back when the
+ * height does, so every keystroke leaves them a line further from the end.
+ * Holding the composer at the height it already occupies keeps the measurement
+ * to itself.
+ */
 function resizeComposer() {
   const element = composerInput.value;
   if (!element) return;
-  element.style.height = "auto";
   if (sessionIsEmpty.value) {
+    element.style.height = "auto";
     element.style.overflowY = "auto";
     return;
   }
+
+  const container = composer.value;
+  if (container) {
+    container.style.height = `${container.getBoundingClientRect().height}px`;
+  }
+  element.style.height = "auto";
   const maxHeight = Number.parseFloat(getComputedStyle(element).maxHeight);
   const height = Number.isFinite(maxHeight)
     ? Math.min(element.scrollHeight, maxHeight)
@@ -407,6 +423,7 @@ function resizeComposer() {
     Number.isFinite(maxHeight) && element.scrollHeight > maxHeight
       ? "auto"
       : "hidden";
+  if (container) container.style.height = "";
 }
 
 function updateCommandMenuLayout() {

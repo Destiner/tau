@@ -212,6 +212,47 @@ test("follows output again once the reader returns to the end", async ({
   await expect.poll(() => transcript.evaluate(distanceFromEnd)).toBeLessThan(2);
 });
 
+test("keeps the reader at the end when the viewport shrinks under them", async ({
+  page,
+}) => {
+  const transcript = page.getByLabel("Tau transcript");
+  await page.evaluate(() => {
+    window.__TAU_TRANSCRIPT_FIXTURE__?.scrollToEnd();
+  });
+  await expect.poll(() => transcript.evaluate(distanceFromEnd)).toBeLessThan(2);
+
+  // Standing in for everything that takes height from the transcript under a
+  // reader sitting at the end: the composer growing a line, a status line, a
+  // sidebar drag. Scroll position survives all of them, so the end walks away.
+  await page.setViewportSize({ width: 1280, height: 500 });
+
+  await expect.poll(() => transcript.evaluate(distanceFromEnd)).toBeLessThan(2);
+
+  await page.evaluate(() =>
+    window.__TAU_TRANSCRIPT_FIXTURE__?.streamLatest(18),
+  );
+  await expect.poll(() => transcript.evaluate(distanceFromEnd)).toBeLessThan(2);
+});
+
+test("leaves a reader in history where they are when the viewport shrinks", async ({
+  page,
+}) => {
+  const transcript = page.getByLabel("Tau transcript");
+  await transcript.hover();
+  await page.mouse.wheel(0, -400);
+  await page.waitForTimeout(150);
+
+  const before = await transcript.evaluate(anchorSnapshot);
+  expect(before).not.toBeNull();
+
+  await page.setViewportSize({ width: 1280, height: 500 });
+  await page.waitForTimeout(150);
+
+  const after = await transcript.evaluate(anchorSnapshot);
+  expect(after?.id).toBe(before?.id);
+  expect(await transcript.evaluate(distanceFromEnd)).toBeGreaterThan(100);
+});
+
 test("follows output again after the reader sends", async ({ page }) => {
   const transcript = page.getByLabel("Tau transcript");
   await transcript.hover();

@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import { useVirtualizer } from "@tanstack/vue-virtual";
 import type { ComponentPublicInstance } from "vue";
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from "vue";
 import type { TranscriptEntry } from "../types";
 import MarkdownText from "./MarkdownText.vue";
 import PiSpinner from "./PiSpinner.vue";
@@ -72,8 +79,36 @@ const contentSignature = computed(() =>
   ].join("|"),
 );
 
+let viewportObserver: ResizeObserver | undefined;
+
 onMounted(() => {
   void nextTick(scrollToEnd);
+
+  const element = transcript.value;
+  if (!element || typeof ResizeObserver === "undefined") return;
+  /**
+   * The end also moves when the viewport shrinks under a reader sitting at it:
+   * the composer takes a line as they type, a status line arrives, the window or
+   * the sidebar is resized. Scroll position survives all of those, so the end
+   * slides down by whatever height the transcript gave up. Being resized is not
+   * the reader scrolling away, so following is left as it was and the end is
+   * taken up again.
+   *
+   * The end is asked for as an offset past it rather than through scrollToEnd,
+   * which measures against the viewport size the virtualizer has cached: its own
+   * observer may not have run yet, and aiming at the height the transcript has
+   * just given up lands exactly that far short. An offset is clamped to the live
+   * maximum instead, and unlike a bare scrollTop write it is one the virtualizer
+   * knows about, so its next update does not undo it.
+   */
+  viewportObserver = new ResizeObserver(() => {
+    if (following) rowVirtualizer.value.scrollToOffset(element.scrollHeight);
+  });
+  viewportObserver.observe(element);
+});
+
+onBeforeUnmount(() => {
+  viewportObserver?.disconnect();
 });
 
 watch(contentSignature, () => {
