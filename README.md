@@ -23,6 +23,8 @@ Tau talks to Pi over RPC: Rust starts `pi --mode rpc` directly and exchanges JSO
 
 Tau uses Pi's native extension runtime and supports workflow-critical non-modal prompts, custom tools and hooks, session replacement, notifications, and editor prefill. See the [extension support matrix and compatibility fixture](docs/extensions.md) for supported and deferred APIs.
 
+What a workflow writes is read as text rather than as a heading: a prompt's title and message, and the notifications beside them, are rendered as markdown and wrap. Links in them open in the default browser, and file paths open in whichever application the system gives their type, resolved against the session's working directory. A remote project's files are on the other host, so its paths stay as text.
+
 Session names are shared with Pi. Clicking the name in the session header edits it and applies the new name on blur or Enter, which renames the session inside Pi itself, and names that Pi or one of its extensions sets appear in Tau without a reload.
 
 The model picker offers the models Pi has scoped through its `enabledModels` setting, which is the list `/scoped-models` edits and `/model` shows. Patterns that match nothing leave the full catalogue in place.

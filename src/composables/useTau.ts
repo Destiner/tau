@@ -1123,6 +1123,9 @@ function handleExtensionUIRequest(
       generation: controller.generation,
       projectName: origin.projectName,
       sessionName: origin.sessionName,
+      ...(origin.workingDirectory
+        ? { workingDirectory: origin.workingDirectory }
+        : {}),
       draft: typeof request.prefill === "string" ? request.prefill : "",
       ...(typeof request.message === "string"
         ? { message: request.message }
@@ -1163,6 +1166,9 @@ function handleExtensionUIRequest(
       type,
       projectName: origin.projectName,
       sessionName: origin.sessionName,
+      ...(origin.workingDirectory
+        ? { workingDirectory: origin.workingDirectory }
+        : {}),
     };
     dismissExtensionNotification(notification.key);
     state.extensionNotifications.push(notification);
@@ -1224,6 +1230,11 @@ function extensionRequestOrigin(controller: SessionController) {
       saved?.title ||
       firstUserMessage(controller) ||
       "New session",
+    // A remote project's files are on the other host, where nothing local can
+    // open them, so its paths are left as text.
+    ...(project && !project.connectionString
+      ? { workingDirectory: project.workingDirectory }
+      : {}),
   };
 }
 

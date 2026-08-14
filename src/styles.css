@@ -1160,6 +1160,20 @@ textarea:disabled {
   text-underline-offset: 2px;
 }
 
+/*
+ * A path is a link to a file the system opens, so it carries a link's colour
+ * but keeps the underline for the pointer rather than wearing one in prose.
+ */
+.markdown .file-link {
+  text-decoration: none;
+}
+
+.markdown .file-link:hover,
+.markdown .file-link:focus-visible {
+  outline: 0;
+  text-decoration: underline;
+}
+
 /* Dragging content out of the transcript is a browser gesture, not an app one. */
 .markdown a,
 .markdown img {
@@ -1211,11 +1225,9 @@ textarea:disabled {
 }
 
 .extension-notification-message {
-  overflow-wrap: anywhere;
   color: var(--text);
   font-size: 12px;
-  line-height: 1.4;
-  white-space: pre-wrap;
+  line-height: 1.45;
 }
 
 .extension-notification-header > button {
@@ -1271,20 +1283,22 @@ textarea:disabled {
   gap: 4px;
 }
 
-.extension-dialog-header h2 {
-  margin: 0;
+/*
+ * A prompt is a sentence a workflow is saying, not a document's heading, so
+ * its title is set as the text around it and separated by colour alone.
+ */
+.extension-dialog-title {
   color: var(--text);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.35;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .extension-dialog-message {
-  margin: -4px 0 0;
+  overflow-y: auto;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
-  white-space: pre-wrap;
+  overscroll-behavior: contain;
 }
 
 .extension-dialog-options {
@@ -1297,6 +1311,7 @@ textarea:disabled {
 .extension-dialog-option {
   display: block;
   width: 100%;
+  overflow-wrap: anywhere;
   border-radius: 5px;
   background: transparent;
   color: var(--text);

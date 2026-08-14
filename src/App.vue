@@ -11,6 +11,7 @@ import {
   ref,
   watch,
 } from "vue";
+import MarkdownText from "./components/MarkdownText.vue";
 import PiSpinner from "./components/PiSpinner.vue";
 import TranscriptView from "./components/TranscriptView.vue";
 import UiIcon from "./components/UiIcon.vue";
@@ -1191,15 +1192,20 @@ function clampSidebarWidth(width: number): number {
               {{ activeExtensionDialog.projectName }} ·
               {{ activeExtensionDialog.sessionName }}
             </span>
-            <h2>{{ activeExtensionDialog.title }}</h2>
+            <MarkdownText
+              class="extension-dialog-title"
+              inline
+              :source="activeExtensionDialog.title"
+              :base-path="activeExtensionDialog.workingDirectory"
+            />
           </header>
 
-          <p
+          <MarkdownText
             v-if="activeExtensionDialog.message"
             class="extension-dialog-message"
-          >
-            {{ activeExtensionDialog.message }}
-          </p>
+            :source="activeExtensionDialog.message"
+            :base-path="activeExtensionDialog.workingDirectory"
+          />
 
           <div
             v-if="activeExtensionDialog.method === 'select'"
@@ -1464,9 +1470,11 @@ function clampSidebarWidth(width: number): number {
               <UiIcon name="cross" />
             </button>
           </div>
-          <span class="extension-notification-message">{{
-            notification.message
-          }}</span>
+          <MarkdownText
+            class="extension-notification-message"
+            :source="notification.message"
+            :base-path="notification.workingDirectory"
+          />
         </div>
       </div>
     </div>

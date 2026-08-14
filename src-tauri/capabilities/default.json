@@ -12,6 +12,10 @@
     "clipboard-manager:allow-write-text",
     "dialog:allow-open",
     "opener:allow-open-url",
-    "opener:allow-default-urls"
+    "opener:allow-default-urls",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [{ "path": "**" }]
+    }
   ]
 }

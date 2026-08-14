@@ -100,6 +100,8 @@ export interface ExtensionDialog {
   generation: number;
   projectName: string;
   sessionName: string;
+  /** Base for the file paths in the text; absent when the project is remote. */
+  workingDirectory?: string;
 }
 
 export type ExtensionNotificationType = "info" | "warning" | "error";
@@ -110,4 +112,6 @@ export interface ExtensionNotification {
   type: ExtensionNotificationType;
   projectName: string;
   sessionName: string;
+  /** Base for the file paths in the text; absent when the project is remote. */
+  workingDirectory?: string;
 }
