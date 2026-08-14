@@ -241,7 +241,6 @@ onMounted(() => {
   setupProjectReordering();
   void watchWindowFocus();
   void watchMenuActions();
-  void nextTick(resizeComposer);
   document.addEventListener("pointerdown", handleDocumentPointerDown);
   document.addEventListener("contextmenu", handleDocumentContextMenu);
   document.addEventListener("keydown", handleDocumentKeydown);
@@ -323,10 +322,6 @@ watch([commandMenuActive, filteredCommands, status], () => {
   void nextTick(updateCommandMenuLayout);
 });
 
-watch([draft, sessionIsEmpty], () => {
-  void nextTick(resizeComposer);
-});
-
 /**
  * Hydration is usually quicker than a spinner takes to read, and one that
  * arrives and leaves within a few frames reads as slower than none at all.
@@ -349,7 +344,6 @@ watch(
 watch(sessionLoading, (loading) => {
   if (loading) return;
   void nextTick(() => {
-    resizeComposer();
     if (!state.remoteDialogOpen && !activeExtensionDialog.value) {
       composerInput.value?.focus();
     }
@@ -388,42 +382,6 @@ function closeSessionRename() {
   const focused = document.activeElement === sessionTitleInput.value;
   renamingSession.value = false;
   if (focused) void nextTick(() => composerInput.value?.focus());
-}
-
-/**
- * A field's auto height comes from its rows attribute rather than from its
- * content, so measuring the text means collapsing the field back to four lines
- * first. That hands the height it had grown by to the transcript for the length
- * of the measurement, and a reader sitting at the end of the transcript is
- * clamped down by that much — the scroll position does not come back when the
- * height does, so every keystroke leaves them a line further from the end.
- * Holding the composer at the height it already occupies keeps the measurement
- * to itself.
- */
-function resizeComposer() {
-  const element = composerInput.value;
-  if (!element) return;
-  if (sessionIsEmpty.value) {
-    element.style.height = "auto";
-    element.style.overflowY = "auto";
-    return;
-  }
-
-  const container = composer.value;
-  if (container) {
-    container.style.height = `${container.getBoundingClientRect().height}px`;
-  }
-  element.style.height = "auto";
-  const maxHeight = Number.parseFloat(getComputedStyle(element).maxHeight);
-  const height = Number.isFinite(maxHeight)
-    ? Math.min(element.scrollHeight, maxHeight)
-    : element.scrollHeight;
-  element.style.height = `${Math.ceil(height)}px`;
-  element.style.overflowY =
-    Number.isFinite(maxHeight) && element.scrollHeight > maxHeight
-      ? "auto"
-      : "hidden";
-  if (container) container.style.height = "";
 }
 
 function updateCommandMenuLayout() {
