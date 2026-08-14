@@ -1703,6 +1703,67 @@ describe("model scope", () => {
 
     mocks.modelScope = [];
   });
+
+  it("keeps the scope on a session that inherits a warm runtime's models", async () => {
+    const project: ProjectSummary = {
+      path: "/tmp/tau-model-scope-inherit-test",
+      name: "tau-model-scope-inherit-test",
+      workingDirectory: "/tmp/tau-model-scope-inherit-test",
+      collapsed: false,
+      selected: true,
+      sessions: [],
+    };
+    const workspace: WorkspaceSnapshot = {
+      activeProjectPath: project.path,
+      piPath: "/usr/local/bin/pi",
+      projects: [project],
+    };
+    mocks.workspace = workspace;
+    mocks.modelScope = ["provider/beta"];
+
+    const { state, initialize, models, newSession } = useTau();
+    await initialize();
+    state.activeControllerKey = "";
+    state.activeSessionId = "";
+    state.controllers.splice(0);
+    state.ephemeralSessions.splice(0);
+
+    await newSession(project);
+    const first = state.controllers[0];
+    if (!first) throw new Error("Expected a pending controller");
+
+    const modelsRequest = sentRequests(first, "get_available_models")[0];
+    emitRpc(first, {
+      id: modelsRequest?.id,
+      type: "response",
+      command: "get_available_models",
+      success: true,
+      data: {
+        models: [
+          { provider: "provider", id: "alpha", name: "Alpha", reasoning: true },
+          { provider: "provider", id: "beta", name: "Beta", reasoning: true },
+        ],
+      },
+    });
+    await vi.waitFor(() =>
+      expect(models.value.map((model) => model.id)).toEqual(["beta"]),
+    );
+
+    // A session that has been used carries everything the next one inherits,
+    // which is what lets the next one open without starting a runtime.
+    first.draft = "Keep this session";
+    first.efforts = ["off"];
+    first.commandsLoaded = true;
+    first.currentModelProvider = "provider";
+    first.currentModelId = "beta";
+    first.currentModelName = "Beta";
+
+    await newSession(project);
+    expect(state.controllers).toHaveLength(2);
+    expect(models.value.map((model) => model.id)).toEqual(["beta"]);
+
+    mocks.modelScope = [];
+  });
 });
 
 describe("transcript continuity", () => {

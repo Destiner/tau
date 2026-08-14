@@ -2420,6 +2420,10 @@ function inheritControllerSettings(
           );
   if (source) {
     controller.models = [...source.models];
+    // The scope belongs to the catalogue it narrows. A session that inherits
+    // one without the other never starts a runtime to read the scope back, and
+    // would offer every model Pi knows.
+    controller.modelScope = [...source.modelScope];
     controller.efforts = [...source.efforts];
     controller.currentModelProvider = source.currentModelProvider;
     controller.currentModelId = source.currentModelId;
