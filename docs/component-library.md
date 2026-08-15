@@ -111,10 +111,6 @@ Checks after every phase: `bun run lint && bun run typecheck && bun run test
 `.tool-call`, `.tool-header`, `.tool-details`, `.tool-detail-label`,
 `data-index`, `data-message-id`.
 
-A dev playground (`src/dev/ComponentPlayground.vue`, loaded via
-`?fixture=playground`) exists for visual evaluation of the primitives in both
-ayu schemes. It stays **uncommitted** until evaluated.
-
 ## Status
 
 Implemented end to end. `App.vue` went from ~1610 lines to ~480; `styles.css`
@@ -123,10 +119,6 @@ inventory above, both noted there: no `UiListbox` was built (the two option
 lists are driven by an external input's keyboard, which reka Listbox's roving
 focus fights), and the `.status` line lives inside `ComposerBar` rather than
 being its own component. `UiTooltip` / `UiToast` / `UiSplitter` remain deferred.
-
-A dev playground (`src/dev/ComponentPlayground.vue`, loaded via
-`?fixture=playground`) exercises every primitive in both ayu schemes, with a
-manual light/dark toggle. It stays **uncommitted** until evaluated.
 
 ## Commits
 
