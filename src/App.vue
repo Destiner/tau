@@ -7,182 +7,10 @@
     }"
     :style="{ '--sidebar-width': `${sidebarWidth}px` }"
   >
-    <aside
-      ref="sidebar"
-      class="sidebar"
-    >
-      <header
-        class="sidebar-titlebar"
-        @mousedown="handleTitlebarMouseDown"
-        @dblclick="handleTitlebarDoubleClick"
-      ></header>
-
-      <div
-        ref="projectList"
-        class="project-list"
-      >
-        <div
-          v-for="project in state.workspace?.projects"
-          :key="project.path"
-          class="project-group"
-          :data-id="project.path"
-        >
-          <div
-            class="project-row"
-            :class="{ selected: project.path === state.activeProjectPath }"
-          >
-            <span
-              class="project-drag-handle"
-              title="Drag to reorder"
-              aria-hidden="true"
-            >
-              <UiIcon name="grip" />
-            </span>
-            <button
-              class="project-toggle"
-              type="button"
-              :title="
-                project.connectionString
-                  ? `${project.connectionString} · ${project.workingDirectory}`
-                  : project.workingDirectory
-              "
-              @click="() => toggleProject(project)"
-            >
-              <span>{{ project.name }}</span>
-              <UiIcon
-                name="chevron"
-                :class="{ expanded: !project.collapsed }"
-              />
-              <UiStatusDot
-                v-if="projectIndicator(project)"
-                :tone="projectIndicator(project) || undefined"
-                :label="indicatorLabel(projectIndicator(project))"
-              />
-            </button>
-            <UiIconButton
-              class="row-action"
-              size="md"
-              variant="reveal"
-              :label="`New session in ${project.name}`"
-              title="New session"
-              @click="() => newSession(project)"
-            >
-              <UiIcon name="plus" />
-            </UiIconButton>
-            <UiIconButton
-              class="row-action"
-              size="md"
-              variant="reveal"
-              tone="danger"
-              :label="`Remove ${project.name}`"
-              title="Remove project"
-              @click="() => removeProject(project)"
-            >
-              <UiIcon name="trash" />
-            </UiIconButton>
-          </div>
-
-          <div
-            v-if="!project.collapsed"
-            class="session-list"
-          >
-            <UiContextMenu
-              v-for="session in projectSessions(project)"
-              :key="session.id"
-              :items="() => sessionMenuItems(project, session)"
-            >
-              <div
-                class="session-row"
-                :class="{
-                  selected: isSessionSelected(project, session),
-                  archivable: canArchiveSession(project, session),
-                }"
-              >
-                <button
-                  class="session-select"
-                  type="button"
-                  @click="() => selectSession(project, session)"
-                >
-                  <UiStatusDot
-                    :tone="sessionIndicator(project, session) || undefined"
-                    :label="indicatorLabel(sessionIndicator(project, session))"
-                  />
-                  <span class="session-copy">
-                    <span class="session-title">{{ session.title }}</span>
-                    <span class="session-time">{{
-                      sessionLastActive(project, session)
-                    }}</span>
-                  </span>
-                </button>
-                <UiIconButton
-                  v-if="canArchiveSession(project, session)"
-                  class="session-archive"
-                  size="md"
-                  variant="reveal"
-                  :label="`Archive ${session.title}`"
-                  title="Archive session"
-                  @click="() => archiveSession(project, session)"
-                >
-                  <UiIcon name="archive" />
-                </UiIconButton>
-              </div>
-            </UiContextMenu>
-            <div
-              v-if="projectSessions(project).length === 0"
-              class="empty-sessions"
-            >
-              No active sessions
-            </div>
-          </div>
-        </div>
-
-        <div
-          v-if="state.workspace && state.workspace.projects.length === 0"
-          class="empty-projects"
-        >
-          <UiIcon name="folder" />
-          <span>No projects yet</span>
-        </div>
-      </div>
-
-      <footer class="sidebar-footer">
-        <div class="project-menu-wrap">
-          <UiMenu
-            v-model:open="projectMenuOpen"
-            :items="projectMenuItems"
-            :min-width="176"
-          >
-            <template #trigger>
-              <button
-                class="icon-button"
-                type="button"
-                title="Open project"
-                aria-label="Open project"
-              >
-                <UiIcon name="folder" />
-              </button>
-            </template>
-          </UiMenu>
-        </div>
-      </footer>
-
-      <div
-        class="sidebar-resize-handle"
-        role="separator"
-        aria-label="Resize sidebar"
-        aria-orientation="vertical"
-        :aria-valuemin="MIN_SIDEBAR_WIDTH"
-        :aria-valuemax="MAX_SIDEBAR_WIDTH"
-        :aria-valuenow="sidebarWidth"
-        tabindex="0"
-        @pointerdown="startSidebarResize"
-        @pointermove="handleSidebarResize"
-        @pointerup="finishSidebarResize"
-        @pointercancel="stopSidebarResize"
-        @lostpointercapture="stopSidebarResize"
-        @keydown="handleSidebarResizeKeydown"
-      ></div>
-    </aside>
+    <ProjectSidebar
+      v-model:sidebar-width="sidebarWidth"
+      v-model:resizing="resizingSidebar"
+    />
 
     <main
       class="session-pane"
@@ -267,7 +95,6 @@
 <script setup lang="ts">
 import { type UnlistenFn, listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import Sortable, { type SortableEvent } from 'sortablejs';
 import {
   computed,
   nextTick,
@@ -280,39 +107,26 @@ import {
 import ComposerBar from './components/ComposerBar.vue';
 import ExtensionDialog from './components/ExtensionDialog.vue';
 import NotificationStack from './components/NotificationStack.vue';
+import ProjectSidebar from './components/ProjectSidebar.vue';
 import RemoteDialog from './components/RemoteDialog.vue';
 import SessionHeader from './components/SessionHeader.vue';
 import TranscriptView from './components/TranscriptView.vue';
-import UiContextMenu from './components/ui/UiContextMenu.vue';
-import UiIcon from './components/ui/UiIcon.vue';
-import UiIconButton from './components/ui/UiIconButton.vue';
-import UiMenu from './components/ui/UiMenu.vue';
-import type { UiMenuItem } from './components/ui/UiMenu.vue';
 import UiSpinner from './components/ui/UiSpinner.vue';
-import UiStatusDot from './components/ui/UiStatusDot.vue';
-import type { ProjectSummary, SessionSummary } from './composables/state';
 import useTau from './composables/useTau';
+import { loadSidebarWidth } from './lib/sidebar-width';
 
-const SIDEBAR_WIDTH_STORAGE_KEY = 'tau.sidebar-width';
 const NEW_SESSION_EVENT = 'tau://new-session';
 /** How long a session may hydrate before it is worth reporting as loading. */
 const LOADING_INDICATOR_DELAY_MS = 200;
 const EDITABLE_SELECTOR = 'input, textarea, select';
-const DEFAULT_SIDEBAR_WIDTH = 260;
-const MIN_SIDEBAR_WIDTH = 200;
-const MAX_SIDEBAR_WIDTH = 480;
 
 const transcriptView = ref<InstanceType<typeof TranscriptView>>();
 const sessionHeader = ref<InstanceType<typeof SessionHeader>>();
 const composerBar = ref<InstanceType<typeof ComposerBar>>();
-const projectList = ref<HTMLElement>();
-const sidebar = ref<HTMLElement>();
-const projectMenuOpen = ref(false);
 const windowFocused = ref(true);
 const loadingIndicatorVisible = ref(false);
 const sidebarWidth = ref(loadSidebarWidth());
 const resizingSidebar = ref(false);
-let projectSortable: Sortable | undefined;
 let unlistenWindowFocus: UnlistenFn | undefined;
 let unlistenNewSessionMenu: UnlistenFn | undefined;
 let loadingIndicatorTimer: ReturnType<typeof setTimeout> | undefined;
@@ -328,27 +142,10 @@ const {
   sessionLoading,
   initialize,
   dispose,
-  addLocalProject,
-  openRemoteProjectDialog,
   closeRemoteProjectDialog,
   submitRemoteConnection,
   chooseRemoteDirectory,
-  toggleProject,
-  reorderProjects,
-  removeProject,
-  archiveSession,
   newSession,
-  selectSession,
-  canArchiveSession,
-  projectSessions,
-  sessionLastActive,
-  isSessionSelected,
-  sessionIndicator,
-  isSessionUnread,
-  markSessionUnread,
-  markSessionRead,
-  projectIndicator,
-  indicatorLabel,
   sendMessage,
   submitExtensionDialog,
   cancelExtensionDialog,
@@ -416,14 +213,12 @@ const remoteDirectoryOptions = computed(() => {
 
 onMounted(() => {
   void initialize();
-  setupProjectReordering();
   void watchWindowFocus();
   void watchMenuActions();
   document.addEventListener('contextmenu', handleDocumentContextMenu);
   document.addEventListener('keydown', handleDocumentKeydown);
 });
 onBeforeUnmount(() => {
-  projectSortable?.destroy();
   dispose();
   clearTimeout(loadingIndicatorTimer);
   unlistenWindowFocus?.();
@@ -515,133 +310,6 @@ function handleNewSession(): void {
   if (activeProject.value) void newSession(activeProject.value);
 }
 
-/** The project menu's two ways to add a project. */
-const projectMenuItems: UiMenuItem[] = [
-  {
-    label: 'Open Local Project',
-    run: () => void handleLocalProject(),
-  },
-  {
-    label: 'Open Remote Project',
-    run: () => void handleRemoteProject(),
-  },
-];
-
-function sessionMenuItems(
-  project: ProjectSummary,
-  session: SessionSummary,
-): UiMenuItem[] {
-  const unread = isSessionUnread(project, session);
-  const items: UiMenuItem[] = [
-    {
-      label: unread ? 'Mark as Read' : 'Mark as Unread',
-      run: () =>
-        unread
-          ? markSessionRead(project, session)
-          : markSessionUnread(project, session),
-    },
-  ];
-  if (canArchiveSession(project, session)) {
-    items.push({
-      label: 'Archive Session',
-      run: () => void archiveSession(project, session),
-    });
-  }
-  return items;
-}
-
-function setupProjectReordering(): void {
-  if (!projectList.value) return;
-  projectSortable = Sortable.create(projectList.value, {
-    animation: 180,
-    handle: '.project-drag-handle',
-    draggable: '.project-group',
-    ghostClass: 'project-sortable-ghost',
-    chosenClass: 'project-sortable-chosen',
-    dragClass: 'project-sortable-drag',
-    forceFallback: true,
-    fallbackOnBody: true,
-    fallbackTolerance: 3,
-    onEnd: finishProjectReordering,
-  });
-}
-
-function finishProjectReordering(event: SortableEvent): void {
-  if (event.oldIndex === undefined || event.newIndex === undefined) return;
-  void reorderProjects(event.oldIndex, event.newIndex);
-}
-
-function startSidebarResize(event: PointerEvent): void {
-  if (event.button !== 0) return;
-  const handle = event.currentTarget;
-  if (!(handle instanceof HTMLElement)) return;
-
-  event.preventDefault();
-  resizingSidebar.value = true;
-  handle.setPointerCapture(event.pointerId);
-  handle.focus({ preventScroll: true });
-  updateSidebarWidth(event.clientX);
-}
-
-function handleSidebarResize(event: PointerEvent): void {
-  if (resizingSidebar.value) updateSidebarWidth(event.clientX);
-}
-
-function finishSidebarResize(event: PointerEvent): void {
-  if (!resizingSidebar.value) return;
-  updateSidebarWidth(event.clientX);
-  stopSidebarResize();
-}
-
-function stopSidebarResize(): void {
-  if (!resizingSidebar.value) return;
-  resizingSidebar.value = false;
-  persistSidebarWidth();
-}
-
-function handleSidebarResizeKeydown(event: KeyboardEvent): void {
-  const step = event.shiftKey ? 40 : 10;
-  let nextWidth: number;
-
-  switch (event.key) {
-    case 'ArrowLeft':
-      nextWidth = sidebarWidth.value - step;
-      break;
-    case 'ArrowRight':
-      nextWidth = sidebarWidth.value + step;
-      break;
-    case 'Home':
-      nextWidth = MIN_SIDEBAR_WIDTH;
-      break;
-    case 'End':
-      nextWidth = MAX_SIDEBAR_WIDTH;
-      break;
-    default:
-      return;
-  }
-
-  event.preventDefault();
-  sidebarWidth.value = clampSidebarWidth(nextWidth);
-  persistSidebarWidth();
-}
-
-function updateSidebarWidth(pointerX: number): void {
-  const left = sidebar.value?.getBoundingClientRect().left ?? 0;
-  sidebarWidth.value = clampSidebarWidth(pointerX - left);
-}
-
-function persistSidebarWidth(): void {
-  try {
-    localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth.value));
-  } catch {
-    return;
-  }
-}
-
-/**
- * Window focus is not document focus: the document inside a webview keeps focus
- * while the app sits in the background, so the shell has to report it instead.
- */
 async function watchWindowFocus(): Promise<void> {
   try {
     unlistenWindowFocus = await getCurrentWindow().onFocusChanged(
@@ -706,14 +374,6 @@ function isEditableTarget(target: EventTarget | null): boolean {
   );
 }
 
-function handleLocalProject(): void {
-  void addLocalProject();
-}
-
-function handleRemoteProject(): void {
-  openRemoteProjectDialog();
-}
-
 function handleTitlebarMouseDown(event: MouseEvent): void {
   if (
     event.button !== 0 ||
@@ -741,23 +401,84 @@ function isTitlebarControl(target: EventTarget | null): boolean {
     Boolean(target.closest('button, a, input, select, textarea'))
   );
 }
-
-function loadSidebarWidth(): number {
-  try {
-    const storedWidth = Number.parseFloat(
-      localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY) ?? '',
-    );
-    if (Number.isFinite(storedWidth)) return clampSidebarWidth(storedWidth);
-  } catch {
-    return DEFAULT_SIDEBAR_WIDTH;
-  }
-  return DEFAULT_SIDEBAR_WIDTH;
-}
-
-function clampSidebarWidth(width: number): number {
-  return Math.min(
-    MAX_SIDEBAR_WIDTH,
-    Math.max(MIN_SIDEBAR_WIDTH, Math.round(width)),
-  );
-}
 </script>
+
+<style scoped>
+.app-shell {
+  --sidebar-width: 260px;
+
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  background: var(--canvas);
+}
+
+/* Native chrome dims its selection while its window sits in the background. */
+.app-shell.window-inactive {
+  --selected: var(--selected-inactive);
+}
+
+.app-shell.resizing-sidebar,
+.app-shell.resizing-sidebar * {
+  cursor: col-resize;
+  /* stylelint-disable-next-line property-no-vendor-prefix -- WKWebView needs the prefix before Safari 17.4 */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.app-shell.resizing-sidebar :deep(.sidebar-resize-handle)::after {
+  background: var(--muted);
+}
+
+.session-pane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.session-pane.empty-session,
+.session-pane.loading-session {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.session-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding-bottom: 24px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.composer-area {
+  padding: 6px 8px 8px 6px;
+  border-top: 1px solid var(--border);
+  background: var(--canvas);
+}
+
+.empty-session .composer-area,
+.empty-session :deep(.composer) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.empty-session .composer-area {
+  border-top: 0;
+}
+
+.empty-session .composer-area:has(.extension-composer) {
+  justify-content: flex-end;
+}
+
+.empty-session :deep(.composer textarea) {
+  flex: 1;
+  max-height: none;
+  padding-top: 16px;
+}
+</style>

@@ -260,3 +260,104 @@ function estimateRowSize(message: TranscriptEntry | undefined): number {
 
 defineExpose({ scrollToEnd });
 </script>
+
+<style scoped>
+.transcript {
+  min-height: 0;
+  overflow: hidden auto;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
+}
+
+.message-list-shell {
+  width: min(100%, 880px);
+  margin: 0 auto;
+  padding: 0 clamp(20px, 5vw, 60px);
+}
+
+.message-list {
+  position: relative;
+  width: 100%;
+}
+
+.message-window {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
+
+.message {
+  margin: 0;
+  padding-bottom: 22px;
+}
+
+.message.user {
+  display: flex;
+  justify-content: flex-start;
+  margin-right: 20px;
+  margin-left: -5px;
+}
+
+.user-bubble {
+  max-width: min(78%, 650px);
+  padding: 9px 13px;
+  border-radius: 7px;
+  background: var(--user);
+}
+
+/*
+ * Code sits on the bubble rather than the canvas, and the shared code
+ * background is too close to it to read as a block of its own. The selector
+ * is deep because the code lives in MarkdownText's rendered HTML.
+ */
+.user-bubble :deep(code),
+.user-bubble :deep(pre) {
+  background: var(--panel-raised);
+}
+
+.message.assistant,
+.message.error,
+.stream-state {
+  margin-right: 20px;
+  margin-left: 8px;
+}
+
+.message.thinking,
+.message.tool {
+  margin-right: 32px;
+  margin-left: 20px;
+}
+
+.thinking-block {
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel-raised);
+}
+
+.thinking-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.thinking-block .markdown {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.message.compact {
+  padding-bottom: 7px;
+}
+
+.stream-state {
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+}
+
+.transcript-stream-state {
+  padding-bottom: 22px;
+}
+</style>

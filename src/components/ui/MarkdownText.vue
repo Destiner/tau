@@ -108,3 +108,107 @@ function handleKeydown(event: KeyboardEvent): void {
   if (event.key === 'Enter') void activate(event);
 }
 </script>
+
+<style scoped>
+/* The rendered HTML carries no scoped attributes, so its descendants are
+ * reached with :deep; the class itself is Tau's only markdown surface. */
+.markdown {
+  color: var(--text);
+  line-height: 1.62;
+  cursor: text;
+  /* stylelint-disable-next-line property-no-vendor-prefix -- WKWebView needs the prefix before Safari 17.4 */
+  -webkit-user-select: text;
+  user-select: text;
+  overflow-wrap: anywhere;
+}
+
+.markdown :deep(> :first-child) {
+  margin-top: 0;
+}
+
+.markdown :deep(> :last-child) {
+  margin-bottom: 0;
+}
+
+.markdown :deep(p),
+.markdown :deep(ul),
+.markdown :deep(ol),
+.markdown :deep(pre),
+.markdown :deep(blockquote) {
+  margin: 0.7em 0;
+}
+
+.markdown :deep(h1),
+.markdown :deep(h2),
+.markdown :deep(h3) {
+  margin: 1.2em 0 0.55em;
+  line-height: 1.25;
+}
+
+.markdown :deep(h1) {
+  font-size: 1.35em;
+}
+
+.markdown :deep(h2) {
+  font-size: 1.2em;
+}
+
+.markdown :deep(h3) {
+  font-size: 1.08em;
+}
+
+.markdown :deep(code) {
+  padding: 0.12em 0.3em;
+  border-radius: 4px;
+  background: var(--sunk);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.88em;
+}
+
+.markdown :deep(pre) {
+  padding: 11px 12px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--sunk);
+}
+
+.markdown :deep(pre code) {
+  padding: 0;
+  background: transparent;
+}
+
+.markdown :deep(blockquote) {
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
+  color: var(--muted);
+}
+
+/* The hand belongs to links, and these are the only ones: they leave the app. */
+.markdown :deep(a) {
+  color: var(--link);
+  cursor: pointer;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+/*
+ * A path is a link to a file the system opens, so it carries a link's colour
+ * but keeps the underline for the pointer rather than wearing one in prose.
+ */
+.markdown :deep(.file-link) {
+  text-decoration: none;
+}
+
+.markdown :deep(.file-link:hover),
+.markdown :deep(.file-link:focus-visible) {
+  outline: 0;
+  text-decoration: underline;
+}
+
+/* Dragging content out of the transcript is a browser gesture, not an app one. */
+.markdown :deep(a),
+.markdown :deep(img) {
+  -webkit-user-drag: none;
+}
+</style>
