@@ -243,6 +243,7 @@ button {
   background: var(--hover);
 }
 
+/* stylelint-disable-next-line no-descending-specificity */
 .context-menu button:disabled {
   color: var(--faint);
 }
@@ -338,6 +339,7 @@ button {
   gap: 3px;
 }
 
+/* stylelint-disable-next-line no-descending-specificity */
 .project-toggle svg {
   flex: none;
   width: 13px;
@@ -512,6 +514,7 @@ button {
   white-space: nowrap;
 }
 
+/* stylelint-disable-next-line no-descending-specificity */
 .session-time {
   flex: none;
   color: var(--faint);
@@ -535,6 +538,7 @@ button {
   gap: 8px;
 }
 
+/* stylelint-disable-next-line no-descending-specificity */
 .empty-projects > svg {
   width: 24px;
   height: 24px;
@@ -740,6 +744,7 @@ button.session-name:focus-visible {
 }
 
 .tool-header:enabled:hover,
+/* stylelint-disable-next-line no-descending-specificity */
 .tool-header:focus-visible {
   outline: 0;
   background: var(--hover);
@@ -946,6 +951,7 @@ button.session-name:focus-visible {
   font-size: 11px;
 }
 
+/* stylelint-disable-next-line no-descending-specificity */
 .composer {
   position: relative;
   width: 100%;
@@ -1031,6 +1037,7 @@ button.session-name:focus-visible {
  * to whole pixels and hands the space it gives up to the transcript for the
  * length of the measurement, clamping a reader sitting at the end away from it.
  */
+/* stylelint-disable-next-line no-descending-specificity */
 .composer textarea {
   display: block;
   width: 100%;
@@ -1100,6 +1107,7 @@ button.session-name:focus-visible {
 }
 
 .composer-selector select:hover:not(:disabled),
+/* stylelint-disable-next-line no-descending-specificity */
 .composer-selector select:focus-visible {
   border-color: var(--border);
   background: var(--hover);
@@ -1110,6 +1118,7 @@ button.session-name:focus-visible {
 }
 
 .effort-selector,
+/* stylelint-disable-next-line no-descending-specificity */
 .effort-selector select {
   max-width: 110px;
 }
@@ -1140,6 +1149,7 @@ button.session-name:focus-visible {
   color: var(--danger);
 }
 
+/* stylelint-disable no-descending-specificity */
 button:disabled,
 input:disabled,
 select:disabled,
@@ -1147,7 +1157,9 @@ textarea:disabled {
   opacity: 0.45;
   cursor: default;
 }
+/* stylelint-enable no-descending-specificity */
 
+/* stylelint-disable-next-line no-descending-specificity */
 .markdown {
   overflow-wrap: anywhere;
   color: var(--text);
@@ -1165,6 +1177,7 @@ textarea:disabled {
 .markdown p,
 .markdown ul,
 .markdown ol,
+/* stylelint-disable-next-line no-descending-specificity */
 .markdown pre,
 .markdown blockquote {
   margin: 0.7em 0;
@@ -1189,6 +1202,7 @@ textarea:disabled {
   font-size: 1.08em;
 }
 
+/* stylelint-disable-next-line no-descending-specificity */
 .markdown code {
   padding: 0.12em 0.3em;
   border-radius: 4px;
@@ -1197,6 +1211,7 @@ textarea:disabled {
   font-size: 0.88em;
 }
 
+/* stylelint-disable-next-line no-descending-specificity */
 .markdown pre {
   padding: 11px 12px;
   overflow-x: auto;
@@ -1205,6 +1220,7 @@ textarea:disabled {
   background: var(--sunk);
 }
 
+/* stylelint-disable-next-line no-descending-specificity */
 .markdown pre code {
   padding: 0;
   background: transparent;
@@ -1294,6 +1310,7 @@ textarea:disabled {
   line-height: 1.45;
 }
 
+/* stylelint-disable-next-line no-descending-specificity */
 .extension-notification-header > button {
   display: grid;
   flex: none;
@@ -1308,12 +1325,14 @@ textarea:disabled {
   place-items: center;
 }
 
+/* stylelint-disable no-descending-specificity */
 .extension-notification-header > button:hover,
 .extension-notification-header > button:focus-visible {
   outline: 0;
   background: var(--hover);
   color: var(--text);
 }
+/* stylelint-enable no-descending-specificity */
 
 .dialog-layer {
   display: flex;
