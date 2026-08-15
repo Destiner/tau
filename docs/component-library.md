@@ -8,23 +8,23 @@ theme and global defaults there. Strictly a refactor: no UI/UX changes.
 
 ### Primitives on reka-ui (reka provides behavior + a11y; Tau provides the ayu styling)
 
-| Component | Replaces | API |
-|---|---|---|
-| `UiMenu` (DropdownMenu) | `.project-menu` | `items: { label, disabled?, run? }[]`, `v-model:open`, `side?` (default `top`), `align?` (default `start`), `sideOffset?` (default 5), `minWidth?`; `#trigger` slot |
-| `UiContextMenu` (ContextMenu) | `.context-menu` (session rows, text fields) | `items: { label, disabled?, run? }[]`, `minWidth?` (default 152); default slot = trigger via `asChild` |
-| `UiDialog` (Dialog) | `.dialog-layer` + `.remote-dialog` | `v-model:open`, `title` (aria), `width?: 'sm' \| 'md'` (440/480px), `busy?: boolean` (aria-busy); default slot = panel body |
-| `UiSelect` (Select) | `.composer-selector` (model + effort pickers) | `modelValue: string`, `options: { value, label }[]`, `placeholder?`, `fallbackLabel?` (shown when the value is not in `options`), `disabled?`, `maxWidth?` (default 210), `ariaLabel?` |
-| `UiCollapsible` (Collapsible) | `.tool-call` expand/collapse | `v-model:open`, `disabled?`; `#trigger` + `#content` slots |
+| Component                     | Replaces                                      | API                                                                                                                                                                                    |
+| ----------------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `UiMenu` (DropdownMenu)       | `.project-menu`                               | `items: { label, disabled?, run? }[]`, `v-model:open`, `side?` (default `top`), `align?` (default `start`), `sideOffset?` (default 5), `minWidth?`; `#trigger` slot                    |
+| `UiContextMenu` (ContextMenu) | `.context-menu` (session rows, text fields)   | `items: { label, disabled?, run? }[]`, `minWidth?` (default 152); default slot = trigger via `asChild`                                                                                 |
+| `UiDialog` (Dialog)           | `.dialog-layer` + `.remote-dialog`            | `v-model:open`, `title` (aria), `width?: 'sm' \| 'md'` (440/480px), `busy?: boolean` (aria-busy); default slot = panel body                                                            |
+| `UiSelect` (Select)           | `.composer-selector` (model + effort pickers) | `modelValue: string`, `options: { value, label }[]`, `placeholder?`, `fallbackLabel?` (shown when the value is not in `options`), `disabled?`, `maxWidth?` (default 210), `ariaLabel?` |
+| `UiCollapsible` (Collapsible) | `.tool-call` expand/collapse                  | `v-model:open`, `disabled?`; `#trigger` + `#content` slots                                                                                                                             |
 
 ### Plain primitives (no reka — pure markup and state)
 
-| Component | Replaces | API |
-|---|---|---|
-| `UiButton` | `.extension-dialog-button.primary/.secondary` | `variant: 'primary' \| 'secondary'`, `size?: 'sm' \| 'md'` |
+| Component      | Replaces                                                                                                           | API                                                                                                                                                                                                                                                |
+| -------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `UiButton`     | `.extension-dialog-button.primary/.secondary`                                                                      | `variant: 'primary' \| 'secondary'`, `size?: 'sm' \| 'md'`                                                                                                                                                                                         |
 | `UiIconButton` | `.icon-button` (28px), `.row-action`/`.session-archive` (22px), `.send-button` (20px), notification dismiss (16px) | `size: 'lg' \| 'md' \| 'sm' \| 'xs'` (28/22/20/16), `variant: 'fade' \| 'fill'`, `tone?: 'default' \| 'danger'`, `label` (aria, required), `title?`, `disabled?`; icon slot. Row-reveal hover rules live in the row's own stylesheet via `:deep()` |
-| `UiInput` | `.extension-dialog-input`, `.remote-dialog input`, `.session-name-input` | `modelValue`, `variant: 'bordered' \| 'mono' \| 'bare'`, `error?: boolean`; everything else via `$attrs` |
-| `UiTextarea` | `.extension-dialog-editor` | `modelValue`, `variant: 'bordered' \| 'bare'`; rest via `$attrs` |
-| `UiStatusDot` | `.session-indicator` (new/draft/working), `.tool-status` (working) | `tone?: 'new' \| 'draft' \| 'working'`, `label?` (aria; without it the dot is aria-hidden) |
+| `UiInput`      | `.extension-dialog-input`, `.remote-dialog input`, `.session-name-input`                                           | `modelValue`, `variant: 'bordered' \| 'mono' \| 'bare'`, `error?: boolean`; everything else via `$attrs`                                                                                                                                           |
+| `UiTextarea`   | `.extension-dialog-editor`                                                                                         | `modelValue`, `variant: 'bordered' \| 'bare'`; rest via `$attrs`                                                                                                                                                                                   |
+| `UiStatusDot`  | `.session-indicator` (new/draft/working), `.tool-status` (working)                                                 | `tone?: 'new' \| 'draft' \| 'working'`, `label?` (aria; without it the dot is aria-hidden)                                                                                                                                                         |
 
 Kept as-is and moved under `ui/`: `UiIcon`, `UiSpinner`, `MarkdownText`. The
 `.markdown` typography moves into `MarkdownText.vue` as a **non-scoped** style
@@ -32,15 +32,15 @@ block — required because `v-html` output carries no scoped attributes.
 
 ### App-level components extracted from `App.vue`
 
-| Component | Contents |
-|---|---|
-| `ProjectSidebar.vue` | titlebar, sortable project list, session rows, footer `UiMenu`, resize handle. Owns sortablejs init, sidebar-width state (v-model), localStorage persistence |
-| `SessionHeader.vue` | session title, rename field, new-session button; exposes `cancelRename()` |
-| `CommandMenu.vue` | slash-command popover; keeps its placement math |
-| `ComposerBar.vue` | status line, command menu, growing textarea, model/effort `UiSelect`s, send/stop button; exposes `focus()` |
-| `ExtensionDialog.vue` | the in-flow workflow prompt (select / input / editor / confirm). Stays in-flow by design — not a modal |
-| `RemoteDialog.vue` | connection + directory browser inside `UiDialog` |
-| `NotificationStack.vue` | fixed bottom-right notification stack |
+| Component               | Contents                                                                                                                                                     |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ProjectSidebar.vue`    | titlebar, sortable project list, session rows, footer `UiMenu`, resize handle. Owns sortablejs init, sidebar-width state (v-model), localStorage persistence |
+| `SessionHeader.vue`     | session title, rename field, new-session button; exposes `cancelRename()`                                                                                    |
+| `CommandMenu.vue`       | slash-command popover; keeps its placement math                                                                                                              |
+| `ComposerBar.vue`       | status line, command menu, growing textarea, model/effort `UiSelect`s, send/stop button; exposes `focus()`                                                   |
+| `ExtensionDialog.vue`   | the in-flow workflow prompt (select / input / editor / confirm). Stays in-flow by design — not a modal                                                       |
+| `RemoteDialog.vue`      | connection + directory browser inside `UiDialog`                                                                                                             |
+| `NotificationStack.vue` | fixed bottom-right notification stack                                                                                                                        |
 
 ### Stays hand-rolled (reka's model does not fit the interaction)
 
@@ -63,24 +63,24 @@ Deferred (user decision): reka `Tooltip`, `Toast`, `Splitter` as a follow-up.
 defaults (box-sizing, font stack, cursor/user-select policy, `::selection`,
 disabled opacity, `accent-color`). Everything else moves to the owning SFC:
 
-| Current CSS | Destination |
-|---|---|
-| `.app-shell`, `.window-inactive`, `.resizing-sidebar` | `App.vue` (scoped) |
-| `.sidebar*`, `.project-*`, `.session-*`, `.empty-*` | `ProjectSidebar.vue` (+ `UiStatusDot`, `UiIconButton`) |
-| `.session-pane`, `.session-loading` | `App.vue` |
-| `.session-header`, `.session-name*`, `.session-new-button` | `SessionHeader.vue` |
-| `.transcript*`, `.message*`, `.user-bubble`, `.thinking-*`, `.stream-state` | `TranscriptView.vue` |
-| `.tool-*` | `ToolCall.vue` (via `UiCollapsible`) |
-| `.error-*` | `ErrorNotice.vue` |
-| `.composer*`, `.send-button`, `.status` | `ComposerBar.vue` |
-| `.command-*` | `CommandMenu.vue` |
-| `.composer-selector` | `UiSelect.vue` |
-| `.icon-button`, `.row-action` | `UiIconButton.vue` (+ row reveal rules in `ProjectSidebar`) |
-| `.project-menu` / `.context-menu` | `UiMenu.vue` / `UiContextMenu.vue` |
-| `.extension-notification*` | `NotificationStack.vue` |
-| `.extension-composer`, `.extension-dialog-*` | `ExtensionDialog.vue` (+ `UiInput`, `UiTextarea`, `UiButton`) |
-| `.dialog-layer`, `.remote-dialog*`, `.remote-directory-*` | `RemoteDialog.vue` (+ `UiDialog`, `UiInput`) |
-| `.markdown*` | `MarkdownText.vue` (non-scoped block) |
+| Current CSS                                                                 | Destination                                                   |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `.app-shell`, `.window-inactive`, `.resizing-sidebar`                       | `App.vue` (scoped)                                            |
+| `.sidebar*`, `.project-*`, `.session-*`, `.empty-*`                         | `ProjectSidebar.vue` (+ `UiStatusDot`, `UiIconButton`)        |
+| `.session-pane`, `.session-loading`                                         | `App.vue`                                                     |
+| `.session-header`, `.session-name*`, `.session-new-button`                  | `SessionHeader.vue`                                           |
+| `.transcript*`, `.message*`, `.user-bubble`, `.thinking-*`, `.stream-state` | `TranscriptView.vue`                                          |
+| `.tool-*`                                                                   | `ToolCall.vue` (via `UiCollapsible`)                          |
+| `.error-*`                                                                  | `ErrorNotice.vue`                                             |
+| `.composer*`, `.send-button`, `.status`                                     | `ComposerBar.vue`                                             |
+| `.command-*`                                                                | `CommandMenu.vue`                                             |
+| `.composer-selector`                                                        | `UiSelect.vue`                                                |
+| `.icon-button`, `.row-action`                                               | `UiIconButton.vue` (+ row reveal rules in `ProjectSidebar`)   |
+| `.project-menu` / `.context-menu`                                           | `UiMenu.vue` / `UiContextMenu.vue`                            |
+| `.extension-notification*`                                                  | `NotificationStack.vue`                                       |
+| `.extension-composer`, `.extension-dialog-*`                                | `ExtensionDialog.vue` (+ `UiInput`, `UiTextarea`, `UiButton`) |
+| `.dialog-layer`, `.remote-dialog*`, `.remote-directory-*`                   | `RemoteDialog.vue` (+ `UiDialog`, `UiInput`)                  |
+| `.markdown*`                                                                | `MarkdownText.vue` (non-scoped block)                         |
 
 Note: reka portals mount into `body`, but Vue scoped styles still apply —
 the `data-v-*` attributes are attached to the elements reka renders in our
