@@ -15,7 +15,8 @@ import MarkdownText from "./components/MarkdownText.vue";
 import Spinner from "./components/Spinner.vue";
 import TranscriptView from "./components/TranscriptView.vue";
 import UiIcon from "./components/UiIcon.vue";
-import { type SessionIndicator, useTau } from "./composables/useTau";
+import { useTau } from "./composables/useTau";
+import type { SessionIndicator } from "./composables/state";
 import {
   type CommandMenuPlacement,
   commandInvocation,
@@ -25,7 +26,7 @@ import {
 } from "./lib/commands";
 import type { CommandOption } from "./lib/commands";
 import type { ThinkingLevel } from "./lib/pi/model-scope";
-import type { ProjectSummary, SessionSummary } from "./composables/useTau";
+import type { ProjectSummary, SessionSummary } from "./composables/state";
 
 type TextField = HTMLInputElement | HTMLTextAreaElement;
 
