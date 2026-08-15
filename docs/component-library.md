@@ -52,11 +52,10 @@ block — required because `v-html` output carries no scoped attributes.
 - **Project group collapse** — the collapsed state is server-persisted
   (`project.collapsed`), so it stays a plain button + `v-if` rather than
   `UiCollapsible`.
-- **Transcript virtualizer** — built on `@tanstack/vue-virtual`.
+- **Sidebar resize handle, transcript virtualizer** — single-axis drag and
+  `@tanstack/vue-virtual` respectively; reka Splitter deferred.
 
-Built in the follow-up: `UiTooltip`, `UiToast` (extension notifications), and
-`UiSplitter` (the sidebar resize, via reka Splitter with px sizing and
-`autoSaveId` persistence).
+Deferred (user decision): reka `Tooltip`, `Toast`, `Splitter` as a follow-up.
 
 ## CSS ownership map
 
@@ -123,22 +122,11 @@ from ~1580 lines to the theme and global defaults only. Two deviations from the
 inventory above, both noted there: no `UiListbox` was built (the two option
 lists are driven by an external input's keyboard, which reka Listbox's roving
 focus fights), and the `.status` line lives inside `ComposerBar` rather than
-being its own component.
-
-Follow-up: the three deferred primitives shipped. `UiTooltip` replaces native
-`title` on the sidebar and header actions (long informational titles — drag
-handle, connection details — stay native). Extension notifications render
-through reka Toast (`UiToast` provider + viewport + `NotificationToast`) with
-enter/exit animations, swipe-to-dismiss, and the same persistent lifetime.
-The sidebar resize is driven by reka Splitter (`SplitterGroup`/`SplitterPanel`
-with px sizing + `autoSaveId` persistence + the resize handle's `dragging`
-event for the resize cursor); the hand-rolled pointer/keyboard/persistence
-machinery and `lib/sidebar-width.ts` were removed.
+being its own component. `UiTooltip` / `UiToast` / `UiSplitter` remain deferred.
 
 A dev playground (`src/dev/ComponentPlayground.vue`, loaded via
 `?fixture=playground`) exercises every primitive in both ayu schemes, with a
-manual light/dark toggle, plus tooltip, toast, menu, and dialog demos. It stays
-**uncommitted** until evaluated.
+manual light/dark toggle. It stays **uncommitted** until evaluated.
 
 ## Commits
 
