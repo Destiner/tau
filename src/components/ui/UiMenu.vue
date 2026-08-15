@@ -74,7 +74,9 @@ export interface UiMenuItem {
 </script>
 
 <style scoped>
-.ui-menu {
+/* reka portals the content to the body, which drops the scoped attribute,
+ * so the menu is styled through :deep on its namespaced classes. */
+:global(.ui-menu) {
   padding: 4px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -82,7 +84,7 @@ export interface UiMenuItem {
   box-shadow: 0 8px 24px var(--shadow-soft);
 }
 
-.ui-menu-item {
+:global(.ui-menu-item) {
   display: block;
   width: 100%;
   padding: 7px 8px;
@@ -93,14 +95,14 @@ export interface UiMenuItem {
   text-align: left;
 }
 
-.ui-menu-item:not([data-disabled]):hover,
-.ui-menu-item:not([data-disabled])[data-highlighted],
-.ui-menu-item:not([data-disabled]):focus-visible {
+:global(.ui-menu-item:not([data-disabled]):hover),
+:global(.ui-menu-item:not([data-disabled])[data-highlighted]),
+:global(.ui-menu-item:not([data-disabled]):focus-visible) {
   outline: 0;
   background: var(--hover);
 }
 
-.ui-menu-item[data-disabled] {
+:global(.ui-menu-item[data-disabled]) {
   color: var(--faint);
 }
 </style>

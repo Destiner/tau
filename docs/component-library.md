@@ -82,11 +82,11 @@ disabled opacity, `accent-color`). Everything else moves to the owning SFC:
 | `.dialog-layer`, `.remote-dialog*`, `.remote-directory-*`                   | `RemoteDialog.vue` (+ `UiDialog`, `UiInput`)                  |
 | `.markdown*`                                                                | `MarkdownText.vue` (non-scoped block)                         |
 
-Note: reka portals mount into `body`, but Vue scoped styles still apply —
-the `data-v-*` attributes are attached to the elements reka renders in our
-template regardless of where they end up. No `:global()` hacks needed except
-inside `MarkdownText` (v-html) and where a descendant of a child component is
-styled (`:deep`).
+One technical note: reka portals (menu/dialog content) mount into `body`, and the
+scoped `data-v` attribute does **not** reach the portaled node, so the primitives
+style their portaled parts with `:global()` on namespaced classes (`.ui-menu`,
+`.ui-dialog-content`, …). Regular child-component roots do carry the parent's
+scoped attribute, so non-portaled descendants are styled plainly.
 
 ## Phases
 

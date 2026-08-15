@@ -38,7 +38,10 @@ withDefaults(
 </script>
 
 <style scoped>
-.ui-dialog-overlay {
+/* reka portals the overlay and panel to the body, where the scoped
+ * attribute does not reach them, so they are styled with :global on
+ * their namespaced classes. */
+:global(.ui-dialog-overlay) {
   display: flex;
   position: fixed;
   z-index: 20;
@@ -49,7 +52,7 @@ withDefaults(
   inset: 0;
 }
 
-.ui-dialog-content {
+:global(.ui-dialog-content) {
   width: min(440px, 100%);
   padding: 8px;
   border: 1px solid var(--border);
@@ -58,12 +61,12 @@ withDefaults(
   box-shadow: 0 14px 40px var(--shadow-strong);
 }
 
-.ui-dialog-content.width-md {
+:global(.ui-dialog-content.width-md) {
   width: min(480px, 100%);
 }
 
 /* The title is announced, not shown: the panel explains itself. */
-.ui-dialog-title {
+:global(.ui-dialog-title) {
   position: absolute;
   width: 1px;
   height: 1px;
