@@ -13,6 +13,7 @@
     @keydown.escape.prevent.stop="dismissCommandMenu"
   >
     <CommandMenu
+      v-if="commandMenuActive"
       ref="commandMenu"
       :commands="filteredCommands"
       :selected-index="commandSelectedIndex"
