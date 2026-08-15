@@ -13,7 +13,6 @@ dist-ssr
 playwright-report
 test-results
 *.local
-.mock-handoff.json
 
 # Editor directories and files
 .vscode/*

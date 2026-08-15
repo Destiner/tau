@@ -46,18 +46,3 @@ Pi buffers a session in memory and writes its file only once the session holds a
 Opening one does not fail. Pi answers `--session` for a file it cannot find by starting a fresh session under the path it was given, reporting that path with a new session id, so the row reads back as an empty session wearing a different identity. Registering that identity would file a second session at the same path, and the row would mint one more on every visit.
 
 Tau treats the requested path coming back under another id as Pi reporting that the session was never saved: it archives the row and presents the empty session Pi did open as an unsent session, which leaves no trace unless it is used. A replacement always brings its own path, so it is unaffected.
-
-## Compatibility fixture
-
-The project-local fixture at [`fixtures/workflow-extension`](../fixtures/workflow-extension/README.md) covers the workflow-critical path:
-
-- Every supported dialog and two back-to-back selects
-- Bottom-right notifications and editor prefill
-- A custom tool that opens a dialog during tool execution
-- A `tool_call` hook that blocks a marked `bash` call
-- Persistent session replacement through `ctx.newSession()`, `setup`, and `withSession`
-- A custom session entry and replacement-session name
-
-Open that directory as a Tau project and follow its manual flow. It intentionally avoids modifying the real project and uses a harmless `echo` command for the blocked-tool check.
-
-The fixture at [`fixtures/workflow-handoff`](../fixtures/workflow-handoff/README.md) covers the runtime lifetime above. It runs a three-phase workflow whose phases wait on the operator, and reports whether the phase can still open its successor, so the difference between a warm runtime and a restarted one is visible without running a real workflow.
