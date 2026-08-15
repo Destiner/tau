@@ -1,4 +1,17 @@
-import type { CommandOption } from "../types";
+export type CommandSource = "extension" | "prompt" | "skill";
+
+export interface CommandOption {
+  name: string;
+  description?: string;
+  source: CommandSource;
+  sourceInfo?: {
+    path: string;
+    source: string;
+    scope: "user" | "project" | "temporary";
+    origin: "package" | "top-level";
+    baseDir?: string;
+  };
+}
 
 const MENU_GAP = 5;
 const MENU_MAX_HEIGHT = 300;

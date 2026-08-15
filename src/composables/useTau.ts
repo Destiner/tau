@@ -15,21 +15,81 @@ import {
 import { describePiError } from "../lib/pi/error";
 import { scopeModels } from "../lib/pi/model-scope";
 import type { PiBridgeEvent } from "../lib/pi/bridge";
-import type {
-  CommandOption,
-  ExtensionDialog,
-  ExtensionDialogMethod,
-  ExtensionNotification,
-  ExtensionNotificationType,
-  ModelOption,
-  ProjectSummary,
-  RemoteDirectoryEntry,
-  RemoteDirectoryListing,
-  SessionSummary,
-  ThinkingLevel,
-  TranscriptEntry,
-  WorkspaceSnapshot,
-} from "../types";
+import type { CommandOption } from "../lib/commands";
+import type { ModelOption, ThinkingLevel } from "../lib/pi/model-scope";
+import type { TranscriptEntry } from "../lib/pi/transcript";
+
+export interface WorkspaceSnapshot {
+  activeProjectPath: string;
+  piPath: string | null;
+  projects: ProjectSummary[];
+}
+
+export interface ProjectSummary {
+  path: string;
+  name: string;
+  workingDirectory: string;
+  connectionString?: string;
+  collapsed: boolean;
+  selected: boolean;
+  sessions: SessionSummary[];
+}
+
+export interface SessionSummary {
+  id: string;
+  path: string;
+  title: string;
+  lastActive: string;
+  lastUserMessageAt: number;
+  archived: boolean;
+  selected: boolean;
+}
+
+export interface RemoteDirectoryEntry {
+  name: string;
+  path: string;
+}
+
+export interface RemoteDirectoryListing {
+  connectionString: string;
+  workingDirectory: string;
+  host: string;
+  directories: RemoteDirectoryEntry[];
+}
+
+export type ExtensionDialogMethod = "select" | "confirm" | "input" | "editor";
+
+export interface ExtensionDialog {
+  key: string;
+  requestId: string;
+  method: ExtensionDialogMethod;
+  title: string;
+  message?: string;
+  options?: string[];
+  placeholder?: string;
+  prefill?: string;
+  draft: string;
+  timeout?: number;
+  controllerKey: string;
+  runtimeId: string;
+  generation: number;
+  projectName: string;
+  sessionName: string;
+  /** Base for the file paths in the text; absent when the project is remote. */
+  workingDirectory?: string;
+}
+
+export type ExtensionNotificationType = "info" | "warning" | "error";
+
+export interface ExtensionNotification {
+  key: string;
+  message: string;
+  type: ExtensionNotificationType;
+  projectName: string;
+  sessionName: string;
+  /** Base for the file paths in the text; absent when the project is remote. */
+  workingDirectory?: string;
+}
 
 const effortLabels: Record<ThinkingLevel, string> = {
   off: "Off",

@@ -1,4 +1,4 @@
-import type { TranscriptEntry } from "../types";
+import type { TranscriptEntry } from "../lib/pi/transcript";
 
 const assistantParagraphs = [
   "The visible transcript stays responsive because only nearby rows are mounted, while every message remains directly reachable through the scrollbar.",

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ModelOption } from "../../types";
+import type { ModelOption } from "./model-scope";
 import { scopeModels } from "./model-scope";
 
 function model(provider: string, id: string, name = id): ModelOption {

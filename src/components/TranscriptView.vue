@@ -9,7 +9,7 @@ import {
   ref,
   watch,
 } from "vue";
-import type { TranscriptEntry } from "../types";
+import type { TranscriptEntry } from "../lib/pi/transcript";
 import ErrorNotice from "./ErrorNotice.vue";
 import MarkdownText from "./MarkdownText.vue";
 import Spinner from "./Spinner.vue";

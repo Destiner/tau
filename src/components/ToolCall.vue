@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import type { TranscriptEntry } from "../types";
+import type { TranscriptEntry } from "../lib/pi/transcript";
 import UiIcon from "./UiIcon.vue";
 
 const props = defineProps<{

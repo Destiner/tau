@@ -1,4 +1,12 @@
-import type { ModelOption } from "../../types";
+export interface ModelOption {
+  provider: string;
+  id: string;
+  name: string;
+  reasoning: boolean;
+}
+
+export type ThinkingLevel =
+  "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 const thinkingLevels = new Set([
   "off",

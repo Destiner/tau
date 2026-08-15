@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CommandOption } from "../types";
+import type { CommandOption } from "./commands";
 import {
   type CommandMenuGeometry,
   commandInvocation,

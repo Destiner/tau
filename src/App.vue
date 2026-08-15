@@ -23,12 +23,9 @@ import {
   filterCommands,
   slashCommandQuery,
 } from "./lib/commands";
-import type {
-  CommandOption,
-  ProjectSummary,
-  SessionSummary,
-  ThinkingLevel,
-} from "./types";
+import type { CommandOption } from "./lib/commands";
+import type { ThinkingLevel } from "./lib/pi/model-scope";
+import type { ProjectSummary, SessionSummary } from "./composables/useTau";
 
 type TextField = HTMLInputElement | HTMLTextAreaElement;
 

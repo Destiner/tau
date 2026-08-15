@@ -1,4 +1,15 @@
-import type { TranscriptEntry } from "../../types";
+export interface TranscriptEntry {
+  id: string;
+  /** An `error` entry holds Pi's own error string in `text`, unparsed. */
+  kind: "user" | "assistant" | "thinking" | "tool" | "error";
+  text: string;
+  toolCallId?: string;
+  toolName?: string;
+  toolRunning?: boolean;
+  toolErrored?: boolean;
+  toolArguments?: string;
+  toolResult?: string;
+}
 
 type JsonRecord = Record<string, unknown>;
 
