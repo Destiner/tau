@@ -51,27 +51,29 @@
               :label="indicatorLabel(projectIndicator(project))"
             />
           </button>
-          <UiIconButton
-            class="row-action"
-            size="md"
-            variant="reveal"
-            :label="`New session in ${project.name}`"
-            title="New session"
-            @click="() => newSession(project)"
-          >
-            <UiIcon name="plus" />
-          </UiIconButton>
-          <UiIconButton
-            class="row-action"
-            size="md"
-            variant="reveal"
-            tone="danger"
-            :label="`Remove ${project.name}`"
-            title="Remove project"
-            @click="() => removeProject(project)"
-          >
-            <UiIcon name="trash" />
-          </UiIconButton>
+          <UiTooltip content="New session">
+            <UiIconButton
+              class="row-action"
+              size="md"
+              variant="reveal"
+              :label="`New session in ${project.name}`"
+              @click="() => newSession(project)"
+            >
+              <UiIcon name="plus" />
+            </UiIconButton>
+          </UiTooltip>
+          <UiTooltip content="Remove project">
+            <UiIconButton
+              class="row-action"
+              size="md"
+              variant="reveal"
+              tone="danger"
+              :label="`Remove ${project.name}`"
+              @click="() => removeProject(project)"
+            >
+              <UiIcon name="trash" />
+            </UiIconButton>
+          </UiTooltip>
         </div>
 
         <div
@@ -106,17 +108,18 @@
                   }}</span>
                 </span>
               </button>
-              <UiIconButton
-                v-if="canArchiveSession(project, session)"
-                class="session-archive"
-                size="md"
-                variant="reveal"
-                :label="`Archive ${session.title}`"
-                title="Archive session"
-                @click="() => archiveSession(project, session)"
-              >
-                <UiIcon name="archive" />
-              </UiIconButton>
+              <UiTooltip content="Archive session">
+                <UiIconButton
+                  v-if="canArchiveSession(project, session)"
+                  class="session-archive"
+                  size="md"
+                  variant="reveal"
+                  :label="`Archive ${session.title}`"
+                  @click="() => archiveSession(project, session)"
+                >
+                  <UiIcon name="archive" />
+                </UiIconButton>
+              </UiTooltip>
             </div>
           </UiContextMenu>
           <div
@@ -196,6 +199,7 @@ import UiIconButton from './ui/UiIconButton.vue';
 import UiMenu from './ui/UiMenu.vue';
 import type { UiMenuItem } from './ui/UiMenu.vue';
 import UiStatusDot from './ui/UiStatusDot.vue';
+import UiTooltip from './ui/UiTooltip.vue';
 
 const props = defineProps<{
   sidebarWidth: number;
