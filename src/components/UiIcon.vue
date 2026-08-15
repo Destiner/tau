@@ -63,9 +63,9 @@ svg {
   display: block;
   width: 1em;
   height: 1em;
-  stroke: currentColor;
   stroke-width: 1.6;
   stroke-linecap: round;
+  stroke: currentcolor;
   stroke-linejoin: round;
 }
 </style>

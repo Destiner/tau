@@ -119,9 +119,9 @@ onBeforeUnmount(() => {
 <style scoped>
 .transcript-fixture {
   display: grid;
+  grid-template-rows: 38px minmax(0, 1fr);
   width: 100%;
   height: 100%;
-  grid-template-rows: 38px minmax(0, 1fr);
   background: var(--canvas);
 }
 
@@ -129,10 +129,10 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  padding: 0 12px;
   border-bottom: 1px solid var(--border);
   color: var(--muted);
   font-size: 11px;
-  padding: 0 12px;
 }
 
 .transcript-fixture-header strong {

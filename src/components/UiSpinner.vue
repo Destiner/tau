@@ -25,13 +25,13 @@ withDefaults(
 <style scoped>
 .spinner {
   display: grid;
-  width: 8px;
-  height: 8px;
-  flex: none;
   grid-template-columns: repeat(3, 2px);
   grid-template-rows: repeat(3, 2px);
-  gap: 1px;
+  flex: none;
+  width: 8px;
+  height: 8px;
   color: var(--muted);
+  gap: 1px;
 }
 
 .spinner-dot {
@@ -39,7 +39,7 @@ withDefaults(
   height: 2px;
   animation: dot-trail 640ms steps(1, end) infinite;
   border-radius: 50%;
-  background: currentColor;
+  background: currentcolor;
 }
 
 .spinner-dot:nth-child(1) {

@@ -11,8 +11,8 @@
  * not be told apart from the row under the pointer.
  */
 :root {
-  color-scheme: light dark;
-  accent-color: var(--accent);
+  background: var(--canvas);
+  color: var(--text);
   font-family:
     'Inter Variable',
     ui-sans-serif,
@@ -20,14 +20,15 @@
     'Segoe UI',
     sans-serif;
   font-size: 14px;
-  color: var(--text);
-  background: var(--canvas);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizelegibility;
+  color-scheme: light dark;
+  accent-color: var(--accent);
+  font-synthesis: none;
+
   --canvas: #fcfcfc;
   --panel: #f8f9fa;
-  --panel-raised: #ffffff;
+  --panel-raised: #fff;
   --sunk: #ebeef0;
   --hover: rgb(107 125 143 / 10%);
   --selected: rgb(107 125 143 / 20%);
@@ -74,6 +75,7 @@ body,
  */
 body {
   cursor: default;
+  /* stylelint-disable-next-line property-no-vendor-prefix -- WKWebView needs the prefix before Safari 17.4 */
   -webkit-user-select: none;
   user-select: none;
 }
@@ -82,6 +84,7 @@ input,
 textarea {
   cursor: auto;
   caret-color: var(--accent);
+  /* stylelint-disable-next-line property-no-vendor-prefix -- WKWebView needs the prefix before Safari 17.4 */
   -webkit-user-select: text;
   user-select: text;
 }
@@ -90,6 +93,7 @@ textarea {
 .tool-detail-body,
 .status {
   cursor: text;
+  /* stylelint-disable-next-line property-no-vendor-prefix -- WKWebView needs the prefix before Safari 17.4 */
   -webkit-user-select: text;
   user-select: text;
 }
@@ -113,6 +117,7 @@ button {
 
 .app-shell {
   --sidebar-width: 260px;
+
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   width: 100%;
@@ -128,15 +133,16 @@ button {
 .app-shell.resizing-sidebar,
 .app-shell.resizing-sidebar * {
   cursor: col-resize;
+  /* stylelint-disable-next-line property-no-vendor-prefix -- WKWebView needs the prefix before Safari 17.4 */
   -webkit-user-select: none;
   user-select: none;
 }
 
 .sidebar {
-  position: relative;
   display: flex;
-  min-width: 0;
+  position: relative;
   flex-direction: column;
+  min-width: 0;
   border-right: 1px solid var(--border);
   background: var(--panel);
 }
@@ -153,13 +159,13 @@ button {
 }
 
 .sidebar-resize-handle::after {
+  content: '';
   position: absolute;
   top: 0;
   bottom: 0;
   left: 4px;
   width: 1px;
   background: transparent;
-  content: '';
 }
 
 .sidebar-resize-handle:hover::after,
@@ -175,9 +181,9 @@ button {
 .sidebar-titlebar,
 .session-header {
   display: flex;
-  height: 30px;
   flex: none;
   align-items: center;
+  height: 30px;
   min-height: 30px;
   border-bottom: 1px solid var(--border);
 }
@@ -199,31 +205,31 @@ button {
   bottom: calc(100% + 5px);
   left: 0;
   width: 176px;
+  padding: 4px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel-raised);
   box-shadow: 0 8px 24px var(--shadow-soft);
-  padding: 4px;
 }
 
 .context-menu {
   position: fixed;
   z-index: 40;
   min-width: 152px;
+  padding: 4px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel-raised);
   box-shadow: 0 8px 24px var(--shadow-soft);
-  padding: 4px;
 }
 
 .project-menu button,
 .context-menu button {
   display: block;
   width: 100%;
+  padding: 7px 8px;
   border-radius: 5px;
   background: transparent;
-  padding: 7px 8px;
   color: var(--text);
   font-size: 12px;
   text-align: left;
@@ -250,17 +256,17 @@ button {
 .session-archive,
 .send-button {
   display: grid;
-  place-items: center;
-  background: transparent;
   padding: 0;
+  background: transparent;
+  place-items: center;
 }
 
 .icon-button {
   width: 28px;
   height: 28px;
+  opacity: 0.65;
   color: var(--muted);
   font-size: 16px;
-  opacity: 0.65;
 }
 
 .icon-button:hover,
@@ -271,17 +277,17 @@ button {
 
 .project-list {
   flex: 1;
-  overflow: auto;
   padding: 6px;
+  overflow: auto;
 }
 
 .project-row {
-  position: relative;
   display: flex;
-  min-width: 0;
+  position: relative;
   align-items: center;
-  gap: 0;
+  min-width: 0;
   border-radius: 7px;
+  gap: 0;
 }
 
 .project-row:hover {
@@ -289,55 +295,55 @@ button {
 }
 
 .project-drag-handle {
+  display: grid;
   position: absolute;
   z-index: 2;
   top: 50%;
   left: 3px;
-  display: grid;
   width: 25px;
   height: 29px;
-  touch-action: none;
   transform: translateY(-50%);
-  place-items: center;
   color: var(--muted);
+  touch-action: none;
+  place-items: center;
 }
 
 .project-drag-handle svg {
   width: 9px;
   height: 13px;
-  opacity: 0;
   transform: translateX(-8px);
   transition:
     opacity 110ms ease,
     transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  opacity: 0;
 }
 
 .project-row:hover > .project-drag-handle svg,
 .project-sortable-chosen > .project-row .project-drag-handle svg,
 .project-sortable-drag > .project-row .project-drag-handle svg {
-  opacity: 1;
   transform: translateX(0);
+  opacity: 1;
 }
 
 .project-toggle {
   display: flex;
-  min-width: 0;
   flex: 1;
   align-items: center;
-  gap: 3px;
+  min-width: 0;
   padding: 7px 5px;
   transition: padding-left 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
   background: transparent;
   color: var(--muted);
   text-align: left;
+  gap: 3px;
 }
 
 .project-toggle svg {
-  width: 13px;
   flex: none;
+  width: 13px;
   transform: translateY(1px);
-  color: var(--muted);
   transition: transform 120ms ease;
+  color: var(--muted);
 }
 
 .project-toggle svg.expanded {
@@ -375,18 +381,18 @@ button {
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 8px;
+  opacity: 0.98;
   background: var(--panel-raised);
   box-shadow: 0 15px 30px var(--shadow-strong);
-  opacity: 0.98;
 }
 
 .row-action {
+  flex: none;
   width: 22px;
   height: 22px;
-  flex: none;
+  opacity: 0;
   color: var(--muted);
   font-size: 12px;
-  opacity: 0;
 }
 
 .project-row:hover .row-action,
@@ -410,8 +416,8 @@ button {
 }
 
 .session-row {
-  position: relative;
   display: flex;
+  position: relative;
   width: 100%;
   min-width: 0;
   border-radius: 7px;
@@ -428,13 +434,13 @@ button {
 
 .session-select {
   display: flex;
+  align-items: center;
   width: 100%;
   min-width: 0;
-  align-items: center;
-  gap: 7px;
-  background: transparent;
   padding: 7px;
+  background: transparent;
   text-align: left;
+  gap: 7px;
 }
 
 /* Shares the column and the size of the actions on a project row above it. */
@@ -444,8 +450,8 @@ button {
   right: 0;
   width: 22px;
   height: 22px;
-  opacity: 0;
   transform: translateY(-50%);
+  opacity: 0;
   color: var(--muted);
   font-size: 12px;
 }
@@ -467,16 +473,16 @@ button {
 }
 
 .session-indicator {
+  flex: none;
   width: 6px;
   height: 6px;
-  flex: none;
   border-radius: 50%;
   opacity: 0;
 }
 
 .session-indicator.new {
-  background: var(--status-new);
   opacity: 1;
+  background: var(--status-new);
 }
 
 .session-indicator.draft {
@@ -485,21 +491,21 @@ button {
 }
 
 .session-indicator.working {
-  background: var(--status-working);
   opacity: 1;
+  background: var(--status-working);
 }
 
 .session-copy {
   display: flex;
-  min-width: 0;
   flex: 1;
   align-items: baseline;
+  min-width: 0;
   gap: 7px;
 }
 
 .session-title {
-  overflow: hidden;
   flex: 1;
+  overflow: hidden;
   color: var(--text);
   font-size: 12px;
   text-overflow: ellipsis;
@@ -520,13 +526,13 @@ button {
 
 .empty-projects {
   display: flex;
-  min-height: 180px;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  min-height: 180px;
   color: var(--muted);
   font-size: 12px;
+  gap: 8px;
 }
 
 .empty-projects > svg {
@@ -537,9 +543,9 @@ button {
 
 .session-pane {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
 .session-pane.empty-session,
@@ -565,24 +571,25 @@ button {
 }
 
 .session-new-button {
+  flex: none;
   width: 24px;
   height: 24px;
-  flex: none;
   padding: 4px;
   color: var(--muted);
 }
 
 .session-heading {
+  flex: 1;
   min-width: 0;
+
   /* Offsets the padding the name carries so it lines up with the transcript. */
   margin-left: -5px;
-  flex: 1;
 }
 
 .session-heading h1 {
-  overflow: hidden;
   max-width: 60ch;
   margin: 0;
+  overflow: hidden;
   color: var(--text);
   font-size: 13px;
   font-weight: 400;
@@ -592,9 +599,9 @@ button {
 
 .session-name {
   display: block;
-  overflow: hidden;
   max-width: 100%;
   padding: 2px 5px;
+  overflow: hidden;
   border-radius: 5px;
   background: transparent;
   text-align: left;
@@ -625,8 +632,7 @@ button.session-name:focus-visible {
 
 .transcript {
   min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden auto;
   overflow-anchor: none;
   overscroll-behavior: contain;
 }
@@ -663,9 +669,9 @@ button.session-name:focus-visible {
 
 .user-bubble {
   max-width: min(78%, 650px);
+  padding: 9px 13px;
   border-radius: 7px;
   background: var(--user);
-  padding: 9px 13px;
 }
 
 /*
@@ -692,10 +698,10 @@ button.session-name:focus-visible {
 }
 
 .thinking-block {
+  padding: 9px 10px;
   border: 1px solid var(--border);
   border-radius: 7px;
   background: var(--panel-raised);
-  padding: 9px 10px;
 }
 
 .thinking-label {
@@ -718,18 +724,18 @@ button.session-name:focus-visible {
   border-radius: 6px;
   background: var(--panel-raised);
   color: var(--muted);
-  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .tool-header {
   display: flex;
-  width: 100%;
   align-items: center;
+  width: 100%;
   min-width: 0;
+  padding: 7px 9px;
   border-radius: 5px;
   background: transparent;
   color: inherit;
-  padding: 7px 9px;
   text-align: left;
 }
 
@@ -746,17 +752,17 @@ button.session-name:focus-visible {
 
 .tool-copy {
   display: flex;
-  overflow: hidden;
-  min-width: 0;
   flex: 1;
   flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
   gap: 2px;
 }
 
 .tool-heading {
   display: flex;
-  min-width: 0;
   align-items: center;
+  min-width: 0;
   gap: 7px;
 }
 
@@ -770,8 +776,8 @@ button.session-name:focus-visible {
 }
 
 .tool-name {
-  overflow: hidden;
   flex: 1;
+  overflow: hidden;
   color: var(--muted);
   font-size: 9px;
   line-height: 1.2;
@@ -786,9 +792,9 @@ button.session-name:focus-visible {
 }
 
 .tool-status {
+  flex: none;
   width: 6px;
   height: 6px;
-  flex: none;
   border-radius: 50%;
   background: var(--status-working);
 }
@@ -797,10 +803,10 @@ button.session-name:focus-visible {
 .tool-disclosure {
   flex: none;
   transform: rotate(90deg);
+  transition: transform 120ms ease;
   opacity: 0;
   color: var(--faint);
   font-size: 11px;
-  transition: transform 120ms ease;
 }
 
 .tool-header:hover .tool-disclosure,
@@ -815,15 +821,15 @@ button.session-name:focus-visible {
 .tool-details {
   display: flex;
   flex-direction: column;
-  gap: 9px;
-  border-top: 1px solid var(--border);
   padding: 9px;
+  border-top: 1px solid var(--border);
+  gap: 9px;
 }
 
 .tool-detail {
   display: flex;
-  min-width: 0;
   flex-direction: column;
+  min-width: 0;
   gap: 4px;
 }
 
@@ -834,19 +840,19 @@ button.session-name:focus-visible {
 }
 
 .tool-detail-body {
-  overflow: auto;
   max-height: 260px;
   margin: 0;
+  padding: 8px 9px;
+  overflow: auto;
   border-radius: 5px;
   background: var(--sunk);
   color: var(--text);
   font-family: inherit;
   font-size: 11px;
   line-height: 1.5;
-  overscroll-behavior: contain;
-  padding: 8px 9px;
-  overflow-wrap: anywhere;
   white-space: pre-wrap;
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
 }
 
 /*
@@ -857,19 +863,19 @@ button.session-name:focus-visible {
  */
 .error-notice {
   display: flex;
-  min-width: 0;
   flex-direction: column;
-  gap: 3px;
+  min-width: 0;
+  padding: 8px 10px;
   border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--border));
   border-radius: 7px;
   background: color-mix(in srgb, var(--danger) 6%, var(--panel-raised));
-  padding: 8px 10px;
+  gap: 3px;
 }
 
 .error-heading {
   display: flex;
-  min-width: 0;
   align-items: center;
+  min-width: 0;
   gap: 6px;
 }
 
@@ -910,17 +916,17 @@ button.session-name:focus-visible {
 }
 
 .composer-area {
+  padding: 6px 8px 8px 6px;
   border-top: 1px solid var(--border);
   background: var(--canvas);
-  padding: 6px 8px 8px 6px;
 }
 
 .empty-session .composer-area,
 .empty-session .composer {
   display: flex;
-  min-height: 0;
   flex: 1;
   flex-direction: column;
+  min-height: 0;
 }
 
 .empty-session .composer-area {
@@ -928,8 +934,8 @@ button.session-name:focus-visible {
 }
 
 .empty-session .composer textarea {
-  max-height: none;
   flex: 1;
+  max-height: none;
   padding-top: 16px;
 }
 
@@ -953,13 +959,13 @@ button.session-name:focus-visible {
   left: 4px;
   width: min(540px, calc(100% - 8px));
   max-height: min(300px, calc(100vh - 90px));
+  padding: 4px;
   overflow-y: auto;
-  overscroll-behavior: contain;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel-raised);
   box-shadow: 0 10px 30px var(--shadow-soft);
-  padding: 4px;
+  overscroll-behavior: contain;
 }
 
 .command-menu.above {
@@ -968,15 +974,15 @@ button.session-name:focus-visible {
 
 .command-option {
   display: flex;
+  align-items: baseline;
   width: 100%;
   min-width: 0;
-  align-items: baseline;
-  gap: 10px;
+  padding: 6px 7px;
   border-radius: 5px;
   background: transparent;
   color: var(--text);
-  padding: 6px 7px;
   text-align: left;
+  gap: 10px;
 }
 
 .command-option:hover,
@@ -986,9 +992,9 @@ button.session-name:focus-visible {
 
 .command-copy {
   display: flex;
-  min-width: 0;
   flex: 1;
   flex-direction: column;
+  min-width: 0;
   gap: 2px;
 }
 
@@ -1000,7 +1006,7 @@ button.session-name:focus-visible {
 }
 
 .command-name {
-  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
 }
 
@@ -1030,14 +1036,14 @@ button.session-name:focus-visible {
   width: 100%;
   min-height: calc(4lh + 7px);
   max-height: calc(10lh + 7px);
-  field-sizing: content;
-  resize: none;
+  padding: 4px 4px 3px;
   border: 0;
   outline: 0;
   background: transparent;
   color: var(--text);
   line-height: 1.45;
-  padding: 4px 4px 3px;
+  resize: none;
+  field-sizing: content;
 }
 
 .composer textarea::placeholder {
@@ -1052,36 +1058,35 @@ button.session-name:focus-visible {
 }
 
 .composer-selector {
-  position: relative;
   display: inline-grid;
+  position: relative;
+  grid-template-areas: 'selector';
   min-width: 0;
   max-width: 210px;
-  grid-template-areas: 'selector';
   color: var(--muted);
 }
 
 .composer-selector::after {
+  content: '';
   z-index: 1;
+  grid-area: selector;
+  place-self: center end;
   width: 5px;
   height: 5px;
-  align-self: center;
-  justify-self: end;
   margin-right: 8px;
   transform: translateY(-1px) rotate(45deg);
-  border-right: 1px solid currentColor;
-  border-bottom: 1px solid currentColor;
-  content: '';
-  grid-area: selector;
+  border-right: 1px solid currentcolor;
+  border-bottom: 1px solid currentcolor;
   pointer-events: none;
 }
 
 .composer-selector select {
+  grid-area: selector;
   width: auto;
-  height: 22px;
   min-width: 0;
   max-width: 210px;
-  appearance: none;
-  field-sizing: content;
+  height: 22px;
+  padding: 0 24px 0 5px;
   overflow: hidden;
   border: 1px solid transparent;
   border-radius: 4px;
@@ -1089,9 +1094,9 @@ button.session-name:focus-visible {
   background: transparent;
   color: var(--muted);
   font-size: 11px;
-  grid-area: selector;
-  padding: 0 24px 0 5px;
   text-overflow: ellipsis;
+  appearance: none;
+  field-sizing: content;
 }
 
 .composer-selector select:hover:not(:disabled),
@@ -1110,9 +1115,9 @@ button.session-name:focus-visible {
 }
 
 .send-button {
+  flex: none;
   width: 20px;
   height: 20px;
-  flex: none;
   margin-left: auto;
   border-radius: 4px;
   background: transparent;
@@ -1139,8 +1144,8 @@ button:disabled,
 input:disabled,
 select:disabled,
 textarea:disabled {
-  cursor: default;
   opacity: 0.45;
+  cursor: default;
 }
 
 .markdown {
@@ -1185,36 +1190,36 @@ textarea:disabled {
 }
 
 .markdown code {
+  padding: 0.12em 0.3em;
   border-radius: 4px;
   background: var(--sunk);
-  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.88em;
-  padding: 0.12em 0.3em;
 }
 
 .markdown pre {
+  padding: 11px 12px;
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 9px;
   background: var(--sunk);
-  padding: 11px 12px;
 }
 
 .markdown pre code {
-  background: transparent;
   padding: 0;
+  background: transparent;
 }
 
 .markdown blockquote {
+  padding-left: 12px;
   border-left: 2px solid var(--border);
   color: var(--muted);
-  padding-left: 12px;
 }
 
 /* The hand belongs to links, and these are the only ones: they leave the app. */
 .markdown a {
-  cursor: pointer;
   color: var(--link);
+  cursor: pointer;
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
 }
@@ -1240,37 +1245,37 @@ textarea:disabled {
 }
 
 .extension-notification-stack {
+  display: flex;
   position: fixed;
   z-index: 30;
   right: 12px;
   bottom: 12px;
-  display: flex;
-  width: min(360px, calc(100vw - 24px));
   flex-direction: column;
-  gap: 7px;
+  width: min(360px, calc(100vw - 24px));
   pointer-events: none;
+  gap: 7px;
 }
 
 .extension-notification {
+  padding: 7px 8px;
   border: 1px solid var(--border);
   border-radius: 5px;
   background: var(--panel-raised);
   box-shadow: 0 10px 30px var(--shadow-soft);
-  padding: 7px 8px;
   pointer-events: auto;
 }
 
 .extension-notification-copy {
   display: flex;
-  min-width: 0;
   flex-direction: column;
+  min-width: 0;
   gap: 3px;
 }
 
 .extension-notification-header {
   display: flex;
-  min-width: 0;
   align-items: center;
+  min-width: 0;
   gap: 8px;
 }
 
@@ -1291,16 +1296,16 @@ textarea:disabled {
 
 .extension-notification-header > button {
   display: grid;
+  flex: none;
   width: 16px;
   height: 16px;
-  flex: none;
   margin-left: auto;
-  place-items: center;
+  padding: 2px;
   border-radius: 3px;
   background: transparent;
   color: var(--muted);
   font-size: 10px;
-  padding: 2px;
+  place-items: center;
 }
 
 .extension-notification-header > button:hover,
@@ -1311,24 +1316,24 @@ textarea:disabled {
 }
 
 .dialog-layer {
+  display: flex;
   position: fixed;
   z-index: 20;
-  inset: 0;
-  display: flex;
   align-items: flex-start;
   justify-content: center;
-  background: var(--scrim);
   padding: 68px 18px 18px;
+  background: var(--scrim);
+  inset: 0;
 }
 
 .extension-composer {
   display: flex;
+  flex-direction: column;
   width: min(720px, 100%);
   max-height: min(520px, 60vh);
-  flex-direction: column;
-  gap: 8px;
   margin: 0 auto;
   padding: 3px;
+  gap: 8px;
 }
 
 .empty-session .composer-area:has(.extension-composer) {
@@ -1337,8 +1342,8 @@ textarea:disabled {
 
 .extension-dialog-header {
   display: flex;
-  min-width: 0;
   flex-direction: column;
+  min-width: 0;
   gap: 4px;
 }
 
@@ -1370,15 +1375,15 @@ textarea:disabled {
 .extension-dialog-option {
   display: block;
   width: 100%;
-  overflow-wrap: anywhere;
+  padding: 5px 7px;
   border-radius: 5px;
   background: transparent;
   color: var(--text);
   font-size: 12px;
   line-height: 1.4;
-  padding: 5px 7px;
   text-align: left;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .extension-dialog-option:hover,
@@ -1389,14 +1394,15 @@ textarea:disabled {
 }
 
 .extension-dialog-empty {
+  padding: 5px 7px;
   color: var(--muted);
   font-size: 12px;
-  padding: 5px 7px;
 }
 
 .extension-dialog-input,
 .extension-dialog-editor {
   width: 100%;
+  padding: 5px 7px;
   border: 1px solid var(--border);
   border-radius: 5px;
   outline: 0;
@@ -1404,7 +1410,6 @@ textarea:disabled {
   color: var(--text);
   font-size: 12px;
   line-height: 1.45;
-  padding: 5px 7px;
 }
 
 .extension-dialog-input {
@@ -1435,10 +1440,10 @@ textarea:disabled {
 .extension-dialog-button {
   min-width: 54px;
   height: 26px;
+  padding: 0 7px;
   border: 1px solid var(--border);
   border-radius: 5px;
   font-size: 11px;
-  padding: 0 7px;
 }
 
 .extension-dialog-button.secondary {
@@ -1460,26 +1465,26 @@ textarea:disabled {
 
 .remote-dialog {
   display: flex;
-  width: min(440px, 100%);
   flex-direction: column;
+  width: min(440px, 100%);
+  padding: 8px;
   border: 1px solid var(--border);
   border-radius: 9px;
   background: var(--panel-raised);
   box-shadow: 0 14px 40px var(--shadow-strong);
-  padding: 8px;
 }
 
 .remote-dialog input {
   width: 100%;
   height: 34px;
+  padding: 0 9px;
   border: 1px solid var(--border);
   border-radius: 6px;
   outline: 0;
   background: var(--canvas);
   color: var(--text);
-  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
-  padding: 0 9px;
 }
 
 .remote-dialog input:focus {
@@ -1511,14 +1516,14 @@ textarea:disabled {
 
 .remote-directory-option {
   display: block;
-  overflow: hidden;
   width: 100%;
   height: 30px;
+  padding: 0 9px;
+  overflow: hidden;
   border-radius: 5px;
   background: transparent;
   color: var(--text);
   font-size: 12px;
-  padding: 0 9px;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
