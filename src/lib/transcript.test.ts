@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { TranscriptEntry } from "../types";
-import { hydrateTranscript, toolSummary } from "./transcript";
+import {
+  appendLocalErrors,
+  hydrateTranscript,
+  messageFailure,
+  toolSummary,
+} from "./transcript";
 
 describe("hydrateTranscript", () => {
   it("keeps assistant content order and resolves tool outcomes", () => {
@@ -174,10 +179,110 @@ describe("hydrateTranscript", () => {
 
     expect(settled[0]?.id).not.toBe("stream-tool-0");
   });
+
+  /** The shape Pi records when a provider rejects the request outright. */
+  it("stands a failed turn in for the reply it replaced", () => {
+    const errorMessage = `402: {"message":"Out of credits","code":402}`;
+    const result = hydrateTranscript([
+      { role: "user", content: "hello" },
+      {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage,
+      },
+    ]);
+
+    expect(result.map((entry) => entry.kind)).toEqual(["user", "error"]);
+    expect(result[1]?.text).toBe(errorMessage);
+  });
+
+  it("keeps the text of a turn that failed part way through", () => {
+    const result = hydrateTranscript([
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Halfway through" }],
+        stopReason: "error",
+        errorMessage: "terminated",
+      },
+    ]);
+
+    expect(result.map((entry) => entry.kind)).toEqual(["assistant", "error"]);
+    expect(result[0]?.text).toBe("Halfway through");
+  });
+
+  it("leaves an aborted turn alone, since the reader stopped it", () => {
+    const result = hydrateTranscript([
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Half a reply" }],
+        stopReason: "aborted",
+        errorMessage: "Aborted",
+      },
+    ]);
+
+    expect(result.map((entry) => entry.kind)).toEqual(["assistant"]);
+  });
+
+  it("carries a streamed error row into the settled turn", () => {
+    const errorMessage = "429: rate limited";
+    const streamed: TranscriptEntry[] = [
+      { id: "user-0", kind: "user", text: "hello" },
+      { id: "stream-error-0", kind: "error", text: errorMessage },
+    ];
+    const settled = hydrateTranscript(
+      [
+        { role: "user", content: "hello" },
+        { role: "assistant", content: [], stopReason: "error", errorMessage },
+      ],
+      streamed,
+    );
+
+    expect(settled[1]?.id).toBe("stream-error-0");
+  });
+});
+
+describe("appendLocalErrors", () => {
+  it("adds the failures Pi keeps nowhere to the hydrated list", () => {
+    const entries = appendLocalErrors(
+      hydrateTranscript([{ role: "user", content: "hello" }]),
+      ["Auto-compaction failed: overloaded"],
+    );
+
+    expect(entries.map((entry) => entry.kind)).toEqual(["user", "error"]);
+    expect(entries[1]).toMatchObject({
+      id: "local-error-0",
+      text: "Auto-compaction failed: overloaded",
+    });
+  });
 });
 
 describe("toolSummary", () => {
   it("prefers a recognizable path", () => {
     expect(toolSummary({ path: "src/main.ts" })).toBe("src/main.ts");
+  });
+});
+
+describe("messageFailure", () => {
+  it("reports an errored assistant turn", () => {
+    expect(
+      messageFailure({
+        role: "assistant",
+        stopReason: "error",
+        errorMessage: "402: out of credits",
+      }),
+    ).toBe("402: out of credits");
+  });
+
+  it("ignores anything that is not a failed assistant turn", () => {
+    expect(messageFailure({ role: "user", content: "hello" })).toBe("");
+    expect(
+      messageFailure({
+        role: "assistant",
+        stopReason: "aborted",
+        errorMessage: "Aborted",
+      }),
+    ).toBe("");
+    expect(messageFailure(undefined)).toBe("");
   });
 });

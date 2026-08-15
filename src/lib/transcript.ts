@@ -35,6 +35,7 @@ export function hydrateTranscript(
 
     if (role === "assistant") {
       const content = Array.isArray(message.content) ? message.content : [];
+      const failure = messageFailure(message);
       for (const partValue of content) {
         const part = asRecord(partValue);
         if (!part) continue;
@@ -60,6 +61,9 @@ export function hydrateTranscript(
           });
         }
       }
+      // A turn that failed carries its reason beside content that is usually
+      // empty, so the row stands for the reply the reader never got.
+      if (failure) entries.push({ id: "", kind: "error", text: failure });
       continue;
     }
 
@@ -146,6 +150,28 @@ function holdsSameRow(
   if (entry.kind !== candidate.kind) return false;
   if (!entry.toolCallId || !candidate.toolCallId) return true;
   return entry.toolCallId === candidate.toolCallId;
+}
+
+/**
+ * The reason a turn failed, or nothing. An aborted turn also carries a reason,
+ * and it is the reader's own stop rather than a failure to report.
+ */
+export function messageFailure(message: unknown): string {
+  const record = asRecord(message);
+  if (!record || stringValue(record.role) !== "assistant") return "";
+  if (stringValue(record.stopReason) !== "error") return "";
+  return stringValue(record.errorMessage);
+}
+
+/** Appends the failures Pi reports as events but never keeps in its messages. */
+export function appendLocalErrors(
+  entries: TranscriptEntry[],
+  errors: string[],
+): TranscriptEntry[] {
+  errors.forEach((text, index) => {
+    entries.push({ id: `local-error-${index}`, kind: "error", text });
+  });
+  return entries;
 }
 
 /** The single line a collapsed tool row shows: whichever argument names the call. */

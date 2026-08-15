@@ -3,13 +3,16 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
+  appendLocalErrors,
   asRecord,
   hydrateTranscript,
+  messageFailure,
   stringValue,
   toolArgumentsText,
   toolResultText,
   toolSummary,
 } from "../lib/transcript";
+import { describePiError } from "../lib/pi-error";
 import { scopeModels } from "../lib/model-scope";
 import type {
   CommandOption,
@@ -84,6 +87,8 @@ interface SessionController {
   unread: boolean;
   lastUserMessageAt: number;
   messages: TranscriptEntry[];
+  /** Failures Pi reports as events only; its message list never carries them. */
+  localErrors: string[];
   draft: string;
   status: string;
   currentModelProvider: string;
@@ -1368,6 +1373,7 @@ async function handleRpc(controller: SessionController, value: unknown) {
   if (type === "agent_start") {
     clearSessionReplacementWatch(controller);
     clearAbortWatch(controller);
+    controller.localErrors = [];
     controller.streaming = true;
     controller.stopping = false;
     controller.working = true;
@@ -1386,6 +1392,26 @@ async function handleRpc(controller: SessionController, value: unknown) {
     }
     if (deltaType === "thinking_delta") {
       appendStream(controller, "thinking", stringValue(delta?.delta));
+    }
+    return;
+  }
+  // A turn that failed is settled from Pi's messages soon after, but only once
+  // the run ends, and a retry can hold that off for the length of its backoff.
+  if (type === "message_end") {
+    const failure = messageFailure(event.message);
+    if (failure) pushError(controller, failure);
+    return;
+  }
+  /**
+   * A failed compaction is reported once and kept nowhere: Pi's message list
+   * has no entry for it, so the row is held on the controller and re-appended
+   * to every list hydrated until the next run begins.
+   */
+  if (type === "compaction_end") {
+    const failure = stringValue(event.errorMessage);
+    if (failure) {
+      controller.localErrors.push(failure);
+      pushError(controller, failure);
     }
     return;
   }
@@ -1441,7 +1467,7 @@ async function handleRpc(controller: SessionController, value: unknown) {
     return;
   }
   if (type === "auto_retry_start") {
-    controller.status = `Retrying (${String(event.attempt ?? "")})…`;
+    controller.status = retryStatus(event);
     return;
   }
   if (type === "extension_error") {
@@ -1659,9 +1685,12 @@ async function handleResponse(
 
   if (command === "get_messages" && data) {
     controller.syncing = false;
-    controller.messages = hydrateTranscript(
-      Array.isArray(data.messages) ? data.messages : [],
-      controller.messages,
+    controller.messages = appendLocalErrors(
+      hydrateTranscript(
+        Array.isArray(data.messages) ? data.messages : [],
+        controller.messages,
+      ),
+      controller.localErrors,
     );
     const pending = controller.pendingPrompt;
     const resolvesPending =
@@ -2092,6 +2121,36 @@ function cancelPendingPrompt(controller: SessionController, error: unknown) {
   setControllerError(controller, error);
 }
 
+/**
+ * Shows a failure where the reply it replaced would have been. The row is one
+ * Pi will send again with the settled transcript, so its id marks it as this
+ * client's until the hydrated list takes it over.
+ */
+function pushError(controller: SessionController, text: string) {
+  controller.messages.push({
+    id: `stream-error-${controller.streamSequence++}`,
+    kind: "error",
+    text,
+  });
+  if (!isControllerSelected(controller)) controller.unread = true;
+}
+
+/** How much of a reason a retry line carries before the composer is pushed down. */
+const retryReasonLimit = 120;
+
+function retryStatus(event: Record<string, unknown>): string {
+  const attempt = String(event.attempt ?? "");
+  const maxAttempts = event.maxAttempts ? `/${String(event.maxAttempts)}` : "";
+  const reason = describePiError(stringValue(event.errorMessage)).message;
+  const trimmed =
+    reason.length > retryReasonLimit
+      ? `${reason.slice(0, retryReasonLimit).trimEnd()}…`
+      : reason;
+  return trimmed
+    ? `Retrying (${attempt}${maxAttempts}): ${trimmed}`
+    : `Retrying (${attempt}${maxAttempts})…`;
+}
+
 function appendStream(
   controller: SessionController,
   kind: "assistant" | "thinking",
@@ -2470,6 +2529,7 @@ function createController(
     unread: false,
     lastUserMessageAt: session.lastUserMessageAt,
     messages: [],
+    localErrors: [],
     draft: "",
     status: "",
     currentModelProvider: "",

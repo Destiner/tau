@@ -10,6 +10,7 @@ import {
   watch,
 } from "vue";
 import type { TranscriptEntry } from "../types";
+import ErrorNotice from "./ErrorNotice.vue";
 import MarkdownText from "./MarkdownText.vue";
 import PiSpinner from "./PiSpinner.vue";
 import ToolCall from "./ToolCall.vue";
@@ -169,6 +170,7 @@ function isActivity(
 function estimateRowSize(message: TranscriptEntry | undefined): number {
   if (!message) return 42;
   if (message.kind === "tool") return 58;
+  if (message.kind === "error") return 88;
   if (message.kind === "user") return 76;
   if (message.kind === "thinking") return 112;
   return 144;
@@ -220,6 +222,10 @@ defineExpose({ scrollToEnd });
                   :source="messageAt(virtualRow.index)?.text ?? ''"
                 />
               </div>
+              <ErrorNotice
+                v-else-if="messageAt(virtualRow.index)?.kind === 'error'"
+                :text="messageAt(virtualRow.index)?.text ?? ''"
+              />
               <ToolCall
                 v-else
                 :entry="messageAt(virtualRow.index)!"

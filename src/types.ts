@@ -63,7 +63,8 @@ export type ThinkingLevel =
 
 export interface TranscriptEntry {
   id: string;
-  kind: "user" | "assistant" | "thinking" | "tool";
+  /** An `error` entry holds Pi's own error string in `text`, unparsed. */
+  kind: "user" | "assistant" | "thinking" | "tool" | "error";
   text: string;
   toolCallId?: string;
   toolName?: string;

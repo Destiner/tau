@@ -25,6 +25,8 @@ Tau uses Pi's native extension runtime and supports workflow-critical non-modal 
 
 What a workflow writes is read as text rather than as a heading: a prompt's title and message, and the notifications beside them, are rendered as markdown and wrap. Links in them open in the default browser, and file paths open in whichever application the system gives their type, resolved against the session's working directory. A remote project's files are on the other host, so its paths stay as text.
 
+A turn the model refuses is shown where its reply would have been, rather than leaving the prompt to stand alone. Pi reports these as messages of its own, so the row carries the provider's sentence lifted out of the payload it arrives wrapped in, under the status it was refused with, and any address in it opens in the default browser. Pi keeps them in the session, so they are read back with everything else; a failed compaction is not among its messages and stays only until the next run begins. A retry says what it is retrying while it waits.
+
 Session names are shared with Pi. Clicking the name in the session header edits it and applies the new name on blur or Enter, which renames the session inside Pi itself, and names that Pi or one of its extensions sets appear in Tau without a reload.
 
 The model picker offers the models Pi has scoped through its `enabledModels` setting, which is the list `/scoped-models` edits and `/model` shows. Patterns that match nothing leave the full catalogue in place.

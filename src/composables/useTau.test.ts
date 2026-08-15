@@ -2004,6 +2004,110 @@ describe("interrupting a run", () => {
   });
 });
 
+describe("turn failures", () => {
+  const credits = `402: {"message":"This request requires more credits.","code":402}`;
+
+  /** Settling from Pi's messages costs a round trip, and a retry can delay it. */
+  it("shows a failed turn as soon as Pi reports it", async () => {
+    const { tau, controller } = await setupNamedSession();
+
+    emitRpc(controller, {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: credits,
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(controller.messages).toHaveLength(1);
+    });
+    expect(controller.messages[0]).toMatchObject({
+      kind: "error",
+      text: credits,
+    });
+    tau.dispose();
+  });
+
+  it("holds one failure through the settle that rewrites the turn", async () => {
+    const { tau, controller, session } = await setupNamedSession();
+
+    emitRpc(controller, {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: credits,
+      },
+    });
+    await vi.waitFor(() => {
+      expect(controller.messages).toHaveLength(1);
+    });
+
+    await settleWith(controller, session, [
+      { role: "user", content: "hello" },
+      {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: credits,
+      },
+    ]);
+
+    expect(controller.messages.map((entry) => entry.kind)).toEqual([
+      "user",
+      "error",
+    ]);
+    tau.dispose();
+  });
+
+  it("keeps a failed compaction, which Pi's messages never carry", async () => {
+    const { tau, controller, session } = await setupNamedSession();
+
+    emitRpc(controller, {
+      type: "compaction_end",
+      reason: "threshold",
+      aborted: false,
+      willRetry: false,
+      errorMessage: "Auto-compaction failed: overloaded",
+    });
+    await vi.waitFor(() => {
+      expect(controller.messages).toHaveLength(1);
+    });
+
+    await settleWith(controller, session, [{ role: "user", content: "hello" }]);
+
+    expect(controller.messages.map((entry) => entry.kind)).toEqual([
+      "user",
+      "error",
+    ]);
+    expect(controller.messages[1]?.text).toBe(
+      "Auto-compaction failed: overloaded",
+    );
+    tau.dispose();
+  });
+
+  it("says what it is retrying rather than only that it is", async () => {
+    const { tau, controller } = await setupNamedSession();
+
+    emitRpc(controller, {
+      type: "auto_retry_start",
+      attempt: 1,
+      maxAttempts: 3,
+      delayMs: 1_000,
+      errorMessage: `529 {"type":"error","error":{"message":"Overloaded"}}`,
+    });
+
+    await vi.waitFor(() => {
+      expect(controller.status).toBe("Retrying (1/3): Overloaded");
+    });
+    tau.dispose();
+  });
+});
+
 describe("session naming", () => {
   it("renames the selected session through Pi and stores the echoed name", async () => {
     const { tau, controller } = await setupNamedSession();
@@ -2404,6 +2508,51 @@ async function setupExtensionControllers() {
     firstController,
     secondController,
   };
+}
+
+/** Runs the settle Pi performs after a turn: state first, then its messages. */
+async function settleWith(
+  controller: { runtimeId: string; generation: number },
+  session: { id: string; path: string; title: string },
+  messages: unknown[],
+) {
+  const before = sentRequests(controller, "get_state").length;
+  emitRpc(controller, { type: "agent_settled" });
+  await vi.waitFor(() => {
+    expect(sentRequests(controller, "get_state")).toHaveLength(before + 1);
+  });
+  emitRpc(controller, {
+    id: sentRequests(controller, "get_state")[before]?.id,
+    type: "response",
+    command: "get_state",
+    success: true,
+    data: {
+      model: { provider: "provider", id: "alpha", name: "Alpha" },
+      thinkingLevel: "high",
+      sessionId: session.id,
+      sessionFile: session.path,
+      sessionName: session.title,
+      isStreaming: false,
+    },
+  });
+
+  await vi.waitFor(() => {
+    expect(sentRequests(controller, "get_messages")).toHaveLength(1);
+  });
+  emitRpc(controller, {
+    id: sentRequests(controller, "get_messages")[0]?.id,
+    type: "response",
+    command: "get_messages",
+    success: true,
+    data: { messages },
+  });
+  await vi.waitFor(() => {
+    expect(controllerOf(controller).syncing).toBe(false);
+  });
+}
+
+function controllerOf(controller: unknown): { syncing: boolean } {
+  return controller as { syncing: boolean };
 }
 
 function savedSession(id: string, lastUserMessageAt = 0) {
