@@ -115,6 +115,19 @@ A dev playground (`src/dev/ComponentPlayground.vue`, loaded via
 `?fixture=playground`) exists for visual evaluation of the primitives in both
 ayu schemes. It stays **uncommitted** until evaluated.
 
+## Status
+
+Implemented end to end. `App.vue` went from ~1610 lines to ~480; `styles.css`
+from ~1580 lines to the theme and global defaults only. Two deviations from the
+inventory above, both noted there: no `UiListbox` was built (the two option
+lists are driven by an external input's keyboard, which reka Listbox's roving
+focus fights), and the `.status` line lives inside `ComposerBar` rather than
+being its own component. `UiTooltip` / `UiToast` / `UiSplitter` remain deferred.
+
+A dev playground (`src/dev/ComponentPlayground.vue`, loaded via
+`?fixture=playground`) exercises every primitive in both ayu schemes, with a
+manual light/dark toggle. It stays **uncommitted** until evaluated.
+
 ## Commits
 
 1. `docs: plan the reka-ui component library refactor`
@@ -123,5 +136,6 @@ ayu schemes. It stays **uncommitted** until evaluated.
 4. `refactor: migrate simple call sites to the ui primitives`
 5. `feat(ui): add menu, context-menu, dialog, select, and collapsible primitives`
 6. `refactor: adopt the overlay primitives across the app`
-7. `refactor: extract app components from App.vue`
-8. `refactor: reduce styles.css to theme and global defaults`
+7. `refactor: extract the session header into its own component`
+8. `refactor: extract composer, dialogs, and notifications from App.vue`
+9. `refactor: extract the project sidebar and reduce styles.css to theme and defaults`
