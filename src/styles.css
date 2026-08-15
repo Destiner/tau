@@ -474,29 +474,6 @@ button {
   opacity: 0;
 }
 
-.session-indicator {
-  flex: none;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  opacity: 0;
-}
-
-.session-indicator.new {
-  opacity: 1;
-  background: var(--status-new);
-}
-
-.session-indicator.draft {
-  border: 1.5px solid var(--status-draft);
-  opacity: 1;
-}
-
-.session-indicator.working {
-  opacity: 1;
-  background: var(--status-working);
-}
-
 .session-copy {
   display: flex;
   flex: 1;
@@ -620,18 +597,6 @@ button.session-name {
 button.session-name:hover,
 button.session-name:focus-visible {
   background: var(--hover);
-}
-
-.session-name-input {
-  display: block;
-  width: 100%;
-  max-width: 60ch;
-  padding: 2px 5px;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--text);
-  font-size: 13px;
 }
 
 .transcript {
@@ -1418,68 +1383,10 @@ textarea:disabled {
   font-size: 12px;
 }
 
-.extension-dialog-input,
-.extension-dialog-editor {
-  width: 100%;
-  padding: 5px 7px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  outline: 0;
-  background: var(--canvas);
-  color: var(--text);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.extension-dialog-input {
-  height: 30px;
-}
-
-.extension-dialog-editor {
-  min-height: 120px;
-  max-height: min(300px, 35vh);
-  resize: vertical;
-}
-
-.extension-dialog-input:focus,
-.extension-dialog-editor:focus {
-  border-color: var(--accent);
-}
-
-.extension-dialog-input::placeholder {
-  color: var(--faint);
-}
-
 .extension-dialog-actions {
   display: flex;
   justify-content: flex-start;
   gap: 4px;
-}
-
-.extension-dialog-button {
-  min-width: 54px;
-  height: 26px;
-  padding: 0 7px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  font-size: 11px;
-}
-
-.extension-dialog-button.secondary {
-  background: transparent;
-  color: var(--muted);
-}
-
-.extension-dialog-button.primary {
-  border-color: var(--text);
-  background: var(--text);
-  color: var(--canvas);
-}
-
-.extension-dialog-button:hover,
-.extension-dialog-button:focus-visible {
-  outline: 0;
-  filter: brightness(0.96);
 }
 
 .remote-dialog {
@@ -1491,35 +1398,6 @@ textarea:disabled {
   border-radius: 9px;
   background: var(--panel-raised);
   box-shadow: 0 14px 40px var(--shadow-strong);
-}
-
-.remote-dialog input {
-  width: 100%;
-  height: 34px;
-  padding: 0 9px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  outline: 0;
-  background: var(--canvas);
-  color: var(--text);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-}
-
-.remote-dialog input:focus {
-  border-color: var(--accent);
-}
-
-.remote-dialog input.error {
-  border-color: var(--danger);
-}
-
-.remote-dialog input::placeholder {
-  color: var(--faint);
-}
-
-.remote-dialog input:read-only {
-  color: var(--muted);
 }
 
 .remote-directory-dialog {

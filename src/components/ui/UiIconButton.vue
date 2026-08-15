@@ -73,6 +73,7 @@ withDefaults(
 .ui-icon-button[data-size='xs'] {
   width: 16px;
   height: 16px;
+  padding: 2px;
   border-radius: 3px;
   font-size: 10px;
 }

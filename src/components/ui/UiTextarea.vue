@@ -29,7 +29,7 @@ function handleInput(event: Event): void {
   modelValue.value = (event.target as HTMLTextAreaElement).value;
 }
 
-defineExpose({ textarea });
+defineExpose({ input: textarea });
 </script>
 
 <style scoped>

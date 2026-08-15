@@ -1,5 +1,6 @@
 <template>
   <button
+    ref="button"
     type="button"
     class="ui-button"
     :class="[variant, size]"
@@ -9,6 +10,8 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue';
+
 withDefaults(
   defineProps<{
     variant?: 'primary' | 'secondary';
@@ -19,6 +22,10 @@ withDefaults(
     size: 'sm',
   },
 );
+
+const button = ref<HTMLButtonElement>();
+
+defineExpose({ button });
 </script>
 
 <style scoped>

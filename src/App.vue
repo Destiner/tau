@@ -54,30 +54,33 @@
                 name="chevron"
                 :class="{ expanded: !project.collapsed }"
               />
-              <span
+              <UiStatusDot
                 v-if="projectIndicator(project)"
-                class="session-indicator"
-                v-bind="indicatorAttrs(projectIndicator(project))"
-              ></span>
+                :tone="projectIndicator(project) || undefined"
+                :label="indicatorLabel(projectIndicator(project))"
+              />
             </button>
-            <button
-              class="row-action new-session-action"
-              type="button"
-              :aria-label="`New session in ${project.name}`"
+            <UiIconButton
+              class="row-action"
+              size="md"
+              variant="reveal"
+              :label="`New session in ${project.name}`"
               title="New session"
               @click="() => newSession(project)"
             >
               <UiIcon name="plus" />
-            </button>
-            <button
-              class="row-action danger"
-              type="button"
-              :aria-label="`Remove ${project.name}`"
+            </UiIconButton>
+            <UiIconButton
+              class="row-action"
+              size="md"
+              variant="reveal"
+              tone="danger"
+              :label="`Remove ${project.name}`"
               title="Remove project"
               @click="() => removeProject(project)"
             >
               <UiIcon name="trash" />
-            </button>
+            </UiIconButton>
           </div>
 
           <div
@@ -101,10 +104,10 @@
                 type="button"
                 @click="() => selectSession(project, session)"
               >
-                <span
-                  class="session-indicator"
-                  v-bind="indicatorAttrs(sessionIndicator(project, session))"
-                ></span>
+                <UiStatusDot
+                  :tone="sessionIndicator(project, session) || undefined"
+                  :label="indicatorLabel(sessionIndicator(project, session))"
+                />
                 <span class="session-copy">
                   <span class="session-title">{{ session.title }}</span>
                   <span class="session-time">{{
@@ -112,16 +115,17 @@
                   }}</span>
                 </span>
               </button>
-              <button
+              <UiIconButton
                 v-if="canArchiveSession(project, session)"
                 class="session-archive"
-                type="button"
-                :aria-label="`Archive ${session.title}`"
+                size="md"
+                variant="reveal"
+                :label="`Archive ${session.title}`"
                 title="Archive session"
                 @click="() => archiveSession(project, session)"
               >
                 <UiIcon name="archive" />
-              </button>
+              </UiIconButton>
             </div>
             <div
               v-if="projectSessions(project).length === 0"
@@ -212,11 +216,12 @@
         @dblclick="handleTitlebarDoubleClick"
       >
         <div class="session-heading">
-          <input
+          <UiInput
             v-if="renamingSession"
             ref="sessionTitleInput"
             v-model="sessionNameDraft"
             class="session-name-input"
+            variant="bare"
             type="text"
             maxlength="240"
             spellcheck="false"
@@ -340,63 +345,61 @@
             </div>
           </div>
 
-          <input
+          <UiInput
             v-else-if="activeExtensionDialog.method === 'input'"
             ref="extensionDialogInput"
             v-model="activeExtensionDialog.draft"
-            class="extension-dialog-input"
             type="text"
             autocomplete="off"
             :placeholder="activeExtensionDialog.placeholder"
             :aria-label="activeExtensionDialog.title"
           />
 
-          <textarea
+          <UiTextarea
             v-else-if="activeExtensionDialog.method === 'editor'"
             ref="extensionDialogInput"
             v-model="activeExtensionDialog.draft"
-            class="extension-dialog-editor"
             rows="6"
             :aria-label="activeExtensionDialog.title"
             @keydown.meta.enter.prevent="handleExtensionDialogSubmit"
             @keydown.ctrl.enter.prevent="handleExtensionDialogSubmit"
-          ></textarea>
+          />
 
           <footer class="extension-dialog-actions">
             <template v-if="activeExtensionDialog.method === 'confirm'">
-              <button
+              <UiButton
                 ref="extensionDialogPrimaryAction"
-                class="extension-dialog-button primary"
+                variant="primary"
                 type="button"
                 @click="acceptExtensionConfirmation"
               >
                 Confirm
-              </button>
-              <button
-                class="extension-dialog-button secondary"
+              </UiButton>
+              <UiButton
+                variant="secondary"
                 type="button"
                 @click="rejectExtensionConfirmation"
               >
                 No
-              </button>
+              </UiButton>
             </template>
-            <button
+            <UiButton
               v-else-if="
                 activeExtensionDialog.method === 'input' ||
                 activeExtensionDialog.method === 'editor'
               "
-              class="extension-dialog-button primary"
+              variant="primary"
               type="submit"
             >
               Submit
-            </button>
-            <button
-              class="extension-dialog-button secondary"
+            </UiButton>
+            <UiButton
+              variant="secondary"
               type="button"
               @click="cancelExtensionDialog"
             >
               Cancel
-            </button>
+            </UiButton>
           </footer>
         </form>
         <div
@@ -516,26 +519,29 @@
                 </option>
               </select>
             </span>
-            <button
+            <UiIconButton
               v-if="streaming"
               class="send-button stop"
-              type="button"
+              size="sm"
+              variant="fill"
+              tone="danger"
               :disabled="stopping"
-              aria-label="Stop Pi"
+              label="Stop Pi"
               @click="stop"
             >
               <UiIcon name="stop" />
-            </button>
-            <button
+            </UiIconButton>
+            <UiIconButton
               v-else
               class="send-button"
-              type="button"
+              size="sm"
+              variant="fill"
               :disabled="!canCompose || !draft.trim()"
-              aria-label="Send message"
+              label="Send message"
               @click="handleSendMessage"
             >
               <UiIcon name="triangle" />
-            </button>
+            </UiIconButton>
           </div>
         </div>
       </footer>
@@ -579,13 +585,14 @@
             <span class="extension-notification-context">
               {{ notification.projectName }} · {{ notification.sessionName }}
             </span>
-            <button
-              type="button"
-              aria-label="Dismiss notification"
+            <UiIconButton
+              size="xs"
+              variant="fill"
+              label="Dismiss notification"
               @click="() => dismissExtensionNotification(notification.key)"
             >
               <UiIcon name="cross" />
-            </button>
+            </UiIconButton>
           </div>
           <MarkdownText
             class="extension-notification-message"
@@ -610,10 +617,11 @@
         :aria-busy="state.remoteConnecting"
         @submit.prevent="submitRemoteConnection"
       >
-        <input
+        <UiInput
           ref="remoteConnectionInput"
           v-model="state.remoteConnectionString"
-          :class="{ error: state.remoteConnectionError }"
+          variant="mono"
+          :error="Boolean(state.remoteConnectionError)"
           type="text"
           inputmode="text"
           autocomplete="off"
@@ -637,10 +645,11 @@
         aria-label="Choose remote working directory"
         :aria-busy="state.remoteConnecting"
       >
-        <input
+        <UiInput
           ref="remoteDirectoryFilterInput"
           v-model="state.remoteDirectoryFilter"
-          :class="{ error: state.remoteConnectionError }"
+          variant="mono"
+          :error="Boolean(state.remoteConnectionError)"
           type="text"
           autocomplete="off"
           autocapitalize="off"
@@ -701,13 +710,14 @@ import {
 
 import TranscriptView from './components/TranscriptView.vue';
 import MarkdownText from './components/ui/MarkdownText.vue';
+import UiButton from './components/ui/UiButton.vue';
 import UiIcon from './components/ui/UiIcon.vue';
+import UiIconButton from './components/ui/UiIconButton.vue';
+import UiInput from './components/ui/UiInput.vue';
 import UiSpinner from './components/ui/UiSpinner.vue';
-import type {
-  SessionIndicator,
-  ProjectSummary,
-  SessionSummary,
-} from './composables/state';
+import UiStatusDot from './components/ui/UiStatusDot.vue';
+import UiTextarea from './components/ui/UiTextarea.vue';
+import type { ProjectSummary, SessionSummary } from './composables/state';
 import useTau from './composables/useTau';
 import {
   type CommandMenuPlacement,
@@ -755,10 +765,12 @@ const projectMenu = ref<HTMLElement>();
 const contextMenu = ref<HTMLElement>();
 const projectList = ref<HTMLElement>();
 const sidebar = ref<HTMLElement>();
-const remoteConnectionInput = ref<HTMLInputElement>();
-const remoteDirectoryFilterInput = ref<HTMLInputElement>();
-const extensionDialogInput = ref<HTMLInputElement | HTMLTextAreaElement>();
-const extensionDialogPrimaryAction = ref<HTMLButtonElement>();
+const remoteConnectionInput = ref<InstanceType<typeof UiInput>>();
+const remoteDirectoryFilterInput = ref<InstanceType<typeof UiInput>>();
+const extensionDialogInput = ref<
+  InstanceType<typeof UiInput> | InstanceType<typeof UiTextarea>
+>();
+const extensionDialogPrimaryAction = ref<InstanceType<typeof UiButton>>();
 const projectMenuOpen = ref(false);
 const contextMenuState = ref<ContextMenuState>();
 const windowFocused = ref(true);
@@ -771,7 +783,7 @@ const commandMenuOffset = ref(0);
 const extensionDialogSelectedIndex = ref(0);
 const sidebarWidth = ref(loadSidebarWidth());
 const resizingSidebar = ref(false);
-const sessionTitleInput = ref<HTMLInputElement>();
+const sessionTitleInput = ref<InstanceType<typeof UiInput>>();
 const renamingSession = ref(false);
 const sessionNameDraft = ref('');
 let projectSortable: Sortable | undefined;
@@ -838,16 +850,9 @@ const {
 
 /**
  * An indicator without a state still reserves its slot, so it stays hidden
- * from assistive tech until it carries a meaning worth announcing.
+ * from assistive tech until it carries a meaning worth announcing. UiStatusDot
+ * renders that itself from the label.
  */
-function indicatorAttrs(
-  indicator: SessionIndicator,
-): Record<string, string | boolean> {
-  const label = indicatorLabel(indicator);
-  return label
-    ? { class: indicator, title: label, role: 'img', 'aria-label': label }
-    : { 'aria-hidden': true };
-}
 
 const sessionIsEmpty = computed(
   () =>
@@ -956,8 +961,8 @@ watch(
   ([open, step]) => {
     if (!open) return;
     void nextTick(() => {
-      if (step === 'connection') remoteConnectionInput.value?.focus();
-      else remoteDirectoryFilterInput.value?.focus();
+      if (step === 'connection') remoteConnectionInput.value?.input?.focus();
+      else remoteDirectoryFilterInput.value?.input?.focus();
     });
   },
 );
@@ -977,9 +982,9 @@ watch(activeExtensionDialog, (dialog) => {
     } else if (dialog.method === 'select') {
       document.getElementById('extension-dialog-option-0')?.focus();
     } else if (dialog.method === 'confirm') {
-      extensionDialogPrimaryAction.value?.focus();
+      extensionDialogPrimaryAction.value?.button?.focus();
     } else {
-      extensionDialogInput.value?.focus();
+      extensionDialogInput.value?.input?.focus();
     }
   });
 });
@@ -1046,8 +1051,8 @@ function beginSessionRename(): void {
   sessionNameDraft.value = sessionTitle.value;
   renamingSession.value = true;
   void nextTick(() => {
-    sessionTitleInput.value?.focus();
-    sessionTitleInput.value?.select();
+    sessionTitleInput.value?.input?.focus();
+    sessionTitleInput.value?.input?.select();
   });
 }
 
@@ -1070,7 +1075,7 @@ function cancelSessionRename(): void {
  * Escape, or a runtime that stopped mid-rename.
  */
 function closeSessionRename(): void {
-  const focused = document.activeElement === sessionTitleInput.value;
+  const focused = document.activeElement === sessionTitleInput.value?.input;
   renamingSession.value = false;
   if (focused) void nextTick(() => composerInput.value?.focus());
 }
