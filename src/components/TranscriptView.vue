@@ -92,9 +92,9 @@ import {
 import type { TranscriptEntry } from '../lib/pi/transcript';
 
 import ErrorNotice from './ErrorNotice.vue';
-import MarkdownText from './MarkdownText.vue';
 import ToolCall from './ToolCall.vue';
-import UiSpinner from './UiSpinner.vue';
+import MarkdownText from './ui/MarkdownText.vue';
+import UiSpinner from './ui/UiSpinner.vue';
 
 const props = defineProps<{
   messages: TranscriptEntry[];

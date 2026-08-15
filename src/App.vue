@@ -699,10 +699,10 @@ import {
   watch,
 } from 'vue';
 
-import MarkdownText from './components/MarkdownText.vue';
 import TranscriptView from './components/TranscriptView.vue';
-import UiIcon from './components/UiIcon.vue';
-import UiSpinner from './components/UiSpinner.vue';
+import MarkdownText from './components/ui/MarkdownText.vue';
+import UiIcon from './components/ui/UiIcon.vue';
+import UiSpinner from './components/ui/UiSpinner.vue';
 import type {
   SessionIndicator,
   ProjectSummary,

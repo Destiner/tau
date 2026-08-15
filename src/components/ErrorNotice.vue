@@ -26,8 +26,8 @@ import { computed } from 'vue';
 
 import { describePiError } from '../lib/pi/error';
 
-import MarkdownText from './MarkdownText.vue';
-import UiIcon from './UiIcon.vue';
+import MarkdownText from './ui/MarkdownText.vue';
+import UiIcon from './ui/UiIcon.vue';
 
 const props = defineProps<{ text: string }>();
 

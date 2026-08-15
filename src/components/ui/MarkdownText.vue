@@ -20,7 +20,7 @@ import {
   parseFileReference,
   renderMarkdown,
   resolveFilePath,
-} from '../lib/markdown';
+} from '../../lib/markdown';
 
 const props = defineProps<{
   source: string;

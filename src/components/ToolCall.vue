@@ -68,7 +68,7 @@ import { computed } from 'vue';
 
 import type { TranscriptEntry } from '../lib/pi/transcript';
 
-import UiIcon from './UiIcon.vue';
+import UiIcon from './ui/UiIcon.vue';
 
 const props = defineProps<{
   entry: TranscriptEntry;
