@@ -12,7 +12,7 @@ import {
 import type { TranscriptEntry } from "../types";
 import ErrorNotice from "./ErrorNotice.vue";
 import MarkdownText from "./MarkdownText.vue";
-import PiSpinner from "./PiSpinner.vue";
+import Spinner from "./Spinner.vue";
 import ToolCall from "./ToolCall.vue";
 
 const props = defineProps<{
@@ -240,7 +240,7 @@ defineExpose({ scrollToEnd });
               :data-index="virtualRow.index"
               class="stream-state transcript-stream-state"
             >
-              <PiSpinner :label="workingLabel" />
+              <Spinner :label="workingLabel" />
             </div>
           </template>
         </div>

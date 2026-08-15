@@ -12,7 +12,7 @@ import {
   watch,
 } from "vue";
 import MarkdownText from "./components/MarkdownText.vue";
-import PiSpinner from "./components/PiSpinner.vue";
+import Spinner from "./components/Spinner.vue";
 import TranscriptView from "./components/TranscriptView.vue";
 import UiIcon from "./components/UiIcon.vue";
 import { type SessionIndicator, useTau } from "./composables/useTau";
@@ -1136,7 +1136,7 @@ function clampSidebarWidth(width: number): number {
 
       <div v-if="sessionLoading" class="session-loading">
         <template v-if="loadingIndicatorVisible">
-          <PiSpinner label="Loading session" />
+          <Spinner label="Loading session" />
           <span>Loading</span>
         </template>
       </div>
