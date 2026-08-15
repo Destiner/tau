@@ -145,14 +145,13 @@
           :min-width="176"
         >
           <template #trigger>
-            <button
-              class="icon-button"
-              type="button"
+            <UiIconButton
+              size="lg"
+              label="Open project"
               title="Open project"
-              aria-label="Open project"
             >
               <UiIcon name="folder" />
-            </button>
+            </UiIconButton>
           </template>
         </UiMenu>
       </div>

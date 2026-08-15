@@ -1,52 +1,39 @@
 <template>
-  <SelectRoot
-    v-model="modelValue"
-    :disabled="disabled"
+  <span
+    class="ui-select"
+    :style="maxWidth === undefined ? undefined : { maxWidth: `${maxWidth}px` }"
   >
-    <SelectTrigger
-      class="ui-select-trigger"
+    <select
+      class="ui-select-field"
+      :value="modelValue"
+      :disabled="disabled || undefined"
       :aria-label="ariaLabel || undefined"
-      :style="
-        maxWidth === undefined ? undefined : { maxWidth: `${maxWidth}px` }
-      "
+      @change="handleChange"
     >
-      <SelectValue class="ui-select-value">{{ displayLabel }}</SelectValue>
-      <SelectIcon as-child>
-        <span
-          class="ui-select-chevron"
-          aria-hidden="true"
-        ></span>
-      </SelectIcon>
-    </SelectTrigger>
-    <SelectPortal>
-      <SelectContent class="ui-select-content">
-        <SelectViewport>
-          <SelectItem
-            v-for="option in options"
-            :key="option.value"
-            :value="option.value"
-            class="ui-select-item"
-          >
-            <SelectItemText>{{ option.label }}</SelectItemText>
-          </SelectItem>
-        </SelectViewport>
-      </SelectContent>
-    </SelectPortal>
-  </SelectRoot>
+      <option
+        v-if="showPlaceholder"
+        value=""
+      >
+        {{ placeholder }}
+      </option>
+      <option
+        v-else-if="needsFallback"
+        :value="modelValue"
+      >
+        {{ fallbackLabel }}
+      </option>
+      <option
+        v-for="option in options"
+        :key="option.value"
+        :value="option.value"
+      >
+        {{ option.label }}
+      </option>
+    </select>
+  </span>
 </template>
 
 <script setup lang="ts">
-import {
-  SelectContent,
-  SelectIcon,
-  SelectItem,
-  SelectItemText,
-  SelectPortal,
-  SelectRoot,
-  SelectTrigger,
-  SelectValue,
-  SelectViewport,
-} from 'reka-ui';
 import { computed } from 'vue';
 
 interface UiSelectOption {
@@ -75,52 +62,33 @@ const props = withDefaults(
   },
 );
 
-const displayLabel = computed(() => {
-  const selected = props.options.find(
-    (option) => option.value === modelValue.value,
-  );
-  return selected?.label ?? props.fallbackLabel ?? props.placeholder ?? '';
-});
+const showPlaceholder = computed(
+  () => !modelValue.value && Boolean(props.placeholder),
+);
+const needsFallback = computed(
+  () =>
+    Boolean(modelValue.value) &&
+    !props.options.some((option) => option.value === modelValue.value),
+);
+
+function handleChange(event: Event): void {
+  modelValue.value = (event.target as HTMLSelectElement).value;
+}
 </script>
 
 <style scoped>
-.ui-select-trigger {
+.ui-select {
   display: inline-grid;
-  grid-template-areas: 'selector';
-  width: fit-content;
-  height: 22px;
-  padding: 0 24px 0 5px;
-  overflow: hidden;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  outline: 0;
-  background: transparent;
-  color: var(--muted);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ui-select-trigger:focus-visible {
-  border-color: var(--border);
-  background: var(--hover);
-}
-
-.ui-select-trigger:hover:not(:disabled) {
-  border-color: var(--border);
-  background: var(--hover);
-}
-
-.ui-select-value {
-  grid-area: selector;
+  position: relative;
+  grid-template-areas: 'field';
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--muted);
 }
 
-.ui-select-chevron {
-  grid-area: selector;
+.ui-select::after {
+  content: '';
+  z-index: 1;
+  grid-area: field;
   place-self: center end;
   width: 5px;
   height: 5px;
@@ -131,31 +99,35 @@ const displayLabel = computed(() => {
   pointer-events: none;
 }
 
-.ui-select-content {
-  max-height: var(--reka-select-content-available-height);
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel-raised);
-  box-shadow: 0 10px 30px var(--shadow-soft);
+.ui-select:has(select:disabled)::after {
+  opacity: 0.45;
 }
 
-.ui-select-item {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  padding: 6px 7px;
-  border-radius: 5px;
-  color: var(--text);
+.ui-select-field {
+  grid-area: field;
+  width: auto;
+  min-width: 0;
+  height: 22px;
+  padding: 0 24px 0 5px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  outline: 0;
+  background: transparent;
+  color: var(--muted);
   font-size: 11px;
-  text-align: left;
+  text-overflow: ellipsis;
+  appearance: none;
+  field-sizing: content;
 }
 
-.ui-select-item[data-highlighted] {
-  background: var(--selected);
+.ui-select-field:focus-visible {
+  border-color: var(--border);
+  background: var(--hover);
 }
 
-.ui-select-item[data-disabled] {
-  color: var(--faint);
+.ui-select-field:hover:not(:disabled) {
+  border-color: var(--border);
+  background: var(--hover);
 }
 </style>

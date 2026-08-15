@@ -43,28 +43,24 @@
       ></textarea>
     </UiContextMenu>
     <div class="composer-toolbar">
-      <span class="composer-selector model-selector">
-        <UiSelect
-          :model-value="`${currentModelProvider}/${currentModelId}`"
-          :options="modelOptions"
-          placeholder="Model"
-          :fallback-label="currentModelLabel"
-          :disabled="settingsDisabled || models.length === 0"
-          aria-label="Model"
-          @update:model-value="handleModelChange"
-        />
-      </span>
-      <span class="composer-selector effort-selector">
-        <UiSelect
-          :model-value="currentEffort"
-          :options="effortOptions"
-          :fallback-label="currentEffortLabel"
-          :disabled="settingsDisabled || efforts.length === 0"
-          aria-label="Thinking effort"
-          :max-width="110"
-          @update:model-value="handleEffortChange"
-        />
-      </span>
+      <UiSelect
+        :model-value="`${currentModelProvider}/${currentModelId}`"
+        :options="modelOptions"
+        placeholder="Model"
+        :fallback-label="currentModelLabel"
+        :disabled="settingsDisabled || models.length === 0"
+        aria-label="Model"
+        @update:model-value="handleModelChange"
+      />
+      <UiSelect
+        :model-value="currentEffort"
+        :options="effortOptions"
+        :fallback-label="currentEffortLabel"
+        :disabled="settingsDisabled || efforts.length === 0"
+        aria-label="Thinking effort"
+        :max-width="110"
+        @update:model-value="handleEffortChange"
+      />
       <UiIconButton
         v-if="streaming"
         class="send-button stop"
@@ -342,15 +338,6 @@ defineExpose({ focus });
   align-items: center;
   gap: 2px;
   padding: 0;
-}
-
-.composer-selector {
-  min-width: 0;
-  max-width: 210px;
-}
-
-.composer-selector.effort-selector {
-  max-width: 110px;
 }
 
 .send-button {
