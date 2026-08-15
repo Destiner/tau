@@ -5,17 +5,20 @@ use std::{
     collections::{HashMap, VecDeque},
     env,
     ffi::{OsStr, OsString},
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::{mpsc, Arc, Mutex, OnceLock},
     thread,
+    time::Duration,
 };
 use tauri::{AppHandle, Emitter, State};
 
 const MAX_RPC_LINE_BYTES: usize = 64 * 1024 * 1024;
 const STDERR_TAIL_LINES: usize = 8;
 const STDERR_LINE_CHARS: usize = 2048;
+const LOGIN_SHELL_TIMEOUT: Duration = Duration::from_secs(5);
+const LOGIN_SHELL_PATH_MARKER: &str = "__TAU_PATH__";
 
 type StderrTail = Arc<Mutex<VecDeque<String>>>;
 
@@ -97,7 +100,7 @@ pub fn resolve_pi_binary() -> Option<PathBuf> {
 
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
     let output = Command::new(shell)
-        .args(["-lc", "command -v pi"])
+        .args(["-lic", "command -v pi"])
         .output()
         .ok()?;
     if !output.status.success() {
@@ -159,7 +162,7 @@ fn resolve_executable(
     }
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
     let output = Command::new(shell)
-        .args(["-lc", &format!("command -v {executable}")])
+        .args(["-lic", &format!("command -v {executable}")])
         .output()
         .ok()?;
     if !output.status.success() {
@@ -234,13 +237,74 @@ fn validate_start_paths(project_path: &str, session_path: Option<&str>) -> Resul
 
 fn configure_child_path(command: &mut Command, executables: &[&Path]) -> Result<(), String> {
     let current_path = env::var_os("PATH");
-    let path = build_child_path(executables, current_path.as_deref())?;
+    let path = build_child_path(
+        executables,
+        login_shell_path().map(OsString::as_os_str),
+        current_path.as_deref(),
+    )?;
     command.env("PATH", path);
     Ok(())
 }
 
+/// Launchd gives GUI apps a minimal PATH, so toolchains installed by version
+/// managers (bun, volta, cargo) are invisible to Pi and to the shell commands
+/// it runs. Ask the login shell for the PATH a terminal would have. The shell
+/// must be interactive as well as login: zsh only reads `.zshrc`, where such
+/// toolchains usually register themselves, when it is interactive.
+fn login_shell_path() -> Option<&'static OsString> {
+    static PATH: OnceLock<Option<OsString>> = OnceLock::new();
+    PATH.get_or_init(query_login_shell_path).as_ref()
+}
+
+fn query_login_shell_path() -> Option<OsString> {
+    let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let mut command = Command::new(shell);
+    command.args([
+        "-lic",
+        &format!("printf '{LOGIN_SHELL_PATH_MARKER}%s{LOGIN_SHELL_PATH_MARKER}' \"$PATH\""),
+    ]);
+    let output = capture_stdout(command, LOGIN_SHELL_TIMEOUT)?;
+    parse_login_shell_path(&String::from_utf8_lossy(&output))
+}
+
+/// Startup files are free to print banners, so the PATH is read from between
+/// markers rather than from the surrounding output.
+fn parse_login_shell_path(output: &str) -> Option<OsString> {
+    let path = output.split(LOGIN_SHELL_PATH_MARKER).nth(1)?.trim();
+    (!path.is_empty()).then(|| OsString::from(path))
+}
+
+/// Interactive startup files can hang, which would otherwise block the caller
+/// forever, so the child is killed once the timeout elapses.
+fn capture_stdout(mut command: Command, timeout: Duration) -> Option<Vec<u8>> {
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let Some(mut stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return None;
+    };
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = stdout.read_to_end(&mut buffer);
+        let _ = sender.send(buffer);
+    });
+    let output = receiver.recv_timeout(timeout).ok();
+    if output.is_none() {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+    output
+}
+
 fn build_child_path(
     executables: &[&Path],
+    login_path: Option<&OsStr>,
     current_path: Option<&OsStr>,
 ) -> Result<OsString, String> {
     let mut directories = Vec::new();
@@ -249,21 +313,22 @@ fn build_child_path(
             .parent()
             .filter(|path| !path.as_os_str().is_empty())
         {
-            let parent = parent.to_path_buf();
-            if !directories.contains(&parent) {
-                directories.push(parent);
-            }
+            push_directory(&mut directories, parent.to_path_buf());
         }
     }
-    if let Some(path) = current_path {
+    for path in [login_path, current_path].into_iter().flatten() {
         for directory in env::split_paths(path) {
-            if !directories.contains(&directory) {
-                directories.push(directory);
-            }
+            push_directory(&mut directories, directory);
         }
     }
     env::join_paths(directories)
         .map_err(|error| format!("Could not prepare the Pi process PATH: {error}"))
+}
+
+fn push_directory(directories: &mut Vec<PathBuf>, directory: PathBuf) {
+    if !directories.contains(&directory) {
+        directories.push(directory);
+    }
 }
 
 fn spawn_command(
@@ -581,6 +646,7 @@ mod tests {
                 Path::new("/opt/homebrew/bin/pi"),
                 Path::new("/opt/homebrew/bin/node"),
             ],
+            None,
             Some(OsStr::new("/usr/bin:/bin")),
         )
         .expect("child PATH");
@@ -592,6 +658,52 @@ mod tests {
                 PathBuf::from("/bin"),
             ],
         );
+    }
+
+    #[test]
+    fn child_path_places_login_shell_directories_before_the_inherited_path() {
+        let path = build_child_path(
+            &[Path::new("/opt/homebrew/bin/pi")],
+            Some(OsStr::new("/Users/tau/.bun/bin:/usr/bin")),
+            Some(OsStr::new("/usr/bin:/bin")),
+        )
+        .expect("child PATH");
+        assert_eq!(
+            env::split_paths(&path).collect::<Vec<_>>(),
+            vec![
+                PathBuf::from("/opt/homebrew/bin"),
+                PathBuf::from("/Users/tau/.bun/bin"),
+                PathBuf::from("/usr/bin"),
+                PathBuf::from("/bin"),
+            ],
+        );
+    }
+
+    #[test]
+    fn login_shell_path_is_read_from_between_the_markers() {
+        let output = format!("startup banner\n{LOGIN_SHELL_PATH_MARKER}/Users/tau/.bun/bin:/usr/bin{LOGIN_SHELL_PATH_MARKER}");
+        assert_eq!(
+            parse_login_shell_path(&output),
+            Some(OsString::from("/Users/tau/.bun/bin:/usr/bin")),
+        );
+    }
+
+    #[test]
+    fn login_shell_path_ignores_output_without_markers() {
+        assert_eq!(parse_login_shell_path("command not found"), None);
+        assert_eq!(
+            parse_login_shell_path(&format!(
+                "{LOGIN_SHELL_PATH_MARKER}  {LOGIN_SHELL_PATH_MARKER}"
+            )),
+            None,
+        );
+    }
+
+    #[test]
+    fn capturing_stdout_gives_up_on_a_hanging_shell() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 30"]);
+        assert_eq!(capture_stdout(command, Duration::from_millis(200)), None);
     }
 
     #[test]
