@@ -1,4 +1,4 @@
-import type { ModelOption } from "../types";
+import type { ModelOption } from "../../types";
 
 const thinkingLevels = new Set([
   "off",

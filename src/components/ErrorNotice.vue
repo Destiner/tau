@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { describePiError } from "../lib/pi-error";
+import { describePiError } from "../lib/pi/error";
 import MarkdownText from "./MarkdownText.vue";
 import UiIcon from "./UiIcon.vue";
 

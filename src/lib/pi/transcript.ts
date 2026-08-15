@@ -1,4 +1,4 @@
-import type { TranscriptEntry } from "../types";
+import type { TranscriptEntry } from "../../types";
 
 type JsonRecord = Record<string, unknown>;
 

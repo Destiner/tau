@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { TranscriptEntry } from "../types";
+import type { TranscriptEntry } from "../../types";
 import {
   appendLocalErrors,
   hydrateTranscript,

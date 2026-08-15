@@ -11,9 +11,10 @@ import {
   toolArgumentsText,
   toolResultText,
   toolSummary,
-} from "../lib/transcript";
-import { describePiError } from "../lib/pi-error";
-import { scopeModels } from "../lib/model-scope";
+} from "../lib/pi/transcript";
+import { describePiError } from "../lib/pi/error";
+import { scopeModels } from "../lib/pi/model-scope";
+import type { PiBridgeEvent } from "../lib/pi/bridge";
 import type {
   CommandOption,
   ExtensionDialog,
@@ -21,7 +22,6 @@ import type {
   ExtensionNotification,
   ExtensionNotificationType,
   ModelOption,
-  PiBridgeEvent,
   ProjectSummary,
   RemoteDirectoryEntry,
   RemoteDirectoryListing,

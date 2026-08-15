@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describePiError } from "./pi-error";
+import { describePiError } from "./error";
 
 describe("pi error", () => {
   it("reads the sentence out of a provider payload", () => {

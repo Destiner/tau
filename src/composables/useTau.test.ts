@@ -1,10 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { describe, expect, it, vi } from "vitest";
-import type {
-  PiBridgeEvent,
-  ProjectSummary,
-  WorkspaceSnapshot,
-} from "../types";
+import type { PiBridgeEvent } from "../lib/pi/bridge";
+import type { ProjectSummary, WorkspaceSnapshot } from "../types";
 import { useTau } from "./useTau";
 
 const mocks = vi.hoisted(() => ({
