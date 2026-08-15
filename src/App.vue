@@ -5,71 +5,86 @@
       'resizing-sidebar': resizingSidebar,
       'window-inactive': !windowFocused,
     }"
-    :style="{ '--sidebar-width': `${sidebarWidth}px` }"
   >
-    <ProjectSidebar
-      v-model:sidebar-width="sidebarWidth"
-      v-model:resizing="resizingSidebar"
-    />
-
-    <main
-      class="session-pane"
-      :class="{
-        'empty-session': sessionIsEmpty,
-        'loading-session': sessionLoading,
-      }"
+    <SplitterGroup
+      direction="horizontal"
+      :auto-save-id="SIDEBAR_SPLITTER_KEY"
+      :keyboard-resize-by="10"
     >
-      <SessionHeader
-        ref="sessionHeader"
-        @mousedown="handleTitlebarMouseDown"
-        @dblclick="handleTitlebarDoubleClick"
-        @composer-focus="focusComposer"
-      />
-
-      <div
-        v-if="sessionLoading"
-        class="session-loading"
+      <SplitterPanel
+        id="sidebar"
+        :default-size="DEFAULT_SIDEBAR_WIDTH"
+        :min-size="MIN_SIDEBAR_WIDTH"
+        :max-size="MAX_SIDEBAR_WIDTH"
+        size-unit="px"
       >
-        <template v-if="loadingIndicatorVisible">
-          <UiSpinner label="Loading session" />
-          <span>Loading</span>
-        </template>
-      </div>
-
-      <TranscriptView
-        v-else-if="!sessionIsEmpty"
-        :key="state.activeControllerKey"
-        ref="transcriptView"
-        :messages="messages"
-        :show-working-indicator="showWorkingIndicator"
-        :working-label="stopping ? 'Pi is stopping' : 'Pi is working'"
+        <ProjectSidebar />
+      </SplitterPanel>
+      <SplitterResizeHandle
+        class="sidebar-resize-handle"
+        @dragging="handleResizeDrag"
       />
+      <SplitterPanel id="session">
+        <main
+          class="session-pane"
+          :class="{
+            'empty-session': sessionIsEmpty,
+            'loading-session': sessionLoading,
+          }"
+        >
+          <SessionHeader
+            ref="sessionHeader"
+            @mousedown="handleTitlebarMouseDown"
+            @dblclick="handleTitlebarDoubleClick"
+            @composer-focus="focusComposer"
+          />
 
-      <footer
-        v-if="!sessionLoading"
-        class="composer-area"
-      >
-        <ExtensionDialog
-          v-if="activeExtensionDialog"
-          v-model:draft="activeExtensionDialog.draft"
-          :method="activeExtensionDialog.method"
-          :title="activeExtensionDialog.title"
-          :message="activeExtensionDialog.message"
-          :options="activeExtensionDialog.options"
-          :placeholder="activeExtensionDialog.placeholder"
-          :project-name="activeExtensionDialog.projectName"
-          :session-name="activeExtensionDialog.sessionName"
-          :working-directory="activeExtensionDialog.workingDirectory"
-          @submit="handleExtensionSubmit"
-          @cancel="cancelExtensionDialog"
-        />
-        <ComposerBar
-          v-else
-          :header-element="() => sessionHeader?.header"
-          @send="handleComposerSend"
-        />
-      </footer>
-    </main>
+          <div
+            v-if="sessionLoading"
+            class="session-loading"
+          >
+            <template v-if="loadingIndicatorVisible">
+              <UiSpinner label="Loading session" />
+              <span>Loading</span>
+            </template>
+          </div>
+
+          <TranscriptView
+            v-else-if="!sessionIsEmpty"
+            :key="state.activeControllerKey"
+            ref="transcriptView"
+            :messages="messages"
+            :show-working-indicator="showWorkingIndicator"
+            :working-label="stopping ? 'Pi is stopping' : 'Pi is working'"
+          />
+
+          <footer
+            v-if="!sessionLoading"
+            class="composer-area"
+          >
+            <ExtensionDialog
+              v-if="activeExtensionDialog"
+              v-model:draft="activeExtensionDialog.draft"
+              :method="activeExtensionDialog.method"
+              :title="activeExtensionDialog.title"
+              :message="activeExtensionDialog.message"
+              :options="activeExtensionDialog.options"
+              :placeholder="activeExtensionDialog.placeholder"
+              :project-name="activeExtensionDialog.projectName"
+              :session-name="activeExtensionDialog.sessionName"
+              :working-directory="activeExtensionDialog.workingDirectory"
+              @submit="handleExtensionSubmit"
+              @cancel="cancelExtensionDialog"
+            />
+            <ComposerBar
+              v-else
+              :header-element="() => sessionHeader?.header"
+              @send="handleComposerSend"
+            />
+          </footer>
+        </main>
+      </SplitterPanel>
+    </SplitterGroup>
 
     <NotificationStack
       :notifications="extensionNotifications"
@@ -95,6 +110,7 @@
 <script setup lang="ts">
 import { type UnlistenFn, listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui';
 import {
   computed,
   nextTick,
@@ -113,8 +129,11 @@ import SessionHeader from './components/SessionHeader.vue';
 import TranscriptView from './components/TranscriptView.vue';
 import UiSpinner from './components/ui/UiSpinner.vue';
 import useTau from './composables/useTau';
-import { loadSidebarWidth } from './lib/sidebar-width';
 
+const SIDEBAR_SPLITTER_KEY = 'tau.app-shell';
+const MIN_SIDEBAR_WIDTH = 200;
+const MAX_SIDEBAR_WIDTH = 480;
+const DEFAULT_SIDEBAR_WIDTH = 260;
 const NEW_SESSION_EVENT = 'tau://new-session';
 /** How long a session may hydrate before it is worth reporting as loading. */
 const LOADING_INDICATOR_DELAY_MS = 200;
@@ -125,7 +144,6 @@ const sessionHeader = ref<InstanceType<typeof SessionHeader>>();
 const composerBar = ref<InstanceType<typeof ComposerBar>>();
 const windowFocused = ref(true);
 const loadingIndicatorVisible = ref(false);
-const sidebarWidth = ref(loadSidebarWidth());
 const resizingSidebar = ref(false);
 let unlistenWindowFocus: UnlistenFn | undefined;
 let unlistenNewSessionMenu: UnlistenFn | undefined;
@@ -290,6 +308,10 @@ function focusComposer(): void {
 }
 
 /** A send starts with the transcript pinned to its end. */
+function handleResizeDrag(isDragging: boolean): void {
+  resizingSidebar.value = isDragging;
+}
+
 function handleComposerSend(): void {
   transcriptView.value?.scrollToEnd();
   void sendMessage();
@@ -405,10 +427,7 @@ function isTitlebarControl(target: EventTarget | null): boolean {
 
 <style scoped>
 .app-shell {
-  --sidebar-width: 260px;
-
-  display: grid;
-  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  display: flex;
   width: 100%;
   height: 100%;
   background: var(--canvas);
@@ -427,8 +446,33 @@ function isTitlebarControl(target: EventTarget | null): boolean {
   user-select: none;
 }
 
-.app-shell.resizing-sidebar :deep(.sidebar-resize-handle)::after {
+.sidebar-resize-handle {
+  position: relative;
+  z-index: 2;
+  width: 9px;
+  margin: 0 -4px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.sidebar-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 1px;
+  background: transparent;
+}
+
+.sidebar-resize-handle:hover::after,
+.sidebar-resize-handle:focus-visible::after,
+.sidebar-resize-handle[data-state='drag']::after {
   background: var(--muted);
+}
+
+.sidebar-resize-handle:focus-visible {
+  outline: 0;
 }
 
 .session-pane {

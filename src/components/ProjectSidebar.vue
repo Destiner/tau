@@ -1,8 +1,5 @@
 <template>
-  <aside
-    ref="sidebar"
-    class="sidebar"
-  >
+  <aside class="sidebar">
     <header
       class="sidebar-titlebar"
       @mousedown="handleTitlebarMouseDown"
@@ -159,23 +156,6 @@
         </UiMenu>
       </div>
     </footer>
-
-    <div
-      class="sidebar-resize-handle"
-      role="separator"
-      aria-label="Resize sidebar"
-      aria-orientation="vertical"
-      :aria-valuemin="MIN_SIDEBAR_WIDTH"
-      :aria-valuemax="MAX_SIDEBAR_WIDTH"
-      :aria-valuenow="sidebarWidth"
-      tabindex="0"
-      @pointerdown="startSidebarResize"
-      @pointermove="handleSidebarResize"
-      @pointerup="finishSidebarResize"
-      @pointercancel="stopSidebarResize"
-      @lostpointercapture="stopSidebarResize"
-      @keydown="handleSidebarResizeKeydown"
-    ></div>
   </aside>
 </template>
 
@@ -186,12 +166,6 @@ import { onBeforeUnmount, onMounted, ref } from 'vue';
 
 import type { ProjectSummary, SessionSummary } from '../composables/state';
 import useTau from '../composables/useTau';
-import {
-  MAX_SIDEBAR_WIDTH,
-  MIN_SIDEBAR_WIDTH,
-  clampSidebarWidth,
-  persistSidebarWidth,
-} from '../lib/sidebar-width';
 
 import UiContextMenu from './ui/UiContextMenu.vue';
 import UiIcon from './ui/UiIcon.vue';
@@ -200,16 +174,6 @@ import UiMenu from './ui/UiMenu.vue';
 import type { UiMenuItem } from './ui/UiMenu.vue';
 import UiStatusDot from './ui/UiStatusDot.vue';
 import UiTooltip from './ui/UiTooltip.vue';
-
-const props = defineProps<{
-  sidebarWidth: number;
-  resizing: boolean;
-}>();
-
-const emit = defineEmits<{
-  'update:sidebar-width': [value: number];
-  'update:resizing': [value: boolean];
-}>();
 
 const {
   addLocalProject,
@@ -234,7 +198,6 @@ const {
 } = useTau();
 
 const projectList = ref<HTMLElement>();
-const sidebar = ref<HTMLElement>();
 const projectMenuOpen = ref(false);
 let projectSortable: Sortable | undefined;
 
@@ -301,65 +264,6 @@ function finishProjectReordering(event: SortableEvent): void {
   void reorderProjects(event.oldIndex, event.newIndex);
 }
 
-function startSidebarResize(event: PointerEvent): void {
-  if (event.button !== 0) return;
-  const handle = event.currentTarget;
-  if (!(handle instanceof HTMLElement)) return;
-
-  event.preventDefault();
-  emit('update:resizing', true);
-  handle.setPointerCapture(event.pointerId);
-  handle.focus({ preventScroll: true });
-  updateSidebarWidth(event.clientX);
-}
-
-function handleSidebarResize(event: PointerEvent): void {
-  if (props.resizing) updateSidebarWidth(event.clientX);
-}
-
-function finishSidebarResize(event: PointerEvent): void {
-  if (!props.resizing) return;
-  updateSidebarWidth(event.clientX);
-  stopSidebarResize();
-}
-
-function stopSidebarResize(): void {
-  if (!props.resizing) return;
-  emit('update:resizing', false);
-  persistSidebarWidth(props.sidebarWidth);
-}
-
-function handleSidebarResizeKeydown(event: KeyboardEvent): void {
-  const step = event.shiftKey ? 40 : 10;
-  let nextWidth: number;
-
-  switch (event.key) {
-    case 'ArrowLeft':
-      nextWidth = props.sidebarWidth - step;
-      break;
-    case 'ArrowRight':
-      nextWidth = props.sidebarWidth + step;
-      break;
-    case 'Home':
-      nextWidth = MIN_SIDEBAR_WIDTH;
-      break;
-    case 'End':
-      nextWidth = MAX_SIDEBAR_WIDTH;
-      break;
-    default:
-      return;
-  }
-
-  event.preventDefault();
-  emit('update:sidebar-width', clampSidebarWidth(nextWidth));
-  persistSidebarWidth(clampSidebarWidth(nextWidth));
-}
-
-function updateSidebarWidth(pointerX: number): void {
-  const left = sidebar.value?.getBoundingClientRect().left ?? 0;
-  emit('update:sidebar-width', clampSidebarWidth(pointerX - left));
-}
-
 function handleTitlebarMouseDown(event: MouseEvent): void {
   if (
     event.button !== 0 ||
@@ -397,267 +301,5 @@ function isTitlebarControl(target: EventTarget | null): boolean {
   min-width: 0;
   border-right: 1px solid var(--border);
   background: var(--panel);
-}
-
-.sidebar-resize-handle {
-  position: absolute;
-  z-index: 4;
-  top: 0;
-  right: -4px;
-  bottom: 0;
-  width: 9px;
-  cursor: col-resize;
-  touch-action: none;
-}
-
-.sidebar-resize-handle::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 4px;
-  width: 1px;
-  background: transparent;
-}
-
-.sidebar-resize-handle:hover::after,
-.sidebar-resize-handle:focus-visible::after {
-  background: var(--muted);
-}
-
-.sidebar-resize-handle:focus-visible {
-  outline: 0;
-}
-
-.sidebar-titlebar {
-  display: flex;
-  flex: none;
-  align-items: center;
-  height: 30px;
-  min-height: 30px;
-  border-bottom: 1px solid var(--border);
-}
-
-.sidebar-footer {
-  display: flex;
-  flex: none;
-  justify-content: flex-start;
-  padding: 6px;
-}
-
-.project-list {
-  flex: 1;
-  padding: 6px;
-  overflow: auto;
-}
-
-.project-row {
-  display: flex;
-  position: relative;
-  align-items: center;
-  min-width: 0;
-  border-radius: 7px;
-  gap: 0;
-}
-
-.project-row:hover {
-  background: var(--hover);
-}
-
-.project-drag-handle {
-  display: grid;
-  position: absolute;
-  z-index: 2;
-  top: 50%;
-  left: 3px;
-  width: 25px;
-  height: 29px;
-  transform: translateY(-50%);
-  color: var(--muted);
-  touch-action: none;
-  place-items: center;
-}
-
-.project-drag-handle svg {
-  width: 9px;
-  height: 13px;
-  transform: translateX(-8px);
-  transition:
-    opacity 110ms ease,
-    transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
-  opacity: 0;
-}
-
-.project-row:hover > .project-drag-handle svg,
-.project-sortable-chosen > .project-row .project-drag-handle svg,
-.project-sortable-drag > .project-row .project-drag-handle svg {
-  transform: translateX(0);
-  opacity: 1;
-}
-
-.project-toggle {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  min-width: 0;
-  padding: 7px 5px;
-  transition: padding-left 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
-  background: transparent;
-  color: var(--muted);
-  text-align: left;
-  gap: 3px;
-}
-
-/* stylelint-disable-next-line no-descending-specificity */
-.project-toggle svg {
-  flex: none;
-  width: 13px;
-  transform: translateY(1px);
-  transition: transform 120ms ease;
-  color: var(--muted);
-}
-
-.project-toggle svg.expanded {
-  transform: translateY(1px) rotate(90deg);
-}
-
-.project-toggle span {
-  overflow: hidden;
-  font-size: 13px;
-  font-weight: 400;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.project-row.selected .project-toggle span {
-  color: var(--text);
-}
-
-.project-row:hover > .project-toggle,
-.project-sortable-chosen > .project-row .project-toggle,
-.project-sortable-drag > .project-row .project-toggle {
-  padding-left: 27px;
-}
-
-.project-sortable-ghost {
-  opacity: 0.2;
-}
-
-.project-sortable-chosen > .project-row,
-.project-sortable-drag > .project-row {
-  background: var(--hover);
-}
-
-.project-sortable-drag {
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  opacity: 0.98;
-  background: var(--panel-raised);
-  box-shadow: 0 15px 30px var(--shadow-strong);
-}
-
-/* A row-hovered action steps out of its row; its box and states live in UiIconButton. */
-.project-row:hover :deep(.row-action),
-.project-row:focus-within :deep(.row-action) {
-  opacity: 0.65;
-}
-
-.session-list {
-  margin: 1px 0 5px;
-}
-
-.session-row {
-  display: flex;
-  position: relative;
-  width: 100%;
-  min-width: 0;
-  border-radius: 7px;
-  background: transparent;
-}
-
-.session-row:hover {
-  background: var(--hover);
-}
-
-.session-row.selected {
-  background: var(--selected);
-}
-
-.session-select {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  min-width: 0;
-  padding: 7px;
-  background: transparent;
-  text-align: left;
-  gap: 7px;
-}
-
-/* The archive action floats over its row; its box and states live in UiIconButton. */
-.session-archive {
-  position: absolute;
-  top: 50%;
-  right: 0;
-  transform: translateY(-50%);
-}
-
-.session-row:hover :deep(.session-archive),
-.session-row:focus-within :deep(.session-archive) {
-  opacity: 0.65;
-}
-
-.session-row.archivable:hover .session-time,
-.session-row.archivable:focus-within .session-time {
-  opacity: 0;
-}
-
-.session-copy {
-  display: flex;
-  flex: 1;
-  align-items: baseline;
-  min-width: 0;
-  gap: 7px;
-}
-
-.session-title {
-  flex: 1;
-  overflow: hidden;
-  color: var(--text);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* stylelint-disable-next-line no-descending-specificity */
-.session-time {
-  flex: none;
-  color: var(--faint);
-  font-size: 10px;
-}
-
-.empty-sessions {
-  padding: 5px 7px 8px 20px;
-  color: var(--faint);
-  font-size: 11px;
-}
-
-.empty-projects {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 180px;
-  color: var(--muted);
-  font-size: 12px;
-  gap: 8px;
-}
-
-/* stylelint-disable-next-line no-descending-specificity */
-.empty-projects > svg {
-  width: 24px;
-  height: 24px;
-  color: var(--faint);
 }
 </style>
