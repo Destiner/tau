@@ -191,55 +191,12 @@
         'loading-session': sessionLoading,
       }"
     >
-      <header
+      <SessionHeader
         ref="sessionHeader"
-        class="session-header"
         @mousedown="handleTitlebarMouseDown"
         @dblclick="handleTitlebarDoubleClick"
-      >
-        <div class="session-heading">
-          <UiInput
-            v-if="renamingSession"
-            ref="sessionTitleInput"
-            v-model="sessionNameDraft"
-            class="session-name-input"
-            variant="bare"
-            type="text"
-            maxlength="240"
-            spellcheck="false"
-            aria-label="Session name"
-            @blur="commitSessionRename"
-            @keydown.enter.prevent="commitSessionRename"
-            @keydown.escape.prevent="cancelSessionRename"
-          />
-          <h1 v-else>
-            <button
-              v-if="canRenameSession"
-              class="session-name"
-              type="button"
-              title="Rename session"
-              @click="beginSessionRename"
-            >
-              {{ sessionTitle }}
-            </button>
-            <span
-              v-else
-              class="session-name"
-              >{{ sessionTitle }}</span
-            >
-          </h1>
-        </div>
-        <button
-          v-if="activeProject"
-          class="icon-button session-new-button"
-          type="button"
-          title="New session"
-          aria-label="New session"
-          @click="handleNewSession"
-        >
-          <UiIcon name="plus" />
-        </button>
-      </header>
+        @composer-focus="focusComposer"
+      />
 
       <div
         v-if="sessionLoading"
@@ -648,6 +605,7 @@ import {
   watch,
 } from 'vue';
 
+import SessionHeader from './components/SessionHeader.vue';
 import TranscriptView from './components/TranscriptView.vue';
 import MarkdownText from './components/ui/MarkdownText.vue';
 import UiButton from './components/ui/UiButton.vue';
@@ -686,7 +644,7 @@ const MIN_SIDEBAR_WIDTH = 200;
 const MAX_SIDEBAR_WIDTH = 480;
 
 const transcriptView = ref<InstanceType<typeof TranscriptView>>();
-const sessionHeader = ref<HTMLElement>();
+const sessionHeader = ref<InstanceType<typeof SessionHeader>>();
 const composer = ref<HTMLElement>();
 const composerInput = ref<HTMLTextAreaElement>();
 const commandMenu = ref<HTMLElement>();
@@ -709,9 +667,6 @@ const commandMenuOffset = ref(0);
 const extensionDialogSelectedIndex = ref(0);
 const sidebarWidth = ref(loadSidebarWidth());
 const resizingSidebar = ref(false);
-const sessionTitleInput = ref<InstanceType<typeof UiInput>>();
-const renamingSession = ref(false);
-const sessionNameDraft = ref('');
 let projectSortable: Sortable | undefined;
 let unlistenWindowFocus: UnlistenFn | undefined;
 let unlistenNewSessionMenu: UnlistenFn | undefined;
@@ -732,14 +687,12 @@ const {
   currentModelProvider,
   currentModelId,
   currentEffort,
-  sessionTitle,
   currentModelLabel,
   currentEffortLabel,
   effortLabels,
   settingsDisabled,
   canDraft,
   canCompose,
-  canRenameSession,
   sessionLoading,
   initialize,
   dispose,
@@ -769,7 +722,6 @@ const {
   submitExtensionDialog,
   cancelExtensionDialog,
   dismissExtensionNotification,
-  renameSession,
   selectModel,
   selectEffort,
 } = useTau();
@@ -923,14 +875,10 @@ watch(activeExtensionDialog, (dialog) => {
   });
 });
 
-watch(canRenameSession, (renamable) => {
-  if (!renamable) cancelSessionRename();
-});
-
 watch(
   () => state.activeControllerKey,
   (controllerKey) => {
-    cancelSessionRename();
+    sessionHeader.value?.cancelRename();
     if (!controllerKey) return;
     void nextTick(() => {
       if (!state.remoteDialogOpen && !activeExtensionDialog.value) {
@@ -980,38 +928,8 @@ watch(sessionLoading, (loading) => {
   });
 });
 
-function beginSessionRename(): void {
-  if (!canRenameSession.value) return;
-  sessionNameDraft.value = sessionTitle.value;
-  renamingSession.value = true;
-  void nextTick(() => {
-    sessionTitleInput.value?.input?.focus();
-    sessionTitleInput.value?.input?.select();
-  });
-}
-
-function commitSessionRename(): void {
-  // Escape and a lost runtime both close the field before its blur arrives,
-  // and neither should apply the name that was left in it.
-  if (!renamingSession.value) return;
-  closeSessionRename();
-  void renameSession(sessionNameDraft.value);
-}
-
-function cancelSessionRename(): void {
-  if (!renamingSession.value) return;
-  closeSessionRename();
-}
-
-/**
- * Committing on blur means focus has already moved on, so the composer is only
- * refocused when the field itself still holds focus, as it does after Enter,
- * Escape, or a runtime that stopped mid-rename.
- */
-function closeSessionRename(): void {
-  const focused = document.activeElement === sessionTitleInput.value?.input;
-  renamingSession.value = false;
-  if (focused) void nextTick(() => composerInput.value?.focus());
+function focusComposer(): void {
+  composerInput.value?.focus();
 }
 
 function updateCommandMenuLayout(): void {
@@ -1027,7 +945,8 @@ function updateCommandMenuLayout(): void {
     composerTop: container.getBoundingClientRect().top,
     textTop: anchorRect.top + (Number.parseFloat(anchorStyle.paddingTop) || 0),
     textLineHeight: Number.parseFloat(anchorStyle.lineHeight) || 0,
-    topBoundary: sessionHeader.value?.getBoundingClientRect().bottom ?? 0,
+    topBoundary:
+      sessionHeader.value?.header?.getBoundingClientRect().bottom ?? 0,
     bottomBoundary: window.innerHeight,
   });
 
