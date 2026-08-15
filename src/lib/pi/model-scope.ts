@@ -1,21 +1,21 @@
-export interface ModelOption {
+interface ModelOption {
   provider: string;
   id: string;
   name: string;
   reasoning: boolean;
 }
 
-export type ThinkingLevel =
-  "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+type ThinkingLevel =
+  'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 const thinkingLevels = new Set([
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
+  'off',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
 ]);
 
 const globCharacters = /[*?[]/;
@@ -28,10 +28,7 @@ const regexpCharacters = /[.*+?^${}()|[\]\\]/g;
  * Patterns that match nothing leave the catalogue untouched, so a stale setting
  * never empties the picker.
  */
-export function scopeModels(
-  models: ModelOption[],
-  patterns: string[],
-): ModelOption[] {
+function scopeModels(models: ModelOption[], patterns: string[]): ModelOption[] {
   const scoped: ModelOption[] = [];
   for (const pattern of patterns) {
     for (const model of matchPattern(models, pattern.trim())) {
@@ -86,7 +83,7 @@ function matchReference(
     )[0];
   }
 
-  const colon = pattern.lastIndexOf(":");
+  const colon = pattern.lastIndexOf(':');
   return colon === -1
     ? undefined
     : matchReference(models, pattern.slice(0, colon));
@@ -106,7 +103,7 @@ function matchExactReference(
   );
   if (canonical.length > 0) return single(canonical);
 
-  const slash = trimmed.indexOf("/");
+  const slash = trimmed.indexOf('/');
   if (slash !== -1) {
     const provider = trimmed.slice(0, slash).trim().toLowerCase();
     const id = trimmed
@@ -133,7 +130,7 @@ function single(models: ModelOption[]): ModelOption | undefined {
 }
 
 function withoutThinkingLevel(pattern: string): string {
-  const colon = pattern.lastIndexOf(":");
+  const colon = pattern.lastIndexOf(':');
   if (colon === -1) return pattern;
   return thinkingLevels.has(pattern.slice(colon + 1))
     ? pattern.slice(0, colon)
@@ -141,33 +138,37 @@ function withoutThinkingLevel(pattern: string): string {
 }
 
 function isAlias(id: string): boolean {
-  return id.endsWith("-latest") || !datedVersion.test(id);
+  return id.endsWith('-latest') || !datedVersion.test(id);
 }
 
 /** `*` and `?` stop at provider boundaries, `**` crosses them, as in Pi. */
 function globExpression(pattern: string): RegExp {
-  let source = "";
+  let source = '';
   for (let index = 0; index < pattern.length; index += 1) {
-    const character = pattern[index];
-    if (character === "*") {
-      const crossesProviders = pattern[index + 1] === "*";
+    const character = pattern.charAt(index);
+    if (character === '*') {
+      const crossesProviders = pattern[index + 1] === '*';
       if (crossesProviders) index += 1;
-      source += crossesProviders ? ".*" : "[^/]*";
+      source += crossesProviders ? '.*' : '[^/]*';
       continue;
     }
-    if (character === "?") {
-      source += "[^/]";
+    if (character === '?') {
+      source += '[^/]';
       continue;
     }
-    if (character === "[") {
-      const end = pattern.indexOf("]", index + 1);
+    if (character === '[') {
+      const end = pattern.indexOf(']', index + 1);
       if (end !== -1) {
-        source += `[${pattern.slice(index + 1, end).replace(/^!/, "^")}]`;
+        source += `[${pattern.slice(index + 1, end).replace(/^!/, '^')}]`;
         index = end;
         continue;
       }
     }
-    source += character.replace(regexpCharacters, "\\$&");
+    source += character.replace(regexpCharacters, '\\$&');
   }
-  return new RegExp(`^${source}$`, "i");
+  return new RegExp(`^${source}$`, 'i');
 }
+
+export type { ModelOption, ThinkingLevel };
+
+export { scopeModels };

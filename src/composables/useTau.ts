@@ -1,8 +1,34 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
-import type { PiBridgeEvent } from "../lib/pi/bridge";
-import type { ThinkingLevel } from "../lib/pi/model-scope";
+import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { open } from '@tauri-apps/plugin-dialog';
+
+import type { PiBridgeEvent } from '../lib/pi/bridge';
+import type { ThinkingLevel } from '../lib/pi/model-scope';
+import {
+  applySessionName,
+  cancelExtensionDialog,
+  cancelPendingPrompt,
+  clearAbortWatch,
+  clearExtensionUiState,
+  clearSessionReplacementWatch,
+  dismissExtensionNotification,
+  handleBridgeEvent,
+  invokesExtensionCommand,
+  persistExpandedProject,
+  persistProjectSelection,
+  registerConnectedSession,
+  releaseIdleRuntimes,
+  releaseRuntime,
+  removeEmptyActivePhantom,
+  removeProjectUiState,
+  removeRegisteredEphemeralSession,
+  rpc,
+  sendPhantomMessage,
+  startController,
+  stopControllerProcess,
+  submitExtensionDialog,
+  watchAbort,
+} from '../lib/pi/runtime';
 
 import {
   activeController,
@@ -47,7 +73,6 @@ import {
   normalizeSessionName,
   projectIndicator,
   projectSessions,
-  remoteRetry,
   runtimeAvailable,
   sessionIndicator,
   sessionLastActive,
@@ -66,39 +91,17 @@ import {
   type RemoteDirectoryListing,
   type SessionSummary,
   type WorkspaceSnapshot,
-} from "./state";
-import {
-  applySessionName,
-  cancelExtensionDialog,
-  cancelPendingPrompt,
-  clearAbortWatch,
-  clearExtensionUiState,
-  clearSessionReplacementWatch,
-  dismissExtensionNotification,
-  handleBridgeEvent,
-  invokesExtensionCommand,
-  persistExpandedProject,
-  persistProjectSelection,
-  registerConnectedSession,
-  releaseIdleRuntimes,
-  releaseRuntime,
-  removeEmptyActivePhantom,
-  removeProjectUiState,
-  removeRegisteredEphemeralSession,
-  rpc,
-  sendPhantomMessage,
-  startController,
-  stopControllerProcess,
-  submitExtensionDialog,
-  watchAbort,
-} from "../lib/pi/runtime";
+} from './state';
 
 let unlisten: UnlistenFn | undefined;
 
-export function useTau() {
-  async function initialize() {
+// The composable returns its own surface: about sixty refs and handlers whose
+// types are all inferred, so spelling the shape out would only duplicate them.
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function useTau() {
+  async function initialize(): Promise<void> {
     if (!unlisten) {
-      unlisten = await listen<PiBridgeEvent>("pi-event", ({ payload }) => {
+      unlisten = await listen<PiBridgeEvent>('pi-event', ({ payload }) => {
         void handleBridgeEvent(payload).catch((error) => {
           const controller = controllerByRuntimeId(payload.runtimeId);
           if (!controller) return;
@@ -109,8 +112,8 @@ export function useTau() {
       });
     }
     try {
-      state.workspace = await invoke<WorkspaceSnapshot>("load_workspace");
-      state.workspaceStatus = "";
+      state.workspace = await invoke<WorkspaceSnapshot>('load_workspace');
+      state.workspaceStatus = '';
       state.activeProjectPath = state.workspace.activeProjectPath;
       const selectedProject = state.workspace.projects.find(
         (project) => project.selected,
@@ -124,7 +127,7 @@ export function useTau() {
         const needsLocalRuntime = !selectedProject.connectionString;
         if (needsLocalRuntime && !state.workspace.piPath) {
           controller.status =
-            "Pi was not found. Install pi or set TAU_PI_PATH, then restart Tau.";
+            'Pi was not found. Install pi or set TAU_PI_PATH, then restart Tau.';
           return;
         }
         await startController(
@@ -142,7 +145,7 @@ export function useTau() {
     }
   }
 
-  function dispose() {
+  function dispose(): void {
     unlisten?.();
     unlisten = undefined;
     for (const controller of state.controllers) {
@@ -152,15 +155,15 @@ export function useTau() {
     clearExtensionUiState();
   }
 
-  async function addLocalProject() {
+  async function addLocalProject(): Promise<void> {
     try {
       const selection = await open({
         directory: true,
         multiple: false,
-        title: "Choose a project folder",
+        title: 'Choose a project folder',
       });
       if (!selection) return;
-      state.workspace = await invoke<WorkspaceSnapshot>("import_project", {
+      state.workspace = await invoke<WorkspaceSnapshot>('import_project', {
         path: selection,
       });
       if (!state.activeProjectPath) {
@@ -171,56 +174,56 @@ export function useTau() {
     }
   }
 
-  function openRemoteProjectDialog() {
+  function openRemoteProjectDialog(): void {
     clearRemoteRetry();
-    state.remoteDialogMode = "add";
-    state.remoteDialogStep = "connection";
-    state.remoteConnectionString = "";
-    state.remoteConnectionError = "";
+    state.remoteDialogMode = 'add';
+    state.remoteDialogStep = 'connection';
+    state.remoteConnectionString = '';
+    state.remoteConnectionError = '';
     state.remoteConnecting = false;
     clearRemoteDirectoryBrowser();
     state.remoteDialogOpen = true;
   }
 
-  function closeRemoteProjectDialog() {
+  function closeRemoteProjectDialog(): void {
     if (state.remoteConnecting) return;
-    const retryController = remoteRetry
-      ? controllerByKey(remoteRetry.controllerKey)
+    const retryController = state.remoteRetry
+      ? controllerByKey(state.remoteRetry.controllerKey)
       : undefined;
-    if (state.remoteDialogMode === "retry" && retryController?.pendingPrompt) {
+    if (state.remoteDialogMode === 'retry' && retryController?.pendingPrompt) {
       cancelPendingPrompt(
         retryController,
-        "The remote connection was cancelled.",
+        'The remote connection was cancelled.',
       );
     }
     clearRemoteRetry();
     state.remoteDialogOpen = false;
-    state.remoteConnectionError = "";
+    state.remoteConnectionError = '';
     clearRemoteDirectoryBrowser();
   }
 
-  async function submitRemoteConnection() {
+  async function submitRemoteConnection(): Promise<void> {
     if (state.remoteConnecting) return;
-    if (state.remoteDialogMode === "retry") {
+    if (state.remoteDialogMode === 'retry') {
       await retryRemoteConnection();
       return;
     }
 
     const connectionString = state.remoteConnectionString.trim();
     if (!connectionString) {
-      state.remoteConnectionError = "Enter an SSH connection string.";
+      state.remoteConnectionError = 'Enter an SSH connection string.';
       return;
     }
     state.remoteConnecting = true;
-    state.remoteConnectionError = "";
+    state.remoteConnectionError = '';
     try {
       const listing = await invoke<RemoteDirectoryListing>(
-        "probe_remote_project",
+        'probe_remote_project',
         { connectionString },
       );
       applyRemoteDirectoryListing(listing, true);
       state.remoteConnectionString = listing.connectionString;
-      state.remoteDialogStep = "directory";
+      state.remoteDialogStep = 'directory';
     } catch (error) {
       state.remoteConnectionError = errorMessage(error);
     } finally {
@@ -231,16 +234,16 @@ export function useTau() {
   async function chooseRemoteDirectory(
     path: string,
     choice: RemoteDirectoryChoice,
-  ) {
-    if (state.remoteConnecting || state.remoteDialogStep !== "directory") {
+  ): Promise<void> {
+    if (state.remoteConnecting || state.remoteDialogStep !== 'directory') {
       return;
     }
     state.remoteConnecting = true;
-    state.remoteConnectionError = "";
+    state.remoteConnectionError = '';
     try {
-      if (choice === "select") {
+      if (choice === 'select') {
         state.workspace = await invoke<WorkspaceSnapshot>(
-          "import_remote_project",
+          'import_remote_project',
           {
             connectionString: state.remoteConnectionString,
             workingDirectory: state.remoteWorkingDirectory,
@@ -255,13 +258,13 @@ export function useTau() {
       } else {
         const currentDirectory = state.remoteWorkingDirectory;
         const listing = await invoke<RemoteDirectoryListing>(
-          "list_remote_directories",
+          'list_remote_directories',
           {
             connectionString: state.remoteConnectionString,
             workingDirectory: path,
           },
         );
-        if (choice === "back") state.remoteDirectoryHistory.pop();
+        if (choice === 'back') state.remoteDirectoryHistory.pop();
         else state.remoteDirectoryHistory.push(currentDirectory);
         applyRemoteDirectoryListing(listing);
       }
@@ -272,20 +275,20 @@ export function useTau() {
     }
   }
 
-  async function retryRemoteConnection() {
-    const retry = remoteRetry;
+  async function retryRemoteConnection(): Promise<void> {
+    const retry = state.remoteRetry;
     const controller = retry ? controllerByKey(retry.controllerKey) : undefined;
     const project = state.workspace?.projects.find(
       (item) => item.path === retry?.projectPath,
     );
     if (!retry || !controller || !project?.connectionString) {
       state.remoteConnectionError =
-        "The remote session is no longer available.";
+        'The remote session is no longer available.';
       return;
     }
 
     state.remoteConnecting = true;
-    state.remoteConnectionError = "";
+    state.remoteConnectionError = '';
     try {
       await startController(
         controller,
@@ -299,10 +302,10 @@ export function useTau() {
     }
   }
 
-  async function toggleProject(project: ProjectSummary) {
+  async function toggleProject(project: ProjectSummary): Promise<void> {
     try {
       state.workspace = await invoke<WorkspaceSnapshot>(
-        "set_project_collapsed",
+        'set_project_collapsed',
         {
           path: project.path,
           collapsed: !project.collapsed,
@@ -313,7 +316,10 @@ export function useTau() {
     }
   }
 
-  async function reorderProjects(fromIndex: number, toIndex: number) {
+  async function reorderProjects(
+    fromIndex: number,
+    toIndex: number,
+  ): Promise<void> {
     const workspace = state.workspace;
     if (
       !workspace ||
@@ -333,7 +339,7 @@ export function useTau() {
     state.workspace = { ...workspace, projects };
 
     try {
-      state.workspace = await invoke<WorkspaceSnapshot>("reorder_projects", {
+      state.workspace = await invoke<WorkspaceSnapshot>('reorder_projects', {
         projectPaths: projects.map((candidate) => candidate.path),
       });
     } catch (error) {
@@ -342,7 +348,7 @@ export function useTau() {
     }
   }
 
-  async function removeProject(project: ProjectSummary) {
+  async function removeProject(project: ProjectSummary): Promise<void> {
     const projectControllers = state.controllers.filter(
       (controller) => controller.projectPath === project.path,
     );
@@ -354,7 +360,7 @@ export function useTau() {
     try {
       const removingActiveView = project.path === state.activeProjectPath;
       removeProjectUiState(project.path);
-      state.workspace = await invoke<WorkspaceSnapshot>("remove_project", {
+      state.workspace = await invoke<WorkspaceSnapshot>('remove_project', {
         path: project.path,
       });
       if (removingActiveView) clearActiveSession();
@@ -369,12 +375,12 @@ export function useTau() {
   async function archiveSession(
     project: ProjectSummary,
     session: SessionSummary,
-  ) {
+  ): Promise<void> {
     if (!canArchiveSession(project, session)) return;
     const controller = controllerForSession(project.path, session.id);
 
     try {
-      state.workspace = await invoke<WorkspaceSnapshot>("archive_session", {
+      state.workspace = await invoke<WorkspaceSnapshot>('archive_session', {
         projectPath: project.path,
         sessionId: session.id,
       });
@@ -403,7 +409,7 @@ export function useTau() {
     }
   }
 
-  async function newSession(project: ProjectSummary) {
+  async function newSession(project: ProjectSummary): Promise<void> {
     const previous = activeController.value;
     removeEmptyActivePhantom();
     const controllerKey = nextControllerKey();
@@ -416,7 +422,7 @@ export function useTau() {
       void persistExpandedProject(project.path);
     }
     setActiveSessionView(project, session, controller);
-    controller.status = "";
+    controller.status = '';
     await persistProjectSelection(project.path, controller);
     releaseIdleRuntimes();
     if (
@@ -433,7 +439,7 @@ export function useTau() {
   async function selectSession(
     project: ProjectSummary,
     session: SessionSummary,
-  ) {
+  ): Promise<void> {
     const alreadySelected =
       project.path === state.activeProjectPath &&
       session.id === state.activeSessionId;
@@ -451,7 +457,7 @@ export function useTau() {
     removeEmptyActivePhantom();
     const controller = ensureController(project, session);
     setActiveSessionView(project, session, controller);
-    controller.status = "";
+    controller.status = '';
     controller.unread = false;
     await persistProjectSelection(project.path, controller);
     releaseIdleRuntimes();
@@ -460,9 +466,9 @@ export function useTau() {
     await startController(controller, project, session.path);
   }
 
-  async function sendMessage() {
+  async function sendMessage(): Promise<void> {
     const controller = activeController.value;
-    const message = controller?.draft.trim() ?? "";
+    const message = controller?.draft.trim() ?? '';
     if (
       !controller ||
       !message ||
@@ -481,36 +487,36 @@ export function useTau() {
       return;
     }
 
-    controller.draft = "";
+    controller.draft = '';
     controller.working = true;
     if (!command) {
       controller.messages.push({
         id: `optimistic-user-${Date.now()}`,
-        kind: "user",
+        kind: 'user',
         text: message,
       });
     }
-    controller.status = "";
+    controller.status = '';
     try {
-      const requestId = nextRequestId("prompt");
+      const requestId = nextRequestId('prompt');
       if (command) controller.commandPromptRequestId = requestId;
-      await rpc(controller, { id: requestId, type: "prompt", message });
+      await rpc(controller, { id: requestId, type: 'prompt', message });
       if (!command) await registerConnectedSession(controller);
     } catch (error) {
       controller.working = false;
-      controller.commandPromptRequestId = "";
+      controller.commandPromptRequestId = '';
       setControllerError(controller, error);
     }
   }
 
-  async function stop() {
+  async function stop(): Promise<void> {
     const controller = activeController.value;
     if (!controller?.streaming || controller.stopping) return;
     controller.stopping = true;
-    controller.status = "";
+    controller.status = '';
     watchAbort(controller);
     try {
-      await rpc(controller, { id: nextRequestId("abort"), type: "abort" });
+      await rpc(controller, { id: nextRequestId('abort'), type: 'abort' });
     } catch (error) {
       clearAbortWatch(controller);
       controller.stopping = false;
@@ -518,13 +524,13 @@ export function useTau() {
     }
   }
 
-  async function selectModel(value: string) {
+  async function selectModel(value: string): Promise<void> {
     const controller = activeController.value;
     const model = controller?.models.find(
       (option) => `${option.provider}/${option.id}` === value,
     );
     if (!controller || !model || settingsDisabled.value) return;
-    controller.status = "";
+    controller.status = '';
     if (controller.phantom) {
       controller.currentModelProvider = model.provider;
       controller.currentModelId = model.id;
@@ -533,8 +539,8 @@ export function useTau() {
     }
     try {
       await rpc(controller, {
-        id: nextRequestId("set-model"),
-        type: "set_model",
+        id: nextRequestId('set-model'),
+        type: 'set_model',
         provider: model.provider,
         modelId: model.id,
       });
@@ -543,17 +549,17 @@ export function useTau() {
     }
   }
 
-  async function renameSession(name: string) {
+  async function renameSession(name: string): Promise<void> {
     const controller = activeController.value;
     if (!controller || !canRenameSession.value) return;
     const next = normalizeSessionName(name);
     if (!next || next === controller.sessionName) return;
-    controller.status = "";
+    controller.status = '';
     applySessionName(controller, next);
     try {
       await rpc(controller, {
-        id: nextRequestId("session-name"),
-        type: "set_session_name",
+        id: nextRequestId('session-name'),
+        type: 'set_session_name',
         name: next,
       });
     } catch (error) {
@@ -561,7 +567,7 @@ export function useTau() {
     }
   }
 
-  async function selectEffort(level: ThinkingLevel) {
+  async function selectEffort(level: ThinkingLevel): Promise<void> {
     const controller = activeController.value;
     if (
       !controller ||
@@ -570,7 +576,7 @@ export function useTau() {
     ) {
       return;
     }
-    controller.status = "";
+    controller.status = '';
     if (controller.phantom) {
       controller.currentEffort = level;
       return;
@@ -578,12 +584,12 @@ export function useTau() {
     controller.pendingEffort = level;
     try {
       await rpc(controller, {
-        id: nextRequestId("set-effort"),
-        type: "set_thinking_level",
+        id: nextRequestId('set-effort'),
+        type: 'set_thinking_level',
         level,
       });
     } catch (error) {
-      controller.pendingEffort = "";
+      controller.pendingEffort = '';
       setControllerError(controller, error);
     }
   }
@@ -647,3 +653,5 @@ export function useTau() {
     selectEffort,
   };
 }
+
+export default useTau;

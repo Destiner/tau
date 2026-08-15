@@ -1,5 +1,7 @@
 dist
 node_modules
+playwright-report
+test-results
 src-tauri/gen
 src-tauri/target
 src-tauri/Cargo.lock

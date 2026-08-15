@@ -1,7 +1,7 @@
-export interface TranscriptEntry {
+interface TranscriptEntry {
   id: string;
   /** An `error` entry holds Pi's own error string in `text`, unparsed. */
-  kind: "user" | "assistant" | "thinking" | "tool" | "error";
+  kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'error';
   text: string;
   toolCallId?: string;
   toolName?: string;
@@ -27,7 +27,7 @@ const detailLimit = 4_000;
  * measured for that row, which collapses the transcript under a reader who has
  * scrolled up and drags them to the bottom.
  */
-export function hydrateTranscript(
+function hydrateTranscript(
   messages: unknown[],
   previous: TranscriptEntry[] = [],
 ): TranscriptEntry[] {
@@ -38,31 +38,31 @@ export function hydrateTranscript(
     if (!message) continue;
     const role = stringValue(message.role);
 
-    if (role === "user") {
+    if (role === 'user') {
       const text = contentText(message.content);
-      if (text) entries.push({ id: "", kind: "user", text });
+      if (text) entries.push({ id: '', kind: 'user', text });
       continue;
     }
 
-    if (role === "assistant") {
+    if (role === 'assistant') {
       const content = Array.isArray(message.content) ? message.content : [];
       const failure = messageFailure(message);
       for (const partValue of content) {
         const part = asRecord(partValue);
         if (!part) continue;
         const type = stringValue(part.type);
-        if (type === "text") {
+        if (type === 'text') {
           const text = stringValue(part.text);
-          if (text) entries.push({ id: "", kind: "assistant", text });
-        } else if (type === "thinking") {
+          if (text) entries.push({ id: '', kind: 'assistant', text });
+        } else if (type === 'thinking') {
           const text = stringValue(part.thinking);
-          if (text) entries.push({ id: "", kind: "thinking", text });
-        } else if (type === "toolCall") {
+          if (text) entries.push({ id: '', kind: 'thinking', text });
+        } else if (type === 'toolCall') {
           const toolCallId = stringValue(part.id);
-          const toolName = stringValue(part.name) || "tool";
+          const toolName = stringValue(part.name) || 'tool';
           entries.push({
-            id: "",
-            kind: "tool",
+            id: '',
+            kind: 'tool',
             text: toolSummary(part.arguments),
             toolCallId,
             toolName,
@@ -74,27 +74,27 @@ export function hydrateTranscript(
       }
       // A turn that failed carries its reason beside content that is usually
       // empty, so the row stands for the reply the reader never got.
-      if (failure) entries.push({ id: "", kind: "error", text: failure });
+      if (failure) entries.push({ id: '', kind: 'error', text: failure });
       continue;
     }
 
-    if (role === "toolResult") {
+    if (role === 'toolResult') {
       const toolCallId = stringValue(message.toolCallId);
       const existing = [...entries]
         .reverse()
         .find(
-          (entry) => entry.kind === "tool" && entry.toolCallId === toolCallId,
+          (entry) => entry.kind === 'tool' && entry.toolCallId === toolCallId,
         );
       if (existing) {
         existing.toolRunning = false;
         existing.toolErrored = message.isError === true;
         existing.toolResult = toolResultText(message.content);
       } else {
-        const toolName = stringValue(message.toolName) || "tool";
+        const toolName = stringValue(message.toolName) || 'tool';
         entries.push({
-          id: "",
-          kind: "tool",
-          text: "",
+          id: '',
+          kind: 'tool',
+          text: '',
           toolCallId,
           toolName,
           toolRunning: false,
@@ -105,13 +105,13 @@ export function hydrateTranscript(
       continue;
     }
 
-    if (role === "bashExecution") {
+    if (role === 'bashExecution') {
       const command = stringValue(message.command);
       entries.push({
-        id: "",
-        kind: "tool",
+        id: '',
+        kind: 'tool',
         text: command,
-        toolName: "bash",
+        toolName: 'bash',
         toolRunning: false,
         toolErrored: numberValue(message.exitCode) !== 0,
         toolResult: toolResultText(message.output),
@@ -167,26 +167,26 @@ function holdsSameRow(
  * The reason a turn failed, or nothing. An aborted turn also carries a reason,
  * and it is the reader's own stop rather than a failure to report.
  */
-export function messageFailure(message: unknown): string {
+function messageFailure(message: unknown): string {
   const record = asRecord(message);
-  if (!record || stringValue(record.role) !== "assistant") return "";
-  if (stringValue(record.stopReason) !== "error") return "";
+  if (!record || stringValue(record.role) !== 'assistant') return '';
+  if (stringValue(record.stopReason) !== 'error') return '';
   return stringValue(record.errorMessage);
 }
 
 /** Appends the failures Pi reports as events but never keeps in its messages. */
-export function appendLocalErrors(
+function appendLocalErrors(
   entries: TranscriptEntry[],
   errors: string[],
 ): TranscriptEntry[] {
   errors.forEach((text, index) => {
-    entries.push({ id: `local-error-${index}`, kind: "error", text });
+    entries.push({ id: `local-error-${index}`, kind: 'error', text });
   });
   return entries;
 }
 
 /** The single line a collapsed tool row shows: whichever argument names the call. */
-export function toolSummary(args: unknown): string {
+function toolSummary(args: unknown): string {
   const record = asRecord(args);
   return (
     stringValue(record?.command) ||
@@ -197,17 +197,17 @@ export function toolSummary(args: unknown): string {
   );
 }
 
-export function toolArgumentsText(args: unknown): string {
+function toolArgumentsText(args: unknown): string {
   const record = asRecord(args);
-  if (!record || Object.keys(record).length === 0) return "";
+  if (!record || Object.keys(record).length === 0) return '';
   try {
-    return clampDetail(JSON.stringify(record, null, 2) ?? "");
+    return clampDetail(JSON.stringify(record, null, 2) ?? '');
   } catch {
-    return "";
+    return '';
   }
 }
 
-export function toolResultText(content: unknown): string {
+function toolResultText(content: unknown): string {
   return clampDetail(contentText(content));
 }
 
@@ -215,38 +215,52 @@ function clampDetail(text: string): string {
   return text.length > detailLimit ? `${text.slice(0, detailLimit)}\n…` : text;
 }
 
-export function contentText(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (!Array.isArray(value)) return "";
+function contentText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (!Array.isArray(value)) return '';
   return value
     .map((part) => {
       const record = asRecord(part);
-      return record && record.type === "text" ? stringValue(record.text) : "";
+      return record && record.type === 'text' ? stringValue(record.text) : '';
     })
     .filter(Boolean)
-    .join("\n");
+    .join('\n');
 }
 
-export function asRecord(value: unknown): JsonRecord | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
+function asRecord(value: unknown): JsonRecord | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as JsonRecord)
     : undefined;
 }
 
-export function stringValue(value: unknown): string {
-  return typeof value === "string" ? value : "";
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value : '';
 }
 
 function numberValue(value: unknown): number | undefined {
-  return typeof value === "number" ? value : undefined;
+  return typeof value === 'number' ? value : undefined;
 }
 
 function compactJson(value: unknown): string {
-  if (value === undefined) return "";
+  if (value === undefined) return '';
   try {
     const text = JSON.stringify(value);
     return text.length > 220 ? `${text.slice(0, 217)}…` : text;
   } catch {
-    return "";
+    return '';
   }
 }
+
+export type { TranscriptEntry };
+
+export {
+  hydrateTranscript,
+  messageFailure,
+  appendLocalErrors,
+  toolSummary,
+  toolArgumentsText,
+  toolResultText,
+  contentText,
+  asRecord,
+  stringValue,
+};

@@ -1,10 +1,28 @@
+<template>
+  <main class="transcript-fixture">
+    <header class="transcript-fixture-header">
+      <strong>Long transcript fixture</strong>
+      <span data-testid="fixture-count">{{ messages.length }} messages</span>
+    </header>
+    <TranscriptView
+      ref="transcriptView"
+      class="fixture-transcript"
+      :messages="messages"
+      :show-working-indicator="showWorkingIndicator"
+      working-label="Pi is working"
+    />
+  </main>
+</template>
+
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from "vue";
-import TranscriptView from "../components/TranscriptView.vue";
-import { createLongTranscript } from "./long-transcript";
+import { computed, onBeforeUnmount, ref } from 'vue';
+
+import TranscriptView from '../components/TranscriptView.vue';
+
+import createLongTranscript from './long-transcript';
 
 interface TranscriptFixtureApi {
-  appendMessage(kind?: "assistant" | "tool"): string;
+  appendMessage(kind?: 'assistant' | 'tool'): string;
   replaceLatestMessage(): string;
   scrollToEnd(): void;
   setWorking(working: boolean): void;
@@ -26,19 +44,19 @@ let sequence = messages.value.length;
 const showWorkingIndicator = computed(
   () =>
     working.value &&
-    messages.value[messages.value.length - 1]?.kind !== "assistant",
+    messages.value[messages.value.length - 1]?.kind !== 'assistant',
 );
 
-function appendMessage(kind: "assistant" | "tool" = "assistant"): string {
+function appendMessage(kind: 'assistant' | 'tool' = 'assistant'): string {
   const id = `fixture-appended-${sequence++}`;
-  if (kind === "tool") {
+  if (kind === 'tool') {
     const path = `/tmp/tau-fixture/appended-${id}.jsonl`;
     messages.value.push({
       id,
-      kind: "tool",
+      kind: 'tool',
       text: path,
       toolCallId: `fixture-appended-call-${id}`,
-      toolName: "read",
+      toolName: 'read',
       toolRunning: true,
       toolErrored: false,
       toolArguments: JSON.stringify({ path }, null, 2),
@@ -47,7 +65,7 @@ function appendMessage(kind: "assistant" | "tool" = "assistant"): string {
   }
   messages.value.push({
     id,
-    kind: "assistant",
+    kind: 'assistant',
     text: `**Appended message ${id}**\n\nThe viewport should follow this only when it was already at the end.`,
   });
   return id;
@@ -56,7 +74,7 @@ function appendMessage(kind: "assistant" | "tool" = "assistant"): string {
 function replaceLatestMessage(): string {
   const lastIndex = messages.value.length - 1;
   const last = messages.value[lastIndex];
-  if (!last) return "";
+  if (!last) return '';
 
   const id = `fixture-rehydrated-${sequence++}`;
   messages.value = messages.value.map((message, index) =>
@@ -77,11 +95,11 @@ async function streamLatest(chunks = 24): Promise<void> {
   working.value = false;
 }
 
-function scrollToEnd() {
+function scrollToEnd(): void {
   transcriptView.value?.scrollToEnd();
 }
 
-function setWorking(next: boolean) {
+function setWorking(next: boolean): void {
   working.value = next;
 }
 
@@ -97,22 +115,6 @@ onBeforeUnmount(() => {
   delete window.__TAU_TRANSCRIPT_FIXTURE__;
 });
 </script>
-
-<template>
-  <main class="transcript-fixture">
-    <header class="transcript-fixture-header">
-      <strong>Long transcript fixture</strong>
-      <span data-testid="fixture-count">{{ messages.length }} messages</span>
-    </header>
-    <TranscriptView
-      ref="transcriptView"
-      class="fixture-transcript"
-      :messages="messages"
-      :show-working-indicator="showWorkingIndicator"
-      working-label="Pi is working"
-    />
-  </main>
-</template>
 
 <style scoped>
 .transcript-fixture {

@@ -1,10 +1,29 @@
 {
   "compilerOptions": {
-    "composite": true,
+    /* Base */
+    "esModuleInterop": true,
     "skipLibCheck": true,
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "allowSyntheticDefaultImports": true
+    "target": "ES2022",
+    "allowJs": true,
+    "moduleDetection": "force",
+    "isolatedModules": true,
+    /* Strictness */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    /* No transpiling */
+    "moduleResolution": "Bundler",
+    "module": "preserve",
+    "noEmit": true,
+    /* Erasable syntax */
+    "erasableSyntaxOnly": true,
+    /* Node-specific */
+    "lib": ["ES2022"],
+    "types": ["node"]
   },
-  "include": ["vite.config.ts"]
+  "include": ["vite.config.ts", "playwright.config.ts", "eslint.config.js"]
 }

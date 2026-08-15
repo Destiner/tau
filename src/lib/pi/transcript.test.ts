@@ -1,114 +1,115 @@
-import { describe, expect, it } from "vitest";
-import type { TranscriptEntry } from "./transcript";
+import { describe, expect, it } from 'vitest';
+
+import type { TranscriptEntry } from './transcript';
 import {
   appendLocalErrors,
   hydrateTranscript,
   messageFailure,
   toolSummary,
-} from "./transcript";
+} from './transcript';
 
-describe("hydrateTranscript", () => {
-  it("keeps assistant content order and resolves tool outcomes", () => {
+describe('hydrateTranscript', () => {
+  it('keeps assistant content order and resolves tool outcomes', () => {
     const result = hydrateTranscript([
-      { role: "user", content: "Inspect the project" },
+      { role: 'user', content: 'Inspect the project' },
       {
-        role: "assistant",
+        role: 'assistant',
         content: [
-          { type: "thinking", thinking: "I should list it." },
+          { type: 'thinking', thinking: 'I should list it.' },
           {
-            type: "toolCall",
-            id: "call-1",
-            name: "bash",
-            arguments: { command: "ls" },
+            type: 'toolCall',
+            id: 'call-1',
+            name: 'bash',
+            arguments: { command: 'ls' },
           },
-          { type: "text", text: "Done." },
+          { type: 'text', text: 'Done.' },
         ],
       },
       {
-        role: "toolResult",
-        toolCallId: "call-1",
-        toolName: "bash",
-        content: [{ type: "text", text: "src\ntests" }],
+        role: 'toolResult',
+        toolCallId: 'call-1',
+        toolName: 'bash',
+        content: [{ type: 'text', text: 'src\ntests' }],
         isError: false,
       },
     ]);
 
     expect(result.map((entry) => entry.kind)).toEqual([
-      "user",
-      "thinking",
-      "tool",
-      "assistant",
+      'user',
+      'thinking',
+      'tool',
+      'assistant',
     ]);
     expect(result[2]).toMatchObject({
-      text: "ls",
-      toolName: "bash",
+      text: 'ls',
+      toolName: 'bash',
       toolRunning: false,
       toolErrored: false,
       toolArguments: '{\n  "command": "ls"\n}',
-      toolResult: "src\ntests",
+      toolResult: 'src\ntests',
     });
   });
 
   it("carries a bash execution's own output", () => {
     const result = hydrateTranscript([
       {
-        role: "bashExecution",
-        command: "ls",
-        output: "src\ntests",
+        role: 'bashExecution',
+        command: 'ls',
+        output: 'src\ntests',
         exitCode: 0,
       },
     ]);
 
     expect(result[0]).toMatchObject({
-      kind: "tool",
-      text: "ls",
-      toolResult: "src\ntests",
+      kind: 'tool',
+      text: 'ls',
+      toolResult: 'src\ntests',
     });
   });
 
-  it("accepts block-based user content", () => {
+  it('accepts block-based user content', () => {
     const result = hydrateTranscript([
-      { role: "user", content: [{ type: "text", text: "Hello" }] },
+      { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
     ]);
-    expect(result[0]?.text).toBe("Hello");
+    expect(result[0]?.text).toBe('Hello');
   });
 
-  it("carries streamed ids into the settled turn", () => {
+  it('carries streamed ids into the settled turn', () => {
     const streamed: TranscriptEntry[] = [
-      { id: "optimistic-1", kind: "user", text: "Inspect the project" },
-      { id: "stream-thinking-0", kind: "thinking", text: "I should list" },
+      { id: 'optimistic-1', kind: 'user', text: 'Inspect the project' },
+      { id: 'stream-thinking-0', kind: 'thinking', text: 'I should list' },
       {
-        id: "stream-tool-1",
-        kind: "tool",
-        text: "ls",
-        toolCallId: "call-1",
-        toolName: "bash",
+        id: 'stream-tool-1',
+        kind: 'tool',
+        text: 'ls',
+        toolCallId: 'call-1',
+        toolName: 'bash',
         toolRunning: true,
         toolErrored: false,
       },
-      { id: "stream-assistant-2", kind: "assistant", text: "Do" },
+      { id: 'stream-assistant-2', kind: 'assistant', text: 'Do' },
     ];
 
     const settled = hydrateTranscript(
       [
-        { role: "user", content: "Inspect the project" },
+        { role: 'user', content: 'Inspect the project' },
         {
-          role: "assistant",
+          role: 'assistant',
           content: [
-            { type: "thinking", thinking: "I should list it." },
+            { type: 'thinking', thinking: 'I should list it.' },
             {
-              type: "toolCall",
-              id: "call-1",
-              name: "bash",
-              arguments: { command: "ls" },
+              type: 'toolCall',
+              id: 'call-1',
+              name: 'bash',
+              arguments: { command: 'ls' },
             },
-            { type: "text", text: "Done." },
+            { type: 'text', text: 'Done.' },
           ],
         },
         {
-          role: "toolResult",
-          toolCallId: "call-1",
-          toolName: "bash",
+          role: 'toolResult',
+          toolCallId: 'call-1',
+          toolName: 'bash',
           isError: false,
         },
       ],
@@ -116,45 +117,45 @@ describe("hydrateTranscript", () => {
     );
 
     expect(settled.map((entry) => entry.id)).toEqual([
-      "optimistic-1",
-      "stream-thinking-0",
-      "stream-tool-1",
-      "stream-assistant-2",
+      'optimistic-1',
+      'stream-thinking-0',
+      'stream-tool-1',
+      'stream-assistant-2',
     ]);
-    expect(settled[3]?.text).toBe("Done.");
+    expect(settled[3]?.text).toBe('Done.');
   });
 
-  it("gives rows the settled turn adds ids of their own", () => {
+  it('gives rows the settled turn adds ids of their own', () => {
     const streamed: TranscriptEntry[] = [
-      { id: "stream-assistant-0", kind: "assistant", text: "Done." },
+      { id: 'stream-assistant-0', kind: 'assistant', text: 'Done.' },
     ];
 
     const settled = hydrateTranscript(
       [
         {
-          role: "assistant",
+          role: 'assistant',
           content: [
-            { type: "text", text: "Done." },
-            { type: "text", text: "One more thing." },
+            { type: 'text', text: 'Done.' },
+            { type: 'text', text: 'One more thing.' },
           ],
         },
       ],
       streamed,
     );
 
-    expect(settled[0]?.id).toBe("stream-assistant-0");
-    expect(settled[1]?.id).not.toBe("stream-assistant-0");
+    expect(settled[0]?.id).toBe('stream-assistant-0');
+    expect(settled[1]?.id).not.toBe('stream-assistant-0');
     expect(new Set(settled.map((entry) => entry.id)).size).toBe(2);
   });
 
   it("keeps a reordered tool row from adopting another call's id", () => {
     const streamed: TranscriptEntry[] = [
       {
-        id: "stream-tool-0",
-        kind: "tool",
-        text: "ls",
-        toolCallId: "call-1",
-        toolName: "bash",
+        id: 'stream-tool-0',
+        kind: 'tool',
+        text: 'ls',
+        toolCallId: 'call-1',
+        toolName: 'bash',
         toolRunning: true,
         toolErrored: false,
       },
@@ -163,13 +164,13 @@ describe("hydrateTranscript", () => {
     const settled = hydrateTranscript(
       [
         {
-          role: "assistant",
+          role: 'assistant',
           content: [
             {
-              type: "toolCall",
-              id: "call-2",
-              name: "bash",
-              arguments: { command: "pwd" },
+              type: 'toolCall',
+              id: 'call-2',
+              name: 'bash',
+              arguments: { command: 'pwd' },
             },
           ],
         },
@@ -177,112 +178,112 @@ describe("hydrateTranscript", () => {
       streamed,
     );
 
-    expect(settled[0]?.id).not.toBe("stream-tool-0");
+    expect(settled[0]?.id).not.toBe('stream-tool-0');
   });
 
   /** The shape Pi records when a provider rejects the request outright. */
-  it("stands a failed turn in for the reply it replaced", () => {
+  it('stands a failed turn in for the reply it replaced', () => {
     const errorMessage = `402: {"message":"Out of credits","code":402}`;
     const result = hydrateTranscript([
-      { role: "user", content: "hello" },
+      { role: 'user', content: 'hello' },
       {
-        role: "assistant",
+        role: 'assistant',
         content: [],
-        stopReason: "error",
+        stopReason: 'error',
         errorMessage,
       },
     ]);
 
-    expect(result.map((entry) => entry.kind)).toEqual(["user", "error"]);
+    expect(result.map((entry) => entry.kind)).toEqual(['user', 'error']);
     expect(result[1]?.text).toBe(errorMessage);
   });
 
-  it("keeps the text of a turn that failed part way through", () => {
+  it('keeps the text of a turn that failed part way through', () => {
     const result = hydrateTranscript([
       {
-        role: "assistant",
-        content: [{ type: "text", text: "Halfway through" }],
-        stopReason: "error",
-        errorMessage: "terminated",
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Halfway through' }],
+        stopReason: 'error',
+        errorMessage: 'terminated',
       },
     ]);
 
-    expect(result.map((entry) => entry.kind)).toEqual(["assistant", "error"]);
-    expect(result[0]?.text).toBe("Halfway through");
+    expect(result.map((entry) => entry.kind)).toEqual(['assistant', 'error']);
+    expect(result[0]?.text).toBe('Halfway through');
   });
 
-  it("leaves an aborted turn alone, since the reader stopped it", () => {
+  it('leaves an aborted turn alone, since the reader stopped it', () => {
     const result = hydrateTranscript([
       {
-        role: "assistant",
-        content: [{ type: "text", text: "Half a reply" }],
-        stopReason: "aborted",
-        errorMessage: "Aborted",
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Half a reply' }],
+        stopReason: 'aborted',
+        errorMessage: 'Aborted',
       },
     ]);
 
-    expect(result.map((entry) => entry.kind)).toEqual(["assistant"]);
+    expect(result.map((entry) => entry.kind)).toEqual(['assistant']);
   });
 
-  it("carries a streamed error row into the settled turn", () => {
-    const errorMessage = "429: rate limited";
+  it('carries a streamed error row into the settled turn', () => {
+    const errorMessage = '429: rate limited';
     const streamed: TranscriptEntry[] = [
-      { id: "user-0", kind: "user", text: "hello" },
-      { id: "stream-error-0", kind: "error", text: errorMessage },
+      { id: 'user-0', kind: 'user', text: 'hello' },
+      { id: 'stream-error-0', kind: 'error', text: errorMessage },
     ];
     const settled = hydrateTranscript(
       [
-        { role: "user", content: "hello" },
-        { role: "assistant", content: [], stopReason: "error", errorMessage },
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: [], stopReason: 'error', errorMessage },
       ],
       streamed,
     );
 
-    expect(settled[1]?.id).toBe("stream-error-0");
+    expect(settled[1]?.id).toBe('stream-error-0');
   });
 });
 
-describe("appendLocalErrors", () => {
-  it("adds the failures Pi keeps nowhere to the hydrated list", () => {
+describe('appendLocalErrors', () => {
+  it('adds the failures Pi keeps nowhere to the hydrated list', () => {
     const entries = appendLocalErrors(
-      hydrateTranscript([{ role: "user", content: "hello" }]),
-      ["Auto-compaction failed: overloaded"],
+      hydrateTranscript([{ role: 'user', content: 'hello' }]),
+      ['Auto-compaction failed: overloaded'],
     );
 
-    expect(entries.map((entry) => entry.kind)).toEqual(["user", "error"]);
+    expect(entries.map((entry) => entry.kind)).toEqual(['user', 'error']);
     expect(entries[1]).toMatchObject({
-      id: "local-error-0",
-      text: "Auto-compaction failed: overloaded",
+      id: 'local-error-0',
+      text: 'Auto-compaction failed: overloaded',
     });
   });
 });
 
-describe("toolSummary", () => {
-  it("prefers a recognizable path", () => {
-    expect(toolSummary({ path: "src/main.ts" })).toBe("src/main.ts");
+describe('toolSummary', () => {
+  it('prefers a recognizable path', () => {
+    expect(toolSummary({ path: 'src/main.ts' })).toBe('src/main.ts');
   });
 });
 
-describe("messageFailure", () => {
-  it("reports an errored assistant turn", () => {
+describe('messageFailure', () => {
+  it('reports an errored assistant turn', () => {
     expect(
       messageFailure({
-        role: "assistant",
-        stopReason: "error",
-        errorMessage: "402: out of credits",
+        role: 'assistant',
+        stopReason: 'error',
+        errorMessage: '402: out of credits',
       }),
-    ).toBe("402: out of credits");
+    ).toBe('402: out of credits');
   });
 
-  it("ignores anything that is not a failed assistant turn", () => {
-    expect(messageFailure({ role: "user", content: "hello" })).toBe("");
+  it('ignores anything that is not a failed assistant turn', () => {
+    expect(messageFailure({ role: 'user', content: 'hello' })).toBe('');
     expect(
       messageFailure({
-        role: "assistant",
-        stopReason: "aborted",
-        errorMessage: "Aborted",
+        role: 'assistant',
+        stopReason: 'aborted',
+        errorMessage: 'Aborted',
       }),
-    ).toBe("");
-    expect(messageFailure(undefined)).toBe("");
+    ).toBe('');
+    expect(messageFailure(undefined)).toBe('');
   });
 });

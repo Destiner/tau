@@ -4,20 +4,21 @@
  * separate from the composable so the store can be shared with the Pi
  * runtime layer without a cycle.
  */
-import { computed, reactive } from "vue";
-import { scopeModels } from "../lib/pi/model-scope";
-import type { ModelOption, ThinkingLevel } from "../lib/pi/model-scope";
-import type { TranscriptEntry } from "../lib/pi/transcript";
-import { asRecord, stringValue } from "../lib/pi/transcript";
-import type { CommandOption } from "../lib/commands";
+import { computed, reactive } from 'vue';
 
-export interface WorkspaceSnapshot {
+import type { CommandOption } from '../lib/commands';
+import { scopeModels } from '../lib/pi/model-scope';
+import type { ModelOption, ThinkingLevel } from '../lib/pi/model-scope';
+import type { TranscriptEntry } from '../lib/pi/transcript';
+import { asRecord, stringValue } from '../lib/pi/transcript';
+
+interface WorkspaceSnapshot {
   activeProjectPath: string;
   piPath: string | null;
   projects: ProjectSummary[];
 }
 
-export interface ProjectSummary {
+interface ProjectSummary {
   path: string;
   name: string;
   workingDirectory: string;
@@ -27,7 +28,7 @@ export interface ProjectSummary {
   sessions: SessionSummary[];
 }
 
-export interface SessionSummary {
+interface SessionSummary {
   id: string;
   path: string;
   title: string;
@@ -37,21 +38,21 @@ export interface SessionSummary {
   selected: boolean;
 }
 
-export interface RemoteDirectoryEntry {
+interface RemoteDirectoryEntry {
   name: string;
   path: string;
 }
 
-export interface RemoteDirectoryListing {
+interface RemoteDirectoryListing {
   connectionString: string;
   workingDirectory: string;
   host: string;
   directories: RemoteDirectoryEntry[];
 }
 
-export type ExtensionDialogMethod = "select" | "confirm" | "input" | "editor";
+type ExtensionDialogMethod = 'select' | 'confirm' | 'input' | 'editor';
 
-export interface ExtensionDialog {
+interface ExtensionDialog {
   key: string;
   requestId: string;
   method: ExtensionDialogMethod;
@@ -71,9 +72,9 @@ export interface ExtensionDialog {
   workingDirectory?: string;
 }
 
-export type ExtensionNotificationType = "info" | "warning" | "error";
+type ExtensionNotificationType = 'info' | 'warning' | 'error';
 
-export interface ExtensionNotification {
+interface ExtensionNotification {
   key: string;
   message: string;
   type: ExtensionNotificationType;
@@ -83,32 +84,32 @@ export interface ExtensionNotification {
   workingDirectory?: string;
 }
 
-export const effortLabels: Record<ThinkingLevel, string> = {
-  off: "Off",
-  minimal: "Minimal",
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-  xhigh: "Extra high",
-  max: "Max",
+const effortLabels: Record<ThinkingLevel, string> = {
+  off: 'Off',
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra high',
+  max: 'Max',
 };
 
-export type SessionIndicator = "new" | "draft" | "working" | "";
+type SessionIndicator = 'new' | 'draft' | 'working' | '';
 
-export const indicatorLabels: Record<Exclude<SessionIndicator, "">, string> = {
-  new: "Unread",
-  draft: "Unsent draft",
-  working: "Working",
+const indicatorLabels: Record<Exclude<SessionIndicator, ''>, string> = {
+  new: 'Unread',
+  draft: 'Unsent draft',
+  working: 'Working',
 };
 
-export interface EphemeralSession extends SessionSummary {
+interface EphemeralSession extends SessionSummary {
   projectPath: string;
   controllerKey: string;
   createdAt: number;
   phantom: boolean;
 }
 
-export interface PendingPrompt {
+interface PendingPrompt {
   message: string;
   optimisticId: string;
   command: boolean;
@@ -119,10 +120,10 @@ export interface PendingPrompt {
   selectedModelName: string;
   selectedEffort: ThinkingLevel;
   settingsRequestId: string;
-  settingsStep: "" | "model" | "effort";
+  settingsStep: '' | 'model' | 'effort';
 }
 
-export interface SessionController {
+interface SessionController {
   key: string;
   runtimeId: string;
   projectPath: string;
@@ -147,7 +148,7 @@ export interface SessionController {
   currentModelId: string;
   currentModelName: string;
   currentEffort: ThinkingLevel;
-  pendingEffort: ThinkingLevel | "";
+  pendingEffort: ThinkingLevel | '';
   models: ModelOption[];
   modelScope: string[];
   efforts: ThinkingLevel[];
@@ -169,41 +170,42 @@ export interface SessionController {
   streamSequence: number;
 }
 
-export interface RemoteRetry {
+interface RemoteRetry {
   controllerKey: string;
   projectPath: string;
   sessionPath?: string;
   preserveMessages: boolean;
 }
 
-export type RemoteDialogMode = "add" | "retry";
-export type RemoteDialogStep = "connection" | "directory";
-export type RemoteDirectoryChoice = "back" | "select" | "forward";
+type RemoteDialogMode = 'add' | 'retry';
+type RemoteDialogStep = 'connection' | 'directory';
+type RemoteDirectoryChoice = 'back' | 'select' | 'forward';
 
-export const state = reactive({
+const state = reactive({
   workspace: null as WorkspaceSnapshot | null,
-  activeProjectPath: "",
-  activeSessionId: "",
-  activeSessionPath: "",
-  activeControllerKey: "",
-  workspaceStatus: "",
+  activeProjectPath: '',
+  activeSessionId: '',
+  activeSessionPath: '',
+  activeControllerKey: '',
+  workspaceStatus: '',
   controllers: [] as SessionController[],
   ephemeralSessions: [] as EphemeralSession[],
   extensionDialogs: [] as ExtensionDialog[],
   extensionNotifications: [] as ExtensionNotification[],
   remoteDialogOpen: false,
-  remoteDialogMode: "add" as RemoteDialogMode,
-  remoteDialogStep: "connection" as RemoteDialogStep,
-  remoteConnectionString: "",
-  remoteConnectionError: "",
+  remoteDialogMode: 'add' as RemoteDialogMode,
+  remoteDialogStep: 'connection' as RemoteDialogStep,
+  remoteConnectionString: '',
+  remoteConnectionError: '',
   remoteConnecting: false,
-  remoteDirectoryHost: "",
-  remoteDirectoryRoot: "",
-  remoteWorkingDirectory: "",
+  remoteDirectoryHost: '',
+  remoteDirectoryRoot: '',
+  remoteWorkingDirectory: '',
   remoteDirectoryHistory: [] as string[],
   remoteDirectories: [] as RemoteDirectoryEntry[],
-  remoteDirectoryFilter: "",
+  remoteDirectoryFilter: '',
   remoteDirectorySelectedIndex: 0,
+  remoteRetry: undefined as RemoteRetry | undefined,
   requestSequence: 0,
 });
 
@@ -214,7 +216,7 @@ export const state = reactive({
  * moments a replacement can happen, so a spawned phase session is registered
  * without waiting for its first user message.
  */
-export const replacementProbeDelays = [150, 450, 1_000, 2_000, 3_200];
+const replacementProbeDelays = [150, 450, 1_000, 2_000, 3_200];
 
 /**
  * Pi answers an abort only once the agent has gone idle, so a tool call that
@@ -223,7 +225,7 @@ export const replacementProbeDelays = [150, 450, 1_000, 2_000, 3_200];
  * this grace period rather than leaving the session locked on a stop it cannot
  * confirm.
  */
-export const abortAcknowledgeDelay = 2_000;
+const abortAcknowledgeDelay = 2_000;
 
 /**
  * Stopping an idle runtime is not the neutral act it looks like. Pi hands a
@@ -238,41 +240,37 @@ export const abortAcknowledgeDelay = 2_000;
  * active ones past this limit are released. Runtimes that are still working
  * are never released, so the live total can exceed the limit while work runs.
  */
-export const idleRuntimeLimit = 6;
+const idleRuntimeLimit = 6;
 
-export let phantomSequence = 0;
-export let controllerSequence = 0;
-export let activitySequence = 0;
-export let remoteRetry: RemoteRetry | undefined;
-export const extensionDialogTimeouts = new Map<
+let phantomSequence = 0;
+let controllerSequence = 0;
+let activitySequence = 0;
+const extensionDialogTimeouts = new Map<
   string,
   ReturnType<typeof setTimeout>
 >();
-export const replacementProbeTimers = new Map<
+const replacementProbeTimers = new Map<
   string,
   ReturnType<typeof setTimeout>[]
 >();
-export const abortProbeTimers = new Map<
-  string,
-  ReturnType<typeof setTimeout>
->();
-export const extensionNotificationTimeouts = new Map<
+const abortProbeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const extensionNotificationTimeouts = new Map<
   string,
   ReturnType<typeof setTimeout>
 >();
 
-export const emptyMessages: TranscriptEntry[] = [];
-export const emptyModels: ModelOption[] = [];
-export const emptyEfforts: ThinkingLevel[] = [];
-export const emptyCommands: CommandOption[] = [];
+const emptyMessages: TranscriptEntry[] = [];
+const emptyModels: ModelOption[] = [];
+const emptyEfforts: ThinkingLevel[] = [];
+const emptyCommands: CommandOption[] = [];
 
-export const activeProject = computed(() =>
+const activeProject = computed(() =>
   state.workspace?.projects.find(
     (project) => project.path === state.activeProjectPath,
   ),
 );
 
-export const activeSession = computed(() =>
+const activeSession = computed(() =>
   activeProject.value
     ? projectSessions(activeProject.value).find(
         (session) => session.id === state.activeSessionId,
@@ -280,17 +278,17 @@ export const activeSession = computed(() =>
     : undefined,
 );
 
-export const activeController = computed(() =>
+const activeController = computed(() =>
   state.controllers.find(
     (controller) => controller.key === state.activeControllerKey,
   ),
 );
 
-export const messages = computed(
+const messages = computed(
   () => activeController.value?.messages ?? emptyMessages,
 );
-export const draft = computed({
-  get: () => activeController.value?.draft ?? "",
+const draft = computed({
+  get: () => activeController.value?.draft ?? '',
   set: (value: string) => {
     const controller = activeController.value;
     if (!controller) return;
@@ -299,47 +297,39 @@ export const draft = computed({
     if (session?.phantom) session.title = draftTitle(value);
   },
 });
-export const status = computed(
+const status = computed(
   () => activeController.value?.status || state.workspaceStatus,
 );
-export const streaming = computed(
-  () => activeController.value?.streaming === true,
-);
-export const stopping = computed(
-  () => activeController.value?.stopping === true,
-);
-export const models = computed(() => {
+const streaming = computed(() => activeController.value?.streaming === true);
+const stopping = computed(() => activeController.value?.stopping === true);
+const models = computed(() => {
   const controller = activeController.value;
   if (!controller) return emptyModels;
   return scopeModels(controller.models, controller.modelScope);
 });
-export const efforts = computed(
-  () => activeController.value?.efforts ?? emptyEfforts,
-);
-export const commands = computed(
+const efforts = computed(() => activeController.value?.efforts ?? emptyEfforts);
+const commands = computed(
   () => activeController.value?.commands ?? emptyCommands,
 );
-export const activeExtensionDialog = computed(() => {
+const activeExtensionDialog = computed(() => {
   const controller = activeController.value;
   if (!controller) return undefined;
   return state.extensionDialogs.find(
     (dialog) => dialog.controllerKey === controller.key,
   );
 });
-export const extensionNotifications = computed(
-  () => state.extensionNotifications,
+const extensionNotifications = computed(() => state.extensionNotifications);
+const currentModelProvider = computed(
+  () => activeController.value?.currentModelProvider ?? '',
 );
-export const currentModelProvider = computed(
-  () => activeController.value?.currentModelProvider ?? "",
+const currentModelId = computed(
+  () => activeController.value?.currentModelId ?? '',
 );
-export const currentModelId = computed(
-  () => activeController.value?.currentModelId ?? "",
-);
-export const currentEffort = computed(
-  () => activeController.value?.currentEffort ?? "off",
+const currentEffort = computed(
+  () => activeController.value?.currentEffort ?? 'off',
 );
 
-export const canDraft = computed(() =>
+const canDraft = computed(() =>
   Boolean(activeProject.value && activeSession.value && activeController.value),
 );
 
@@ -348,14 +338,14 @@ export const canDraft = computed(() =>
  * transcript, so the pane reports loading instead of rendering the empty
  * session composer over a session that already holds messages.
  */
-export const sessionLoading = computed(() => {
+const sessionLoading = computed(() => {
   const controller = activeController.value;
   if (!controller || controller.phantom) return false;
   if (controller.messages.length > 0 || controller.status) return false;
   return !controller.ready || controller.starting || controller.syncing;
 });
 
-export const canCompose = computed(() => {
+const canCompose = computed(() => {
   const controller = activeController.value;
   if (!activeProject.value || !activeSession.value || !controller) return false;
   if (controller.starting) return false;
@@ -364,26 +354,26 @@ export const canCompose = computed(() => {
     : controller.ready;
 });
 
-export const sessionTitle = computed(() => {
+const sessionTitle = computed(() => {
   const controller = activeController.value;
   return (
     controller?.sessionName ||
     activeSession.value?.title ||
     firstUserMessage(controller) ||
-    "New session"
+    'New session'
   );
 });
 
-export const currentModelLabel = computed(() => {
+const currentModelLabel = computed(() => {
   const controller = activeController.value;
-  return controller?.currentModelName || controller?.currentModelId || "Model";
+  return controller?.currentModelName || controller?.currentModelId || 'Model';
 });
 
-export const currentEffortLabel = computed(
-  () => effortLabels[activeController.value?.currentEffort ?? "off"],
+const currentEffortLabel = computed(
+  () => effortLabels[activeController.value?.currentEffort ?? 'off'],
 );
 
-export const settingsDisabled = computed(() => {
+const settingsDisabled = computed(() => {
   const controller = activeController.value;
   return (
     !controller ||
@@ -399,19 +389,19 @@ export const settingsDisabled = computed(() => {
  * runtime and a session Pi has already opened. An unsent session shows a
  * preview of its draft instead of a name, so it has nothing to rename yet.
  */
-export const canRenameSession = computed(() => {
+const canRenameSession = computed(() => {
   const controller = activeController.value;
   return Boolean(controller && !controller.phantom && controller.ready);
 });
 
-export function canArchiveSession(
+function canArchiveSession(
   project: ProjectSummary,
   session: SessionSummary,
 ): boolean {
   return ephemeralSession(project.path, session.id)?.phantom !== true;
 }
 
-export function projectSessions(project: ProjectSummary): SessionSummary[] {
+function projectSessions(project: ProjectSummary): SessionSummary[] {
   const ephemeral = state.ephemeralSessions.filter(
     (session) => session.projectPath === project.path,
   );
@@ -444,7 +434,7 @@ export function projectSessions(project: ProjectSummary): SessionSummary[] {
   });
 }
 
-export function sessionLastActive(
+function sessionLastActive(
   project: ProjectSummary,
   session: SessionSummary,
 ): string {
@@ -454,7 +444,7 @@ export function sessionLastActive(
     : session.lastActive;
 }
 
-export function sessionLastUserMessageAt(
+function sessionLastUserMessageAt(
   projectPath: string,
   session: SessionSummary,
 ): number {
@@ -464,7 +454,7 @@ export function sessionLastUserMessageAt(
   );
 }
 
-export function isSessionSelected(
+function isSessionSelected(
   project: ProjectSummary,
   session: SessionSummary,
 ): boolean {
@@ -474,63 +464,63 @@ export function isSessionSelected(
   );
 }
 
-export function sessionIndicator(
+function sessionIndicator(
   project: ProjectSummary,
   session: SessionSummary,
 ): SessionIndicator {
   const controller = controllerForSession(project.path, session.id);
-  if (!controller) return "";
+  if (!controller) return '';
   const selected = isSessionSelected(project, session);
-  if (!selected && controllerHasPendingDialog(controller)) return "new";
-  if (controller.working) return "working";
-  if (controller.draft.trim()) return "draft";
-  return controller.unread ? "new" : "";
+  if (!selected && controllerHasPendingDialog(controller)) return 'new';
+  if (controller.working) return 'working';
+  if (controller.draft.trim()) return 'draft';
+  return controller.unread ? 'new' : '';
 }
 
-export function isSessionUnread(
+function isSessionUnread(
   project: ProjectSummary,
   session: SessionSummary,
 ): boolean {
   return controllerForSession(project.path, session.id)?.unread === true;
 }
 
-export function markSessionUnread(
+function markSessionUnread(
   project: ProjectSummary,
   session: SessionSummary,
-) {
+): void {
   ensureController(project, session).unread = true;
 }
 
-export function markSessionRead(
+function markSessionRead(
   project: ProjectSummary,
   session: SessionSummary,
-) {
+): void {
   const controller = controllerForSession(project.path, session.id);
   if (controller) controller.unread = false;
 }
 
-export function indicatorLabel(indicator: SessionIndicator): string {
-  return indicator ? indicatorLabels[indicator] : "";
+function indicatorLabel(indicator: SessionIndicator): string {
+  return indicator ? indicatorLabels[indicator] : '';
 }
 
-export function projectIndicator(project: ProjectSummary): SessionIndicator {
-  if (!project.collapsed) return "";
+function projectIndicator(project: ProjectSummary): SessionIndicator {
+  if (!project.collapsed) return '';
   const indicators = new Set(
     projectSessions(project).map((session) =>
       sessionIndicator(project, session),
     ),
   );
-  for (const indicator of ["new", "draft", "working"] as const) {
+  for (const indicator of ['new', 'draft', 'working'] as const) {
     if (indicators.has(indicator)) return indicator;
   }
-  return "";
+  return '';
 }
 
-export function setActiveSessionView(
+function setActiveSessionView(
   project: ProjectSummary,
   session: SessionSummary,
   controller: SessionController,
-) {
+): void {
   state.activeProjectPath = project.path;
   state.activeSessionId = session.id;
   state.activeSessionPath = session.path;
@@ -539,7 +529,7 @@ export function setActiveSessionView(
   touchController(controller);
 }
 
-export function createPhantomSession(
+function createPhantomSession(
   projectPath: string,
   controllerKey: string,
 ): EphemeralSession {
@@ -547,9 +537,9 @@ export function createPhantomSession(
   const now = Date.now();
   return {
     id: `phantom-${now}-${phantomSequence}`,
-    path: "",
-    title: "New session",
-    lastActive: "now",
+    path: '',
+    title: 'New session',
+    lastActive: 'now',
     lastUserMessageAt: 0,
     archived: false,
     selected: true,
@@ -560,9 +550,7 @@ export function createPhantomSession(
   };
 }
 
-export function workspaceContainsSession(
-  controller: SessionController,
-): boolean {
+function workspaceContainsSession(controller: SessionController): boolean {
   return (
     state.workspace?.projects
       .find((project) => project.path === controller.projectPath)
@@ -570,7 +558,7 @@ export function workspaceContainsSession(
   );
 }
 
-export function ensureController(
+function ensureController(
   project: ProjectSummary,
   session: SessionSummary,
 ): SessionController {
@@ -580,10 +568,10 @@ export function ensureController(
   );
 }
 
-export function inheritControllerSettings(
+function inheritControllerSettings(
   controller: SessionController,
   preferred: SessionController | undefined,
-) {
+): void {
   const source =
     preferred &&
     (preferred.models.length > 0 ||
@@ -626,13 +614,13 @@ export function inheritControllerSettings(
   }
 }
 
-export function createController(
+function createController(
   project: ProjectSummary,
   session: SessionSummary,
   key: string,
 ): SessionController {
   const phantom =
-    ("phantom" in session && session.phantom === true) ||
+    ('phantom' in session && session.phantom === true) ||
     ephemeralSession(project.path, session.id)?.phantom === true;
   const controller: SessionController = reactive({
     key,
@@ -640,7 +628,7 @@ export function createController(
     projectPath: project.path,
     sessionId: session.id,
     sessionPath: session.path,
-    sessionName: session.title === "New session" ? "" : session.title,
+    sessionName: session.title === 'New session' ? '' : session.title,
     phantom,
     generation: 0,
     ready: false,
@@ -652,27 +640,27 @@ export function createController(
     lastUserMessageAt: session.lastUserMessageAt,
     messages: [],
     localErrors: [],
-    draft: "",
-    status: "",
-    currentModelProvider: "",
-    currentModelId: "",
-    currentModelName: "",
-    currentEffort: "off",
-    pendingEffort: "",
+    draft: '',
+    status: '',
+    currentModelProvider: '',
+    currentModelId: '',
+    currentModelName: '',
+    currentEffort: 'off',
+    pendingEffort: '',
     models: [],
     modelScope: [],
     efforts: [],
     commands: [],
     commandsLoaded: false,
     pendingPrompt: undefined,
-    bootstrapStateRequestId: "",
-    bootstrapSessionPath: "",
-    runStateRequestId: "",
-    startMessagesRequestId: "",
-    commandPromptRequestId: "",
-    commandSyncRequestId: "",
-    replacementProbeRequestId: "",
-    abortProbeRequestId: "",
+    bootstrapStateRequestId: '',
+    bootstrapSessionPath: '',
+    runStateRequestId: '',
+    startMessagesRequestId: '',
+    commandPromptRequestId: '',
+    commandSyncRequestId: '',
+    replacementProbeRequestId: '',
+    abortProbeRequestId: '',
     connectingRemote: false,
     syncing: false,
     lastActiveSequence: (activitySequence += 1),
@@ -683,7 +671,7 @@ export function createController(
   return controller;
 }
 
-export function controllerForSession(
+function controllerForSession(
   projectPath: string,
   sessionId: string,
 ): SessionController | undefined {
@@ -696,11 +684,11 @@ export function controllerForSession(
   );
 }
 
-export function controllerByKey(key: string): SessionController | undefined {
+function controllerByKey(key: string): SessionController | undefined {
   return state.controllers.find((controller) => controller.key === key);
 }
 
-export function controllerByRuntimeId(
+function controllerByRuntimeId(
   runtimeId: string,
 ): SessionController | undefined {
   return state.controllers.find(
@@ -708,7 +696,7 @@ export function controllerByRuntimeId(
   );
 }
 
-export function ephemeralSession(
+function ephemeralSession(
   projectPath: string,
   sessionId: string,
 ): EphemeralSession | undefined {
@@ -718,7 +706,7 @@ export function ephemeralSession(
   );
 }
 
-export function ephemeralSessionByController(
+function ephemeralSessionByController(
   controllerKey: string,
 ): EphemeralSession | undefined {
   return state.ephemeralSessions.find(
@@ -726,40 +714,38 @@ export function ephemeralSessionByController(
   );
 }
 
-export function isControllerSelected(controller: SessionController): boolean {
+function isControllerSelected(controller: SessionController): boolean {
   return controller.key === state.activeControllerKey;
 }
 
-export function controllerHasPendingDialog(
-  controller: SessionController,
-): boolean {
+function controllerHasPendingDialog(controller: SessionController): boolean {
   return state.extensionDialogs.some(
     (dialog) => dialog.controllerKey === controller.key,
   );
 }
 
-export function runtimeAvailable(project: ProjectSummary): boolean {
+function runtimeAvailable(project: ProjectSummary): boolean {
   if (project.connectionString) return true;
   return Boolean(state.workspace?.piPath);
 }
 
-export function touchController(controller: SessionController) {
+function touchController(controller: SessionController): void {
   activitySequence += 1;
   controller.lastActiveSequence = activitySequence;
 }
 
-export function markUserMessageSubmitted(controller: SessionController) {
+function markUserMessageSubmitted(controller: SessionController): void {
   controller.lastUserMessageAt = Date.now();
   const session = ephemeralSessionByController(controller.key);
   if (session) {
     session.lastUserMessageAt = controller.lastUserMessageAt;
-    session.lastActive = "now";
+    session.lastActive = 'now';
   }
 }
 
-export function relativeTimestamp(timestamp: number): string {
+function relativeTimestamp(timestamp: number): string {
   const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1_000));
-  if (seconds < 60) return "now";
+  if (seconds < 60) return 'now';
   if (seconds < 3_600) return `${Math.floor(seconds / 60)}m`;
   if (seconds < 86_400) return `${Math.floor(seconds / 3_600)}h`;
   if (seconds < 604_800) return `${Math.floor(seconds / 86_400)}d`;
@@ -767,21 +753,21 @@ export function relativeTimestamp(timestamp: number): string {
   return `${Math.floor(seconds / 31_536_000)}y`;
 }
 
-export function draftTitle(value: string): string {
-  return normalizeSessionName(value) || "New session";
+function draftTitle(value: string): string {
+  return normalizeSessionName(value) || 'New session';
 }
 
-export function normalizeSessionName(value: string): string {
-  return value.replace(/\s+/g, " ").trim().slice(0, 240);
+function normalizeSessionName(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().slice(0, 240);
 }
 
-export function commandOption(value: unknown): CommandOption | undefined {
+function commandOption(value: unknown): CommandOption | undefined {
   const command = asRecord(value);
   const name = stringValue(command?.name);
   const source = stringValue(command?.source);
   if (
     !name ||
-    (source !== "extension" && source !== "prompt" && source !== "skill")
+    (source !== 'extension' && source !== 'prompt' && source !== 'skill')
   ) {
     return undefined;
   }
@@ -794,56 +780,54 @@ export function commandOption(value: unknown): CommandOption | undefined {
   };
 }
 
-export function normalizeEffort(value: unknown): ThinkingLevel {
-  return value === "minimal" ||
-    value === "low" ||
-    value === "medium" ||
-    value === "high" ||
-    value === "xhigh" ||
-    value === "max"
+function normalizeEffort(value: unknown): ThinkingLevel {
+  return value === 'minimal' ||
+    value === 'low' ||
+    value === 'medium' ||
+    value === 'high' ||
+    value === 'xhigh' ||
+    value === 'max'
     ? value
-    : "off";
+    : 'off';
 }
 
-export function nextRequestId(label: string): string {
+function nextRequestId(label: string): string {
   state.requestSequence += 1;
   return `tau-${label}-${state.requestSequence}`;
 }
 
-export function nextControllerKey(): string {
+function nextControllerKey(): string {
   controllerSequence += 1;
   return `${Date.now()}-${controllerSequence}`;
 }
 
-export function firstUserMessage(
-  controller: SessionController | undefined,
-): string {
+function firstUserMessage(controller: SessionController | undefined): string {
   return (
-    controller?.messages.find((message) => message.kind === "user")?.text ?? ""
+    controller?.messages.find((message) => message.kind === 'user')?.text ?? ''
   );
 }
 
-export function clearActiveSession() {
-  state.activeProjectPath = "";
-  state.activeSessionId = "";
-  state.activeSessionPath = "";
-  state.activeControllerKey = "";
+function clearActiveSession(): void {
+  state.activeProjectPath = '';
+  state.activeSessionId = '';
+  state.activeSessionPath = '';
+  state.activeControllerKey = '';
 }
 
-export function clearRemoteDirectoryBrowser() {
-  state.remoteDirectoryHost = "";
-  state.remoteDirectoryRoot = "";
-  state.remoteWorkingDirectory = "";
+function clearRemoteDirectoryBrowser(): void {
+  state.remoteDirectoryHost = '';
+  state.remoteDirectoryRoot = '';
+  state.remoteWorkingDirectory = '';
   state.remoteDirectoryHistory = [];
   state.remoteDirectories = [];
-  state.remoteDirectoryFilter = "";
+  state.remoteDirectoryFilter = '';
   state.remoteDirectorySelectedIndex = 0;
 }
 
-export function applyRemoteDirectoryListing(
+function applyRemoteDirectoryListing(
   listing: RemoteDirectoryListing,
   initial = false,
-) {
+): void {
   state.remoteConnectionString = listing.connectionString;
   state.remoteDirectoryHost = listing.host;
   if (initial) {
@@ -852,15 +836,15 @@ export function applyRemoteDirectoryListing(
   }
   state.remoteWorkingDirectory = listing.workingDirectory;
   state.remoteDirectories = listing.directories;
-  state.remoteDirectoryFilter = "";
+  state.remoteDirectoryFilter = '';
   state.remoteDirectorySelectedIndex = 0;
-  state.remoteConnectionError = "";
+  state.remoteConnectionError = '';
 }
 
-export function presentRemoteConnectionError(
+function presentRemoteConnectionError(
   controller: SessionController,
   error: unknown,
-) {
+): void {
   controller.ready = false;
   controller.streaming = false;
   controller.stopping = false;
@@ -868,7 +852,7 @@ export function presentRemoteConnectionError(
   controller.working = false;
   controller.connectingRemote = false;
   controller.syncing = false;
-  controller.runStateRequestId = "";
+  controller.runStateRequestId = '';
   controller.status = errorMessage(error);
   if (!isControllerSelected(controller)) return;
 
@@ -876,14 +860,14 @@ export function presentRemoteConnectionError(
     (item) => item.path === controller.projectPath,
   );
   if (!project?.connectionString) return;
-  remoteRetry = {
+  state.remoteRetry = {
     controllerKey: controller.key,
     projectPath: project.path,
     sessionPath: controller.sessionPath || undefined,
     preserveMessages: controller.messages.length > 0,
   };
-  state.remoteDialogMode = "retry";
-  state.remoteDialogStep = "connection";
+  state.remoteDialogMode = 'retry';
+  state.remoteDialogStep = 'connection';
   state.remoteConnectionString = project.connectionString;
   clearRemoteDirectoryBrowser();
   state.remoteConnectionError = controller.status;
@@ -891,35 +875,140 @@ export function presentRemoteConnectionError(
   state.remoteDialogOpen = true;
 }
 
-export function clearRemoteRetry() {
-  remoteRetry = undefined;
+function clearRemoteRetry(): void {
+  state.remoteRetry = undefined;
 }
 
-export function finishRemoteConnection(controller: SessionController) {
+function finishRemoteConnection(controller: SessionController): void {
   controller.connectingRemote = false;
-  if (remoteRetry?.controllerKey !== controller.key) return;
-  remoteRetry = undefined;
+  if (state.remoteRetry?.controllerKey !== controller.key) return;
+  state.remoteRetry = undefined;
   state.remoteConnecting = false;
-  if (state.remoteDialogMode === "retry") {
+  if (state.remoteDialogMode === 'retry') {
     state.remoteDialogOpen = false;
-    state.remoteConnectionError = "";
+    state.remoteConnectionError = '';
     clearRemoteDirectoryBrowser();
   }
 }
 
-export function errorMessage(error: unknown): string {
+function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function setControllerError(
+function setControllerError(
   controller: SessionController,
   error: unknown,
-) {
+): void {
   controller.status = errorMessage(error);
 }
 
-export function setActiveError(error: unknown) {
+function setActiveError(error: unknown): void {
   const controller = activeController.value;
   if (controller) setControllerError(controller, error);
   else state.workspaceStatus = errorMessage(error);
 }
+
+export type {
+  WorkspaceSnapshot,
+  ProjectSummary,
+  SessionSummary,
+  RemoteDirectoryEntry,
+  RemoteDirectoryListing,
+  ExtensionDialogMethod,
+  ExtensionDialog,
+  ExtensionNotificationType,
+  ExtensionNotification,
+  SessionIndicator,
+  EphemeralSession,
+  PendingPrompt,
+  SessionController,
+  RemoteRetry,
+  RemoteDialogMode,
+  RemoteDialogStep,
+  RemoteDirectoryChoice,
+};
+
+export {
+  effortLabels,
+  indicatorLabels,
+  state,
+  replacementProbeDelays,
+  abortAcknowledgeDelay,
+  idleRuntimeLimit,
+  extensionDialogTimeouts,
+  replacementProbeTimers,
+  abortProbeTimers,
+  extensionNotificationTimeouts,
+  emptyMessages,
+  emptyModels,
+  emptyEfforts,
+  emptyCommands,
+  activeProject,
+  activeSession,
+  activeController,
+  messages,
+  draft,
+  status,
+  streaming,
+  stopping,
+  models,
+  efforts,
+  commands,
+  activeExtensionDialog,
+  extensionNotifications,
+  currentModelProvider,
+  currentModelId,
+  currentEffort,
+  canDraft,
+  sessionLoading,
+  canCompose,
+  sessionTitle,
+  currentModelLabel,
+  currentEffortLabel,
+  settingsDisabled,
+  canRenameSession,
+  canArchiveSession,
+  projectSessions,
+  sessionLastActive,
+  sessionLastUserMessageAt,
+  isSessionSelected,
+  sessionIndicator,
+  isSessionUnread,
+  markSessionUnread,
+  markSessionRead,
+  indicatorLabel,
+  projectIndicator,
+  setActiveSessionView,
+  createPhantomSession,
+  workspaceContainsSession,
+  ensureController,
+  inheritControllerSettings,
+  createController,
+  controllerForSession,
+  controllerByKey,
+  controllerByRuntimeId,
+  ephemeralSession,
+  ephemeralSessionByController,
+  isControllerSelected,
+  controllerHasPendingDialog,
+  runtimeAvailable,
+  touchController,
+  markUserMessageSubmitted,
+  relativeTimestamp,
+  draftTitle,
+  normalizeSessionName,
+  commandOption,
+  normalizeEffort,
+  nextRequestId,
+  nextControllerKey,
+  firstUserMessage,
+  clearActiveSession,
+  clearRemoteDirectoryBrowser,
+  applyRemoteDirectoryListing,
+  presentRemoteConnectionError,
+  clearRemoteRetry,
+  finishRemoteConnection,
+  errorMessage,
+  setControllerError,
+  setActiveError,
+};

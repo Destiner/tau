@@ -3,18 +3,8 @@
  * runtime, the extension UI requests they surface, and the controller
  * lifecycle (start, release, dispose). Mirrors src-tauri/src/pi.rs.
  */
-import { invoke } from "@tauri-apps/api/core";
-import {
-  appendLocalErrors,
-  asRecord,
-  hydrateTranscript,
-  messageFailure,
-  stringValue,
-  toolArgumentsText,
-  toolResultText,
-  toolSummary,
-} from "./transcript";
-import { describePiError } from "./error";
+import { invoke } from '@tauri-apps/api/core';
+
 import {
   abortAcknowledgeDelay,
   abortProbeTimers,
@@ -52,16 +42,28 @@ import {
   type ProjectSummary,
   type SessionController,
   type WorkspaceSnapshot,
-} from "../../composables/state";
-import type { ModelOption } from "./model-scope";
-import type { CommandOption } from "../commands";
-import type { PiBridgeEvent } from "./bridge";
+} from '../../composables/state';
+import type { CommandOption } from '../commands';
 
-export async function sendPhantomMessage(
+import type { PiBridgeEvent } from './bridge';
+import { describePiError } from './error';
+import type { ModelOption } from './model-scope';
+import {
+  appendLocalErrors,
+  asRecord,
+  hydrateTranscript,
+  messageFailure,
+  stringValue,
+  toolArgumentsText,
+  toolResultText,
+  toolSummary,
+} from './transcript';
+
+async function sendPhantomMessage(
   controller: SessionController,
   message: string,
   command: boolean,
-) {
+): Promise<void> {
   const project = state.workspace?.projects.find(
     (item) => item.path === controller.projectPath,
   );
@@ -72,51 +74,51 @@ export async function sendPhantomMessage(
     message,
     optimisticId,
     command,
-    stateRequestId: "",
-    messagesRequestId: "",
+    stateRequestId: '',
+    messagesRequestId: '',
     selectedModelProvider: controller.currentModelProvider,
     selectedModelId: controller.currentModelId,
     selectedModelName: controller.currentModelName,
     selectedEffort: controller.currentEffort,
-    settingsRequestId: "",
-    settingsStep: "",
+    settingsRequestId: '',
+    settingsStep: '',
   };
-  controller.draft = "";
+  controller.draft = '';
   controller.working = true;
   if (!command) {
-    controller.messages.push({ id: optimisticId, kind: "user", text: message });
+    controller.messages.push({ id: optimisticId, kind: 'user', text: message });
   }
-  controller.status = "";
+  controller.status = '';
 
   if (controller.ready && controller.generation) {
     controller.starting = true;
-    const stateRequestId = nextRequestId("state");
+    const stateRequestId = nextRequestId('state');
     controller.pendingPrompt.stateRequestId = stateRequestId;
-    await rpc(controller, { id: stateRequestId, type: "get_state" });
+    await rpc(controller, { id: stateRequestId, type: 'get_state' });
     return;
   }
   await startController(controller, project, undefined, true);
 }
 
-export async function startController(
+async function startController(
   controller: SessionController,
   project: ProjectSummary,
   sessionPath?: string,
   preserveMessages = false,
-) {
+): Promise<void> {
   if (controller.starting || controller.disposed) return;
   controller.ready = false;
   controller.starting = true;
   controller.stopping = false;
   controller.connectingRemote = Boolean(project.connectionString);
-  controller.bootstrapStateRequestId = "";
-  controller.bootstrapSessionPath = sessionPath ?? "";
-  controller.runStateRequestId = "";
-  controller.startMessagesRequestId = "";
-  controller.commandPromptRequestId = "";
-  controller.commandSyncRequestId = "";
-  controller.replacementProbeRequestId = "";
-  controller.abortProbeRequestId = "";
+  controller.bootstrapStateRequestId = '';
+  controller.bootstrapSessionPath = sessionPath ?? '';
+  controller.runStateRequestId = '';
+  controller.startMessagesRequestId = '';
+  controller.commandPromptRequestId = '';
+  controller.commandSyncRequestId = '';
+  controller.replacementProbeRequestId = '';
+  controller.abortProbeRequestId = '';
   touchController(controller);
   clearSessionReplacementWatch(controller);
   clearAbortWatch(controller);
@@ -127,27 +129,27 @@ export async function startController(
   controller.efforts = [];
   controller.commands = [];
   controller.commandsLoaded = false;
-  controller.status = "";
+  controller.status = '';
   discardControllerDialogs(controller);
   void refreshModelScope(controller, project);
 
   try {
     if (project.connectionString) {
-      controller.generation = await invoke<number>("start_pi_remote", {
+      controller.generation = await invoke<number>('start_pi_remote', {
         runtimeId: controller.runtimeId,
         connectionString: project.connectionString,
         workingDirectory: project.workingDirectory,
         sessionPath: sessionPath ?? null,
       });
     } else {
-      controller.generation = await invoke<number>("start_pi", {
+      controller.generation = await invoke<number>('start_pi', {
         runtimeId: controller.runtimeId,
         projectPath: project.workingDirectory,
         sessionPath: sessionPath ?? null,
       });
     }
     if (controller.disposed) {
-      await invoke("stop_pi", { runtimeId: controller.runtimeId });
+      await invoke('stop_pi', { runtimeId: controller.runtimeId });
       return;
     }
     await requestBootstrap(controller);
@@ -162,83 +164,83 @@ export async function startController(
   }
 }
 
-export async function refreshModelScope(
+async function refreshModelScope(
   controller: SessionController,
   project: ProjectSummary,
-) {
+): Promise<void> {
   try {
     const patterns = project.connectionString
-      ? await invoke<string[]>("read_remote_model_scope", {
+      ? await invoke<string[]>('read_remote_model_scope', {
           connectionString: project.connectionString,
         })
-      : await invoke<string[]>("read_model_scope");
+      : await invoke<string[]>('read_model_scope');
     if (controller.disposed || !Array.isArray(patterns)) return;
     controller.modelScope = patterns.filter(
-      (pattern) => typeof pattern === "string",
+      (pattern) => typeof pattern === 'string',
     );
   } catch {
     controller.modelScope = [];
   }
 }
 
-export async function requestBootstrap(controller: SessionController) {
+async function requestBootstrap(controller: SessionController): Promise<void> {
   await rpc(controller, {
-    id: nextRequestId("models"),
-    type: "get_available_models",
+    id: nextRequestId('models'),
+    type: 'get_available_models',
   });
   await rpc(controller, {
-    id: nextRequestId("commands"),
-    type: "get_commands",
+    id: nextRequestId('commands'),
+    type: 'get_commands',
   });
-  const stateRequestId = nextRequestId("state");
+  const stateRequestId = nextRequestId('state');
   controller.bootstrapStateRequestId = stateRequestId;
   if (controller.pendingPrompt) {
     controller.pendingPrompt.stateRequestId = stateRequestId;
   }
-  await rpc(controller, { id: stateRequestId, type: "get_state" });
+  await rpc(controller, { id: stateRequestId, type: 'get_state' });
 }
 
-export async function rpc(
+async function rpc(
   controller: SessionController,
   request: Record<string, unknown>,
-) {
-  await invoke("send_pi", { runtimeId: controller.runtimeId, request });
+): Promise<void> {
+  await invoke('send_pi', { runtimeId: controller.runtimeId, request });
 }
 
-export async function submitExtensionDialog(value: string | boolean) {
+async function submitExtensionDialog(value: string | boolean): Promise<void> {
   const dialog = activeExtensionDialog.value;
   if (!dialog) return;
   const response =
-    dialog.method === "confirm" && typeof value === "boolean"
+    dialog.method === 'confirm' && typeof value === 'boolean'
       ? {
-          type: "extension_ui_response",
+          type: 'extension_ui_response',
           id: dialog.requestId,
           confirmed: value,
         }
-      : typeof value === "string"
-        ? { type: "extension_ui_response", id: dialog.requestId, value }
+      : typeof value === 'string'
+        ? { type: 'extension_ui_response', id: dialog.requestId, value }
         : {
-            type: "extension_ui_response",
+            type: 'extension_ui_response',
             id: dialog.requestId,
             cancelled: true,
           };
   await respondToExtensionDialog(dialog, response);
 }
 
-export async function cancelExtensionDialog() {
+async function cancelExtensionDialog(): Promise<void> {
   const dialog = activeExtensionDialog.value;
   if (!dialog) return;
   await respondToExtensionDialog(dialog, {
-    type: "extension_ui_response",
+    type: 'extension_ui_response',
     id: dialog.requestId,
     cancelled: true,
   });
 }
 
-export async function respondToExtensionDialog(
+async function respondToExtensionDialog(
   dialog: ExtensionDialog,
   response: Record<string, unknown>,
-) {
+): Promise<void> {
   discardExtensionDialog(dialog.key);
   const controller = controllerByKey(dialog.controllerKey);
   if (
@@ -259,10 +261,10 @@ export async function respondToExtensionDialog(
   }
 }
 
-export function handleExtensionUIRequest(
+function handleExtensionUIRequest(
   controller: SessionController,
   request: Record<string, unknown>,
-) {
+): void {
   const requestId = stringValue(request.id);
   const method = stringValue(request.method);
   if (!requestId || !method) return;
@@ -270,7 +272,7 @@ export function handleExtensionUIRequest(
   if (isExtensionDialogMethod(method)) {
     const origin = extensionRequestOrigin(controller);
     const timeout =
-      typeof request.timeout === "number" &&
+      typeof request.timeout === 'number' &&
       Number.isFinite(request.timeout) &&
       request.timeout > 0
         ? request.timeout
@@ -288,21 +290,21 @@ export function handleExtensionUIRequest(
       ...(origin.workingDirectory
         ? { workingDirectory: origin.workingDirectory }
         : {}),
-      draft: typeof request.prefill === "string" ? request.prefill : "",
-      ...(typeof request.message === "string"
+      draft: typeof request.prefill === 'string' ? request.prefill : '',
+      ...(typeof request.message === 'string'
         ? { message: request.message }
         : {}),
       ...(Array.isArray(request.options)
         ? {
             options: request.options.filter(
-              (option): option is string => typeof option === "string",
+              (option): option is string => typeof option === 'string',
             ),
           }
         : {}),
-      ...(typeof request.placeholder === "string"
+      ...(typeof request.placeholder === 'string'
         ? { placeholder: request.placeholder }
         : {}),
-      ...(typeof request.prefill === "string"
+      ...(typeof request.prefill === 'string'
         ? { prefill: request.prefill }
         : {}),
       ...(timeout ? { timeout } : {}),
@@ -319,7 +321,7 @@ export function handleExtensionUIRequest(
     return;
   }
 
-  if (method === "notify" && typeof request.message === "string") {
+  if (method === 'notify' && typeof request.message === 'string') {
     const origin = extensionRequestOrigin(controller);
     const type = extensionNotificationType(request.notifyType);
     const notification: ExtensionNotification = {
@@ -345,40 +347,42 @@ export function handleExtensionUIRequest(
     return;
   }
 
-  if (method === "setStatus") return;
+  if (method === 'setStatus') return;
 
-  if (method === "set_editor_text" && typeof request.text === "string") {
+  if (method === 'set_editor_text' && typeof request.text === 'string') {
     controller.draft = request.text;
     const session = ephemeralSessionByController(controller.key);
     if (session?.phantom) session.title = draftTitle(request.text);
   }
 }
 
-export function isExtensionDialogMethod(
+function isExtensionDialogMethod(
   method: string,
 ): method is ExtensionDialogMethod {
   return (
-    method === "select" ||
-    method === "confirm" ||
-    method === "input" ||
-    method === "editor"
+    method === 'select' ||
+    method === 'confirm' ||
+    method === 'input' ||
+    method === 'editor'
   );
 }
 
-export function extensionDialogTitle(method: ExtensionDialogMethod): string {
-  if (method === "select") return "Choose an option";
-  if (method === "confirm") return "Confirm";
-  if (method === "input") return "Enter a value";
-  return "Edit text";
+function extensionDialogTitle(method: ExtensionDialogMethod): string {
+  if (method === 'select') return 'Choose an option';
+  if (method === 'confirm') return 'Confirm';
+  if (method === 'input') return 'Enter a value';
+  return 'Edit text';
 }
 
-export function extensionNotificationType(
-  value: unknown,
-): ExtensionNotificationType {
-  return value === "warning" || value === "error" ? value : "info";
+function extensionNotificationType(value: unknown): ExtensionNotificationType {
+  return value === 'warning' || value === 'error' ? value : 'info';
 }
 
-export function extensionRequestOrigin(controller: SessionController) {
+function extensionRequestOrigin(controller: SessionController): {
+  workingDirectory?: string | undefined;
+  projectName: string;
+  sessionName: string;
+} {
   const project = state.workspace?.projects.find(
     (item) => item.path === controller.projectPath,
   );
@@ -393,7 +397,7 @@ export function extensionRequestOrigin(controller: SessionController) {
       ephemeral?.title ||
       saved?.title ||
       firstUserMessage(controller) ||
-      "New session",
+      'New session',
     // A remote project's files are on the other host, where nothing local can
     // open them, so its paths are left as text.
     ...(project && !project.connectionString
@@ -402,14 +406,14 @@ export function extensionRequestOrigin(controller: SessionController) {
   };
 }
 
-export function extensionRequestKey(
+function extensionRequestKey(
   controller: SessionController,
   requestId: string,
 ): string {
   return `${controller.runtimeId}:${controller.generation}:${requestId}`;
 }
 
-export function discardExtensionDialog(key: string) {
+function discardExtensionDialog(key: string): void {
   const timeout = extensionDialogTimeouts.get(key);
   if (timeout) clearTimeout(timeout);
   extensionDialogTimeouts.delete(key);
@@ -419,10 +423,10 @@ export function discardExtensionDialog(key: string) {
   if (index >= 0) state.extensionDialogs.splice(index, 1);
 }
 
-export function discardControllerDialogs(
+function discardControllerDialogs(
   controller: SessionController,
   generation?: number,
-) {
+): void {
   for (const dialog of [...state.extensionDialogs]) {
     if (
       dialog.controllerKey === controller.key &&
@@ -433,7 +437,7 @@ export function discardControllerDialogs(
   }
 }
 
-export function dismissExtensionNotification(key: string) {
+function dismissExtensionNotification(key: string): void {
   const timeout = extensionNotificationTimeouts.get(key);
   if (timeout) clearTimeout(timeout);
   extensionNotificationTimeouts.delete(key);
@@ -443,7 +447,7 @@ export function dismissExtensionNotification(key: string) {
   if (index >= 0) state.extensionNotifications.splice(index, 1);
 }
 
-export function clearExtensionUiState() {
+function clearExtensionUiState(): void {
   for (const timeout of extensionDialogTimeouts.values()) clearTimeout(timeout);
   extensionDialogTimeouts.clear();
   state.extensionDialogs.splice(0);
@@ -454,11 +458,11 @@ export function clearExtensionUiState() {
   state.extensionNotifications.splice(0);
 }
 
-export async function handleBridgeEvent(event: PiBridgeEvent) {
+async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
   const controller = controllerByRuntimeId(event.runtimeId);
   if (!controller) return;
   touchController(controller);
-  if (event.kind === "started") {
+  if (event.kind === 'started') {
     if (event.generation > controller.generation) {
       discardControllerDialogs(controller);
       controller.generation = event.generation;
@@ -467,7 +471,7 @@ export async function handleBridgeEvent(event: PiBridgeEvent) {
   }
   if (event.generation !== controller.generation) return;
 
-  if (event.kind === "rpc" && event.line) {
+  if (event.kind === 'rpc' && event.line) {
     let value: unknown;
     try {
       value = JSON.parse(event.line);
@@ -477,9 +481,9 @@ export async function handleBridgeEvent(event: PiBridgeEvent) {
     await handleRpc(controller, value);
     return;
   }
-  if (event.kind === "stderr") return;
-  if (event.kind === "error") {
-    const message = event.message || "The Pi connection failed.";
+  if (event.kind === 'stderr') return;
+  if (event.kind === 'error') {
+    const message = event.message || 'The Pi connection failed.';
     if (controller.connectingRemote) {
       presentRemoteConnectionError(controller, message);
       return;
@@ -488,75 +492,78 @@ export async function handleBridgeEvent(event: PiBridgeEvent) {
     else setControllerError(controller, message);
     return;
   }
-  if (event.kind === "exited") {
+  if (event.kind === 'exited') {
     clearSessionReplacementWatch(controller);
     clearAbortWatch(controller);
     discardControllerDialogs(controller, event.generation);
     const message =
       event.code === 0
-        ? ""
-        : event.message || "The Pi process stopped unexpectedly.";
+        ? ''
+        : event.message || 'The Pi process stopped unexpectedly.';
     if (controller.connectingRemote) {
       presentRemoteConnectionError(
         controller,
-        message || "The remote Pi process stopped before it was ready.",
+        message || 'The remote Pi process stopped before it was ready.',
       );
       return;
     }
     if (controller.pendingPrompt) {
-      cancelPendingPrompt(controller, message || "The Pi process stopped.");
+      cancelPendingPrompt(controller, message || 'The Pi process stopped.');
     }
     controller.ready = false;
     controller.streaming = false;
     controller.stopping = false;
     controller.starting = false;
     controller.working = false;
-    controller.runStateRequestId = "";
+    controller.runStateRequestId = '';
     controller.generation = 0;
     controller.status = message;
   }
 }
 
-export async function handleRpc(controller: SessionController, value: unknown) {
+async function handleRpc(
+  controller: SessionController,
+  value: unknown,
+): Promise<void> {
   const event = asRecord(value);
   if (!event) return;
   const type = stringValue(event.type);
-  if (type === "extension_ui_request") {
+  if (type === 'extension_ui_request') {
     handleExtensionUIRequest(controller, event);
     return;
   }
-  if (type === "response") {
+  if (type === 'response') {
     await handleResponse(controller, event);
     return;
   }
-  if (type === "agent_start") {
+  if (type === 'agent_start') {
     clearSessionReplacementWatch(controller);
     clearAbortWatch(controller);
     controller.localErrors = [];
     controller.streaming = true;
     controller.stopping = false;
     controller.working = true;
-    controller.status = "";
-    const stateRequestId = nextRequestId("run-state");
+    controller.status = '';
+    const stateRequestId = nextRequestId('run-state');
     controller.runStateRequestId = stateRequestId;
-    await rpc(controller, { id: stateRequestId, type: "get_state" });
+    await rpc(controller, { id: stateRequestId, type: 'get_state' });
     return;
   }
-  if (type === "message_update") {
+  if (type === 'message_update') {
     const delta = asRecord(event.assistantMessageEvent);
     const deltaType = stringValue(delta?.type);
-    if (deltaType === "text_delta") {
-      appendStream(controller, "assistant", stringValue(delta?.delta));
+    if (deltaType === 'text_delta') {
+      appendStream(controller, 'assistant', stringValue(delta?.delta));
       if (!isControllerSelected(controller)) controller.unread = true;
     }
-    if (deltaType === "thinking_delta") {
-      appendStream(controller, "thinking", stringValue(delta?.delta));
+    if (deltaType === 'thinking_delta') {
+      appendStream(controller, 'thinking', stringValue(delta?.delta));
     }
     return;
   }
   // A turn that failed is settled from Pi's messages soon after, but only once
   // the run ends, and a retry can hold that off for the length of its backoff.
-  if (type === "message_end") {
+  if (type === 'message_end') {
     const failure = messageFailure(event.message);
     if (failure) pushError(controller, failure);
     return;
@@ -566,7 +573,7 @@ export async function handleRpc(controller: SessionController, value: unknown) {
    * has no entry for it, so the row is held on the controller and re-appended
    * to every list hydrated until the next run begins.
    */
-  if (type === "compaction_end") {
+  if (type === 'compaction_end') {
     const failure = stringValue(event.errorMessage);
     if (failure) {
       controller.localErrors.push(failure);
@@ -574,12 +581,12 @@ export async function handleRpc(controller: SessionController, value: unknown) {
     }
     return;
   }
-  if (type === "tool_execution_start") {
+  if (type === 'tool_execution_start') {
     const toolCallId = stringValue(event.toolCallId);
-    const toolName = stringValue(event.toolName) || "tool";
+    const toolName = stringValue(event.toolName) || 'tool';
     controller.messages.push({
       id: `stream-tool-${controller.streamSequence++}`,
-      kind: "tool",
+      kind: 'tool',
       text: toolSummary(event.args),
       toolCallId,
       toolName,
@@ -589,12 +596,12 @@ export async function handleRpc(controller: SessionController, value: unknown) {
     });
     return;
   }
-  if (type === "tool_execution_end") {
+  if (type === 'tool_execution_end') {
     const toolCallId = stringValue(event.toolCallId);
     const tool = [...controller.messages]
       .reverse()
       .find(
-        (entry) => entry.kind === "tool" && entry.toolCallId === toolCallId,
+        (entry) => entry.kind === 'tool' && entry.toolCallId === toolCallId,
       );
     if (tool) {
       tool.toolRunning = false;
@@ -603,69 +610,69 @@ export async function handleRpc(controller: SessionController, value: unknown) {
     }
     return;
   }
-  if (type === "agent_settled") {
+  if (type === 'agent_settled') {
     clearAbortWatch(controller);
     controller.syncing = true;
     controller.working = false;
     controller.streaming = false;
     controller.stopping = false;
-    controller.status = "";
+    controller.status = '';
     if (!isControllerSelected(controller)) controller.unread = true;
     watchSessionReplacement(controller);
     await rpc(controller, {
-      id: nextRequestId("settled-state"),
-      type: "get_state",
+      id: nextRequestId('settled-state'),
+      type: 'get_state',
     });
     return;
   }
   // Pi announces every rename, whether it came from Tau's header, one of Pi's
   // own commands, or an extension, so the name is only ever read back from Pi.
-  if (type === "session_info_changed") {
+  if (type === 'session_info_changed') {
     applySessionName(controller, stringValue(event.name));
     await persistSessionName(controller);
     return;
   }
-  if (type === "auto_retry_start") {
+  if (type === 'auto_retry_start') {
     controller.status = retryStatus(event);
     return;
   }
-  if (type === "extension_error") {
-    controller.status = stringValue(event.error) || "A Pi extension failed.";
+  if (type === 'extension_error') {
+    controller.status = stringValue(event.error) || 'A Pi extension failed.';
   }
 }
 
-export async function handleResponse(
+async function handleResponse(
   controller: SessionController,
   response: Record<string, unknown>,
-) {
+): Promise<void> {
   const command = stringValue(response.command);
   const responseId = stringValue(response.id);
   const resolvesRunState =
-    command === "get_state" &&
+    command === 'get_state' &&
     Boolean(controller.runStateRequestId) &&
     responseId === controller.runStateRequestId;
-  if (resolvesRunState) controller.runStateRequestId = "";
+  if (resolvesRunState) controller.runStateRequestId = '';
   const resolvesReplacementProbe =
-    command === "get_state" &&
+    command === 'get_state' &&
     Boolean(controller.replacementProbeRequestId) &&
     responseId === controller.replacementProbeRequestId;
-  if (resolvesReplacementProbe) controller.replacementProbeRequestId = "";
+  if (resolvesReplacementProbe) controller.replacementProbeRequestId = '';
   const resolvesCommandSync =
-    command === "get_state" &&
+    command === 'get_state' &&
     Boolean(controller.commandSyncRequestId) &&
     responseId === controller.commandSyncRequestId;
-  if (resolvesCommandSync) controller.commandSyncRequestId = "";
+  if (resolvesCommandSync) controller.commandSyncRequestId = '';
   const resolvesAbortProbe =
-    command === "get_state" &&
+    command === 'get_state' &&
     Boolean(controller.abortProbeRequestId) &&
     responseId === controller.abortProbeRequestId;
-  if (resolvesAbortProbe) controller.abortProbeRequestId = "";
+  if (resolvesAbortProbe) controller.abortProbeRequestId = '';
   if (
-    command === "prompt" &&
+    command === 'prompt' &&
     Boolean(controller.commandPromptRequestId) &&
     responseId === controller.commandPromptRequestId
   ) {
-    controller.commandPromptRequestId = "";
+    controller.commandPromptRequestId = '';
     if (response.success === true) {
       controller.working = controller.streaming;
       await syncAfterCommand(controller);
@@ -677,7 +684,7 @@ export async function handleResponse(
     controller.status =
       stringValue(error?.message) ||
       stringValue(response.error) ||
-      `Pi rejected ${command || "the request"}.`;
+      `Pi rejected ${command || 'the request'}.`;
     const pending = controller.pendingPrompt;
     const failedPendingSetting =
       Boolean(pending?.settingsRequestId) &&
@@ -688,43 +695,43 @@ export async function handleResponse(
     }
     const failedPendingRequest =
       Boolean(pending) &&
-      ((command === "get_state" && responseId === pending?.stateRequestId) ||
-        (command === "get_messages" &&
+      ((command === 'get_state' && responseId === pending?.stateRequestId) ||
+        (command === 'get_messages' &&
           responseId === pending?.messagesRequestId));
     if (failedPendingRequest) {
       cancelPendingPrompt(controller, controller.status);
     }
-    if (command === "get_state") {
+    if (command === 'get_state') {
       controller.syncing = false;
       if (responseId === controller.bootstrapStateRequestId) {
-        controller.bootstrapStateRequestId = "";
+        controller.bootstrapStateRequestId = '';
         controller.starting = false;
       }
       releaseRuntime(controller);
     }
     if (
-      command === "get_messages" &&
+      command === 'get_messages' &&
       responseId === controller.startMessagesRequestId
     ) {
-      controller.startMessagesRequestId = "";
+      controller.startMessagesRequestId = '';
       controller.starting = false;
       controller.syncing = false;
     }
-    if (command === "prompt") controller.working = false;
-    if (command === "abort") controller.stopping = false;
+    if (command === 'prompt') controller.working = false;
+    if (command === 'abort') controller.stopping = false;
     // A rejected rename leaves the optimistic name on screen, so Pi's name is
     // read back instead of being guessed.
-    if (command === "set_session_name") {
+    if (command === 'set_session_name') {
       await rpc(controller, {
-        id: nextRequestId("session-name-state"),
-        type: "get_state",
+        id: nextRequestId('session-name-state'),
+        type: 'get_state',
       });
     }
     return;
   }
   const data = asRecord(response.data);
 
-  if (command === "get_state" && data) {
+  if (command === 'get_state' && data) {
     const model = asRecord(data.model);
     controller.currentModelProvider = stringValue(model?.provider);
     controller.currentModelId = stringValue(model?.id);
@@ -764,7 +771,7 @@ export async function handleResponse(
     controller.status =
       resolvesAbortProbe && controller.streaming
         ? unstoppedStatus(controller)
-        : "";
+        : '';
     finishRemoteConnection(controller);
 
     if (resolvesPending && pending) {
@@ -782,7 +789,7 @@ export async function handleResponse(
       controller.efforts = [];
       controller.commands = [];
       controller.commandsLoaded = false;
-      controller.pendingEffort = "";
+      controller.pendingEffort = '';
       controller.syncing = true;
     }
     controller.working = controller.streaming || Boolean(pending);
@@ -804,7 +811,7 @@ export async function handleResponse(
     if (controller.disposed) return;
 
     if (resolvesPending && pending) {
-      controller.bootstrapStateRequestId = "";
+      controller.bootstrapStateRequestId = '';
       await applyPendingSessionSettings(controller);
       return;
     }
@@ -820,29 +827,29 @@ export async function handleResponse(
 
     if (sessionChanged) {
       await rpc(controller, {
-        id: nextRequestId("replacement-models"),
-        type: "get_available_models",
+        id: nextRequestId('replacement-models'),
+        type: 'get_available_models',
       });
       await rpc(controller, {
-        id: nextRequestId("replacement-commands"),
-        type: "get_commands",
+        id: nextRequestId('replacement-commands'),
+        type: 'get_commands',
       });
     }
 
-    const messagesRequestId = nextRequestId("messages");
+    const messagesRequestId = nextRequestId('messages');
     if (resolvesBootstrap) {
       controller.startMessagesRequestId = messagesRequestId;
-      controller.bootstrapStateRequestId = "";
+      controller.bootstrapStateRequestId = '';
     }
     await rpc(controller, {
-      id: nextRequestId("efforts"),
-      type: "get_available_thinking_levels",
+      id: nextRequestId('efforts'),
+      type: 'get_available_thinking_levels',
     });
-    await rpc(controller, { id: messagesRequestId, type: "get_messages" });
+    await rpc(controller, { id: messagesRequestId, type: 'get_messages' });
     return;
   }
 
-  if (command === "get_messages" && data) {
+  if (command === 'get_messages' && data) {
     controller.syncing = false;
     controller.messages = appendLocalErrors(
       hydrateTranscript(
@@ -858,7 +865,7 @@ export async function handleResponse(
     if (resolvesPending) {
       await dispatchPendingPrompt(controller);
     } else if (responseId === controller.startMessagesRequestId) {
-      controller.startMessagesRequestId = "";
+      controller.startMessagesRequestId = '';
       controller.starting = false;
     }
     // A hidden session that finishes hydrating has nothing left to wait for,
@@ -867,7 +874,7 @@ export async function handleResponse(
     return;
   }
 
-  if (command === "get_available_models" && data) {
+  if (command === 'get_available_models' && data) {
     controller.models = (Array.isArray(data.models) ? data.models : [])
       .map((value): ModelOption | undefined => {
         const model = asRecord(value);
@@ -885,14 +892,14 @@ export async function handleResponse(
     return;
   }
 
-  if (command === "get_available_thinking_levels" && data) {
+  if (command === 'get_available_thinking_levels' && data) {
     controller.efforts = (Array.isArray(data.levels) ? data.levels : [])
       .map(normalizeEffort)
       .filter((level, index, levels) => levels.indexOf(level) === index);
     return;
   }
 
-  if (command === "get_commands" && data) {
+  if (command === 'get_commands' && data) {
     controller.commands = (Array.isArray(data.commands) ? data.commands : [])
       .map(commandOption)
       .filter((command): command is CommandOption => Boolean(command));
@@ -900,19 +907,19 @@ export async function handleResponse(
     return;
   }
 
-  if (command === "prompt") {
+  if (command === 'prompt') {
     controller.working = controller.streaming;
     return;
   }
 
-  if (command === "set_model") {
+  if (command === 'set_model') {
     const pending = controller.pendingPrompt;
     if (
-      pending?.settingsStep === "model" &&
+      pending?.settingsStep === 'model' &&
       responseId === pending.settingsRequestId
     ) {
-      pending.settingsRequestId = "";
-      pending.settingsStep = "";
+      pending.settingsRequestId = '';
+      pending.settingsStep = '';
       controller.currentModelProvider = pending.selectedModelProvider;
       controller.currentModelId = pending.selectedModelId;
       controller.currentModelName = pending.selectedModelName;
@@ -920,36 +927,36 @@ export async function handleResponse(
       return;
     }
     await rpc(controller, {
-      id: nextRequestId("model-state"),
-      type: "get_state",
+      id: nextRequestId('model-state'),
+      type: 'get_state',
     });
     return;
   }
 
-  if (command === "set_thinking_level") {
+  if (command === 'set_thinking_level') {
     const pending = controller.pendingPrompt;
     if (
-      pending?.settingsStep === "effort" &&
+      pending?.settingsStep === 'effort' &&
       responseId === pending.settingsRequestId
     ) {
-      pending.settingsRequestId = "";
-      pending.settingsStep = "";
+      pending.settingsRequestId = '';
+      pending.settingsStep = '';
       controller.currentEffort = pending.selectedEffort;
-      controller.status = "";
+      controller.status = '';
       await requestPendingMessages(controller);
       return;
     }
     if (controller.pendingEffort) {
       controller.currentEffort = controller.pendingEffort;
     }
-    controller.pendingEffort = "";
-    controller.status = "";
+    controller.pendingEffort = '';
+    controller.status = '';
   }
 }
 
-export async function applyPendingSessionSettings(
+async function applyPendingSessionSettings(
   controller: SessionController,
-) {
+): Promise<void> {
   const pending = controller.pendingPrompt;
   if (!pending) return;
   const modelChanged =
@@ -961,21 +968,21 @@ export async function applyPendingSessionSettings(
     return;
   }
 
-  const requestId = nextRequestId("initial-model");
+  const requestId = nextRequestId('initial-model');
   pending.settingsRequestId = requestId;
-  pending.settingsStep = "model";
+  pending.settingsStep = 'model';
   await rpc(controller, {
     id: requestId,
-    type: "set_model",
+    type: 'set_model',
     provider: pending.selectedModelProvider,
     modelId: pending.selectedModelId,
   });
 }
 
-export async function applyPendingSessionEffort(
+async function applyPendingSessionEffort(
   controller: SessionController,
   force: boolean,
-) {
+): Promise<void> {
   const pending = controller.pendingPrompt;
   if (!pending) return;
   if (!force && pending.selectedEffort === controller.currentEffort) {
@@ -983,29 +990,33 @@ export async function applyPendingSessionEffort(
     return;
   }
 
-  const requestId = nextRequestId("initial-effort");
+  const requestId = nextRequestId('initial-effort');
   pending.settingsRequestId = requestId;
-  pending.settingsStep = "effort";
+  pending.settingsStep = 'effort';
   await rpc(controller, {
     id: requestId,
-    type: "set_thinking_level",
+    type: 'set_thinking_level',
     level: pending.selectedEffort,
   });
 }
 
-export async function requestPendingMessages(controller: SessionController) {
+async function requestPendingMessages(
+  controller: SessionController,
+): Promise<void> {
   const pending = controller.pendingPrompt;
   if (!pending) return;
-  const messagesRequestId = nextRequestId("messages");
+  const messagesRequestId = nextRequestId('messages');
   pending.messagesRequestId = messagesRequestId;
   await rpc(controller, {
-    id: nextRequestId("efforts"),
-    type: "get_available_thinking_levels",
+    id: nextRequestId('efforts'),
+    type: 'get_available_thinking_levels',
   });
-  await rpc(controller, { id: messagesRequestId, type: "get_messages" });
+  await rpc(controller, { id: messagesRequestId, type: 'get_messages' });
 }
 
-export async function dispatchPendingPrompt(controller: SessionController) {
+async function dispatchPendingPrompt(
+  controller: SessionController,
+): Promise<void> {
   const prompt = controller.pendingPrompt;
   if (!prompt) return;
   controller.pendingPrompt = undefined;
@@ -1016,40 +1027,40 @@ export async function dispatchPendingPrompt(controller: SessionController) {
   ) {
     controller.messages.push({
       id: prompt.optimisticId,
-      kind: "user",
+      kind: 'user',
       text: prompt.message,
     });
   }
   controller.working = true;
   try {
-    const requestId = nextRequestId("prompt");
+    const requestId = nextRequestId('prompt');
     if (prompt.command) controller.commandPromptRequestId = requestId;
     await rpc(controller, {
       id: requestId,
-      type: "prompt",
+      type: 'prompt',
       message: prompt.message,
     });
   } catch (error) {
     controller.working = false;
-    controller.commandPromptRequestId = "";
+    controller.commandPromptRequestId = '';
     controller.draft = prompt.message;
     setControllerError(controller, error);
   }
 }
 
-export async function syncAfterCommand(controller: SessionController) {
+async function syncAfterCommand(controller: SessionController): Promise<void> {
   if (controller.disposed || !controller.generation) return;
-  const requestId = nextRequestId("command-sync");
+  const requestId = nextRequestId('command-sync');
   controller.commandSyncRequestId = requestId;
   try {
-    await rpc(controller, { id: requestId, type: "get_state" });
+    await rpc(controller, { id: requestId, type: 'get_state' });
   } catch (error) {
-    controller.commandSyncRequestId = "";
+    controller.commandSyncRequestId = '';
     setControllerError(controller, error);
   }
 }
 
-export function watchSessionReplacement(controller: SessionController) {
+function watchSessionReplacement(controller: SessionController): void {
   clearSessionReplacementWatch(controller);
   if (controller.disposed || !controller.generation) return;
   replacementProbeTimers.set(
@@ -1065,10 +1076,10 @@ export function watchSessionReplacement(controller: SessionController) {
   );
 }
 
-export async function probeSessionReplacement(
+async function probeSessionReplacement(
   controller: SessionController,
   last: boolean,
-) {
+): Promise<void> {
   if (last) replacementProbeTimers.delete(controller.key);
   if (
     controller.disposed ||
@@ -1079,29 +1090,27 @@ export async function probeSessionReplacement(
   ) {
     return;
   }
-  const requestId = nextRequestId("replacement-probe");
+  const requestId = nextRequestId('replacement-probe');
   controller.replacementProbeRequestId = requestId;
   try {
-    await rpc(controller, { id: requestId, type: "get_state" });
+    await rpc(controller, { id: requestId, type: 'get_state' });
   } catch {
-    controller.replacementProbeRequestId = "";
+    controller.replacementProbeRequestId = '';
   }
 }
 
-export function clearSessionReplacementWatch(controller: SessionController) {
+function clearSessionReplacementWatch(controller: SessionController): void {
   const timers = replacementProbeTimers.get(controller.key);
   if (!timers) return;
   replacementProbeTimers.delete(controller.key);
   for (const timer of timers) clearTimeout(timer);
 }
 
-export function watchingSessionReplacement(
-  controller: SessionController,
-): boolean {
+function watchingSessionReplacement(controller: SessionController): boolean {
   return replacementProbeTimers.has(controller.key);
 }
 
-export function watchAbort(controller: SessionController) {
+function watchAbort(controller: SessionController): void {
   clearAbortWatch(controller);
   if (controller.disposed || !controller.generation) return;
   abortProbeTimers.set(
@@ -1112,71 +1121,75 @@ export function watchAbort(controller: SessionController) {
   );
 }
 
-export async function probeAbort(controller: SessionController) {
+async function probeAbort(controller: SessionController): Promise<void> {
   abortProbeTimers.delete(controller.key);
   if (controller.disposed || !controller.generation || !controller.stopping) {
     return;
   }
-  const requestId = nextRequestId("abort-probe");
+  const requestId = nextRequestId('abort-probe');
   controller.abortProbeRequestId = requestId;
   try {
-    await rpc(controller, { id: requestId, type: "get_state" });
+    await rpc(controller, { id: requestId, type: 'get_state' });
   } catch (error) {
-    controller.abortProbeRequestId = "";
+    controller.abortProbeRequestId = '';
     controller.stopping = false;
     setControllerError(controller, error);
   }
 }
 
-export function clearAbortWatch(controller: SessionController) {
+function clearAbortWatch(controller: SessionController): void {
   const timer = abortProbeTimers.get(controller.key);
   if (!timer) return;
   abortProbeTimers.delete(controller.key);
   clearTimeout(timer);
 }
 
-export function unstoppedStatus(controller: SessionController): string {
+function unstoppedStatus(controller: SessionController): string {
   const tool = [...controller.messages]
     .reverse()
-    .find((entry) => entry.kind === "tool" && entry.toolRunning);
+    .find((entry) => entry.kind === 'tool' && entry.toolRunning);
   return tool?.toolName
     ? `Pi is still running ${tool.toolName} and stops once it returns.`
-    : "Pi has not stopped yet and stops once its current work finishes.";
+    : 'Pi has not stopped yet and stops once its current work finishes.';
 }
 
-export function invokesExtensionCommand(
+function invokesExtensionCommand(
   controller: SessionController,
   message: string,
 ): boolean {
-  if (!message.startsWith("/")) return false;
+  if (!message.startsWith('/')) return false;
   // Pi takes the command name from the first space, so anything else is a
   // prompt for the model even when it opens with a slash.
-  const space = message.indexOf(" ");
+  const space = message.indexOf(' ');
   const name = space < 0 ? message.slice(1) : message.slice(1, space);
   return (
     Boolean(name) &&
     controller.commands.some(
-      (command) => command.name === name && command.source === "extension",
+      (command) => command.name === name && command.source === 'extension',
     )
   );
 }
 
-export function applySessionName(controller: SessionController, name: string) {
+function applySessionName(controller: SessionController, name: string): void {
   controller.sessionName = name;
   const session = ephemeralSessionByController(controller.key);
   if (name && session && !session.phantom) session.title = name;
 }
 
-export async function persistSessionName(controller: SessionController) {
+async function persistSessionName(
+  controller: SessionController,
+): Promise<void> {
   if (controller.phantom || !controller.sessionId || !controller.sessionPath) {
     return;
   }
   await registerConnectedSession(controller);
 }
 
-export async function registerConnectedSession(controller: SessionController) {
+async function registerConnectedSession(
+  controller: SessionController,
+): Promise<void> {
   try {
-    const workspace = await invoke<WorkspaceSnapshot>("register_session", {
+    const workspace = await invoke<WorkspaceSnapshot>('register_session', {
       projectPath: controller.projectPath,
       sessionId: controller.sessionId,
       sessionPath: controller.sessionPath,
@@ -1193,7 +1206,7 @@ export async function registerConnectedSession(controller: SessionController) {
     if (isControllerSelected(controller)) {
       state.activeSessionId = controller.sessionId;
       state.activeSessionPath = controller.sessionPath;
-      state.workspace = await invoke<WorkspaceSnapshot>("set_active_session", {
+      state.workspace = await invoke<WorkspaceSnapshot>('set_active_session', {
         projectPath: controller.projectPath,
         sessionId: controller.sessionId,
       });
@@ -1203,9 +1216,9 @@ export async function registerConnectedSession(controller: SessionController) {
   }
 }
 
-export async function persistExpandedProject(projectPath: string) {
+async function persistExpandedProject(projectPath: string): Promise<void> {
   try {
-    state.workspace = await invoke<WorkspaceSnapshot>("set_project_collapsed", {
+    state.workspace = await invoke<WorkspaceSnapshot>('set_project_collapsed', {
       path: projectPath,
       collapsed: false,
     });
@@ -1214,17 +1227,17 @@ export async function persistExpandedProject(projectPath: string) {
   }
 }
 
-export async function persistProjectSelection(
+async function persistProjectSelection(
   projectPath: string,
   controller: SessionController,
-) {
+): Promise<void> {
   try {
     if (controller.phantom) {
-      state.workspace = await invoke<WorkspaceSnapshot>("set_active_project", {
+      state.workspace = await invoke<WorkspaceSnapshot>('set_active_project', {
         path: projectPath,
       });
     } else {
-      state.workspace = await invoke<WorkspaceSnapshot>("set_active_session", {
+      state.workspace = await invoke<WorkspaceSnapshot>('set_active_session', {
         projectPath,
         sessionId: controller.sessionId,
       });
@@ -1234,11 +1247,11 @@ export async function persistProjectSelection(
   }
 }
 
-export function materializePendingSession(
+function materializePendingSession(
   controller: SessionController,
   sessionId: string,
   sessionPath: string,
-) {
+): void {
   const session = ephemeralSessionByController(controller.key);
   controller.sessionId = sessionId;
   controller.sessionPath = sessionPath;
@@ -1247,7 +1260,7 @@ export function materializePendingSession(
     session.id = sessionId;
     session.path = sessionPath;
     session.phantom = false;
-    session.title = draftTitle(controller.pendingPrompt?.message ?? "");
+    session.title = draftTitle(controller.pendingPrompt?.message ?? '');
   }
   if (isControllerSelected(controller)) {
     state.activeSessionId = sessionId;
@@ -1255,10 +1268,10 @@ export function materializePendingSession(
   }
 }
 
-export function cancelPendingPrompt(
+function cancelPendingPrompt(
   controller: SessionController,
   error: unknown,
-) {
+): void {
   const prompt = controller.pendingPrompt;
   if (!prompt) {
     setControllerError(controller, error);
@@ -1274,21 +1287,21 @@ export function cancelPendingPrompt(
   setControllerError(controller, error);
 }
 
-export function pushError(controller: SessionController, text: string) {
+function pushError(controller: SessionController, text: string): void {
   controller.messages.push({
     id: `stream-error-${controller.streamSequence++}`,
-    kind: "error",
+    kind: 'error',
     text,
   });
   if (!isControllerSelected(controller)) controller.unread = true;
 }
 
 /** How much of a reason a retry line carries before the composer is pushed down. */
-export const retryReasonLimit = 120;
+const retryReasonLimit = 120;
 
-export function retryStatus(event: Record<string, unknown>): string {
-  const attempt = String(event.attempt ?? "");
-  const maxAttempts = event.maxAttempts ? `/${String(event.maxAttempts)}` : "";
+function retryStatus(event: Record<string, unknown>): string {
+  const attempt = String(event.attempt ?? '');
+  const maxAttempts = event.maxAttempts ? `/${String(event.maxAttempts)}` : '';
   const reason = describePiError(stringValue(event.errorMessage)).message;
   const trimmed =
     reason.length > retryReasonLimit
@@ -1299,14 +1312,14 @@ export function retryStatus(event: Record<string, unknown>): string {
     : `Retrying (${attempt}${maxAttempts})…`;
 }
 
-export function appendStream(
+function appendStream(
   controller: SessionController,
-  kind: "assistant" | "thinking",
+  kind: 'assistant' | 'thinking',
   delta: string,
-) {
+): void {
   if (!delta) return;
   const last = controller.messages[controller.messages.length - 1];
-  if (last?.kind === kind && last.id.startsWith("stream-")) {
+  if (last?.kind === kind && last.id.startsWith('stream-')) {
     last.text += delta;
     return;
   }
@@ -1317,11 +1330,13 @@ export function appendStream(
   });
 }
 
-export async function retireUnsavedSession(controller: SessionController) {
+async function retireUnsavedSession(
+  controller: SessionController,
+): Promise<void> {
   const staleSessionId = controller.sessionId;
   if (workspaceContainsSession(controller)) {
     try {
-      state.workspace = await invoke<WorkspaceSnapshot>("archive_session", {
+      state.workspace = await invoke<WorkspaceSnapshot>('archive_session', {
         projectPath: controller.projectPath,
         sessionId: staleSessionId,
       });
@@ -1339,19 +1354,19 @@ export async function retireUnsavedSession(controller: SessionController) {
 
   controller.phantom = true;
   controller.sessionId = session.id;
-  controller.sessionPath = "";
-  controller.sessionName = "";
+  controller.sessionPath = '';
+  controller.sessionName = '';
   controller.lastUserMessageAt = 0;
   controller.messages = [];
   if (isControllerSelected(controller)) {
     state.activeSessionId = session.id;
-    state.activeSessionPath = "";
+    state.activeSessionPath = '';
   }
   controller.status =
-    "That session was never saved by Pi, so this is a new one.";
+    'That session was never saved by Pi, so this is a new one.';
 }
 
-export function removeEmptyActivePhantom() {
+function removeEmptyActivePhantom(): void {
   const controller = activeController.value;
   const session = controller
     ? ephemeralSessionByController(controller.key)
@@ -1369,17 +1384,15 @@ export function removeEmptyActivePhantom() {
   removeEphemeralSession(session, true);
 }
 
-export function removeRegisteredEphemeralSession(
-  controller: SessionController,
-) {
+function removeRegisteredEphemeralSession(controller: SessionController): void {
   const session = ephemeralSessionByController(controller.key);
   if (session && !session.phantom) removeEphemeralSession(session, false);
 }
 
-export function removeEphemeralSession(
+function removeEphemeralSession(
   session: EphemeralSession,
   removeController: boolean,
-) {
+): void {
   const index = state.ephemeralSessions.indexOf(session);
   if (index >= 0) state.ephemeralSessions.splice(index, 1);
   if (removeController) {
@@ -1396,7 +1409,7 @@ export function removeEphemeralSession(
   }
 }
 
-export function removeProjectUiState(projectPath: string) {
+function removeProjectUiState(projectPath: string): void {
   state.ephemeralSessions = state.ephemeralSessions.filter(
     (session) => session.projectPath !== projectPath,
   );
@@ -1411,7 +1424,7 @@ export function removeProjectUiState(projectPath: string) {
   );
 }
 
-export function canReleaseRuntime(controller: SessionController): boolean {
+function canReleaseRuntime(controller: SessionController): boolean {
   return (
     !isControllerSelected(controller) &&
     controller.ready &&
@@ -1424,12 +1437,12 @@ export function canReleaseRuntime(controller: SessionController): boolean {
   );
 }
 
-export function releaseRuntime(controller: SessionController | undefined) {
+function releaseRuntime(controller: SessionController | undefined): void {
   if (!controller || !canReleaseRuntime(controller)) return;
   void stopControllerProcess(controller);
 }
 
-export function releaseIdleRuntimes() {
+function releaseIdleRuntimes(): void {
   const idle = state.controllers
     .filter((controller) => canReleaseRuntime(controller))
     .sort(
@@ -1440,14 +1453,16 @@ export function releaseIdleRuntimes() {
   }
 }
 
-export async function stopControllerProcess(controller: SessionController) {
+async function stopControllerProcess(
+  controller: SessionController,
+): Promise<void> {
   if (!controller.generation && !controller.starting) return;
   const generation = controller.generation;
   clearSessionReplacementWatch(controller);
   clearAbortWatch(controller);
   discardControllerDialogs(controller, generation);
   try {
-    await invoke("stop_pi", { runtimeId: controller.runtimeId });
+    await invoke('stop_pi', { runtimeId: controller.runtimeId });
   } catch (error) {
     setControllerError(controller, error);
   }
@@ -1460,8 +1475,8 @@ export async function stopControllerProcess(controller: SessionController) {
   controller.working = false;
   controller.connectingRemote = false;
   controller.syncing = false;
-  controller.runStateRequestId = "";
-  controller.abortProbeRequestId = "";
+  controller.runStateRequestId = '';
+  controller.abortProbeRequestId = '';
 
   if (
     isControllerSelected(controller) &&
@@ -1476,3 +1491,61 @@ export async function stopControllerProcess(controller: SessionController) {
     }
   }
 }
+
+export {
+  sendPhantomMessage,
+  startController,
+  refreshModelScope,
+  requestBootstrap,
+  rpc,
+  submitExtensionDialog,
+  cancelExtensionDialog,
+  respondToExtensionDialog,
+  handleExtensionUIRequest,
+  isExtensionDialogMethod,
+  extensionDialogTitle,
+  extensionNotificationType,
+  extensionRequestOrigin,
+  extensionRequestKey,
+  discardExtensionDialog,
+  discardControllerDialogs,
+  dismissExtensionNotification,
+  clearExtensionUiState,
+  handleBridgeEvent,
+  handleRpc,
+  handleResponse,
+  applyPendingSessionSettings,
+  applyPendingSessionEffort,
+  requestPendingMessages,
+  dispatchPendingPrompt,
+  syncAfterCommand,
+  watchSessionReplacement,
+  probeSessionReplacement,
+  clearSessionReplacementWatch,
+  watchingSessionReplacement,
+  watchAbort,
+  probeAbort,
+  clearAbortWatch,
+  unstoppedStatus,
+  invokesExtensionCommand,
+  applySessionName,
+  persistSessionName,
+  registerConnectedSession,
+  persistExpandedProject,
+  persistProjectSelection,
+  materializePendingSession,
+  cancelPendingPrompt,
+  pushError,
+  retryReasonLimit,
+  retryStatus,
+  appendStream,
+  retireUnsavedSession,
+  removeEmptyActivePhantom,
+  removeRegisteredEphemeralSession,
+  removeEphemeralSession,
+  removeProjectUiState,
+  canReleaseRuntime,
+  releaseRuntime,
+  releaseIdleRuntimes,
+  stopControllerProcess,
+};

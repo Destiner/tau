@@ -1,14 +1,26 @@
+<template>
+  <!-- eslint-disable vue/no-v-html -- renderMarkdown sanitizes with DOMPurify -->
+  <div
+    class="markdown"
+    @click="activate"
+    @keydown="handleKeydown"
+    v-html="rendered"
+  ></div>
+  <!-- eslint-enable vue/no-v-html -->
+</template>
+
 <script setup lang="ts">
-import { homeDir } from "@tauri-apps/api/path";
-import { openPath, openUrl } from "@tauri-apps/plugin-opener";
-import { computed } from "vue";
+import { homeDir } from '@tauri-apps/api/path';
+import { openPath, openUrl } from '@tauri-apps/plugin-opener';
+import { computed } from 'vue';
+
 import {
   FILE_PATH_ATTRIBUTE,
   isWebUrl,
   parseFileReference,
   renderMarkdown,
   resolveFilePath,
-} from "../lib/markdown";
+} from '../lib/markdown';
 
 const props = defineProps<{
   source: string;
@@ -50,7 +62,7 @@ function filePath(link: HTMLElement): string | null {
   const written = link.getAttribute(FILE_PATH_ATTRIBUTE);
   if (written) return written;
 
-  const href = link.getAttribute("href");
+  const href = link.getAttribute('href');
   return href ? (parseFileReference(href)?.path ?? null) : null;
 }
 
@@ -58,7 +70,7 @@ async function openFile(path: string, basePath: string): Promise<void> {
   try {
     await openPath(resolveFilePath(basePath, path, await homeDirectory()));
   } catch (error) {
-    console.error("Could not open the file in its default app", error);
+    console.error('Could not open the file in its default app', error);
   }
 }
 
@@ -66,7 +78,7 @@ async function openWebLink(href: string): Promise<void> {
   try {
     await openUrl(href);
   } catch (error) {
-    console.error("Could not open link in the default browser", error);
+    console.error('Could not open link in the default browser', error);
   }
 }
 
@@ -76,7 +88,7 @@ async function activate(event: Event): Promise<void> {
 
   // What was written, not what the webview resolved it to: a fragment or a
   // relative link would otherwise read as a link to the app's own address.
-  const href = link.getAttribute("href");
+  const href = link.getAttribute('href');
   if (href && isWebUrl(href)) {
     event.preventDefault();
     await openWebLink(href);
@@ -93,15 +105,6 @@ async function activate(event: Event): Promise<void> {
 }
 
 function handleKeydown(event: KeyboardEvent): void {
-  if (event.key === "Enter") void activate(event);
+  if (event.key === 'Enter') void activate(event);
 }
 </script>
-
-<template>
-  <div
-    class="markdown"
-    @click="activate"
-    @keydown="handleKeydown"
-    v-html="rendered"
-  ></div>
-</template>

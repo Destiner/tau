@@ -4,7 +4,7 @@
  * sentence a reader needs is inside that payload, so the string is reduced to
  * the two parts worth showing rather than printed whole.
  */
-export interface PiErrorDescription {
+interface PiErrorDescription {
   /** The provider and status, e.g. `OpenAI API error (401)`. */
   label: string;
   /** The sentence to read, taken from the payload when it carries one. */
@@ -14,16 +14,16 @@ export interface PiErrorDescription {
 /** How much of a message a row shows before the rest is left to the session file. */
 const messageLimit = 400;
 
-export function describePiError(raw: string): PiErrorDescription {
+function describePiError(raw: string): PiErrorDescription {
   const text = raw.trim();
-  if (!text) return { label: "Error", message: "Pi reported an error." };
+  if (!text) return { label: 'Error', message: 'Pi reported an error.' };
 
   const payload = parseTrailingJson(text);
-  const message = payload ? payloadMessage(payload.value) : "";
-  if (!message) return { label: "Error", message: clamp(firstLine(text)) };
+  const message = payload ? payloadMessage(payload.value) : '';
+  if (!message) return { label: 'Error', message: clamp(firstLine(text)) };
 
   return {
-    label: labelFrom(payload?.prefix ?? "") || "Error",
+    label: labelFrom(payload?.prefix ?? '') || 'Error',
     message: clamp(message),
   };
 }
@@ -36,7 +36,7 @@ export function describePiError(raw: string): PiErrorDescription {
 function parseTrailingJson(
   text: string,
 ): { prefix: string; value: unknown } | undefined {
-  const start = text.indexOf("{");
+  const start = text.indexOf('{');
   if (start < 0) return undefined;
   try {
     return {
@@ -50,15 +50,15 @@ function parseTrailingJson(
 
 function payloadMessage(value: unknown): string {
   const record = asRecord(value);
-  if (!record) return "";
-  if (typeof record.message === "string") return record.message.trim();
+  if (!record) return '';
+  if (typeof record.message === 'string') return record.message.trim();
   const nested = record.error;
-  if (typeof nested === "string") return nested.trim();
+  if (typeof nested === 'string') return nested.trim();
   const nestedRecord = asRecord(nested);
-  if (nestedRecord && typeof nestedRecord.message === "string") {
+  if (nestedRecord && typeof nestedRecord.message === 'string') {
     return nestedRecord.message.trim();
   }
-  return "";
+  return '';
 }
 
 /**
@@ -69,14 +69,14 @@ function payloadMessage(value: unknown): string {
 function labelFrom(prefix: string): string {
   const label = prefix
     .trim()
-    .replace(/[:\-–—]+$/, "")
-    .replace(/^error:?\s*/i, "")
+    .replace(/[:\-–—]+$/, '')
+    .replace(/^error:?\s*/i, '')
     .trim();
   return /^\d{3}$/.test(label) ? `HTTP ${label}` : label;
 }
 
 function firstLine(text: string): string {
-  const [line] = text.split("\n");
+  const [line] = text.split('\n');
   return (line ?? text).trim();
 }
 
@@ -87,7 +87,11 @@ function clamp(text: string): string {
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
 }
+
+export type { PiErrorDescription };
+
+export { describePiError };

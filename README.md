@@ -45,6 +45,8 @@ Remote projects use the system OpenSSH client and start directory browsing from 
 
 ```sh
 bun run format
+bun run lint
+bun run typecheck
 bun run test
 bun run test:e2e
 bun run build

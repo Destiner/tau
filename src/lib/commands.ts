@@ -1,14 +1,14 @@
-export type CommandSource = "extension" | "prompt" | "skill";
+type CommandSource = 'extension' | 'prompt' | 'skill';
 
-export interface CommandOption {
+interface CommandOption {
   name: string;
   description?: string;
   source: CommandSource;
   sourceInfo?: {
     path: string;
     source: string;
-    scope: "user" | "project" | "temporary";
-    origin: "package" | "top-level";
+    scope: 'user' | 'project' | 'temporary';
+    origin: 'package' | 'top-level';
     baseDir?: string;
   };
 }
@@ -17,16 +17,16 @@ const MENU_GAP = 5;
 const MENU_MAX_HEIGHT = 300;
 const MENU_MIN_HEIGHT = 96;
 
-export type CommandMenuPlacement = "above" | "below";
+type CommandMenuPlacement = 'above' | 'below';
 
-export type CommandMenuLayout = {
+type CommandMenuLayout = {
   placement: CommandMenuPlacement;
   maxHeight: number;
   /** Distance from the composer top, used by the "below" placement. */
   offset: number;
 };
 
-export type CommandMenuGeometry = {
+type CommandMenuGeometry = {
   /** Height the menu wants, including its own border and padding. */
   contentHeight: number;
   /** Viewport offset of the box the menu is positioned against. */
@@ -46,7 +46,7 @@ export type CommandMenuGeometry = {
  * text otherwise. The menu always overlays its surroundings so that opening it
  * never shifts the composer.
  */
-export function commandMenuLayout({
+function commandMenuLayout({
   contentHeight,
   composerTop,
   textTop,
@@ -62,7 +62,7 @@ export function commandMenuLayout({
   const available = below ? spaceBelow : spaceAbove;
 
   return {
-    placement: below ? "below" : "above",
+    placement: below ? 'below' : 'above',
     maxHeight: Math.round(
       Math.max(MENU_MIN_HEIGHT, Math.min(desiredHeight, available)),
     ),
@@ -70,12 +70,12 @@ export function commandMenuLayout({
   };
 }
 
-export function slashCommandQuery(draft: string): string | null {
+function slashCommandQuery(draft: string): string | null {
   const match = /^\/([^\s/]*)$/.exec(draft);
   return match?.[1] ?? null;
 }
 
-export function filterCommands(
+function filterCommands(
   commands: readonly CommandOption[],
   query: string,
 ): CommandOption[] {
@@ -100,7 +100,7 @@ export function filterCommands(
     .map(({ command }) => command);
 }
 
-export function commandInvocation(command: CommandOption): string {
+function commandInvocation(command: CommandOption): string {
   return `/${command.name}`;
 }
 
@@ -127,3 +127,18 @@ function fuzzyScore(value: string, query: string): number | null {
   if (queryIndex !== needle.length) return null;
   return firstMatch * 8 + gaps * 2 + candidate.length - needle.length;
 }
+
+export type {
+  CommandSource,
+  CommandOption,
+  CommandMenuPlacement,
+  CommandMenuLayout,
+  CommandMenuGeometry,
+};
+
+export {
+  commandMenuLayout,
+  slashCommandQuery,
+  filterCommands,
+  commandInvocation,
+};

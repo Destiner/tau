@@ -1,14 +1,9 @@
-<script setup lang="ts">
-withDefaults(
-  defineProps<{
-    label?: string;
-  }>(),
-  { label: "Pi is working" },
-);
-</script>
-
 <template>
-  <span class="spinner" role="status" :aria-label="label">
+  <span
+    class="spinner"
+    role="status"
+    :aria-label="label"
+  >
     <span
       v-for="index in 8"
       :key="index"
@@ -17,6 +12,15 @@ withDefaults(
     ></span>
   </span>
 </template>
+
+<script setup lang="ts">
+withDefaults(
+  defineProps<{
+    label?: string;
+  }>(),
+  { label: 'Pi is working' },
+);
+</script>
 
 <style scoped>
 .spinner {

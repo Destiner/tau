@@ -1,55 +1,56 @@
-import { describe, expect, it } from "vitest";
-import type { CommandOption } from "./commands";
+import { describe, expect, it } from 'vitest';
+
 import {
   type CommandMenuGeometry,
+  type CommandOption,
   commandInvocation,
   commandMenuLayout,
   filterCommands,
   slashCommandQuery,
-} from "./commands";
+} from './commands';
 
 const commands: CommandOption[] = [
   {
-    name: "session-name",
-    description: "Name the session",
-    source: "extension",
+    name: 'session-name',
+    description: 'Name the session',
+    source: 'extension',
   },
-  { name: "summarize", description: "Summarize the session", source: "prompt" },
-  { name: "skill:source-check", description: "Check a claim", source: "skill" },
+  { name: 'summarize', description: 'Summarize the session', source: 'prompt' },
+  { name: 'skill:source-check', description: 'Check a claim', source: 'skill' },
 ];
 
-describe("slash command completion", () => {
-  it("extracts a query only from a leading command token", () => {
-    expect(slashCommandQuery("/")).toBe("");
-    expect(slashCommandQuery("/ssn")).toBe("ssn");
-    expect(slashCommandQuery(" /ssn")).toBeNull();
-    expect(slashCommandQuery("/session-name ")).toBeNull();
-    expect(slashCommandQuery("/session-name value")).toBeNull();
-    expect(slashCommandQuery("/session\n")).toBeNull();
+describe('slash command completion', () => {
+  it('extracts a query only from a leading command token', () => {
+    expect(slashCommandQuery('/')).toBe('');
+    expect(slashCommandQuery('/ssn')).toBe('ssn');
+    expect(slashCommandQuery(' /ssn')).toBeNull();
+    expect(slashCommandQuery('/session-name ')).toBeNull();
+    expect(slashCommandQuery('/session-name value')).toBeNull();
+    expect(slashCommandQuery('/session\n')).toBeNull();
   });
 
   it("keeps Pi's command order until a query is entered", () => {
-    expect(filterCommands(commands, "")).toEqual(commands);
+    expect(filterCommands(commands, '')).toEqual(commands);
   });
 
-  it("fuzzy matches command names and ranks tighter matches first", () => {
-    expect(filterCommands(commands, "ssn").map(({ name }) => name)).toEqual([
-      "session-name",
+  it('fuzzy matches command names and ranks tighter matches first', () => {
+    expect(filterCommands(commands, 'ssn').map(({ name }) => name)).toEqual([
+      'session-name',
     ]);
-    expect(filterCommands(commands, "sum").map(({ name }) => name)).toEqual([
-      "summarize",
+    expect(filterCommands(commands, 'sum').map(({ name }) => name)).toEqual([
+      'summarize',
     ]);
-    expect(filterCommands(commands, "sc").map(({ name }) => name)).toEqual([
-      "skill:source-check",
+    expect(filterCommands(commands, 'sc').map(({ name }) => name)).toEqual([
+      'skill:source-check',
     ]);
   });
 
-  it("formats a command for immediate invocation", () => {
-    expect(commandInvocation(commands[0])).toBe("/session-name");
+  it('formats a command for immediate invocation', () => {
+    expect(commandInvocation(commands[0]!)).toBe('/session-name');
   });
 });
 
-describe("command menu placement", () => {
+describe('command menu placement', () => {
   // A composer docked at the bottom of a 800px tall window.
   const docked: CommandMenuGeometry = {
     contentHeight: 200,
@@ -60,14 +61,14 @@ describe("command menu placement", () => {
     bottomBoundary: 800,
   };
 
-  it("opens above the composer when the content fits there", () => {
+  it('opens above the composer when the content fits there', () => {
     expect(commandMenuLayout(docked)).toMatchObject({
-      placement: "above",
+      placement: 'above',
       maxHeight: 200,
     });
   });
 
-  it("opens below the draft text when the space above is smaller", () => {
+  it('opens below the draft text when the space above is smaller', () => {
     // An empty session composer filling the pane below the header.
     const layout = commandMenuLayout({
       ...docked,
@@ -75,12 +76,12 @@ describe("command menu placement", () => {
       textTop: 56,
     });
 
-    expect(layout.placement).toBe("below");
+    expect(layout.placement).toBe('below');
     expect(layout.maxHeight).toBe(200);
     expect(layout.offset).toBe(41);
   });
 
-  it("caps the height at the space it was given", () => {
+  it('caps the height at the space it was given', () => {
     expect(commandMenuLayout({ ...docked, contentHeight: 900 }).maxHeight).toBe(
       300,
     );
@@ -93,10 +94,10 @@ describe("command menu placement", () => {
         textTop: 184,
         bottomBoundary: 320,
       }),
-    ).toMatchObject({ placement: "above", maxHeight: 135 });
+    ).toMatchObject({ placement: 'above', maxHeight: 135 });
   });
 
-  it("keeps a usable height when neither side has room", () => {
+  it('keeps a usable height when neither side has room', () => {
     expect(
       commandMenuLayout({
         ...docked,
