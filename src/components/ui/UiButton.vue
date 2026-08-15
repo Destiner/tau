@@ -25,7 +25,12 @@ withDefaults(
 
 const button = ref<HTMLButtonElement>();
 
-defineExpose({ button });
+/** The underlying element, for the imperative focus callers need. */
+defineExpose({
+  get button() {
+    return button.value;
+  },
+});
 </script>
 
 <style scoped>

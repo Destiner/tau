@@ -32,7 +32,12 @@ function handleInput(event: Event): void {
   modelValue.value = (event.target as HTMLInputElement).value;
 }
 
-defineExpose({ input });
+/** The underlying element, for the imperative focus/select callers need. */
+defineExpose({
+  get input() {
+    return input.value;
+  },
+});
 </script>
 
 <style scoped>

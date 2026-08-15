@@ -29,7 +29,12 @@ function handleInput(event: Event): void {
   modelValue.value = (event.target as HTMLTextAreaElement).value;
 }
 
-defineExpose({ input: textarea });
+/** The underlying element, for the imperative focus/select callers need. */
+defineExpose({
+  get input() {
+    return textarea.value;
+  },
+});
 </script>
 
 <style scoped>

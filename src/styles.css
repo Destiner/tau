@@ -195,67 +195,12 @@ button {
   padding: 6px;
 }
 
-.project-menu-wrap {
-  position: relative;
-}
-
-.project-menu {
-  position: absolute;
-  z-index: 5;
-  bottom: calc(100% + 5px);
-  left: 0;
-  width: 176px;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel-raised);
-  box-shadow: 0 8px 24px var(--shadow-soft);
-}
-
-.context-menu {
-  position: fixed;
-  z-index: 40;
-  min-width: 152px;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel-raised);
-  box-shadow: 0 8px 24px var(--shadow-soft);
-}
-
-.project-menu button,
-.context-menu button {
-  display: block;
-  width: 100%;
-  padding: 7px 8px;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text);
-  font-size: 12px;
-  text-align: left;
-}
-
-.project-menu button:hover,
-.project-menu button:focus-visible,
-.context-menu button:enabled:hover,
-.context-menu button:enabled:focus-visible {
-  outline: 0;
-  background: var(--hover);
-}
-
-/* stylelint-disable-next-line no-descending-specificity */
-.context-menu button:disabled {
-  color: var(--faint);
-}
-
 /*
  * The user agent gives every button a padding of its own, which squeezes a
  * fixed-size icon box until the glyph no longer sits in its middle.
  */
-.icon-button,
 .row-action,
-.session-archive,
-.send-button {
+.session-archive {
   display: grid;
   padding: 0;
   background: transparent;
@@ -388,29 +333,10 @@ button {
   box-shadow: 0 15px 30px var(--shadow-strong);
 }
 
-.row-action {
-  flex: none;
-  width: 22px;
-  height: 22px;
-  opacity: 0;
-  color: var(--muted);
-  font-size: 12px;
-}
-
+/* A row-hovered action steps out of its row; its box and states live in UiIconButton. */
 .project-row:hover .row-action,
 .project-row:focus-within .row-action {
   opacity: 0.65;
-}
-
-.project-row .row-action:hover,
-.project-row .row-action:focus-visible {
-  outline: 0;
-  opacity: 1;
-}
-
-.row-action.danger:hover,
-.row-action.danger:focus-visible {
-  color: var(--danger);
 }
 
 .session-list {
@@ -445,28 +371,17 @@ button {
   gap: 7px;
 }
 
-/* Shares the column and the size of the actions on a project row above it. */
+/* The archive action floats over its row; its box and states live in UiIconButton. */
 .session-archive {
   position: absolute;
   top: 50%;
   right: 0;
-  width: 22px;
-  height: 22px;
   transform: translateY(-50%);
-  opacity: 0;
-  color: var(--muted);
-  font-size: 12px;
 }
 
 .session-row:hover .session-archive,
 .session-row:focus-within .session-archive {
   opacity: 0.65;
-}
-
-.session-row .session-archive:hover,
-.session-row .session-archive:focus-visible {
-  outline: 0;
-  opacity: 1;
 }
 
 .session-row.archivable:hover .session-time,
@@ -1030,88 +945,16 @@ button.session-name:focus-visible {
 }
 
 .composer-selector {
-  display: inline-grid;
-  position: relative;
-  grid-template-areas: 'selector';
   min-width: 0;
   max-width: 210px;
-  color: var(--muted);
 }
 
-.composer-selector::after {
-  content: '';
-  z-index: 1;
-  grid-area: selector;
-  place-self: center end;
-  width: 5px;
-  height: 5px;
-  margin-right: 8px;
-  transform: translateY(-1px) rotate(45deg);
-  border-right: 1px solid currentcolor;
-  border-bottom: 1px solid currentcolor;
-  pointer-events: none;
-}
-
-.composer-selector select {
-  grid-area: selector;
-  width: auto;
-  min-width: 0;
-  max-width: 210px;
-  height: 22px;
-  padding: 0 24px 0 5px;
-  overflow: hidden;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  outline: 0;
-  background: transparent;
-  color: var(--muted);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  appearance: none;
-  field-sizing: content;
-}
-
-.composer-selector select:hover:not(:disabled),
-/* stylelint-disable-next-line no-descending-specificity */
-.composer-selector select:focus-visible {
-  border-color: var(--border);
-  background: var(--hover);
-}
-
-.composer-selector:has(select:disabled)::after {
-  opacity: 0.45;
-}
-
-.effort-selector,
-/* stylelint-disable-next-line no-descending-specificity */
-.effort-selector select {
+.composer-selector.effort-selector {
   max-width: 110px;
 }
 
 .send-button {
-  flex: none;
-  width: 20px;
-  height: 20px;
   margin-left: auto;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 15px;
-}
-
-.send-button:hover:not(:disabled) {
-  background: var(--hover);
-  color: var(--text);
-}
-
-.send-button.stop {
-  background: transparent;
-  color: var(--danger);
-}
-
-.send-button.stop:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
-  color: var(--danger);
 }
 
 /* stylelint-disable no-descending-specificity */
@@ -1277,37 +1120,7 @@ textarea:disabled {
 
 /* stylelint-disable-next-line no-descending-specificity */
 .extension-notification-header > button {
-  display: grid;
-  flex: none;
-  width: 16px;
-  height: 16px;
   margin-left: auto;
-  padding: 2px;
-  border-radius: 3px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 10px;
-  place-items: center;
-}
-
-/* stylelint-disable no-descending-specificity */
-.extension-notification-header > button:hover,
-.extension-notification-header > button:focus-visible {
-  outline: 0;
-  background: var(--hover);
-  color: var(--text);
-}
-/* stylelint-enable no-descending-specificity */
-
-.dialog-layer {
-  display: flex;
-  position: fixed;
-  z-index: 20;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 68px 18px 18px;
-  background: var(--scrim);
-  inset: 0;
 }
 
 .extension-composer {
@@ -1389,19 +1202,7 @@ textarea:disabled {
   gap: 4px;
 }
 
-.remote-dialog {
-  display: flex;
-  flex-direction: column;
-  width: min(440px, 100%);
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: var(--panel-raised);
-  box-shadow: 0 14px 40px var(--shadow-strong);
-}
-
 .remote-directory-dialog {
-  width: min(480px, 100%);
   gap: 6px;
 }
 

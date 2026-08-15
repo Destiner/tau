@@ -20,7 +20,6 @@
       <div
         ref="projectList"
         class="project-list"
-        @scroll.passive="closeContextMenu"
       >
         <div
           v-for="project in state.workspace?.projects"
@@ -87,46 +86,47 @@
             v-if="!project.collapsed"
             class="session-list"
           >
-            <div
+            <UiContextMenu
               v-for="session in projectSessions(project)"
               :key="session.id"
-              class="session-row"
-              :class="{
-                selected: isSessionSelected(project, session),
-                archivable: canArchiveSession(project, session),
-              }"
-              @contextmenu.prevent="
-                (event) => openSessionMenu(project, session, event)
-              "
+              :items="() => sessionMenuItems(project, session)"
             >
-              <button
-                class="session-select"
-                type="button"
-                @click="() => selectSession(project, session)"
+              <div
+                class="session-row"
+                :class="{
+                  selected: isSessionSelected(project, session),
+                  archivable: canArchiveSession(project, session),
+                }"
               >
-                <UiStatusDot
-                  :tone="sessionIndicator(project, session) || undefined"
-                  :label="indicatorLabel(sessionIndicator(project, session))"
-                />
-                <span class="session-copy">
-                  <span class="session-title">{{ session.title }}</span>
-                  <span class="session-time">{{
-                    sessionLastActive(project, session)
-                  }}</span>
-                </span>
-              </button>
-              <UiIconButton
-                v-if="canArchiveSession(project, session)"
-                class="session-archive"
-                size="md"
-                variant="reveal"
-                :label="`Archive ${session.title}`"
-                title="Archive session"
-                @click="() => archiveSession(project, session)"
-              >
-                <UiIcon name="archive" />
-              </UiIconButton>
-            </div>
+                <button
+                  class="session-select"
+                  type="button"
+                  @click="() => selectSession(project, session)"
+                >
+                  <UiStatusDot
+                    :tone="sessionIndicator(project, session) || undefined"
+                    :label="indicatorLabel(sessionIndicator(project, session))"
+                  />
+                  <span class="session-copy">
+                    <span class="session-title">{{ session.title }}</span>
+                    <span class="session-time">{{
+                      sessionLastActive(project, session)
+                    }}</span>
+                  </span>
+                </button>
+                <UiIconButton
+                  v-if="canArchiveSession(project, session)"
+                  class="session-archive"
+                  size="md"
+                  variant="reveal"
+                  :label="`Archive ${session.title}`"
+                  title="Archive session"
+                  @click="() => archiveSession(project, session)"
+                >
+                  <UiIcon name="archive" />
+                </UiIconButton>
+              </div>
+            </UiContextMenu>
             <div
               v-if="projectSessions(project).length === 0"
               class="empty-sessions"
@@ -146,41 +146,23 @@
       </div>
 
       <footer class="sidebar-footer">
-        <div
-          ref="projectMenu"
-          class="project-menu-wrap"
-        >
-          <button
-            class="icon-button"
-            type="button"
-            title="Open project"
-            aria-label="Open project"
-            aria-haspopup="menu"
-            :aria-expanded="projectMenuOpen"
-            @click="toggleProjectMenu"
+        <div class="project-menu-wrap">
+          <UiMenu
+            v-model:open="projectMenuOpen"
+            :items="projectMenuItems"
+            :min-width="176"
           >
-            <UiIcon name="folder" />
-          </button>
-          <div
-            v-if="projectMenuOpen"
-            class="project-menu"
-            role="menu"
-          >
-            <button
-              type="button"
-              role="menuitem"
-              @click="handleLocalProject"
-            >
-              Open Local Project
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              @click="handleRemoteProject"
-            >
-              Open Remote Project
-            </button>
-          </div>
+            <template #trigger>
+              <button
+                class="icon-button"
+                type="button"
+                title="Open project"
+                aria-label="Open project"
+              >
+                <UiIcon name="folder" />
+              </button>
+            </template>
+          </UiMenu>
         </div>
       </footer>
 
@@ -345,25 +327,33 @@
             </div>
           </div>
 
-          <UiInput
+          <UiContextMenu
             v-else-if="activeExtensionDialog.method === 'input'"
-            ref="extensionDialogInput"
-            v-model="activeExtensionDialog.draft"
-            type="text"
-            autocomplete="off"
-            :placeholder="activeExtensionDialog.placeholder"
-            :aria-label="activeExtensionDialog.title"
-          />
+            :items="() => textFieldItems(() => extensionDialogInput?.input)"
+          >
+            <UiInput
+              ref="extensionDialogInput"
+              v-model="activeExtensionDialog.draft"
+              type="text"
+              autocomplete="off"
+              :placeholder="activeExtensionDialog.placeholder"
+              :aria-label="activeExtensionDialog.title"
+            />
+          </UiContextMenu>
 
-          <UiTextarea
+          <UiContextMenu
             v-else-if="activeExtensionDialog.method === 'editor'"
-            ref="extensionDialogInput"
-            v-model="activeExtensionDialog.draft"
-            rows="6"
-            :aria-label="activeExtensionDialog.title"
-            @keydown.meta.enter.prevent="handleExtensionDialogSubmit"
-            @keydown.ctrl.enter.prevent="handleExtensionDialogSubmit"
-          />
+            :items="() => textFieldItems(() => extensionDialogInput?.input)"
+          >
+            <UiTextarea
+              ref="extensionDialogInput"
+              v-model="activeExtensionDialog.draft"
+              rows="6"
+              :aria-label="activeExtensionDialog.title"
+              @keydown.meta.enter.prevent="handleExtensionDialogSubmit"
+              @keydown.ctrl.enter.prevent="handleExtensionDialogSubmit"
+            />
+          </UiContextMenu>
 
           <footer class="extension-dialog-actions">
             <template v-if="activeExtensionDialog.method === 'confirm'">
@@ -444,80 +434,48 @@
               <span class="command-source">{{ command.source }}</span>
             </button>
           </div>
-          <textarea
-            ref="composerInput"
-            v-model="draft"
-            rows="4"
-            maxlength="32768"
-            placeholder="Message π"
-            :disabled="!canDraft"
-            :aria-expanded="commandMenuActive"
-            :aria-controls="commandMenuActive ? 'command-menu' : undefined"
-            :aria-activedescendant="
-              commandMenuActive && selectedCommand
-                ? `command-option-${commandSelectedIndex}`
-                : undefined
-            "
-            aria-autocomplete="list"
-            aria-label="Message Pi"
-            @keydown="handleComposerKeydown"
-          ></textarea>
+          <UiContextMenu :items="() => textFieldItems(() => composerInput)">
+            <textarea
+              ref="composerInput"
+              v-model="draft"
+              rows="4"
+              maxlength="32768"
+              placeholder="Message π"
+              :disabled="!canDraft"
+              :aria-expanded="commandMenuActive"
+              :aria-controls="commandMenuActive ? 'command-menu' : undefined"
+              :aria-activedescendant="
+                commandMenuActive && selectedCommand
+                  ? `command-option-${commandSelectedIndex}`
+                  : undefined
+              "
+              aria-autocomplete="list"
+              aria-label="Message Pi"
+              @keydown="handleComposerKeydown"
+            ></textarea>
+          </UiContextMenu>
           <div class="composer-toolbar">
             <span class="composer-selector model-selector">
-              <select
-                :value="`${currentModelProvider}/${currentModelId}`"
+              <UiSelect
+                :model-value="`${currentModelProvider}/${currentModelId}`"
+                :options="modelOptions"
+                placeholder="Model"
+                :fallback-label="currentModelLabel"
                 :disabled="settingsDisabled || models.length === 0"
                 aria-label="Model"
-                @change="handleModelChange"
-              >
-                <option
-                  v-if="!currentModelId"
-                  value="/"
-                >
-                  Model
-                </option>
-                <option
-                  v-else-if="
-                    !models.some(
-                      (model) =>
-                        model.provider === currentModelProvider &&
-                        model.id === currentModelId,
-                    )
-                  "
-                  :value="`${currentModelProvider}/${currentModelId}`"
-                >
-                  {{ currentModelLabel }}
-                </option>
-                <option
-                  v-for="model in models"
-                  :key="`${model.provider}/${model.id}`"
-                  :value="`${model.provider}/${model.id}`"
-                >
-                  {{ model.name }} · {{ model.provider }}
-                </option>
-              </select>
+                @update:model-value="handleModelChange"
+              />
             </span>
             <span class="composer-selector effort-selector">
-              <select
-                :value="currentEffort"
+              <UiSelect
+                :model-value="currentEffort"
+                :options="effortOptions"
+                :fallback-label="currentEffortLabel"
                 :disabled="settingsDisabled || efforts.length === 0"
                 aria-label="Thinking effort"
-                @change="handleEffortChange"
-              >
-                <option
-                  v-if="!efforts.includes(currentEffort)"
-                  :value="currentEffort"
-                >
-                  {{ currentEffortLabel }}
-                </option>
-                <option
-                  v-for="effort in efforts"
-                  :key="effort"
-                  :value="effort"
-                >
-                  {{ effortLabels[effort] }}
-                </option>
-              </select>
+                :max-width="110"
+                @update:model-value="handleEffortChange"
+              />
             </span>
             <UiIconButton
               v-if="streaming"
@@ -546,28 +504,6 @@
         </div>
       </footer>
     </main>
-
-    <div
-      v-if="contextMenuState"
-      ref="contextMenu"
-      class="context-menu"
-      role="menu"
-      :style="{
-        left: `${contextMenuState.x}px`,
-        top: `${contextMenuState.y}px`,
-      }"
-    >
-      <button
-        v-for="item in contextMenuState.items"
-        :key="item.label"
-        type="button"
-        role="menuitem"
-        :disabled="item.disabled"
-        @click="() => runContextMenuItem(item)"
-      >
-        {{ item.label }}
-      </button>
-    </div>
 
     <div
       v-if="extensionNotifications.length"
@@ -603,66 +539,70 @@
       </div>
     </div>
 
-    <div
-      v-if="state.remoteDialogOpen"
-      class="dialog-layer"
-      @mousedown.self="closeRemoteProjectDialog"
+    <UiDialog
+      v-model:open="state.remoteDialogOpen"
+      :title="
+        state.remoteDialogStep === 'connection'
+          ? 'SSH connection'
+          : 'Choose remote working directory'
+      "
+      :width="state.remoteDialogStep === 'connection' ? 'sm' : 'md'"
+      :busy="state.remoteConnecting"
     >
       <form
         v-if="state.remoteDialogStep === 'connection'"
-        class="remote-dialog remote-connection-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label="SSH connection"
-        :aria-busy="state.remoteConnecting"
         @submit.prevent="submitRemoteConnection"
       >
-        <UiInput
-          ref="remoteConnectionInput"
-          v-model="state.remoteConnectionString"
-          variant="mono"
-          :error="Boolean(state.remoteConnectionError)"
-          type="text"
-          inputmode="text"
-          autocomplete="off"
-          autocapitalize="off"
-          spellcheck="false"
-          placeholder="ssh user@example -p 1234"
-          :aria-label="state.remoteConnectionError || 'SSH connection string'"
-          :aria-invalid="Boolean(state.remoteConnectionError)"
-          :title="state.remoteConnectionError"
-          :readonly="
-            state.remoteConnecting || state.remoteDialogMode === 'retry'
-          "
-        />
+        <UiContextMenu
+          :items="() => textFieldItems(() => remoteConnectionInput?.input)"
+        >
+          <UiInput
+            ref="remoteConnectionInput"
+            v-model="state.remoteConnectionString"
+            variant="mono"
+            :error="Boolean(state.remoteConnectionError)"
+            type="text"
+            inputmode="text"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+            placeholder="ssh user@example -p 1234"
+            :aria-label="state.remoteConnectionError || 'SSH connection string'"
+            :aria-invalid="Boolean(state.remoteConnectionError)"
+            :title="state.remoteConnectionError"
+            :readonly="
+              state.remoteConnecting || state.remoteDialogMode === 'retry'
+            "
+          />
+        </UiContextMenu>
       </form>
 
       <div
         v-else
-        class="remote-dialog remote-directory-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Choose remote working directory"
-        :aria-busy="state.remoteConnecting"
+        class="remote-directory-dialog"
       >
-        <UiInput
-          ref="remoteDirectoryFilterInput"
-          v-model="state.remoteDirectoryFilter"
-          variant="mono"
-          :error="Boolean(state.remoteConnectionError)"
-          type="text"
-          autocomplete="off"
-          autocapitalize="off"
-          spellcheck="false"
-          placeholder="Filter directories"
-          aria-label="Filter remote directories"
-          aria-controls="remote-directory-list"
-          :aria-activedescendant="`remote-directory-option-${state.remoteDirectorySelectedIndex}`"
-          :aria-invalid="Boolean(state.remoteConnectionError)"
-          :title="state.remoteConnectionError"
-          :readonly="state.remoteConnecting"
-          @keydown="handleRemoteDirectoryKeydown"
-        />
+        <UiContextMenu
+          :items="() => textFieldItems(() => remoteDirectoryFilterInput?.input)"
+        >
+          <UiInput
+            ref="remoteDirectoryFilterInput"
+            v-model="state.remoteDirectoryFilter"
+            variant="mono"
+            :error="Boolean(state.remoteConnectionError)"
+            type="text"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+            placeholder="Filter directories"
+            aria-label="Filter remote directories"
+            aria-controls="remote-directory-list"
+            :aria-activedescendant="`remote-directory-option-${state.remoteDirectorySelectedIndex}`"
+            :aria-invalid="Boolean(state.remoteConnectionError)"
+            :title="state.remoteConnectionError"
+            :readonly="state.remoteConnecting"
+            @keydown="handleRemoteDirectoryKeydown"
+          />
+        </UiContextMenu>
         <div
           id="remote-directory-list"
           class="remote-directory-list"
@@ -690,7 +630,7 @@
           </button>
         </div>
       </div>
-    </div>
+    </UiDialog>
   </div>
 </template>
 
@@ -711,9 +651,14 @@ import {
 import TranscriptView from './components/TranscriptView.vue';
 import MarkdownText from './components/ui/MarkdownText.vue';
 import UiButton from './components/ui/UiButton.vue';
+import UiContextMenu from './components/ui/UiContextMenu.vue';
+import UiDialog from './components/ui/UiDialog.vue';
 import UiIcon from './components/ui/UiIcon.vue';
 import UiIconButton from './components/ui/UiIconButton.vue';
 import UiInput from './components/ui/UiInput.vue';
+import UiMenu from './components/ui/UiMenu.vue';
+import type { UiMenuItem } from './components/ui/UiMenu.vue';
+import UiSelect from './components/ui/UiSelect.vue';
 import UiSpinner from './components/ui/UiSpinner.vue';
 import UiStatusDot from './components/ui/UiStatusDot.vue';
 import UiTextarea from './components/ui/UiTextarea.vue';
@@ -731,26 +676,10 @@ import type { ThinkingLevel } from './lib/pi/model-scope';
 
 type TextField = HTMLInputElement | HTMLTextAreaElement;
 
-interface ContextMenuItem {
-  label: string;
-  disabled?: boolean;
-  run: () => void;
-}
-
-interface ContextMenuState {
-  items: ContextMenuItem[];
-  x: number;
-  y: number;
-}
-
 const SIDEBAR_WIDTH_STORAGE_KEY = 'tau.sidebar-width';
-const CONTEXT_MENU_MARGIN = 8;
 const NEW_SESSION_EVENT = 'tau://new-session';
 /** How long a session may hydrate before it is worth reporting as loading. */
 const LOADING_INDICATOR_DELAY_MS = 200;
-// The rename field applies its value the moment it loses focus, so it is left
-// out: a menu that takes focus to open would end the rename it edits.
-const TEXT_FIELD_SELECTOR = 'input:not(.session-name-input), textarea';
 const EDITABLE_SELECTOR = 'input, textarea, select';
 const DEFAULT_SIDEBAR_WIDTH = 260;
 const MIN_SIDEBAR_WIDTH = 200;
@@ -761,8 +690,6 @@ const sessionHeader = ref<HTMLElement>();
 const composer = ref<HTMLElement>();
 const composerInput = ref<HTMLTextAreaElement>();
 const commandMenu = ref<HTMLElement>();
-const projectMenu = ref<HTMLElement>();
-const contextMenu = ref<HTMLElement>();
 const projectList = ref<HTMLElement>();
 const sidebar = ref<HTMLElement>();
 const remoteConnectionInput = ref<InstanceType<typeof UiInput>>();
@@ -772,7 +699,6 @@ const extensionDialogInput = ref<
 >();
 const extensionDialogPrimaryAction = ref<InstanceType<typeof UiButton>>();
 const projectMenuOpen = ref(false);
-const contextMenuState = ref<ContextMenuState>();
 const windowFocused = ref(true);
 const loadingIndicatorVisible = ref(false);
 const commandMenuDismissed = ref(false);
@@ -882,6 +808,18 @@ const commandMenuActive = computed(
 const selectedCommand = computed(
   () => filteredCommands.value[commandSelectedIndex.value],
 );
+const modelOptions = computed(() =>
+  models.value.map((model) => ({
+    value: `${model.provider}/${model.id}`,
+    label: `${model.name} · ${model.provider}`,
+  })),
+);
+const effortOptions = computed(() =>
+  efforts.value.map((effort) => ({
+    value: effort,
+    label: effortLabels[effort],
+  })),
+);
 const commandMenuStyle = computed(() => ({
   maxHeight:
     commandMenuMaxHeight.value === undefined
@@ -937,11 +875,9 @@ onMounted(() => {
   setupProjectReordering();
   void watchWindowFocus();
   void watchMenuActions();
-  document.addEventListener('pointerdown', handleDocumentPointerDown);
   document.addEventListener('contextmenu', handleDocumentContextMenu);
   document.addEventListener('keydown', handleDocumentKeydown);
   window.addEventListener('resize', updateCommandMenuLayout);
-  window.addEventListener('resize', closeContextMenu);
 });
 onBeforeUnmount(() => {
   projectSortable?.destroy();
@@ -949,11 +885,9 @@ onBeforeUnmount(() => {
   clearTimeout(loadingIndicatorTimer);
   unlistenWindowFocus?.();
   unlistenNewSessionMenu?.();
-  document.removeEventListener('pointerdown', handleDocumentPointerDown);
   document.removeEventListener('contextmenu', handleDocumentContextMenu);
   document.removeEventListener('keydown', handleDocumentKeydown);
   window.removeEventListener('resize', updateCommandMenuLayout);
-  window.removeEventListener('resize', closeContextMenu);
 });
 
 watch(
@@ -1148,25 +1082,36 @@ function scrollSelectedCommand(): void {
   });
 }
 
-function handleModelChange(event: Event): void {
-  void selectModel((event.target as HTMLSelectElement).value);
+function handleModelChange(value: string): void {
+  void selectModel(value);
 }
 
-function handleEffortChange(event: Event): void {
-  void selectEffort((event.target as HTMLSelectElement).value as ThinkingLevel);
+function handleEffortChange(value: string): void {
+  void selectEffort(value as ThinkingLevel);
 }
 
 function handleNewSession(): void {
   if (activeProject.value) void newSession(activeProject.value);
 }
 
-function openSessionMenu(
+/** The project menu's two ways to add a project. */
+const projectMenuItems: UiMenuItem[] = [
+  {
+    label: 'Open Local Project',
+    run: () => void handleLocalProject(),
+  },
+  {
+    label: 'Open Remote Project',
+    run: () => void handleRemoteProject(),
+  },
+];
+
+function sessionMenuItems(
   project: ProjectSummary,
   session: SessionSummary,
-  event: MouseEvent,
-): void {
+): UiMenuItem[] {
   const unread = isSessionUnread(project, session);
-  const items: ContextMenuItem[] = [
+  const items: UiMenuItem[] = [
     {
       label: unread ? 'Mark as Read' : 'Mark as Unread',
       run: () =>
@@ -1181,34 +1126,37 @@ function openSessionMenu(
       run: () => void archiveSession(project, session),
     });
   }
-  openContextMenu(event, items);
+  return items;
 }
 
-function openTextFieldMenu(event: MouseEvent, field: TextField): void {
-  // The menu takes focus, so the range the pointer landed on is captured now
-  // and handed back to the field when an item runs.
-  const start = field.selectionStart ?? 0;
-  const end = field.selectionEnd ?? 0;
+/**
+ * The menu reads the range when it opens, while the field still holds it: the
+ * menu takes focus next, and the items hand that range back on the way out.
+ */
+function textFieldItems(field: () => TextField | undefined): UiMenuItem[] {
+  const element = field();
+  const start = element?.selectionStart ?? 0;
+  const end = element?.selectionEnd ?? 0;
   const selected = start !== end;
-  const editable = !field.readOnly && !field.disabled;
-  const items: ContextMenuItem[] = [
+  const editable = element ? !element.readOnly && !element.disabled : false;
+  if (!element) return [];
+  return [
     {
       label: 'Cut',
       disabled: !selected || !editable,
-      run: () => void copyField(field, start, end, editable),
+      run: () => void copyField(element, start, end, editable),
     },
     {
       label: 'Copy',
       disabled: !selected,
-      run: () => void copyField(field, start, end, false),
+      run: () => void copyField(element, start, end, false),
     },
     {
       label: 'Paste',
       disabled: !editable,
-      run: () => void pasteField(field, start, end),
+      run: () => void pasteField(element, start, end),
     },
   ];
-  openContextMenu(event, items);
 }
 
 async function copyField(
@@ -1256,41 +1204,6 @@ function replaceFieldRange(
   field.dispatchEvent(new Event('input', { bubbles: true }));
   field.focus();
   field.setSelectionRange(caret, caret);
-}
-
-function openContextMenu(event: MouseEvent, items: ContextMenuItem[]): void {
-  projectMenuOpen.value = false;
-  contextMenuState.value = { items, x: event.clientX, y: event.clientY };
-  void nextTick(() => {
-    keepContextMenuOnScreen();
-    contextMenu.value
-      ?.querySelector<HTMLButtonElement>('button:not(:disabled)')
-      ?.focus();
-  });
-}
-
-/**
- * The menu opens at the pointer, which near the bottom or right edge would
- * otherwise place part of it outside the window.
- */
-function keepContextMenuOnScreen(): void {
-  const menu = contextMenuState.value;
-  const element = contextMenu.value;
-  if (!menu || !element) return;
-  const { width, height } = element.getBoundingClientRect();
-  const maxX = window.innerWidth - width - CONTEXT_MENU_MARGIN;
-  const maxY = window.innerHeight - height - CONTEXT_MENU_MARGIN;
-  menu.x = Math.max(CONTEXT_MENU_MARGIN, Math.min(menu.x, maxX));
-  menu.y = Math.max(CONTEXT_MENU_MARGIN, Math.min(menu.y, maxY));
-}
-
-function closeContextMenu(): void {
-  contextMenuState.value = undefined;
-}
-
-function runContextMenuItem(item: ContextMenuItem): void {
-  closeContextMenu();
-  item.run();
 }
 
 function setupProjectReordering(): void {
@@ -1381,23 +1294,6 @@ function persistSidebarWidth(): void {
   }
 }
 
-function handleDocumentPointerDown(event: PointerEvent): void {
-  const target = event.target;
-  if (
-    projectMenuOpen.value &&
-    target instanceof Node &&
-    !projectMenu.value?.contains(target)
-  ) {
-    projectMenuOpen.value = false;
-  }
-  if (
-    contextMenuState.value &&
-    (!(target instanceof Node) || !contextMenu.value?.contains(target))
-  ) {
-    closeContextMenu();
-  }
-}
-
 /**
  * Window focus is not document focus: the document inside a webview keeps focus
  * while the app sits in the background, so the shell has to report it instead.
@@ -1424,20 +1320,11 @@ async function watchMenuActions(): Promise<void> {
 
 /**
  * The webview's own menu offers reloads and page navigation, which a desktop
- * app has no use for, so every menu in Tau is its own. Text fields still need
- * the editing actions the native menu would have carried.
+ * app has no use for, so every menu in Tau is its own. The menus themselves
+ * are reka's; this only keeps the webview's native one from ever appearing.
  */
 function handleDocumentContextMenu(event: MouseEvent): void {
   event.preventDefault();
-  const target = event.target;
-  const field =
-    target instanceof Element ? target.closest(TEXT_FIELD_SELECTOR) : null;
-  if (
-    field instanceof HTMLInputElement ||
-    field instanceof HTMLTextAreaElement
-  ) {
-    openTextFieldMenu(event, field);
-  }
 }
 
 function handleDocumentKeydown(event: KeyboardEvent): void {
@@ -1451,17 +1338,14 @@ function handleDocumentKeydown(event: KeyboardEvent): void {
 
 /** Escape closes the innermost surface that is open, innermost first. */
 function handleEscape(event: KeyboardEvent): void {
-  if (contextMenuState.value) {
-    event.preventDefault();
-    closeContextMenu();
-  } else if (activeExtensionDialog.value) {
+  if (activeExtensionDialog.value) {
     event.preventDefault();
     void cancelExtensionDialog();
   } else if (state.remoteDialogOpen) closeRemoteProjectDialog();
   else if (commandMenuActive.value) {
     event.preventDefault();
     commandMenuDismissed.value = true;
-  } else projectMenuOpen.value = false;
+  }
 }
 
 /**
@@ -1520,17 +1404,11 @@ function handleExtensionSelectKeydown(event: KeyboardEvent): void {
   }
 }
 
-function toggleProjectMenu(): void {
-  projectMenuOpen.value = !projectMenuOpen.value;
-}
-
 function handleLocalProject(): void {
-  projectMenuOpen.value = false;
   void addLocalProject();
 }
 
 function handleRemoteProject(): void {
-  projectMenuOpen.value = false;
   openRemoteProjectDialog();
 }
 
