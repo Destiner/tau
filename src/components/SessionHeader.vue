@@ -19,18 +19,15 @@
         @keydown.escape.prevent="cancelSessionRename"
       />
       <h1 v-else>
-        <UiTooltip
+        <button
           v-if="canRenameSession"
-          content="Rename session"
+          class="session-name"
+          type="button"
+          title="Rename session"
+          @click="beginSessionRename"
         >
-          <button
-            class="session-name"
-            type="button"
-            @click="beginSessionRename"
-          >
-            {{ sessionTitle }}
-          </button>
-        </UiTooltip>
+          {{ sessionTitle }}
+        </button>
         <span
           v-else
           class="session-name"
@@ -38,17 +35,16 @@
         >
       </h1>
     </div>
-    <UiTooltip content="New session">
-      <UiIconButton
-        v-if="activeProject"
-        class="session-new-button"
-        size="lg"
-        label="New session"
-        @click="handleNewSession"
-      >
-        <UiIcon name="plus" />
-      </UiIconButton>
-    </UiTooltip>
+    <UiIconButton
+      v-if="activeProject"
+      class="session-new-button"
+      size="lg"
+      label="New session"
+      title="New session"
+      @click="handleNewSession"
+    >
+      <UiIcon name="plus" />
+    </UiIconButton>
   </header>
 </template>
 
@@ -60,7 +56,6 @@ import useTau from '../composables/useTau';
 import UiIcon from './ui/UiIcon.vue';
 import UiIconButton from './ui/UiIconButton.vue';
 import UiInput from './ui/UiInput.vue';
-import UiTooltip from './ui/UiTooltip.vue';
 
 const emit = defineEmits<{ 'composer-focus': [] }>();
 
