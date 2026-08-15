@@ -19,6 +19,10 @@ const STDERR_TAIL_LINES: usize = 8;
 const STDERR_LINE_CHARS: usize = 2048;
 const LOGIN_SHELL_TIMEOUT: Duration = Duration::from_secs(5);
 const LOGIN_SHELL_PATH_MARKER: &str = "__TAU_PATH__";
+/// Shells disagree about flags: tcsh rejects `-l` unless it stands alone, and
+/// shells that are not POSIX-like may reject bundling altogether. The
+/// combinations are ordered from most to least of the user's configuration.
+const LOGIN_SHELL_ARGUMENTS: [&[&str]; 4] = [&["-lic"], &["-i", "-c"], &["-lc"], &["-c"]];
 
 type StderrTail = Arc<Mutex<VecDeque<String>>>;
 
@@ -98,16 +102,7 @@ pub fn resolve_pi_binary() -> Option<PathBuf> {
         return Some(path);
     }
 
-    let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-    let output = Command::new(shell)
-        .args(["-lic", "command -v pi"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-    is_executable_file(&path).then_some(path)
+    find_on_login_shell_path("pi")
 }
 
 fn resolve_node_binary() -> Option<PathBuf> {
@@ -160,16 +155,16 @@ fn resolve_executable(
             }
         }
     }
-    let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-    let output = Command::new(shell)
-        .args(["-lic", &format!("command -v {executable}")])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-    is_executable_file(&path).then_some(path)
+    find_on_login_shell_path(executable)
+}
+
+/// Searching the login shell's PATH ourselves avoids depending on a lookup
+/// command whose spelling differs between shells.
+fn find_on_login_shell_path(executable: &str) -> Option<PathBuf> {
+    let path = login_shell_path()?;
+    env::split_paths(path)
+        .map(|directory| directory.join(executable))
+        .find(|path| is_executable_file(path))
 }
 
 fn is_executable_file(path: &Path) -> bool {
@@ -257,14 +252,24 @@ fn login_shell_path() -> Option<&'static OsString> {
 }
 
 fn query_login_shell_path() -> Option<OsString> {
+    // Windows processes already inherit a usable PATH, and none of these flags
+    // mean anything to its shells.
+    if cfg!(windows) {
+        return None;
+    }
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-    let mut command = Command::new(shell);
-    command.args([
-        "-lic",
-        &format!("printf '{LOGIN_SHELL_PATH_MARKER}%s{LOGIN_SHELL_PATH_MARKER}' \"$PATH\""),
-    ]);
-    let output = capture_stdout(command, LOGIN_SHELL_TIMEOUT)?;
-    parse_login_shell_path(&String::from_utf8_lossy(&output))
+    // `printenv` reports the exported variable, which is colon separated for
+    // every shell because that is what the process environment holds.
+    // Interpolating `$PATH` instead would yield a space separated list in fish
+    // and csh, whose PATH is a shell array.
+    let script =
+        format!("echo {LOGIN_SHELL_PATH_MARKER}; printenv PATH; echo {LOGIN_SHELL_PATH_MARKER}");
+    LOGIN_SHELL_ARGUMENTS.into_iter().find_map(|arguments| {
+        let mut command = Command::new(&shell);
+        command.args(arguments).arg(&script);
+        let output = capture_stdout(command, LOGIN_SHELL_TIMEOUT)?;
+        parse_login_shell_path(&String::from_utf8_lossy(&output))
+    })
 }
 
 /// Startup files are free to print banners, so the PATH is read from between
@@ -681,11 +686,38 @@ mod tests {
 
     #[test]
     fn login_shell_path_is_read_from_between_the_markers() {
-        let output = format!("startup banner\n{LOGIN_SHELL_PATH_MARKER}/Users/tau/.bun/bin:/usr/bin{LOGIN_SHELL_PATH_MARKER}");
+        let output = format!(
+            "startup banner\n{LOGIN_SHELL_PATH_MARKER}\n/Users/tau/.bun/bin:/usr/bin\n{LOGIN_SHELL_PATH_MARKER}\n"
+        );
         assert_eq!(
             parse_login_shell_path(&output),
             Some(OsString::from("/Users/tau/.bun/bin:/usr/bin")),
         );
+    }
+
+    #[test]
+    fn every_login_shell_argument_set_ends_with_a_command_flag() {
+        for arguments in LOGIN_SHELL_ARGUMENTS {
+            let last = arguments.last().expect("argument");
+            assert!(
+                last.ends_with('c'),
+                "{last} would not treat the next argument as a command",
+            );
+        }
+    }
+
+    #[test]
+    fn executables_are_found_on_the_login_shell_path() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        std::fs::write(directory.path().join("pi"), "").expect("executable");
+        let path =
+            env::join_paths([Path::new("/nonexistent"), directory.path()]).expect("search PATH");
+
+        let found = env::split_paths(&path)
+            .map(|candidate| candidate.join("pi"))
+            .find(|candidate| is_executable_file(candidate));
+
+        assert_eq!(found, Some(directory.path().join("pi")));
     }
 
     #[test]
