@@ -4,9 +4,6 @@ mod profile;
 mod settings;
 mod ssh;
 mod storage;
-// Stage 0 contract only: nothing outside its own tests calls into this yet.
-// Stage 1 wires provider initialization and persistence against it.
-#[allow(dead_code)]
 mod telemetry;
 
 use std::time::Duration;
@@ -30,7 +27,10 @@ const REVEAL_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let telemetry = telemetry::Telemetry::init();
+    telemetry.record_app_started();
+
+    let app = tauri::Builder::default()
         .manage(pi::PiState::default())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
@@ -89,8 +89,19 @@ pub fn run() {
             storage::set_active_session,
             storage::set_project_collapsed,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(move |_app_handle, event| {
+        // `App::run` calls `std::process::exit` once this closure returns
+        // control after `RunEvent::Exit`, which skips `Drop`. The clean-exit
+        // marker must therefore be recorded and flushed here, not relied on
+        // to happen implicitly when `telemetry` goes out of scope.
+        if let tauri::RunEvent::Exit = event {
+            telemetry.record_app_exited();
+            telemetry.shutdown();
+        }
+    });
 }
 
 /// The frontend shows the window once it has something to draw. One that never

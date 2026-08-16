@@ -6,6 +6,8 @@
 /// telemetry must never record, then scan persisted output for. Kept in one
 /// place so a test that forgets a category shows up as a missing entry here,
 /// not as a silently-absent assertion in a test body.
+// Stage 4+ privacy tests scan persisted/ingested output for these.
+#[allow(dead_code)]
 pub const FORBIDDEN_CONTENT_CANARIES: &[(&str, &str)] = &[
     ("prompt", "tau-canary-prompt-3f1c9a"),
     ("assistant_response", "tau-canary-response-3f1c9a"),
@@ -25,6 +27,7 @@ pub const FORBIDDEN_CONTENT_CANARIES: &[(&str, &str)] = &[
 
 /// True if `haystack` contains any forbidden-content canary. Later stages'
 /// privacy tests assert this is `false` for everything telemetry persists.
+#[allow(dead_code)]
 pub fn contains_forbidden_content(haystack: &str) -> bool {
     FORBIDDEN_CONTENT_CANARIES
         .iter()
@@ -33,6 +36,7 @@ pub fn contains_forbidden_content(haystack: &str) -> bool {
 
 /// Names of every canary found in `haystack`, so a failing test can report
 /// which content categories leaked instead of just that something did.
+#[allow(dead_code)]
 pub fn matched_canaries(haystack: &str) -> Vec<&'static str> {
     FORBIDDEN_CONTENT_CANARIES
         .iter()
@@ -45,6 +49,8 @@ pub fn matched_canaries(haystack: &str) -> Vec<&'static str> {
 /// "sanitize stack traces to module or source basenames" redaction rule.
 /// Directory components can carry a project path or a username, so they are
 /// dropped rather than truncated.
+// Stage 4 sanitizes captured stack frames with this before persisting them.
+#[allow(dead_code)]
 pub fn sanitize_source_location(file: &str, line: Option<u32>, column: Option<u32>) -> String {
     let base = file
         .trim_end_matches(['/', '\\'])
