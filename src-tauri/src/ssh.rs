@@ -1,4 +1,5 @@
 use crate::models::{RemoteDirectoryEntry, RemoteDirectoryListing};
+use crate::telemetry::{trace_context::TraceContext, Telemetry};
 use std::{
     env,
     ffi::OsStr,
@@ -7,6 +8,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use tauri::State;
 
 const SSH_COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
 const SSH_OPTIONS: [&str; 8] = [
@@ -82,8 +84,13 @@ impl SshConnection {
 
 #[tauri::command]
 pub async fn probe_remote_project(
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
     connection_string: String,
 ) -> Result<RemoteDirectoryListing, String> {
+    let _span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "probe_remote_project"));
     tauri::async_runtime::spawn_blocking(move || inspect_remote_directory(&connection_string, None))
         .await
         .map_err(|error| format!("Could not test the SSH connection: {error}"))?
@@ -91,9 +98,14 @@ pub async fn probe_remote_project(
 
 #[tauri::command]
 pub async fn list_remote_directories(
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
     connection_string: String,
     working_directory: String,
 ) -> Result<RemoteDirectoryListing, String> {
+    let _span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "list_remote_directories"));
     tauri::async_runtime::spawn_blocking(move || {
         inspect_remote_directory(&connection_string, Some(&working_directory))
     })

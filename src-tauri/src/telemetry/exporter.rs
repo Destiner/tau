@@ -152,6 +152,16 @@ fn log_record_to_otlp_json(
     if let Some(event_name) = record.event_name() {
         log_record.insert("eventName".into(), Value::String(event_name.to_string()));
     }
+    if let Some(context) = record.trace_context() {
+        log_record.insert(
+            "traceId".into(),
+            Value::String(context.trace_id.to_string()),
+        );
+        log_record.insert("spanId".into(), Value::String(context.span_id.to_string()));
+        if let Some(flags) = context.trace_flags {
+            log_record.insert("flags".into(), Value::from(flags.to_u8()));
+        }
+    }
     if let Some(body) = record.body() {
         log_record.insert("body".into(), any_value_json(body));
     }

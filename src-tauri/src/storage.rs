@@ -22,11 +22,11 @@ use tauri::State;
 const MAX_SESSION_LINE_BYTES: usize = 64 * 1024 * 1024;
 static STORAGE_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
-/// The one operation Stage 2 instruments end to end to prove frontend and
-/// native work land in the same trace. `telemetry_context` is optional and
-/// explicit so a caller without a span (or a malformed one) still loads the
-/// workspace normally — telemetry failure must not fail this command.
-/// Ordinary invokes get this treatment generally in Stage 3, not here.
+/// Every storage command below accepts the same optional, explicit
+/// `telemetry_context`: a caller without a span (or a malformed one) still
+/// runs normally, since telemetry failure must never fail the command it is
+/// attached to. Stage 2 proved the pattern end to end on this one command;
+/// Stage 3 applies it to the rest of storage's ordinary invokes.
 #[tauri::command]
 pub fn load_workspace(
     telemetry: State<'_, Telemetry>,
@@ -39,7 +39,14 @@ pub fn load_workspace(
 }
 
 #[tauri::command]
-pub fn import_project(path: String) -> Result<WorkspaceSnapshot, String> {
+pub fn import_project(
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
+    path: String,
+) -> Result<WorkspaceSnapshot, String> {
+    let _span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "import_project"));
     let path = normalized_project_path(&path)?;
     mutate_projects(|registry| {
         if !registry.projects.iter().any(|project| project.path == path) {
@@ -58,10 +65,15 @@ pub fn import_project(path: String) -> Result<WorkspaceSnapshot, String> {
 
 #[tauri::command]
 pub fn import_remote_project(
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
     connection_string: String,
     working_directory: String,
     host: String,
 ) -> Result<WorkspaceSnapshot, String> {
+    let _span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "import_remote_project"));
     let connection_string = connection_string.trim().to_string();
     let working_directory = working_directory.trim_end_matches('/').to_string();
     let working_directory = if working_directory.is_empty() {
@@ -124,7 +136,14 @@ pub fn import_remote_project(
 }
 
 #[tauri::command]
-pub fn remove_project(path: String) -> Result<WorkspaceSnapshot, String> {
+pub fn remove_project(
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
+    path: String,
+) -> Result<WorkspaceSnapshot, String> {
+    let _span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "remove_project"));
     mutate_projects(|registry| {
         registry.projects.retain(|project| project.path != path);
         if registry.active_project_path == path {
@@ -135,7 +154,14 @@ pub fn remove_project(path: String) -> Result<WorkspaceSnapshot, String> {
 }
 
 #[tauri::command]
-pub fn set_active_project(path: String) -> Result<WorkspaceSnapshot, String> {
+pub fn set_active_project(
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
+    path: String,
+) -> Result<WorkspaceSnapshot, String> {
+    let _span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "set_active_project"));
     mutate_projects(|registry| {
         if !registry.projects.iter().any(|project| project.path == path) {
             return Err("The project is not imported in Tau.".into());
@@ -146,7 +172,15 @@ pub fn set_active_project(path: String) -> Result<WorkspaceSnapshot, String> {
 }
 
 #[tauri::command]
-pub fn set_project_collapsed(path: String, collapsed: bool) -> Result<WorkspaceSnapshot, String> {
+pub fn set_project_collapsed(
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
+    path: String,
+    collapsed: bool,
+) -> Result<WorkspaceSnapshot, String> {
+    let _span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "set_project_collapsed"));
     mutate_projects(|registry| {
         let project = registry
             .projects
@@ -159,15 +193,27 @@ pub fn set_project_collapsed(path: String, collapsed: bool) -> Result<WorkspaceS
 }
 
 #[tauri::command]
-pub fn reorder_projects(project_paths: Vec<String>) -> Result<WorkspaceSnapshot, String> {
+pub fn reorder_projects(
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
+    project_paths: Vec<String>,
+) -> Result<WorkspaceSnapshot, String> {
+    let _span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "reorder_projects"));
     mutate_projects(|registry| reorder_project_records(&mut registry.projects, &project_paths))
 }
 
 #[tauri::command]
 pub fn set_active_session(
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
     project_path: String,
     session_id: String,
 ) -> Result<WorkspaceSnapshot, String> {
+    let _span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "set_active_session"));
     let _write_guard = lock_storage_writes()?;
     let mut projects = load_project_registry()?;
     let project = projects
@@ -209,9 +255,14 @@ pub fn set_active_session(
 
 #[tauri::command]
 pub fn archive_session(
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
     project_path: String,
     session_id: String,
 ) -> Result<WorkspaceSnapshot, String> {
+    let _span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "archive_session"));
     let _write_guard = lock_storage_writes()?;
     let mut projects = load_project_registry()?;
     let project = projects
@@ -235,13 +286,19 @@ pub fn archive_session(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn register_session(
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
     project_path: String,
     session_id: String,
     session_path: String,
     session_name: Option<String>,
     last_user_message_at: Option<u64>,
 ) -> Result<WorkspaceSnapshot, String> {
+    let _span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "register_session"));
     if session_id.trim().is_empty() || session_id.len() > 256 {
         return Err("Pi returned an invalid session id.".into());
     }

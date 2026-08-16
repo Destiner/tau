@@ -11,6 +11,7 @@ import { scopeModels } from '../lib/pi/model-scope';
 import type { ModelOption, ThinkingLevel } from '../lib/pi/model-scope';
 import type { TranscriptEntry } from '../lib/pi/transcript';
 import { asRecord, stringValue } from '../lib/pi/transcript';
+import type { TraceContext } from '../lib/telemetry/trace-context';
 
 interface WorkspaceSnapshot {
   activeProjectPath: string;
@@ -121,6 +122,10 @@ interface PendingPrompt {
   selectedEffort: ThinkingLevel;
   settingsRequestId: string;
   settingsStep: '' | 'model' | 'effort';
+  /** The `message.send` action span this prompt started under, if any, so
+   * every RPC the pending-prompt flow later makes (across the `get_state`
+   * round trip) still nests under the action that requested it. */
+  telemetryContext?: TraceContext;
 }
 
 interface SessionController {

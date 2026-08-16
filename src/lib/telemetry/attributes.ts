@@ -74,12 +74,48 @@ const CONTEXT_ATTRIBUTES: readonly AttributeSpec[] = [
   { key: 'pi.generation', kind: 'int', maxLen: null, metricSafe: false },
 ];
 
+/** Categorical values for `ui.action`'s `tau.action.name`: the semantic user
+ * actions Stage 3 instruments in `useTau.ts`. */
+const UI_ACTION_NAMES = [
+  'session.select',
+  'session.new',
+  'message.send',
+  'session.stop',
+  'session.rename',
+  'model.select',
+  'effort.select',
+  'extension.dialog.submit',
+  'extension.dialog.cancel',
+] as const;
+type UiActionName = (typeof UI_ACTION_NAMES)[number];
+
 const UI_ACTION: RecordFamily = {
   name: 'ui.action',
   attributes: [stringAttribute('tau.action.name', true)],
 };
 
-const TAURI_INVOKE_COMMANDS = ['load_workspace'] as const;
+/** Every ordinary Tauri command routed through the shared invoke wrapper.
+ * `send_pi` (covered by `pi.rpc` spans) and `ingest_telemetry` (which must
+ * never trace itself) are deliberately absent. */
+const TAURI_INVOKE_COMMANDS = [
+  'load_workspace',
+  'import_project',
+  'import_remote_project',
+  'remove_project',
+  'set_active_project',
+  'set_project_collapsed',
+  'reorder_projects',
+  'set_active_session',
+  'archive_session',
+  'register_session',
+  'probe_remote_project',
+  'list_remote_directories',
+  'read_model_scope',
+  'read_remote_model_scope',
+  'start_pi',
+  'start_pi_remote',
+  'stop_pi',
+] as const;
 type TauriInvokeCommand = (typeof TAURI_INVOKE_COMMANDS)[number];
 
 const TAURI_INVOKE: RecordFamily = {
@@ -87,12 +123,62 @@ const TAURI_INVOKE: RecordFamily = {
   attributes: [stringAttribute('tau.invoke.command', true)],
 };
 
+/** Categorical values for `pi.rpc.method`: every request `type` Tau sends
+ * through `send_pi` (see `src/lib/pi/runtime.ts`). */
+const PI_RPC_METHODS = [
+  'get_state',
+  'get_available_models',
+  'get_commands',
+  'get_available_thinking_levels',
+  'get_messages',
+  'set_model',
+  'set_thinking_level',
+  'set_session_name',
+  'prompt',
+  'abort',
+  'extension_ui_response',
+] as const;
+type PiRpcMethod = (typeof PI_RPC_METHODS)[number];
+
+/** Categorical values for `pi.rpc.outcome`: how a Pi RPC span ended. */
+const PI_RPC_OUTCOMES = [
+  'success',
+  'error',
+  'timeout',
+  'abandoned_process_exit',
+  'abandoned_generation_change',
+  'abandoned_stop',
+  'abandoned_replacement',
+  'abandoned_duplicate_request',
+] as const;
+type PiRpcOutcome = (typeof PI_RPC_OUTCOMES)[number];
+
 const PI_RPC: RecordFamily = {
   name: 'pi.rpc',
   attributes: [
     stringAttribute('pi.rpc.method', true),
     stringAttribute('pi.rpc.request_id', false),
     stringAttribute('pi.rpc.outcome', true),
+  ],
+};
+
+/** Per-Pi-run aggregate streaming counts (`src/lib/pi/runtime.ts`). Never
+ * one record per delta or token: this family carries only bounded totals. */
+const PI_STREAM: RecordFamily = {
+  name: 'pi.stream',
+  attributes: [
+    {
+      key: 'pi.stream.delta_count',
+      kind: 'int',
+      maxLen: null,
+      metricSafe: true,
+    },
+    {
+      key: 'pi.stream.character_count',
+      kind: 'int',
+      maxLen: null,
+      metricSafe: true,
+    },
   ],
 };
 
@@ -105,9 +191,13 @@ const CONTROLLER_LIFECYCLE: RecordFamily = {
   ],
 };
 
+const PI_PROCESS_STOP_REASONS = ['explicit_stop', 'replaced'] as const;
+const PI_PROCESS_RESOLUTIONS = ['found', 'not_found'] as const;
+
 const PI_PROCESS_LIFECYCLE: RecordFamily = {
   name: 'pi.process.lifecycle',
   attributes: [
+    stringAttribute('tau.process.resolution', true),
     stringAttribute('tau.process.stop_reason', true),
     {
       key: 'tau.process.exit_code',
@@ -126,6 +216,7 @@ const FAMILIES: readonly RecordFamily[] = [
   UI_ACTION,
   TAURI_INVOKE,
   PI_RPC,
+  PI_STREAM,
   CONTROLLER_LIFECYCLE,
   PI_PROCESS_LIFECYCLE,
   APP_LIFECYCLE,
@@ -159,6 +250,29 @@ function isMetricSafe(key: string): boolean {
   return catalog.find((spec) => spec.key === key)?.metricSafe ?? false;
 }
 
+/** The reviewed value set for a categorical string attribute, if `key` is
+ * one. Centralizing the key-to-enum mapping here means a new categorical
+ * attribute only needs an entry here, not a bespoke branch in
+ * `validateAttribute`. */
+function categoricalValues(key: string): readonly string[] | undefined {
+  switch (key) {
+    case 'tau.action.name':
+      return UI_ACTION_NAMES;
+    case 'tau.invoke.command':
+      return TAURI_INVOKE_COMMANDS;
+    case 'pi.rpc.method':
+      return PI_RPC_METHODS;
+    case 'pi.rpc.outcome':
+      return PI_RPC_OUTCOMES;
+    case 'tau.process.stop_reason':
+      return PI_PROCESS_STOP_REASONS;
+    case 'tau.process.resolution':
+      return PI_PROCESS_RESOLUTIONS;
+    default:
+      return undefined;
+  }
+}
+
 /** Validates `value` for `key` within `family`: the key must be allowlisted,
  * its runtime type must match the spec, and string values must fit the
  * spec's maximum length. This is the enforcement point that keeps telemetry
@@ -176,10 +290,8 @@ function validateAttribute(
     if (spec.maxLen !== null && utf8Length(value) > spec.maxLen) {
       return { valid: false, error: 'too-long' };
     }
-    if (
-      key === 'tau.invoke.command' &&
-      !(TAURI_INVOKE_COMMANDS as readonly string[]).includes(value)
-    ) {
+    const allowedValues = categoricalValues(key);
+    if (allowedValues && !allowedValues.includes(value)) {
       return { valid: false, error: 'unknown-value' };
     }
     return { valid: true };
@@ -195,8 +307,11 @@ export type {
   AttributeError,
   AttributeKind,
   AttributeSpec,
+  PiRpcMethod,
+  PiRpcOutcome,
   RecordFamily,
   TauriInvokeCommand,
+  UiActionName,
 };
 
 export {
@@ -208,10 +323,16 @@ export {
   findFamily,
   isMetricSafe,
   PI_PROCESS_LIFECYCLE,
+  PI_PROCESS_RESOLUTIONS,
+  PI_PROCESS_STOP_REASONS,
   PI_RPC,
+  PI_RPC_METHODS,
+  PI_RPC_OUTCOMES,
+  PI_STREAM,
   RESOURCE_ATTRIBUTES,
   TAURI_INVOKE,
   TAURI_INVOKE_COMMANDS,
   UI_ACTION,
+  UI_ACTION_NAMES,
   validateAttribute,
 };

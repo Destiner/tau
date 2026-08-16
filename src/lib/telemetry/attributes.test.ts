@@ -6,10 +6,19 @@ import {
   CONTEXT_ATTRIBUTES,
   FAMILIES,
   isMetricSafe,
+  PI_PROCESS_RESOLUTIONS,
+  PI_PROCESS_STOP_REASONS,
+  PI_RPC_METHODS,
+  PI_RPC_OUTCOMES,
   RESOURCE_ATTRIBUTES,
+  TAURI_INVOKE_COMMANDS,
+  UI_ACTION_NAMES,
   validateAttribute,
 } from './attributes';
-import { DEFAULT_MAX_ATTRIBUTE_LEN } from './privacy';
+import {
+  DEFAULT_MAX_ATTRIBUTE_LEN,
+  FORBIDDEN_CONTENT_CANARIES,
+} from './privacy';
 
 function allSpecs(): AttributeSpec[] {
   return [
@@ -111,6 +120,96 @@ describe('validateAttribute', () => {
         valid: false,
         error: 'too-long',
       });
+    }
+  });
+
+  it('accepts every reviewed action name', () => {
+    for (const name of UI_ACTION_NAMES) {
+      expect(validateAttribute('ui.action', 'tau.action.name', name)).toEqual({
+        valid: true,
+      });
+    }
+  });
+
+  it('rejects an unreviewed action name', () => {
+    expect(
+      validateAttribute('ui.action', 'tau.action.name', 'not.a.real.action'),
+    ).toEqual({ valid: false, error: 'unknown-value' });
+  });
+
+  it('accepts every reviewed invoke command', () => {
+    for (const command of TAURI_INVOKE_COMMANDS) {
+      expect(
+        validateAttribute('tauri.invoke', 'tau.invoke.command', command),
+      ).toEqual({ valid: true });
+    }
+  });
+
+  it('accepts every reviewed rpc method and outcome', () => {
+    for (const method of PI_RPC_METHODS) {
+      expect(validateAttribute('pi.rpc', 'pi.rpc.method', method)).toEqual({
+        valid: true,
+      });
+    }
+    for (const outcome of PI_RPC_OUTCOMES) {
+      expect(validateAttribute('pi.rpc', 'pi.rpc.outcome', outcome)).toEqual({
+        valid: true,
+      });
+    }
+  });
+
+  it('rejects an unreviewed rpc outcome', () => {
+    expect(
+      validateAttribute('pi.rpc', 'pi.rpc.outcome', 'not-a-real-outcome'),
+    ).toEqual({ valid: false, error: 'unknown-value' });
+  });
+
+  it('accepts every reviewed process reason and resolution', () => {
+    for (const reason of PI_PROCESS_STOP_REASONS) {
+      expect(
+        validateAttribute(
+          'pi.process.lifecycle',
+          'tau.process.stop_reason',
+          reason,
+        ),
+      ).toEqual({ valid: true });
+    }
+    for (const resolution of PI_PROCESS_RESOLUTIONS) {
+      expect(
+        validateAttribute(
+          'pi.process.lifecycle',
+          'tau.process.resolution',
+          resolution,
+        ),
+      ).toEqual({ valid: true });
+    }
+  });
+
+  it('accepts stream aggregate counts', () => {
+    expect(validateAttribute('pi.stream', 'pi.stream.delta_count', 3)).toEqual({
+      valid: true,
+    });
+    expect(
+      validateAttribute('pi.stream', 'pi.stream.character_count', 42),
+    ).toEqual({ valid: true });
+  });
+
+  it('never treats a forbidden-content canary as a reviewed categorical value', () => {
+    const categoricalAttributes: Array<[string, string]> = [
+      ['ui.action', 'tau.action.name'],
+      ['tauri.invoke', 'tau.invoke.command'],
+      ['pi.rpc', 'pi.rpc.method'],
+      ['pi.rpc', 'pi.rpc.outcome'],
+      ['pi.process.lifecycle', 'tau.process.stop_reason'],
+      ['pi.process.lifecycle', 'tau.process.resolution'],
+    ];
+    for (const [family, key] of categoricalAttributes) {
+      for (const canary of FORBIDDEN_CONTENT_CANARIES.values()) {
+        expect(validateAttribute(family, key, canary)).toEqual({
+          valid: false,
+          error: 'unknown-value',
+        });
+      }
     }
   });
 });

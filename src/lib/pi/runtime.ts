@@ -44,6 +44,13 @@ import {
   type WorkspaceSnapshot,
 } from '../../composables/state';
 import type { CommandOption } from '../commands';
+import {
+  invokeTraced,
+  recordStreamAggregate,
+  startRpcSpan,
+} from '../telemetry';
+import type { PiRpcMethod, PiRpcOutcome } from '../telemetry/attributes';
+import type { TraceContext } from '../telemetry/trace-context';
 
 import type { PiBridgeEvent } from './bridge';
 import { describePiError } from './error';
@@ -63,6 +70,7 @@ async function sendPhantomMessage(
   controller: SessionController,
   message: string,
   command: boolean,
+  parentContext?: TraceContext,
 ): Promise<void> {
   const project = state.workspace?.projects.find(
     (item) => item.path === controller.projectPath,
@@ -82,6 +90,7 @@ async function sendPhantomMessage(
     selectedEffort: controller.currentEffort,
     settingsRequestId: '',
     settingsStep: '',
+    telemetryContext: parentContext,
   };
   controller.draft = '';
   controller.working = true;
@@ -94,10 +103,14 @@ async function sendPhantomMessage(
     controller.starting = true;
     const stateRequestId = nextRequestId('state');
     controller.pendingPrompt.stateRequestId = stateRequestId;
-    await rpc(controller, { id: stateRequestId, type: 'get_state' });
+    await rpc(
+      controller,
+      { id: stateRequestId, type: 'get_state' },
+      parentContext,
+    );
     return;
   }
-  await startController(controller, project, undefined, true);
+  await startController(controller, project, undefined, true, parentContext);
 }
 
 async function startController(
@@ -105,6 +118,7 @@ async function startController(
   project: ProjectSummary,
   sessionPath?: string,
   preserveMessages = false,
+  parentContext?: TraceContext,
 ): Promise<void> {
   if (controller.starting || controller.disposed) return;
   controller.ready = false;
@@ -131,28 +145,40 @@ async function startController(
   controller.commandsLoaded = false;
   controller.status = '';
   discardControllerDialogs(controller);
-  void refreshModelScope(controller, project);
+  void refreshModelScope(controller, project, parentContext);
 
   try {
     if (project.connectionString) {
-      controller.generation = await invoke<number>('start_pi_remote', {
-        runtimeId: controller.runtimeId,
-        connectionString: project.connectionString,
-        workingDirectory: project.workingDirectory,
-        sessionPath: sessionPath ?? null,
-      });
+      controller.generation = await invokeTraced<number>(
+        'start_pi_remote',
+        {
+          runtimeId: controller.runtimeId,
+          connectionString: project.connectionString,
+          workingDirectory: project.workingDirectory,
+          sessionPath: sessionPath ?? null,
+        },
+        parentContext,
+      );
     } else {
-      controller.generation = await invoke<number>('start_pi', {
-        runtimeId: controller.runtimeId,
-        projectPath: project.workingDirectory,
-        sessionPath: sessionPath ?? null,
-      });
+      controller.generation = await invokeTraced<number>(
+        'start_pi',
+        {
+          runtimeId: controller.runtimeId,
+          projectPath: project.workingDirectory,
+          sessionPath: sessionPath ?? null,
+        },
+        parentContext,
+      );
     }
     if (controller.disposed) {
-      await invoke('stop_pi', { runtimeId: controller.runtimeId });
+      await invokeTraced(
+        'stop_pi',
+        { runtimeId: controller.runtimeId },
+        parentContext,
+      );
       return;
     }
-    await requestBootstrap(controller);
+    await requestBootstrap(controller, parentContext);
   } catch (error) {
     controller.starting = false;
     controller.connectingRemote = false;
@@ -167,13 +193,16 @@ async function startController(
 async function refreshModelScope(
   controller: SessionController,
   project: ProjectSummary,
+  parentContext?: TraceContext,
 ): Promise<void> {
   try {
     const patterns = project.connectionString
-      ? await invoke<string[]>('read_remote_model_scope', {
-          connectionString: project.connectionString,
-        })
-      : await invoke<string[]>('read_model_scope');
+      ? await invokeTraced<string[]>(
+          'read_remote_model_scope',
+          { connectionString: project.connectionString },
+          parentContext,
+        )
+      : await invokeTraced<string[]>('read_model_scope', {}, parentContext);
     if (controller.disposed || !Array.isArray(patterns)) return;
     controller.modelScope = patterns.filter(
       (pattern) => typeof pattern === 'string',
@@ -183,31 +212,211 @@ async function refreshModelScope(
   }
 }
 
-async function requestBootstrap(controller: SessionController): Promise<void> {
-  await rpc(controller, {
-    id: nextRequestId('models'),
-    type: 'get_available_models',
-  });
-  await rpc(controller, {
-    id: nextRequestId('commands'),
-    type: 'get_commands',
-  });
+async function requestBootstrap(
+  controller: SessionController,
+  parentContext?: TraceContext,
+): Promise<void> {
+  await rpc(
+    controller,
+    { id: nextRequestId('models'), type: 'get_available_models' },
+    parentContext,
+  );
+  await rpc(
+    controller,
+    { id: nextRequestId('commands'), type: 'get_commands' },
+    parentContext,
+  );
   const stateRequestId = nextRequestId('state');
   controller.bootstrapStateRequestId = stateRequestId;
   if (controller.pendingPrompt) {
     controller.pendingPrompt.stateRequestId = stateRequestId;
   }
-  await rpc(controller, { id: stateRequestId, type: 'get_state' });
+  await rpc(
+    controller,
+    { id: stateRequestId, type: 'get_state' },
+    parentContext,
+  );
 }
 
+/**
+ * Bounds how long a Pi RPC span can stay pending before it is closed out as
+ * timed out. Pi RPCs can legitimately run for a long time (a prompt with
+ * tool use), so this is generous — it exists only so an RPC that never gets
+ * a response (and is never otherwise abandoned) does not pin a span open
+ * forever, not to police ordinary latency.
+ */
+const RPC_SPAN_TIMEOUT_MS = 10 * 60 * 1000;
+
+interface PendingRpcSpan {
+  end: (outcome: PiRpcOutcome) => void;
+  timeoutHandle: ReturnType<typeof setTimeout>;
+}
+
+/**
+ * Pi RPC spans in flight, keyed by runtime + generation + request id — the
+ * exact key the plan calls for, and the same shape `send_pi`'s responses
+ * carry. This is explicit request bookkeeping, not ambient "current span"
+ * state: entries are looked up and removed by their own key, so concurrent
+ * runtimes and generations cannot collide or leak into each other.
+ */
+const pendingRpcSpans = new Map<string, PendingRpcSpan>();
+
+function rpcSpanKey(
+  runtimeId: string,
+  generation: number,
+  requestId: string,
+): string {
+  return `${runtimeId}:${generation}:${requestId}`;
+}
+
+function registerPendingRpcSpan(
+  key: string,
+  end: (outcome: PiRpcOutcome) => void,
+): void {
+  const previous = pendingRpcSpans.get(key);
+  if (previous) {
+    pendingRpcSpans.delete(key);
+    clearTimeout(previous.timeoutHandle);
+    previous.end('abandoned_duplicate_request');
+  }
+  const timeoutHandle = setTimeout(() => {
+    pendingRpcSpans.delete(key);
+    end('timeout');
+  }, RPC_SPAN_TIMEOUT_MS);
+  pendingRpcSpans.set(key, { end, timeoutHandle });
+}
+
+/** Ends the pending span for `key` with `outcome`, if one is still pending.
+ * A key with nothing pending — an unmatched or duplicate response — is a
+ * deliberate no-op: there is nothing to end, and the caller's own response
+ * handling continues regardless. */
+function endPendingRpcSpan(key: string, outcome: PiRpcOutcome): void {
+  const pending = pendingRpcSpans.get(key);
+  if (!pending) return;
+  pendingRpcSpans.delete(key);
+  clearTimeout(pending.timeoutHandle);
+  pending.end(outcome);
+}
+
+/** Abandons every span pending for `runtimeId`/`generation` with `outcome`:
+ * process exit, a generation change, a controller disposal or replacement,
+ * or a stop path. Never touches spans for other runtimes or generations. */
+function abandonPendingRpcSpans(
+  runtimeId: string,
+  generation: number,
+  outcome: PiRpcOutcome,
+): void {
+  const prefix = `${runtimeId}:${generation}:`;
+  for (const [key, pending] of pendingRpcSpans) {
+    if (!key.startsWith(prefix)) continue;
+    pendingRpcSpans.delete(key);
+    clearTimeout(pending.timeoutHandle);
+    pending.end(outcome);
+  }
+}
+
+interface StreamAggregate {
+  deltaCount: number;
+  characterCount: number;
+  startedAt: number;
+  sessionId: string;
+  controllerId: string;
+}
+
+/** Per-run streaming aggregates, keyed the same way as pending RPC spans.
+ * Accumulates locally and is recorded as one bounded `pi.stream` span per
+ * run — never one record per delta or token — when the run settles, is
+ * abandoned, or the runtime stops. */
+const streamAggregates = new Map<string, StreamAggregate>();
+
+function streamAggregateKey(runtimeId: string, generation: number): string {
+  return `${runtimeId}:${generation}`;
+}
+
+function resetStreamAggregate(runtimeId: string, generation: number): void {
+  streamAggregates.delete(streamAggregateKey(runtimeId, generation));
+}
+
+function recordStreamDelta(controller: SessionController, delta: string): void {
+  if (!delta) return;
+  const key = streamAggregateKey(controller.runtimeId, controller.generation);
+  const aggregate =
+    streamAggregates.get(key) ??
+    ({
+      deltaCount: 0,
+      characterCount: 0,
+      startedAt: Date.now(),
+      sessionId: controller.sessionId,
+      controllerId: controller.key,
+    } satisfies StreamAggregate);
+  aggregate.deltaCount += 1;
+  aggregate.characterCount += delta.length;
+  streamAggregates.set(key, aggregate);
+}
+
+function flushStreamAggregate(runtimeId: string, generation: number): void {
+  const key = streamAggregateKey(runtimeId, generation);
+  const aggregate = streamAggregates.get(key);
+  if (!aggregate) return;
+  streamAggregates.delete(key);
+  if (aggregate.deltaCount === 0) return;
+  recordStreamAggregate(
+    runtimeId,
+    generation,
+    aggregate.deltaCount,
+    aggregate.characterCount,
+    aggregate.startedAt,
+    Date.now(),
+    {
+      sessionId: aggregate.sessionId,
+      controllerId: aggregate.controllerId,
+    },
+  );
+}
+
+/**
+ * Sends one Pi RPC request. The `pi.rpc` span starts here, the moment Tau
+ * creates the request — not once `send_pi` finishes writing it — and ends
+ * later on the exact matching response (`handleResponse`), a timeout, or
+ * explicit abandonment. `parentContext` nests the span under an enclosing
+ * `ui.action` span when this call is part of a traced user action.
+ */
 async function rpc(
   controller: SessionController,
   request: Record<string, unknown>,
+  parentContext?: TraceContext,
 ): Promise<void> {
-  await invoke('send_pi', { runtimeId: controller.runtimeId, request });
+  const requestId = stringValue(request.id);
+  const method = stringValue(request.type);
+  const key = requestId
+    ? rpcSpanKey(controller.runtimeId, controller.generation, requestId)
+    : undefined;
+  if (key) {
+    const span = startRpcSpan(
+      method as PiRpcMethod,
+      requestId,
+      controller.runtimeId,
+      controller.generation,
+      parentContext,
+      {
+        sessionId: controller.sessionId,
+        controllerId: controller.key,
+      },
+    );
+    registerPendingRpcSpan(key, span.end);
+  }
+  try {
+    await invoke('send_pi', { runtimeId: controller.runtimeId, request });
+  } catch (error) {
+    if (key) endPendingRpcSpan(key, 'error');
+    throw error;
+  }
 }
 
-async function submitExtensionDialog(value: string | boolean): Promise<void> {
+async function submitExtensionDialog(
+  value: string | boolean,
+  parentContext?: TraceContext,
+): Promise<void> {
   const dialog = activeExtensionDialog.value;
   if (!dialog) return;
   const response =
@@ -224,22 +433,29 @@ async function submitExtensionDialog(value: string | boolean): Promise<void> {
             id: dialog.requestId,
             cancelled: true,
           };
-  await respondToExtensionDialog(dialog, response);
+  await respondToExtensionDialog(dialog, response, parentContext);
 }
 
-async function cancelExtensionDialog(): Promise<void> {
+async function cancelExtensionDialog(
+  parentContext?: TraceContext,
+): Promise<void> {
   const dialog = activeExtensionDialog.value;
   if (!dialog) return;
-  await respondToExtensionDialog(dialog, {
-    type: 'extension_ui_response',
-    id: dialog.requestId,
-    cancelled: true,
-  });
+  await respondToExtensionDialog(
+    dialog,
+    {
+      type: 'extension_ui_response',
+      id: dialog.requestId,
+      cancelled: true,
+    },
+    parentContext,
+  );
 }
 
 async function respondToExtensionDialog(
   dialog: ExtensionDialog,
   response: Record<string, unknown>,
+  parentContext?: TraceContext,
 ): Promise<void> {
   discardExtensionDialog(dialog.key);
   const controller = controllerByKey(dialog.controllerKey);
@@ -252,7 +468,7 @@ async function respondToExtensionDialog(
     return;
   }
   try {
-    await rpc(controller, response);
+    await rpc(controller, response, parentContext);
     // An answered dialog is a common point for a workflow to open its next
     // session, and that swap is not reported by any event.
     watchSessionReplacement(controller);
@@ -464,6 +680,12 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
   touchController(controller);
   if (event.kind === 'started') {
     if (event.generation > controller.generation) {
+      abandonPendingRpcSpans(
+        controller.runtimeId,
+        controller.generation,
+        'abandoned_generation_change',
+      );
+      flushStreamAggregate(controller.runtimeId, controller.generation);
       discardControllerDialogs(controller);
       controller.generation = event.generation;
     }
@@ -493,6 +715,12 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     return;
   }
   if (event.kind === 'exited') {
+    abandonPendingRpcSpans(
+      controller.runtimeId,
+      event.generation,
+      'abandoned_process_exit',
+    );
+    flushStreamAggregate(controller.runtimeId, event.generation);
     clearSessionReplacementWatch(controller);
     clearAbortWatch(controller);
     discardControllerDialogs(controller, event.generation);
@@ -539,6 +767,7 @@ async function handleRpc(
   if (type === 'agent_start') {
     clearSessionReplacementWatch(controller);
     clearAbortWatch(controller);
+    resetStreamAggregate(controller.runtimeId, controller.generation);
     controller.localErrors = [];
     controller.streaming = true;
     controller.stopping = false;
@@ -552,12 +781,16 @@ async function handleRpc(
   if (type === 'message_update') {
     const delta = asRecord(event.assistantMessageEvent);
     const deltaType = stringValue(delta?.type);
+    const deltaText = stringValue(delta?.delta);
+    if (deltaType === 'text_delta' || deltaType === 'thinking_delta') {
+      recordStreamDelta(controller, deltaText);
+    }
     if (deltaType === 'text_delta') {
-      appendStream(controller, 'assistant', stringValue(delta?.delta));
+      appendStream(controller, 'assistant', deltaText);
       if (!isControllerSelected(controller)) controller.unread = true;
     }
     if (deltaType === 'thinking_delta') {
-      appendStream(controller, 'thinking', stringValue(delta?.delta));
+      appendStream(controller, 'thinking', deltaText);
     }
     return;
   }
@@ -611,6 +844,7 @@ async function handleRpc(
     return;
   }
   if (type === 'agent_settled') {
+    flushStreamAggregate(controller.runtimeId, controller.generation);
     clearAbortWatch(controller);
     controller.syncing = true;
     controller.working = false;
@@ -647,6 +881,12 @@ async function handleResponse(
 ): Promise<void> {
   const command = stringValue(response.command);
   const responseId = stringValue(response.id);
+  if (responseId) {
+    endPendingRpcSpan(
+      rpcSpanKey(controller.runtimeId, controller.generation, responseId),
+      response.success === true ? 'success' : 'error',
+    );
+  }
   const resolvesRunState =
     command === 'get_state' &&
     Boolean(controller.runStateRequestId) &&
@@ -782,6 +1022,14 @@ async function handleResponse(
     }
 
     if (sessionChanged) {
+      // The response that revealed the replacement already ended its own
+      // span above; anything else still pending for this runtime and
+      // generation belongs to the session Pi just swapped out from under it.
+      abandonPendingRpcSpans(
+        controller.runtimeId,
+        controller.generation,
+        'abandoned_replacement',
+      );
       clearSessionReplacementWatch(controller);
       clearAbortWatch(controller);
       controller.messages = [];
@@ -971,12 +1219,16 @@ async function applyPendingSessionSettings(
   const requestId = nextRequestId('initial-model');
   pending.settingsRequestId = requestId;
   pending.settingsStep = 'model';
-  await rpc(controller, {
-    id: requestId,
-    type: 'set_model',
-    provider: pending.selectedModelProvider,
-    modelId: pending.selectedModelId,
-  });
+  await rpc(
+    controller,
+    {
+      id: requestId,
+      type: 'set_model',
+      provider: pending.selectedModelProvider,
+      modelId: pending.selectedModelId,
+    },
+    pending.telemetryContext,
+  );
 }
 
 async function applyPendingSessionEffort(
@@ -993,11 +1245,15 @@ async function applyPendingSessionEffort(
   const requestId = nextRequestId('initial-effort');
   pending.settingsRequestId = requestId;
   pending.settingsStep = 'effort';
-  await rpc(controller, {
-    id: requestId,
-    type: 'set_thinking_level',
-    level: pending.selectedEffort,
-  });
+  await rpc(
+    controller,
+    {
+      id: requestId,
+      type: 'set_thinking_level',
+      level: pending.selectedEffort,
+    },
+    pending.telemetryContext,
+  );
 }
 
 async function requestPendingMessages(
@@ -1007,11 +1263,16 @@ async function requestPendingMessages(
   if (!pending) return;
   const messagesRequestId = nextRequestId('messages');
   pending.messagesRequestId = messagesRequestId;
-  await rpc(controller, {
-    id: nextRequestId('efforts'),
-    type: 'get_available_thinking_levels',
-  });
-  await rpc(controller, { id: messagesRequestId, type: 'get_messages' });
+  await rpc(
+    controller,
+    { id: nextRequestId('efforts'), type: 'get_available_thinking_levels' },
+    pending.telemetryContext,
+  );
+  await rpc(
+    controller,
+    { id: messagesRequestId, type: 'get_messages' },
+    pending.telemetryContext,
+  );
 }
 
 async function dispatchPendingPrompt(
@@ -1035,11 +1296,11 @@ async function dispatchPendingPrompt(
   try {
     const requestId = nextRequestId('prompt');
     if (prompt.command) controller.commandPromptRequestId = requestId;
-    await rpc(controller, {
-      id: requestId,
-      type: 'prompt',
-      message: prompt.message,
-    });
+    await rpc(
+      controller,
+      { id: requestId, type: 'prompt', message: prompt.message },
+      prompt.telemetryContext,
+    );
   } catch (error) {
     controller.working = false;
     controller.commandPromptRequestId = '';
@@ -1187,17 +1448,24 @@ async function persistSessionName(
 
 async function registerConnectedSession(
   controller: SessionController,
+  parentContext?: TraceContext,
 ): Promise<void> {
   try {
-    const workspace = await invoke<WorkspaceSnapshot>('register_session', {
-      projectPath: controller.projectPath,
-      sessionId: controller.sessionId,
-      sessionPath: controller.sessionPath,
-      sessionName:
-        controller.sessionName || firstUserMessage(controller) || null,
-      lastUserMessageAt:
-        controller.lastUserMessageAt > 0 ? controller.lastUserMessageAt : null,
-    });
+    const workspace = await invokeTraced<WorkspaceSnapshot>(
+      'register_session',
+      {
+        projectPath: controller.projectPath,
+        sessionId: controller.sessionId,
+        sessionPath: controller.sessionPath,
+        sessionName:
+          controller.sessionName || firstUserMessage(controller) || null,
+        lastUserMessageAt:
+          controller.lastUserMessageAt > 0
+            ? controller.lastUserMessageAt
+            : null,
+      },
+      parentContext,
+    );
     if (controller.disposed) return;
     state.workspace = workspace;
     if (workspaceContainsSession(controller)) {
@@ -1206,22 +1474,30 @@ async function registerConnectedSession(
     if (isControllerSelected(controller)) {
       state.activeSessionId = controller.sessionId;
       state.activeSessionPath = controller.sessionPath;
-      state.workspace = await invoke<WorkspaceSnapshot>('set_active_session', {
-        projectPath: controller.projectPath,
-        sessionId: controller.sessionId,
-      });
+      state.workspace = await invokeTraced<WorkspaceSnapshot>(
+        'set_active_session',
+        {
+          projectPath: controller.projectPath,
+          sessionId: controller.sessionId,
+        },
+        parentContext,
+      );
     }
   } catch (error) {
     setControllerError(controller, error);
   }
 }
 
-async function persistExpandedProject(projectPath: string): Promise<void> {
+async function persistExpandedProject(
+  projectPath: string,
+  parentContext?: TraceContext,
+): Promise<void> {
   try {
-    state.workspace = await invoke<WorkspaceSnapshot>('set_project_collapsed', {
-      path: projectPath,
-      collapsed: false,
-    });
+    state.workspace = await invokeTraced<WorkspaceSnapshot>(
+      'set_project_collapsed',
+      { path: projectPath, collapsed: false },
+      parentContext,
+    );
   } catch (error) {
     setActiveError(error);
   }
@@ -1230,17 +1506,21 @@ async function persistExpandedProject(projectPath: string): Promise<void> {
 async function persistProjectSelection(
   projectPath: string,
   controller: SessionController,
+  parentContext?: TraceContext,
 ): Promise<void> {
   try {
     if (controller.phantom) {
-      state.workspace = await invoke<WorkspaceSnapshot>('set_active_project', {
-        path: projectPath,
-      });
+      state.workspace = await invokeTraced<WorkspaceSnapshot>(
+        'set_active_project',
+        { path: projectPath },
+        parentContext,
+      );
     } else {
-      state.workspace = await invoke<WorkspaceSnapshot>('set_active_session', {
-        projectPath,
-        sessionId: controller.sessionId,
-      });
+      state.workspace = await invokeTraced<WorkspaceSnapshot>(
+        'set_active_session',
+        { projectPath, sessionId: controller.sessionId },
+        parentContext,
+      );
     }
   } catch (error) {
     setControllerError(controller, error);
@@ -1336,10 +1616,10 @@ async function retireUnsavedSession(
   const staleSessionId = controller.sessionId;
   if (workspaceContainsSession(controller)) {
     try {
-      state.workspace = await invoke<WorkspaceSnapshot>('archive_session', {
-        projectPath: controller.projectPath,
-        sessionId: staleSessionId,
-      });
+      state.workspace = await invokeTraced<WorkspaceSnapshot>(
+        'archive_session',
+        { projectPath: controller.projectPath, sessionId: staleSessionId },
+      );
     } catch {
       // A row Tau cannot retire is still worth replacing with a session that
       // works, and the message below says why it is there.
@@ -1455,14 +1735,21 @@ function releaseIdleRuntimes(): void {
 
 async function stopControllerProcess(
   controller: SessionController,
+  parentContext?: TraceContext,
 ): Promise<void> {
   if (!controller.generation && !controller.starting) return;
   const generation = controller.generation;
   clearSessionReplacementWatch(controller);
   clearAbortWatch(controller);
   discardControllerDialogs(controller, generation);
+  abandonPendingRpcSpans(controller.runtimeId, generation, 'abandoned_stop');
+  flushStreamAggregate(controller.runtimeId, generation);
   try {
-    await invoke('stop_pi', { runtimeId: controller.runtimeId });
+    await invokeTraced(
+      'stop_pi',
+      { runtimeId: controller.runtimeId },
+      parentContext,
+    );
   } catch (error) {
     setControllerError(controller, error);
   }

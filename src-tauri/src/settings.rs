@@ -1,6 +1,11 @@
-use crate::{ssh::run_remote_command, storage::pi_agent_dir};
+use crate::{
+    ssh::run_remote_command,
+    storage::pi_agent_dir,
+    telemetry::{trace_context::TraceContext, Telemetry},
+};
 use serde::Deserialize;
 use std::fs;
+use tauri::State;
 
 /// Prints Pi's global settings, which is where `/scoped-models` stores the
 /// model scope. A missing file simply means nothing is scoped. The marker
@@ -18,7 +23,13 @@ struct PiSettings {
 }
 
 #[tauri::command]
-pub fn read_model_scope() -> Result<Vec<String>, String> {
+pub fn read_model_scope(
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
+) -> Result<Vec<String>, String> {
+    let _span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "read_model_scope"));
     let path = pi_agent_dir()?.join("settings.json");
     Ok(fs::read_to_string(path)
         .map(|settings| parse_model_scope(&settings))
@@ -26,7 +37,14 @@ pub fn read_model_scope() -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-pub async fn read_remote_model_scope(connection_string: String) -> Result<Vec<String>, String> {
+pub async fn read_remote_model_scope(
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
+    connection_string: String,
+) -> Result<Vec<String>, String> {
+    let _span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "read_remote_model_scope"));
     tauri::async_runtime::spawn_blocking(move || {
         let output = run_remote_command(&connection_string, REMOTE_SETTINGS_COMMAND)?;
         let stdout = String::from_utf8_lossy(&output.stdout);

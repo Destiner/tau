@@ -100,12 +100,49 @@ fn ingest_records(telemetry: &Telemetry, records: Vec<Value>) -> IngestOutcome {
 /// passes every check, converts it to the same OTLP JSON shape native spans
 /// use. Any failure rejects the whole record rather than persisting a
 /// partially-validated one.
+/// Every attribute key a frontend-owned family's record must carry, in
+/// addition to the trace/span identity fields already required of every
+/// record. Reviewed context identifiers may be added; every key/value still
+/// passes the family catalog, and the total is bounded. Families not
+/// listed here are not owned by this frontend transport at all: `send_pi`'s
+/// RPC bodies never reach here, and `ingest_telemetry` must never trace
+/// itself.
+fn required_attributes(family: &str) -> Option<&'static [&'static str]> {
+    if family == attributes::TAURI_INVOKE.name {
+        Some(&["tau.invoke.command"])
+    } else if family == attributes::UI_ACTION.name {
+        Some(&["tau.action.name"])
+    } else if family == attributes::PI_RPC.name {
+        Some(&[
+            "pi.rpc.method",
+            "pi.rpc.request_id",
+            "pi.rpc.outcome",
+            "tau.runtime.id",
+            "pi.generation",
+        ])
+    } else if family == attributes::PI_STREAM.name {
+        Some(&[
+            "pi.stream.delta_count",
+            "pi.stream.character_count",
+            "tau.runtime.id",
+            "pi.generation",
+        ])
+    } else {
+        None
+    }
+}
+
 fn validated_span_json(
     record: &FrontendSpanRecord,
     resource_json: &Value,
     scope_name: &str,
 ) -> Option<Value> {
-    if record.family != attributes::TAURI_INVOKE.name || record.attributes.len() != 1 {
+    let required = required_attributes(&record.family)?;
+    if record.attributes.len() > required.len() + attributes::CONTEXT_ATTRIBUTES.len()
+        || !required
+            .iter()
+            .all(|key| record.attributes.contains_key(*key))
+    {
         return None;
     }
 
@@ -313,6 +350,139 @@ mod tests {
             "tau"
         )
         .is_none());
+    }
+
+    fn string_attribute(key: &str, value: &str) -> (String, FrontendAttributeValue) {
+        (
+            key.to_string(),
+            FrontendAttributeValue::Str(value.to_string()),
+        )
+    }
+
+    fn int_attribute(key: &str, value: i64) -> (String, FrontendAttributeValue) {
+        (key.to_string(), FrontendAttributeValue::Int(value))
+    }
+
+    #[test]
+    fn accepts_a_well_formed_ui_action_record() {
+        let resource_json = json!({ "attributes": [] });
+        let attributes = HashMap::from([string_attribute("tau.action.name", "session.select")]);
+        let value = validated_span_json(&record("ui.action", attributes), &resource_json, "tau")
+            .expect("valid ui.action record");
+        let span_object = &value["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
+        assert_eq!(span_object["name"], "ui.action");
+    }
+
+    #[test]
+    fn accepts_reviewed_context_identifiers_on_a_frontend_record() {
+        let resource_json = json!({ "attributes": [] });
+        let attributes = HashMap::from([
+            string_attribute("tau.action.name", "session.select"),
+            string_attribute("tau.session.id", "session-1"),
+            string_attribute("tau.controller.id", "controller-1"),
+        ]);
+        let value = validated_span_json(&record("ui.action", attributes), &resource_json, "tau")
+            .expect("valid scoped ui.action record");
+        let persisted = value["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"]
+            .as_array()
+            .expect("attributes");
+        assert!(persisted
+            .iter()
+            .any(|attribute| attribute["key"] == "tau.session.id"));
+    }
+
+    #[test]
+    fn rejects_an_unreviewed_action_name() {
+        let resource_json = json!({ "attributes": [] });
+        let attributes = HashMap::from([string_attribute("tau.action.name", "not.a.real.action")]);
+        assert!(
+            validated_span_json(&record("ui.action", attributes), &resource_json, "tau").is_none()
+        );
+    }
+
+    #[test]
+    fn rejects_a_forbidden_content_canary_disguised_as_an_action_name() {
+        let resource_json = json!({ "attributes": [] });
+        let canary = crate::telemetry::privacy::FORBIDDEN_CONTENT_CANARIES[0].1;
+        let attributes = HashMap::from([string_attribute("tau.action.name", canary)]);
+        assert!(
+            validated_span_json(&record("ui.action", attributes), &resource_json, "tau").is_none()
+        );
+    }
+
+    fn pi_rpc_attributes(method: &str, outcome: &str) -> HashMap<String, FrontendAttributeValue> {
+        HashMap::from([
+            string_attribute("pi.rpc.method", method),
+            string_attribute("pi.rpc.request_id", "tau-prompt-1"),
+            string_attribute("pi.rpc.outcome", outcome),
+            string_attribute("tau.runtime.id", "runtime-1"),
+            int_attribute("pi.generation", 3),
+        ])
+    }
+
+    #[test]
+    fn accepts_a_well_formed_pi_rpc_record() {
+        let resource_json = json!({ "attributes": [] });
+        let attributes = pi_rpc_attributes("get_state", "success");
+        let value = validated_span_json(&record("pi.rpc", attributes), &resource_json, "tau")
+            .expect("valid pi.rpc record");
+        let span_object = &value["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
+        assert_eq!(span_object["name"], "pi.rpc");
+        assert!(span_object["attributes"]
+            .as_array()
+            .expect("attributes")
+            .iter()
+            .any(|attribute| attribute["key"] == "pi.generation"
+                && attribute["value"]["intValue"] == "3"));
+    }
+
+    #[test]
+    fn rejects_a_pi_rpc_record_missing_a_required_attribute() {
+        let resource_json = json!({ "attributes": [] });
+        let mut attributes = pi_rpc_attributes("get_state", "success");
+        attributes.remove("tau.runtime.id");
+        assert!(
+            validated_span_json(&record("pi.rpc", attributes), &resource_json, "tau").is_none()
+        );
+    }
+
+    #[test]
+    fn rejects_an_unreviewed_rpc_outcome() {
+        let resource_json = json!({ "attributes": [] });
+        let attributes = pi_rpc_attributes("get_state", "not-a-real-outcome");
+        assert!(
+            validated_span_json(&record("pi.rpc", attributes), &resource_json, "tau").is_none()
+        );
+    }
+
+    #[test]
+    fn accepts_a_well_formed_pi_stream_aggregate_record() {
+        let resource_json = json!({ "attributes": [] });
+        let attributes = HashMap::from([
+            int_attribute("pi.stream.delta_count", 12),
+            int_attribute("pi.stream.character_count", 480),
+            string_attribute("tau.runtime.id", "runtime-1"),
+            int_attribute("pi.generation", 3),
+        ]);
+        let value = validated_span_json(&record("pi.stream", attributes), &resource_json, "tau")
+            .expect("valid pi.stream record");
+        let span_object = &value["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
+        assert_eq!(span_object["name"], "pi.stream");
+    }
+
+    #[test]
+    fn rejects_a_pi_stream_record_with_an_extra_attribute() {
+        let resource_json = json!({ "attributes": [] });
+        let mut attributes = HashMap::from([
+            int_attribute("pi.stream.delta_count", 12),
+            int_attribute("pi.stream.character_count", 480),
+            string_attribute("tau.runtime.id", "runtime-1"),
+            int_attribute("pi.generation", 3),
+        ]);
+        attributes.insert("unexpected.key".to_string(), FrontendAttributeValue::Int(1));
+        assert!(
+            validated_span_json(&record("pi.stream", attributes), &resource_json, "tau").is_none()
+        );
     }
 
     fn test_telemetry() -> (Telemetry, tempfile::TempDir) {

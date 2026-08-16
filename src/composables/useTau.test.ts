@@ -1654,9 +1654,12 @@ describe('project ordering', () => {
     expect(
       tau.state.workspace?.projects.map((project) => project.name),
     ).toEqual(['beta', 'gamma', 'alpha']);
-    expect(invoke).toHaveBeenCalledWith('reorder_projects', {
-      projectPaths: ['/tmp/beta', '/tmp/gamma', '/tmp/alpha'],
-    });
+    expect(invoke).toHaveBeenCalledWith(
+      'reorder_projects',
+      expect.objectContaining({
+        projectPaths: ['/tmp/beta', '/tmp/gamma', '/tmp/alpha'],
+      }),
+    );
   });
 });
 

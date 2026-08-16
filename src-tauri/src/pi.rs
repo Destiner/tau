@@ -1,4 +1,6 @@
 use crate::ssh::{remote_pi_command, SshConnection};
+use crate::telemetry::{trace_context::TraceContext, Telemetry};
+use opentelemetry::Value as TelemetryValue;
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -12,7 +14,7 @@ use std::{
     thread,
     time::Duration,
 };
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 const MAX_RPC_LINE_BYTES: usize = 64 * 1024 * 1024;
 const STDERR_TAIL_LINES: usize = 8;
@@ -172,17 +174,42 @@ fn is_executable_file(path: &Path) -> bool {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn start_pi(
     app: AppHandle,
     state: State<'_, PiState>,
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
     runtime_id: String,
     project_path: String,
     session_path: Option<String>,
 ) -> Result<u64, String> {
     validate_runtime_id(&runtime_id)?;
     validate_start_paths(&project_path, session_path.as_deref())?;
+    let command_span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "start_pi"));
+    let span_context = command_span.as_ref().map(|span| span.span_context());
 
-    let pi_path = resolve_pi_binary()
+    let resolved_pi_path = resolve_pi_binary();
+    telemetry.record_process_lifecycle(
+        "pi.process.resolved",
+        &runtime_id,
+        None,
+        span_context.as_ref(),
+        &[(
+            "tau.process.resolution",
+            TelemetryValue::String(
+                if resolved_pi_path.is_some() {
+                    "found"
+                } else {
+                    "not_found"
+                }
+                .into(),
+            ),
+        )],
+    );
+    let pi_path = resolved_pi_path
         .ok_or_else(|| "Could not find pi. Install it or set TAU_PI_PATH.".to_string())?;
     let node_path = resolve_node_binary();
     let mut executable_paths = vec![pi_path.as_path()];
@@ -195,22 +222,43 @@ pub fn start_pi(
     if let Some(path) = session_path {
         command.args(["--session", &path]);
     }
-    spawn_command(app, state, runtime_id, command)
+    spawn_command(
+        app,
+        state,
+        &telemetry,
+        span_context.as_ref(),
+        runtime_id,
+        command,
+    )
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn start_pi_remote(
     app: AppHandle,
     state: State<'_, PiState>,
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
     runtime_id: String,
     connection_string: String,
     working_directory: String,
     session_path: Option<String>,
 ) -> Result<u64, String> {
     validate_runtime_id(&runtime_id)?;
+    let command_span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "start_pi_remote"));
+    let span_context = command_span.as_ref().map(|span| span.span_context());
     let connection = SshConnection::parse(&connection_string)?;
     let remote_command = remote_pi_command(&working_directory, session_path.as_deref());
-    spawn_command(app, state, runtime_id, connection.command(&remote_command))
+    spawn_command(
+        app,
+        state,
+        &telemetry,
+        span_context.as_ref(),
+        runtime_id,
+        connection.command(&remote_command),
+    )
 }
 
 fn validate_runtime_id(runtime_id: &str) -> Result<(), String> {
@@ -339,6 +387,8 @@ fn push_directory(directories: &mut Vec<PathBuf>, directory: PathBuf) {
 fn spawn_command(
     app: AppHandle,
     state: State<'_, PiState>,
+    telemetry: &Telemetry,
+    span_context: Option<&opentelemetry::trace::SpanContext>,
     runtime_id: String,
     mut command: Command,
 ) -> Result<u64, String> {
@@ -346,7 +396,20 @@ fn spawn_command(
         .inner
         .lock()
         .map_err(|_| "Pi process state is unavailable.".to_string())?;
+    let replaced_generation = manager.processes.get(&runtime_id).map(|p| p.generation);
     stop_runtime_process(&mut manager, &runtime_id);
+    if let Some(generation) = replaced_generation {
+        telemetry.record_process_lifecycle(
+            "pi.process.stopped",
+            &runtime_id,
+            Some(generation),
+            span_context,
+            &[(
+                "tau.process.stop_reason",
+                TelemetryValue::String("replaced".into()),
+            )],
+        );
+    }
     manager.generation = manager.generation.wrapping_add(1).max(1);
     let generation = manager.generation;
 
@@ -392,6 +455,13 @@ fn spawn_command(
     let stderr_reader =
         spawn_stderr_reader(reader_context.clone(), stderr, Arc::clone(&stderr_tail));
     spawn_stdout_reader(reader_context, stdout, stderr_tail, stderr_reader);
+    telemetry.record_process_lifecycle(
+        "pi.process.started",
+        &runtime_id,
+        Some(generation),
+        span_context,
+        &[],
+    );
     let _ = app.emit(
         "pi-event",
         PiEvent {
@@ -440,12 +510,34 @@ pub fn send_pi(
 }
 
 #[tauri::command]
-pub fn stop_pi(state: State<'_, PiState>, runtime_id: String) -> Result<(), String> {
+pub fn stop_pi(
+    state: State<'_, PiState>,
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
+    runtime_id: String,
+) -> Result<(), String> {
+    let command_span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "stop_pi"));
+    let span_context = command_span.as_ref().map(|span| span.span_context());
     let mut manager = state
         .inner
         .lock()
         .map_err(|_| "Pi process state is unavailable.".to_string())?;
+    let stopped_generation = manager.processes.get(&runtime_id).map(|p| p.generation);
     stop_runtime_process(&mut manager, &runtime_id);
+    if let Some(generation) = stopped_generation {
+        telemetry.record_process_lifecycle(
+            "pi.process.stopped",
+            &runtime_id,
+            Some(generation),
+            span_context.as_ref(),
+            &[(
+                "tau.process.stop_reason",
+                TelemetryValue::String("explicit_stop".into()),
+            )],
+        );
+    }
     Ok(())
 }
 
@@ -553,6 +645,16 @@ fn spawn_stdout_reader(
             .map(|tail| tail.iter().cloned().collect::<Vec<_>>().join("\n"))
             .unwrap_or_default();
         let message = (!succeeded).then(|| pi_exit_message(code, &stderr));
+        let exit_attributes: Vec<(&'static str, TelemetryValue)> = code
+            .map(|code| vec![("tau.process.exit_code", TelemetryValue::I64(code as i64))])
+            .unwrap_or_default();
+        app.state::<Telemetry>().record_process_lifecycle(
+            "pi.process.exited",
+            &runtime_id,
+            Some(generation),
+            None,
+            &exit_attributes,
+        );
         let _ = app.emit(
             "pi-event",
             PiEvent {

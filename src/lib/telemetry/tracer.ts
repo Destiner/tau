@@ -5,7 +5,13 @@
  * `startCommandSpan` instead, keeping browser SDK usage behind one adapter
  * per the design principles.
  */
-import { TraceFlags, type Tracer } from '@opentelemetry/api';
+import {
+  ROOT_CONTEXT,
+  trace,
+  TraceFlags,
+  type Context,
+  type Tracer,
+} from '@opentelemetry/api';
 import type { ExportResult } from '@opentelemetry/core';
 import { ExportResultCode } from '@opentelemetry/core';
 import {
@@ -18,6 +24,7 @@ import {
 
 import { validateAttribute } from './attributes';
 import type { BoundedQueue } from './queue';
+import type { TraceContext } from './trace-context';
 
 /** The wire shape a frontend span is sent to Rust as, mirroring
  * src-tauri/src/telemetry/ingest.rs's `FrontendSpanRecord`. Only string and
@@ -103,6 +110,21 @@ function createTracer(queue: BoundedQueue<FrontendSpanRecord>): Tracer {
   return provider.getTracer('tau');
 }
 
+/** Wraps a decoded W3C `traceparent` as an OTel `Context` carrying a remote
+ * parent span, mirroring the native side's
+ * `Context::new().with_remote_span_context(...)`: built from the explicit
+ * `parent` argument every time, never read from an ambient/global "current
+ * span", so concurrent action → invoke/RPC chains cannot leak context into
+ * each other. */
+function remoteParentContext(parent: TraceContext): Context {
+  return trace.setSpanContext(ROOT_CONTEXT, {
+    traceId: parent.traceId,
+    spanId: parent.spanId,
+    traceFlags: parent.sampled ? TraceFlags.SAMPLED : TraceFlags.NONE,
+    isRemote: true,
+  });
+}
+
 export type { FrontendSpanRecord };
 
-export { createTracer, hrTimeToNanosString };
+export { createTracer, hrTimeToNanosString, remoteParentContext };

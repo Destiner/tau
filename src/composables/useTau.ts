@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 
@@ -6,7 +5,7 @@ import type { PiBridgeEvent } from '../lib/pi/bridge';
 import type { ThinkingLevel } from '../lib/pi/model-scope';
 import {
   applySessionName,
-  cancelExtensionDialog,
+  cancelExtensionDialog as sendExtensionDialogCancellation,
   cancelPendingPrompt,
   clearAbortWatch,
   clearExtensionUiState,
@@ -26,10 +25,14 @@ import {
   sendPhantomMessage,
   startController,
   stopControllerProcess,
-  submitExtensionDialog,
+  submitExtensionDialog as sendExtensionDialogResponse,
   watchAbort,
 } from '../lib/pi/runtime';
-import { startCommandSpan } from '../lib/telemetry';
+import {
+  invokeTraced,
+  startActionSpan,
+  type TelemetryScope,
+} from '../lib/telemetry';
 
 import {
   activeController,
@@ -90,11 +93,24 @@ import {
   type ProjectSummary,
   type RemoteDirectoryChoice,
   type RemoteDirectoryListing,
+  type SessionController,
   type SessionSummary,
   type WorkspaceSnapshot,
 } from './state';
 
 let unlisten: UnlistenFn | undefined;
+
+function controllerTelemetryScope(
+  controller: SessionController | undefined,
+  sessionId?: string,
+): TelemetryScope {
+  return {
+    sessionId: controller?.sessionId || sessionId,
+    controllerId: controller?.key,
+    runtimeId: controller?.runtimeId,
+    generation: controller?.generation || undefined,
+  };
+}
 
 // The composable returns its own surface: about sixty refs and handlers whose
 // types are all inferred, so spelling the shape out would only duplicate them.
@@ -113,14 +129,10 @@ function useTau() {
       });
     }
     try {
-      const span = startCommandSpan('load_workspace');
-      try {
-        state.workspace = await invoke<WorkspaceSnapshot>('load_workspace', {
-          telemetryContext: span.context,
-        });
-      } finally {
-        span.end();
-      }
+      state.workspace = await invokeTraced<WorkspaceSnapshot>(
+        'load_workspace',
+        {},
+      );
       state.workspaceStatus = '';
       state.activeProjectPath = state.workspace.activeProjectPath;
       const selectedProject = state.workspace.projects.find(
@@ -171,9 +183,10 @@ function useTau() {
         title: 'Choose a project folder',
       });
       if (!selection) return;
-      state.workspace = await invoke<WorkspaceSnapshot>('import_project', {
-        path: selection,
-      });
+      state.workspace = await invokeTraced<WorkspaceSnapshot>(
+        'import_project',
+        { path: selection },
+      );
       if (!state.activeProjectPath) {
         state.activeProjectPath = state.workspace.activeProjectPath;
       }
@@ -225,7 +238,7 @@ function useTau() {
     state.remoteConnecting = true;
     state.remoteConnectionError = '';
     try {
-      const listing = await invoke<RemoteDirectoryListing>(
+      const listing = await invokeTraced<RemoteDirectoryListing>(
         'probe_remote_project',
         { connectionString },
       );
@@ -250,7 +263,7 @@ function useTau() {
     state.remoteConnectionError = '';
     try {
       if (choice === 'select') {
-        state.workspace = await invoke<WorkspaceSnapshot>(
+        state.workspace = await invokeTraced<WorkspaceSnapshot>(
           'import_remote_project',
           {
             connectionString: state.remoteConnectionString,
@@ -265,7 +278,7 @@ function useTau() {
         clearRemoteDirectoryBrowser();
       } else {
         const currentDirectory = state.remoteWorkingDirectory;
-        const listing = await invoke<RemoteDirectoryListing>(
+        const listing = await invokeTraced<RemoteDirectoryListing>(
           'list_remote_directories',
           {
             connectionString: state.remoteConnectionString,
@@ -312,12 +325,9 @@ function useTau() {
 
   async function toggleProject(project: ProjectSummary): Promise<void> {
     try {
-      state.workspace = await invoke<WorkspaceSnapshot>(
+      state.workspace = await invokeTraced<WorkspaceSnapshot>(
         'set_project_collapsed',
-        {
-          path: project.path,
-          collapsed: !project.collapsed,
-        },
+        { path: project.path, collapsed: !project.collapsed },
       );
     } catch (error) {
       setActiveError(error);
@@ -347,9 +357,10 @@ function useTau() {
     state.workspace = { ...workspace, projects };
 
     try {
-      state.workspace = await invoke<WorkspaceSnapshot>('reorder_projects', {
-        projectPaths: projects.map((candidate) => candidate.path),
-      });
+      state.workspace = await invokeTraced<WorkspaceSnapshot>(
+        'reorder_projects',
+        { projectPaths: projects.map((candidate) => candidate.path) },
+      );
     } catch (error) {
       state.workspace = workspace;
       setActiveError(error);
@@ -368,9 +379,10 @@ function useTau() {
     try {
       const removingActiveView = project.path === state.activeProjectPath;
       removeProjectUiState(project.path);
-      state.workspace = await invoke<WorkspaceSnapshot>('remove_project', {
-        path: project.path,
-      });
+      state.workspace = await invokeTraced<WorkspaceSnapshot>(
+        'remove_project',
+        { path: project.path },
+      );
       if (removingActiveView) clearActiveSession();
       if (!state.activeProjectPath) {
         state.activeProjectPath = state.workspace.activeProjectPath;
@@ -388,10 +400,10 @@ function useTau() {
     const controller = controllerForSession(project.path, session.id);
 
     try {
-      state.workspace = await invoke<WorkspaceSnapshot>('archive_session', {
-        projectPath: project.path,
-        sessionId: session.id,
-      });
+      state.workspace = await invokeTraced<WorkspaceSnapshot>(
+        'archive_session',
+        { projectPath: project.path, sessionId: session.id },
+      );
       if (controller) removeRegisteredEphemeralSession(controller);
 
       const archivedViewStillSelected =
@@ -418,29 +430,44 @@ function useTau() {
   }
 
   async function newSession(project: ProjectSummary): Promise<void> {
-    const previous = activeController.value;
-    removeEmptyActivePhantom();
-    const controllerKey = nextControllerKey();
-    const session = createPhantomSession(project.path, controllerKey);
-    const controller = createController(project, session, controllerKey);
-    inheritControllerSettings(controller, previous);
-    state.ephemeralSessions.push(session);
-    if (project.collapsed) {
-      project.collapsed = false;
-      void persistExpandedProject(project.path);
-    }
-    setActiveSessionView(project, session, controller);
-    controller.status = '';
-    await persistProjectSelection(project.path, controller);
-    releaseIdleRuntimes();
-    if (
-      runtimeAvailable(project) &&
-      (!controller.currentModelId ||
-        controller.models.length === 0 ||
-        controller.efforts.length === 0 ||
-        !controller.commandsLoaded)
-    ) {
-      await startController(controller, project);
+    const actionSpan = startActionSpan('session.new');
+    try {
+      const previous = activeController.value;
+      removeEmptyActivePhantom();
+      const controllerKey = nextControllerKey();
+      const session = createPhantomSession(project.path, controllerKey);
+      const controller = createController(project, session, controllerKey);
+      inheritControllerSettings(controller, previous);
+      state.ephemeralSessions.push(session);
+      if (project.collapsed) {
+        project.collapsed = false;
+        void persistExpandedProject(project.path, actionSpan.context);
+      }
+      setActiveSessionView(project, session, controller);
+      controller.status = '';
+      await persistProjectSelection(
+        project.path,
+        controller,
+        actionSpan.context,
+      );
+      releaseIdleRuntimes();
+      if (
+        runtimeAvailable(project) &&
+        (!controller.currentModelId ||
+          controller.models.length === 0 ||
+          controller.efforts.length === 0 ||
+          !controller.commandsLoaded)
+      ) {
+        await startController(
+          controller,
+          project,
+          undefined,
+          false,
+          actionSpan.context,
+        );
+      }
+    } finally {
+      actionSpan.end();
     }
   }
 
@@ -448,30 +475,61 @@ function useTau() {
     project: ProjectSummary,
     session: SessionSummary,
   ): Promise<void> {
-    const alreadySelected =
-      project.path === state.activeProjectPath &&
-      session.id === state.activeSessionId;
-    if (alreadySelected) {
-      const controller = activeController.value;
-      if (controller) {
-        controller.unread = false;
-        if (!controller.phantom && !controller.ready && !controller.starting) {
-          await startController(controller, project, session.path);
+    const actionSpan = startActionSpan(
+      'session.select',
+      controllerTelemetryScope(
+        controllerForSession(project.path, session.id),
+        session.id,
+      ),
+    );
+    try {
+      const alreadySelected =
+        project.path === state.activeProjectPath &&
+        session.id === state.activeSessionId;
+      if (alreadySelected) {
+        const controller = activeController.value;
+        if (controller) {
+          controller.unread = false;
+          if (
+            !controller.phantom &&
+            !controller.ready &&
+            !controller.starting
+          ) {
+            await startController(
+              controller,
+              project,
+              session.path,
+              false,
+              actionSpan.context,
+            );
+          }
         }
+        return;
       }
-      return;
+
+      removeEmptyActivePhantom();
+      const controller = ensureController(project, session);
+      setActiveSessionView(project, session, controller);
+      controller.status = '';
+      controller.unread = false;
+      await persistProjectSelection(
+        project.path,
+        controller,
+        actionSpan.context,
+      );
+      releaseIdleRuntimes();
+
+      if (controller.phantom || controller.ready || controller.starting) return;
+      await startController(
+        controller,
+        project,
+        session.path,
+        false,
+        actionSpan.context,
+      );
+    } finally {
+      actionSpan.end();
     }
-
-    removeEmptyActivePhantom();
-    const controller = ensureController(project, session);
-    setActiveSessionView(project, session, controller);
-    controller.status = '';
-    controller.unread = false;
-    await persistProjectSelection(project.path, controller);
-    releaseIdleRuntimes();
-
-    if (controller.phantom || controller.ready || controller.starting) return;
-    await startController(controller, project, session.path);
   }
 
   async function sendMessage(): Promise<void> {
@@ -487,48 +545,79 @@ function useTau() {
       return;
     }
 
-    const command = invokesExtensionCommand(controller, message);
-    if (!command) markUserMessageSubmitted(controller);
-
-    if (controller.phantom) {
-      await sendPhantomMessage(controller, message, command);
-      return;
-    }
-
-    controller.draft = '';
-    controller.working = true;
-    if (!command) {
-      controller.messages.push({
-        id: `optimistic-user-${Date.now()}`,
-        kind: 'user',
-        text: message,
-      });
-    }
-    controller.status = '';
+    const actionSpan = startActionSpan(
+      'message.send',
+      controllerTelemetryScope(controller),
+    );
     try {
-      const requestId = nextRequestId('prompt');
-      if (command) controller.commandPromptRequestId = requestId;
-      await rpc(controller, { id: requestId, type: 'prompt', message });
-      if (!command) await registerConnectedSession(controller);
-    } catch (error) {
-      controller.working = false;
-      controller.commandPromptRequestId = '';
-      setControllerError(controller, error);
+      const command = invokesExtensionCommand(controller, message);
+      if (!command) markUserMessageSubmitted(controller);
+
+      if (controller.phantom) {
+        await sendPhantomMessage(
+          controller,
+          message,
+          command,
+          actionSpan.context,
+        );
+        return;
+      }
+
+      controller.draft = '';
+      controller.working = true;
+      if (!command) {
+        controller.messages.push({
+          id: `optimistic-user-${Date.now()}`,
+          kind: 'user',
+          text: message,
+        });
+      }
+      controller.status = '';
+      try {
+        const requestId = nextRequestId('prompt');
+        if (command) controller.commandPromptRequestId = requestId;
+        await rpc(
+          controller,
+          { id: requestId, type: 'prompt', message },
+          actionSpan.context,
+        );
+        if (!command) {
+          await registerConnectedSession(controller, actionSpan.context);
+        }
+      } catch (error) {
+        controller.working = false;
+        controller.commandPromptRequestId = '';
+        setControllerError(controller, error);
+      }
+    } finally {
+      actionSpan.end();
     }
   }
 
   async function stop(): Promise<void> {
     const controller = activeController.value;
     if (!controller?.streaming || controller.stopping) return;
-    controller.stopping = true;
-    controller.status = '';
-    watchAbort(controller);
+    const actionSpan = startActionSpan(
+      'session.stop',
+      controllerTelemetryScope(controller),
+    );
     try {
-      await rpc(controller, { id: nextRequestId('abort'), type: 'abort' });
-    } catch (error) {
-      clearAbortWatch(controller);
-      controller.stopping = false;
-      setControllerError(controller, error);
+      controller.stopping = true;
+      controller.status = '';
+      watchAbort(controller);
+      try {
+        await rpc(
+          controller,
+          { id: nextRequestId('abort'), type: 'abort' },
+          actionSpan.context,
+        );
+      } catch (error) {
+        clearAbortWatch(controller);
+        controller.stopping = false;
+        setControllerError(controller, error);
+      }
+    } finally {
+      actionSpan.end();
     }
   }
 
@@ -538,22 +627,34 @@ function useTau() {
       (option) => `${option.provider}/${option.id}` === value,
     );
     if (!controller || !model || settingsDisabled.value) return;
-    controller.status = '';
-    if (controller.phantom) {
-      controller.currentModelProvider = model.provider;
-      controller.currentModelId = model.id;
-      controller.currentModelName = model.name;
-      return;
-    }
+    const actionSpan = startActionSpan(
+      'model.select',
+      controllerTelemetryScope(controller),
+    );
     try {
-      await rpc(controller, {
-        id: nextRequestId('set-model'),
-        type: 'set_model',
-        provider: model.provider,
-        modelId: model.id,
-      });
-    } catch (error) {
-      setControllerError(controller, error);
+      controller.status = '';
+      if (controller.phantom) {
+        controller.currentModelProvider = model.provider;
+        controller.currentModelId = model.id;
+        controller.currentModelName = model.name;
+        return;
+      }
+      try {
+        await rpc(
+          controller,
+          {
+            id: nextRequestId('set-model'),
+            type: 'set_model',
+            provider: model.provider,
+            modelId: model.id,
+          },
+          actionSpan.context,
+        );
+      } catch (error) {
+        setControllerError(controller, error);
+      }
+    } finally {
+      actionSpan.end();
     }
   }
 
@@ -562,16 +663,28 @@ function useTau() {
     if (!controller || !canRenameSession.value) return;
     const next = normalizeSessionName(name);
     if (!next || next === controller.sessionName) return;
-    controller.status = '';
-    applySessionName(controller, next);
+    const actionSpan = startActionSpan(
+      'session.rename',
+      controllerTelemetryScope(controller),
+    );
     try {
-      await rpc(controller, {
-        id: nextRequestId('session-name'),
-        type: 'set_session_name',
-        name: next,
-      });
-    } catch (error) {
-      setControllerError(controller, error);
+      controller.status = '';
+      applySessionName(controller, next);
+      try {
+        await rpc(
+          controller,
+          {
+            id: nextRequestId('session-name'),
+            type: 'set_session_name',
+            name: next,
+          },
+          actionSpan.context,
+        );
+      } catch (error) {
+        setControllerError(controller, error);
+      }
+    } finally {
+      actionSpan.end();
     }
   }
 
@@ -584,21 +697,57 @@ function useTau() {
     ) {
       return;
     }
-    controller.status = '';
-    if (controller.phantom) {
-      controller.currentEffort = level;
-      return;
-    }
-    controller.pendingEffort = level;
+    const actionSpan = startActionSpan(
+      'effort.select',
+      controllerTelemetryScope(controller),
+    );
     try {
-      await rpc(controller, {
-        id: nextRequestId('set-effort'),
-        type: 'set_thinking_level',
-        level,
-      });
-    } catch (error) {
-      controller.pendingEffort = '';
-      setControllerError(controller, error);
+      controller.status = '';
+      if (controller.phantom) {
+        controller.currentEffort = level;
+        return;
+      }
+      controller.pendingEffort = level;
+      try {
+        await rpc(
+          controller,
+          {
+            id: nextRequestId('set-effort'),
+            type: 'set_thinking_level',
+            level,
+          },
+          actionSpan.context,
+        );
+      } catch (error) {
+        controller.pendingEffort = '';
+        setControllerError(controller, error);
+      }
+    } finally {
+      actionSpan.end();
+    }
+  }
+
+  async function submitExtensionDialog(value: string | boolean): Promise<void> {
+    const actionSpan = startActionSpan(
+      'extension.dialog.submit',
+      controllerTelemetryScope(activeController.value),
+    );
+    try {
+      await sendExtensionDialogResponse(value, actionSpan.context);
+    } finally {
+      actionSpan.end();
+    }
+  }
+
+  async function cancelExtensionDialog(): Promise<void> {
+    const actionSpan = startActionSpan(
+      'extension.dialog.cancel',
+      controllerTelemetryScope(activeController.value),
+    );
+    try {
+      await sendExtensionDialogCancellation(actionSpan.context);
+    } finally {
+      actionSpan.end();
     }
   }
 

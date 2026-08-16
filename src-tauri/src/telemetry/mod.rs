@@ -1,9 +1,12 @@
 //! Native telemetry: OTel `LoggerProvider`/`TracerProvider`s backed by the
 //! bounded segmented JSON store in `store.rs`, exported through
-//! `exporter.rs`. This module owns provider initialization, the two
-//! lifecycle events Stage 1 records (`app.started`, `app.exited`), and the
-//! native half of Stage 2's frontend/native trace correlation
-//! (`start_command_span`). Ordinary operation tracing is Stage 3's job (see
+//! `exporter.rs`. This module owns provider initialization, the app
+//! lifecycle events (`app.started`, `app.exited`), the shared
+//! `start_command_span` every ordinary Tauri command now uses to link its
+//! native work into the frontend action that requested it (Stage 2 proved it
+//! on one call site; Stage 3 applies it broadly), and
+//! `record_process_lifecycle`, the native Pi process log family `pi.rs` uses
+//! for resolution, start, stop, and exit telemetry (see
 //! `OBSERVABILITY_PLAN.md`).
 
 pub mod attributes;
@@ -170,6 +173,60 @@ impl Telemetry {
     pub(super) fn record_trace(&self, value: serde_json::Value) -> bool {
         self.store.append(store::Signal::Trace, value)
     }
+
+    /// Records one `pi.process.lifecycle` log: resolution, start, stop, or
+    /// exit. `generation` is included only when known (resolution happens
+    /// before a runtime's first process has one). Every attribute is
+    /// revalidated against the catalog before being attached, so a caller
+    /// mistake drops the attribute rather than persisting an unreviewed one;
+    /// telemetry failure never affects Pi process management itself.
+    pub fn record_process_lifecycle(
+        &self,
+        event_name: &'static str,
+        runtime_id: &str,
+        generation: Option<u64>,
+        span_context: Option<&SpanContext>,
+        attributes: &[(&'static str, opentelemetry::Value)],
+    ) {
+        let family = attributes::PI_PROCESS_LIFECYCLE.name;
+        let mut validated: Vec<(&'static str, opentelemetry::Value)> = Vec::new();
+
+        let runtime_value = opentelemetry::Value::String(
+            truncate_to_limit(runtime_id, DEFAULT_MAX_ATTRIBUTE_LEN).into(),
+        );
+        if attributes::validate(family, "tau.runtime.id", &runtime_value).is_ok() {
+            validated.push(("tau.runtime.id", runtime_value));
+        }
+        if let Some(generation) = generation.and_then(|value| i64::try_from(value).ok()) {
+            let generation_value = opentelemetry::Value::I64(generation);
+            if attributes::validate(family, "pi.generation", &generation_value).is_ok() {
+                validated.push(("pi.generation", generation_value));
+            }
+        }
+        for (key, value) in attributes {
+            if attributes::validate(family, key, value).is_ok() {
+                validated.push((key, value.clone()));
+            }
+        }
+
+        let logger = self.logger_provider.logger(SCOPE_NAME);
+        let mut record = logger.create_log_record();
+        record.set_timestamp(SystemTime::now());
+        record.set_event_name(event_name);
+        record.set_severity_number(Severity::Info);
+        record.set_body(AnyValue::String(event_name.into()));
+        if let Some(context) = span_context {
+            record.set_trace_context(
+                context.trace_id(),
+                context.span_id(),
+                Some(context.trace_flags()),
+            );
+        }
+        for (key, value) in validated {
+            record.add_attribute(key, otel_value_to_any_value(&value));
+        }
+        logger.emit(record);
+    }
 }
 
 /// Ends the wrapped native span when dropped, so it is recorded whether the
@@ -177,6 +234,12 @@ impl Telemetry {
 /// their own `CommandSpan`; nothing here is shared mutable state.
 pub struct CommandSpan {
     span: opentelemetry_sdk::trace::Span,
+}
+
+impl CommandSpan {
+    pub fn span_context(&self) -> SpanContext {
+        self.span.span_context().clone()
+    }
 }
 
 impl Drop for CommandSpan {
@@ -205,6 +268,20 @@ fn build_resource() -> Resource {
 
 fn generate_instance_id() -> String {
     uuid::Uuid::new_v4().to_string()
+}
+
+/// Converts a validated `opentelemetry::Value` to the log API's `AnyValue`.
+/// Fails closed like `exporter::any_value_json`/`otel_value_json`: an
+/// unsupported variant renders as a fixed marker, never `Debug` output that
+/// could leak an unexpected value's content.
+fn otel_value_to_any_value(value: &opentelemetry::Value) -> AnyValue {
+    match value {
+        opentelemetry::Value::String(value) => AnyValue::String(value.as_str().to_string().into()),
+        opentelemetry::Value::I64(value) => AnyValue::Int(*value),
+        opentelemetry::Value::F64(value) => AnyValue::Double(*value),
+        opentelemetry::Value::Bool(value) => AnyValue::Boolean(*value),
+        _ => AnyValue::String("[unsupported telemetry value]".into()),
+    }
 }
 
 /// Maps Rust's `std::env::consts::OS` to the OTel `os.type` enum, which uses
@@ -457,5 +534,150 @@ mod tests {
                 "22222222222222222222222222222222".to_string(),
             ])
         );
+    }
+
+    fn process_log_records(telemetry: &Telemetry) -> Vec<serde_json::Value> {
+        telemetry.store.read_records(store::Signal::Log)
+    }
+
+    #[test]
+    fn process_lifecycle_persists_runtime_and_optional_generation() {
+        let (telemetry, _directory) = test_telemetry();
+
+        telemetry.record_process_lifecycle(
+            "pi.process.resolved",
+            "runtime-1",
+            None,
+            None,
+            &[(
+                "tau.process.resolution",
+                opentelemetry::Value::String("found".into()),
+            )],
+        );
+        telemetry.record_process_lifecycle("pi.process.started", "runtime-1", Some(3), None, &[]);
+
+        let records = process_log_records(&telemetry);
+        assert_eq!(records.len(), 2);
+        let resolved = &records[0]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+        assert_eq!(resolved["eventName"], "pi.process.resolved");
+        let resolved_attributes = resolved["attributes"].as_array().expect("attributes");
+        assert!(resolved_attributes
+            .iter()
+            .any(|attribute| attribute["key"] == "tau.process.resolution"
+                && attribute["value"]["stringValue"] == "found"));
+        assert!(resolved_attributes
+            .iter()
+            .any(|attribute| attribute["key"] == "tau.runtime.id"
+                && attribute["value"]["stringValue"] == "runtime-1"));
+        assert!(!resolved_attributes
+            .iter()
+            .any(|attribute| attribute["key"] == "pi.generation"));
+
+        let started = &records[1]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+        assert_eq!(started["eventName"], "pi.process.started");
+        assert!(started["attributes"]
+            .as_array()
+            .expect("attributes")
+            .iter()
+            .any(|attribute| attribute["key"] == "pi.generation"
+                && attribute["value"]["intValue"] == "3"));
+    }
+
+    #[test]
+    fn process_lifecycle_links_to_the_active_command_span() {
+        let (telemetry, _directory) = test_telemetry();
+        let parent = sample_context("4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7");
+        let command = telemetry
+            .start_command_span(&parent, "start_pi")
+            .expect("command span");
+        let context = command.span_context();
+
+        telemetry.record_process_lifecycle(
+            "pi.process.started",
+            "runtime-1",
+            Some(1),
+            Some(&context),
+            &[],
+        );
+
+        let records = process_log_records(&telemetry);
+        let log_record = &records[0]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+        assert_eq!(log_record["traceId"], context.trace_id().to_string());
+        assert_eq!(log_record["spanId"], context.span_id().to_string());
+        assert_eq!(log_record["flags"], context.trace_flags().to_u8());
+    }
+
+    #[test]
+    fn process_lifecycle_drops_an_unreviewed_stop_reason_without_failing() {
+        let (telemetry, _directory) = test_telemetry();
+
+        telemetry.record_process_lifecycle(
+            "pi.process.stopped",
+            "runtime-1",
+            Some(1),
+            None,
+            &[(
+                "tau.process.stop_reason",
+                opentelemetry::Value::String("not-a-real-reason".into()),
+            )],
+        );
+
+        let records = process_log_records(&telemetry);
+        assert_eq!(records.len(), 1);
+        let log_record = &records[0]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+        assert!(!log_record["attributes"]
+            .as_array()
+            .expect("attributes")
+            .iter()
+            .any(|attribute| attribute["key"] == "tau.process.stop_reason"));
+    }
+
+    #[test]
+    fn process_lifecycle_drops_a_forbidden_content_canary_disguised_as_a_stop_reason() {
+        let (telemetry, _directory) = test_telemetry();
+        let canary = privacy::FORBIDDEN_CONTENT_CANARIES[0].1;
+
+        telemetry.record_process_lifecycle(
+            "pi.process.stopped",
+            "runtime-1",
+            Some(1),
+            None,
+            &[(
+                "tau.process.stop_reason",
+                opentelemetry::Value::String(canary.into()),
+            )],
+        );
+
+        let records = process_log_records(&telemetry);
+        let log_record = &records[0]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+        let encoded = log_record.to_string();
+        assert!(!encoded.contains(canary));
+        assert!(!log_record["attributes"]
+            .as_array()
+            .expect("attributes")
+            .iter()
+            .any(|attribute| attribute["key"] == "tau.process.stop_reason"));
+    }
+
+    #[test]
+    fn process_lifecycle_exit_code_supports_a_canary_free_fail_closed_conversion() {
+        let (telemetry, _directory) = test_telemetry();
+
+        telemetry.record_process_lifecycle(
+            "pi.process.exited",
+            "runtime-1",
+            Some(1),
+            None,
+            &[("tau.process.exit_code", opentelemetry::Value::I64(127))],
+        );
+
+        let records = process_log_records(&telemetry);
+        let log_record = &records[0]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+        assert!(log_record["attributes"]
+            .as_array()
+            .expect("attributes")
+            .iter()
+            .any(|attribute| attribute["key"] == "tau.process.exit_code"
+                && attribute["value"]["intValue"] == "127"));
     }
 }
