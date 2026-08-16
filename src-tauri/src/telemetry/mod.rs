@@ -1,17 +1,16 @@
-//! Native telemetry: an OTel `LoggerProvider` backed by the bounded
-//! segmented JSON store in `store.rs`, exported through `exporter.rs`. This
-//! module owns provider initialization and the two lifecycle events Stage 1
-//! records (`app.started`, `app.exited`); it does not yet touch the
-//! frontend, Pi, or any other operation (see `OBSERVABILITY_PLAN.md`).
+//! Native telemetry: OTel `LoggerProvider`/`TracerProvider`s backed by the
+//! bounded segmented JSON store in `store.rs`, exported through
+//! `exporter.rs`. This module owns provider initialization, the two
+//! lifecycle events Stage 1 records (`app.started`, `app.exited`), and the
+//! native half of Stage 2's frontend/native trace correlation
+//! (`start_command_span`). Ordinary operation tracing is Stage 3's job (see
+//! `OBSERVABILITY_PLAN.md`).
 
-// Stage 3 wires per-family attribute validation against this catalog.
-#[allow(dead_code)]
 pub mod attributes;
 mod exporter;
+pub mod ingest;
 pub mod privacy;
 mod store;
-// Stage 2 wires IPC trace-context propagation against this.
-#[allow(dead_code)]
 pub mod trace_context;
 
 use std::path::PathBuf;
@@ -19,8 +18,13 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use opentelemetry::logs::{AnyValue, LogRecord as _, Logger as _, LoggerProvider as _, Severity};
-use opentelemetry::KeyValue;
+use opentelemetry::trace::{
+    Span as _, SpanContext, TraceContextExt, TraceFlags, TraceState, Tracer as _,
+    TracerProvider as _,
+};
+use opentelemetry::{Context, KeyValue, SpanId, TraceId};
 use opentelemetry_sdk::logs::SdkLoggerProvider;
+use opentelemetry_sdk::trace::{Sampler, SdkTracerProvider};
 use opentelemetry_sdk::Resource;
 use opentelemetry_semantic_conventions::resource::{
     DEPLOYMENT_ENVIRONMENT_NAME, HOST_ARCH, OS_TYPE, SERVICE_INSTANCE_ID, SERVICE_NAME,
@@ -29,6 +33,7 @@ use opentelemetry_semantic_conventions::resource::{
 
 use crate::profile::{APP_DIRECTORY_NAME, ENVIRONMENT_NAME};
 use privacy::{truncate_to_limit, DEFAULT_MAX_ATTRIBUTE_LEN};
+use trace_context::TraceContext;
 
 /// Directory holding telemetry segments, relative to Tau's per-profile
 /// application-data directory (see `profile::APP_DIRECTORY_NAME`).
@@ -46,6 +51,11 @@ const SCOPE_NAME: &str = "tau";
 /// fallback instead of stopping app startup.
 pub struct Telemetry {
     logger_provider: SdkLoggerProvider,
+    tracer_provider: SdkTracerProvider,
+    store: Arc<store::Store>,
+    /// Precomputed once so `ingest.rs` does not rebuild it per frontend
+    /// record; see `exporter::resource_to_json`.
+    resource_json: serde_json::Value,
 }
 
 impl Telemetry {
@@ -63,12 +73,26 @@ impl Telemetry {
             clock,
         ));
         let resource = build_resource();
-        let exporter = exporter::JsonFileLogExporter::new(store, &resource);
+        let resource_json = exporter::resource_to_json(&resource);
+        let log_exporter = exporter::JsonFileLogExporter::new(Arc::clone(&store), &resource);
+        let span_exporter = exporter::JsonFileSpanExporter::new(Arc::clone(&store), &resource);
         let logger_provider = SdkLoggerProvider::builder()
-            .with_resource(resource)
-            .with_simple_exporter(exporter)
+            .with_resource(resource.clone())
+            .with_simple_exporter(log_exporter)
             .build();
-        Telemetry { logger_provider }
+        // Do not sample: the design principles call for recording all of
+        // this deliberately low-volume telemetry.
+        let tracer_provider = SdkTracerProvider::builder()
+            .with_resource(resource)
+            .with_sampler(Sampler::AlwaysOn)
+            .with_simple_exporter(span_exporter)
+            .build();
+        Telemetry {
+            logger_provider,
+            tracer_provider,
+            store,
+            resource_json,
+        }
     }
 
     pub fn record_app_started(&self) {
@@ -86,6 +110,7 @@ impl Telemetry {
 
     pub fn shutdown(&self) {
         let _ = self.logger_provider.shutdown();
+        let _ = self.tracer_provider.shutdown();
     }
 
     fn emit_lifecycle_log(&self, event_name: &'static str) {
@@ -96,6 +121,67 @@ impl Telemetry {
         record.set_severity_number(Severity::Info);
         record.set_body(AnyValue::String(event_name.into()));
         logger.emit(record);
+    }
+
+    /// Starts a native span in the `tauri.invoke` family as a child of the
+    /// frontend-originated `context`, so the frontend span that requested
+    /// `command` and this native work share one trace. `context` is passed
+    /// explicitly by the caller on every invocation — never read from an
+    /// ambient/global "current span" — so concurrent calls cannot leak trace
+    /// context into each other.
+    ///
+    /// Returns `None` if `context` is not a well-formed trace/span id or the
+    /// command name fails catalog validation; telemetry failure never fails
+    /// the command it is attached to.
+    pub fn start_command_span(
+        &self,
+        context: &TraceContext,
+        command: &'static str,
+    ) -> Option<CommandSpan> {
+        let context = TraceContext::parse(&context.to_traceparent()).ok()?;
+        let trace_id = TraceId::from_hex(&context.trace_id).ok()?;
+        let span_id = SpanId::from_hex(&context.span_id).ok()?;
+        let flags = if context.sampled {
+            TraceFlags::SAMPLED
+        } else {
+            TraceFlags::NOT_SAMPLED
+        };
+        let parent_span_context =
+            SpanContext::new(trace_id, span_id, flags, true, TraceState::default());
+        let parent_cx = Context::new().with_remote_span_context(parent_span_context);
+
+        let command_value = opentelemetry::Value::String(command.into());
+        attributes::validate(
+            attributes::TAURI_INVOKE.name,
+            "tau.invoke.command",
+            &command_value,
+        )
+        .ok()?;
+
+        let tracer = self.tracer_provider.tracer(SCOPE_NAME);
+        let mut span = tracer.start_with_context(attributes::TAURI_INVOKE.name, &parent_cx);
+        span.set_attribute(KeyValue::new("tau.invoke.command", command));
+        Some(CommandSpan { span })
+    }
+
+    /// Persists an already-validated OTLP trace JSON record. Used only by
+    /// `ingest.rs`, after it has revalidated a frontend record against the
+    /// Stage 0 catalog.
+    pub(super) fn record_trace(&self, value: serde_json::Value) -> bool {
+        self.store.append(store::Signal::Trace, value)
+    }
+}
+
+/// Ends the wrapped native span when dropped, so it is recorded whether the
+/// guarded scope returns normally or via `?`. Concurrent callers each own
+/// their own `CommandSpan`; nothing here is shared mutable state.
+pub struct CommandSpan {
+    span: opentelemetry_sdk::trace::Span,
+}
+
+impl Drop for CommandSpan {
+    fn drop(&mut self) {
+        self.span.end();
     }
 }
 
@@ -272,5 +358,104 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(line).expect("valid json");
         let log_record = &value["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
         assert_eq!(log_record["eventName"], "app.exited");
+    }
+
+    fn test_telemetry() -> (Telemetry, tempfile::TempDir) {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let telemetry =
+            Telemetry::new(directory.path().to_path_buf(), Arc::new(store::SystemClock));
+        (telemetry, directory)
+    }
+
+    fn sample_context(trace_id: &str, span_id: &str) -> TraceContext {
+        TraceContext {
+            trace_id: trace_id.to_string(),
+            span_id: span_id.to_string(),
+            sampled: true,
+        }
+    }
+
+    #[test]
+    fn command_span_persists_a_native_child_of_the_given_context() {
+        let (telemetry, _directory) = test_telemetry();
+        let context = sample_context("4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7");
+
+        telemetry
+            .start_command_span(&context, "load_workspace")
+            .expect("valid context");
+
+        let records = telemetry.store.read_records(store::Signal::Trace);
+        assert_eq!(records.len(), 1);
+        let span = &records[0]["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
+        assert_eq!(span["traceId"], context.trace_id);
+        assert_eq!(span["parentSpanId"], context.span_id);
+        assert_eq!(span["name"], attributes::TAURI_INVOKE.name);
+        assert_eq!(
+            span["attributes"][0]["value"]["stringValue"],
+            "load_workspace"
+        );
+        assert_ne!(span["spanId"], context.span_id);
+    }
+
+    #[test]
+    fn command_span_rejects_a_malformed_context() {
+        let (telemetry, _directory) = test_telemetry();
+        for malformed in [
+            sample_context("not-hex", "00f067aa0ba902b7"),
+            sample_context("00000000000000000000000000000000", "00f067aa0ba902b7"),
+            sample_context("4BF92F3577B34DA6A3CE929D0E0E4736", "00f067aa0ba902b7"),
+        ] {
+            assert!(telemetry
+                .start_command_span(&malformed, "load_workspace")
+                .is_none());
+        }
+        assert!(telemetry
+            .store
+            .read_records(store::Signal::Trace)
+            .is_empty());
+    }
+
+    #[test]
+    fn concurrent_command_spans_do_not_leak_trace_context() {
+        let (telemetry, _directory) = test_telemetry();
+        let telemetry = Arc::new(telemetry);
+        let contexts = [
+            sample_context("11111111111111111111111111111111", "1111111111111111"),
+            sample_context("22222222222222222222222222222222", "2222222222222222"),
+        ];
+
+        let threads: Vec<_> = contexts
+            .into_iter()
+            .map(|context| {
+                let telemetry = Arc::clone(&telemetry);
+                std::thread::spawn(move || {
+                    telemetry
+                        .start_command_span(&context, "load_workspace")
+                        .expect("valid context");
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().expect("command span thread");
+        }
+
+        let records = telemetry.store.read_records(store::Signal::Trace);
+        let trace_ids: std::collections::HashSet<String> = records
+            .iter()
+            .map(|record| {
+                record["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["traceId"]
+                    .as_str()
+                    .expect("trace id")
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(records.len(), 2);
+        assert_eq!(
+            trace_ids,
+            std::collections::HashSet::from([
+                "11111111111111111111111111111111".to_string(),
+                "22222222222222222222222222222222".to_string(),
+            ])
+        );
     }
 }

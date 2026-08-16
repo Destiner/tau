@@ -2,8 +2,11 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { createApp } from 'vue';
 
 import App from './App.vue';
+import { initTelemetry } from './lib/telemetry';
 import '@fontsource-variable/inter/wght.css';
 import './styles.css';
+
+initTelemetry();
 
 async function mountApp(): Promise<void> {
   const fixture = new URLSearchParams(window.location.search).get('fixture');

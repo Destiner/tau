@@ -29,6 +29,7 @@ import {
   submitExtensionDialog,
   watchAbort,
 } from '../lib/pi/runtime';
+import { startCommandSpan } from '../lib/telemetry';
 
 import {
   activeController,
@@ -112,7 +113,14 @@ function useTau() {
       });
     }
     try {
-      state.workspace = await invoke<WorkspaceSnapshot>('load_workspace');
+      const span = startCommandSpan('load_workspace');
+      try {
+        state.workspace = await invoke<WorkspaceSnapshot>('load_workspace', {
+          telemetryContext: span.context,
+        });
+      } finally {
+        span.end();
+      }
       state.workspaceStatus = '';
       state.activeProjectPath = state.workspace.activeProjectPath;
       const selectedProject = state.workspace.projects.find(

@@ -32,6 +32,7 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .manage(pi::PiState::default())
+        .manage(telemetry)
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -88,16 +89,18 @@ pub fn run() {
             storage::set_active_project,
             storage::set_active_session,
             storage::set_project_collapsed,
+            telemetry::ingest::ingest_telemetry,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(move |_app_handle, event| {
+    app.run(|app_handle, event| {
         // `App::run` calls `std::process::exit` once this closure returns
         // control after `RunEvent::Exit`, which skips `Drop`. The clean-exit
         // marker must therefore be recorded and flushed here, not relied on
-        // to happen implicitly when `telemetry` goes out of scope.
+        // to happen implicitly when the managed `Telemetry` goes out of scope.
         if let tauri::RunEvent::Exit = event {
+            let telemetry = app_handle.state::<telemetry::Telemetry>();
             telemetry.record_app_exited();
             telemetry.shutdown();
         }

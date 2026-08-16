@@ -146,6 +146,10 @@ impl Store {
         state.next_sequence += 1;
         if let Some(object) = record.as_object_mut() {
             object.insert(
+                "tauObservedTimeUnixNano".to_string(),
+                serde_json::Value::String(duration_nanos(self.clock.now())),
+            );
+            object.insert(
                 "tauStoreSequence".to_string(),
                 serde_json::Value::from(sequence),
             );
@@ -410,6 +414,12 @@ fn parse_segment_name(name: &str) -> Option<(Signal, u64, u64)> {
     Some((signal, millis, sequence))
 }
 
+fn duration_nanos(time: SystemTime) -> String {
+    time.duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos().to_string())
+        .unwrap_or_default()
+}
+
 fn duration_millis(time: SystemTime) -> u64 {
     time.duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
@@ -484,6 +494,9 @@ mod tests {
             .map(|record| record["tauStoreSequence"].as_u64().expect("sequence"))
             .collect();
         assert_eq!(sequences, vec![0, 1, 2]);
+        assert!(records
+            .iter()
+            .all(|record| record["tauObservedTimeUnixNano"].is_string()));
         let values: Vec<u64> = records
             .iter()
             .map(|record| record["n"].as_u64().expect("n"))
@@ -688,9 +701,13 @@ mod tests {
         // One record's on-disk line, including the stamped sequence, so the
         // byte budget below can target "room for one segment, not two"
         // without hardcoding a JSON encoding length.
-        let one_segment_bytes = json!({ "n": 0u64, "tauStoreSequence": 0u64 })
-            .to_string()
-            .len() as u64
+        let one_segment_bytes = json!({
+            "n": 0u64,
+            "tauObservedTimeUnixNano": "1000000",
+            "tauStoreSequence": 0u64
+        })
+        .to_string()
+        .len() as u64
             + 1;
 
         let directory = tempfile::tempdir().expect("temp dir");

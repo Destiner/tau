@@ -5,6 +5,7 @@ use crate::{
     },
     pi::resolve_pi_binary,
     profile::{APP_DIRECTORY_NAME, SESSION_REGISTRY_FILENAME},
+    telemetry::{trace_context::TraceContext, Telemetry},
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -16,12 +17,24 @@ use std::{
     sync::{Mutex, MutexGuard},
     time::{Duration, SystemTime},
 };
+use tauri::State;
 
 const MAX_SESSION_LINE_BYTES: usize = 64 * 1024 * 1024;
 static STORAGE_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
+/// The one operation Stage 2 instruments end to end to prove frontend and
+/// native work land in the same trace. `telemetry_context` is optional and
+/// explicit so a caller without a span (or a malformed one) still loads the
+/// workspace normally — telemetry failure must not fail this command.
+/// Ordinary invokes get this treatment generally in Stage 3, not here.
 #[tauri::command]
-pub fn load_workspace() -> Result<WorkspaceSnapshot, String> {
+pub fn load_workspace(
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
+) -> Result<WorkspaceSnapshot, String> {
+    let _span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "load_workspace"));
     snapshot(&load_project_registry()?)
 }
 

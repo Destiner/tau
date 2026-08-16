@@ -1,13 +1,18 @@
-//! Converts emitted OTel log records into the OTLP JSON mapping
+//! Converts emitted OTel log and span records into the OTLP JSON mapping
 //! (<https://opentelemetry.io/docs/specs/otel/protocol/file-exporter/>) and
 //! hands the resulting line to the `Store`. This is the only place that
-//! understands both the OTel SDK's record types and the on-disk JSON shape.
+//! understands both the OTel SDK's record types and the on-disk JSON shape;
+//! `ingest.rs` reuses its value/envelope helpers for frontend-originated
+//! spans so both sources produce identically shaped output.
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use opentelemetry::logs::AnyValue;
+use opentelemetry::trace::{SpanKind, Status};
+use opentelemetry::SpanId;
 use opentelemetry_sdk::error::OTelSdkResult;
 use opentelemetry_sdk::logs::{LogBatch, LogExporter, SdkLogRecord};
+use opentelemetry_sdk::trace::{SpanData, SpanExporter};
 use opentelemetry_sdk::Resource;
 use serde_json::{json, Value};
 
@@ -48,7 +53,40 @@ impl LogExporter for JsonFileLogExporter {
     }
 }
 
-fn resource_to_json(resource: &Resource) -> Value {
+pub struct JsonFileSpanExporter {
+    store: Arc<Store>,
+    resource_json: Value,
+}
+
+impl std::fmt::Debug for JsonFileSpanExporter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JsonFileSpanExporter")
+            .finish_non_exhaustive()
+    }
+}
+
+impl JsonFileSpanExporter {
+    /// See `JsonFileLogExporter::new`: the resource is captured once here for
+    /// the same reason.
+    pub fn new(store: Arc<Store>, resource: &Resource) -> Self {
+        JsonFileSpanExporter {
+            store,
+            resource_json: resource_to_json(resource),
+        }
+    }
+}
+
+impl SpanExporter for JsonFileSpanExporter {
+    async fn export(&self, batch: Vec<SpanData>) -> OTelSdkResult {
+        for span in &batch {
+            let value = span_data_to_otlp_json(&self.resource_json, span);
+            self.store.append(Signal::Trace, value);
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn resource_to_json(resource: &Resource) -> Value {
     let attributes: Vec<Value> = resource
         .iter()
         .map(|(key, value)| key_value_json(key.as_str(), value))
@@ -60,7 +98,7 @@ fn key_value_json(key: &str, value: &opentelemetry::Value) -> Value {
     json!({ "key": key, "value": otel_value_json(value) })
 }
 
-fn otel_value_json(value: &opentelemetry::Value) -> Value {
+pub(super) fn otel_value_json(value: &opentelemetry::Value) -> Value {
     match value {
         opentelemetry::Value::Bool(value) => json!({ "boolValue": value }),
         opentelemetry::Value::I64(value) => json!({ "intValue": value.to_string() }),
@@ -70,7 +108,7 @@ fn otel_value_json(value: &opentelemetry::Value) -> Value {
     }
 }
 
-fn any_value_json(value: &AnyValue) -> Value {
+pub(super) fn any_value_json(value: &AnyValue) -> Value {
     match value {
         AnyValue::Int(value) => json!({ "intValue": value.to_string() }),
         AnyValue::Double(value) => json!({ "doubleValue": value }),
@@ -134,6 +172,85 @@ fn log_record_to_otlp_json(
             }],
         }],
     })
+}
+
+/// Wraps one already-built OTLP span object in the `resourceSpans` envelope.
+/// Shared by native spans (below) and `ingest.rs`'s frontend-originated
+/// spans, so both sources produce identically shaped `traces.jsonl` lines.
+pub(super) fn wrap_span_json(resource_json: &Value, scope_name: &str, span_object: Value) -> Value {
+    json!({
+        "resourceSpans": [{
+            "resource": resource_json,
+            "scopeSpans": [{
+                "scope": { "name": scope_name },
+                "spans": [span_object],
+            }],
+        }],
+    })
+}
+
+fn span_data_to_otlp_json(resource_json: &Value, span: &SpanData) -> Value {
+    let mut span_object = serde_json::Map::new();
+    span_object.insert(
+        "traceId".into(),
+        Value::String(span.span_context.trace_id().to_string()),
+    );
+    span_object.insert(
+        "spanId".into(),
+        Value::String(span.span_context.span_id().to_string()),
+    );
+    if span.parent_span_id != SpanId::INVALID {
+        span_object.insert(
+            "parentSpanId".into(),
+            Value::String(span.parent_span_id.to_string()),
+        );
+    }
+    span_object.insert("name".into(), Value::String(span.name.to_string()));
+    span_object.insert("kind".into(), Value::from(span_kind_code(&span.span_kind)));
+    span_object.insert(
+        "startTimeUnixNano".into(),
+        Value::String(unix_nanos_string(span.start_time)),
+    );
+    span_object.insert(
+        "endTimeUnixNano".into(),
+        Value::String(unix_nanos_string(span.end_time)),
+    );
+    let attributes: Vec<Value> = span
+        .attributes
+        .iter()
+        .map(|attribute| key_value_json(attribute.key.as_str(), &attribute.value))
+        .collect();
+    if !attributes.is_empty() {
+        span_object.insert("attributes".into(), Value::Array(attributes));
+    }
+    span_object.insert(
+        "status".into(),
+        json!({ "code": status_code(&span.status) }),
+    );
+
+    wrap_span_json(
+        resource_json,
+        span.instrumentation_scope.name(),
+        Value::Object(span_object),
+    )
+}
+
+fn span_kind_code(kind: &SpanKind) -> i32 {
+    match kind {
+        SpanKind::Internal => 1,
+        SpanKind::Server => 2,
+        SpanKind::Client => 3,
+        SpanKind::Producer => 4,
+        SpanKind::Consumer => 5,
+    }
+}
+
+fn status_code(status: &Status) -> i32 {
+    match status {
+        Status::Unset => 0,
+        Status::Ok => 1,
+        Status::Error { .. } => 2,
+    }
 }
 
 #[cfg(test)]
@@ -223,5 +340,75 @@ mod tests {
             r#"{"stringValue":"[unsupported telemetry value]"}"#
         );
         assert!(!encoded.contains(canary));
+    }
+
+    fn sample_span_data(parent_span_id: opentelemetry::SpanId) -> SpanData {
+        use opentelemetry::trace::{SpanContext, TraceFlags, TraceState};
+        use opentelemetry::{InstrumentationScope, KeyValue, TraceId};
+        use std::time::Duration;
+
+        let start = UNIX_EPOCH + Duration::from_secs(1);
+        SpanData {
+            span_context: SpanContext::new(
+                TraceId::from_hex("4bf92f3577b34da6a3ce929d0e0e4736").expect("trace id"),
+                SpanId::from_hex("00f067aa0ba902b7").expect("span id"),
+                TraceFlags::SAMPLED,
+                false,
+                TraceState::default(),
+            ),
+            parent_span_id,
+            parent_span_is_remote: parent_span_id != SpanId::INVALID,
+            span_kind: SpanKind::Internal,
+            name: "tauri.invoke".into(),
+            start_time: start,
+            end_time: start + Duration::from_millis(5),
+            attributes: vec![KeyValue::new("tau.invoke.command", "load_workspace")],
+            dropped_attributes_count: 0,
+            events: Default::default(),
+            links: Default::default(),
+            status: Status::Unset,
+            instrumentation_scope: InstrumentationScope::builder("tau").build(),
+        }
+    }
+
+    #[test]
+    fn span_conversion_produces_the_otlp_trace_json_shape() {
+        let span = sample_span_data(SpanId::from_hex("cafebabecafebabe").expect("parent span id"));
+        let resource_json = json!({ "attributes": [] });
+        let value = span_data_to_otlp_json(&resource_json, &span);
+
+        let span_object = &value["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
+        assert_eq!(span_object["traceId"], "4bf92f3577b34da6a3ce929d0e0e4736");
+        assert_eq!(span_object["spanId"], "00f067aa0ba902b7");
+        assert_eq!(span_object["parentSpanId"], "cafebabecafebabe");
+        assert_eq!(span_object["name"], "tauri.invoke");
+        assert_eq!(span_object["kind"], 1);
+        assert_eq!(span_object["status"]["code"], 0);
+        assert_eq!(
+            span_object["attributes"][0],
+            json!({ "key": "tau.invoke.command", "value": { "stringValue": "load_workspace" } })
+        );
+        assert_eq!(
+            value["resourceSpans"][0]["scopeSpans"][0]["scope"]["name"],
+            "tau"
+        );
+    }
+
+    #[test]
+    fn span_conversion_omits_parent_span_id_for_a_root_span() {
+        let span = sample_span_data(SpanId::INVALID);
+        let resource_json = json!({ "attributes": [] });
+        let value = span_data_to_otlp_json(&resource_json, &span);
+        let span_object = &value["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
+        assert!(span_object.get("parentSpanId").is_none());
+    }
+
+    #[test]
+    fn span_kind_and_status_map_to_otlp_integer_codes() {
+        assert_eq!(span_kind_code(&SpanKind::Internal), 1);
+        assert_eq!(span_kind_code(&SpanKind::Server), 2);
+        assert_eq!(status_code(&Status::Unset), 0);
+        assert_eq!(status_code(&Status::Ok), 1);
+        assert_eq!(status_code(&Status::error("unused description")), 2);
     }
 }

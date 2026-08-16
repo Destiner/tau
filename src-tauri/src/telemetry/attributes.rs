@@ -39,6 +39,8 @@ pub enum AttributeError {
     /// The key is not part of this family's allowlist (or the shared context
     /// attributes), so it cannot be recorded at all.
     UnknownAttribute,
+    /// A categorical string is not one of the reviewed safe values.
+    UnknownValue,
     /// The value's runtime type does not match the spec's declared kind.
     WrongType,
     /// A string value exceeds the spec's `max_len`.
@@ -138,6 +140,8 @@ pub const UI_ACTION: RecordFamily = RecordFamily {
         metric_safe: true,
     }],
 };
+
+pub const TAURI_INVOKE_COMMANDS: &[&str] = &["load_workspace"];
 
 pub const TAURI_INVOKE: RecordFamily = RecordFamily {
     name: "tauri.invoke",
@@ -248,6 +252,8 @@ pub fn allowed_attribute(family: &str, key: &str) -> Option<&'static AttributeSp
 
 /// Whether `key` is safe to use as a metric dimension. Unknown keys are not
 /// safe: only cataloged, explicitly-reviewed attributes may reach a metric.
+/// Stage 5 checks metric dimensions against this before recording them.
+#[allow(dead_code)]
 pub fn is_metric_safe(key: &str) -> bool {
     RESOURCE_ATTRIBUTES
         .iter()
@@ -268,6 +274,9 @@ pub fn validate(family: &str, key: &str, value: &Value) -> Result<(), AttributeE
             let max_len = spec.max_len.expect("string specs declare a max length");
             if string.as_str().len() > max_len {
                 return Err(AttributeError::TooLong);
+            }
+            if key == "tau.invoke.command" && !TAURI_INVOKE_COMMANDS.contains(&string.as_str()) {
+                return Err(AttributeError::UnknownValue);
             }
         }
         (AttributeKind::I64, Value::I64(_)) => {}
@@ -363,6 +372,18 @@ mod tests {
                 &Value::String("hello".into())
             ),
             Err(AttributeError::UnknownAttribute)
+        );
+    }
+
+    #[test]
+    fn validate_rejects_an_unreviewed_categorical_value() {
+        assert_eq!(
+            validate(
+                "tauri.invoke",
+                "tau.invoke.command",
+                &Value::String("user content".into())
+            ),
+            Err(AttributeError::UnknownValue)
         );
     }
 

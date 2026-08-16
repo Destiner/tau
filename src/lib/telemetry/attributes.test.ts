@@ -71,6 +71,12 @@ describe('validateAttribute', () => {
     });
   });
 
+  it('rejects an unreviewed categorical value', () => {
+    expect(
+      validateAttribute('tauri.invoke', 'tau.invoke.command', 'user content'),
+    ).toEqual({ valid: false, error: 'unknown-value' });
+  });
+
   it('rejects a type mismatch', () => {
     expect(validateAttribute('pi.rpc', 'pi.rpc.method', 1)).toEqual({
       valid: false,
@@ -85,10 +91,16 @@ describe('validateAttribute', () => {
     ).toEqual({ valid: false, error: 'wrong-type' });
   });
 
-  it('rejects a non-integer number for an int attribute', () => {
-    expect(
-      validateAttribute('pi.process.lifecycle', 'tau.process.exit_code', 1.5),
-    ).toEqual({ valid: false, error: 'wrong-type' });
+  it('rejects a non-integer or unsafe number for an int attribute', () => {
+    for (const value of [1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(
+        validateAttribute(
+          'pi.process.lifecycle',
+          'tau.process.exit_code',
+          value,
+        ),
+      ).toEqual({ valid: false, error: 'wrong-type' });
+    }
   });
 
   it('rejects a string oversized in UTF-8 bytes', () => {

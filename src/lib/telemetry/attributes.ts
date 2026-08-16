@@ -36,7 +36,8 @@ interface AttributeSpec {
   metricSafe: boolean;
 }
 
-type AttributeError = 'unknown-attribute' | 'wrong-type' | 'too-long';
+type AttributeError =
+  'unknown-attribute' | 'unknown-value' | 'wrong-type' | 'too-long';
 
 type AttributeValidation =
   { valid: true } | { valid: false; error: AttributeError };
@@ -77,6 +78,9 @@ const UI_ACTION: RecordFamily = {
   name: 'ui.action',
   attributes: [stringAttribute('tau.action.name', true)],
 };
+
+const TAURI_INVOKE_COMMANDS = ['load_workspace'] as const;
+type TauriInvokeCommand = (typeof TAURI_INVOKE_COMMANDS)[number];
 
 const TAURI_INVOKE: RecordFamily = {
   name: 'tauri.invoke',
@@ -172,16 +176,28 @@ function validateAttribute(
     if (spec.maxLen !== null && utf8Length(value) > spec.maxLen) {
       return { valid: false, error: 'too-long' };
     }
+    if (
+      key === 'tau.invoke.command' &&
+      !(TAURI_INVOKE_COMMANDS as readonly string[]).includes(value)
+    ) {
+      return { valid: false, error: 'unknown-value' };
+    }
     return { valid: true };
   }
 
-  if (typeof value !== 'number' || !Number.isInteger(value)) {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
     return { valid: false, error: 'wrong-type' };
   }
   return { valid: true };
 }
 
-export type { AttributeError, AttributeKind, AttributeSpec, RecordFamily };
+export type {
+  AttributeError,
+  AttributeKind,
+  AttributeSpec,
+  RecordFamily,
+  TauriInvokeCommand,
+};
 
 export {
   allowedAttribute,
@@ -195,6 +211,7 @@ export {
   PI_RPC,
   RESOURCE_ATTRIBUTES,
   TAURI_INVOKE,
+  TAURI_INVOKE_COMMANDS,
   UI_ACTION,
   validateAttribute,
 };

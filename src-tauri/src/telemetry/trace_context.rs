@@ -25,7 +25,7 @@ pub enum TraceContextError {
 }
 
 const TRACE_ID_LEN: usize = 32;
-const SPAN_ID_LEN: usize = 16;
+pub(super) const SPAN_ID_LEN: usize = 16;
 
 impl TraceContext {
     /// Parses a `version-traceId-spanId-flags` traceparent header value.
@@ -72,7 +72,7 @@ fn is_lower_hex(value: &str) -> bool {
         })
 }
 
-fn is_non_zero_lower_hex(value: &str, expected_len: usize) -> bool {
+pub(super) fn is_non_zero_lower_hex(value: &str, expected_len: usize) -> bool {
     value.len() == expected_len && is_lower_hex(value) && value.bytes().any(|byte| byte != b'0')
 }
 
