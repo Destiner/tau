@@ -4,6 +4,10 @@ mod profile;
 mod settings;
 mod ssh;
 mod storage;
+// Stage 0 contract only: nothing outside its own tests calls into this yet.
+// Stage 1 wires provider initialization and persistence against it.
+#[allow(dead_code)]
+mod telemetry;
 
 use std::time::Duration;
 
