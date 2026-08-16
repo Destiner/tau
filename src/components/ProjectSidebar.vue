@@ -563,6 +563,11 @@ function isTitlebarControl(target: EventTarget | null): boolean {
   margin: 1px 0 5px;
 }
 
+.session-row,
+.empty-sessions {
+  height: 29px;
+}
+
 .session-row {
   display: flex;
   position: relative;
@@ -634,7 +639,9 @@ function isTitlebarControl(target: EventTarget | null): boolean {
 }
 
 .empty-sessions {
-  padding: 5px 7px 8px 20px;
+  display: flex;
+  align-items: center;
+  padding: 0 5px;
   color: var(--faint);
   font-size: 11px;
 }
