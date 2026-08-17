@@ -5,6 +5,7 @@ import {
   type CommandOption,
   commandInvocation,
   commandMenuLayout,
+  commandSelection,
   filterCommands,
   slashCommandQuery,
 } from './commands';
@@ -47,6 +48,24 @@ describe('slash command completion', () => {
 
   it('formats a command for immediate invocation', () => {
     expect(commandInvocation(commands[0]!)).toBe('/session-name');
+  });
+
+  it('uses Tab to complete any command without submitting', () => {
+    expect(commandSelection(commands[0]!, true)).toEqual({
+      draft: '/session-name ',
+      submit: false,
+    });
+  });
+
+  it('immediately invokes selected commands, including skills', () => {
+    expect(commandSelection(commands[0]!)).toEqual({
+      draft: '/session-name',
+      submit: true,
+    });
+    expect(commandSelection(commands[2]!)).toEqual({
+      draft: '/skill:source-check',
+      submit: true,
+    });
   });
 });
 

@@ -26,6 +26,11 @@ type CommandMenuLayout = {
   offset: number;
 };
 
+type CommandSelection = {
+  draft: string;
+  submit: boolean;
+};
+
 type CommandMenuGeometry = {
   /** Height the menu wants, including its own border and padding. */
   contentHeight: number;
@@ -104,6 +109,18 @@ function commandInvocation(command: CommandOption): string {
   return `/${command.name}`;
 }
 
+function commandSelection(
+  command: CommandOption,
+  completeOnly = false,
+): CommandSelection {
+  const submit = !completeOnly;
+  const invocation = commandInvocation(command);
+  return {
+    draft: submit ? invocation : `${invocation} `,
+    submit,
+  };
+}
+
 function fuzzyScore(value: string, query: string): number | null {
   const candidate = value.toLowerCase();
   const needle = query.toLowerCase();
@@ -133,6 +150,7 @@ export type {
   CommandOption,
   CommandMenuPlacement,
   CommandMenuLayout,
+  CommandSelection,
   CommandMenuGeometry,
 };
 
@@ -141,4 +159,5 @@ export {
   slashCommandQuery,
   filterCommands,
   commandInvocation,
+  commandSelection,
 };

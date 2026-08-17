@@ -21,7 +21,7 @@
       :max-height="commandMenuMaxHeight"
       :offset="commandMenuOffset"
       @highlight="handleHighlight"
-      @select="executeCommand"
+      @select="selectCommand"
     />
     <UiContextMenu :items="() => textFieldItems(() => composerInput)">
       <textarea
@@ -103,8 +103,8 @@ import useTau from '../composables/useTau';
 import {
   type CommandMenuPlacement,
   type CommandOption,
-  commandInvocation,
   commandMenuLayout,
+  commandSelection,
   filterCommands,
   slashCommandQuery,
 } from '../lib/commands';
@@ -237,9 +237,14 @@ function handleComposerKeydown(event: KeyboardEvent): void {
       );
       return;
     }
+    if (event.key === 'Tab' && !event.shiftKey) {
+      event.preventDefault();
+      if (selectedCommand.value) selectCommand(selectedCommand.value, true);
+      return;
+    }
     if (event.key === 'Enter') {
       event.preventDefault();
-      if (selectedCommand.value) executeCommand(selectedCommand.value);
+      if (selectedCommand.value) selectCommand(selectedCommand.value);
       return;
     }
   }
@@ -254,10 +259,11 @@ function handleHighlight(index: number): void {
   commandSelectedIndex.value = index;
 }
 
-function executeCommand(command: CommandOption): void {
-  draft.value = commandInvocation(command);
+function selectCommand(command: CommandOption, completeOnly = false): void {
+  const selection = commandSelection(command, completeOnly);
+  draft.value = selection.draft;
   commandSelectedIndex.value = 0;
-  send();
+  if (selection.submit) send();
 }
 
 function send(): void {
