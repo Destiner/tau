@@ -8,6 +8,15 @@ Tau continuously writes content-free OpenTelemetry JSONL under its profile data 
 
 Retention is bounded to seven days and 32 MiB. Telemetry failure does not fail product operations. Records contain operation names, lifecycle state, timings, outcomes, counts, sanitized source basenames, and relevant session/runtime identifiers. They do not contain prompts, transcripts, drafts, tool or extension payloads, file/clipboard contents, paths, SSH commands, connection strings, stderr, credentials, or raw errors.
 
+## User issue reports
+
+Reports submitted from the sidebar are stored separately from content-free telemetry:
+
+- development: `tau-dev/feedback/issues.jsonl`
+- production: `tau/feedback/issues.jsonl`
+
+Each JSON line contains the user's description, its submission time, and the current Pi session ID only when the user explicitly includes it. Reports stay local and are retained until the file is removed.
+
 ## Optional development OTLP export
 
 External export is disabled by default and no collector is bundled. Build with the opt-in feature:

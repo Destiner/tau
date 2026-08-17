@@ -162,6 +162,7 @@ pub const UI_ACTION: RecordFamily = RecordFamily {
 /// never trace itself) are deliberately absent.
 pub const TAURI_INVOKE_COMMANDS: &[&str] = &[
     "load_workspace",
+    "submit_issue_report",
     "import_project",
     "import_remote_project",
     "remove_project",

@@ -182,6 +182,16 @@ function useTau() {
     clearExtensionUiState();
   }
 
+  function submitIssueReport(
+    description: string,
+    sessionId?: string,
+  ): Promise<void> {
+    return invokeTraced('submit_issue_report', {
+      description,
+      ...(sessionId ? { sessionId } : {}),
+    });
+  }
+
   async function addLocalProject(): Promise<void> {
     try {
       const selection = await open({
@@ -820,6 +830,7 @@ function useTau() {
     sessionLoading,
     initialize,
     dispose,
+    submitIssueReport,
     addLocalProject,
     openRemoteProjectDialog,
     closeRemoteProjectDialog,

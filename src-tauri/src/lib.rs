@@ -1,3 +1,4 @@
+mod feedback;
 mod models;
 mod pi;
 mod profile;
@@ -72,6 +73,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            feedback::submit_issue_report,
             pi::send_pi,
             pi::start_pi,
             pi::start_pi_remote,

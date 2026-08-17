@@ -33,6 +33,14 @@ async function mountApp(): Promise<void> {
     app.mount('#app');
     return;
   }
+  if (import.meta.env.DEV && fixture === 'issue-report') {
+    const { default: IssueReportFixture } =
+      await import('./dev/IssueReportFixture.vue');
+    const app = createApp(IssueReportFixture);
+    app.config.errorHandler = vueErrorHandler;
+    app.mount('#app');
+    return;
+  }
 
   const app = createApp(App);
   app.config.errorHandler = vueErrorHandler;

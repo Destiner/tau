@@ -103,6 +103,7 @@ const UI_ACTION: RecordFamily = {
  * never trace itself) are deliberately absent. */
 const TAURI_INVOKE_COMMANDS = [
   'load_workspace',
+  'submit_issue_report',
   'import_project',
   'import_remote_project',
   'remove_project',

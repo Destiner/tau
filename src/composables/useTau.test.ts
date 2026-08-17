@@ -2344,6 +2344,36 @@ describe('runtime retention', () => {
   });
 });
 
+describe('issue reports', () => {
+  it('submits the description with only explicitly supplied session context', async () => {
+    const tau = useTau();
+    vi.mocked(invoke).mockClear();
+
+    await tau.submitIssueReport('The sidebar stopped responding.');
+    await tau.submitIssueReport(
+      'The reply appeared in the wrong session.',
+      'session-1',
+    );
+
+    const calls = vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command === 'submit_issue_report');
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        description: 'The sidebar stopped responding.',
+      }),
+    );
+    expect(calls[0]?.[1]).not.toHaveProperty('sessionId');
+    expect(calls[1]?.[1]).toEqual(
+      expect.objectContaining({
+        description: 'The reply appeared in the wrong session.',
+        sessionId: 'session-1',
+      }),
+    );
+  });
+});
+
 function stoppedRuntimes(): string[] {
   return vi
     .mocked(invoke)

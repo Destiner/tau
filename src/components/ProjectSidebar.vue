@@ -155,6 +155,10 @@
           </template>
         </UiMenu>
       </div>
+      <IssueReportPopover
+        :session-id="state.activeSessionId || undefined"
+        :submit-report="submitIssueReport"
+      />
     </footer>
 
     <div
@@ -190,6 +194,7 @@ import {
   persistSidebarWidth,
 } from '../lib/sidebar-width';
 
+import IssueReportPopover from './IssueReportPopover.vue';
 import UiContextMenu from './ui/UiContextMenu.vue';
 import UiIcon from './ui/UiIcon.vue';
 import UiIconButton from './ui/UiIconButton.vue';
@@ -226,6 +231,7 @@ const {
   sessionIndicator,
   sessionLastActive,
   state,
+  submitIssueReport,
   toggleProject,
 } = useTau();
 
@@ -437,7 +443,7 @@ function isTitlebarControl(target: EventTarget | null): boolean {
 .sidebar-footer {
   display: flex;
   flex: none;
-  justify-content: flex-start;
+  justify-content: space-between;
   padding: 6px;
 }
 

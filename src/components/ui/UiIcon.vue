@@ -9,6 +9,10 @@
       d="M3 4.5h14v3H3zm1.5 3v9h11v-9M8 10.5h4"
     />
     <path
+      v-else-if="name === 'bug'"
+      d="M7 5.5h6M10 3v2.5M5 8H3m2 3H3m12-3h2m-2 3h2M6.5 6.5v6a3.5 3.5 0 0 0 7 0v-6zM6.5 14.5 4.5 16m9-1.5 2 1.5"
+    />
+    <path
       v-else-if="name === 'chevron'"
       d="m7 5 5 5-5 5"
     />
@@ -55,6 +59,7 @@
 defineProps<{
   name:
     | 'archive'
+    | 'bug'
     | 'chevron'
     | 'cross'
     | 'folder'
