@@ -10,6 +10,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { state, type SessionController } from '../../composables/state';
+import { FORBIDDEN_CONTENT_CANARIES } from '../telemetry/privacy';
 
 import type { PiBridgeEvent } from './bridge';
 
@@ -123,6 +124,37 @@ beforeEach(async () => {
 });
 
 describe('Pi RPC span lifecycle', () => {
+  it('never passes RPC request content into telemetry on successful sends', async () => {
+    const telemetry = await import('../telemetry');
+    const { rpc, handleResponse } = await import('./runtime');
+    const controller = makeController();
+
+    let index = 0;
+    for (const canary of FORBIDDEN_CONTENT_CANARIES.values()) {
+      index += 1;
+      const id = `req-canary-${index}`;
+      await rpc(controller, {
+        id,
+        type: 'prompt',
+        message: canary,
+        toolResult: canary,
+        extensionValue: canary,
+      });
+      await handleResponse(controller, {
+        id,
+        command: 'prompt',
+        success: true,
+      });
+    }
+
+    const telemetryCalls = JSON.stringify(
+      vi.mocked(telemetry.startRpcSpan).mock.calls,
+    );
+    for (const canary of FORBIDDEN_CONTENT_CANARIES.values()) {
+      expect(telemetryCalls).not.toContain(canary);
+    }
+  });
+
   it('starts a span at request creation and ends it on the exact matching response', async () => {
     const { rpc, handleResponse } = await import('./runtime');
     const controller = makeController();

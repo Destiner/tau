@@ -117,6 +117,22 @@ describe('validateAttribute', () => {
     }
   });
 
+  it('rejects negative or absurd collection counts', () => {
+    for (const value of [-1, 1_000_000_001]) {
+      expect(
+        validateAttribute(
+          'frontend.heartbeat',
+          'tau.heartbeat.pending_rpc_count',
+          value,
+        ),
+      ).toEqual({ valid: false, error: 'out-of-range' });
+    }
+    expect(validateAttribute('pi.rpc', 'pi.generation', -1)).toEqual({
+      valid: false,
+      error: 'out-of-range',
+    });
+  });
+
   it('rejects a string oversized in UTF-8 bytes', () => {
     const ascii = 'x'.repeat(DEFAULT_MAX_ATTRIBUTE_LEN + 1);
     const multibyte = 'é'.repeat(DEFAULT_MAX_ATTRIBUTE_LEN / 2 + 1);

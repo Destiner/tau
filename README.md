@@ -41,6 +41,10 @@ Each live session owns an isolated Pi runtime. Switching the visible session doe
 
 Remote projects use the system OpenSSH client and start directory browsing from the remote account's default working directory. SSH config aliases and command-line options are supported. Authentication must work non-interactively, such as through keys or an SSH agent, and Pi must be available on the remote login shell's `PATH`.
 
+## Local observability
+
+Tau continuously retains bounded, content-free OpenTelemetry data locally for diagnostics. See [local observability](docs/observability.md) for storage, privacy, and optional development OTLP export details.
+
 ## Checks
 
 ```sh

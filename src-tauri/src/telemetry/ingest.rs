@@ -1049,6 +1049,97 @@ mod tests {
         );
     }
 
+    /// Stage 6's comprehensive end-to-end privacy sweep: every forbidden-
+    /// content canary, smuggled in as an extra field under every plausible
+    /// "a bug forwarded content here" field name, is rejected outright by
+    /// `deny_unknown_fields` regardless of which shape (span/log/metric) or
+    /// which field name carries it — the type system rejects the whole
+    /// record before any attribute-level check even runs. A clean sibling
+    /// record in the same batch still succeeds, proving one bad record
+    /// never poisons the rest.
+    #[test]
+    fn no_forbidden_content_canary_survives_ingest_via_any_unexpected_field() {
+        use crate::telemetry::privacy::FORBIDDEN_CONTENT_CANARIES;
+
+        let (telemetry, _directory) = test_telemetry();
+        let leak_field_names = [
+            "message",
+            "prompt",
+            "promptText",
+            "toolResult",
+            "toolArguments",
+            "stderr",
+            "connectionString",
+            "path",
+            "clipboard",
+        ];
+
+        // Each (canary, field) pair is its own small batch — well under
+        // `MAX_RECORDS_PER_CALL` — paired with one clean sibling record per
+        // shape, so a poisoned record's rejection is checked against not
+        // collaterally rejecting a clean record in the very same call.
+        let mut total_rejected = 0;
+        let mut total_accepted = 0;
+        for (_, canary) in FORBIDDEN_CONTENT_CANARIES {
+            for field in leak_field_names {
+                let mut poisoned_span =
+                    to_value(&record("tauri.invoke", command_attribute("load_workspace")));
+                poisoned_span
+                    .as_object_mut()
+                    .expect("object")
+                    .insert(field.to_string(), json!(*canary));
+
+                let mut poisoned_log = to_log_value(&log_record(
+                    "frontend.error",
+                    frontend_error_attributes("console_error", "Error", "a.ts:1:1"),
+                ));
+                poisoned_log
+                    .as_object_mut()
+                    .expect("object")
+                    .insert(field.to_string(), json!(*canary));
+
+                let clean_span =
+                    to_value(&record("tauri.invoke", command_attribute("load_workspace")));
+                let clean_log = to_log_value(&log_record(
+                    "frontend.error",
+                    frontend_error_attributes("console_error", "Error", "a.ts:1:1"),
+                ));
+
+                let outcome = ingest_records(
+                    &telemetry,
+                    vec![poisoned_span, poisoned_log, clean_span, clean_log],
+                );
+                assert_eq!(
+                    outcome,
+                    IngestOutcome {
+                        accepted: 2,
+                        rejected: 2
+                    },
+                    "canary {canary:?} smuggled through field {field:?}"
+                );
+                total_rejected += outcome.rejected;
+                total_accepted += outcome.accepted;
+            }
+        }
+        let expected_cases = (FORBIDDEN_CONTENT_CANARIES.len() * leak_field_names.len()) as u32;
+        assert_eq!(total_rejected, expected_cases * 2);
+        assert_eq!(total_accepted, expected_cases * 2);
+
+        let persisted_traces = telemetry.store.read_records(Signal::Trace);
+        let persisted_logs = telemetry.store.read_records(Signal::Log);
+        assert_eq!(persisted_traces.len(), expected_cases as usize);
+        assert_eq!(persisted_logs.len(), expected_cases as usize);
+        for record in persisted_traces.iter().chain(persisted_logs.iter()) {
+            let encoded = record.to_string();
+            for (name, canary) in FORBIDDEN_CONTENT_CANARIES {
+                assert!(
+                    !encoded.contains(canary),
+                    "a persisted record leaked the {name} canary: {encoded}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn ingest_rejects_batches_beyond_the_per_call_bound() {
         let (telemetry, _directory) = test_telemetry();
@@ -1410,6 +1501,40 @@ mod tests {
         assert!(!encoded.contains("tau-canary"));
     }
 
+    /// Stage 6's state-summary size measurement: with every count at its
+    /// largest plausible magnitude, the serialized record still fits
+    /// comfortably in a small bound — proof that its size is driven by its
+    /// fixed *attribute count* (12), not by how much state it summarizes, so
+    /// a workspace with thousands of controllers costs the same few hundred
+    /// bytes as one with none.
+    #[test]
+    fn frontend_state_summary_serializes_to_a_small_bounded_size_regardless_of_counts() {
+        let resource_json = json!({ "attributes": [] });
+        let mut attributes = state_summary_attributes();
+        for (key, value) in &mut attributes {
+            if let FrontendAttributeValue::Int(count) = value {
+                *count = if key == "tau.state.oldest_pending_rpc_age_ms" {
+                    86_400_000
+                } else {
+                    999_999_999
+                };
+            }
+        }
+        let mut log = log_record("frontend.state_summary", attributes);
+        log.trace_id = None;
+        log.span_id = None;
+
+        let value =
+            validated_log_json(&log, &resource_json, "tau").expect("valid state summary record");
+        let serialized = value.to_string();
+
+        assert!(
+            serialized.len() < 2048,
+            "frontend.state_summary serialized to {} bytes at worst-case counts, expected < 2048",
+            serialized.len()
+        );
+    }
+
     #[test]
     fn ingest_persists_an_event_loop_lag_metric_never_a_log() {
         let (telemetry, _directory) = test_telemetry();
@@ -1646,5 +1771,198 @@ mod tests {
     fn process_metric_records(telemetry: &Telemetry) -> Vec<Value> {
         telemetry.force_flush_metrics();
         telemetry.store.read_records(Signal::Metric)
+    }
+
+    /// Stage 6's completion criterion in test form: a representative mix of
+    /// every signal source (a frontend action → invoke → RPC span chain, a
+    /// linked controller-lifecycle transition, native process lifecycle,
+    /// app start/exit, and an uncorrelated frontend error) ingested into one
+    /// store, then reconstructed three different ways — by trace, by
+    /// session, and globally with no session at all — the way a person
+    /// investigating an issue from an approximate time actually would.
+    #[test]
+    fn a_time_window_reconstructs_representative_global_and_session_bound_chronology() {
+        let (telemetry, _directory) = test_telemetry();
+        const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
+        const ACTION_SPAN: &str = "aaaaaaaaaaaaaaaa";
+        const INVOKE_SPAN: &str = "bbbbbbbbbbbbbbbb";
+        const RPC_SPAN: &str = "cccccccccccccccc";
+
+        telemetry.record_app_started();
+
+        // The action span: a real user gesture, carrying session/controller
+        // context so it is also session-findable.
+        let mut action = record(
+            "ui.action",
+            HashMap::from([
+                string_attribute("tau.action.name", "session.select"),
+                string_attribute("tau.session.id", "session-1"),
+                string_attribute("tau.controller.id", "controller-1"),
+            ]),
+        );
+        action.trace_id = TRACE_ID.to_string();
+        action.span_id = ACTION_SPAN.to_string();
+
+        // Its native `tauri.invoke` child.
+        let mut invoke = record("tauri.invoke", command_attribute("set_active_session"));
+        invoke.trace_id = TRACE_ID.to_string();
+        invoke.span_id = INVOKE_SPAN.to_string();
+        invoke.parent_span_id = Some(ACTION_SPAN.to_string());
+
+        // A Pi RPC child sharing the same runtime as the native process
+        // lifecycle log below — the process↔RPC correlation.
+        let mut rpc = record(
+            "pi.rpc",
+            HashMap::from([
+                string_attribute("pi.rpc.method", "get_state"),
+                string_attribute("pi.rpc.request_id", "tau-state-1"),
+                string_attribute("pi.rpc.outcome", "success"),
+                string_attribute("tau.runtime.id", "runtime-1"),
+                int_attribute("pi.generation", 1),
+            ]),
+        );
+        rpc.trace_id = TRACE_ID.to_string();
+        rpc.span_id = RPC_SPAN.to_string();
+        rpc.parent_span_id = Some(ACTION_SPAN.to_string());
+
+        // The named state transition the action's RPC caused, linked to the
+        // action's own span and carrying the same session/controller/
+        // runtime context.
+        let mut transition = log_record(
+            "controller.lifecycle",
+            HashMap::from([
+                string_attribute("tau.controller.state.before", "idle"),
+                string_attribute("tau.controller.state.after", "ready"),
+                string_attribute("tau.controller.transition.cause", "get_state_response"),
+                string_attribute("tau.session.id", "session-1"),
+                string_attribute("tau.controller.id", "controller-1"),
+                string_attribute("tau.runtime.id", "runtime-1"),
+            ]),
+        );
+        transition.trace_id = Some(TRACE_ID.to_string());
+        transition.span_id = Some(ACTION_SPAN.to_string());
+
+        let outcome = ingest_records(
+            &telemetry,
+            vec![
+                to_value(&action),
+                to_value(&invoke),
+                to_value(&rpc),
+                to_log_value(&transition),
+            ],
+        );
+        assert_eq!(
+            outcome,
+            IngestOutcome {
+                accepted: 4,
+                rejected: 0
+            }
+        );
+
+        // Native process lifecycle, sharing the RPC's runtime id but no
+        // trace — process lifetime is not itself a span in this design.
+        telemetry.record_process_lifecycle("pi.process.started", "runtime-1", Some(1), None, &[]);
+
+        // An uncorrelated frontend error: global, undetected-issue evidence
+        // with no session at all.
+        let error = log_record(
+            "frontend.error",
+            frontend_error_attributes("window_error", "TypeError", "app.ts:1:1"),
+        );
+        ingest_records(&telemetry, vec![to_log_value(&error)]);
+
+        telemetry.record_app_exited();
+
+        let traces = telemetry.store.read_records(Signal::Trace);
+        let logs = telemetry.store.read_records(Signal::Log);
+
+        // 1. By trace: the action → invoke → RPC chain plus the transition it
+        //    caused reconstruct as one connected chronology.
+        let same_trace_spans: Vec<&Value> = traces
+            .iter()
+            .filter(|record| {
+                record["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["traceId"] == TRACE_ID
+            })
+            .collect();
+        assert_eq!(same_trace_spans.len(), 3, "action, invoke, and rpc spans");
+        let child_parents: Vec<&Value> = same_trace_spans
+            .iter()
+            .map(|record| &record["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["parentSpanId"])
+            .filter(|parent| !parent.is_null())
+            .collect();
+        assert!(
+            child_parents.iter().all(|parent| **parent == ACTION_SPAN),
+            "both children must resolve back to the action span"
+        );
+        let linked_transition = logs
+            .iter()
+            .find(|record| {
+                record["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["traceId"] == TRACE_ID
+            })
+            .expect("the transition log links back to the same trace");
+        assert_eq!(
+            linked_transition["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["eventName"],
+            "controller.state_transition"
+        );
+
+        // 2. By session: the action span and the transition log both carry
+        //    `tau.session.id`, surfacing the session-bound slice without
+        //    needing the trace id at all.
+        let session_bound_logs = logs.iter().filter(|record| {
+            record["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["attributes"]
+                .as_array()
+                .is_some_and(|attributes| {
+                    attributes.iter().any(|attribute| {
+                        attribute["key"] == "tau.session.id"
+                            && attribute["value"]["stringValue"] == "session-1"
+                    })
+                })
+        });
+        assert_eq!(session_bound_logs.count(), 1, "the linked transition log");
+
+        // 3. Process↔RPC correlation: the RPC span and the native process
+        //    lifecycle log share `tau.runtime.id`, without any session.
+        let process_log = logs
+            .iter()
+            .find(|record| {
+                record["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["eventName"]
+                    == "pi.process.started"
+            })
+            .expect("native process lifecycle log");
+        let runtime_id_of = |value: &Value| -> Option<String> {
+            value["attributes"]
+                .as_array()?
+                .iter()
+                .find_map(|attribute| {
+                    (attribute["key"] == "tau.runtime.id")
+                        .then(|| {
+                            attribute["value"]["stringValue"]
+                                .as_str()
+                                .map(str::to_string)
+                        })
+                        .flatten()
+                })
+        };
+        let rpc_span_object = &traces
+            .iter()
+            .find(|record| {
+                record["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["spanId"] == RPC_SPAN
+            })
+            .expect("rpc span")["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
+        assert_eq!(
+            runtime_id_of(&process_log["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]),
+            runtime_id_of(rpc_span_object),
+        );
+
+        // 4. Global, undetected-issue evidence needs no session at all:
+        //    app.started/app.exited/frontend.error are all present
+        //    unconditionally.
+        let event_names: Vec<&Value> = logs
+            .iter()
+            .map(|record| &record["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["eventName"])
+            .collect();
+        assert!(event_names.iter().any(|name| **name == "app.started"));
+        assert!(event_names.iter().any(|name| **name == "app.exited"));
+        assert!(event_names.iter().any(|name| **name == "frontend.error"));
     }
 }

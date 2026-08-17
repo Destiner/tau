@@ -43,6 +43,8 @@ pub enum AttributeError {
     UnknownValue,
     /// The value's runtime type does not match the spec's declared kind.
     WrongType,
+    /// A numeric value is outside its reviewed range.
+    OutOfRange,
     /// A string value exceeds the spec's `max_len`.
     TooLong,
 }
@@ -851,6 +853,22 @@ fn categorical_values(key: &str) -> Option<&'static [&'static str]> {
 /// its runtime type must match the spec, and string values must fit the
 /// spec's maximum length. This is the enforcement point that keeps telemetry
 /// callers from recording arbitrary attributes.
+const MAX_COUNT_ATTRIBUTE: i64 = 1_000_000_000;
+const MAX_AGE_ATTRIBUTE_MS: i64 = 24 * 60 * 60 * 1000;
+
+fn numeric_range(key: &str) -> Option<(i64, i64)> {
+    if key.ends_with("_count") || key == "tau.heartbeat.queue_length" {
+        return Some((0, MAX_COUNT_ATTRIBUTE));
+    }
+    if key == "pi.generation" {
+        return Some((0, MAX_COUNT_ATTRIBUTE));
+    }
+    if key == "tau.state.oldest_pending_rpc_age_ms" {
+        return Some((0, MAX_AGE_ATTRIBUTE_MS));
+    }
+    None
+}
+
 pub fn validate(family: &str, key: &str, value: &Value) -> Result<(), AttributeError> {
     let spec = allowed_attribute(family, key).ok_or(AttributeError::UnknownAttribute)?;
     match (spec.kind, value) {
@@ -865,7 +883,13 @@ pub fn validate(family: &str, key: &str, value: &Value) -> Result<(), AttributeE
                 }
             }
         }
-        (AttributeKind::I64, Value::I64(_)) => {}
+        (AttributeKind::I64, Value::I64(value)) => {
+            if let Some((minimum, maximum)) = numeric_range(key) {
+                if *value < minimum || *value > maximum {
+                    return Err(AttributeError::OutOfRange);
+                }
+            }
+        }
         _ => return Err(AttributeError::WrongType),
     }
     Ok(())
@@ -978,6 +1002,24 @@ mod tests {
         assert_eq!(
             validate("pi.rpc", "pi.rpc.method", &Value::I64(1)),
             Err(AttributeError::WrongType)
+        );
+    }
+
+    #[test]
+    fn validate_rejects_negative_or_absurd_collection_counts() {
+        for value in [-1, MAX_COUNT_ATTRIBUTE + 1] {
+            assert_eq!(
+                validate(
+                    "frontend.heartbeat",
+                    "tau.heartbeat.pending_rpc_count",
+                    &Value::I64(value)
+                ),
+                Err(AttributeError::OutOfRange)
+            );
+        }
+        assert_eq!(
+            validate("pi.rpc", "pi.generation", &Value::I64(-1)),
+            Err(AttributeError::OutOfRange)
         );
     }
 

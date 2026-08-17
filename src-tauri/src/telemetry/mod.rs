@@ -13,6 +13,8 @@
 pub mod attributes;
 mod exporter;
 pub mod ingest;
+#[cfg(feature = "otlp_export")]
+mod otlp_export;
 pub mod privacy;
 mod store;
 pub mod trace_context;
@@ -1672,5 +1674,188 @@ mod tests {
             .as_str()
             .expect("location string")
             .starts_with("mod.rs"));
+    }
+
+    /// Stage 6's comprehensive failure-path privacy sweep: a real panic
+    /// carrying *every* forbidden-content canary as its message, one after
+    /// another under the same installed hook, proves the panic-payload leak
+    /// path is closed for the whole reviewed catalog — not just the one
+    /// hardcoded message the test above uses.
+    #[test]
+    fn panic_hook_never_persists_any_forbidden_content_canary_as_the_panic_message() {
+        use privacy::FORBIDDEN_CONTENT_CANARIES;
+        use std::panic::AssertUnwindSafe;
+
+        let (telemetry, _directory) = test_telemetry();
+        let original_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_info| {}));
+        telemetry.install_panic_hook();
+
+        for (_, canary) in FORBIDDEN_CONTENT_CANARIES {
+            let canary = *canary;
+            let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                panic!("{canary}");
+            }));
+            assert!(result.is_err());
+        }
+
+        std::panic::set_hook(original_hook);
+
+        let records = process_log_records(&telemetry);
+        let panic_records: Vec<&serde_json::Value> = records
+            .iter()
+            .filter(|record| {
+                record["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["eventName"]
+                    == "rust.panic"
+            })
+            .collect();
+        assert_eq!(
+            panic_records.len(),
+            FORBIDDEN_CONTENT_CANARIES.len(),
+            "expected one rust.panic record per triggered panic"
+        );
+        for record in &panic_records {
+            let encoded = record.to_string();
+            for (name, canary) in FORBIDDEN_CONTENT_CANARIES {
+                assert!(
+                    !encoded.contains(canary),
+                    "a rust.panic record leaked the {name} canary: {encoded}"
+                );
+            }
+        }
+    }
+
+    /// Stage 6's disk-volume measurement: appends a representative mix of
+    /// 100 log/span records (Pi process lifecycle logs and native
+    /// `tauri.invoke` command spans, the two most frequent native record
+    /// shapes) and asserts the *measured* average bytes per record — not a
+    /// hand-waved estimate — stays under a bound generous enough to allow
+    /// normal growth but tight enough to catch an accidental unbounded
+    /// payload (e.g. a bug that starts embedding message text). Measured
+    /// ~880 bytes/log and ~600 bytes/span on this codebase today; the 2000
+    /// byte bound leaves more than 2x headroom.
+    #[test]
+    fn disk_write_volume_per_record_stays_within_a_generous_bound() {
+        let (telemetry, directory) = test_telemetry();
+        let context = sample_context("4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7");
+
+        for generation in 0..50u64 {
+            telemetry.record_process_lifecycle(
+                "pi.process.started",
+                "runtime-1",
+                Some(generation),
+                None,
+                &[],
+            );
+        }
+        for _ in 0..50 {
+            telemetry
+                .start_command_span(&context, "load_workspace")
+                .expect("valid context");
+        }
+        telemetry.shutdown();
+
+        let average_bytes = |path: PathBuf| -> usize {
+            let contents = std::fs::read_to_string(path).unwrap_or_default();
+            let lines: Vec<&str> = contents.lines().collect();
+            if lines.is_empty() {
+                return 0;
+            }
+            lines.iter().map(|line| line.len()).sum::<usize>() / lines.len()
+        };
+        let average_log_bytes = average_bytes(directory.path().join(LOG_SEGMENT_FILE));
+        let average_span_bytes = average_bytes(directory.path().join(TRACE_SEGMENT_FILE));
+
+        assert!(
+            average_log_bytes > 0 && average_log_bytes < 2000,
+            "average log record was {average_log_bytes} bytes, expected 0 < n < 2000"
+        );
+        assert!(
+            average_span_bytes > 0 && average_span_bytes < 2000,
+            "average span record was {average_span_bytes} bytes, expected 0 < n < 2000"
+        );
+    }
+
+    /// Stage 6's OTel-SDK-memory proxy: SDK memory for a metrics pipeline is
+    /// driven by the number of distinct time series (attribute-set
+    /// combinations) an instrument accumulates, not by how many times it is
+    /// recorded into — a `Histogram`/`Counter`/`Gauge` aggregates in place.
+    /// This records every instrument hundreds of times across every reviewed
+    /// dimension value, then asserts the exported series count matches
+    /// exactly the bounded, reviewed dimension combinations (2 visibility ×
+    /// 2 focused = 4 for the lag histogram; 2 outcomes for process exits;
+    /// none for everything else), never growing with call volume. Combined
+    /// with `no_metric_ever_carries_a_forbidden_high_cardinality_dimension`,
+    /// this is the reproducible check standing in for a literal heap-byte
+    /// measurement, which the design's own metric families make unnecessary:
+    /// series count, not call count, is what could make memory unbounded.
+    #[test]
+    fn metric_series_count_stays_fixed_regardless_of_recording_volume() {
+        let (telemetry, _directory) = test_telemetry();
+
+        for i in 0..500 {
+            telemetry.record_operation_duration(attributes::TAURI_INVOKE.name, i as f64);
+            telemetry.record_operation_duration(attributes::UI_ACTION.name, i as f64);
+            telemetry.record_operation_duration(attributes::PI_RPC.name, i as f64);
+            telemetry.record_rpc_failure();
+            telemetry.record_pi_process_start();
+            telemetry.record_pi_process_exit(i % 2 == 0);
+            telemetry.record_heartbeat_gauges(i, i, i, i, i);
+            telemetry.record_telemetry_dropped_gauge(i);
+            for visibility in ["visible", "hidden"] {
+                for focused in ["true", "false"] {
+                    telemetry.record_event_loop_lag(
+                        i as f64,
+                        &[
+                            KeyValue::new("tau.heartbeat.visibility", visibility),
+                            KeyValue::new("tau.heartbeat.focused", focused),
+                        ],
+                    );
+                }
+            }
+            telemetry.record_long_task_duration(i as f64);
+        }
+
+        let records = process_metric_records(&telemetry);
+        let data_point_count = |name: &str| -> usize {
+            records
+                .iter()
+                .filter(|record| {
+                    record["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["name"] == name
+                })
+                .flat_map(|record| {
+                    let metric = &record["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0];
+                    let shape = ["histogram", "sum", "gauge"]
+                        .into_iter()
+                        .find_map(|kind| metric.get(kind))
+                        .expect("one known shape");
+                    shape["dataPoints"].as_array().cloned().unwrap_or_default()
+                })
+                .count()
+        };
+
+        // Every instrument name appears at most once per collection (one
+        // record per instrument, not per call), and each instrument's own
+        // data-point count matches exactly its bounded dimension
+        // combinations — 500 recordings each still produce a fixed series
+        // count, proving memory does not grow with usage.
+        assert_eq!(data_point_count("tau.invoke.duration"), 1);
+        assert_eq!(data_point_count("tau.ui_action.duration"), 1);
+        assert_eq!(data_point_count("tau.pi_rpc.duration"), 1);
+        assert_eq!(data_point_count("tau.pi_rpc.failures"), 1);
+        assert_eq!(data_point_count("tau.pi_process.starts"), 1);
+        assert_eq!(
+            data_point_count("tau.pi_process.exits"),
+            2,
+            "exactly the clean/unexpected outcome dimension, never more"
+        );
+        assert_eq!(data_point_count("tau.telemetry.pending_rpc_count"), 1);
+        assert_eq!(data_point_count("tau.telemetry.dropped_count"), 1);
+        assert_eq!(
+            data_point_count("tau.frontend.event_loop_lag"),
+            4,
+            "exactly the visibility × focused dimension combinations, never more"
+        );
+        assert_eq!(data_point_count("tau.frontend.long_task.duration"), 1);
     }
 }

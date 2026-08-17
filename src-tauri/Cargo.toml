@@ -30,3 +30,12 @@ uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 tempfile = "3"
+
+[features]
+# Off by default: no code in this feature is compiled into an ordinary
+# build, so it adds no runtime dependency to the shipped app. Enables an
+# opt-in, development-only OTLP/HTTP JSON export path honoring the standard
+# OTEL_EXPORTER_OTLP_* environment variables, reusing the same OTLP JSON this
+# module already produces for local storage — no new crate, since it is a
+# raw std::net::TcpStream HTTP/1.1 client, not a full HTTP stack.
+otlp_export = []

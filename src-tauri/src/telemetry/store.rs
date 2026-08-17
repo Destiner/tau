@@ -558,6 +558,65 @@ mod tests {
         assert_eq!(sequences, (0..80).collect::<Vec<_>>());
     }
 
+    /// Stage 6: the concurrency test above deliberately never rotates
+    /// (`tiny_config`'s `segment_rotation_bytes: u64::MAX`), so it never
+    /// proves ordering survives a rotation happening *during* concurrent
+    /// writes. This one forces frequent rotation while 8 threads append, so
+    /// most writes land in a freshly-rotated segment, and asserts every
+    /// sequence is still contiguous, unique, and disk-ordered once read back
+    /// across however many rotated files resulted.
+    #[test]
+    fn concurrent_appends_survive_rotation_and_remain_ordered_and_unique() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let config = StoreConfig {
+            segment_rotation_bytes: 40,
+            ..tiny_config()
+        };
+        let store = Arc::new(Store::new(
+            directory.path().to_path_buf(),
+            config,
+            TestClock::new(UNIX_EPOCH),
+        ));
+        let threads: Vec<_> = (0..8)
+            .map(|thread| {
+                let store = Arc::clone(&store);
+                std::thread::spawn(move || {
+                    for record in 0..15 {
+                        store.append(Signal::Log, json!({ "thread": thread, "record": record }));
+                    }
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().expect("append thread");
+        }
+
+        let rotated_segments = fs::read_dir(directory.path())
+            .expect("read dir")
+            .flatten()
+            .filter(|entry| parse_segment_name(entry.file_name().to_str().unwrap_or("")).is_some())
+            .count();
+        assert!(
+            rotated_segments > 1,
+            "expected multiple rotated segments under concurrent writes, got {rotated_segments}"
+        );
+
+        let records = store.read_records(Signal::Log);
+        assert_eq!(records.len(), 120);
+        let sequences: Vec<u64> = records
+            .iter()
+            .map(|record| record["tauStoreSequence"].as_u64().expect("sequence"))
+            .collect();
+        assert_eq!(sequences, (0..120).collect::<Vec<_>>());
+        let mut unique_sequences = sequences.clone();
+        unique_sequences.dedup();
+        assert_eq!(
+            unique_sequences.len(),
+            120,
+            "every sequence number must be unique across rotated segments"
+        );
+    }
+
     #[test]
     fn signals_are_stored_in_separate_segments() {
         let directory = tempfile::tempdir().expect("temp dir");

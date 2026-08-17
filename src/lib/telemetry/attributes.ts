@@ -37,7 +37,11 @@ interface AttributeSpec {
 }
 
 type AttributeError =
-  'unknown-attribute' | 'unknown-value' | 'wrong-type' | 'too-long';
+  | 'unknown-attribute'
+  | 'unknown-value'
+  | 'wrong-type'
+  | 'out-of-range'
+  | 'too-long';
 
 type AttributeValidation =
   { valid: true } | { valid: false; error: AttributeError };
@@ -600,6 +604,20 @@ function categoricalValues(key: string): readonly string[] | undefined {
  * its runtime type must match the spec, and string values must fit the
  * spec's maximum length. This is the enforcement point that keeps telemetry
  * callers from recording arbitrary attributes. */
+const MAX_COUNT_ATTRIBUTE = 1_000_000_000;
+const MAX_AGE_ATTRIBUTE_MS = 24 * 60 * 60 * 1000;
+
+function numericRange(key: string): readonly [number, number] | undefined {
+  if (key.endsWith('_count') || key === 'tau.heartbeat.queue_length') {
+    return [0, MAX_COUNT_ATTRIBUTE];
+  }
+  if (key === 'pi.generation') return [0, MAX_COUNT_ATTRIBUTE];
+  if (key === 'tau.state.oldest_pending_rpc_age_ms') {
+    return [0, MAX_AGE_ATTRIBUTE_MS];
+  }
+  return undefined;
+}
+
 function validateAttribute(
   family: string,
   key: string,
@@ -622,6 +640,10 @@ function validateAttribute(
 
   if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
     return { valid: false, error: 'wrong-type' };
+  }
+  const range = numericRange(key);
+  if (range && (value < range[0] || value > range[1])) {
+    return { valid: false, error: 'out-of-range' };
   }
   return { valid: true };
 }

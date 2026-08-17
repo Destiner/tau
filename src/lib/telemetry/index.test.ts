@@ -716,6 +716,53 @@ describe('vueErrorHandler', () => {
   });
 });
 
+describe('forbidden-content canary sweep across frontend error capture paths', () => {
+  it('never persists any catalog canary as a vueErrorHandler error message', async () => {
+    const consoleError = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => {});
+    const { vueErrorHandler, flushTelemetry } = await import('./index');
+    const { FORBIDDEN_CONTENT_CANARIES } = await import('./privacy');
+
+    for (const canary of FORBIDDEN_CONTENT_CANARIES.values()) {
+      vueErrorHandler(new Error(canary));
+    }
+    await flushTelemetry();
+
+    const records = flushedRecords().filter(
+      (record) => record.family === 'frontend.error',
+    );
+    expect(records).toHaveLength(FORBIDDEN_CONTENT_CANARIES.size);
+    const encoded = JSON.stringify(records);
+    for (const [name, canary] of FORBIDDEN_CONTENT_CANARIES) {
+      expect(encoded, `leaked the ${name} canary`).not.toContain(canary);
+    }
+    consoleError.mockRestore();
+  });
+
+  it('never persists any catalog canary through the wrapped console.error', async () => {
+    console.error = vi.fn();
+    const { installFrontendErrorCapture, flushTelemetry } =
+      await import('./index');
+    const { FORBIDDEN_CONTENT_CANARIES } = await import('./privacy');
+    installFrontendErrorCapture();
+
+    for (const canary of FORBIDDEN_CONTENT_CANARIES.values()) {
+      console.error(new Error(canary));
+    }
+    await flushTelemetry();
+
+    const records = flushedRecords().filter(
+      (record) => record.family === 'frontend.error',
+    );
+    expect(records).toHaveLength(FORBIDDEN_CONTENT_CANARIES.size);
+    const encoded = JSON.stringify(records);
+    for (const [name, canary] of FORBIDDEN_CONTENT_CANARIES) {
+      expect(encoded, `leaked the ${name} canary`).not.toContain(canary);
+    }
+  });
+});
+
 describe('installFrontendErrorCapture', () => {
   it('wraps console.error, still calling the original, and records a sanitized entry', async () => {
     const nativeConsoleError = vi.fn();

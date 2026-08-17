@@ -48,13 +48,23 @@ async function mountApp(): Promise<void> {
  * leave the window hidden for the rest of the run.
  */
 function revealWindow(): void {
-  getCurrentWindow()
-    .show()
-    .catch((error: unknown) => {
-      // Expected in a plain browser, which has no window to show. Anything else
-      // left the window hidden, which is worth seeing in the console.
-      console.debug('Could not show the window', error);
-    });
+  try {
+    // `getCurrentWindow()` itself throws synchronously (not a rejected
+    // promise) outside a real Tauri webview — a plain browser (a Playwright
+    // test, `vite dev` in a tab) has no `window.__TAURI_INTERNALS__` for it
+    // to read. The whole call is wrapped, not just `.show()`'s rejection, so
+    // that case degrades the same way: log and move on, never an uncaught
+    // page error.
+    getCurrentWindow()
+      .show()
+      .catch((error: unknown) => {
+        // Expected in a plain browser, which has no window to show. Anything else
+        // left the window hidden, which is worth seeing in the console.
+        console.debug('Could not show the window', error);
+      });
+  } catch (error) {
+    console.debug('Could not show the window', error);
+  }
 }
 
 void mountApp().finally(revealWindow);

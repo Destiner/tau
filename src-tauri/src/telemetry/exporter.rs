@@ -24,6 +24,12 @@ use super::store::{Signal, Store};
 pub struct JsonFileLogExporter {
     store: Arc<Store>,
     resource_json: Value,
+    /// The optional development-only OTLP/HTTP export target, resolved once
+    /// at construction. Always `None` when the `otlp_export` feature is not
+    /// compiled in or no endpoint is configured, so `export` below never
+    /// attempts a network call in an ordinary build.
+    #[cfg(feature = "otlp_export")]
+    otlp: Option<Arc<super::otlp_export::OtlpTarget>>,
 }
 
 impl std::fmt::Debug for JsonFileLogExporter {
@@ -42,6 +48,12 @@ impl JsonFileLogExporter {
         JsonFileLogExporter {
             store,
             resource_json: resource_to_json(resource),
+            #[cfg(feature = "otlp_export")]
+            otlp: super::otlp_export::OtlpTarget::from_env(
+                "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+                "/v1/logs",
+            )
+            .map(Arc::new),
         }
     }
 }
@@ -50,6 +62,10 @@ impl LogExporter for JsonFileLogExporter {
     async fn export(&self, batch: LogBatch<'_>) -> OTelSdkResult {
         for (record, scope) in batch.iter() {
             let value = log_record_to_otlp_json(&self.resource_json, scope.name(), record);
+            #[cfg(feature = "otlp_export")]
+            if let Some(target) = &self.otlp {
+                target.send(&value);
+            }
             self.store.append(Signal::Log, value);
         }
         Ok(())
@@ -59,6 +75,8 @@ impl LogExporter for JsonFileLogExporter {
 pub struct JsonFileSpanExporter {
     store: Arc<Store>,
     resource_json: Value,
+    #[cfg(feature = "otlp_export")]
+    otlp: Option<Arc<super::otlp_export::OtlpTarget>>,
 }
 
 impl std::fmt::Debug for JsonFileSpanExporter {
@@ -75,6 +93,12 @@ impl JsonFileSpanExporter {
         JsonFileSpanExporter {
             store,
             resource_json: resource_to_json(resource),
+            #[cfg(feature = "otlp_export")]
+            otlp: super::otlp_export::OtlpTarget::from_env(
+                "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+                "/v1/traces",
+            )
+            .map(Arc::new),
         }
     }
 }
@@ -83,6 +107,10 @@ impl SpanExporter for JsonFileSpanExporter {
     async fn export(&self, batch: Vec<SpanData>) -> OTelSdkResult {
         for span in &batch {
             let value = span_data_to_otlp_json(&self.resource_json, span);
+            #[cfg(feature = "otlp_export")]
+            if let Some(target) = &self.otlp {
+                target.send(&value);
+            }
             self.store.append(Signal::Trace, value);
         }
         Ok(())
@@ -98,6 +126,8 @@ impl SpanExporter for JsonFileSpanExporter {
 pub struct JsonFileMetricExporter {
     store: Arc<Store>,
     resource_json: Value,
+    #[cfg(feature = "otlp_export")]
+    otlp: Option<Arc<super::otlp_export::OtlpTarget>>,
 }
 
 impl std::fmt::Debug for JsonFileMetricExporter {
@@ -114,6 +144,12 @@ impl JsonFileMetricExporter {
         JsonFileMetricExporter {
             store,
             resource_json: resource_to_json(resource),
+            #[cfg(feature = "otlp_export")]
+            otlp: super::otlp_export::OtlpTarget::from_env(
+                "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+                "/v1/metrics",
+            )
+            .map(Arc::new),
         }
     }
 }
@@ -124,6 +160,10 @@ impl PushMetricExporter for JsonFileMetricExporter {
             for metric in scope_metrics.metrics() {
                 let value =
                     metric_to_otlp_json(&self.resource_json, scope_metrics.scope().name(), metric);
+                #[cfg(feature = "otlp_export")]
+                if let Some(target) = &self.otlp {
+                    target.send(&value);
+                }
                 self.store.append(Signal::Metric, value);
             }
         }
