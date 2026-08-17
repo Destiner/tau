@@ -8,8 +8,10 @@ import {
   FRONTEND_ERROR_KINDS,
   FRONTEND_ERROR_SOURCES,
   isMetricSafe,
+  PI_PROCESS_EXIT_OUTCOMES,
   PI_PROCESS_RESOLUTIONS,
   PI_PROCESS_STOP_REASONS,
+  PI_RPC_ANOMALY_KINDS,
   PI_RPC_METHODS,
   PI_RPC_OUTCOMES,
   RESOURCE_ATTRIBUTES,
@@ -164,6 +166,11 @@ describe('validateAttribute', () => {
         valid: true,
       });
     }
+    for (const kind of PI_RPC_ANOMALY_KINDS) {
+      expect(
+        validateAttribute('pi.rpc.anomaly', 'pi.rpc.anomaly.kind', kind),
+      ).toEqual({ valid: true });
+    }
   });
 
   it('rejects an unreviewed rpc outcome', () => {
@@ -188,6 +195,15 @@ describe('validateAttribute', () => {
           'pi.process.lifecycle',
           'tau.process.resolution',
           resolution,
+        ),
+      ).toEqual({ valid: true });
+    }
+    for (const outcome of PI_PROCESS_EXIT_OUTCOMES) {
+      expect(
+        validateAttribute(
+          'pi.process.lifecycle',
+          'tau.process.exit_outcome',
+          outcome,
         ),
       ).toEqual({ valid: true });
     }
@@ -244,8 +260,10 @@ describe('validateAttribute', () => {
       ['tauri.invoke', 'tau.invoke.outcome'],
       ['pi.rpc', 'pi.rpc.method'],
       ['pi.rpc', 'pi.rpc.outcome'],
+      ['pi.rpc.anomaly', 'pi.rpc.anomaly.kind'],
       ['pi.process.lifecycle', 'tau.process.stop_reason'],
       ['pi.process.lifecycle', 'tau.process.resolution'],
+      ['pi.process.lifecycle', 'tau.process.exit_outcome'],
       ['frontend.error', 'tau.error.source'],
       ['frontend.error', 'tau.error.kind'],
     ];

@@ -10,11 +10,17 @@
 /** The wire shape a frontend log record is sent to Rust as, mirroring
  * `src-tauri/src/telemetry/ingest.rs`'s `FrontendLogRecord`. No event name
  * or severity: native code assigns both from `family` alone, so an
- * untrusted caller can never choose either. */
+ * untrusted caller can never choose either. `traceId`/`spanId` are optional
+ * and only used by the handful of log families a Stage 5 caller links to an
+ * active span (`controller.lifecycle`, `operation.checkpoint`) so a
+ * reconstructed trace can show the log alongside the operation it happened
+ * during; most log families never set them. */
 interface FrontendLogRecord {
   family: string;
   timeUnixNano: string;
   attributes: Record<string, string | number>;
+  traceId?: string;
+  spanId?: string;
 }
 
 /** Encodes the current time as decimal nanoseconds since the epoch, built

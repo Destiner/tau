@@ -9,9 +9,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use opentelemetry::logs::AnyValue;
 use opentelemetry::trace::{SpanKind, Status};
-use opentelemetry::SpanId;
+use opentelemetry::{KeyValue, SpanId};
 use opentelemetry_sdk::error::OTelSdkResult;
 use opentelemetry_sdk::logs::{LogBatch, LogExporter, SdkLogRecord};
+use opentelemetry_sdk::metrics::data::{self, Histogram};
+use opentelemetry_sdk::metrics::exporter::PushMetricExporter;
+use opentelemetry_sdk::metrics::Temporality;
 use opentelemetry_sdk::trace::{SpanData, SpanExporter};
 use opentelemetry_sdk::Resource;
 use serde_json::{json, Value};
@@ -84,6 +87,149 @@ impl SpanExporter for JsonFileSpanExporter {
         }
         Ok(())
     }
+}
+
+/// Writes OTLP-shaped metric points to `metrics.jsonl`, one JSON line per
+/// instrument per collection — the same "one self-contained line per record"
+/// shape traces and logs already use, rather than one line per whole
+/// collection batch. Driven by a `PeriodicReader` (see `mod.rs`), which
+/// calls `export` on its own background thread at a short, fixed interval;
+/// nothing here schedules collection itself.
+pub struct JsonFileMetricExporter {
+    store: Arc<Store>,
+    resource_json: Value,
+}
+
+impl std::fmt::Debug for JsonFileMetricExporter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JsonFileMetricExporter")
+            .finish_non_exhaustive()
+    }
+}
+
+impl JsonFileMetricExporter {
+    /// See `JsonFileLogExporter::new`: the resource is captured once here
+    /// for the same reason.
+    pub fn new(store: Arc<Store>, resource: &Resource) -> Self {
+        JsonFileMetricExporter {
+            store,
+            resource_json: resource_to_json(resource),
+        }
+    }
+}
+
+impl PushMetricExporter for JsonFileMetricExporter {
+    async fn export(&self, metrics: &data::ResourceMetrics) -> OTelSdkResult {
+        for scope_metrics in metrics.scope_metrics() {
+            for metric in scope_metrics.metrics() {
+                let value =
+                    metric_to_otlp_json(&self.resource_json, scope_metrics.scope().name(), metric);
+                self.store.append(Signal::Metric, value);
+            }
+        }
+        Ok(())
+    }
+
+    fn force_flush(&self) -> OTelSdkResult {
+        Ok(())
+    }
+
+    fn shutdown_with_timeout(&self, _timeout: std::time::Duration) -> OTelSdkResult {
+        Ok(())
+    }
+
+    /// Cumulative: every collection reports the running total/aggregate
+    /// since the instrument was created, not just the delta since the last
+    /// collection. Simpler for a local, append-only JSONL file: each line
+    /// is independently meaningful without replaying every prior line to
+    /// reconstruct a running total.
+    fn temporality(&self) -> Temporality {
+        Temporality::Cumulative
+    }
+}
+
+fn attributes_json<'a>(attributes: impl Iterator<Item = &'a KeyValue>) -> Vec<Value> {
+    attributes
+        .map(|key_value| key_value_json(key_value.key.as_str(), &key_value.value))
+        .collect()
+}
+
+fn histogram_data_points_json(histogram: &Histogram<f64>) -> Vec<Value> {
+    histogram
+        .data_points()
+        .map(|point| {
+            json!({
+                "attributes": attributes_json(point.attributes()),
+                "timeUnixNano": unix_nanos_string(histogram.time()),
+                "count": point.count().to_string(),
+                "sum": point.sum(),
+                "bucketCounts": point.bucket_counts().map(|count| count.to_string()).collect::<Vec<_>>(),
+                "explicitBounds": point.bounds().collect::<Vec<_>>(),
+            })
+        })
+        .collect()
+}
+
+/// Converts one collected `Metric` (one instrument's aggregated data points)
+/// to the OTLP JSON metric mapping, wrapped in the same `resourceMetrics`
+/// envelope every line carries. Only the three data shapes this module's
+/// instruments actually use (`f64` histograms, `u64` monotonic sums, `u64`
+/// gauges) are handled; any other combination is intentionally unreachable
+/// given the instruments `mod.rs` creates, but still degrades to a bare
+/// name/unit object rather than panicking.
+fn metric_to_otlp_json(resource_json: &Value, scope_name: &str, metric: &data::Metric) -> Value {
+    let shape = match metric.data() {
+        data::AggregatedMetrics::F64(data::MetricData::Histogram(histogram)) => json!({
+            "histogram": {
+                "aggregationTemporality": 2,
+                "dataPoints": histogram_data_points_json(histogram),
+            }
+        }),
+        data::AggregatedMetrics::U64(data::MetricData::Sum(sum)) => json!({
+            "sum": {
+                "aggregationTemporality": 2,
+                "isMonotonic": sum.is_monotonic(),
+                "dataPoints": sum
+                    .data_points()
+                    .map(|point| json!({
+                        "attributes": attributes_json(point.attributes()),
+                        "timeUnixNano": unix_nanos_string(sum.time()),
+                        "asInt": point.value().to_string(),
+                    }))
+                    .collect::<Vec<_>>(),
+            }
+        }),
+        data::AggregatedMetrics::U64(data::MetricData::Gauge(gauge)) => json!({
+            "gauge": {
+                "dataPoints": gauge
+                    .data_points()
+                    .map(|point| json!({
+                        "attributes": attributes_json(point.attributes()),
+                        "timeUnixNano": unix_nanos_string(gauge.time()),
+                        "asInt": point.value().to_string(),
+                    }))
+                    .collect::<Vec<_>>(),
+            }
+        }),
+        _ => json!({}),
+    };
+
+    let mut metric_object = serde_json::Map::new();
+    metric_object.insert("name".into(), Value::String(metric.name().to_string()));
+    metric_object.insert("unit".into(), Value::String(metric.unit().to_string()));
+    if let Value::Object(fields) = shape {
+        metric_object.extend(fields);
+    }
+
+    json!({
+        "resourceMetrics": [{
+            "resource": resource_json,
+            "scopeMetrics": [{
+                "scope": { "name": scope_name },
+                "metrics": [Value::Object(metric_object)],
+            }],
+        }],
+    })
 }
 
 pub(super) fn resource_to_json(resource: &Resource) -> Value {

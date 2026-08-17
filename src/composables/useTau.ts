@@ -85,6 +85,7 @@ import {
   setActiveError,
   setActiveSessionView,
   setControllerError,
+  setControllerLifecycle,
   settingsDisabled,
   state,
   status,
@@ -122,7 +123,11 @@ function useTau() {
         void handleBridgeEvent(payload).catch((error) => {
           const controller = controllerByRuntimeId(payload.runtimeId);
           if (!controller) return;
-          controller.syncing = false;
+          setControllerLifecycle(
+            controller,
+            { syncing: false },
+            'bridge_event_failed',
+          );
           setControllerError(controller, error);
           releaseRuntime(controller);
         });
@@ -159,7 +164,11 @@ function useTau() {
     } catch (error) {
       const controller = activeController.value;
       if (controller) {
-        controller.starting = false;
+        setControllerLifecycle(
+          controller,
+          { starting: false },
+          'workspace_load_failed',
+        );
         setControllerError(controller, error);
       }
     }
@@ -564,7 +573,12 @@ function useTau() {
       }
 
       controller.draft = '';
-      controller.working = true;
+      setControllerLifecycle(
+        controller,
+        { working: true },
+        'message_send',
+        actionSpan.context,
+      );
       if (!command) {
         controller.messages.push({
           id: `optimistic-user-${Date.now()}`,
@@ -585,7 +599,12 @@ function useTau() {
           await registerConnectedSession(controller, actionSpan.context);
         }
       } catch (error) {
-        controller.working = false;
+        setControllerLifecycle(
+          controller,
+          { working: false },
+          'message_send_failed',
+          actionSpan.context,
+        );
         controller.commandPromptRequestId = '';
         setControllerError(controller, error);
       }
@@ -602,7 +621,12 @@ function useTau() {
       controllerTelemetryScope(controller),
     );
     try {
-      controller.stopping = true;
+      setControllerLifecycle(
+        controller,
+        { stopping: true },
+        'stop_requested',
+        actionSpan.context,
+      );
       controller.status = '';
       watchAbort(controller);
       try {
@@ -613,7 +637,12 @@ function useTau() {
         );
       } catch (error) {
         clearAbortWatch(controller);
-        controller.stopping = false;
+        setControllerLifecycle(
+          controller,
+          { stopping: false },
+          'stop_failed',
+          actionSpan.context,
+        );
         setControllerError(controller, error);
       }
     } finally {

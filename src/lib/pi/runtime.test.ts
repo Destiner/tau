@@ -23,6 +23,8 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 vi.mock('../telemetry', () => ({
   invokeTraced: vi.fn(async () => undefined),
+  recordControllerTransition: vi.fn(),
+  recordRpcResponseAnomaly: vi.fn(),
   recordStreamAggregate: vi.fn(),
   startRpcSpan: vi.fn(
     (
@@ -33,7 +35,14 @@ vi.mock('../telemetry', () => ({
     ) => {
       const end = vi.fn();
       rpcSpans.set(`${runtimeId}:${generation}:${requestId}`, { end });
-      return { context: undefined, end };
+      return {
+        context: {
+          traceId: `trace-${requestId}`,
+          spanId: `span-${requestId}`,
+          sampled: true,
+        },
+        end,
+      };
     },
   ),
 }));
@@ -106,6 +115,8 @@ beforeEach(async () => {
   rpcSpans.clear();
   state.controllers.splice(0);
   const telemetry = await import('../telemetry');
+  vi.mocked(telemetry.recordControllerTransition).mockClear();
+  vi.mocked(telemetry.recordRpcResponseAnomaly).mockClear();
   vi.mocked(telemetry.recordStreamAggregate).mockClear();
   vi.mocked(telemetry.invokeTraced).mockClear();
   vi.mocked(telemetry.startRpcSpan).mockClear();
@@ -138,6 +149,34 @@ describe('Pi RPC span lifecycle', () => {
     expect(end).toHaveBeenCalledWith('success');
   });
 
+  it('links response-driven state transitions to the matching RPC span', async () => {
+    const telemetry = await import('../telemetry');
+    const { rpc, handleResponse } = await import('./runtime');
+    const controller = makeController({
+      working: true,
+      commandPromptRequestId: 'req-transition',
+    });
+
+    await rpc(controller, { id: 'req-transition', type: 'prompt' });
+    await handleResponse(controller, {
+      id: 'req-transition',
+      command: 'prompt',
+      success: true,
+    });
+
+    expect(telemetry.recordControllerTransition).toHaveBeenCalledWith(
+      'working',
+      'ready',
+      'prompt_response',
+      expect.objectContaining({ controllerId: 'controller-1' }),
+      {
+        traceId: 'trace-req-transition',
+        spanId: 'span-req-transition',
+        sampled: true,
+      },
+    );
+  });
+
   it('ends with an error outcome for a failed response', async () => {
     const { rpc, handleResponse } = await import('./runtime');
     const controller = makeController();
@@ -154,6 +193,7 @@ describe('Pi RPC span lifecycle', () => {
   });
 
   it('leaves other pending spans untouched by an unmatched response', async () => {
+    const telemetry = await import('../telemetry');
     const { rpc, handleResponse } = await import('./runtime');
     const controller = makeController();
 
@@ -167,6 +207,11 @@ describe('Pi RPC span lifecycle', () => {
     });
 
     expect(end).not.toHaveBeenCalled();
+    expect(telemetry.recordRpcResponseAnomaly).toHaveBeenCalledWith(
+      'unmatched_or_duplicate',
+      'unrelated-id',
+      expect.objectContaining({ runtimeId: 'runtime-1' }),
+    );
     await handleResponse(controller, {
       id: 'req-3',
       command: 'get_state',
@@ -174,7 +219,8 @@ describe('Pi RPC span lifecycle', () => {
     });
   });
 
-  it('is a no-op for a duplicate response instead of double-ending the span', async () => {
+  it('records a duplicate response without double-ending the span', async () => {
+    const telemetry = await import('../telemetry');
     const { rpc, handleResponse } = await import('./runtime');
     const controller = makeController();
 
@@ -194,6 +240,11 @@ describe('Pi RPC span lifecycle', () => {
       success: true,
     });
     expect(end).toHaveBeenCalledTimes(1);
+    expect(telemetry.recordRpcResponseAnomaly).toHaveBeenCalledWith(
+      'unmatched_or_duplicate',
+      'req-4',
+      expect.objectContaining({ runtimeId: 'runtime-1' }),
+    );
   });
 
   it('abandons an older span when a duplicate request key is registered', async () => {

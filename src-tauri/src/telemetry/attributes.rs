@@ -250,6 +250,26 @@ pub const PI_RPC: RecordFamily = RecordFamily {
     ],
 };
 
+pub const PI_RPC_ANOMALY_KINDS: &[&str] = &["unmatched_or_duplicate"];
+
+pub const PI_RPC_ANOMALY: RecordFamily = RecordFamily {
+    name: "pi.rpc.anomaly",
+    attributes: &[
+        AttributeSpec {
+            key: "pi.rpc.anomaly.kind",
+            kind: AttributeKind::Str,
+            max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "pi.rpc.request_id",
+            kind: AttributeKind::Str,
+            max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+            metric_safe: false,
+        },
+    ],
+};
+
 /// Per-Pi-run aggregate streaming counts (`src/lib/pi/runtime.ts`). Never one
 /// record per delta or token: this family carries only bounded totals.
 pub const PI_STREAM: RecordFamily = RecordFamily {
@@ -269,6 +289,50 @@ pub const PI_STREAM: RecordFamily = RecordFamily {
         },
     ],
 };
+
+/// Categorical values for `tau.controller.state.before`/`.after`: the
+/// coarse composite lifecycle state the frontend's
+/// `classifyControllerLifecycle` derives from a controller's boolean flags.
+pub const CONTROLLER_LIFECYCLE_STATES: &[&str] = &[
+    "idle",
+    "connecting",
+    "starting",
+    "stopping",
+    "syncing",
+    "working",
+    "ready",
+];
+
+/// Categorical values for `tau.controller.transition.cause`: every named
+/// mutation boundary the frontend's `setControllerLifecycle` is called
+/// from.
+pub const CONTROLLER_LIFECYCLE_CAUSES: &[&str] = &[
+    "controller_start",
+    "controller_start_failed",
+    "phantom_prompt_start",
+    "phantom_prompt_resume",
+    "process_exited",
+    "agent_start",
+    "agent_settled",
+    "prompt_response",
+    "get_state_failed",
+    "get_messages_failed",
+    "prompt_failed",
+    "abort_failed",
+    "get_state_response",
+    "get_messages_response",
+    "pending_prompt_dispatch",
+    "pending_prompt_failed",
+    "abort_probe_failed",
+    "pending_prompt_cancelled",
+    "process_stopped",
+    "bridge_event_failed",
+    "workspace_load_failed",
+    "message_send",
+    "message_send_failed",
+    "stop_requested",
+    "stop_failed",
+];
 
 pub const CONTROLLER_LIFECYCLE: RecordFamily = RecordFamily {
     name: "controller.lifecycle",
@@ -301,6 +365,7 @@ pub const PI_PROCESS_STOP_REASONS: &[&str] = &["explicit_stop", "replaced"];
 /// Categorical values for `tau.process.resolution`: whether Tau found a
 /// local `pi` executable to spawn.
 pub const PI_PROCESS_RESOLUTIONS: &[&str] = &["found", "not_found"];
+pub const PI_PROCESS_EXIT_OUTCOMES: &[&str] = &["clean", "unexpected"];
 
 pub const PI_PROCESS_LIFECYCLE: RecordFamily = RecordFamily {
     name: "pi.process.lifecycle",
@@ -313,6 +378,12 @@ pub const PI_PROCESS_LIFECYCLE: RecordFamily = RecordFamily {
         },
         AttributeSpec {
             key: "tau.process.stop_reason",
+            kind: AttributeKind::Str,
+            max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.process.exit_outcome",
             kind: AttributeKind::Str,
             max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
             metric_safe: true,
@@ -463,10 +534,244 @@ pub const FRONTEND_ERROR: RecordFamily = RecordFamily {
     ],
 };
 
+/// Categorical values for `tau.operation.family`: which real span family a
+/// linked checkpoint log stands in for.
+pub const OPERATION_CHECKPOINT_FAMILIES: &[&str] = &["ui.action", "pi.rpc"];
+
+/// Categorical values for `tau.operation.name`: the union of every action
+/// and RPC method name a checkpoint can name.
+pub const OPERATION_CHECKPOINT_NAMES: &[&str] = &[
+    "session.select",
+    "session.new",
+    "message.send",
+    "session.stop",
+    "session.rename",
+    "model.select",
+    "effort.select",
+    "extension.dialog.submit",
+    "extension.dialog.cancel",
+    "get_state",
+    "get_available_models",
+    "get_commands",
+    "get_available_thinking_levels",
+    "get_messages",
+    "set_model",
+    "set_thinking_level",
+    "set_session_name",
+    "prompt",
+    "abort",
+    "extension_ui_response",
+];
+
+/// A linked start/checkpoint log for an operation that might never finish:
+/// recorded the moment its span starts, carrying that span's own
+/// `traceId`/`spanId`, so the operation stays visible in the persisted
+/// timeline even if the span itself never ends.
+pub const OPERATION_CHECKPOINT: RecordFamily = RecordFamily {
+    name: "operation.checkpoint",
+    attributes: &[
+        AttributeSpec {
+            key: "tau.operation.family",
+            kind: AttributeKind::Str,
+            max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.operation.name",
+            kind: AttributeKind::Str,
+            max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "pi.rpc.request_id",
+            kind: AttributeKind::Str,
+            max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+            metric_safe: false,
+        },
+    ],
+};
+
+/// Categorical values shared by `tau.heartbeat.visibility`.
+pub const HEARTBEAT_VISIBILITY_VALUES: &[&str] = &["visible", "hidden"];
+
+/// Categorical values shared by every boolean-as-string attribute in the
+/// catalog (`tau.heartbeat.focused`).
+pub const BOOLEAN_STRING_VALUES: &[&str] = &["true", "false"];
+
+/// A low-frequency liveness signal recorded whether or not anything else is
+/// happening. A gap between heartbeats — or the absence of the next one —
+/// is itself the diagnostic signal for a slow or stuck frontend; visibility
+/// and focus are carried alongside it so a gap while hidden (background
+/// timer throttling) is not mistaken for one while the window was actually
+/// active.
+pub const FRONTEND_HEARTBEAT: RecordFamily = RecordFamily {
+    name: "frontend.heartbeat",
+    attributes: &[
+        AttributeSpec {
+            key: "tau.heartbeat.visibility",
+            kind: AttributeKind::Str,
+            max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.heartbeat.focused",
+            kind: AttributeKind::Str,
+            max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.heartbeat.pending_rpc_count",
+            kind: AttributeKind::I64,
+            max_len: None,
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.heartbeat.controller_count",
+            kind: AttributeKind::I64,
+            max_len: None,
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.heartbeat.active_controller_count",
+            kind: AttributeKind::I64,
+            max_len: None,
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.heartbeat.runtime_count",
+            kind: AttributeKind::I64,
+            max_len: None,
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.heartbeat.queue_length",
+            kind: AttributeKind::I64,
+            max_len: None,
+            metric_safe: true,
+        },
+    ],
+};
+
+/// Categorical values for `tau.state.draft_bucket`: a length bucket only,
+/// never the draft text itself.
+pub const DRAFT_LENGTH_BUCKETS: &[&str] = &["empty", "short", "medium", "long"];
+
+/// A periodic, content-free snapshot of workspace shape: counts and a
+/// length bucket only, never transcript text, draft text, or paths.
+pub const FRONTEND_STATE_SUMMARY: RecordFamily = RecordFamily {
+    name: "frontend.state_summary",
+    attributes: &[
+        AttributeSpec {
+            key: "tau.state.controller_count",
+            kind: AttributeKind::I64,
+            max_len: None,
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.state.runtime_count",
+            kind: AttributeKind::I64,
+            max_len: None,
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.state.pending_rpc_count",
+            kind: AttributeKind::I64,
+            max_len: None,
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.state.notification_count",
+            kind: AttributeKind::I64,
+            max_len: None,
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.state.dialog_count",
+            kind: AttributeKind::I64,
+            max_len: None,
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.state.transcript.user_count",
+            kind: AttributeKind::I64,
+            max_len: None,
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.state.transcript.assistant_count",
+            kind: AttributeKind::I64,
+            max_len: None,
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.state.transcript.tool_count",
+            kind: AttributeKind::I64,
+            max_len: None,
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.state.transcript.thinking_count",
+            kind: AttributeKind::I64,
+            max_len: None,
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.state.transcript.error_count",
+            kind: AttributeKind::I64,
+            max_len: None,
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.state.draft_bucket",
+            kind: AttributeKind::Str,
+            max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.state.oldest_pending_rpc_age_ms",
+            kind: AttributeKind::I64,
+            max_len: None,
+            metric_safe: true,
+        },
+    ],
+};
+
+/// A raw frontend-measured duration with no native span/log counterpart —
+/// event-loop lag and long-task measurements only exist on the frontend, so
+/// unlike every other Stage 5 metric, these two cross IPC as a dedicated
+/// `FrontendMetricRecord` (see `ingest.rs`) instead of being derived from an
+/// already-ingested span or log.
+pub const FRONTEND_EVENT_LOOP_LAG: RecordFamily = RecordFamily {
+    name: "frontend.event_loop_lag",
+    attributes: &[
+        AttributeSpec {
+            key: "tau.heartbeat.visibility",
+            kind: AttributeKind::Str,
+            max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.heartbeat.focused",
+            kind: AttributeKind::Str,
+            max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+            metric_safe: true,
+        },
+    ],
+};
+
+/// A single `PerformanceObserver` `longtask` entry's duration. No
+/// attributes: a long task's own attribution is not part of the reviewed
+/// catalog and is never read.
+pub const FRONTEND_LONG_TASK: RecordFamily = RecordFamily {
+    name: "frontend.long_task",
+    attributes: &[],
+};
+
 pub const FAMILIES: &[&RecordFamily] = &[
     &UI_ACTION,
     &TAURI_INVOKE,
     &PI_RPC,
+    &PI_RPC_ANOMALY,
     &PI_STREAM,
     &CONTROLLER_LIFECYCLE,
     &PI_PROCESS_LIFECYCLE,
@@ -475,6 +780,11 @@ pub const FAMILIES: &[&RecordFamily] = &[
     &TELEMETRY_HEALTH,
     &RUST_PANIC,
     &FRONTEND_ERROR,
+    &OPERATION_CHECKPOINT,
+    &FRONTEND_HEARTBEAT,
+    &FRONTEND_STATE_SUMMARY,
+    &FRONTEND_EVENT_LOOP_LAG,
+    &FRONTEND_LONG_TASK,
 ];
 
 pub fn find_family(name: &str) -> Option<&'static RecordFamily> {
@@ -515,13 +825,24 @@ fn categorical_values(key: &str) -> Option<&'static [&'static str]> {
         "tau.invoke.outcome" => Some(TAURI_INVOKE_OUTCOMES),
         "pi.rpc.method" => Some(PI_RPC_METHODS),
         "pi.rpc.outcome" => Some(PI_RPC_OUTCOMES),
+        "pi.rpc.anomaly.kind" => Some(PI_RPC_ANOMALY_KINDS),
         "tau.process.stop_reason" => Some(PI_PROCESS_STOP_REASONS),
         "tau.process.resolution" => Some(PI_PROCESS_RESOLUTIONS),
+        "tau.process.exit_outcome" => Some(PI_PROCESS_EXIT_OUTCOMES),
         "tau.reader.drop_reason" => Some(PI_READER_DROP_REASONS),
         "tau.reader.error_kind" => Some(PI_READER_ERROR_KINDS),
         "tau.event.kind" => Some(PI_EVENT_KINDS),
         "tau.error.source" => Some(FRONTEND_ERROR_SOURCES),
         "tau.error.kind" => Some(FRONTEND_ERROR_KINDS),
+        "tau.controller.state.before" | "tau.controller.state.after" => {
+            Some(CONTROLLER_LIFECYCLE_STATES)
+        }
+        "tau.controller.transition.cause" => Some(CONTROLLER_LIFECYCLE_CAUSES),
+        "tau.operation.family" => Some(OPERATION_CHECKPOINT_FAMILIES),
+        "tau.operation.name" => Some(OPERATION_CHECKPOINT_NAMES),
+        "tau.heartbeat.visibility" => Some(HEARTBEAT_VISIBILITY_VALUES),
+        "tau.heartbeat.focused" => Some(BOOLEAN_STRING_VALUES),
+        "tau.state.draft_bucket" => Some(DRAFT_LENGTH_BUCKETS),
         _ => None,
     }
 }
@@ -744,6 +1065,16 @@ mod tests {
                 Ok(())
             );
         }
+        for kind in PI_RPC_ANOMALY_KINDS {
+            assert_eq!(
+                validate(
+                    "pi.rpc.anomaly",
+                    "pi.rpc.anomaly.kind",
+                    &Value::String((*kind).into())
+                ),
+                Ok(())
+            );
+        }
     }
 
     #[test]
@@ -792,6 +1123,16 @@ mod tests {
                 Ok(())
             );
         }
+        for outcome in PI_PROCESS_EXIT_OUTCOMES {
+            assert_eq!(
+                validate(
+                    "pi.process.lifecycle",
+                    "tau.process.exit_outcome",
+                    &Value::String((*outcome).into())
+                ),
+                Ok(())
+            );
+        }
     }
 
     #[test]
@@ -821,13 +1162,23 @@ mod tests {
             ("tauri.invoke", "tau.invoke.outcome"),
             ("pi.rpc", "pi.rpc.method"),
             ("pi.rpc", "pi.rpc.outcome"),
+            ("pi.rpc.anomaly", "pi.rpc.anomaly.kind"),
             ("pi.process.lifecycle", "tau.process.stop_reason"),
             ("pi.process.lifecycle", "tau.process.resolution"),
+            ("pi.process.lifecycle", "tau.process.exit_outcome"),
             ("pi.reader", "tau.reader.drop_reason"),
             ("pi.reader", "tau.reader.error_kind"),
             ("pi.reader", "tau.event.kind"),
             ("frontend.error", "tau.error.source"),
             ("frontend.error", "tau.error.kind"),
+            ("controller.lifecycle", "tau.controller.state.before"),
+            ("controller.lifecycle", "tau.controller.state.after"),
+            ("controller.lifecycle", "tau.controller.transition.cause"),
+            ("operation.checkpoint", "tau.operation.family"),
+            ("operation.checkpoint", "tau.operation.name"),
+            ("frontend.heartbeat", "tau.heartbeat.visibility"),
+            ("frontend.heartbeat", "tau.heartbeat.focused"),
+            ("frontend.state_summary", "tau.state.draft_bucket"),
         ];
         for (family, key) in categorical_attributes {
             for (_, canary) in FORBIDDEN_CONTENT_CANARIES {
@@ -931,6 +1282,139 @@ mod tests {
                 &Value::String("pi.rs:42:5".into())
             ),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn validate_accepts_every_reviewed_controller_lifecycle_value() {
+        for state in CONTROLLER_LIFECYCLE_STATES {
+            assert_eq!(
+                validate(
+                    "controller.lifecycle",
+                    "tau.controller.state.before",
+                    &Value::String((*state).into())
+                ),
+                Ok(())
+            );
+            assert_eq!(
+                validate(
+                    "controller.lifecycle",
+                    "tau.controller.state.after",
+                    &Value::String((*state).into())
+                ),
+                Ok(())
+            );
+        }
+        for cause in CONTROLLER_LIFECYCLE_CAUSES {
+            assert_eq!(
+                validate(
+                    "controller.lifecycle",
+                    "tau.controller.transition.cause",
+                    &Value::String((*cause).into())
+                ),
+                Ok(())
+            );
+        }
+    }
+
+    #[test]
+    fn validate_rejects_an_unreviewed_controller_lifecycle_state() {
+        assert_eq!(
+            validate(
+                "controller.lifecycle",
+                "tau.controller.state.before",
+                &Value::String("not-a-real-state".into())
+            ),
+            Err(AttributeError::UnknownValue)
+        );
+    }
+
+    #[test]
+    fn validate_accepts_every_reviewed_operation_checkpoint_value() {
+        for family in OPERATION_CHECKPOINT_FAMILIES {
+            assert_eq!(
+                validate(
+                    "operation.checkpoint",
+                    "tau.operation.family",
+                    &Value::String((*family).into())
+                ),
+                Ok(())
+            );
+        }
+        for name in OPERATION_CHECKPOINT_NAMES {
+            assert_eq!(
+                validate(
+                    "operation.checkpoint",
+                    "tau.operation.name",
+                    &Value::String((*name).into())
+                ),
+                Ok(())
+            );
+        }
+    }
+
+    #[test]
+    fn validate_accepts_every_reviewed_heartbeat_and_state_summary_value() {
+        for visibility in HEARTBEAT_VISIBILITY_VALUES {
+            assert_eq!(
+                validate(
+                    "frontend.heartbeat",
+                    "tau.heartbeat.visibility",
+                    &Value::String((*visibility).into())
+                ),
+                Ok(())
+            );
+        }
+        for focused in BOOLEAN_STRING_VALUES {
+            assert_eq!(
+                validate(
+                    "frontend.heartbeat",
+                    "tau.heartbeat.focused",
+                    &Value::String((*focused).into())
+                ),
+                Ok(())
+            );
+        }
+        for bucket in DRAFT_LENGTH_BUCKETS {
+            assert_eq!(
+                validate(
+                    "frontend.state_summary",
+                    "tau.state.draft_bucket",
+                    &Value::String((*bucket).into())
+                ),
+                Ok(())
+            );
+        }
+    }
+
+    #[test]
+    fn frontend_metric_families_accept_their_declared_attributes() {
+        assert_eq!(
+            validate(
+                "frontend.event_loop_lag",
+                "tau.heartbeat.visibility",
+                &Value::String("visible".into())
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            validate(
+                "frontend.event_loop_lag",
+                "tau.heartbeat.focused",
+                &Value::String("true".into())
+            ),
+            Ok(())
+        );
+        // `frontend.long_task` declares no attributes of its own: even a
+        // context attribute like `tau.session.id` is still allowed (shared
+        // context, not family-specific), but nothing family-specific is.
+        assert_eq!(
+            validate(
+                "frontend.long_task",
+                "tau.error.kind",
+                &Value::String("Error".into())
+            ),
+            Err(AttributeError::UnknownAttribute)
         );
     }
 }

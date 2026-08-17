@@ -24,6 +24,7 @@ import {
 
 import { validateAttribute } from './attributes';
 import type { FrontendLogRecord } from './log';
+import type { FrontendMetricRecord } from './metric';
 import type { BoundedQueue } from './queue';
 import type { TraceContext } from './trace-context';
 
@@ -43,11 +44,14 @@ interface FrontendSpanRecord {
   attributes: Record<string, string | number>;
 }
 
-/** Everything that can sit in the shared bounded queue: spans (this file)
- * and logs (`./log`). One queue serves both signal types so they share the
- * same capacity and drop-count accounting; `index.ts` owns the queue and
- * pushes both kinds into it. */
-type FrontendQueueRecord = FrontendSpanRecord | FrontendLogRecord;
+/** Everything that can sit in the shared bounded queue: spans (this file),
+ * logs (`./log`), and the two raw metric values (`./metric`) that have no
+ * native span/log counterpart to derive a metric from. One queue serves
+ * every signal type so they share the same capacity and drop-count
+ * accounting; `index.ts` owns the queue and pushes all three kinds into
+ * it. */
+type FrontendQueueRecord =
+  FrontendSpanRecord | FrontendLogRecord | FrontendMetricRecord;
 
 /** Converts an `[seconds, nanoseconds]` `HrTime` to a decimal
  * nanoseconds-since-epoch string without going through a JS `number`, which

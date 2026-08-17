@@ -31,6 +31,7 @@ import {
   replacementProbeTimers,
   setActiveError,
   setControllerError,
+  setControllerLifecycle,
   state,
   touchController,
   workspaceContainsSession,
@@ -46,6 +47,7 @@ import {
 import type { CommandOption } from '../commands';
 import {
   invokeTraced,
+  recordRpcResponseAnomaly,
   recordStreamAggregate,
   startRpcSpan,
 } from '../telemetry';
@@ -93,14 +95,24 @@ async function sendPhantomMessage(
     telemetryContext: parentContext,
   };
   controller.draft = '';
-  controller.working = true;
+  setControllerLifecycle(
+    controller,
+    { working: true },
+    'phantom_prompt_start',
+    parentContext,
+  );
   if (!command) {
     controller.messages.push({ id: optimisticId, kind: 'user', text: message });
   }
   controller.status = '';
 
   if (controller.ready && controller.generation) {
-    controller.starting = true;
+    setControllerLifecycle(
+      controller,
+      { starting: true },
+      'phantom_prompt_resume',
+      parentContext,
+    );
     const stateRequestId = nextRequestId('state');
     controller.pendingPrompt.stateRequestId = stateRequestId;
     await rpc(
@@ -121,10 +133,17 @@ async function startController(
   parentContext?: TraceContext,
 ): Promise<void> {
   if (controller.starting || controller.disposed) return;
-  controller.ready = false;
-  controller.starting = true;
-  controller.stopping = false;
-  controller.connectingRemote = Boolean(project.connectionString);
+  setControllerLifecycle(
+    controller,
+    {
+      ready: false,
+      starting: true,
+      stopping: false,
+      connectingRemote: Boolean(project.connectionString),
+    },
+    'controller_start',
+    parentContext,
+  );
   controller.bootstrapStateRequestId = '';
   controller.bootstrapSessionPath = sessionPath ?? '';
   controller.runStateRequestId = '';
@@ -180,9 +199,12 @@ async function startController(
     }
     await requestBootstrap(controller, parentContext);
   } catch (error) {
-    controller.starting = false;
-    controller.connectingRemote = false;
-    controller.syncing = false;
+    setControllerLifecycle(
+      controller,
+      { starting: false, connectingRemote: false, syncing: false },
+      'controller_start_failed',
+      parentContext,
+    );
     if (project.connectionString)
       presentRemoteConnectionError(controller, error);
     else setControllerError(controller, error);
@@ -249,7 +271,12 @@ const RPC_SPAN_TIMEOUT_MS = 10 * 60 * 1000;
 
 interface PendingRpcSpan {
   end: (outcome: PiRpcOutcome) => void;
+  context?: TraceContext;
   timeoutHandle: ReturnType<typeof setTimeout>;
+  /** When this request was registered, in epoch milliseconds. Used only to
+   * derive `oldestPendingRpcAgeMs` for the periodic state summary — never
+   * sent as its own record, never per-request. */
+  startedAt: number;
 }
 
 /**
@@ -272,6 +299,7 @@ function rpcSpanKey(
 function registerPendingRpcSpan(
   key: string,
   end: (outcome: PiRpcOutcome) => void,
+  context?: TraceContext,
 ): void {
   const previous = pendingRpcSpans.get(key);
   if (previous) {
@@ -283,19 +311,53 @@ function registerPendingRpcSpan(
     pendingRpcSpans.delete(key);
     end('timeout');
   }, RPC_SPAN_TIMEOUT_MS);
-  pendingRpcSpans.set(key, { end, timeoutHandle });
+  pendingRpcSpans.set(key, {
+    end,
+    context,
+    timeoutHandle,
+    startedAt: Date.now(),
+  });
+}
+
+/** The number of Pi RPC spans currently pending a matching response,
+ * timeout, or explicit abandonment. Read by `./telemetry/heartbeat` for the
+ * periodic heartbeat/state-summary gauges; never exposes the map itself. */
+function pendingRpcCount(): number {
+  return pendingRpcSpans.size;
+}
+
+/** The age, in milliseconds, of the longest-pending RPC span, or `0` when
+ * none are pending. One of the "ages of pending operations" the periodic
+ * state summary records. */
+function oldestPendingRpcAgeMs(): number {
+  const now = Date.now();
+  let oldest = 0;
+  for (const pending of pendingRpcSpans.values()) {
+    const age = now - pending.startedAt;
+    if (age > oldest) oldest = age;
+  }
+  return oldest;
 }
 
 /** Ends the pending span for `key` with `outcome`, if one is still pending.
  * A key with nothing pending — an unmatched or duplicate response — is a
  * deliberate no-op: there is nothing to end, and the caller's own response
  * handling continues regardless. */
-function endPendingRpcSpan(key: string, outcome: PiRpcOutcome): void {
+interface EndPendingRpcResult {
+  matched: boolean;
+  context?: TraceContext;
+}
+
+function endPendingRpcSpan(
+  key: string,
+  outcome: PiRpcOutcome,
+): EndPendingRpcResult {
   const pending = pendingRpcSpans.get(key);
-  if (!pending) return;
+  if (!pending) return { matched: false };
   pendingRpcSpans.delete(key);
   clearTimeout(pending.timeoutHandle);
   pending.end(outcome);
+  return { matched: true, context: pending.context };
 }
 
 /** Abandons every span pending for `runtimeId`/`generation` with `outcome`:
@@ -403,7 +465,7 @@ async function rpc(
         controllerId: controller.key,
       },
     );
-    registerPendingRpcSpan(key, span.end);
+    registerPendingRpcSpan(key, span.end, span.context);
   }
   try {
     await invoke('send_pi', { runtimeId: controller.runtimeId, request });
@@ -738,11 +800,17 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     if (controller.pendingPrompt) {
       cancelPendingPrompt(controller, message || 'The Pi process stopped.');
     }
-    controller.ready = false;
-    controller.streaming = false;
-    controller.stopping = false;
-    controller.starting = false;
-    controller.working = false;
+    setControllerLifecycle(
+      controller,
+      {
+        ready: false,
+        streaming: false,
+        stopping: false,
+        starting: false,
+        working: false,
+      },
+      'process_exited',
+    );
     controller.runStateRequestId = '';
     controller.generation = 0;
     controller.status = message;
@@ -769,9 +837,11 @@ async function handleRpc(
     clearAbortWatch(controller);
     resetStreamAggregate(controller.runtimeId, controller.generation);
     controller.localErrors = [];
-    controller.streaming = true;
-    controller.stopping = false;
-    controller.working = true;
+    setControllerLifecycle(
+      controller,
+      { streaming: true, stopping: false, working: true },
+      'agent_start',
+    );
     controller.status = '';
     const stateRequestId = nextRequestId('run-state');
     controller.runStateRequestId = stateRequestId;
@@ -846,10 +916,11 @@ async function handleRpc(
   if (type === 'agent_settled') {
     flushStreamAggregate(controller.runtimeId, controller.generation);
     clearAbortWatch(controller);
-    controller.syncing = true;
-    controller.working = false;
-    controller.streaming = false;
-    controller.stopping = false;
+    setControllerLifecycle(
+      controller,
+      { syncing: true, working: false, streaming: false, stopping: false },
+      'agent_settled',
+    );
     controller.status = '';
     if (!isControllerSelected(controller)) controller.unread = true;
     watchSessionReplacement(controller);
@@ -881,12 +952,21 @@ async function handleResponse(
 ): Promise<void> {
   const command = stringValue(response.command);
   const responseId = stringValue(response.id);
-  if (responseId) {
-    endPendingRpcSpan(
-      rpcSpanKey(controller.runtimeId, controller.generation, responseId),
-      response.success === true ? 'success' : 'error',
-    );
+  const pendingResult = responseId
+    ? endPendingRpcSpan(
+        rpcSpanKey(controller.runtimeId, controller.generation, responseId),
+        response.success === true ? 'success' : 'error',
+      )
+    : { matched: false };
+  if (responseId && !pendingResult.matched) {
+    recordRpcResponseAnomaly('unmatched_or_duplicate', responseId, {
+      sessionId: controller.sessionId,
+      controllerId: controller.key,
+      runtimeId: controller.runtimeId,
+      generation: controller.generation,
+    });
   }
+  const responseContext = pendingResult.context;
   const resolvesRunState =
     command === 'get_state' &&
     Boolean(controller.runStateRequestId) &&
@@ -914,7 +994,12 @@ async function handleResponse(
   ) {
     controller.commandPromptRequestId = '';
     if (response.success === true) {
-      controller.working = controller.streaming;
+      setControllerLifecycle(
+        controller,
+        { working: controller.streaming },
+        'prompt_response',
+        responseContext,
+      );
       await syncAfterCommand(controller);
       return;
     }
@@ -942,11 +1027,17 @@ async function handleResponse(
       cancelPendingPrompt(controller, controller.status);
     }
     if (command === 'get_state') {
-      controller.syncing = false;
-      if (responseId === controller.bootstrapStateRequestId) {
-        controller.bootstrapStateRequestId = '';
-        controller.starting = false;
-      }
+      const resolvesBootstrap =
+        responseId === controller.bootstrapStateRequestId;
+      if (resolvesBootstrap) controller.bootstrapStateRequestId = '';
+      setControllerLifecycle(
+        controller,
+        resolvesBootstrap
+          ? { syncing: false, starting: false }
+          : { syncing: false },
+        'get_state_failed',
+        responseContext,
+      );
       releaseRuntime(controller);
     }
     if (
@@ -954,11 +1045,29 @@ async function handleResponse(
       responseId === controller.startMessagesRequestId
     ) {
       controller.startMessagesRequestId = '';
-      controller.starting = false;
-      controller.syncing = false;
+      setControllerLifecycle(
+        controller,
+        { starting: false, syncing: false },
+        'get_messages_failed',
+        responseContext,
+      );
     }
-    if (command === 'prompt') controller.working = false;
-    if (command === 'abort') controller.stopping = false;
+    if (command === 'prompt') {
+      setControllerLifecycle(
+        controller,
+        { working: false },
+        'prompt_failed',
+        responseContext,
+      );
+    }
+    if (command === 'abort') {
+      setControllerLifecycle(
+        controller,
+        { stopping: false },
+        'abort_failed',
+        responseContext,
+      );
+    }
     // A rejected rename leaves the optimistic name on screen, so Pi's name is
     // read back instead of being guessed.
     if (command === 'set_session_name') {
@@ -1005,13 +1114,9 @@ async function handleResponse(
       (controller.sessionId !== piSessionId ||
         controller.sessionPath !== piSessionPath);
     controller.sessionName = stringValue(data.sessionName);
-    controller.ready = true;
-    controller.streaming = data.isStreaming === true;
-    controller.stopping = false;
+    const nowStreaming = data.isStreaming === true;
     controller.status =
-      resolvesAbortProbe && controller.streaming
-        ? unstoppedStatus(controller)
-        : '';
+      resolvesAbortProbe && nowStreaming ? unstoppedStatus(controller) : '';
     finishRemoteConnection(controller);
 
     if (resolvesPending && pending) {
@@ -1021,6 +1126,7 @@ async function handleResponse(
       controller.sessionPath = piSessionPath;
     }
 
+    let syncingAfterSessionChange = false;
     if (sessionChanged) {
       // The response that revealed the replacement already ended its own
       // span above; anything else still pending for this runtime and
@@ -1038,9 +1144,21 @@ async function handleResponse(
       controller.commands = [];
       controller.commandsLoaded = false;
       controller.pendingEffort = '';
-      controller.syncing = true;
+      syncingAfterSessionChange = true;
     }
-    controller.working = controller.streaming || Boolean(pending);
+    setControllerLifecycle(
+      controller,
+      {
+        ready: true,
+        streaming: nowStreaming,
+        stopping: false,
+        working: nowStreaming || Boolean(pending),
+        connectingRemote: false,
+        ...(syncingAfterSessionChange ? { syncing: true } : {}),
+      },
+      'get_state_response',
+      responseContext,
+    );
 
     if (unsavedSession) await retireUnsavedSession(controller);
     if (controller.disposed) return;
@@ -1098,7 +1216,6 @@ async function handleResponse(
   }
 
   if (command === 'get_messages' && data) {
-    controller.syncing = false;
     controller.messages = appendLocalErrors(
       hydrateTranscript(
         Array.isArray(data.messages) ? data.messages : [],
@@ -1110,11 +1227,17 @@ async function handleResponse(
     const resolvesPending =
       Boolean(pending?.messagesRequestId) &&
       responseId === pending?.messagesRequestId;
+    const resolvesStart =
+      !resolvesPending && responseId === controller.startMessagesRequestId;
+    if (resolvesStart) controller.startMessagesRequestId = '';
+    setControllerLifecycle(
+      controller,
+      resolvesStart ? { syncing: false, starting: false } : { syncing: false },
+      'get_messages_response',
+      responseContext,
+    );
     if (resolvesPending) {
       await dispatchPendingPrompt(controller);
-    } else if (responseId === controller.startMessagesRequestId) {
-      controller.startMessagesRequestId = '';
-      controller.starting = false;
     }
     // A hidden session that finishes hydrating has nothing left to wait for,
     // so this is where a runtime the user has moved on from is accounted for.
@@ -1156,7 +1279,12 @@ async function handleResponse(
   }
 
   if (command === 'prompt') {
-    controller.working = controller.streaming;
+    setControllerLifecycle(
+      controller,
+      { working: controller.streaming },
+      'prompt_response',
+      responseContext,
+    );
     return;
   }
 
@@ -1281,7 +1409,12 @@ async function dispatchPendingPrompt(
   const prompt = controller.pendingPrompt;
   if (!prompt) return;
   controller.pendingPrompt = undefined;
-  controller.starting = false;
+  setControllerLifecycle(
+    controller,
+    { starting: false, working: true },
+    'pending_prompt_dispatch',
+    prompt.telemetryContext,
+  );
   if (
     !prompt.command &&
     !controller.messages.some((message) => message.id === prompt.optimisticId)
@@ -1292,7 +1425,6 @@ async function dispatchPendingPrompt(
       text: prompt.message,
     });
   }
-  controller.working = true;
   try {
     const requestId = nextRequestId('prompt');
     if (prompt.command) controller.commandPromptRequestId = requestId;
@@ -1302,7 +1434,12 @@ async function dispatchPendingPrompt(
       prompt.telemetryContext,
     );
   } catch (error) {
-    controller.working = false;
+    setControllerLifecycle(
+      controller,
+      { working: false },
+      'pending_prompt_failed',
+      prompt.telemetryContext,
+    );
     controller.commandPromptRequestId = '';
     controller.draft = prompt.message;
     setControllerError(controller, error);
@@ -1393,7 +1530,11 @@ async function probeAbort(controller: SessionController): Promise<void> {
     await rpc(controller, { id: requestId, type: 'get_state' });
   } catch (error) {
     controller.abortProbeRequestId = '';
-    controller.stopping = false;
+    setControllerLifecycle(
+      controller,
+      { stopping: false },
+      'abort_probe_failed',
+    );
     setControllerError(controller, error);
   }
 }
@@ -1558,8 +1699,12 @@ function cancelPendingPrompt(
     return;
   }
   controller.pendingPrompt = undefined;
-  controller.starting = false;
-  controller.working = false;
+  setControllerLifecycle(
+    controller,
+    { starting: false, working: false },
+    'pending_prompt_cancelled',
+    prompt.telemetryContext,
+  );
   controller.messages = controller.messages.filter(
     (message) => message.id !== prompt.optimisticId,
   );
@@ -1755,13 +1900,20 @@ async function stopControllerProcess(
   }
   if (controller.generation !== generation) return;
   controller.generation = 0;
-  controller.ready = false;
-  controller.streaming = false;
-  controller.stopping = false;
-  controller.starting = false;
-  controller.working = false;
-  controller.connectingRemote = false;
-  controller.syncing = false;
+  setControllerLifecycle(
+    controller,
+    {
+      ready: false,
+      streaming: false,
+      stopping: false,
+      starting: false,
+      working: false,
+      connectingRemote: false,
+      syncing: false,
+    },
+    'process_stopped',
+    parentContext,
+  );
   controller.runStateRequestId = '';
   controller.abortProbeRequestId = '';
 
@@ -1835,4 +1987,6 @@ export {
   releaseRuntime,
   releaseIdleRuntimes,
   stopControllerProcess,
+  pendingRpcCount,
+  oldestPendingRpcAgeMs,
 };

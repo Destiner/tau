@@ -457,6 +457,7 @@ fn spawn_command(
                 TelemetryValue::String("replaced".into()),
             )],
         );
+        telemetry.record_pi_process_exit(true);
     }
     manager.generation = manager.generation.wrapping_add(1).max(1);
     let generation = manager.generation;
@@ -510,6 +511,7 @@ fn spawn_command(
         span_context,
         &[],
     );
+    telemetry.record_pi_process_start();
     emit_pi_event(
         &app,
         PiEvent {
@@ -585,6 +587,7 @@ pub fn stop_pi(
                 TelemetryValue::String("explicit_stop".into()),
             )],
         );
+        telemetry.record_pi_process_exit(true);
     }
     Ok(())
 }
@@ -727,6 +730,7 @@ fn spawn_stdout_reader(
             None,
             &exit_attributes,
         );
+        telemetry.record_pi_process_exit(false);
         telemetry.force_flush_logs();
         emit_pi_event(
             &app,

@@ -11,6 +11,12 @@ import { scopeModels } from '../lib/pi/model-scope';
 import type { ModelOption, ThinkingLevel } from '../lib/pi/model-scope';
 import type { TranscriptEntry } from '../lib/pi/transcript';
 import { asRecord, stringValue } from '../lib/pi/transcript';
+import { recordControllerTransition } from '../lib/telemetry';
+import type {
+  ControllerLifecycleCause,
+  ControllerLifecycleState,
+  DraftLengthBucket,
+} from '../lib/telemetry/attributes';
 import type { TraceContext } from '../lib/telemetry/trace-context';
 
 interface WorkspaceSnapshot {
@@ -173,6 +179,83 @@ interface SessionController {
   lastActiveSequence: number;
   disposed: boolean;
   streamSequence: number;
+}
+
+/** The subset of a controller's boolean flags a lifecycle transition is
+ * derived from. Not every boolean on `SessionController` is lifecycle-
+ * critical (`unread`, `phantom`, `disposed`, and the various request-id
+ * strings are bookkeeping, not run state), and `disposed` is a one-way
+ * terminal flag set immediately before a controller is spliced out of
+ * `state.controllers`, so it is deliberately excluded from the derived
+ * state a transition compares. */
+type ControllerLifecycleField =
+  | 'ready'
+  | 'streaming'
+  | 'stopping'
+  | 'starting'
+  | 'working'
+  | 'syncing'
+  | 'connectingRemote';
+
+type ControllerLifecyclePatch = Partial<
+  Pick<SessionController, ControllerLifecycleField>
+>;
+
+/**
+ * Derives one coarse, named lifecycle state from a controller's boolean
+ * flags, in priority order (most specific/blocking first). This is the
+ * "state" `setControllerLifecycle` compares before and after a mutation:
+ * not every boolean toggle changes it (`working` flipping while `streaming`
+ * is already true never does), but a move between these seven names always
+ * does, and that is exactly the kind of change worth a persisted record.
+ */
+function classifyControllerLifecycle(
+  controller: SessionController,
+): ControllerLifecycleState {
+  if (controller.connectingRemote) return 'connecting';
+  if (controller.starting) return 'starting';
+  if (controller.stopping) return 'stopping';
+  if (controller.syncing) return 'syncing';
+  if (controller.working || controller.streaming) return 'working';
+  if (controller.ready) return 'ready';
+  return 'idle';
+}
+
+/**
+ * Applies `patch` to `controller`'s lifecycle-critical fields and, if doing
+ * so changes the derived composite state, records one `controller.lifecycle`
+ * transition naming `cause` and carrying `context` when the mutation
+ * happened inside an active span (a semantic action or an RPC response).
+ *
+ * This replaces every lifecycle-critical direct assignment in
+ * `src/lib/pi/runtime.ts` and `src/composables/useTau.ts`: calling it here
+ * instead of assigning the fields directly is what makes a missing expected
+ * transition visible as an absence in the persisted timeline (a response or
+ * action is recorded, but no matching transition follows) rather than a
+ * change nothing has any evidence for either way.
+ */
+function setControllerLifecycle(
+  controller: SessionController,
+  patch: ControllerLifecyclePatch,
+  cause: ControllerLifecycleCause,
+  context?: TraceContext,
+): void {
+  const before = classifyControllerLifecycle(controller);
+  Object.assign(controller, patch);
+  const after = classifyControllerLifecycle(controller);
+  if (before === after) return;
+  recordControllerTransition(
+    before,
+    after,
+    cause,
+    {
+      sessionId: controller.sessionId,
+      controllerId: controller.key,
+      runtimeId: controller.runtimeId,
+      generation: controller.generation || undefined,
+    },
+    context,
+  );
 }
 
 interface RemoteRetry {
@@ -850,13 +933,19 @@ function presentRemoteConnectionError(
   controller: SessionController,
   error: unknown,
 ): void {
-  controller.ready = false;
-  controller.streaming = false;
-  controller.stopping = false;
-  controller.starting = false;
-  controller.working = false;
-  controller.connectingRemote = false;
-  controller.syncing = false;
+  setControllerLifecycle(
+    controller,
+    {
+      ready: false,
+      streaming: false,
+      stopping: false,
+      starting: false,
+      working: false,
+      connectingRemote: false,
+      syncing: false,
+    },
+    'bridge_event_failed',
+  );
   controller.runStateRequestId = '';
   controller.status = errorMessage(error);
   if (!isControllerSelected(controller)) return;
@@ -885,7 +974,6 @@ function clearRemoteRetry(): void {
 }
 
 function finishRemoteConnection(controller: SessionController): void {
-  controller.connectingRemote = false;
   if (state.remoteRetry?.controllerKey !== controller.key) return;
   state.remoteRetry = undefined;
   state.remoteConnecting = false;
@@ -913,6 +1001,100 @@ function setActiveError(error: unknown): void {
   else state.workspaceStatus = errorMessage(error);
 }
 
+const MAX_STATE_SUMMARY_COUNT = 1_000_000;
+
+interface TranscriptKindCounts {
+  user: number;
+  assistant: number;
+  tool: number;
+  thinking: number;
+  error: number;
+}
+
+interface StateSnapshot {
+  controllerCount: number;
+  runtimeCount: number;
+  activeControllerCount: number;
+  notificationCount: number;
+  dialogCount: number;
+  transcriptCounts: TranscriptKindCounts;
+  draftBucket: DraftLengthBucket;
+  /** Active session/controller identifiers, when applicable — attached the
+   * same way any other log's context is, never a new family-specific
+   * attribute. No project identifier: Stage 3 already deferred one until an
+   * installation-local project identifier exists. */
+  scope: { sessionId?: string; controllerId?: string };
+}
+
+/** Buckets a draft's length, never its text: `frontend.state_summary` is
+ * content-free by construction, so only the bucket ever leaves this
+ * function. */
+function draftLengthBucket(length: number): DraftLengthBucket {
+  if (length === 0) return 'empty';
+  if (length <= 50) return 'short';
+  if (length <= 500) return 'medium';
+  return 'long';
+}
+
+/**
+ * Builds one periodic, content-free snapshot of workspace shape: counts and
+ * a length bucket only, never transcript or draft text, paths, or names.
+ * Read by `lib/telemetry/heartbeat`'s timer and otherwise unused — this is
+ * the one place that walks every controller's message list for this
+ * purpose, so the counting logic exists once.
+ */
+function buildStateSnapshot(): StateSnapshot {
+  const transcriptCounts: TranscriptKindCounts = {
+    user: 0,
+    assistant: 0,
+    tool: 0,
+    thinking: 0,
+    error: 0,
+  };
+  let activeControllerCount = 0;
+  let runtimeCount = 0;
+  for (const controller of state.controllers) {
+    if (classifyControllerLifecycle(controller) !== 'idle') {
+      activeControllerCount = Math.min(
+        MAX_STATE_SUMMARY_COUNT,
+        activeControllerCount + 1,
+      );
+    }
+    if (controller.generation > 0) {
+      runtimeCount = Math.min(MAX_STATE_SUMMARY_COUNT, runtimeCount + 1);
+    }
+    for (const message of controller.messages) {
+      transcriptCounts[message.kind] = Math.min(
+        MAX_STATE_SUMMARY_COUNT,
+        transcriptCounts[message.kind] + 1,
+      );
+    }
+  }
+  const controller = activeController.value;
+  return {
+    controllerCount: Math.min(
+      MAX_STATE_SUMMARY_COUNT,
+      state.controllers.length,
+    ),
+    runtimeCount,
+    activeControllerCount,
+    notificationCount: Math.min(
+      MAX_STATE_SUMMARY_COUNT,
+      state.extensionNotifications.length,
+    ),
+    dialogCount: Math.min(
+      MAX_STATE_SUMMARY_COUNT,
+      state.extensionDialogs.length,
+    ),
+    transcriptCounts,
+    draftBucket: draftLengthBucket(controller?.draft.length ?? 0),
+    scope: {
+      sessionId: controller?.sessionId,
+      controllerId: controller?.key,
+    },
+  };
+}
+
 export type {
   WorkspaceSnapshot,
   ProjectSummary,
@@ -927,10 +1109,13 @@ export type {
   EphemeralSession,
   PendingPrompt,
   SessionController,
+  ControllerLifecyclePatch,
   RemoteRetry,
   RemoteDialogMode,
   RemoteDialogStep,
   RemoteDirectoryChoice,
+  StateSnapshot,
+  TranscriptKindCounts,
 };
 
 export {
@@ -1016,4 +1201,7 @@ export {
   errorMessage,
   setControllerError,
   setActiveError,
+  classifyControllerLifecycle,
+  setControllerLifecycle,
+  buildStateSnapshot,
 };

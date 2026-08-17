@@ -168,6 +168,17 @@ const PI_RPC: RecordFamily = {
   ],
 };
 
+const PI_RPC_ANOMALY_KINDS = ['unmatched_or_duplicate'] as const;
+type PiRpcAnomalyKind = (typeof PI_RPC_ANOMALY_KINDS)[number];
+
+const PI_RPC_ANOMALY: RecordFamily = {
+  name: 'pi.rpc.anomaly',
+  attributes: [
+    stringAttribute('pi.rpc.anomaly.kind', true),
+    stringAttribute('pi.rpc.request_id', false),
+  ],
+};
+
 /** Per-Pi-run aggregate streaming counts (`src/lib/pi/runtime.ts`). Never
  * one record per delta or token: this family carries only bounded totals. */
 const PI_STREAM: RecordFamily = {
@@ -188,6 +199,57 @@ const PI_STREAM: RecordFamily = {
   ],
 };
 
+/** Categorical values for `tau.controller.state.before`/`.after`: the
+ * coarse composite lifecycle state `composables/state.ts`'s
+ * `classifyControllerLifecycle` derives from a controller's boolean flags,
+ * in priority order. Not the raw booleans themselves: a single named state
+ * is what `setControllerLifecycle` compares before/after a mutation to
+ * decide whether a transition happened at all. */
+const CONTROLLER_LIFECYCLE_STATES = [
+  'idle',
+  'connecting',
+  'starting',
+  'stopping',
+  'syncing',
+  'working',
+  'ready',
+] as const;
+type ControllerLifecycleState = (typeof CONTROLLER_LIFECYCLE_STATES)[number];
+
+/** Categorical values for `tau.controller.transition.cause`: every named
+ * mutation boundary `setControllerLifecycle` is called from
+ * (`src/lib/pi/runtime.ts`, `src/composables/useTau.ts`). Bounded and
+ * reviewed like any other categorical value, not a free-form reason
+ * string. */
+const CONTROLLER_LIFECYCLE_CAUSES = [
+  'controller_start',
+  'controller_start_failed',
+  'phantom_prompt_start',
+  'phantom_prompt_resume',
+  'process_exited',
+  'agent_start',
+  'agent_settled',
+  'prompt_response',
+  'get_state_failed',
+  'get_messages_failed',
+  'prompt_failed',
+  'abort_failed',
+  'get_state_response',
+  'get_messages_response',
+  'pending_prompt_dispatch',
+  'pending_prompt_failed',
+  'abort_probe_failed',
+  'pending_prompt_cancelled',
+  'process_stopped',
+  'bridge_event_failed',
+  'workspace_load_failed',
+  'message_send',
+  'message_send_failed',
+  'stop_requested',
+  'stop_failed',
+] as const;
+type ControllerLifecycleCause = (typeof CONTROLLER_LIFECYCLE_CAUSES)[number];
+
 const CONTROLLER_LIFECYCLE: RecordFamily = {
   name: 'controller.lifecycle',
   attributes: [
@@ -199,12 +261,14 @@ const CONTROLLER_LIFECYCLE: RecordFamily = {
 
 const PI_PROCESS_STOP_REASONS = ['explicit_stop', 'replaced'] as const;
 const PI_PROCESS_RESOLUTIONS = ['found', 'not_found'] as const;
+const PI_PROCESS_EXIT_OUTCOMES = ['clean', 'unexpected'] as const;
 
 const PI_PROCESS_LIFECYCLE: RecordFamily = {
   name: 'pi.process.lifecycle',
   attributes: [
     stringAttribute('tau.process.resolution', true),
     stringAttribute('tau.process.stop_reason', true),
+    stringAttribute('tau.process.exit_outcome', true),
     {
       key: 'tau.process.exit_code',
       kind: 'int',
@@ -322,10 +386,119 @@ const FRONTEND_ERROR: RecordFamily = {
   ],
 };
 
+/** Categorical values for `tau.operation.family`: which real span family a
+ * linked checkpoint log stands in for. */
+const OPERATION_CHECKPOINT_FAMILIES = ['ui.action', 'pi.rpc'] as const;
+type OperationCheckpointFamily = (typeof OPERATION_CHECKPOINT_FAMILIES)[number];
+
+/** Categorical values for `tau.operation.name`: the union of every action
+ * and RPC method name a checkpoint can name — the same reviewed sets
+ * `ui.action`/`pi.rpc` spans already draw from, not a new namespace. */
+const OPERATION_CHECKPOINT_NAMES = [
+  ...UI_ACTION_NAMES,
+  ...PI_RPC_METHODS,
+] as const;
+
+/** A linked start/checkpoint log for an operation that might never finish:
+ * recorded the moment its span starts (carrying that span's own `traceId`/
+ * `spanId`), so the operation stays visible in the persisted timeline even
+ * if the span itself never ends — a hang, a crash, or an abandoned request
+ * all leave an open span an OTel exporter never gets to write. */
+const OPERATION_CHECKPOINT: RecordFamily = {
+  name: 'operation.checkpoint',
+  attributes: [
+    stringAttribute('tau.operation.family', true),
+    stringAttribute('tau.operation.name', true),
+    stringAttribute('pi.rpc.request_id', false),
+  ],
+};
+
+const HEARTBEAT_VISIBILITY_VALUES = ['visible', 'hidden'] as const;
+type HeartbeatVisibility = (typeof HEARTBEAT_VISIBILITY_VALUES)[number];
+
+const BOOLEAN_STRING_VALUES = ['true', 'false'] as const;
+
+function intAttribute(key: string): AttributeSpec {
+  return { key, kind: 'int', maxLen: null, metricSafe: true };
+}
+
+/** A low-frequency liveness signal recorded whether or not anything else is
+ * happening. A gap between heartbeats — or the absence of the next one — is
+ * itself the diagnostic signal for a slow or stuck frontend; visibility and
+ * focus are carried alongside it so a gap while hidden (background timer
+ * throttling) is not mistaken for one while the window was actually active.
+ * The counts here are coarse, content-free gauges: nothing here is a
+ * session, controller, runtime, or request identifier. */
+const FRONTEND_HEARTBEAT: RecordFamily = {
+  name: 'frontend.heartbeat',
+  attributes: [
+    stringAttribute('tau.heartbeat.visibility', true),
+    stringAttribute('tau.heartbeat.focused', true),
+    intAttribute('tau.heartbeat.pending_rpc_count'),
+    intAttribute('tau.heartbeat.controller_count'),
+    intAttribute('tau.heartbeat.active_controller_count'),
+    intAttribute('tau.heartbeat.runtime_count'),
+    intAttribute('tau.heartbeat.queue_length'),
+  ],
+};
+
+/** Categorical values for `tau.state.draft_bucket`: a length bucket only,
+ * never the draft text itself. */
+const DRAFT_LENGTH_BUCKETS = ['empty', 'short', 'medium', 'long'] as const;
+type DraftLengthBucket = (typeof DRAFT_LENGTH_BUCKETS)[number];
+
+/** A periodic, content-free snapshot of workspace shape: counts and a
+ * length bucket only, never transcript text, draft text, or paths. Exists
+ * so a missing state update or a stuck operation is visible from shape and
+ * age evidence even when nothing else recognizes a failure. Active
+ * project/session/controller identifiers, when applicable, are attached as
+ * ordinary `CONTEXT_ATTRIBUTES`, not new family-specific attributes. */
+const FRONTEND_STATE_SUMMARY: RecordFamily = {
+  name: 'frontend.state_summary',
+  attributes: [
+    intAttribute('tau.state.controller_count'),
+    intAttribute('tau.state.runtime_count'),
+    intAttribute('tau.state.pending_rpc_count'),
+    intAttribute('tau.state.notification_count'),
+    intAttribute('tau.state.dialog_count'),
+    intAttribute('tau.state.transcript.user_count'),
+    intAttribute('tau.state.transcript.assistant_count'),
+    intAttribute('tau.state.transcript.tool_count'),
+    intAttribute('tau.state.transcript.thinking_count'),
+    intAttribute('tau.state.transcript.error_count'),
+    stringAttribute('tau.state.draft_bucket', true),
+    intAttribute('tau.state.oldest_pending_rpc_age_ms'),
+  ],
+};
+
+/** A raw frontend-measured duration with no native span/log counterpart —
+ * event-loop lag and long-task measurements only exist on the frontend, so
+ * unlike every other metric this stage adds, these two families cross IPC
+ * as a dedicated `FrontendMetricRecord` (see `./metric.ts`) rather than
+ * being derived from an already-ingested span or log. The family name
+ * itself selects the native instrument (`ingest.rs`'s `record_metric`),
+ * mirroring how a log family's name selects its fixed event name/severity. */
+const FRONTEND_EVENT_LOOP_LAG: RecordFamily = {
+  name: 'frontend.event_loop_lag',
+  attributes: [
+    stringAttribute('tau.heartbeat.visibility', true),
+    stringAttribute('tau.heartbeat.focused', true),
+  ],
+};
+
+/** A single `PerformanceObserver` `longtask` entry's duration. No
+ * attributes: a long task's own attribution (script URL, container) is not
+ * part of the reviewed catalog and is never read. */
+const FRONTEND_LONG_TASK: RecordFamily = {
+  name: 'frontend.long_task',
+  attributes: [],
+};
+
 const FAMILIES: readonly RecordFamily[] = [
   UI_ACTION,
   TAURI_INVOKE,
   PI_RPC,
+  PI_RPC_ANOMALY,
   PI_STREAM,
   CONTROLLER_LIFECYCLE,
   PI_PROCESS_LIFECYCLE,
@@ -334,6 +507,11 @@ const FAMILIES: readonly RecordFamily[] = [
   TELEMETRY_HEALTH,
   RUST_PANIC,
   FRONTEND_ERROR,
+  OPERATION_CHECKPOINT,
+  FRONTEND_HEARTBEAT,
+  FRONTEND_STATE_SUMMARY,
+  FRONTEND_EVENT_LOOP_LAG,
+  FRONTEND_LONG_TASK,
 ];
 
 function findFamily(name: string): RecordFamily | undefined {
@@ -380,10 +558,14 @@ function categoricalValues(key: string): readonly string[] | undefined {
       return PI_RPC_METHODS;
     case 'pi.rpc.outcome':
       return PI_RPC_OUTCOMES;
+    case 'pi.rpc.anomaly.kind':
+      return PI_RPC_ANOMALY_KINDS;
     case 'tau.process.stop_reason':
       return PI_PROCESS_STOP_REASONS;
     case 'tau.process.resolution':
       return PI_PROCESS_RESOLUTIONS;
+    case 'tau.process.exit_outcome':
+      return PI_PROCESS_EXIT_OUTCOMES;
     case 'tau.reader.drop_reason':
       return PI_READER_DROP_REASONS;
     case 'tau.reader.error_kind':
@@ -394,6 +576,21 @@ function categoricalValues(key: string): readonly string[] | undefined {
       return FRONTEND_ERROR_SOURCES;
     case 'tau.error.kind':
       return FRONTEND_ERROR_KINDS;
+    case 'tau.controller.state.before':
+    case 'tau.controller.state.after':
+      return CONTROLLER_LIFECYCLE_STATES;
+    case 'tau.controller.transition.cause':
+      return CONTROLLER_LIFECYCLE_CAUSES;
+    case 'tau.operation.family':
+      return OPERATION_CHECKPOINT_FAMILIES;
+    case 'tau.operation.name':
+      return OPERATION_CHECKPOINT_NAMES;
+    case 'tau.heartbeat.visibility':
+      return HEARTBEAT_VISIBILITY_VALUES;
+    case 'tau.heartbeat.focused':
+      return BOOLEAN_STRING_VALUES;
+    case 'tau.state.draft_bucket':
+      return DRAFT_LENGTH_BUCKETS;
     default:
       return undefined;
   }
@@ -433,8 +630,14 @@ export type {
   AttributeError,
   AttributeKind,
   AttributeSpec,
+  ControllerLifecycleCause,
+  ControllerLifecycleState,
+  DraftLengthBucket,
   FrontendErrorKind,
   FrontendErrorSource,
+  HeartbeatVisibility,
+  OperationCheckpointFamily,
+  PiRpcAnomalyKind,
   PiRpcMethod,
   PiRpcOutcome,
   RecordFamily,
@@ -448,16 +651,29 @@ export {
   APP_LIFECYCLE,
   CONTEXT_ATTRIBUTES,
   CONTROLLER_LIFECYCLE,
+  CONTROLLER_LIFECYCLE_CAUSES,
+  CONTROLLER_LIFECYCLE_STATES,
+  DRAFT_LENGTH_BUCKETS,
   FAMILIES,
   findFamily,
   FRONTEND_ERROR,
   FRONTEND_ERROR_KINDS,
   FRONTEND_ERROR_SOURCES,
+  FRONTEND_EVENT_LOOP_LAG,
+  FRONTEND_HEARTBEAT,
+  FRONTEND_LONG_TASK,
+  FRONTEND_STATE_SUMMARY,
   isMetricSafe,
+  OPERATION_CHECKPOINT,
+  OPERATION_CHECKPOINT_FAMILIES,
+  OPERATION_CHECKPOINT_NAMES,
+  PI_PROCESS_EXIT_OUTCOMES,
   PI_PROCESS_LIFECYCLE,
   PI_PROCESS_RESOLUTIONS,
   PI_PROCESS_STOP_REASONS,
   PI_RPC,
+  PI_RPC_ANOMALY,
+  PI_RPC_ANOMALY_KINDS,
   PI_RPC_METHODS,
   PI_RPC_OUTCOMES,
   PI_STREAM,

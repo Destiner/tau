@@ -7,13 +7,21 @@ import {
   installFrontendErrorCapture,
   vueErrorHandler,
 } from './lib/telemetry';
+import {
+  installLongTaskObserver,
+  startHeartbeat,
+} from './lib/telemetry/heartbeat';
 import '@fontsource-variable/inter/wght.css';
 import './styles.css';
 
-// Both are synchronous, do no I/O, and never throw, so neither delays
-// window reveal or mounting below.
+// All four are synchronous, do no I/O, and never throw, so none delays
+// window reveal or mounting below. `startHeartbeat`/`installLongTaskObserver`
+// only arm a timer/observer here; the first tick and any long task are still
+// asynchronous.
 initTelemetry();
 installFrontendErrorCapture();
+startHeartbeat();
+installLongTaskObserver();
 
 async function mountApp(): Promise<void> {
   const fixture = new URLSearchParams(window.location.search).get('fixture');

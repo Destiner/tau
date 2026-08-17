@@ -102,30 +102,31 @@ describe('startCommandSpan', () => {
 
     await flushTelemetry();
 
-    const ingestCall = mockInvoke.mock.calls.find(
-      ([name]) => name === 'ingest_telemetry',
-    );
-    const records = (
-      ingestCall?.[1] as {
-        records: Array<{
-          family: string;
-          traceId: string;
-          spanId: string;
-          parentSpanId?: string;
-        }>;
-      }
-    ).records;
+    const records = flushedRecords();
     const actionRecord = records.find(
       (record) => record.family === 'ui.action',
     );
-    const children = records.filter((record) => record.family !== 'ui.action');
+    // Two real span children (the invoke and the RPC) plus one linked
+    // `operation.checkpoint` log per checkpointed family (`ui.action` and
+    // `pi.rpc`; `tauri.invoke` is not checkpointed) — five records sharing
+    // one trace in total.
+    const spanChildren = records.filter(
+      (record) =>
+        record.family === 'tauri.invoke' || record.family === 'pi.rpc',
+    );
+    const checkpoints = records.filter(
+      (record) => record.family === 'operation.checkpoint',
+    );
     expect(actionRecord).toBeDefined();
-    expect(children).toHaveLength(2);
+    expect(spanChildren).toHaveLength(2);
+    expect(checkpoints).toHaveLength(2);
     expect(
-      children.every((record) => record.traceId === actionRecord?.traceId),
+      records.every((record) => record.traceId === actionRecord?.traceId),
     ).toBe(true);
     expect(
-      children.every((record) => record.parentSpanId === actionRecord?.spanId),
+      spanChildren.every(
+        (record) => record.parentSpanId === actionRecord?.spanId,
+      ),
     ).toBe(true);
   });
 });
@@ -151,7 +152,7 @@ describe('startActionSpan', () => {
     expect(mockInvoke).toHaveBeenCalledWith(
       'ingest_telemetry',
       expect.objectContaining({
-        records: [
+        records: expect.arrayContaining([
           expect.objectContaining({
             family: 'ui.action',
             attributes: {
@@ -160,7 +161,7 @@ describe('startActionSpan', () => {
               'tau.controller.id': 'controller-1',
             },
           }),
-        ],
+        ]),
       }),
     );
   });
@@ -252,7 +253,7 @@ describe('startRpcSpan', () => {
     expect(mockInvoke).toHaveBeenCalledWith(
       'ingest_telemetry',
       expect.objectContaining({
-        records: [
+        records: expect.arrayContaining([
           expect.objectContaining({
             family: 'pi.rpc',
             attributes: {
@@ -265,7 +266,7 @@ describe('startRpcSpan', () => {
               'tau.controller.id': 'controller-1',
             },
           }),
-        ],
+        ]),
       }),
     );
   });
@@ -282,10 +283,11 @@ describe('startRpcSpan', () => {
     );
     const records = (
       ingestCall?.[1] as {
-        records: Array<{ attributes: Record<string, unknown> }>;
+        records: Array<{ family: string; attributes: Record<string, unknown> }>;
       }
     ).records;
-    expect(records[0]?.attributes['pi.rpc.outcome']).toBeUndefined();
+    const rpcRecord = records.find((record) => record.family === 'pi.rpc');
+    expect(rpcRecord?.attributes['pi.rpc.outcome']).toBeUndefined();
   });
 
   it('nests under an explicit parent action context', async () => {
@@ -300,6 +302,89 @@ describe('startRpcSpan', () => {
     );
 
     expect(rpc.context?.traceId).toBe(action.context?.traceId);
+  });
+});
+
+describe('operation checkpoints', () => {
+  it('records a ui.action checkpoint immediately, even if the span never ends', async () => {
+    const { startActionSpan, flushTelemetry } = await import('./index');
+    const action = startActionSpan('message.send');
+
+    await flushTelemetry();
+
+    const ingestCall = mockInvoke.mock.calls.find(
+      ([name]) => name === 'ingest_telemetry',
+    );
+    const records = (
+      ingestCall?.[1] as {
+        records: Array<{
+          family: string;
+          traceId: string;
+          spanId: string;
+          attributes: Record<string, unknown>;
+        }>;
+      }
+    ).records;
+    const checkpoint = records.find(
+      (record) => record.family === 'operation.checkpoint',
+    );
+    expect(checkpoint).toBeDefined();
+    expect(checkpoint?.attributes).toEqual({
+      'tau.operation.family': 'ui.action',
+      'tau.operation.name': 'message.send',
+    });
+    expect(checkpoint?.traceId).toBe(action.context?.traceId);
+    expect(checkpoint?.spanId).toBe(action.context?.spanId);
+    // The action's own span is never ended in this test: only the linked
+    // checkpoint log proves the operation began.
+    expect(records.some((record) => record.family === 'ui.action')).toBe(false);
+  });
+
+  it('records a pi.rpc checkpoint immediately, even if the span never ends', async () => {
+    const { startRpcSpan, flushTelemetry } = await import('./index');
+    const rpc = startRpcSpan('prompt', 'tau-prompt-1', 'runtime-1', 1);
+
+    await flushTelemetry();
+
+    const ingestCall = mockInvoke.mock.calls.find(
+      ([name]) => name === 'ingest_telemetry',
+    );
+    const records = (
+      ingestCall?.[1] as {
+        records: Array<{
+          family: string;
+          traceId: string;
+          spanId: string;
+          attributes: Record<string, unknown>;
+        }>;
+      }
+    ).records;
+    const checkpoint = records.find(
+      (record) => record.family === 'operation.checkpoint',
+    );
+    expect(checkpoint).toBeDefined();
+    expect(checkpoint?.attributes).toEqual({
+      'tau.operation.family': 'pi.rpc',
+      'tau.operation.name': 'prompt',
+      'pi.rpc.request_id': 'tau-prompt-1',
+      'tau.runtime.id': 'runtime-1',
+      'pi.generation': 1,
+    });
+    expect(checkpoint?.traceId).toBe(rpc.context?.traceId);
+    expect(checkpoint?.spanId).toBe(rpc.context?.spanId);
+    expect(records.some((record) => record.family === 'pi.rpc')).toBe(false);
+  });
+
+  it('does not checkpoint an ordinary tauri.invoke span', async () => {
+    const { startCommandSpan, flushTelemetry } = await import('./index');
+    startCommandSpan('load_workspace');
+
+    await flushTelemetry();
+
+    const ingestCall = mockInvoke.mock.calls.find(
+      ([name]) => name === 'ingest_telemetry',
+    );
+    expect(ingestCall).toBeUndefined();
   });
 });
 
@@ -337,6 +422,9 @@ describe('recordStreamAggregate', () => {
 interface IngestedRecord {
   family: string;
   attributes: Record<string, unknown>;
+  traceId?: string;
+  spanId?: string;
+  parentSpanId?: string;
 }
 
 function flushedRecords(): IngestedRecord[] {
@@ -344,6 +432,233 @@ function flushedRecords(): IngestedRecord[] {
     .filter(([name]) => name === 'ingest_telemetry')
     .flatMap(([, args]) => (args as { records: IngestedRecord[] }).records);
 }
+
+describe('recordRpcResponseAnomaly', () => {
+  it('records a bounded request id and runtime scope without response content', async () => {
+    const { recordRpcResponseAnomaly, flushTelemetry } =
+      await import('./index');
+    recordRpcResponseAnomaly('unmatched_or_duplicate', 'tau-state-1', {
+      sessionId: 'session-1',
+      runtimeId: 'runtime-1',
+      generation: 2,
+    });
+
+    await flushTelemetry();
+
+    const anomaly = flushedRecords().find(
+      (record) => record.family === 'pi.rpc.anomaly',
+    );
+    expect(anomaly?.attributes).toEqual({
+      'pi.rpc.anomaly.kind': 'unmatched_or_duplicate',
+      'pi.rpc.request_id': 'tau-state-1',
+      'tau.session.id': 'session-1',
+      'tau.runtime.id': 'runtime-1',
+      'pi.generation': 2,
+    });
+  });
+});
+
+describe('recordControllerTransition', () => {
+  it('records state before/after, cause, and session/controller/runtime context', async () => {
+    const { recordControllerTransition, flushTelemetry } =
+      await import('./index');
+    recordControllerTransition('idle', 'starting', 'controller_start', {
+      sessionId: 'session-1',
+      controllerId: 'controller-1',
+      runtimeId: 'runtime-1',
+      generation: 2,
+    });
+
+    await flushTelemetry();
+
+    const transition = flushedRecords().find(
+      (record) => record.family === 'controller.lifecycle',
+    );
+    expect(transition?.attributes).toEqual({
+      'tau.controller.state.before': 'idle',
+      'tau.controller.state.after': 'starting',
+      'tau.controller.transition.cause': 'controller_start',
+      'tau.session.id': 'session-1',
+      'tau.controller.id': 'controller-1',
+      'tau.runtime.id': 'runtime-1',
+      'pi.generation': 2,
+    });
+  });
+
+  it('carries the active span context when given one', async () => {
+    const { recordControllerTransition, startActionSpan, flushTelemetry } =
+      await import('./index');
+    const action = startActionSpan('message.send');
+
+    recordControllerTransition(
+      'idle',
+      'working',
+      'message_send',
+      { controllerId: 'controller-1' },
+      action.context,
+    );
+
+    await flushTelemetry();
+
+    const transition = flushedRecords().find(
+      (record) => record.family === 'controller.lifecycle',
+    );
+    expect(transition?.traceId).toBe(action.context?.traceId);
+    expect(transition?.spanId).toBe(action.context?.spanId);
+  });
+});
+
+describe('recordEventLoopLag', () => {
+  it('records a bounded lag value with visibility/focus dimensions', async () => {
+    const { recordEventLoopLag, flushTelemetry } = await import('./index');
+    recordEventLoopLag(42, 'visible', true);
+
+    await flushTelemetry();
+
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'ingest_telemetry',
+      expect.objectContaining({
+        records: [
+          expect.objectContaining({
+            family: 'frontend.event_loop_lag',
+            value: 42,
+            attributes: {
+              'tau.heartbeat.visibility': 'visible',
+              'tau.heartbeat.focused': 'true',
+            },
+          }),
+        ],
+      }),
+    );
+  });
+
+  it('drops a negative, non-finite, or out-of-bounds value rather than sending it', async () => {
+    const { recordEventLoopLag, flushTelemetry } = await import('./index');
+    const { MAX_METRIC_VALUE_MS } = await import('./metric');
+    recordEventLoopLag(-1, 'visible', true);
+    recordEventLoopLag(Number.POSITIVE_INFINITY, 'visible', true);
+    recordEventLoopLag(Number.NaN, 'visible', true);
+    recordEventLoopLag(MAX_METRIC_VALUE_MS + 1, 'visible', true);
+
+    await flushTelemetry();
+
+    expect(
+      flushedRecords().some(
+        (record) => record.family === 'frontend.event_loop_lag',
+      ),
+    ).toBe(false);
+  });
+});
+
+describe('recordLongTask', () => {
+  it('records a bounded duration with no attributes', async () => {
+    const { recordLongTask, flushTelemetry } = await import('./index');
+    recordLongTask(75);
+
+    await flushTelemetry();
+
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'ingest_telemetry',
+      expect.objectContaining({
+        records: [
+          expect.objectContaining({
+            family: 'frontend.long_task',
+            value: 75,
+            attributes: {},
+          }),
+        ],
+      }),
+    );
+  });
+});
+
+describe('recordHeartbeat', () => {
+  it('records visibility, focus, and coarse counts', async () => {
+    const { recordHeartbeat, flushTelemetry } = await import('./index');
+    recordHeartbeat({
+      visibility: 'hidden',
+      focused: false,
+      pendingRpcCount: 2,
+      controllerCount: 3,
+      activeControllerCount: 1,
+      runtimeCount: 2,
+      queueLength: 4,
+    });
+
+    await flushTelemetry();
+
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'ingest_telemetry',
+      expect.objectContaining({
+        records: [
+          expect.objectContaining({
+            family: 'frontend.heartbeat',
+            attributes: {
+              'tau.heartbeat.visibility': 'hidden',
+              'tau.heartbeat.focused': 'false',
+              'tau.heartbeat.pending_rpc_count': 2,
+              'tau.heartbeat.controller_count': 3,
+              'tau.heartbeat.active_controller_count': 1,
+              'tau.heartbeat.runtime_count': 2,
+              'tau.heartbeat.queue_length': 4,
+            },
+          }),
+        ],
+      }),
+    );
+  });
+});
+
+describe('recordStateSummary', () => {
+  it('records counts and a draft bucket, never draft or transcript text', async () => {
+    const { recordStateSummary, flushTelemetry } = await import('./index');
+    recordStateSummary({
+      controllerCount: 2,
+      runtimeCount: 1,
+      pendingRpcCount: 0,
+      notificationCount: 1,
+      dialogCount: 0,
+      transcriptCounts: {
+        user: 3,
+        assistant: 3,
+        tool: 1,
+        thinking: 2,
+        error: 0,
+      },
+      draftBucket: 'short',
+      oldestPendingRpcAgeMs: 0,
+      scope: { sessionId: 'session-1' },
+    });
+
+    await flushTelemetry();
+
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'ingest_telemetry',
+      expect.objectContaining({
+        records: [
+          expect.objectContaining({
+            family: 'frontend.state_summary',
+            attributes: {
+              'tau.state.controller_count': 2,
+              'tau.state.runtime_count': 1,
+              'tau.state.pending_rpc_count': 0,
+              'tau.state.notification_count': 1,
+              'tau.state.dialog_count': 0,
+              'tau.state.transcript.user_count': 3,
+              'tau.state.transcript.assistant_count': 3,
+              'tau.state.transcript.tool_count': 1,
+              'tau.state.transcript.thinking_count': 2,
+              'tau.state.transcript.error_count': 0,
+              'tau.state.draft_bucket': 'short',
+              'tau.state.oldest_pending_rpc_age_ms': 0,
+              'tau.session.id': 'session-1',
+            },
+          }),
+        ],
+      }),
+    );
+  });
+});
 
 describe('vueErrorHandler', () => {
   it('records the bounded error kind and a sanitized location, never the message', async () => {

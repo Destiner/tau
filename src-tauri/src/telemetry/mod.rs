@@ -26,12 +26,14 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use opentelemetry::logs::{AnyValue, LogRecord as _, Logger as _, LoggerProvider as _, Severity};
+use opentelemetry::metrics::{Counter, Gauge, Histogram, Meter, MeterProvider as _};
 use opentelemetry::trace::{
     Span as _, SpanContext, TraceContextExt, TraceFlags, TraceState, Tracer as _,
     TracerProvider as _,
 };
 use opentelemetry::{Context, KeyValue, SpanId, TraceId};
 use opentelemetry_sdk::logs::SdkLoggerProvider;
+use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
 use opentelemetry_sdk::trace::{Sampler, SdkTracerProvider};
 use opentelemetry_sdk::Resource;
 use opentelemetry_semantic_conventions::resource::{
@@ -69,12 +71,108 @@ pub const METRIC_SEGMENT_FILE: &str = "metrics.jsonl";
 
 const SCOPE_NAME: &str = "tau";
 
+/// How often the metric `PeriodicReader` collects and exports. Short, per
+/// the design principles' "use a short export interval so a crash loses
+/// little completed telemetry" — the same reasoning Stage 1 gave for the
+/// log/span writer being synchronous rather than batched.
+const METRIC_EXPORT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Every OTel metric instrument this module records into, built once from
+/// one `Meter` in `Telemetry::new`. Grouped in its own struct so
+/// `Telemetry`'s own fields stay about providers/storage, not individual
+/// instruments.
+struct Metrics {
+    /// `tauri.invoke`/`ui.action`/`pi.rpc` span durations, derived from an
+    /// already-ingested frontend span's own start/end timestamps — see
+    /// `record_operation_duration`. One shared instrument per family
+    /// selected by name, not three separate call sites duplicating the
+    /// same recording logic.
+    invoke_duration: Histogram<f64>,
+    ui_action_duration: Histogram<f64>,
+    pi_rpc_duration: Histogram<f64>,
+    controller_start_duration: Histogram<f64>,
+    /// The two raw frontend measurements with no native span/log
+    /// counterpart to derive a metric from; see `ingest.rs`'s
+    /// `FrontendMetricRecord`.
+    event_loop_lag: Histogram<f64>,
+    long_task_duration: Histogram<f64>,
+    pi_process_starts: Counter<u64>,
+    pi_process_exits: Counter<u64>,
+    /// Incremented whenever an ingested `pi.rpc` span's own
+    /// `pi.rpc.outcome` attribute is present and not `"success"`.
+    pi_rpc_failures: Counter<u64>,
+    pi_rpc_abandoned: Counter<u64>,
+    pi_rpc_unmatched: Counter<u64>,
+    pi_reader_malformed: Counter<u64>,
+    /// Populated from the frontend's own periodic `frontend.heartbeat` log
+    /// once it has already been validated — never a separate wire format.
+    pending_rpc_gauge: Gauge<u64>,
+    controller_count_gauge: Gauge<u64>,
+    active_controller_gauge: Gauge<u64>,
+    runtime_count_gauge: Gauge<u64>,
+    queue_length_gauge: Gauge<u64>,
+    /// Populated from the frontend's own `telemetry.health` log (dropped
+    /// count) and natively at `record_writer_health` (failed-write count).
+    telemetry_dropped_gauge: Gauge<u64>,
+    telemetry_failed_write_gauge: Gauge<u64>,
+}
+
+impl Metrics {
+    fn new(meter: &Meter) -> Self {
+        Metrics {
+            invoke_duration: meter
+                .f64_histogram("tau.invoke.duration")
+                .with_unit("ms")
+                .build(),
+            ui_action_duration: meter
+                .f64_histogram("tau.ui_action.duration")
+                .with_unit("ms")
+                .build(),
+            pi_rpc_duration: meter
+                .f64_histogram("tau.pi_rpc.duration")
+                .with_unit("ms")
+                .build(),
+            controller_start_duration: meter
+                .f64_histogram("tau.controller_start.duration")
+                .with_unit("ms")
+                .build(),
+            event_loop_lag: meter
+                .f64_histogram("tau.frontend.event_loop_lag")
+                .with_unit("ms")
+                .build(),
+            long_task_duration: meter
+                .f64_histogram("tau.frontend.long_task.duration")
+                .with_unit("ms")
+                .build(),
+            pi_process_starts: meter.u64_counter("tau.pi_process.starts").build(),
+            pi_process_exits: meter.u64_counter("tau.pi_process.exits").build(),
+            pi_rpc_failures: meter.u64_counter("tau.pi_rpc.failures").build(),
+            pi_rpc_abandoned: meter.u64_counter("tau.pi_rpc.abandoned").build(),
+            pi_rpc_unmatched: meter.u64_counter("tau.pi_rpc.unmatched_responses").build(),
+            pi_reader_malformed: meter.u64_counter("tau.pi_reader.malformed_lines").build(),
+            pending_rpc_gauge: meter.u64_gauge("tau.telemetry.pending_rpc_count").build(),
+            controller_count_gauge: meter.u64_gauge("tau.telemetry.controller_count").build(),
+            active_controller_gauge: meter
+                .u64_gauge("tau.telemetry.active_controller_count")
+                .build(),
+            runtime_count_gauge: meter.u64_gauge("tau.telemetry.runtime_count").build(),
+            queue_length_gauge: meter.u64_gauge("tau.telemetry.queue_length").build(),
+            telemetry_dropped_gauge: meter.u64_gauge("tau.telemetry.dropped_count").build(),
+            telemetry_failed_write_gauge: meter
+                .u64_gauge("tau.telemetry.failed_write_count")
+                .build(),
+        }
+    }
+}
+
 /// The native telemetry pipeline for one app launch. Construction never
 /// fails: a directory or writer problem degrades to the store's in-memory
 /// fallback instead of stopping app startup.
 pub struct Telemetry {
     logger_provider: SdkLoggerProvider,
     tracer_provider: SdkTracerProvider,
+    meter_provider: SdkMeterProvider,
+    metrics: Metrics,
     store: Arc<store::Store>,
     /// Precomputed once so `ingest.rs` does not rebuild it per frontend
     /// record; see `exporter::resource_to_json`.
@@ -107,10 +205,19 @@ impl Telemetry {
         let resource_json = exporter::resource_to_json(&resource);
         let log_exporter = exporter::JsonFileLogExporter::new(Arc::clone(&store), &resource);
         let span_exporter = exporter::JsonFileSpanExporter::new(Arc::clone(&store), &resource);
+        let metric_exporter = exporter::JsonFileMetricExporter::new(Arc::clone(&store), &resource);
         let logger_provider = SdkLoggerProvider::builder()
             .with_resource(resource.clone())
             .with_simple_exporter(log_exporter)
             .build();
+        let metric_reader = PeriodicReader::builder(metric_exporter)
+            .with_interval(METRIC_EXPORT_INTERVAL)
+            .build();
+        let meter_provider = SdkMeterProvider::builder()
+            .with_resource(resource.clone())
+            .with_reader(metric_reader)
+            .build();
+        let metrics = Metrics::new(&meter_provider.meter(SCOPE_NAME));
         // Do not sample: the design principles call for recording all of
         // this deliberately low-volume telemetry.
         let tracer_provider = SdkTracerProvider::builder()
@@ -121,6 +228,8 @@ impl Telemetry {
         Telemetry {
             logger_provider,
             tracer_provider,
+            meter_provider,
+            metrics,
             store,
             resource_json,
             telemetry_dir: dir,
@@ -150,12 +259,21 @@ impl Telemetry {
         self.emit_lifecycle_log("app.exited");
         self.record_writer_health();
         let _ = self.logger_provider.force_flush();
+        self.force_flush_metrics();
         clear_run_marker(&self.telemetry_dir);
     }
 
     pub fn shutdown(&self) {
         let _ = self.logger_provider.shutdown();
         let _ = self.tracer_provider.shutdown();
+        let _ = self.meter_provider.shutdown();
+    }
+
+    /// Force-flushes the metric provider. Used by tests (the `PeriodicReader`
+    /// otherwise only collects on its own interval) and available for the
+    /// same "flush aggressively" call sites logs already force-flush.
+    pub fn force_flush_metrics(&self) {
+        let _ = self.meter_provider.force_flush();
     }
 
     /// Force-flushes the log provider. A no-op for correctness today, since
@@ -183,6 +301,9 @@ impl Telemetry {
     /// retained in the bounded fallback or evicted from it.
     fn record_writer_health(&self) {
         let failed_writes = self.store.failed_writes();
+        self.metrics
+            .telemetry_failed_write_gauge
+            .record(failed_writes, &[]);
         if failed_writes == 0 {
             return;
         }
@@ -197,6 +318,108 @@ impl Telemetry {
                 opentelemetry::Value::I64(i64::try_from(failed_writes).unwrap_or(i64::MAX)),
             )],
         );
+    }
+
+    /// Records one duration observation into whichever histogram `family`
+    /// selects (`tauri.invoke`/`ui.action`/`pi.rpc`). Any other family is a
+    /// silent no-op: forward-compatible with a new span family this module
+    /// has no matching instrument for yet, rather than a hard error.
+    pub(super) fn record_operation_duration(&self, family: &str, duration_ms: f64) {
+        let histogram = if family == attributes::TAURI_INVOKE.name {
+            &self.metrics.invoke_duration
+        } else if family == attributes::UI_ACTION.name {
+            &self.metrics.ui_action_duration
+        } else if family == attributes::PI_RPC.name {
+            &self.metrics.pi_rpc_duration
+        } else {
+            return;
+        };
+        histogram.record(duration_ms, &[]);
+    }
+
+    pub(super) fn record_controller_start_duration(&self, duration_ms: f64) {
+        self.metrics
+            .controller_start_duration
+            .record(duration_ms, &[]);
+    }
+
+    /// Increments the `pi.rpc` failure counter: called once per ingested
+    /// `pi.rpc` span whose own `pi.rpc.outcome` attribute is present and not
+    /// `"success"`.
+    pub(super) fn record_rpc_failure(&self) {
+        self.metrics.pi_rpc_failures.add(1, &[]);
+    }
+
+    pub(super) fn record_rpc_abandoned(&self) {
+        self.metrics.pi_rpc_abandoned.add(1, &[]);
+    }
+
+    pub(super) fn record_rpc_unmatched(&self) {
+        self.metrics.pi_rpc_unmatched.add(1, &[]);
+    }
+
+    /// Records one `tau.pi_process.starts` count. Called from `pi.rs` at the
+    /// same point `record_process_lifecycle("pi.process.started", ...)` is.
+    pub fn record_pi_process_start(&self) {
+        self.metrics.pi_process_starts.add(1, &[]);
+    }
+
+    /// Records one `tau.pi_process.exits` count, with a bounded
+    /// `tau.process.exit_outcome` dimension (`"clean"`/`"unexpected"`) — two
+    /// hardcoded, compile-time values, not accepted from any untrusted
+    /// input, so this does not need to go through the attribute catalog
+    /// `ingest.rs` revalidates frontend-submitted values against.
+    pub fn record_pi_process_exit(&self, clean: bool) {
+        let outcome = if clean { "clean" } else { "unexpected" };
+        self.metrics
+            .pi_process_exits
+            .add(1, &[KeyValue::new("tau.process.exit_outcome", outcome)]);
+    }
+
+    /// Records the frontend's own periodic gauge values (already validated
+    /// as a `frontend.heartbeat` log by the time this is called) into the
+    /// matching native `Gauge` instruments.
+    pub(super) fn record_heartbeat_gauges(
+        &self,
+        pending_rpc_count: u64,
+        controller_count: u64,
+        active_controller_count: u64,
+        runtime_count: u64,
+        queue_length: u64,
+    ) {
+        self.metrics
+            .pending_rpc_gauge
+            .record(pending_rpc_count, &[]);
+        self.metrics
+            .controller_count_gauge
+            .record(controller_count, &[]);
+        self.metrics
+            .active_controller_gauge
+            .record(active_controller_count, &[]);
+        self.metrics.runtime_count_gauge.record(runtime_count, &[]);
+        self.metrics.queue_length_gauge.record(queue_length, &[]);
+    }
+
+    /// Records the frontend's own `telemetry.health` drop count (already
+    /// validated by the time this is called) into the native gauge.
+    pub(super) fn record_telemetry_dropped_gauge(&self, dropped_count: u64) {
+        self.metrics
+            .telemetry_dropped_gauge
+            .record(dropped_count, &[]);
+    }
+
+    /// Records one raw frontend-measured event-loop-lag reading (no native
+    /// span/log counterpart exists to derive this from) into the histogram,
+    /// with the caller's already-validated `visibility`/`focused` dimensions.
+    pub(super) fn record_event_loop_lag(&self, lag_ms: f64, dimensions: &[KeyValue]) {
+        self.metrics.event_loop_lag.record(lag_ms, dimensions);
+    }
+
+    /// Records one raw frontend-measured `PerformanceObserver` `longtask`
+    /// duration (no native span/log counterpart exists to derive this
+    /// from) into the histogram. No dimensions.
+    pub(super) fn record_long_task_duration(&self, duration_ms: f64) {
+        self.metrics.long_task_duration.record(duration_ms, &[]);
     }
 
     /// Starts a native span in the `tauri.invoke` family as a child of the
@@ -297,6 +520,18 @@ impl Telemetry {
             None,
             attributes,
         );
+        if event_name == "pi.reader.line_dropped"
+            && attributes.iter().any(|(key, value)| {
+                *key == "tau.reader.drop_reason"
+                    && matches!(
+                        value,
+                        opentelemetry::Value::String(reason)
+                            if reason.as_str() == "malformed" || reason.as_str() == "invalid_utf8"
+                    )
+            })
+        {
+            self.metrics.pi_reader_malformed.add(1, &[]);
+        }
         self.force_flush_logs();
     }
 
@@ -823,6 +1058,245 @@ mod tests {
         telemetry.store.read_records(store::Signal::Log)
     }
 
+    /// Force-flushes the metric provider (the `PeriodicReader` otherwise
+    /// only collects on its own 15s interval) and reads back every
+    /// persisted metric line.
+    fn process_metric_records(telemetry: &Telemetry) -> Vec<serde_json::Value> {
+        telemetry.force_flush_metrics();
+        telemetry.store.read_records(store::Signal::Metric)
+    }
+
+    fn find_metric<'a>(
+        records: &'a [serde_json::Value],
+        name: &str,
+    ) -> Option<&'a serde_json::Value> {
+        records.iter().find(|record| {
+            record["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["name"] == name
+        })
+    }
+
+    #[test]
+    fn record_operation_duration_persists_a_histogram_for_each_reviewed_family() {
+        let (telemetry, _directory) = test_telemetry();
+
+        telemetry.record_operation_duration(attributes::TAURI_INVOKE.name, 12.5);
+        telemetry.record_operation_duration(attributes::UI_ACTION.name, 40.0);
+        telemetry.record_operation_duration(attributes::PI_RPC.name, 250.0);
+        telemetry.record_controller_start_duration(500.0);
+        // An unrecognized family is a silent no-op, not a new instrument.
+        telemetry.record_operation_duration("not.a.real.family", 999.0);
+
+        let records = process_metric_records(&telemetry);
+        let invoke = find_metric(&records, "tau.invoke.duration").expect("invoke histogram");
+        let action = find_metric(&records, "tau.ui_action.duration").expect("action histogram");
+        let rpc = find_metric(&records, "tau.pi_rpc.duration").expect("rpc histogram");
+        let controller_start = find_metric(&records, "tau.controller_start.duration")
+            .expect("controller start histogram");
+
+        let metric = &invoke["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0];
+        assert_eq!(metric["unit"], "ms");
+        let point = &metric["histogram"]["dataPoints"][0];
+        assert_eq!(point["count"], "1");
+        assert_eq!(point["sum"], 12.5);
+        assert!(point["attributes"]
+            .as_array()
+            .expect("attributes")
+            .is_empty());
+
+        assert_eq!(
+            action["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["histogram"]
+                ["dataPoints"][0]["sum"],
+            40.0
+        );
+        assert_eq!(
+            rpc["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["histogram"]["dataPoints"]
+                [0]["sum"],
+            250.0
+        );
+        assert_eq!(
+            controller_start["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["histogram"]
+                ["dataPoints"][0]["sum"],
+            500.0
+        );
+        assert!(find_metric(&records, "not.a.real.family").is_none());
+    }
+
+    #[test]
+    fn record_rpc_failure_increments_a_counter_never_a_gauge() {
+        let (telemetry, _directory) = test_telemetry();
+
+        telemetry.record_rpc_failure();
+        telemetry.record_rpc_failure();
+
+        let records = process_metric_records(&telemetry);
+        let metric = find_metric(&records, "tau.pi_rpc.failures").expect("failure counter");
+        let point =
+            &metric["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["sum"]["dataPoints"][0];
+        assert_eq!(point["asInt"], "2");
+    }
+
+    #[test]
+    fn record_pi_process_start_and_exit_persist_bounded_counters() {
+        let (telemetry, _directory) = test_telemetry();
+
+        telemetry.record_pi_process_start();
+        telemetry.record_pi_process_start();
+        telemetry.record_pi_process_exit(true);
+        telemetry.record_pi_process_exit(false);
+
+        let records = process_metric_records(&telemetry);
+        let starts = find_metric(&records, "tau.pi_process.starts").expect("starts counter");
+        assert_eq!(
+            starts["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["sum"]["dataPoints"][0]
+                ["asInt"],
+            "2"
+        );
+
+        let exits = find_metric(&records, "tau.pi_process.exits").expect("exits counter");
+        let points = exits["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["sum"]
+            ["dataPoints"]
+            .as_array()
+            .expect("data points");
+        assert_eq!(points.len(), 2, "clean and unexpected are separate series");
+        let outcomes: Vec<&str> = points
+            .iter()
+            .map(|point| {
+                point["attributes"][0]["value"]["stringValue"]
+                    .as_str()
+                    .expect("outcome string")
+            })
+            .collect();
+        assert!(outcomes.contains(&"clean"));
+        assert!(outcomes.contains(&"unexpected"));
+    }
+
+    #[test]
+    fn record_heartbeat_gauges_persists_every_reviewed_gauge() {
+        let (telemetry, _directory) = test_telemetry();
+
+        telemetry.record_heartbeat_gauges(3, 5, 2, 4, 7);
+
+        let records = process_metric_records(&telemetry);
+        let assert_gauge = |name: &str, expected: &str| {
+            let metric = find_metric(&records, name).unwrap_or_else(|| panic!("{name} gauge"));
+            let point = &metric["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["gauge"]
+                ["dataPoints"][0];
+            assert_eq!(point["asInt"], expected, "{name}");
+        };
+        assert_gauge("tau.telemetry.pending_rpc_count", "3");
+        assert_gauge("tau.telemetry.controller_count", "5");
+        assert_gauge("tau.telemetry.active_controller_count", "2");
+        assert_gauge("tau.telemetry.runtime_count", "4");
+        assert_gauge("tau.telemetry.queue_length", "7");
+    }
+
+    #[test]
+    fn writer_health_records_the_failed_write_gauge_even_when_zero() {
+        let (telemetry, _directory) = test_telemetry();
+
+        telemetry.record_app_exited();
+
+        let records = process_metric_records(&telemetry);
+        let metric =
+            find_metric(&records, "tau.telemetry.failed_write_count").expect("failed-write gauge");
+        let point = &metric["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["gauge"]
+            ["dataPoints"][0];
+        assert_eq!(point["asInt"], "0");
+    }
+
+    #[test]
+    fn record_event_loop_lag_carries_only_the_two_reviewed_dimensions() {
+        let (telemetry, _directory) = test_telemetry();
+
+        telemetry.record_event_loop_lag(
+            42.0,
+            &[
+                KeyValue::new("tau.heartbeat.visibility", "hidden"),
+                KeyValue::new("tau.heartbeat.focused", "false"),
+            ],
+        );
+
+        let records = process_metric_records(&telemetry);
+        let metric = find_metric(&records, "tau.frontend.event_loop_lag").expect("lag histogram");
+        let point = &metric["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["histogram"]
+            ["dataPoints"][0];
+        assert_eq!(point["sum"], 42.0);
+        let mut attribute_keys: Vec<&str> = point["attributes"]
+            .as_array()
+            .expect("attributes")
+            .iter()
+            .map(|attribute| attribute["key"].as_str().expect("key"))
+            .collect();
+        attribute_keys.sort_unstable();
+        assert_eq!(
+            attribute_keys,
+            vec!["tau.heartbeat.focused", "tau.heartbeat.visibility"]
+        );
+    }
+
+    #[test]
+    fn record_long_task_duration_persists_a_dimensionless_histogram() {
+        let (telemetry, _directory) = test_telemetry();
+
+        telemetry.record_long_task_duration(88.0);
+
+        let records = process_metric_records(&telemetry);
+        let metric =
+            find_metric(&records, "tau.frontend.long_task.duration").expect("long task histogram");
+        let point = &metric["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["histogram"]
+            ["dataPoints"][0];
+        assert_eq!(point["sum"], 88.0);
+        assert!(point["attributes"]
+            .as_array()
+            .expect("attributes")
+            .is_empty());
+    }
+
+    /// The exit check itself: every metric this module records carries no
+    /// project, session, controller, runtime, request, or trace dimension.
+    /// Exercises every recording method with attributes at least once, then
+    /// sweeps every persisted metric's data points for a forbidden key.
+    #[test]
+    fn no_metric_ever_carries_a_forbidden_high_cardinality_dimension() {
+        let (telemetry, _directory) = test_telemetry();
+
+        telemetry.record_operation_duration(attributes::PI_RPC.name, 10.0);
+        telemetry.record_rpc_failure();
+        telemetry.record_pi_process_start();
+        telemetry.record_pi_process_exit(true);
+        telemetry.record_heartbeat_gauges(1, 2, 3, 4, 5);
+        telemetry.record_telemetry_dropped_gauge(6);
+        telemetry.record_event_loop_lag(
+            1.0,
+            &[
+                KeyValue::new("tau.heartbeat.visibility", "visible"),
+                KeyValue::new("tau.heartbeat.focused", "true"),
+            ],
+        );
+        telemetry.record_long_task_duration(2.0);
+
+        let records = process_metric_records(&telemetry);
+        let forbidden = [
+            "tau.project.id",
+            "tau.session.id",
+            "tau.controller.id",
+            "tau.runtime.id",
+            "pi.generation",
+            "pi.rpc.request_id",
+            "traceId",
+            "spanId",
+        ];
+        for record in &records {
+            let encoded = record.to_string();
+            for key in forbidden {
+                assert!(
+                    !encoded.contains(key),
+                    "a metric record contained the forbidden dimension {key}: {encoded}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn process_lifecycle_persists_runtime_and_optional_generation() {
         let (telemetry, _directory) = test_telemetry();
@@ -994,6 +1468,30 @@ mod tests {
             .iter()
             .any(|attribute| attribute["key"] == "pi.generation"
                 && attribute["value"]["intValue"] == "2"));
+    }
+
+    #[test]
+    fn malformed_reader_events_increment_their_counter() {
+        let (telemetry, _directory) = test_telemetry();
+
+        telemetry.record_reader_event(
+            "pi.reader.line_dropped",
+            "runtime-1",
+            Some(2),
+            &[(
+                "tau.reader.drop_reason",
+                opentelemetry::Value::String("malformed".into()),
+            )],
+        );
+
+        let records = process_metric_records(&telemetry);
+        let metric =
+            find_metric(&records, "tau.pi_reader.malformed_lines").expect("malformed line counter");
+        assert_eq!(
+            metric["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["sum"]["dataPoints"][0]
+                ["asInt"],
+            "1"
+        );
     }
 
     #[test]
