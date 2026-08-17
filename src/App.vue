@@ -71,11 +71,6 @@
       </footer>
     </main>
 
-    <NotificationStack
-      :notifications="extensionNotifications"
-      @dismiss="dismissExtensionNotification"
-    />
-
     <RemoteDialog
       v-model:open="state.remoteDialogOpen"
       v-model:connection-string="state.remoteConnectionString"
@@ -106,7 +101,6 @@ import {
 
 import ComposerBar from './components/ComposerBar.vue';
 import ExtensionDialog from './components/ExtensionDialog.vue';
-import NotificationStack from './components/NotificationStack.vue';
 import ProjectSidebar from './components/ProjectSidebar.vue';
 import RemoteDialog from './components/RemoteDialog.vue';
 import SessionHeader from './components/SessionHeader.vue';
@@ -138,7 +132,6 @@ const {
   streaming,
   stopping,
   activeExtensionDialog,
-  extensionNotifications,
   sessionLoading,
   initialize,
   dispose,
@@ -149,7 +142,6 @@ const {
   sendMessage,
   submitExtensionDialog,
   cancelExtensionDialog,
-  dismissExtensionNotification,
 } = useTau();
 
 /**
@@ -159,12 +151,7 @@ const {
  */
 
 const sessionIsEmpty = computed(
-  () =>
-    canDraft.value &&
-    !sessionLoading.value &&
-    !messages.value.some(
-      (message) => message.kind === 'user' || message.kind === 'assistant',
-    ),
+  () => canDraft.value && !sessionLoading.value && messages.value.length === 0,
 );
 const showWorkingIndicator = computed(() => {
   if (stopping.value) return true;

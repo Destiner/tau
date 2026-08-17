@@ -1492,8 +1492,8 @@ describe('extension UI protocol', () => {
     tau.dispose();
   });
 
-  it('keeps extension drafts on their hidden session and ignores TUI statuses', async () => {
-    const { firstController, firstSession, project, tau } =
+  it('keeps extension drafts and notices in their owning session', async () => {
+    const { firstController, firstSession, secondController, project, tau } =
       await setupExtensionControllers();
     firstController.status = 'Tau connection warning';
 
@@ -1512,27 +1512,69 @@ describe('extension UI protocol', () => {
     });
     emitRpc(firstController, {
       type: 'extension_ui_request',
-      id: 'notify-1',
+      id: 'notify-info',
+      method: 'notify',
+      message: 'MCP servers refreshed',
+    });
+    emitRpc(firstController, {
+      type: 'extension_ui_request',
+      id: 'notify-warning',
       method: 'notify',
       message: 'Approval is ready',
       notifyType: 'warning',
     });
+    emitRpc(firstController, {
+      type: 'extension_ui_request',
+      id: 'notify-error',
+      method: 'notify',
+      message: 'MCP server failed',
+      notifyType: 'error',
+    });
 
     expect(firstController.draft).toBe('/implement');
     expect(firstController.status).toBe('Tau connection warning');
-    expect(tau.extensionNotifications.value).toEqual([
+    expect(firstController.unread).toBe(true);
+    expect(secondController.messages).toEqual([]);
+    expect(firstController.messages).toEqual([
       expect.objectContaining({
-        message: 'Approval is ready',
-        type: 'warning',
-        projectName: 'extension-ui-test',
-        sessionName: 'first',
+        kind: 'notice',
+        text: 'MCP servers refreshed',
+        noticeType: 'info',
+        basePath: '/tmp/extension-ui-test',
+      }),
+      expect.objectContaining({
+        kind: 'notice',
+        text: 'Approval is ready',
+        noticeType: 'warning',
+      }),
+      expect.objectContaining({
+        kind: 'notice',
+        text: 'MCP server failed',
+        noticeType: 'error',
       }),
     ]);
+
+    emitRpc(firstController, {
+      type: 'response',
+      id: 'hydrate-after-command',
+      command: 'get_messages',
+      success: true,
+      data: { messages: [{ role: 'user', content: 'Previous prompt' }] },
+    });
+    await vi.waitFor(() => {
+      expect(firstController.messages.map((message) => message.kind)).toEqual([
+        'user',
+        'notice',
+        'notice',
+        'notice',
+      ]);
+    });
 
     await tau.selectSession(project, firstSession);
 
     expect(tau.draft.value).toBe('/implement');
     expect(tau.status.value).toBe('');
+    expect(tau.messages.value).toBe(firstController.messages);
     tau.dispose();
   });
 

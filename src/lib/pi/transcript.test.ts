@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { TranscriptEntry } from './transcript';
 import {
   appendLocalErrors,
+  appendLocalNotices,
   hydrateTranscript,
   messageFailure,
   toolSummary,
@@ -255,6 +256,26 @@ describe('appendLocalErrors', () => {
       id: 'local-error-0',
       text: 'Auto-compaction failed: overloaded',
     });
+  });
+});
+
+describe('appendLocalNotices', () => {
+  it('keeps extension notices that Pi messages cannot carry', () => {
+    const notice: TranscriptEntry = {
+      id: 'extension-notify:1',
+      kind: 'notice',
+      text: 'MCP servers refreshed',
+      noticeType: 'info',
+    };
+    const entries = appendLocalNotices(
+      hydrateTranscript([{ role: 'user', content: 'hello' }]),
+      [notice],
+    );
+
+    expect(entries).toEqual([
+      expect.objectContaining({ kind: 'user', text: 'hello' }),
+      notice,
+    ]);
   });
 });
 

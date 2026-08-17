@@ -25,6 +25,10 @@
       d="M7 5h.01M13 5h.01M7 10h.01M13 10h.01M7 15h.01M13 15h.01"
     />
     <path
+      v-else-if="name === 'info'"
+      d="M10 17a7 7 0 1 0 0-14 7 7 0 0 0 0 14Zm0-7v4m0-8.25v.01"
+    />
+    <path
       v-else-if="name === 'plus'"
       d="M10 4v12M4 10h12"
     />
@@ -40,6 +44,10 @@
       v-else-if="name === 'trash'"
       d="M4 6h12M8 3h4l1 3H7zm-2 3 1 11h6l1-11"
     />
+    <path
+      v-else-if="name === 'warning'"
+      d="M10 3 18 17H2Zm0 5v4m0 2.25v.01"
+    />
   </svg>
 </template>
 
@@ -51,10 +59,12 @@ defineProps<{
     | 'cross'
     | 'folder'
     | 'grip'
+    | 'info'
     | 'plus'
     | 'stop'
     | 'triangle'
-    | 'trash';
+    | 'trash'
+    | 'warning';
 }>();
 </script>
 

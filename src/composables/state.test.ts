@@ -261,7 +261,6 @@ describe('buildStateSnapshot', () => {
   it('reports zero counts and an empty draft bucket for an empty workspace', async () => {
     const { buildStateSnapshot, state } = await import('./state');
     state.controllers = [];
-    state.extensionNotifications = [];
     state.extensionDialogs = [];
     state.activeControllerKey = '';
 
@@ -298,18 +297,15 @@ describe('buildStateSnapshot', () => {
         { id: '3', kind: 'tool', text: 'tau-canary-tool-message' },
         { id: '4', kind: 'thinking', text: 'tau-canary-thinking-message' },
         { id: '5', kind: 'error', text: 'tau-canary-error-message' },
+        {
+          id: '6',
+          kind: 'notice',
+          text: 'tau-canary-notification',
+          noticeType: 'info',
+        },
       ],
     });
     state.controllers = [idle, running];
-    state.extensionNotifications = [
-      {
-        key: 'n1',
-        message: 'tau-canary-notification',
-        type: 'info',
-        projectName: 'proj',
-        sessionName: 'sess',
-      },
-    ];
     state.extensionDialogs = [];
     state.activeControllerKey = 'running-1';
 

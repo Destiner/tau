@@ -79,18 +79,6 @@ interface ExtensionDialog {
   workingDirectory?: string;
 }
 
-type ExtensionNotificationType = 'info' | 'warning' | 'error';
-
-interface ExtensionNotification {
-  key: string;
-  message: string;
-  type: ExtensionNotificationType;
-  projectName: string;
-  sessionName: string;
-  /** Base for the file paths in the text; absent when the project is remote. */
-  workingDirectory?: string;
-}
-
 const effortLabels: Record<ThinkingLevel, string> = {
   off: 'Off',
   minimal: 'Minimal',
@@ -286,7 +274,6 @@ const state = reactive({
   controllers: [] as SessionController[],
   ephemeralSessions: [] as EphemeralSession[],
   extensionDialogs: [] as ExtensionDialog[],
-  extensionNotifications: [] as ExtensionNotification[],
   remoteDialogOpen: false,
   remoteDialogMode: 'add' as RemoteDialogMode,
   remoteDialogStep: 'connection' as RemoteDialogStep,
@@ -349,10 +336,6 @@ const replacementProbeTimers = new Map<
   ReturnType<typeof setTimeout>[]
 >();
 const abortProbeTimers = new Map<string, ReturnType<typeof setTimeout>>();
-const extensionNotificationTimeouts = new Map<
-  string,
-  ReturnType<typeof setTimeout>
->();
 
 const emptyMessages: TranscriptEntry[] = [];
 const emptyModels: ModelOption[] = [];
@@ -413,7 +396,6 @@ const activeExtensionDialog = computed(() => {
     (dialog) => dialog.controllerKey === controller.key,
   );
 });
-const extensionNotifications = computed(() => state.extensionNotifications);
 const currentModelProvider = computed(
   () => activeController.value?.currentModelProvider ?? '',
 );
@@ -1066,6 +1048,7 @@ function buildStateSnapshot(): StateSnapshot {
   };
   let activeControllerCount = 0;
   let runtimeCount = 0;
+  let notificationCount = 0;
   for (const controller of state.controllers) {
     if (classifyControllerLifecycle(controller) !== 'idle') {
       activeControllerCount = Math.min(
@@ -1077,6 +1060,13 @@ function buildStateSnapshot(): StateSnapshot {
       runtimeCount = Math.min(MAX_STATE_SUMMARY_COUNT, runtimeCount + 1);
     }
     for (const message of controller.messages) {
+      if (message.kind === 'notice') {
+        notificationCount = Math.min(
+          MAX_STATE_SUMMARY_COUNT,
+          notificationCount + 1,
+        );
+        continue;
+      }
       transcriptCounts[message.kind] = Math.min(
         MAX_STATE_SUMMARY_COUNT,
         transcriptCounts[message.kind] + 1,
@@ -1091,10 +1081,7 @@ function buildStateSnapshot(): StateSnapshot {
     ),
     runtimeCount,
     activeControllerCount,
-    notificationCount: Math.min(
-      MAX_STATE_SUMMARY_COUNT,
-      state.extensionNotifications.length,
-    ),
+    notificationCount,
     dialogCount: Math.min(
       MAX_STATE_SUMMARY_COUNT,
       state.extensionDialogs.length,
@@ -1116,8 +1103,6 @@ export type {
   RemoteDirectoryListing,
   ExtensionDialogMethod,
   ExtensionDialog,
-  ExtensionNotificationType,
-  ExtensionNotification,
   SessionIndicator,
   EphemeralSession,
   PendingPrompt,
@@ -1141,7 +1126,6 @@ export {
   extensionDialogTimeouts,
   replacementProbeTimers,
   abortProbeTimers,
-  extensionNotificationTimeouts,
   emptyMessages,
   emptyModels,
   emptyEfforts,
@@ -1158,7 +1142,6 @@ export {
   efforts,
   commands,
   activeExtensionDialog,
-  extensionNotifications,
   currentModelProvider,
   currentModelId,
   currentEffort,

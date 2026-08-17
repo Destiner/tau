@@ -1,8 +1,13 @@
+type TranscriptNoticeType = 'info' | 'warning' | 'error';
+
 interface TranscriptEntry {
   id: string;
   /** An `error` entry holds Pi's own error string in `text`, unparsed. */
-  kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'error';
+  kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'error' | 'notice';
   text: string;
+  noticeType?: TranscriptNoticeType;
+  /** Base for file paths in extension notices; absent for remote projects. */
+  basePath?: string;
   toolCallId?: string;
   toolName?: string;
   toolRunning?: boolean;
@@ -185,6 +190,23 @@ function appendLocalErrors(
   return entries;
 }
 
+/**
+ * Carries extension notices across `get_messages`, whose Pi-owned transcript
+ * cannot contain fire-and-forget extension UI events.
+ */
+function appendLocalNotices(
+  entries: TranscriptEntry[],
+  previous: TranscriptEntry[],
+): TranscriptEntry[] {
+  const ids = new Set(entries.map((entry) => entry.id));
+  for (const entry of previous) {
+    if (entry.kind !== 'notice' || ids.has(entry.id)) continue;
+    entries.push(entry);
+    ids.add(entry.id);
+  }
+  return entries;
+}
+
 /** The single line a collapsed tool row shows: whichever argument names the call. */
 function toolSummary(args: unknown): string {
   const record = asRecord(args);
@@ -251,12 +273,13 @@ function compactJson(value: unknown): string {
   }
 }
 
-export type { TranscriptEntry };
+export type { TranscriptEntry, TranscriptNoticeType };
 
 export {
   hydrateTranscript,
   messageFailure,
   appendLocalErrors,
+  appendLocalNotices,
   toolSummary,
   toolArgumentsText,
   toolResultText,

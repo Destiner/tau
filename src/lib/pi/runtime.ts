@@ -19,7 +19,6 @@ import {
   draftTitle,
   ephemeralSessionByController,
   extensionDialogTimeouts,
-  extensionNotificationTimeouts,
   finishRemoteConnection,
   firstUserMessage,
   idleRuntimeLimit,
@@ -38,8 +37,6 @@ import {
   type EphemeralSession,
   type ExtensionDialog,
   type ExtensionDialogMethod,
-  type ExtensionNotification,
-  type ExtensionNotificationType,
   type ProjectSummary,
   type SessionController,
   type WorkspaceSnapshot,
@@ -59,6 +56,7 @@ import { describePiError } from './error';
 import type { ModelOption } from './model-scope';
 import {
   appendLocalErrors,
+  appendLocalNotices,
   asRecord,
   hydrateTranscript,
   messageFailure,
@@ -66,6 +64,7 @@ import {
   toolArgumentsText,
   toolResultText,
   toolSummary,
+  type TranscriptNoticeType,
 } from './transcript';
 
 async function sendPhantomMessage(
@@ -601,28 +600,18 @@ function handleExtensionUIRequest(
   }
 
   if (method === 'notify' && typeof request.message === 'string') {
+    const id = `extension-notify:${extensionRequestKey(controller, requestId)}`;
+    if (controller.messages.some((message) => message.id === id)) return;
+
     const origin = extensionRequestOrigin(controller);
-    const type = extensionNotificationType(request.notifyType);
-    const notification: ExtensionNotification = {
-      key: extensionRequestKey(controller, requestId),
-      message: request.message,
-      type,
-      projectName: origin.projectName,
-      sessionName: origin.sessionName,
-      ...(origin.workingDirectory
-        ? { workingDirectory: origin.workingDirectory }
-        : {}),
-    };
-    dismissExtensionNotification(notification.key);
-    state.extensionNotifications.push(notification);
-    while (state.extensionNotifications.length > 4) {
-      const oldest = state.extensionNotifications[0];
-      if (oldest) dismissExtensionNotification(oldest.key);
-    }
-    extensionNotificationTimeouts.set(
-      notification.key,
-      setTimeout(() => dismissExtensionNotification(notification.key), 8_000),
-    );
+    controller.messages.push({
+      id,
+      kind: 'notice',
+      text: request.message,
+      noticeType: extensionNotifyType(request.notifyType),
+      ...(origin.workingDirectory ? { basePath: origin.workingDirectory } : {}),
+    });
+    if (!isControllerSelected(controller)) controller.unread = true;
     return;
   }
 
@@ -653,7 +642,7 @@ function extensionDialogTitle(method: ExtensionDialogMethod): string {
   return 'Edit text';
 }
 
-function extensionNotificationType(value: unknown): ExtensionNotificationType {
+function extensionNotifyType(value: unknown): TranscriptNoticeType {
   return value === 'warning' || value === 'error' ? value : 'info';
 }
 
@@ -716,25 +705,10 @@ function discardControllerDialogs(
   }
 }
 
-function dismissExtensionNotification(key: string): void {
-  const timeout = extensionNotificationTimeouts.get(key);
-  if (timeout) clearTimeout(timeout);
-  extensionNotificationTimeouts.delete(key);
-  const index = state.extensionNotifications.findIndex(
-    (notification) => notification.key === key,
-  );
-  if (index >= 0) state.extensionNotifications.splice(index, 1);
-}
-
 function clearExtensionUiState(): void {
   for (const timeout of extensionDialogTimeouts.values()) clearTimeout(timeout);
   extensionDialogTimeouts.clear();
   state.extensionDialogs.splice(0);
-  for (const timeout of extensionNotificationTimeouts.values()) {
-    clearTimeout(timeout);
-  }
-  extensionNotificationTimeouts.clear();
-  state.extensionNotifications.splice(0);
 }
 
 async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
@@ -1232,12 +1206,16 @@ async function handleResponse(
   }
 
   if (command === 'get_messages' && data) {
-    controller.messages = appendLocalErrors(
-      hydrateTranscript(
-        Array.isArray(data.messages) ? data.messages : [],
-        controller.messages,
+    const previous = controller.messages;
+    controller.messages = appendLocalNotices(
+      appendLocalErrors(
+        hydrateTranscript(
+          Array.isArray(data.messages) ? data.messages : [],
+          previous,
+        ),
+        controller.localErrors,
       ),
-      controller.localErrors,
+      previous,
     );
     const pending = controller.pendingPrompt;
     const resolvesPending =
@@ -1977,12 +1955,11 @@ export {
   handleExtensionUIRequest,
   isExtensionDialogMethod,
   extensionDialogTitle,
-  extensionNotificationType,
+  extensionNotifyType,
   extensionRequestOrigin,
   extensionRequestKey,
   discardExtensionDialog,
   discardControllerDialogs,
-  dismissExtensionNotification,
   clearExtensionUiState,
   handleBridgeEvent,
   handleRpc,
