@@ -11,6 +11,18 @@ function createLongTranscript(count = 5_000): TranscriptEntry[] {
 }
 
 function createMessage(index: number): TranscriptEntry {
+  if (index === 4_998) {
+    return {
+      id: 'fixture-skill-4998',
+      kind: 'skill',
+      skillName: 'desktop-app-native-feel',
+      skillPrompt: 'Focus on keyboard behavior and perceived performance',
+      text: `# Native feel audit
+
+Inspect selection, scrolling, keyboard behavior, window behavior, and perceived performance.`,
+    };
+  }
+
   const variant = index % 6;
   if (variant === 0) {
     return {

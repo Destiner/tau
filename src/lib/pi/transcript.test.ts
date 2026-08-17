@@ -6,6 +6,7 @@ import {
   appendLocalNotices,
   hydrateTranscript,
   messageFailure,
+  parseSkillBlock,
   toolSummary,
 } from './transcript';
 
@@ -73,6 +74,70 @@ describe('hydrateTranscript', () => {
       { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
     ]);
     expect(result[0]?.text).toBe('Hello');
+  });
+
+  it('keeps a skill invocation and its prompt in one entry', () => {
+    const result = hydrateTranscript([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: `<skill name="pr-review" location="/skills/pr-review/SKILL.md">
+References are relative to /skills/pr-review.
+
+# PR review
+
+Review the active branch.
+</skill>
+
+Focus on correctness`,
+          },
+        ],
+      },
+    ]);
+
+    expect(result).toMatchObject([
+      {
+        kind: 'skill',
+        skillName: 'pr-review',
+        skillPrompt: 'Focus on correctness',
+        text: `References are relative to /skills/pr-review.
+
+# PR review
+
+Review the active branch.`,
+      },
+    ]);
+  });
+
+  it('carries an optimistic skill id into the expanded message', () => {
+    const previous: TranscriptEntry[] = [
+      {
+        id: 'optimistic-user-1',
+        kind: 'skill',
+        skillName: 'pr-review',
+        text: '',
+      },
+    ];
+    const result = hydrateTranscript(
+      [
+        {
+          role: 'user',
+          content: `<skill name="pr-review" location="/skills/pr-review/SKILL.md">
+Full instructions
+</skill>`,
+        },
+      ],
+      previous,
+    );
+
+    expect(result[0]).toMatchObject({
+      id: 'optimistic-user-1',
+      kind: 'skill',
+      skillName: 'pr-review',
+      text: 'Full instructions',
+    });
   });
 
   it('carries streamed ids into the settled turn', () => {
@@ -276,6 +341,15 @@ describe('appendLocalNotices', () => {
       expect.objectContaining({ kind: 'user', text: 'hello' }),
       notice,
     ]);
+  });
+});
+
+describe('parseSkillBlock', () => {
+  it('rejects ordinary user text and malformed envelopes', () => {
+    expect(parseSkillBlock('Use the review skill')).toBeUndefined();
+    expect(
+      parseSkillBlock('<skill name="review">missing location</skill>'),
+    ).toBeUndefined();
   });
 });
 

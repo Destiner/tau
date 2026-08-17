@@ -63,11 +63,17 @@
                 :text="messageAt(virtualRow.index)?.text ?? ''"
                 :base-path="messageAt(virtualRow.index)?.basePath"
               />
+              <SkillInvocation
+                v-else-if="messageAt(virtualRow.index)?.kind === 'skill'"
+                :entry="messageAt(virtualRow.index)!"
+                :expanded="isEntryExpanded(virtualRow.index)"
+                @toggle="() => toggleEntry(virtualRow.index)"
+              />
               <ToolCall
                 v-else
                 :entry="messageAt(virtualRow.index)!"
-                :expanded="isToolExpanded(virtualRow.index)"
-                @toggle="() => toggleTool(virtualRow.index)"
+                :expanded="isEntryExpanded(virtualRow.index)"
+                @toggle="() => toggleEntry(virtualRow.index)"
               />
             </article>
 
@@ -101,6 +107,7 @@ import {
 import type { TranscriptEntry } from '../lib/pi/transcript';
 
 import ErrorNotice from './ErrorNotice.vue';
+import SkillInvocation from './SkillInvocation.vue';
 import ToolCall from './ToolCall.vue';
 import TranscriptNotice from './TranscriptNotice.vue';
 import MarkdownText from './ui/MarkdownText.vue';
@@ -117,11 +124,10 @@ const transcript = ref<HTMLElement>();
 const workingRowKey = 'tau-working-indicator';
 
 /**
- * Which tool rows are open, held by message id rather than in the row itself:
- * the virtualizer unmounts a row the reader scrolls away from, and an opened
- * call should still be open when they scroll back to it.
+ * Which activity rows are open, held by message id rather than in the row
+ * itself: the virtualizer unmounts rows the reader scrolls away from.
  */
-const expandedTools = ref(new Set<string>());
+const expandedEntries = ref(new Set<string>());
 
 /** How far from the end the reader may sit and still be counted as following. */
 const followThreshold = 48;
@@ -235,17 +241,17 @@ function messageAt(index: number): TranscriptEntry | undefined {
   return props.messages[index];
 }
 
-function isToolExpanded(index: number): boolean {
+function isEntryExpanded(index: number): boolean {
   const id = messageAt(index)?.id;
-  return id ? expandedTools.value.has(id) : false;
+  return id ? expandedEntries.value.has(id) : false;
 }
 
-function toggleTool(index: number): void {
+function toggleEntry(index: number): void {
   const id = messageAt(index)?.id;
   if (!id) return;
-  const next = new Set(expandedTools.value);
+  const next = new Set(expandedEntries.value);
   if (!next.delete(id)) next.add(id);
-  expandedTools.value = next;
+  expandedEntries.value = next;
 }
 
 function isCompact(index: number): boolean {
@@ -256,13 +262,13 @@ function isCompact(index: number): boolean {
 
 function isActivity(
   kind: TranscriptEntry['kind'] | undefined,
-): kind is 'thinking' | 'tool' {
-  return kind === 'thinking' || kind === 'tool';
+): kind is 'thinking' | 'tool' | 'skill' {
+  return kind === 'thinking' || kind === 'tool' || kind === 'skill';
 }
 
 function estimateRowSize(message: TranscriptEntry | undefined): number {
   if (!message) return 42;
-  if (message.kind === 'tool') return 58;
+  if (message.kind === 'tool' || message.kind === 'skill') return 58;
   if (message.kind === 'error' || message.kind === 'notice') return 88;
   if (message.kind === 'user') return 76;
   if (message.kind === 'thinking') return 112;
@@ -336,7 +342,8 @@ defineExpose({ scrollToEnd });
 }
 
 .message.thinking,
-.message.tool {
+.message.tool,
+.message.skill {
   margin-right: 32px;
   margin-left: 20px;
 }

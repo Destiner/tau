@@ -25,6 +25,35 @@ test('renders a long transcript without pagination controls or an oversized DOM'
   expect(await page.locator('.message').count()).toBeLessThan(50);
 });
 
+test('shows skill use as a collapsed expandable block', async ({ page }) => {
+  const skill = page.locator('[data-message-id="fixture-skill-4998"]');
+  const header = skill.locator('.skill-header');
+
+  await expect(skill.locator('.skill-label')).toHaveText('skill');
+  await expect(skill.locator('.skill-title')).toHaveText(
+    'desktop-app-native-feel',
+  );
+  await expect(header).not.toContainText(
+    'Focus on keyboard behavior and perceived performance',
+  );
+  await expect(header).toHaveAttribute('aria-expanded', 'false');
+  await expect(skill.locator('.skill-details')).toHaveCount(0);
+
+  await header.click();
+
+  await expect(header).toHaveAttribute('aria-expanded', 'true');
+  await expect(skill.locator('.skill-detail-label')).toHaveText([
+    'Prompt',
+    'Instructions',
+  ]);
+  await expect(skill.locator('.skill-details')).toContainText(
+    'Focus on keyboard behavior and perceived performance',
+  );
+  await expect(skill.locator('.skill-details')).toContainText(
+    'Inspect selection, scrolling, keyboard behavior',
+  );
+});
+
 test('opens a tool call in place and keeps it open across virtualization', async ({
   page,
 }) => {

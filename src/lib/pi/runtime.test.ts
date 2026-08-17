@@ -123,6 +123,96 @@ beforeEach(async () => {
   vi.mocked(telemetry.startRpcSpan).mockClear();
 });
 
+describe('skill transcript events', () => {
+  it('optimistically keeps a known skill and its prompt together', async () => {
+    const { appendOptimisticPrompt } = await import('./runtime');
+    const controller = makeController({
+      commands: [
+        {
+          name: 'skill:pr-review',
+          source: 'skill',
+          description: 'Review a PR',
+        },
+      ],
+    });
+
+    appendOptimisticPrompt(
+      controller,
+      '/skill:pr-review Focus on correctness',
+      'optimistic-1',
+    );
+
+    expect(controller.messages).toEqual([
+      {
+        id: 'optimistic-1',
+        kind: 'skill',
+        text: '',
+        skillName: 'pr-review',
+        skillPrompt: 'Focus on correctness',
+      },
+    ]);
+  });
+
+  it('upgrades a raw optimistic command when command metadata arrived late', async () => {
+    const { appendOptimisticPrompt, handleRpc } = await import('./runtime');
+    const controller = makeController();
+    appendOptimisticPrompt(
+      controller,
+      '/skill:pr-review Focus on correctness',
+      'optimistic-user-1',
+    );
+
+    await handleRpc(controller, {
+      type: 'message_start',
+      message: {
+        role: 'user',
+        content: `<skill name="pr-review" location="/skills/pr-review/SKILL.md">
+Full review instructions
+</skill>
+
+Focus on correctness`,
+      },
+    });
+
+    expect(controller.messages).toMatchObject([
+      {
+        id: 'optimistic-user-1',
+        kind: 'skill',
+        text: 'Full review instructions',
+        skillName: 'pr-review',
+        skillPrompt: 'Focus on correctness',
+      },
+    ]);
+  });
+
+  it('fills optimistic skill details from the user message event', async () => {
+    const { appendOptimisticPrompt, handleRpc } = await import('./runtime');
+    const controller = makeController({
+      commands: [{ name: 'skill:pr-review', source: 'skill' }],
+    });
+    appendOptimisticPrompt(controller, '/skill:pr-review', 'optimistic-1');
+
+    await handleRpc(controller, {
+      type: 'message_start',
+      message: {
+        role: 'user',
+        content: `<skill name="pr-review" location="/skills/pr-review/SKILL.md">
+Full review instructions
+</skill>`,
+      },
+    });
+
+    expect(controller.messages).toEqual([
+      {
+        id: 'optimistic-1',
+        kind: 'skill',
+        text: 'Full review instructions',
+        skillName: 'pr-review',
+      },
+    ]);
+  });
+});
+
 describe('Pi RPC span lifecycle', () => {
   it('never passes RPC request content into telemetry on successful sends', async () => {
     const telemetry = await import('../telemetry');

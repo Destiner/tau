@@ -3,7 +3,8 @@ type TranscriptNoticeType = 'info' | 'warning' | 'error';
 interface TranscriptEntry {
   id: string;
   /** An `error` entry holds Pi's own error string in `text`, unparsed. */
-  kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'error' | 'notice';
+  kind:
+    'user' | 'assistant' | 'thinking' | 'tool' | 'skill' | 'error' | 'notice';
   text: string;
   noticeType?: TranscriptNoticeType;
   /** Base for file paths in extension notices; absent for remote projects. */
@@ -14,6 +15,15 @@ interface TranscriptEntry {
   toolErrored?: boolean;
   toolArguments?: string;
   toolResult?: string;
+  skillName?: string;
+  skillPrompt?: string;
+}
+
+interface ParsedSkillBlock {
+  name: string;
+  location: string;
+  content: string;
+  userMessage?: string;
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -45,7 +55,18 @@ function hydrateTranscript(
 
     if (role === 'user') {
       const text = contentText(message.content);
-      if (text) entries.push({ id: '', kind: 'user', text });
+      const skill = parseSkillBlock(text);
+      if (skill) {
+        entries.push({
+          id: '',
+          kind: 'skill',
+          text: skill.content,
+          skillName: skill.name,
+          ...(skill.userMessage ? { skillPrompt: skill.userMessage } : {}),
+        });
+      } else if (text) {
+        entries.push({ id: '', kind: 'user', text });
+      }
       continue;
     }
 
@@ -164,6 +185,7 @@ function holdsSameRow(
   candidate: TranscriptEntry,
 ): boolean {
   if (entry.kind !== candidate.kind) return false;
+  if (entry.kind === 'skill') return entry.skillName === candidate.skillName;
   if (!entry.toolCallId || !candidate.toolCallId) return true;
   return entry.toolCallId === candidate.toolCallId;
 }
@@ -205,6 +227,21 @@ function appendLocalNotices(
     ids.add(entry.id);
   }
   return entries;
+}
+
+/** Parses the exact user-message envelope Pi records for `/skill:name`. */
+function parseSkillBlock(text: string): ParsedSkillBlock | undefined {
+  const match =
+    /^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n([\s\S]+))?$/.exec(
+      text,
+    );
+  if (!match) return undefined;
+  return {
+    name: match[1] ?? '',
+    location: match[2] ?? '',
+    content: match[3] ?? '',
+    ...(match[4]?.trim() ? { userMessage: match[4].trim() } : {}),
+  };
 }
 
 /** The single line a collapsed tool row shows: whichever argument names the call. */
@@ -273,10 +310,11 @@ function compactJson(value: unknown): string {
   }
 }
 
-export type { TranscriptEntry, TranscriptNoticeType };
+export type { ParsedSkillBlock, TranscriptEntry, TranscriptNoticeType };
 
 export {
   hydrateTranscript,
+  parseSkillBlock,
   messageFailure,
   appendLocalErrors,
   appendLocalNotices,

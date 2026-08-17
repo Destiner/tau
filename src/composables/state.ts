@@ -885,9 +885,12 @@ function nextControllerKey(): string {
 }
 
 function firstUserMessage(controller: SessionController | undefined): string {
-  return (
-    controller?.messages.find((message) => message.kind === 'user')?.text ?? ''
+  const entry = controller?.messages.find(
+    (message) => message.kind === 'user' || message.kind === 'skill',
   );
+  return entry?.kind === 'skill'
+    ? `/skill:${entry.skillName || 'skill'}`
+    : (entry?.text ?? '');
 }
 
 function clearActiveSession(): void {
@@ -1067,9 +1070,10 @@ function buildStateSnapshot(): StateSnapshot {
         );
         continue;
       }
-      transcriptCounts[message.kind] = Math.min(
+      const countedKind = message.kind === 'skill' ? 'user' : message.kind;
+      transcriptCounts[countedKind] = Math.min(
         MAX_STATE_SUMMARY_COUNT,
-        transcriptCounts[message.kind] + 1,
+        transcriptCounts[countedKind] + 1,
       );
     }
   }

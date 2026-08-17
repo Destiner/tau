@@ -5,6 +5,7 @@ import type { PiBridgeEvent } from '../lib/pi/bridge';
 import type { ThinkingLevel } from '../lib/pi/model-scope';
 import {
   applySessionName,
+  appendOptimisticPrompt,
   cancelExtensionDialog as sendExtensionDialogCancellation,
   cancelPendingPrompt,
   clearAbortWatch,
@@ -588,11 +589,11 @@ function useTau() {
         actionSpan.context,
       );
       if (!command) {
-        controller.messages.push({
-          id: `optimistic-user-${Date.now()}`,
-          kind: 'user',
-          text: message,
-        });
+        appendOptimisticPrompt(
+          controller,
+          message,
+          `optimistic-user-${Date.now()}`,
+        );
       }
       controller.status = '';
       try {

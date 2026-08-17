@@ -58,8 +58,10 @@ import {
   appendLocalErrors,
   appendLocalNotices,
   asRecord,
+  contentText,
   hydrateTranscript,
   messageFailure,
+  parseSkillBlock,
   stringValue,
   toolArgumentsText,
   toolResultText,
@@ -100,9 +102,7 @@ async function sendPhantomMessage(
     'phantom_prompt_start',
     parentContext,
   );
-  if (!command) {
-    controller.messages.push({ id: optimisticId, kind: 'user', text: message });
-  }
+  if (!command) appendOptimisticPrompt(controller, message, optimisticId);
   controller.status = '';
 
   if (controller.ready && controller.generation) {
@@ -823,6 +823,57 @@ async function handleRpc(
     await rpc(controller, { id: stateRequestId, type: 'get_state' });
     return;
   }
+  if (type === 'message_start') {
+    const message = asRecord(event.message);
+    if (stringValue(message?.role) !== 'user') return;
+    const skill = parseSkillBlock(contentText(message?.content));
+    if (!skill) return;
+
+    const optimistic = [...controller.messages]
+      .reverse()
+      .find(
+        (entry) =>
+          entry.kind === 'skill' &&
+          entry.skillName === skill.name &&
+          !entry.text,
+      );
+    if (optimistic) {
+      optimistic.text = skill.content;
+      optimistic.skillPrompt = skill.userMessage;
+      return;
+    }
+
+    const invocation = `/skill:${skill.name}`;
+    const rawOptimistic = [...controller.messages]
+      .reverse()
+      .find(
+        (entry) =>
+          entry.kind === 'user' &&
+          entry.id.startsWith('optimistic-user-') &&
+          (entry.text === invocation ||
+            entry.text.startsWith(`${invocation} `)),
+      );
+    if (rawOptimistic) {
+      const index = controller.messages.indexOf(rawOptimistic);
+      controller.messages.splice(index, 1, {
+        id: rawOptimistic.id,
+        kind: 'skill',
+        text: skill.content,
+        skillName: skill.name,
+        ...(skill.userMessage ? { skillPrompt: skill.userMessage } : {}),
+      });
+      return;
+    }
+
+    controller.messages.push({
+      id: `stream-skill-${controller.streamSequence++}`,
+      kind: 'skill',
+      text: skill.content,
+      skillName: skill.name,
+      ...(skill.userMessage ? { skillPrompt: skill.userMessage } : {}),
+    });
+    return;
+  }
   if (type === 'message_update') {
     const delta = asRecord(event.assistantMessageEvent);
     const deltaType = stringValue(delta?.type);
@@ -1413,11 +1464,7 @@ async function dispatchPendingPrompt(
     !prompt.command &&
     !controller.messages.some((message) => message.id === prompt.optimisticId)
   ) {
-    controller.messages.push({
-      id: prompt.optimisticId,
-      kind: 'user',
-      text: prompt.message,
-    });
+    appendOptimisticPrompt(controller, prompt.message, prompt.optimisticId);
   }
   try {
     const requestId = nextRequestId('prompt');
@@ -1547,6 +1594,44 @@ function unstoppedStatus(controller: SessionController): string {
   return tool?.toolName
     ? `Pi is still running ${tool.toolName} and stops once it returns.`
     : 'Pi has not stopped yet and stops once its current work finishes.';
+}
+
+function appendOptimisticPrompt(
+  controller: SessionController,
+  message: string,
+  id: string,
+): void {
+  const invocation = skillInvocation(controller, message);
+  if (!invocation) {
+    controller.messages.push({ id, kind: 'user', text: message });
+    return;
+  }
+
+  controller.messages.push({
+    id,
+    kind: 'skill',
+    text: '',
+    skillName: invocation.name,
+    ...(invocation.userMessage ? { skillPrompt: invocation.userMessage } : {}),
+  });
+}
+
+function skillInvocation(
+  controller: SessionController,
+  message: string,
+): { name: string; userMessage: string } | undefined {
+  if (!message.startsWith('/')) return undefined;
+  const space = message.indexOf(' ');
+  const commandName = space < 0 ? message.slice(1) : message.slice(1, space);
+  const command = controller.commands.find(
+    (candidate) =>
+      candidate.name === commandName && candidate.source === 'skill',
+  );
+  if (!command) return undefined;
+  return {
+    name: commandName.slice('skill:'.length),
+    userMessage: space < 0 ? '' : message.slice(space + 1).trim(),
+  };
 }
 
 function invokesExtensionCommand(
@@ -1977,6 +2062,8 @@ export {
   probeAbort,
   clearAbortWatch,
   unstoppedStatus,
+  appendOptimisticPrompt,
+  skillInvocation,
   invokesExtensionCommand,
   applySessionName,
   persistSessionName,
