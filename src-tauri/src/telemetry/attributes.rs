@@ -178,14 +178,24 @@ pub const TAURI_INVOKE_COMMANDS: &[&str] = &[
     "stop_pi",
 ];
 
+pub const TAURI_INVOKE_OUTCOMES: &[&str] = &["success", "error"];
+
 pub const TAURI_INVOKE: RecordFamily = RecordFamily {
     name: "tauri.invoke",
-    attributes: &[AttributeSpec {
-        key: "tau.invoke.command",
-        kind: AttributeKind::Str,
-        max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
-        metric_safe: true,
-    }],
+    attributes: &[
+        AttributeSpec {
+            key: "tau.invoke.command",
+            kind: AttributeKind::Str,
+            max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.invoke.outcome",
+            kind: AttributeKind::Str,
+            max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+            metric_safe: true,
+        },
+    ],
 };
 
 /// Categorical values for `pi.rpc.method`: every request `type` Tau sends
@@ -323,6 +333,136 @@ pub const APP_LIFECYCLE: RecordFamily = RecordFamily {
     attributes: &[],
 };
 
+/// Categorical values for `tau.reader.drop_reason`: why `pi.rs` discarded a
+/// line from Pi's stdout without forwarding it.
+pub const PI_READER_DROP_REASONS: &[&str] = &["oversized", "invalid_utf8", "malformed"];
+
+/// Categorical values for `tau.reader.error_kind`: a bounded subset of
+/// `std::io::ErrorKind` variants a Pi stdout/stderr reader can observe.
+/// Never the OS's own error message, which can be arbitrary.
+pub const PI_READER_ERROR_KINDS: &[&str] =
+    &["broken_pipe", "interrupted", "unexpected_eof", "other"];
+
+/// Categorical values for `tau.event.kind`: the `pi-event` kinds `pi.rs` can
+/// fail to emit to the frontend.
+pub const PI_EVENT_KINDS: &[&str] = &["started", "rpc", "stderr", "error", "exited"];
+
+/// Reader failures, malformed/oversized lines, and failed `pi-event`
+/// emission — all native-only diagnostics about `pi.rs`'s own reading and
+/// event-forwarding machinery, distinct from `pi.process.lifecycle`'s
+/// resolve/start/stop/exit events.
+pub const PI_READER: RecordFamily = RecordFamily {
+    name: "pi.reader",
+    attributes: &[
+        AttributeSpec {
+            key: "tau.reader.drop_reason",
+            kind: AttributeKind::Str,
+            max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.reader.error_kind",
+            kind: AttributeKind::Str,
+            max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.event.kind",
+            kind: AttributeKind::Str,
+            max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+            metric_safe: true,
+        },
+    ],
+};
+
+/// Telemetry-pipeline health: the frontend's bounded-queue drop count and
+/// the native store's writer-failure count. The frontend only ever reports
+/// its own counter; the native counter is recorded natively (see
+/// `Telemetry::record_writer_health`) and never accepted from the frontend
+/// (`ingest.rs`'s `required_attributes` only requires the dropped-count key).
+pub const TELEMETRY_HEALTH: RecordFamily = RecordFamily {
+    name: "telemetry.health",
+    attributes: &[
+        AttributeSpec {
+            key: "tau.telemetry.dropped_count",
+            kind: AttributeKind::I64,
+            max_len: None,
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.telemetry.failed_write_count",
+            kind: AttributeKind::I64,
+            max_len: None,
+            metric_safe: true,
+        },
+    ],
+};
+
+/// A Rust panic. Carries only a sanitized `basename:line:column` source
+/// location — never the panic message, which can contain arbitrary content.
+pub const RUST_PANIC: RecordFamily = RecordFamily {
+    name: "rust.panic",
+    attributes: &[AttributeSpec {
+        key: "tau.error.location",
+        kind: AttributeKind::Str,
+        max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+        metric_safe: false,
+    }],
+};
+
+/// Categorical values for `tau.error.source`: which frontend capture point
+/// produced a `frontend.error` record.
+pub const FRONTEND_ERROR_SOURCES: &[&str] = &[
+    "window_error",
+    "unhandled_rejection",
+    "vue_error",
+    "console_error",
+];
+
+/// Categorical values for `tau.error.kind`: a thrown/rejected value's
+/// constructor name, bounded to JavaScript's built-in error types plus
+/// `other`/`none`. Never the error's own message.
+pub const FRONTEND_ERROR_KINDS: &[&str] = &[
+    "Error",
+    "TypeError",
+    "RangeError",
+    "ReferenceError",
+    "SyntaxError",
+    "EvalError",
+    "URIError",
+    "other",
+    "none",
+];
+
+/// `window.error`, `unhandledrejection`, Vue errors, and sanitized
+/// `console.error` calls captured from the frontend. Never the thrown
+/// value's message or a serialized object — only its bounded category and a
+/// sanitized source location (`tau.error.location`, not metric-safe: many
+/// distinct call sites would make it high-cardinality as a dimension).
+pub const FRONTEND_ERROR: RecordFamily = RecordFamily {
+    name: "frontend.error",
+    attributes: &[
+        AttributeSpec {
+            key: "tau.error.source",
+            kind: AttributeKind::Str,
+            max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.error.kind",
+            kind: AttributeKind::Str,
+            max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.error.location",
+            kind: AttributeKind::Str,
+            max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+            metric_safe: false,
+        },
+    ],
+};
+
 pub const FAMILIES: &[&RecordFamily] = &[
     &UI_ACTION,
     &TAURI_INVOKE,
@@ -331,6 +471,10 @@ pub const FAMILIES: &[&RecordFamily] = &[
     &CONTROLLER_LIFECYCLE,
     &PI_PROCESS_LIFECYCLE,
     &APP_LIFECYCLE,
+    &PI_READER,
+    &TELEMETRY_HEALTH,
+    &RUST_PANIC,
+    &FRONTEND_ERROR,
 ];
 
 pub fn find_family(name: &str) -> Option<&'static RecordFamily> {
@@ -368,10 +512,16 @@ fn categorical_values(key: &str) -> Option<&'static [&'static str]> {
     match key {
         "tau.action.name" => Some(UI_ACTION_NAMES),
         "tau.invoke.command" => Some(TAURI_INVOKE_COMMANDS),
+        "tau.invoke.outcome" => Some(TAURI_INVOKE_OUTCOMES),
         "pi.rpc.method" => Some(PI_RPC_METHODS),
         "pi.rpc.outcome" => Some(PI_RPC_OUTCOMES),
         "tau.process.stop_reason" => Some(PI_PROCESS_STOP_REASONS),
         "tau.process.resolution" => Some(PI_PROCESS_RESOLUTIONS),
+        "tau.reader.drop_reason" => Some(PI_READER_DROP_REASONS),
+        "tau.reader.error_kind" => Some(PI_READER_ERROR_KINDS),
+        "tau.event.kind" => Some(PI_EVENT_KINDS),
+        "tau.error.source" => Some(FRONTEND_ERROR_SOURCES),
+        "tau.error.kind" => Some(FRONTEND_ERROR_KINDS),
         _ => None,
     }
 }
@@ -553,13 +703,23 @@ mod tests {
     }
 
     #[test]
-    fn validate_accepts_every_reviewed_invoke_command() {
+    fn validate_accepts_every_reviewed_invoke_command_and_outcome() {
         for command in TAURI_INVOKE_COMMANDS {
             assert_eq!(
                 validate(
                     "tauri.invoke",
                     "tau.invoke.command",
                     &Value::String((*command).into())
+                ),
+                Ok(())
+            );
+        }
+        for outcome in TAURI_INVOKE_OUTCOMES {
+            assert_eq!(
+                validate(
+                    "tauri.invoke",
+                    "tau.invoke.outcome",
+                    &Value::String((*outcome).into())
                 ),
                 Ok(())
             );
@@ -658,10 +818,16 @@ mod tests {
         let categorical_attributes = [
             ("ui.action", "tau.action.name"),
             ("tauri.invoke", "tau.invoke.command"),
+            ("tauri.invoke", "tau.invoke.outcome"),
             ("pi.rpc", "pi.rpc.method"),
             ("pi.rpc", "pi.rpc.outcome"),
             ("pi.process.lifecycle", "tau.process.stop_reason"),
             ("pi.process.lifecycle", "tau.process.resolution"),
+            ("pi.reader", "tau.reader.drop_reason"),
+            ("pi.reader", "tau.reader.error_kind"),
+            ("pi.reader", "tau.event.kind"),
+            ("frontend.error", "tau.error.source"),
+            ("frontend.error", "tau.error.kind"),
         ];
         for (family, key) in categorical_attributes {
             for (_, canary) in FORBIDDEN_CONTENT_CANARIES {
@@ -672,5 +838,99 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn validate_accepts_every_reviewed_reader_and_frontend_error_value() {
+        for reason in PI_READER_DROP_REASONS {
+            assert_eq!(
+                validate(
+                    "pi.reader",
+                    "tau.reader.drop_reason",
+                    &Value::String((*reason).into())
+                ),
+                Ok(())
+            );
+        }
+        for kind in PI_READER_ERROR_KINDS {
+            assert_eq!(
+                validate(
+                    "pi.reader",
+                    "tau.reader.error_kind",
+                    &Value::String((*kind).into())
+                ),
+                Ok(())
+            );
+        }
+        for kind in PI_EVENT_KINDS {
+            assert_eq!(
+                validate(
+                    "pi.reader",
+                    "tau.event.kind",
+                    &Value::String((*kind).into())
+                ),
+                Ok(())
+            );
+        }
+        for source in FRONTEND_ERROR_SOURCES {
+            assert_eq!(
+                validate(
+                    "frontend.error",
+                    "tau.error.source",
+                    &Value::String((*source).into())
+                ),
+                Ok(())
+            );
+        }
+        for kind in FRONTEND_ERROR_KINDS {
+            assert_eq!(
+                validate(
+                    "frontend.error",
+                    "tau.error.kind",
+                    &Value::String((*kind).into())
+                ),
+                Ok(())
+            );
+        }
+    }
+
+    #[test]
+    fn validate_rejects_an_unreviewed_reader_drop_reason() {
+        assert_eq!(
+            validate(
+                "pi.reader",
+                "tau.reader.drop_reason",
+                &Value::String("not-a-real-reason".into())
+            ),
+            Err(AttributeError::UnknownValue)
+        );
+    }
+
+    #[test]
+    fn telemetry_health_and_rust_panic_accept_their_declared_attributes() {
+        assert_eq!(
+            validate(
+                "telemetry.health",
+                "tau.telemetry.dropped_count",
+                &Value::I64(3)
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            validate(
+                "telemetry.health",
+                "tau.telemetry.failed_write_count",
+                &Value::I64(1)
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            validate(
+                "rust.panic",
+                "tau.error.location",
+                &Value::String("pi.rs:42:5".into())
+            ),
+            Ok(())
+        );
     }
 }

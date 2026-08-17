@@ -9,7 +9,7 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import type { BoundedQueue } from './queue';
-import type { FrontendSpanRecord } from './tracer';
+import type { FrontendQueueRecord } from './tracer';
 
 /** Keeps a single native call small; the queue's own bound is the real
  * backstop against unbounded growth. */
@@ -18,7 +18,7 @@ const MAX_BATCH_SIZE = 20;
  * instead of one call per span. */
 const FLUSH_DELAY_MS = 50;
 
-async function sendBatch(records: FrontendSpanRecord[]): Promise<void> {
+async function sendBatch(records: FrontendQueueRecord[]): Promise<void> {
   try {
     await invoke('ingest_telemetry', { records });
   } catch {
@@ -28,7 +28,7 @@ async function sendBatch(records: FrontendSpanRecord[]): Promise<void> {
 }
 
 async function flushAll(
-  queue: BoundedQueue<FrontendSpanRecord>,
+  queue: BoundedQueue<FrontendQueueRecord>,
 ): Promise<void> {
   for (;;) {
     const batch = queue.drain(MAX_BATCH_SIZE);
@@ -37,7 +37,7 @@ async function flushAll(
   }
 }
 
-function createFlushScheduler(queue: BoundedQueue<FrontendSpanRecord>): {
+function createFlushScheduler(queue: BoundedQueue<FrontendQueueRecord>): {
   scheduleFlush: () => void;
   flushNow: () => Promise<void>;
 } {

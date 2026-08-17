@@ -5,6 +5,8 @@ import {
   type AttributeSpec,
   CONTEXT_ATTRIBUTES,
   FAMILIES,
+  FRONTEND_ERROR_KINDS,
+  FRONTEND_ERROR_SOURCES,
   isMetricSafe,
   PI_PROCESS_RESOLUTIONS,
   PI_PROCESS_STOP_REASONS,
@@ -12,6 +14,7 @@ import {
   PI_RPC_OUTCOMES,
   RESOURCE_ATTRIBUTES,
   TAURI_INVOKE_COMMANDS,
+  TAURI_INVOKE_OUTCOMES,
   UI_ACTION_NAMES,
   validateAttribute,
 } from './attributes';
@@ -137,10 +140,15 @@ describe('validateAttribute', () => {
     ).toEqual({ valid: false, error: 'unknown-value' });
   });
 
-  it('accepts every reviewed invoke command', () => {
+  it('accepts every reviewed invoke command and outcome', () => {
     for (const command of TAURI_INVOKE_COMMANDS) {
       expect(
         validateAttribute('tauri.invoke', 'tau.invoke.command', command),
+      ).toEqual({ valid: true });
+    }
+    for (const outcome of TAURI_INVOKE_OUTCOMES) {
+      expect(
+        validateAttribute('tauri.invoke', 'tau.invoke.outcome', outcome),
       ).toEqual({ valid: true });
     }
   });
@@ -194,14 +202,52 @@ describe('validateAttribute', () => {
     ).toEqual({ valid: true });
   });
 
+  it('accepts every reviewed frontend error source and kind', () => {
+    for (const source of FRONTEND_ERROR_SOURCES) {
+      expect(
+        validateAttribute('frontend.error', 'tau.error.source', source),
+      ).toEqual({ valid: true });
+    }
+    for (const kind of FRONTEND_ERROR_KINDS) {
+      expect(
+        validateAttribute('frontend.error', 'tau.error.kind', kind),
+      ).toEqual({ valid: true });
+    }
+  });
+
+  it('rejects an unreviewed frontend error source or kind', () => {
+    expect(
+      validateAttribute('frontend.error', 'tau.error.source', 'not-a-source'),
+    ).toEqual({ valid: false, error: 'unknown-value' });
+    expect(
+      validateAttribute('frontend.error', 'tau.error.kind', 'not-a-kind'),
+    ).toEqual({ valid: false, error: 'unknown-value' });
+  });
+
+  it('accepts a sanitized panic/error location as a bounded free-form string', () => {
+    expect(
+      validateAttribute('rust.panic', 'tau.error.location', 'pi.rs:42:5'),
+    ).toEqual({ valid: true });
+    expect(
+      validateAttribute(
+        'frontend.error',
+        'tau.error.location',
+        'index.ts:10:4',
+      ),
+    ).toEqual({ valid: true });
+  });
+
   it('never treats a forbidden-content canary as a reviewed categorical value', () => {
     const categoricalAttributes: Array<[string, string]> = [
       ['ui.action', 'tau.action.name'],
       ['tauri.invoke', 'tau.invoke.command'],
+      ['tauri.invoke', 'tau.invoke.outcome'],
       ['pi.rpc', 'pi.rpc.method'],
       ['pi.rpc', 'pi.rpc.outcome'],
       ['pi.process.lifecycle', 'tau.process.stop_reason'],
       ['pi.process.lifecycle', 'tau.process.resolution'],
+      ['frontend.error', 'tau.error.source'],
+      ['frontend.error', 'tau.error.kind'],
     ];
     for (const [family, key] of categoricalAttributes) {
       for (const canary of FORBIDDEN_CONTENT_CANARIES.values()) {

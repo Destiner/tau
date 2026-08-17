@@ -184,7 +184,10 @@ describe('invokeTraced', () => {
     expect(records).toEqual([
       expect.objectContaining({
         family: 'tauri.invoke',
-        attributes: { 'tau.invoke.command': 'import_project' },
+        attributes: {
+          'tau.invoke.command': 'import_project',
+          'tau.invoke.outcome': 'success',
+        },
       }),
     ]);
   });
@@ -220,7 +223,10 @@ describe('invokeTraced', () => {
         records: [
           expect.objectContaining({
             family: 'tauri.invoke',
-            attributes: { 'tau.invoke.command': 'remove_project' },
+            attributes: {
+              'tau.invoke.command': 'remove_project',
+              'tau.invoke.outcome': 'error',
+            },
           }),
         ],
       }),
@@ -325,5 +331,174 @@ describe('recordStreamAggregate', () => {
         ],
       }),
     );
+  });
+});
+
+interface IngestedRecord {
+  family: string;
+  attributes: Record<string, unknown>;
+}
+
+function flushedRecords(): IngestedRecord[] {
+  return mockInvoke.mock.calls
+    .filter(([name]) => name === 'ingest_telemetry')
+    .flatMap(([, args]) => (args as { records: IngestedRecord[] }).records);
+}
+
+describe('vueErrorHandler', () => {
+  it('records the bounded error kind and a sanitized location, never the message', async () => {
+    const consoleError = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => {});
+    const { vueErrorHandler, flushTelemetry } = await import('./index');
+    const error = new TypeError('tau-canary-vue-error-message');
+    error.stack =
+      'TypeError: tau-canary-vue-error-message\n    at run (/tmp/project/src/app.ts:5:2)';
+
+    vueErrorHandler(error);
+
+    await flushTelemetry();
+
+    const record = flushedRecords().find(
+      (candidate) => candidate.family === 'frontend.error',
+    );
+    expect(record).toEqual(
+      expect.objectContaining({
+        attributes: {
+          'tau.error.source': 'vue_error',
+          'tau.error.kind': 'TypeError',
+          'tau.error.location': 'app.ts:5:2',
+        },
+      }),
+    );
+    expect(JSON.stringify(record)).not.toContain(
+      'tau-canary-vue-error-message',
+    );
+    expect(consoleError).toHaveBeenCalledWith(error);
+    consoleError.mockRestore();
+  });
+
+  it('still records a bounded record for a non-Error thrown value', async () => {
+    const consoleError = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => {});
+    const { vueErrorHandler, flushTelemetry } = await import('./index');
+
+    vueErrorHandler('a plain string reason');
+
+    await flushTelemetry();
+
+    const record = flushedRecords().find(
+      (candidate) => candidate.family === 'frontend.error',
+    );
+    expect(record?.attributes).toEqual({
+      'tau.error.source': 'vue_error',
+      'tau.error.kind': 'other',
+      'tau.error.location': '',
+    });
+    expect(consoleError).toHaveBeenCalledWith('a plain string reason');
+    consoleError.mockRestore();
+  });
+});
+
+describe('installFrontendErrorCapture', () => {
+  it('wraps console.error, still calling the original, and records a sanitized entry', async () => {
+    const nativeConsoleError = vi.fn();
+
+    console.error = nativeConsoleError;
+    const { installFrontendErrorCapture, flushTelemetry } =
+      await import('./index');
+    installFrontendErrorCapture();
+    installFrontendErrorCapture();
+
+    const error = new RangeError('tau-canary-console-error-message');
+    error.stack =
+      'RangeError: tau-canary-console-error-message\n    at run (/tmp/project/src/console.ts:1:1)';
+
+    console.error(error);
+
+    expect(nativeConsoleError).toHaveBeenCalledWith(error);
+
+    await flushTelemetry();
+
+    const record = flushedRecords().find(
+      (candidate) => candidate.family === 'frontend.error',
+    );
+    expect(record?.attributes).toEqual({
+      'tau.error.source': 'console_error',
+      'tau.error.kind': 'RangeError',
+      'tau.error.location': 'console.ts:1:1',
+    });
+  });
+
+  it('does not record a nested console.error call triggered by its own classification code', async () => {
+    const nativeConsoleError = vi.fn();
+
+    console.error = nativeConsoleError;
+    const { installFrontendErrorCapture, flushTelemetry } =
+      await import('./index');
+    installFrontendErrorCapture();
+
+    const reentrant = new Error('boom');
+    Object.defineProperty(reentrant, 'stack', {
+      get(): string {
+        // Simulates a bug (or an unrelated integration) that reacts to the
+        // original console.error call by logging again, synchronously,
+        // before this call has finished recording its own telemetry.
+
+        console.error('a reentrant console.error call');
+        return 'Error: boom\n    at run (/tmp/project/src/a.ts:1:1)';
+      },
+    });
+
+    console.error(reentrant);
+
+    await flushTelemetry();
+
+    const records = flushedRecords().filter(
+      (candidate) => candidate.family === 'frontend.error',
+    );
+    expect(records).toHaveLength(1);
+  });
+});
+
+describe('queue overflow reporting', () => {
+  it('reports a telemetry.health log once the bounded queue starts dropping records', async () => {
+    const { startCommandSpan, flushTelemetry } = await import('./index');
+
+    for (let index = 0; index < 205; index += 1) {
+      startCommandSpan('load_workspace').end();
+    }
+
+    await flushTelemetry();
+
+    const healthRecord = flushedRecords().find(
+      (candidate) => candidate.family === 'telemetry.health',
+    );
+    expect(healthRecord).toBeDefined();
+    expect(healthRecord?.attributes['tau.telemetry.dropped_count']).toEqual(
+      expect.any(Number),
+    );
+    expect(
+      healthRecord?.attributes['tau.telemetry.dropped_count'] as number,
+    ).toBeGreaterThan(0);
+  });
+
+  it('does not report the same drop count twice', async () => {
+    const { startCommandSpan, flushTelemetry } = await import('./index');
+
+    for (let index = 0; index < 201; index += 1) {
+      startCommandSpan('load_workspace').end();
+    }
+    await flushTelemetry();
+    mockInvoke.mockClear();
+
+    startCommandSpan('load_workspace').end();
+    await flushTelemetry();
+
+    const healthRecords = flushedRecords().filter(
+      (candidate) => candidate.family === 'telemetry.health',
+    );
+    expect(healthRecords).toHaveLength(0);
   });
 });

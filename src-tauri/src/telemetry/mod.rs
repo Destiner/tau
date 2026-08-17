@@ -4,9 +4,10 @@
 //! lifecycle events (`app.started`, `app.exited`), the shared
 //! `start_command_span` every ordinary Tauri command now uses to link its
 //! native work into the frontend action that requested it (Stage 2 proved it
-//! on one call site; Stage 3 applies it broadly), and
-//! `record_process_lifecycle`, the native Pi process log family `pi.rs` uses
-//! for resolution, start, stop, and exit telemetry (see
+//! on one call site; Stage 3 applies it broadly), `record_process_lifecycle`/
+//! `record_reader_event`, the native Pi process/reader log families `pi.rs`
+//! uses, the durable start/clean-exit marker that detects an unclean
+//! previous run, and the recursion-safe panic hook (see
 //! `OBSERVABILITY_PLAN.md`).
 
 pub mod attributes;
@@ -16,7 +17,11 @@ pub mod privacy;
 mod store;
 pub mod trace_context;
 
-use std::path::PathBuf;
+use std::cell::Cell;
+use std::fs;
+use std::io::Write as _;
+use std::panic::PanicHookInfo;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -35,8 +40,23 @@ use opentelemetry_semantic_conventions::resource::{
 };
 
 use crate::profile::{APP_DIRECTORY_NAME, ENVIRONMENT_NAME};
-use privacy::{truncate_to_limit, DEFAULT_MAX_ATTRIBUTE_LEN};
+use privacy::{sanitize_source_location, truncate_to_limit, DEFAULT_MAX_ATTRIBUTE_LEN};
 use trace_context::TraceContext;
+
+/// The durable start marker's file name, kept in the same telemetry
+/// directory as the segments so it shares that directory's owner-only
+/// permissions. Its mere presence at the *next* launch means this run never
+/// reached a clean exit.
+const RUN_MARKER_FILE: &str = "run.marker";
+
+// Guards against a panic occurring while the installed hook is already
+// handling a previous panic on the same thread (for example, a bug in the
+// hook's own sanitization code panicking). The previous hook still runs
+// either way; only telemetry recording is skipped on re-entry, since
+// recursing into it risks panicking again.
+thread_local! {
+    static IN_PANIC_HOOK: Cell<bool> = const { Cell::new(false) };
+}
 
 /// Directory holding telemetry segments, relative to Tau's per-profile
 /// application-data directory (see `profile::APP_DIRECTORY_NAME`).
@@ -59,6 +79,12 @@ pub struct Telemetry {
     /// Precomputed once so `ingest.rs` does not rebuild it per frontend
     /// record; see `exporter::resource_to_json`.
     resource_json: serde_json::Value,
+    /// Where the run marker lives, so `record_app_exited` can clear it.
+    telemetry_dir: PathBuf,
+    /// Whether the *previous* run's marker was still present when this run
+    /// started, i.e. that run never reached a clean exit. Computed once in
+    /// `new`, before this run's own marker is written.
+    previous_run_unclean: bool,
 }
 
 impl Telemetry {
@@ -70,8 +96,10 @@ impl Telemetry {
     }
 
     fn new(dir: PathBuf, clock: Arc<dyn store::Clock>) -> Self {
+        let previous_run_unclean = previous_run_was_unclean(&dir);
+        write_run_marker(&dir);
         let store = Arc::new(store::Store::new(
-            dir,
+            dir.clone(),
             store::StoreConfig::production(),
             clock,
         ));
@@ -95,25 +123,48 @@ impl Telemetry {
             tracer_provider,
             store,
             resource_json,
+            telemetry_dir: dir,
+            previous_run_unclean,
         }
     }
 
+    /// Records this run's start marker and, if the *previous* run's own
+    /// marker was still present (it never reached `record_app_exited`),
+    /// also records and force-flushes an `app.unclean_exit_detected` log so
+    /// that evidence survives even if this run also crashes.
     pub fn record_app_started(&self) {
         self.emit_lifecycle_log("app.started");
+        if self.previous_run_unclean {
+            self.emit_lifecycle_log("app.unclean_exit_detected");
+            let _ = self.logger_provider.force_flush();
+        }
     }
 
-    /// Records the clean-exit marker and force-flushes it. Callers must
-    /// invoke this from a `RunEvent::Exit` handler: `App::run` calls
-    /// `std::process::exit` internally once it returns, which skips `Drop`,
-    /// so nothing here can rely on destructors running.
+    /// Records the clean-exit marker, records writer-health telemetry if
+    /// any writes failed this run, force-flushes both, and clears this
+    /// run's start marker so the *next* launch does not see it as unclean.
+    /// Callers must invoke this from a `RunEvent::Exit` handler: `App::run`
+    /// calls `std::process::exit` internally once it returns, which skips
+    /// `Drop`, so nothing here can rely on destructors running.
     pub fn record_app_exited(&self) {
         self.emit_lifecycle_log("app.exited");
+        self.record_writer_health();
         let _ = self.logger_provider.force_flush();
+        clear_run_marker(&self.telemetry_dir);
     }
 
     pub fn shutdown(&self) {
         let _ = self.logger_provider.shutdown();
         let _ = self.tracer_provider.shutdown();
+    }
+
+    /// Force-flushes the log provider. A no-op for correctness today, since
+    /// the `SimpleLogProcessor` this module builds already writes and syncs
+    /// synchronously on every `emit`, but called explicitly at every point
+    /// the plan names (process exit, reader failure, failed event emission)
+    /// so the intent stays correct if the exporter ever becomes batched.
+    pub fn force_flush_logs(&self) {
+        let _ = self.logger_provider.force_flush();
     }
 
     fn emit_lifecycle_log(&self, event_name: &'static str) {
@@ -124,6 +175,28 @@ impl Telemetry {
         record.set_severity_number(Severity::Info);
         record.set_body(AnyValue::String(event_name.into()));
         logger.emit(record);
+    }
+
+    /// Records `telemetry.health`'s writer-failure count if any write to
+    /// disk failed this run. Reads `Store::failed_writes`, which is always
+    /// available regardless of whether the failed records themselves were
+    /// retained in the bounded fallback or evicted from it.
+    fn record_writer_health(&self) {
+        let failed_writes = self.store.failed_writes();
+        if failed_writes == 0 {
+            return;
+        }
+        self.emit_family_log(
+            attributes::TELEMETRY_HEALTH.name,
+            "telemetry.writer_failure",
+            None,
+            None,
+            None,
+            &[(
+                "tau.telemetry.failed_write_count",
+                opentelemetry::Value::I64(i64::try_from(failed_writes).unwrap_or(i64::MAX)),
+            )],
+        );
     }
 
     /// Starts a native span in the `tauri.invoke` family as a child of the
@@ -174,6 +247,13 @@ impl Telemetry {
         self.store.append(store::Signal::Trace, value)
     }
 
+    /// Persists an already-validated OTLP log JSON record. Used only by
+    /// `ingest.rs`, for frontend-originated logs (`frontend.error`) after
+    /// it has revalidated the record against the Stage 0 catalog.
+    pub(super) fn record_log(&self, value: serde_json::Value) -> bool {
+        self.store.append(store::Signal::Log, value)
+    }
+
     /// Records one `pi.process.lifecycle` log: resolution, start, stop, or
     /// exit. `generation` is included only when known (resolution happens
     /// before a runtime's first process has one). Every attribute is
@@ -188,14 +268,61 @@ impl Telemetry {
         span_context: Option<&SpanContext>,
         attributes: &[(&'static str, opentelemetry::Value)],
     ) {
-        let family = attributes::PI_PROCESS_LIFECYCLE.name;
+        self.emit_family_log(
+            attributes::PI_PROCESS_LIFECYCLE.name,
+            event_name,
+            Some(runtime_id),
+            generation,
+            span_context,
+            attributes,
+        );
+    }
+
+    /// Records one `pi.reader` log: a dropped oversized/malformed line, a
+    /// reader thread failure, or a failed `pi-event` emission. All native
+    /// diagnostics about `pi.rs`'s own reading/forwarding machinery, never
+    /// about Pi's own process lifecycle (see `record_process_lifecycle`).
+    pub fn record_reader_event(
+        &self,
+        event_name: &'static str,
+        runtime_id: &str,
+        generation: Option<u64>,
+        attributes: &[(&'static str, opentelemetry::Value)],
+    ) {
+        self.emit_family_log(
+            attributes::PI_READER.name,
+            event_name,
+            Some(runtime_id),
+            generation,
+            None,
+            attributes,
+        );
+        self.force_flush_logs();
+    }
+
+    /// Shared implementation behind every "validate attributes against
+    /// `family`, optionally attach runtime/generation context and an active
+    /// span, emit an Info-severity log" helper above. Kept as named
+    /// wrappers rather than one public generic method so call sites read as
+    /// what they are recording, not as a bare family string.
+    fn emit_family_log(
+        &self,
+        family: &str,
+        event_name: &'static str,
+        runtime_id: Option<&str>,
+        generation: Option<u64>,
+        span_context: Option<&SpanContext>,
+        attributes: &[(&'static str, opentelemetry::Value)],
+    ) {
         let mut validated: Vec<(&'static str, opentelemetry::Value)> = Vec::new();
 
-        let runtime_value = opentelemetry::Value::String(
-            truncate_to_limit(runtime_id, DEFAULT_MAX_ATTRIBUTE_LEN).into(),
-        );
-        if attributes::validate(family, "tau.runtime.id", &runtime_value).is_ok() {
-            validated.push(("tau.runtime.id", runtime_value));
+        if let Some(runtime_id) = runtime_id {
+            let runtime_value = opentelemetry::Value::String(
+                truncate_to_limit(runtime_id, DEFAULT_MAX_ATTRIBUTE_LEN).into(),
+            );
+            if attributes::validate(family, "tau.runtime.id", &runtime_value).is_ok() {
+                validated.push(("tau.runtime.id", runtime_value));
+            }
         }
         if let Some(generation) = generation.and_then(|value| i64::try_from(value).ok()) {
             let generation_value = opentelemetry::Value::I64(generation);
@@ -227,7 +354,163 @@ impl Telemetry {
         }
         logger.emit(record);
     }
+
+    /// Installs a panic hook that first calls whatever hook was previously
+    /// registered (Rust's own default hook prints the panic to stderr; a
+    /// test harness might install its own), preserving existing behavior
+    /// completely, then attempts to record one sanitized `rust.panic` log.
+    /// Only a sanitized `basename:line:column` location is ever recorded —
+    /// never the panic message or payload, which can contain arbitrary
+    /// content. Re-entering this hook on the same thread (this closure's
+    /// own code panicking) is guarded by a thread-local flag: the previous
+    /// hook still runs, but recording is skipped rather than risking
+    /// another recursive panic. The closure captures only cheap clones
+    /// (`Arc<Store>`, a small `resource_json` value), never a borrow of
+    /// `self`, since the hook must be `'static` and outlives this call.
+    pub fn install_panic_hook(&self) {
+        let store = Arc::clone(&self.store);
+        let resource_json = self.resource_json.clone();
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info: &PanicHookInfo<'_>| {
+            previous(info);
+
+            guarded_panic_record(|| {
+                let location = info
+                    .location()
+                    .map(|location| {
+                        sanitize_source_location(
+                            location.file(),
+                            Some(location.line()),
+                            Some(location.column()),
+                        )
+                    })
+                    .unwrap_or_default();
+                record_panic_to(&store, &resource_json, &location);
+            });
+        }));
+    }
 }
+
+/// Runs `record` unless this thread is already inside a panic-hook
+/// invocation — i.e. this same closure's own code is panicking again —
+/// toggling the re-entrancy guard around it. Extracted from the hook
+/// closure so this exact guard behavior can be unit tested without
+/// triggering a genuinely re-entrant panic, which risks aborting the whole
+/// process if mishandled.
+fn guarded_panic_record(record: impl FnOnce()) {
+    let already_in_hook = IN_PANIC_HOOK.with(|flag| flag.replace(true));
+    if !already_in_hook {
+        record();
+    }
+    IN_PANIC_HOOK.with(|flag| flag.set(already_in_hook));
+}
+
+/// Builds a `rust.panic` log record and persists it through
+/// `Store::try_append`, bypassing the OTel `Logger`/`LoggerProvider`
+/// entirely (which always blocks on the same writer lock `append` uses).
+/// This is the one telemetry path in the whole module that does not go
+/// through `emit_family_log`, specifically so the panic hook can call it
+/// without ever risking a deadlock on a lock this same thread might already
+/// hold. `location` must already be sanitized; only the reviewed
+/// `tau.error.location` attribute is attached, and only if it validates. A
+/// free function, not a `Telemetry` method, so the panic hook's closure
+/// needs to capture only `Arc<Store>` and the resource JSON, not a
+/// `Telemetry` reference it cannot safely hold across a `'static` hook.
+fn record_panic_to(store: &store::Store, resource_json: &serde_json::Value, location: &str) {
+    let family = attributes::RUST_PANIC.name;
+    let location_value =
+        opentelemetry::Value::String(truncate_to_limit(location, DEFAULT_MAX_ATTRIBUTE_LEN).into());
+
+    let mut log_record = serde_json::Map::new();
+    log_record.insert(
+        "timeUnixNano".into(),
+        serde_json::Value::String(exporter::unix_nanos_string(SystemTime::now())),
+    );
+    log_record.insert(
+        "eventName".into(),
+        serde_json::Value::String("rust.panic".into()),
+    );
+    log_record.insert(
+        "severityNumber".into(),
+        serde_json::Value::from(Severity::Error as i32),
+    );
+    log_record.insert(
+        "severityText".into(),
+        serde_json::Value::String(Severity::Error.name().to_string()),
+    );
+    log_record.insert(
+        "body".into(),
+        serde_json::json!({ "stringValue": "rust.panic" }),
+    );
+    if attributes::validate(family, "tau.error.location", &location_value).is_ok() {
+        log_record.insert(
+            "attributes".into(),
+            serde_json::json!([{
+                "key": "tau.error.location",
+                "value": exporter::otel_value_json(&location_value),
+            }]),
+        );
+    }
+
+    let wrapped = exporter::wrap_log_json(
+        resource_json,
+        SCOPE_NAME,
+        serde_json::Value::Object(log_record),
+    );
+    let _ = store.try_append(store::Signal::Log, wrapped);
+}
+
+/// Returns `true` if the *previous* launch's run marker was still present,
+/// meaning that run never reached `record_app_exited` (a crash, a force
+/// quit, or an OS-level kill). Must be called before `write_run_marker`
+/// writes this run's own marker.
+fn previous_run_was_unclean(dir: &Path) -> bool {
+    dir.join(RUN_MARKER_FILE).is_file()
+}
+
+/// Writes and syncs this run's start marker. Left in place until
+/// `clear_run_marker` removes it at a clean exit, so a marker still present
+/// at the *next* launch means this run itself never reached that point.
+fn write_run_marker(dir: &Path) {
+    let _ = fs::create_dir_all(dir);
+    set_owner_only_marker_dir_permissions(dir);
+    let marker = dir.join(RUN_MARKER_FILE);
+    if let Ok(mut file) = fs::File::create(&marker) {
+        set_owner_only_marker_file_permissions(&marker);
+        let _ = file.write_all(b"running");
+        let _ = file.sync_all();
+        sync_directory(dir);
+    }
+}
+
+/// Removes this run's start marker, recording a clean exit.
+fn clear_run_marker(dir: &Path) {
+    if fs::remove_file(dir.join(RUN_MARKER_FILE)).is_ok() {
+        sync_directory(dir);
+    }
+}
+
+fn sync_directory(dir: &Path) {
+    if let Ok(directory) = fs::File::open(dir) {
+        let _ = directory.sync_all();
+    }
+}
+
+#[cfg(unix)]
+fn set_owner_only_marker_dir_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
+}
+#[cfg(not(unix))]
+fn set_owner_only_marker_dir_permissions(_path: &Path) {}
+
+#[cfg(unix)]
+fn set_owner_only_marker_file_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+}
+#[cfg(not(unix))]
+fn set_owner_only_marker_file_permissions(_path: &Path) {}
 
 /// Ends the wrapped native span when dropped, so it is recorded whether the
 /// guarded scope returns normally or via `?`. Concurrent callers each own
@@ -679,5 +962,217 @@ mod tests {
             .iter()
             .any(|attribute| attribute["key"] == "tau.process.exit_code"
                 && attribute["value"]["intValue"] == "127"));
+    }
+
+    #[test]
+    fn reader_event_persists_runtime_context_like_process_lifecycle() {
+        let (telemetry, _directory) = test_telemetry();
+
+        telemetry.record_reader_event(
+            "pi.reader.line_dropped",
+            "runtime-1",
+            Some(2),
+            &[(
+                "tau.reader.drop_reason",
+                opentelemetry::Value::String("oversized".into()),
+            )],
+        );
+
+        let records = process_log_records(&telemetry);
+        let log_record = &records[0]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+        assert_eq!(log_record["eventName"], "pi.reader.line_dropped");
+        let persisted = log_record["attributes"].as_array().expect("attributes");
+        assert!(persisted
+            .iter()
+            .any(|attribute| attribute["key"] == "tau.reader.drop_reason"
+                && attribute["value"]["stringValue"] == "oversized"));
+        assert!(persisted
+            .iter()
+            .any(|attribute| attribute["key"] == "tau.runtime.id"
+                && attribute["value"]["stringValue"] == "runtime-1"));
+        assert!(persisted
+            .iter()
+            .any(|attribute| attribute["key"] == "pi.generation"
+                && attribute["value"]["intValue"] == "2"));
+    }
+
+    #[test]
+    fn reader_event_drops_an_unreviewed_error_kind_without_failing() {
+        let (telemetry, _directory) = test_telemetry();
+
+        telemetry.record_reader_event(
+            "pi.reader.failed",
+            "runtime-1",
+            None,
+            &[(
+                "tau.reader.error_kind",
+                opentelemetry::Value::String("not-a-real-kind".into()),
+            )],
+        );
+
+        let records = process_log_records(&telemetry);
+        assert_eq!(records.len(), 1);
+        let log_record = &records[0]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+        assert!(!log_record["attributes"]
+            .as_array()
+            .expect("attributes")
+            .iter()
+            .any(|attribute| attribute["key"] == "tau.reader.error_kind"));
+    }
+
+    #[test]
+    fn detects_an_unclean_previous_run_and_records_it_at_the_next_start() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let dir = directory.path().to_path_buf();
+
+        let first = Telemetry::new(dir.clone(), Arc::new(store::SystemClock));
+        assert!(!first.previous_run_unclean);
+        // Deliberately do not call `first.record_app_exited()`: the marker
+        // it would clear is left behind, simulating a crash or force quit.
+
+        let second = Telemetry::new(dir.clone(), Arc::new(store::SystemClock));
+        assert!(second.previous_run_unclean);
+        second.record_app_started();
+
+        let records = process_log_records(&second);
+        assert!(records.iter().any(|record| {
+            record["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["eventName"]
+                == "app.unclean_exit_detected"
+        }));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn run_marker_and_directory_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().expect("temp dir");
+        let dir = directory.path().join("telemetry");
+        let _telemetry = Telemetry::new(dir.clone(), Arc::new(store::SystemClock));
+        let dir_mode = fs::metadata(&dir)
+            .expect("dir metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        let marker_mode = fs::metadata(dir.join(RUN_MARKER_FILE))
+            .expect("marker metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(dir_mode, 0o700);
+        assert_eq!(marker_mode, 0o600);
+    }
+
+    #[test]
+    fn a_clean_exit_clears_the_marker_so_the_next_run_is_not_flagged() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let dir = directory.path().to_path_buf();
+
+        let first = Telemetry::new(dir.clone(), Arc::new(store::SystemClock));
+        first.record_app_exited();
+
+        let second = Telemetry::new(dir.clone(), Arc::new(store::SystemClock));
+        assert!(!second.previous_run_unclean);
+    }
+
+    #[test]
+    fn writer_health_is_recorded_at_exit_once_writes_start_succeeding_again() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let blocked_path = directory.path().join("telemetry");
+        std::fs::write(&blocked_path, b"file").expect("blocking file");
+        let telemetry = Telemetry::new(blocked_path.clone(), Arc::new(store::SystemClock));
+
+        // Fails: `blocked_path` is a file, not a directory, so this lands in
+        // the store's bounded in-memory fallback instead of on disk.
+        telemetry.record_app_started();
+        assert!(telemetry.store.failed_writes() > 0);
+
+        // The store re-checks the directory on every write, so repairing it
+        // here is enough for the next append to succeed.
+        std::fs::remove_file(&blocked_path).expect("remove blocking file");
+
+        telemetry.record_app_exited();
+
+        let records = process_log_records(&telemetry);
+        assert!(records.iter().any(|record| {
+            let log_record = &record["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+            log_record["eventName"] == "telemetry.writer_failure"
+                && log_record["attributes"]
+                    .as_array()
+                    .is_some_and(|attributes| {
+                        attributes.iter().any(|attribute| {
+                            attribute["key"] == "tau.telemetry.failed_write_count"
+                                && attribute["value"]["intValue"] == "1"
+                        })
+                    })
+        }));
+    }
+
+    #[test]
+    fn guarded_panic_record_skips_reentrant_calls_on_the_same_thread() {
+        let mut outer_ran = false;
+        guarded_panic_record(|| {
+            outer_ran = true;
+            let mut inner_ran = false;
+            guarded_panic_record(|| {
+                inner_ran = true;
+            });
+            assert!(!inner_ran, "a re-entrant call must not run its recorder");
+        });
+        assert!(outer_ran);
+    }
+
+    #[test]
+    fn panic_hook_calls_the_previous_hook_and_records_a_sanitized_location_only() {
+        use std::panic::AssertUnwindSafe;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let (telemetry, _directory) = test_telemetry();
+        let original_hook = std::panic::take_hook();
+
+        static PREVIOUS_HOOK_RAN: AtomicBool = AtomicBool::new(false);
+        PREVIOUS_HOOK_RAN.store(false, Ordering::SeqCst);
+        std::panic::set_hook(Box::new(|_info| {
+            PREVIOUS_HOOK_RAN.store(true, Ordering::SeqCst);
+        }));
+        telemetry.install_panic_hook();
+
+        const PANIC_MESSAGE: &str = "tau-canary-panic-message-3f1c9a";
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            panic!("{PANIC_MESSAGE}");
+        }));
+        assert!(result.is_err());
+
+        std::panic::set_hook(original_hook);
+
+        assert!(
+            PREVIOUS_HOOK_RAN.load(Ordering::SeqCst),
+            "the previously installed hook must still run"
+        );
+
+        let records = process_log_records(&telemetry);
+        let panic_record = records
+            .iter()
+            .find(|record| {
+                record["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["eventName"]
+                    == "rust.panic"
+            })
+            .expect("a rust.panic record");
+        let encoded = panic_record.to_string();
+        assert!(
+            !encoded.contains(PANIC_MESSAGE),
+            "the panic message must never be persisted"
+        );
+        let log_record = &panic_record["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+        let location = log_record["attributes"]
+            .as_array()
+            .expect("attributes")
+            .iter()
+            .find(|attribute| attribute["key"] == "tau.error.location")
+            .expect("a location attribute");
+        assert!(location["value"]["stringValue"]
+            .as_str()
+            .expect("location string")
+            .starts_with("mod.rs"));
     }
 }

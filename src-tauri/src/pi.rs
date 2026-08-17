@@ -384,6 +384,54 @@ fn push_directory(directories: &mut Vec<PathBuf>, directory: PathBuf) {
     }
 }
 
+/// Emits a `pi-event`, recording (and force-flushing) a `pi.reader`
+/// telemetry log if the emission itself fails — e.g. the webview is gone.
+/// `app.emit`'s own error is never recorded: only the bounded, reviewed
+/// event kind that failed to reach the frontend.
+fn emit_pi_event(app: &AppHandle, event: PiEvent<'_>) {
+    let runtime_id = event.runtime_id.to_string();
+    let generation = event.generation;
+    let kind = event.kind;
+    if app.emit("pi-event", event).is_err() {
+        let telemetry = app.state::<Telemetry>();
+        telemetry.record_reader_event(
+            "pi.event.emit_failed",
+            &runtime_id,
+            Some(generation),
+            &[(
+                "tau.event.kind",
+                TelemetryValue::String(kind.to_string().into()),
+            )],
+        );
+        telemetry.force_flush_logs();
+    }
+}
+
+/// Maps an `io::ErrorKind` a Pi stdout/stderr reader can observe to the
+/// bounded, reviewed category `tau.reader.error_kind` allows. Never the
+/// error's own message, which can include OS-specific detail.
+fn io_error_kind_category(kind: std::io::ErrorKind) -> &'static str {
+    match kind {
+        std::io::ErrorKind::BrokenPipe => "broken_pipe",
+        std::io::ErrorKind::Interrupted => "interrupted",
+        std::io::ErrorKind::UnexpectedEof => "unexpected_eof",
+        _ => "other",
+    }
+}
+
+fn line_drop_reason(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() > MAX_RPC_LINE_BYTES {
+        return Some("oversized");
+    }
+    if std::str::from_utf8(bytes).is_err() {
+        return Some("invalid_utf8");
+    }
+    match serde_json::from_slice::<Value>(bytes) {
+        Ok(Value::Object(_)) => None,
+        _ => Some("malformed"),
+    }
+}
+
 fn spawn_command(
     app: AppHandle,
     state: State<'_, PiState>,
@@ -462,8 +510,8 @@ fn spawn_command(
         span_context,
         &[],
     );
-    let _ = app.emit(
-        "pi-event",
+    emit_pi_event(
+        &app,
         PiEvent {
             runtime_id: &runtime_id,
             generation,
@@ -587,12 +635,24 @@ fn spawn_stdout_reader(
                     if bytes.last() == Some(&b'\r') {
                         bytes.pop();
                     }
-                    if bytes.is_empty() || bytes.len() > MAX_RPC_LINE_BYTES {
+                    if bytes.is_empty() {
+                        continue;
+                    }
+                    if let Some(reason) = line_drop_reason(&bytes) {
+                        app.state::<Telemetry>().record_reader_event(
+                            "pi.reader.line_dropped",
+                            &runtime_id,
+                            Some(generation),
+                            &[(
+                                "tau.reader.drop_reason",
+                                TelemetryValue::String(reason.into()),
+                            )],
+                        );
                         continue;
                     }
                     let line = String::from_utf8_lossy(&bytes);
-                    let _ = app.emit(
-                        "pi-event",
+                    emit_pi_event(
+                        &app,
                         PiEvent {
                             runtime_id: &runtime_id,
                             generation,
@@ -605,8 +665,19 @@ fn spawn_stdout_reader(
                 }
                 Err(error) => {
                     let message = error.to_string();
-                    let _ = app.emit(
-                        "pi-event",
+                    let telemetry = app.state::<Telemetry>();
+                    telemetry.record_reader_event(
+                        "pi.reader.failed",
+                        &runtime_id,
+                        Some(generation),
+                        &[(
+                            "tau.reader.error_kind",
+                            TelemetryValue::String(io_error_kind_category(error.kind()).into()),
+                        )],
+                    );
+                    telemetry.force_flush_logs();
+                    emit_pi_event(
+                        &app,
                         PiEvent {
                             runtime_id: &runtime_id,
                             generation,
@@ -648,15 +719,17 @@ fn spawn_stdout_reader(
         let exit_attributes: Vec<(&'static str, TelemetryValue)> = code
             .map(|code| vec![("tau.process.exit_code", TelemetryValue::I64(code as i64))])
             .unwrap_or_default();
-        app.state::<Telemetry>().record_process_lifecycle(
+        let telemetry = app.state::<Telemetry>();
+        telemetry.record_process_lifecycle(
             "pi.process.exited",
             &runtime_id,
             Some(generation),
             None,
             &exit_attributes,
         );
-        let _ = app.emit(
-            "pi-event",
+        telemetry.force_flush_logs();
+        emit_pi_event(
+            &app,
             PiEvent {
                 runtime_id: &runtime_id,
                 generation,
@@ -681,29 +754,50 @@ fn spawn_stderr_reader(
             generation,
             ..
         } = context;
-        let reader = BufReader::new(stderr);
-        for line in reader.lines().map_while(Result::ok) {
-            if line.is_empty() {
-                continue;
-            }
-            let line = truncate_stderr_line(&line);
-            if let Ok(mut tail) = stderr_tail.lock() {
-                if tail.len() == STDERR_TAIL_LINES {
-                    tail.pop_front();
+        let mut reader = BufReader::new(stderr);
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    let line = line.trim_end_matches(['\n', '\r']);
+                    if line.is_empty() {
+                        continue;
+                    }
+                    let line = truncate_stderr_line(line);
+                    if let Ok(mut tail) = stderr_tail.lock() {
+                        if tail.len() == STDERR_TAIL_LINES {
+                            tail.pop_front();
+                        }
+                        tail.push_back(line.clone());
+                    }
+                    emit_pi_event(
+                        &app,
+                        PiEvent {
+                            runtime_id: &runtime_id,
+                            generation,
+                            kind: "stderr",
+                            line: None,
+                            message: Some(&line),
+                            code: None,
+                        },
+                    );
                 }
-                tail.push_back(line.clone());
+                Err(error) => {
+                    let telemetry = app.state::<Telemetry>();
+                    telemetry.record_reader_event(
+                        "pi.reader.failed",
+                        &runtime_id,
+                        Some(generation),
+                        &[(
+                            "tau.reader.error_kind",
+                            TelemetryValue::String(io_error_kind_category(error.kind()).into()),
+                        )],
+                    );
+                    telemetry.force_flush_logs();
+                    break;
+                }
             }
-            let _ = app.emit(
-                "pi-event",
-                PiEvent {
-                    runtime_id: &runtime_id,
-                    generation,
-                    kind: "stderr",
-                    line: None,
-                    message: Some(&line),
-                    code: None,
-                },
-            );
         }
     })
 }
@@ -845,6 +939,41 @@ mod tests {
         assert_eq!(
             pi_exit_message(Some(127), "env: node: No such file or directory"),
             "Pi exited with status 127. env: node: No such file or directory",
+        );
+    }
+
+    #[test]
+    fn io_error_kinds_map_to_the_reviewed_category_set() {
+        assert_eq!(
+            io_error_kind_category(std::io::ErrorKind::BrokenPipe),
+            "broken_pipe"
+        );
+        assert_eq!(
+            io_error_kind_category(std::io::ErrorKind::Interrupted),
+            "interrupted"
+        );
+        assert_eq!(
+            io_error_kind_category(std::io::ErrorKind::UnexpectedEof),
+            "unexpected_eof"
+        );
+        assert_eq!(
+            io_error_kind_category(std::io::ErrorKind::PermissionDenied),
+            "other"
+        );
+    }
+
+    #[test]
+    fn malformed_and_oversized_rpc_lines_map_to_reviewed_drop_reasons() {
+        assert_eq!(line_drop_reason(br#"{"type":"response"}"#), None);
+        assert_eq!(line_drop_reason(b"not json"), Some("malformed"));
+        assert_eq!(
+            line_drop_reason(br#"["not", "an", "object"]"#),
+            Some("malformed")
+        );
+        assert_eq!(line_drop_reason(&[0xff]), Some("invalid_utf8"));
+        assert_eq!(
+            line_drop_reason(&vec![b'x'; MAX_RPC_LINE_BYTES + 1]),
+            Some("oversized")
         );
     }
 

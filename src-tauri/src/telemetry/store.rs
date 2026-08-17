@@ -137,11 +137,38 @@ impl Store {
     /// it was retained in the bounded in-memory fallback instead. Never
     /// panics and never fails the caller: telemetry failure must not fail a
     /// product operation.
-    pub fn append(&self, signal: Signal, mut record: serde_json::Value) -> bool {
+    pub fn append(&self, signal: Signal, record: serde_json::Value) -> bool {
         let mut state = self
             .state
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
+        self.append_locked(&mut state, signal, record)
+    }
+
+    /// Non-blocking counterpart to `append`, for the one caller (the Rust
+    /// panic hook) that must never wait on the writer lock: a panic can
+    /// occur while this very thread already holds it, mid-`append`, and
+    /// nothing may deadlock trying to record telemetry about that panic. If
+    /// the lock is genuinely contended (held by another thread, or by this
+    /// one), this returns `false` immediately instead of blocking; a
+    /// poisoned-but-uncontended lock is still recovered and used, the same
+    /// way `append` recovers it.
+    pub fn try_append(&self, signal: Signal, record: serde_json::Value) -> bool {
+        match self.state.try_lock() {
+            Ok(mut state) => self.append_locked(&mut state, signal, record),
+            Err(std::sync::TryLockError::Poisoned(poison)) => {
+                self.append_locked(&mut poison.into_inner(), signal, record)
+            }
+            Err(std::sync::TryLockError::WouldBlock) => false,
+        }
+    }
+
+    fn append_locked(
+        &self,
+        state: &mut StoreState,
+        signal: Signal,
+        mut record: serde_json::Value,
+    ) -> bool {
         let sequence = state.next_sequence;
         state.next_sequence += 1;
         if let Some(object) = record.as_object_mut() {
@@ -173,9 +200,6 @@ impl Store {
         false
     }
 
-    // Exercised by store tests today; Stage 4+ surfaces these as telemetry
-    // health metrics.
-    #[allow(dead_code)]
     pub fn failed_writes(&self) -> u64 {
         self.state
             .lock()
@@ -783,6 +807,60 @@ mod tests {
             & 0o777;
         assert_eq!(dir_mode, 0o700);
         assert_eq!(file_mode, 0o600);
+    }
+
+    #[test]
+    fn try_append_persists_like_append_when_the_lock_is_free() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let store = Store::new(
+            directory.path().to_path_buf(),
+            tiny_config(),
+            TestClock::new(UNIX_EPOCH),
+        );
+
+        assert!(store.try_append(Signal::Log, json!({ "n": 0 })));
+
+        let records = store.read_records(Signal::Log);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0]["n"], 0);
+    }
+
+    /// The one guarantee the panic hook depends on: `try_append` must
+    /// return immediately, never wait, when the writer lock is already
+    /// held — including by this same thread, which is exactly what
+    /// happens if a panic occurs mid-`append` and the installed panic hook
+    /// tries to record telemetry about it through the normal blocking path.
+    #[test]
+    fn try_append_never_blocks_when_the_lock_is_already_held() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let store = Arc::new(Store::new(
+            directory.path().to_path_buf(),
+            tiny_config(),
+            TestClock::new(UNIX_EPOCH),
+        ));
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let holder = Arc::clone(&store);
+        let handle = std::thread::spawn(move || {
+            let _guard = holder.state.lock().expect("lock");
+            ready_tx.send(()).expect("signal ready");
+            release_rx.recv().expect("wait for release");
+        });
+        ready_rx.recv().expect("wait for the lock to be held");
+
+        let started = std::time::Instant::now();
+        let wrote = store.try_append(Signal::Log, json!({ "n": 0 }));
+        let elapsed = started.elapsed();
+
+        release_tx.send(()).expect("release the lock");
+        handle.join().expect("holder thread");
+
+        assert!(!wrote, "try_append must not write while the lock is held");
+        assert!(
+            elapsed < Duration::from_millis(200),
+            "try_append blocked for {elapsed:?} instead of returning immediately"
+        );
+        assert!(store.read_records(Signal::Log).is_empty());
     }
 
     #[test]

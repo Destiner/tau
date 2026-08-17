@@ -11,12 +11,13 @@
 //! never calls `Telemetry::start_command_span`.
 use std::collections::HashMap;
 
+use opentelemetry::logs::Severity;
 use opentelemetry::Value as OtelValue;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::State;
 
-use super::exporter::{otel_value_json, wrap_span_json};
+use super::exporter::{otel_value_json, wrap_log_json, wrap_span_json};
 use super::trace_context::{is_non_zero_lower_hex, TraceContext, SPAN_ID_LEN};
 use super::{attributes, Telemetry, SCOPE_NAME};
 
@@ -34,6 +35,24 @@ pub struct FrontendSpanRecord {
     sampled: bool,
     start_time_unix_nano: String,
     end_time_unix_nano: String,
+    #[serde(default)]
+    attributes: HashMap<String, FrontendAttributeValue>,
+}
+
+/// The wire shape for a frontend-originated log record (Stage 4's
+/// `frontend.error`). Deliberately narrower than a span: no trace/span
+/// identity, and no frontend-supplied event name or severity —
+/// `fixed_log_metadata` maps `family` to both, so an untrusted caller can
+/// never choose either. This shape and a span's are structurally disjoint
+/// (a span always requires `traceId`/`spanId`/`sampled`/`startTimeUnixNano`/
+/// `endTimeUnixNano`, none of which a log record carries), so
+/// `ingest_records` can try deserializing as a span first and fall back to
+/// this without an explicit discriminant field.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FrontendLogRecord {
+    family: String,
+    time_unix_nano: String,
     #[serde(default)]
     attributes: HashMap<String, FrontendAttributeValue>,
 }
@@ -82,18 +101,91 @@ fn ingest_records(telemetry: &Telemetry, records: Vec<Value>) -> IngestOutcome {
     };
 
     for raw in records.into_iter().take(MAX_RECORDS_PER_CALL) {
-        let value = serde_json::from_value::<FrontendSpanRecord>(raw)
-            .ok()
-            .and_then(|record| validated_span_json(&record, &telemetry.resource_json, SCOPE_NAME));
-        match value {
-            Some(value) => {
-                telemetry.record_trace(value);
-                outcome.accepted += 1;
-            }
-            None => outcome.rejected += 1,
+        if ingest_one(telemetry, raw) {
+            outcome.accepted += 1;
+        } else {
+            outcome.rejected += 1;
         }
     }
     outcome
+}
+
+/// Tries a record as a span first, then as a log; a value that matches
+/// neither shape (or fails its family's validation) is rejected. Cloning
+/// `raw` for the second attempt is cheap: batches are capped at
+/// `MAX_RECORDS_PER_CALL` small JSON objects.
+fn ingest_one(telemetry: &Telemetry, raw: Value) -> bool {
+    if let Some(record) = serde_json::from_value::<FrontendSpanRecord>(raw.clone())
+        .ok()
+        .and_then(|record| validated_span_json(&record, &telemetry.resource_json, SCOPE_NAME))
+    {
+        telemetry.record_trace(record);
+        return true;
+    }
+    if let Some(record) = serde_json::from_value::<FrontendLogRecord>(raw)
+        .ok()
+        .and_then(|record| validated_log_json(&record, &telemetry.resource_json, SCOPE_NAME))
+    {
+        telemetry.record_log(record);
+        return true;
+    }
+    false
+}
+
+/// The fixed `(eventName, severity)` pair a frontend-owned log family
+/// produces. Neither is ever taken from the frontend: trusting an
+/// untrusted caller's choice of event name or severity would add a second
+/// categorical dimension to review for no benefit, since today every
+/// family has exactly one of each.
+fn fixed_log_metadata(family: &str) -> Option<(&'static str, Severity)> {
+    if family == attributes::FRONTEND_ERROR.name {
+        Some(("frontend.error", Severity::Error))
+    } else if family == attributes::TELEMETRY_HEALTH.name {
+        Some(("telemetry.queue_overflow", Severity::Warn))
+    } else {
+        None
+    }
+}
+
+/// Validates one frontend log record against the Stage 0 catalog and, if it
+/// passes every check, converts it to the same OTLP JSON shape native logs
+/// use. Mirrors `validated_span_json`'s structure and required-attribute
+/// check.
+fn validated_log_json(
+    record: &FrontendLogRecord,
+    resource_json: &Value,
+    scope_name: &str,
+) -> Option<Value> {
+    let (event_name, severity) = fixed_log_metadata(&record.family)?;
+    validate_frontend_attribute_keys(&record.family, &record.attributes)?;
+
+    let time = canonical_timestamp(&record.time_unix_nano)?;
+
+    let mut attribute_values = Vec::with_capacity(record.attributes.len());
+    for (key, value) in &record.attributes {
+        let otel_value = value.as_otel_value();
+        attributes::validate(&record.family, key, &otel_value).ok()?;
+        attribute_values.push(json!({ "key": key, "value": otel_value_json(&otel_value) }));
+    }
+
+    let mut log_object = serde_json::Map::new();
+    log_object.insert("timeUnixNano".into(), Value::String(time.1));
+    log_object.insert("eventName".into(), Value::String(event_name.to_string()));
+    log_object.insert("severityNumber".into(), Value::from(severity as i32));
+    log_object.insert(
+        "severityText".into(),
+        Value::String(severity.name().to_string()),
+    );
+    log_object.insert("body".into(), json!({ "stringValue": event_name }));
+    if !attribute_values.is_empty() {
+        log_object.insert("attributes".into(), Value::Array(attribute_values));
+    }
+
+    Some(wrap_log_json(
+        resource_json,
+        scope_name,
+        Value::Object(log_object),
+    ))
 }
 
 /// Validates one frontend record against the Stage 0 catalog and, if it
@@ -127,9 +219,43 @@ fn required_attributes(family: &str) -> Option<&'static [&'static str]> {
             "tau.runtime.id",
             "pi.generation",
         ])
+    } else if family == attributes::TELEMETRY_HEALTH.name {
+        // Only the frontend's own counter is accepted from the frontend;
+        // `tau.telemetry.failed_write_count` is native-only (see
+        // `Telemetry::record_writer_health`) and never sent here.
+        Some(&["tau.telemetry.dropped_count"])
+    } else if family == attributes::FRONTEND_ERROR.name {
+        Some(&["tau.error.source", "tau.error.kind", "tau.error.location"])
     } else {
         None
     }
+}
+
+fn optional_frontend_attributes(family: &str) -> &'static [&'static str] {
+    if family == attributes::TAURI_INVOKE.name {
+        &["tau.invoke.outcome"]
+    } else {
+        &[]
+    }
+}
+
+fn validate_frontend_attribute_keys(
+    family: &str,
+    values: &HashMap<String, FrontendAttributeValue>,
+) -> Option<()> {
+    let required = required_attributes(family)?;
+    let optional = optional_frontend_attributes(family);
+    if !required.iter().all(|key| values.contains_key(*key)) {
+        return None;
+    }
+    let keys_are_owned = values.keys().all(|key| {
+        required.contains(&key.as_str())
+            || optional.contains(&key.as_str())
+            || attributes::CONTEXT_ATTRIBUTES
+                .iter()
+                .any(|spec| spec.key == key)
+    });
+    keys_are_owned.then_some(())
 }
 
 fn validated_span_json(
@@ -137,14 +263,7 @@ fn validated_span_json(
     resource_json: &Value,
     scope_name: &str,
 ) -> Option<Value> {
-    let required = required_attributes(&record.family)?;
-    if record.attributes.len() > required.len() + attributes::CONTEXT_ATTRIBUTES.len()
-        || !required
-            .iter()
-            .all(|key| record.attributes.contains_key(*key))
-    {
-        return None;
-    }
+    validate_frontend_attribute_keys(&record.family, &record.attributes)?;
 
     let flags = if record.sampled { "01" } else { "00" };
     TraceContext::parse(&format!(
@@ -246,6 +365,25 @@ mod tests {
             span_object["attributes"][0],
             json!({ "key": "tau.invoke.command", "value": { "stringValue": "load_workspace" } })
         );
+    }
+
+    #[test]
+    fn accepts_a_reviewed_invoke_outcome() {
+        let resource_json = json!({ "attributes": [] });
+        let mut attributes = command_attribute("load_workspace");
+        attributes.insert(
+            "tau.invoke.outcome".to_string(),
+            FrontendAttributeValue::Str("success".to_string()),
+        );
+        let value = validated_span_json(&record("tauri.invoke", attributes), &resource_json, "tau")
+            .expect("valid outcome");
+        let persisted = value["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"]
+            .as_array()
+            .expect("attributes");
+        assert!(persisted.iter().any(|attribute| {
+            attribute["key"] == "tau.invoke.outcome"
+                && attribute["value"]["stringValue"] == "success"
+        }));
     }
 
     #[test]
@@ -485,6 +623,131 @@ mod tests {
         );
     }
 
+    fn log_record(
+        family: &str,
+        attributes: HashMap<String, FrontendAttributeValue>,
+    ) -> FrontendLogRecord {
+        FrontendLogRecord {
+            family: family.to_string(),
+            time_unix_nano: "1000000000".to_string(),
+            attributes,
+        }
+    }
+
+    fn frontend_error_attributes(
+        source: &str,
+        kind: &str,
+        location: &str,
+    ) -> HashMap<String, FrontendAttributeValue> {
+        HashMap::from([
+            string_attribute("tau.error.source", source),
+            string_attribute("tau.error.kind", kind),
+            string_attribute("tau.error.location", location),
+        ])
+    }
+
+    #[test]
+    fn accepts_a_well_formed_frontend_error_record() {
+        let resource_json = json!({ "attributes": [] });
+        let attributes = frontend_error_attributes("window_error", "TypeError", "index.ts:10:4");
+        let value = validated_log_json(
+            &log_record("frontend.error", attributes),
+            &resource_json,
+            "tau",
+        )
+        .expect("valid frontend.error record");
+        let log_object = &value["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+        assert_eq!(log_object["eventName"], "frontend.error");
+        assert_eq!(log_object["severityNumber"], Severity::Error as i32);
+        let persisted = log_object["attributes"].as_array().expect("attributes");
+        assert!(persisted
+            .iter()
+            .any(|attribute| attribute["key"] == "tau.error.location"
+                && attribute["value"]["stringValue"] == "index.ts:10:4"));
+    }
+
+    #[test]
+    fn accepts_a_frontend_queue_overflow_health_record() {
+        let resource_json = json!({ "attributes": [] });
+        let attributes = HashMap::from([int_attribute("tau.telemetry.dropped_count", 3)]);
+        let value = validated_log_json(
+            &log_record("telemetry.health", attributes),
+            &resource_json,
+            "tau",
+        )
+        .expect("valid telemetry.health record");
+        let log_object = &value["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+        assert_eq!(log_object["eventName"], "telemetry.queue_overflow");
+        assert_eq!(log_object["severityNumber"], Severity::Warn as i32);
+    }
+
+    #[test]
+    fn rejects_the_native_writer_failure_counter_from_frontend_health() {
+        let resource_json = json!({ "attributes": [] });
+        let attributes = HashMap::from([
+            int_attribute("tau.telemetry.dropped_count", 3),
+            int_attribute("tau.telemetry.failed_write_count", 1),
+        ]);
+        assert!(validated_log_json(
+            &log_record("telemetry.health", attributes),
+            &resource_json,
+            "tau"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn rejects_an_unreviewed_frontend_error_source() {
+        let resource_json = json!({ "attributes": [] });
+        let attributes =
+            frontend_error_attributes("not-a-real-source", "TypeError", "index.ts:10:4");
+        assert!(validated_log_json(
+            &log_record("frontend.error", attributes),
+            &resource_json,
+            "tau"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn rejects_a_forbidden_content_canary_disguised_as_a_frontend_error_kind() {
+        let resource_json = json!({ "attributes": [] });
+        let canary = crate::telemetry::privacy::FORBIDDEN_CONTENT_CANARIES[0].1;
+        let attributes = frontend_error_attributes("console_error", canary, "index.ts:10:4");
+        assert!(validated_log_json(
+            &log_record("frontend.error", attributes),
+            &resource_json,
+            "tau"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn rejects_a_frontend_error_record_missing_a_required_attribute() {
+        let resource_json = json!({ "attributes": [] });
+        let mut attributes = frontend_error_attributes("console_error", "Error", "index.ts:10:4");
+        attributes.remove("tau.error.location");
+        assert!(validated_log_json(
+            &log_record("frontend.error", attributes),
+            &resource_json,
+            "tau"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn rejects_a_log_shaped_record_for_a_family_the_frontend_does_not_own_as_a_log() {
+        // `tauri.invoke` is frontend-owned as a span, never as a log: a
+        // log-shaped payload naming it must still be rejected.
+        let resource_json = json!({ "attributes": [] });
+        assert!(validated_log_json(
+            &log_record("tauri.invoke", HashMap::new()),
+            &resource_json,
+            "tau"
+        )
+        .is_none());
+    }
+
     fn test_telemetry() -> (Telemetry, tempfile::TempDir) {
         let directory = tempfile::tempdir().expect("temp dir");
         let telemetry = Telemetry::new(
@@ -495,6 +758,10 @@ mod tests {
     }
 
     fn to_value(record: &FrontendSpanRecord) -> Value {
+        serde_json::to_value(record).expect("serializable record")
+    }
+
+    fn to_log_value(record: &FrontendLogRecord) -> Value {
         serde_json::to_value(record).expect("serializable record")
     }
 
@@ -586,6 +853,48 @@ mod tests {
         assert!(spans.iter().any(|span| {
             span["traceId"] == context.trace_id && span["parentSpanId"] == context.span_id
         }));
+    }
+
+    #[test]
+    fn ingest_persists_a_frontend_error_log_record() {
+        let (telemetry, _directory) = test_telemetry();
+        let attributes =
+            frontend_error_attributes("unhandled_rejection", "RangeError", "main.ts:5:1");
+        let records = vec![to_log_value(&log_record("frontend.error", attributes))];
+
+        let outcome = ingest_records(&telemetry, records);
+
+        assert_eq!(
+            outcome,
+            IngestOutcome {
+                accepted: 1,
+                rejected: 0
+            }
+        );
+        assert_eq!(telemetry.store.read_records(Signal::Log).len(), 1);
+        assert_eq!(telemetry.store.read_records(Signal::Trace).len(), 0);
+    }
+
+    #[test]
+    fn ingest_dispatches_spans_and_logs_in_the_same_batch() {
+        let (telemetry, _directory) = test_telemetry();
+        let span = to_value(&record("tauri.invoke", command_attribute("load_workspace")));
+        let log = to_log_value(&log_record(
+            "frontend.error",
+            frontend_error_attributes("console_error", "none", ""),
+        ));
+
+        let outcome = ingest_records(&telemetry, vec![span, log]);
+
+        assert_eq!(
+            outcome,
+            IngestOutcome {
+                accepted: 2,
+                rejected: 0
+            }
+        );
+        assert_eq!(telemetry.store.read_records(Signal::Trace).len(), 1);
+        assert_eq!(telemetry.store.read_records(Signal::Log).len(), 1);
     }
 
     /// The ingest command itself must never be traced: processing a batch

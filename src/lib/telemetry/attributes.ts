@@ -118,9 +118,15 @@ const TAURI_INVOKE_COMMANDS = [
 ] as const;
 type TauriInvokeCommand = (typeof TAURI_INVOKE_COMMANDS)[number];
 
+const TAURI_INVOKE_OUTCOMES = ['success', 'error'] as const;
+type TauriInvokeOutcome = (typeof TAURI_INVOKE_OUTCOMES)[number];
+
 const TAURI_INVOKE: RecordFamily = {
   name: 'tauri.invoke',
-  attributes: [stringAttribute('tau.invoke.command', true)],
+  attributes: [
+    stringAttribute('tau.invoke.command', true),
+    stringAttribute('tau.invoke.outcome', true),
+  ],
 };
 
 /** Categorical values for `pi.rpc.method`: every request `type` Tau sends
@@ -212,6 +218,110 @@ const PI_PROCESS_LIFECYCLE: RecordFamily = {
  * and, where applicable, context attributes, so this family adds none. */
 const APP_LIFECYCLE: RecordFamily = { name: 'app.lifecycle', attributes: [] };
 
+/** Categorical values for `tau.reader.drop_reason`: why native code
+ * discarded a line from Pi's stdout without forwarding it. */
+const PI_READER_DROP_REASONS = [
+  'oversized',
+  'invalid_utf8',
+  'malformed',
+] as const;
+
+/** Categorical values for `tau.reader.error_kind`: a bounded subset of
+ * `std::io::ErrorKind` variants a Pi stdout/stderr reader can observe.
+ * Never the OS's own error message, which can be arbitrary. */
+const PI_READER_ERROR_KINDS = [
+  'broken_pipe',
+  'interrupted',
+  'unexpected_eof',
+  'other',
+] as const;
+
+/** Categorical values for `tau.event.kind`: the `pi-event` kinds native
+ * code can fail to emit to the frontend. */
+const PI_EVENT_KINDS = ['started', 'rpc', 'stderr', 'error', 'exited'] as const;
+
+/** Reader failures, malformed/oversized lines, and failed `pi-event`
+ * emission — native-only diagnostics about Pi's stdout/stderr reading and
+ * event-forwarding machinery. Mirrored here only so the shared
+ * `categoricalValues` lookup stays authoritative; the frontend never emits
+ * this family itself. */
+const PI_READER: RecordFamily = {
+  name: 'pi.reader',
+  attributes: [
+    stringAttribute('tau.reader.drop_reason', true),
+    stringAttribute('tau.reader.error_kind', true),
+    stringAttribute('tau.event.kind', true),
+  ],
+};
+
+/** Telemetry-pipeline health: the frontend's bounded-queue drop count and
+ * the native store's writer-failure count. The frontend only ever reports
+ * `tau.telemetry.dropped_count`; the failure count is native-only. */
+const TELEMETRY_HEALTH: RecordFamily = {
+  name: 'telemetry.health',
+  attributes: [
+    {
+      key: 'tau.telemetry.dropped_count',
+      kind: 'int',
+      maxLen: null,
+      metricSafe: true,
+    },
+    {
+      key: 'tau.telemetry.failed_write_count',
+      kind: 'int',
+      maxLen: null,
+      metricSafe: true,
+    },
+  ],
+};
+
+/** A Rust panic. Mirrored here for the shared `categoricalValues` lookup;
+ * the frontend never emits this family. */
+const RUST_PANIC: RecordFamily = {
+  name: 'rust.panic',
+  attributes: [stringAttribute('tau.error.location', false)],
+};
+
+/** Categorical values for `tau.error.source`: which frontend capture point
+ * produced a `frontend.error` record. */
+const FRONTEND_ERROR_SOURCES = [
+  'window_error',
+  'unhandled_rejection',
+  'vue_error',
+  'console_error',
+] as const;
+type FrontendErrorSource = (typeof FRONTEND_ERROR_SOURCES)[number];
+
+/** Categorical values for `tau.error.kind`: a thrown/rejected value's
+ * constructor name, bounded to JavaScript's built-in error types plus
+ * `other`/`none`. Never the error's own message. */
+const FRONTEND_ERROR_KINDS = [
+  'Error',
+  'TypeError',
+  'RangeError',
+  'ReferenceError',
+  'SyntaxError',
+  'EvalError',
+  'URIError',
+  'other',
+  'none',
+] as const;
+type FrontendErrorKind = (typeof FRONTEND_ERROR_KINDS)[number];
+
+/** `window.error`, `unhandledrejection`, Vue errors, and sanitized
+ * `console.error` calls captured from the frontend. Never the thrown
+ * value's message or a serialized object — only its bounded category and a
+ * sanitized source location (`tau.error.location`, not metric-safe: many
+ * distinct call sites would make it high-cardinality as a dimension). */
+const FRONTEND_ERROR: RecordFamily = {
+  name: 'frontend.error',
+  attributes: [
+    stringAttribute('tau.error.source', true),
+    stringAttribute('tau.error.kind', true),
+    stringAttribute('tau.error.location', false),
+  ],
+};
+
 const FAMILIES: readonly RecordFamily[] = [
   UI_ACTION,
   TAURI_INVOKE,
@@ -220,6 +330,10 @@ const FAMILIES: readonly RecordFamily[] = [
   CONTROLLER_LIFECYCLE,
   PI_PROCESS_LIFECYCLE,
   APP_LIFECYCLE,
+  PI_READER,
+  TELEMETRY_HEALTH,
+  RUST_PANIC,
+  FRONTEND_ERROR,
 ];
 
 function findFamily(name: string): RecordFamily | undefined {
@@ -260,6 +374,8 @@ function categoricalValues(key: string): readonly string[] | undefined {
       return UI_ACTION_NAMES;
     case 'tau.invoke.command':
       return TAURI_INVOKE_COMMANDS;
+    case 'tau.invoke.outcome':
+      return TAURI_INVOKE_OUTCOMES;
     case 'pi.rpc.method':
       return PI_RPC_METHODS;
     case 'pi.rpc.outcome':
@@ -268,6 +384,16 @@ function categoricalValues(key: string): readonly string[] | undefined {
       return PI_PROCESS_STOP_REASONS;
     case 'tau.process.resolution':
       return PI_PROCESS_RESOLUTIONS;
+    case 'tau.reader.drop_reason':
+      return PI_READER_DROP_REASONS;
+    case 'tau.reader.error_kind':
+      return PI_READER_ERROR_KINDS;
+    case 'tau.event.kind':
+      return PI_EVENT_KINDS;
+    case 'tau.error.source':
+      return FRONTEND_ERROR_SOURCES;
+    case 'tau.error.kind':
+      return FRONTEND_ERROR_KINDS;
     default:
       return undefined;
   }
@@ -307,10 +433,13 @@ export type {
   AttributeError,
   AttributeKind,
   AttributeSpec,
+  FrontendErrorKind,
+  FrontendErrorSource,
   PiRpcMethod,
   PiRpcOutcome,
   RecordFamily,
   TauriInvokeCommand,
+  TauriInvokeOutcome,
   UiActionName,
 };
 
@@ -321,6 +450,9 @@ export {
   CONTROLLER_LIFECYCLE,
   FAMILIES,
   findFamily,
+  FRONTEND_ERROR,
+  FRONTEND_ERROR_KINDS,
+  FRONTEND_ERROR_SOURCES,
   isMetricSafe,
   PI_PROCESS_LIFECYCLE,
   PI_PROCESS_RESOLUTIONS,
@@ -332,6 +464,8 @@ export {
   RESOURCE_ATTRIBUTES,
   TAURI_INVOKE,
   TAURI_INVOKE_COMMANDS,
+  TAURI_INVOKE_OUTCOMES,
+  TELEMETRY_HEALTH,
   UI_ACTION,
   UI_ACTION_NAMES,
   validateAttribute,

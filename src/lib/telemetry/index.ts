@@ -13,47 +13,101 @@ import {
 import { invoke } from '@tauri-apps/api/core';
 
 import {
+  FRONTEND_ERROR,
   PI_RPC,
   PI_STREAM,
   TAURI_INVOKE,
+  TELEMETRY_HEALTH,
   UI_ACTION,
   validateAttribute,
+  type FrontendErrorSource,
   type PiRpcMethod,
   type PiRpcOutcome,
   type TauriInvokeCommand,
+  type TauriInvokeOutcome,
   type UiActionName,
 } from './attributes';
+import {
+  classifyErrorKind,
+  locationFromErrorEvent,
+  locationFromValue,
+} from './errors';
 import { createFlushScheduler } from './ingest';
+import { nowUnixNanoString, type FrontendLogRecord } from './log';
 import { createBoundedQueue, type BoundedQueue } from './queue';
 import type { TraceContext } from './trace-context';
 import {
   createTracer,
   remoteParentContext,
-  type FrontendSpanRecord,
+  type FrontendQueueRecord,
 } from './tracer';
 
 /** Bounds both the pre-init and batch buffer; see `./queue`. */
 const MAX_QUEUE_SIZE = 200;
 
 interface AdapterState {
-  queue: BoundedQueue<FrontendSpanRecord>;
+  queue: BoundedQueue<FrontendQueueRecord>;
   tracer: Tracer;
   scheduleFlush: () => void;
   flushNow: () => Promise<void>;
 }
 
 let state: AdapterState | undefined;
+/** The queue's own `dropped` count as of the last time it was reported via
+ * a `telemetry.health` log, so overflow is reported once per new drop
+ * rather than on every flush. */
+let lastReportedDroppedCount = 0;
 
 /** Builds the queue, tracer, and flush scheduler on first use, so a span
  * created before `initTelemetry` runs is still captured rather than lost. */
 function ensureState(): AdapterState {
   if (!state) {
-    const queue = createBoundedQueue<FrontendSpanRecord>(MAX_QUEUE_SIZE);
+    const queue = createBoundedQueue<FrontendQueueRecord>(MAX_QUEUE_SIZE);
     const tracer = createTracer(queue);
-    const { scheduleFlush, flushNow } = createFlushScheduler(queue);
+    const { scheduleFlush: rawScheduleFlush, flushNow } =
+      createFlushScheduler(queue);
+    // Every call site below already calls `scheduleFlush` once its span or
+    // log is queued, so piggybacking the overflow check here reports a new
+    // drop promptly without threading a callback through `tracer.ts`.
+    function scheduleFlush(): void {
+      reportQueueOverflowIfChanged(queue);
+      rawScheduleFlush();
+    }
     state = { queue, tracer, scheduleFlush, flushNow };
   }
   return state;
+}
+
+/** Queues one `telemetry.health` log reporting the queue's current
+ * `dropped` count, but only once per new drop — not on every flush — so
+ * reporting overflow cannot itself contribute to more of it. Pushed
+ * directly into the queue it is reporting on, never through a second
+ * `ensureState()`/tracer round trip. */
+function reportQueueOverflowIfChanged(
+  queue: BoundedQueue<FrontendQueueRecord>,
+): void {
+  if (queue.dropped === lastReportedDroppedCount) return;
+  const droppedCount = queue.dropped;
+  const record: FrontendLogRecord = {
+    family: TELEMETRY_HEALTH.name,
+    timeUnixNano: nowUnixNanoString(),
+    attributes: {},
+  };
+  if (
+    validateAttribute(
+      TELEMETRY_HEALTH.name,
+      'tau.telemetry.dropped_count',
+      droppedCount,
+    ).valid
+  ) {
+    record.attributes['tau.telemetry.dropped_count'] = droppedCount;
+  }
+  queue.push(record);
+  // Re-read after pushing: if the queue was already at capacity, this push
+  // may have evicted another record and incremented `dropped` again. Using
+  // the post-push value here means that increment is never mistaken for a
+  // fresh drop on a later, unrelated call.
+  lastReportedDroppedCount = queue.dropped;
 }
 
 interface TelemetryScope {
@@ -67,7 +121,7 @@ interface CommandSpanHandle {
   /** Passed to the corresponding Tauri command as `telemetryContext`, so the
    * native span it starts becomes a child of this one. */
   readonly context?: TraceContext;
-  end: () => void;
+  end: (outcome?: TauriInvokeOutcome) => void;
 }
 
 /** Starts a span in `family`, carrying one attribute, as a child of
@@ -121,8 +175,15 @@ function startFamilySpan(
         spanId: spanContext.spanId,
         sampled: (spanContext.traceFlags & TraceFlags.SAMPLED) !== 0,
       },
-      end(): void {
+      end(outcome?: TauriInvokeOutcome): void {
         try {
+          if (
+            family === TAURI_INVOKE.name &&
+            outcome !== undefined &&
+            validateAttribute(family, 'tau.invoke.outcome', outcome).valid
+          ) {
+            span.setAttribute('tau.invoke.outcome', outcome);
+          }
           span.end();
           scheduleFlush();
         } catch {
@@ -199,12 +260,12 @@ function invokeTraced<T>(
   try {
     promise = invoke<T>(command, { ...args, telemetryContext: span.context });
   } catch (error) {
-    span.end();
+    span.end('error');
     return Promise.reject(error);
   }
   promise.then(
-    () => span.end(),
-    () => span.end(),
+    () => span.end('success'),
+    () => span.end('error'),
   );
   return promise;
 }
@@ -315,6 +376,132 @@ function recordStreamAggregate(
   }
 }
 
+/**
+ * Records one `frontend.error` log for a captured `window.error`,
+ * `unhandledrejection`, Vue error, or `console.error` call. Never the
+ * thrown value's message or a serialized object — only its bounded
+ * `kind`/`source` category and a sanitized source location, each dropped
+ * (not persisted) individually if it somehow fails validation, so a
+ * classification bug can never smuggle an unreviewed value through.
+ */
+let inConsoleErrorCapture = false;
+let frontendErrorCaptureInstalled = false;
+
+function recordFrontendError(
+  source: FrontendErrorSource,
+  kind: string,
+  location: string,
+): void {
+  try {
+    const { queue, scheduleFlush, flushNow } = ensureState();
+    const record: FrontendLogRecord = {
+      family: FRONTEND_ERROR.name,
+      timeUnixNano: nowUnixNanoString(),
+      attributes: {},
+    };
+    const candidates: ReadonlyArray<[string, string]> = [
+      ['tau.error.source', source],
+      ['tau.error.kind', kind],
+      ['tau.error.location', location],
+    ];
+    for (const [key, value] of candidates) {
+      if (validateAttribute(FRONTEND_ERROR.name, key, value).valid) {
+        record.attributes[key] = value;
+      }
+    }
+    queue.push(record);
+    scheduleFlush();
+    void flushNow();
+  } catch {
+    // Telemetry completion must not affect error handling itself.
+  }
+}
+
+/** Assigned to `app.config.errorHandler`. Vue calls this synchronously with
+ * whatever was thrown; only its bounded category and sanitized location
+ * are ever recorded, never `err` itself or Vue's own `info` string (which
+ * is not part of the reviewed catalog). */
+function vueErrorHandler(err: unknown): void {
+  recordFrontendError(
+    'vue_error',
+    classifyErrorKind(err),
+    locationFromValue(err),
+  );
+  const wasCapturing = inConsoleErrorCapture;
+  inConsoleErrorCapture = true;
+  try {
+    console.error(err);
+  } catch {
+    // Preserve telemetry's fail-open behavior even if the console is patched.
+  } finally {
+    inConsoleErrorCapture = wasCapturing;
+  }
+}
+
+/** Guards `console.error` wrapping against recording its own re-entry: if
+ * sanitizing/recording somehow calls `console.error` again on the same
+ * thread (a bug in this module, not expected), the nested call is still
+ * forwarded to the real `console.error` but is not itself recorded. */
+
+/**
+ * Installs `window.error`/`unhandledrejection` listeners and wraps
+ * `console.error`. Each installation is independently guarded so a
+ * DOM-less environment (a unit test) can still exercise the parts that do
+ * not need `window`. Safe to call once at startup, before Vue mounts:
+ * every listener/wrapper here is synchronous and does no I/O, so nothing
+ * delays window reveal or mounting.
+ */
+function installFrontendErrorCapture(): void {
+  if (frontendErrorCaptureInstalled) return;
+  frontendErrorCaptureInstalled = true;
+
+  try {
+    window.addEventListener('error', (event) => {
+      recordFrontendError(
+        'window_error',
+        classifyErrorKind(event.error),
+        locationFromErrorEvent(event),
+      );
+    });
+  } catch {
+    // No `window` (e.g. a non-browser test environment): skip this listener.
+  }
+
+  try {
+    window.addEventListener('unhandledrejection', (event) => {
+      recordFrontendError(
+        'unhandled_rejection',
+        classifyErrorKind(event.reason),
+        locationFromValue(event.reason),
+      );
+    });
+  } catch {
+    // No `window`: skip this listener too.
+  }
+
+  try {
+    const original = console.error.bind(console);
+
+    console.error = (...args: unknown[]): void => {
+      original(...args);
+      if (inConsoleErrorCapture) return;
+      inConsoleErrorCapture = true;
+      try {
+        const first: unknown = args[0];
+        recordFrontendError(
+          'console_error',
+          classifyErrorKind(first),
+          locationFromValue(first),
+        );
+      } finally {
+        inConsoleErrorCapture = false;
+      }
+    };
+  } catch {
+    // Telemetry must never prevent console.error from working normally.
+  }
+}
+
 /** Constructs the adapter eagerly so a span created immediately at startup
  * is captured from the start. Call before Vue mounts. */
 function initTelemetry(): void {
@@ -340,9 +527,11 @@ export type { CommandSpanHandle, RpcSpanHandle, TelemetryScope };
 export {
   flushTelemetry,
   initTelemetry,
+  installFrontendErrorCapture,
   invokeTraced,
   recordStreamAggregate,
   startActionSpan,
   startCommandSpan,
   startRpcSpan,
+  vueErrorHandler,
 };

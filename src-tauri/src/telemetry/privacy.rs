@@ -49,8 +49,6 @@ pub fn matched_canaries(haystack: &str) -> Vec<&'static str> {
 /// "sanitize stack traces to module or source basenames" redaction rule.
 /// Directory components can carry a project path or a username, so they are
 /// dropped rather than truncated.
-// Stage 4 sanitizes captured stack frames with this before persisting them.
-#[allow(dead_code)]
 pub fn sanitize_source_location(file: &str, line: Option<u32>, column: Option<u32>) -> String {
     let base = file
         .trim_end_matches(['/', '\\'])

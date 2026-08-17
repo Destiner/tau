@@ -28,6 +28,7 @@ const REVEAL_TIMEOUT: Duration = Duration::from_secs(3);
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let telemetry = telemetry::Telemetry::init();
+    telemetry.install_panic_hook();
     telemetry.record_app_started();
 
     let app = tauri::Builder::default()

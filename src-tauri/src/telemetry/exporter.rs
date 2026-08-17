@@ -118,7 +118,7 @@ pub(super) fn any_value_json(value: &AnyValue) -> Value {
     }
 }
 
-fn unix_nanos_string(time: SystemTime) -> String {
+pub(super) fn unix_nanos_string(time: SystemTime) -> String {
     time.duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos().to_string())
         .unwrap_or_default()
@@ -173,12 +173,20 @@ fn log_record_to_otlp_json(
         log_record.insert("attributes".into(), Value::Array(attributes));
     }
 
+    wrap_log_json(resource_json, scope_name, Value::Object(log_record))
+}
+
+/// Wraps one already-built OTLP log record object in the `resourceLogs`
+/// envelope. Shared by native logs (above) and `ingest.rs`'s
+/// frontend-originated logs, so both sources produce identically shaped
+/// `logs.jsonl` lines — the same relationship `wrap_span_json` has to spans.
+pub(super) fn wrap_log_json(resource_json: &Value, scope_name: &str, log_record: Value) -> Value {
     json!({
         "resourceLogs": [{
             "resource": resource_json,
             "scopeLogs": [{
                 "scope": { "name": scope_name },
-                "logRecords": [Value::Object(log_record)],
+                "logRecords": [log_record],
             }],
         }],
     })

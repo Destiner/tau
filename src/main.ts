@@ -2,22 +2,33 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { createApp } from 'vue';
 
 import App from './App.vue';
-import { initTelemetry } from './lib/telemetry';
+import {
+  initTelemetry,
+  installFrontendErrorCapture,
+  vueErrorHandler,
+} from './lib/telemetry';
 import '@fontsource-variable/inter/wght.css';
 import './styles.css';
 
+// Both are synchronous, do no I/O, and never throw, so neither delays
+// window reveal or mounting below.
 initTelemetry();
+installFrontendErrorCapture();
 
 async function mountApp(): Promise<void> {
   const fixture = new URLSearchParams(window.location.search).get('fixture');
   if (import.meta.env.DEV && fixture === 'long-transcript') {
     const { default: TranscriptFixture } =
       await import('./dev/TranscriptFixture.vue');
-    createApp(TranscriptFixture).mount('#app');
+    const app = createApp(TranscriptFixture);
+    app.config.errorHandler = vueErrorHandler;
+    app.mount('#app');
     return;
   }
 
-  createApp(App).mount('#app');
+  const app = createApp(App);
+  app.config.errorHandler = vueErrorHandler;
+  app.mount('#app');
 }
 
 /**

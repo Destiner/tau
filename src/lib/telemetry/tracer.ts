@@ -23,6 +23,7 @@ import {
 } from '@opentelemetry/sdk-trace';
 
 import { validateAttribute } from './attributes';
+import type { FrontendLogRecord } from './log';
 import type { BoundedQueue } from './queue';
 import type { TraceContext } from './trace-context';
 
@@ -41,6 +42,12 @@ interface FrontendSpanRecord {
   endTimeUnixNano: string;
   attributes: Record<string, string | number>;
 }
+
+/** Everything that can sit in the shared bounded queue: spans (this file)
+ * and logs (`./log`). One queue serves both signal types so they share the
+ * same capacity and drop-count accounting; `index.ts` owns the queue and
+ * pushes both kinds into it. */
+type FrontendQueueRecord = FrontendSpanRecord | FrontendLogRecord;
 
 /** Converts an `[seconds, nanoseconds]` `HrTime` to a decimal
  * nanoseconds-since-epoch string without going through a JS `number`, which
@@ -83,7 +90,7 @@ function toFrontendSpanRecord(span: ReadableSpan): FrontendSpanRecord {
  * so `initTelemetry`/`startCommandSpan` cannot recurse into the ingest
  * command through this path. */
 function createQueueExporter(
-  queue: BoundedQueue<FrontendSpanRecord>,
+  queue: BoundedQueue<FrontendQueueRecord>,
 ): SpanExporter {
   return {
     export(spans, resultCallback: (result: ExportResult) => void): void {
@@ -100,7 +107,7 @@ function createQueueExporter(
 
 /** Builds a tracer that exports every span (no sampling, per the design
  * principles) into `queue`. */
-function createTracer(queue: BoundedQueue<FrontendSpanRecord>): Tracer {
+function createTracer(queue: BoundedQueue<FrontendQueueRecord>): Tracer {
   const provider = new TracerProvider({
     sampler: new AlwaysOnSampler(),
     spanProcessors: [
@@ -125,6 +132,6 @@ function remoteParentContext(parent: TraceContext): Context {
   });
 }
 
-export type { FrontendSpanRecord };
+export type { FrontendQueueRecord, FrontendSpanRecord };
 
 export { createTracer, hrTimeToNanosString, remoteParentContext };
