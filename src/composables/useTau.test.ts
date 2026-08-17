@@ -1113,6 +1113,65 @@ describe('session replacement hardening', () => {
     tau.dispose();
   });
 
+  it('auto-removes an empty session held by an unanswered command', async () => {
+    const { controller, otherSession, project, tau } =
+      await setupUnansweredPhantomCommand();
+
+    await tau.selectSession(project, otherSession);
+
+    expect(
+      tau.state.ephemeralSessions.some(
+        (session) => session.controllerKey === controller.key,
+      ),
+    ).toBe(false);
+    expect(
+      tau.state.controllers.some(
+        (candidate) => candidate.key === controller.key,
+      ),
+    ).toBe(false);
+    expect(tau.state.activeSessionId).toBe(otherSession.id);
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.some(([command]) => command === 'archive_session'),
+    ).toBe(false);
+    await vi.waitFor(() => {
+      expect(stoppedRuntimes()).toContain(controller.runtimeId);
+    });
+    tau.dispose();
+  });
+
+  it('discards an unregistered command session when it is archived', async () => {
+    const { controller, project, tau } = await setupUnansweredPhantomCommand();
+    const session = tau.state.ephemeralSessions.find(
+      (candidate) => candidate.controllerKey === controller.key,
+    );
+    if (!session) throw new Error('Expected the command session');
+
+    await tau.archiveSession(project, session);
+
+    expect(
+      tau.state.ephemeralSessions.some(
+        (candidate) => candidate.controllerKey === controller.key,
+      ),
+    ).toBe(false);
+    expect(
+      tau.state.controllers.some(
+        (candidate) => candidate.key === controller.key,
+      ),
+    ).toBe(false);
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.some(([command]) => command === 'archive_session'),
+    ).toBe(false);
+    expect(tau.state.activeSessionId).not.toBe(session.id);
+    await vi.waitFor(() => {
+      expect(stoppedRuntimes()).toContain(controller.runtimeId);
+    });
+    tau.dispose();
+  });
+
   it('detects a phase session opened after the run settles', async () => {
     vi.useFakeTimers();
     try {
@@ -2478,6 +2537,65 @@ async function setupUnsavedSession(): Promise<{
   if (!controller) throw new Error('Expected the unsaved session controller');
   vi.mocked(invoke).mockClear();
   return { tau, project, ghost, other, controller };
+}
+
+async function setupUnansweredPhantomCommand(): Promise<{
+  tau: Tau;
+  project: ProjectSummary;
+  otherSession: SessionSummary;
+  controller: SessionController;
+}> {
+  const { tau, project, secondSession } = await setupExtensionControllers();
+  await tau.newSession(project);
+  const controller = tau.state.controllers.find(
+    (candidate) => candidate.phantom,
+  );
+  if (!controller) throw new Error('Expected a phantom controller');
+  controller.starting = false;
+  controller.ready = true;
+  controller.commands = [{ name: 'mcp', source: 'extension' }];
+  controller.commandsLoaded = true;
+  controller.currentEffort = 'high';
+  vi.mocked(invoke).mockClear();
+
+  tau.draft.value = '/mcp';
+  await tau.sendMessage();
+  emitRpc(controller, {
+    id: controller.pendingPrompt?.stateRequestId,
+    type: 'response',
+    command: 'get_state',
+    success: true,
+    data: {
+      model: { provider: 'provider', id: 'alpha', name: 'Alpha' },
+      thinkingLevel: 'high',
+      sessionId: 'unwritten-mcp',
+      sessionFile: '/tmp/unwritten-mcp.jsonl',
+      sessionName: '',
+      isStreaming: false,
+    },
+  });
+  await vi.waitFor(() => {
+    expect(controller.pendingPrompt?.messagesRequestId).not.toBe('');
+  });
+  emitRpc(controller, {
+    id: controller.pendingPrompt?.messagesRequestId,
+    type: 'response',
+    command: 'get_messages',
+    success: true,
+    data: { messages: [] },
+  });
+  await vi.waitFor(() => {
+    expect(controller.commandPromptRequestId).not.toBe('');
+  });
+
+  expect(controller.phantom).toBe(false);
+  expect(controller.working).toBe(true);
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.some(([command]) => command === 'register_session'),
+  ).toBe(false);
+  return { tau, project, otherSession: secondSession, controller };
 }
 
 async function setupNamedSession(): Promise<{

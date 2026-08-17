@@ -1893,17 +1893,39 @@ function removeEmptyActivePhantom(): void {
   const session = controller
     ? ephemeralSessionByController(controller.key)
     : undefined;
+  // Pi gives a phantom its real in-memory identity before executing an
+  // extension command. A command that never answers can therefore leave an
+  // empty, unregistered row that is no longer marked phantom. It is just as
+  // disposable as the unsent row it came from when the user leaves it.
+  const unansweredUnsavedCommand = Boolean(
+    controller &&
+    session &&
+    !session.phantom &&
+    controller.commandPromptRequestId &&
+    !controller.streaming &&
+    !workspaceContainsSession(controller),
+  );
   if (
     !controller ||
-    !session?.phantom ||
+    !session ||
+    (!session.phantom && !unansweredUnsavedCommand) ||
     controller.draft.trim() ||
-    controller.working ||
+    (controller.working && !unansweredUnsavedCommand) ||
     controllerHasPendingDialog(controller) ||
     controller.messages.length > 0
   ) {
     return;
   }
   removeEphemeralSession(session, true);
+}
+
+function discardUnregisteredEphemeralSession(
+  controller: SessionController,
+): boolean {
+  const session = ephemeralSessionByController(controller.key);
+  if (!session || workspaceContainsSession(controller)) return false;
+  removeEphemeralSession(session, true);
+  return true;
 }
 
 function removeRegisteredEphemeralSession(controller: SessionController): void {
@@ -2078,6 +2100,7 @@ export {
   appendStream,
   retireUnsavedSession,
   removeEmptyActivePhantom,
+  discardUnregisteredEphemeralSession,
   removeRegisteredEphemeralSession,
   removeEphemeralSession,
   removeProjectUiState,

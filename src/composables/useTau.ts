@@ -11,6 +11,7 @@ import {
   clearAbortWatch,
   clearExtensionUiState,
   clearSessionReplacementWatch,
+  discardUnregisteredEphemeralSession,
   handleBridgeEvent,
   invokesExtensionCommand,
   persistExpandedProject,
@@ -416,6 +417,23 @@ function useTau() {
   ): Promise<void> {
     if (!canArchiveSession(project, session)) return;
     const controller = controllerForSession(project.path, session.id);
+    const discardedViewWasSelected =
+      state.activeProjectPath === project.path &&
+      state.activeSessionId === session.id;
+    if (controller && discardUnregisteredEphemeralSession(controller)) {
+      if (!discardedViewWasSelected) return;
+      const updatedProject = state.workspace?.projects.find(
+        (candidate) => candidate.path === project.path,
+      );
+      if (!updatedProject) {
+        clearActiveSession();
+        return;
+      }
+      const nextSession = projectSessions(updatedProject)[0];
+      if (nextSession) await selectSession(updatedProject, nextSession);
+      else await newSession(updatedProject);
+      return;
+    }
 
     try {
       state.workspace = await invokeTraced<WorkspaceSnapshot>(
