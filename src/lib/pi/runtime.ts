@@ -151,6 +151,7 @@ async function startController(
   controller.commandPromptRequestId = '';
   controller.commandSyncRequestId = '';
   controller.replacementProbeRequestId = '';
+  controller.pendingSessionRename = undefined;
   controller.abortProbeRequestId = '';
   touchController(controller);
   clearSessionReplacementWatch(controller);
@@ -1068,15 +1069,30 @@ async function handleResponse(
         responseContext,
       );
     }
-    // A rejected rename leaves the optimistic name on screen, so Pi's name is
-    // read back instead of being guessed.
+    // Restore the last confirmed title immediately, then ask Pi in case an
+    // extension changed the name while this request was in flight.
     if (command === 'set_session_name') {
+      const pending = controller.pendingSessionRename;
+      if (pending?.requestId === responseId) {
+        applySessionName(
+          controller,
+          pending.previousName,
+          pending.previousTitle,
+        );
+        controller.pendingSessionRename = undefined;
+      }
       await rpc(controller, {
         id: nextRequestId('session-name-state'),
         type: 'get_state',
       });
     }
     return;
+  }
+  if (
+    command === 'set_session_name' &&
+    controller.pendingSessionRename?.requestId === responseId
+  ) {
+    controller.pendingSessionRename = undefined;
   }
   const data = asRecord(response.data);
 
@@ -1113,7 +1129,7 @@ async function handleResponse(
       Boolean(piSessionId && piSessionPath) &&
       (controller.sessionId !== piSessionId ||
         controller.sessionPath !== piSessionPath);
-    controller.sessionName = stringValue(data.sessionName);
+    applySessionName(controller, stringValue(data.sessionName));
     const nowStreaming = data.isStreaming === true;
     controller.status =
       resolvesAbortProbe && nowStreaming ? unstoppedStatus(controller) : '';
@@ -1572,10 +1588,28 @@ function invokesExtensionCommand(
   );
 }
 
-function applySessionName(controller: SessionController, name: string): void {
+function applySessionName(
+  controller: SessionController,
+  name: string,
+  fallbackTitle = '',
+): void {
   controller.sessionName = name;
-  const session = ephemeralSessionByController(controller.key);
-  if (name && session && !session.phantom) session.title = name;
+  const title = name || fallbackTitle;
+  if (!title) return;
+
+  const ephemeral = ephemeralSessionByController(controller.key);
+  if (ephemeral && !ephemeral.phantom) {
+    ephemeral.title = title;
+    return;
+  }
+
+  const project = state.workspace?.projects.find(
+    (candidate) => candidate.path === controller.projectPath,
+  );
+  const session = project?.sessions.find(
+    (candidate) => candidate.id === controller.sessionId,
+  );
+  if (session) session.title = title;
 }
 
 async function persistSessionName(

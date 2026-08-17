@@ -2118,11 +2118,14 @@ describe('turn failures', () => {
 });
 
 describe('session naming', () => {
-  it('renames the selected session through Pi and stores the echoed name', async () => {
-    const { tau, controller } = await setupNamedSession();
+  it('renames the selected session optimistically and stores the echoed name', async () => {
+    const { tau, project, controller } = await setupNamedSession();
     expect(tau.canRenameSession.value).toBe(true);
 
-    await tau.renameSession('  Migration   plan  ');
+    const rename = tau.renameSession('  Migration   plan  ');
+    expect(tau.sessionTitle.value).toBe('Migration plan');
+    expect(tau.projectSessions(project)[0]?.title).toBe('Migration plan');
+    await rename;
     expect(sentRequests(controller, 'set_session_name')).toEqual([
       {
         id: expect.any(String),
@@ -2130,8 +2133,13 @@ describe('session naming', () => {
         name: 'Migration plan',
       },
     ]);
-    expect(tau.sessionTitle.value).toBe('Migration plan');
 
+    emitRpc(controller, {
+      id: sentRequests(controller, 'set_session_name')[0]?.id,
+      type: 'response',
+      command: 'set_session_name',
+      success: true,
+    });
     emitRpc(controller, {
       type: 'session_info_changed',
       name: 'Migration plan',
@@ -2141,11 +2149,12 @@ describe('session naming', () => {
         'register_session',
         expect.objectContaining({ sessionName: 'Migration plan' }),
       );
+      expect(tau.canRenameSession.value).toBe(true);
     });
   });
 
   it('adopts a name Pi reports without being asked', async () => {
-    const { tau, controller } = await setupNamedSession();
+    const { tau, project, controller } = await setupNamedSession();
 
     emitRpc(controller, {
       type: 'session_info_changed',
@@ -2154,6 +2163,9 @@ describe('session naming', () => {
 
     await vi.waitFor(() => {
       expect(tau.sessionTitle.value).toBe('Named by an extension');
+      expect(tau.projectSessions(project)[0]?.title).toBe(
+        'Named by an extension',
+      );
     });
     expect(invoke).toHaveBeenCalledWith(
       'register_session',
@@ -2162,7 +2174,7 @@ describe('session naming', () => {
   });
 
   it('reads the name back from Pi when it rejects a rename', async () => {
-    const { tau, controller, session } = await setupNamedSession();
+    const { tau, project, controller, session } = await setupNamedSession();
     emitRpc(controller, { type: 'session_info_changed', name: 'Named in Pi' });
     await vi.waitFor(() => {
       expect(controller.sessionName).toBe('Named in Pi');
@@ -2170,6 +2182,7 @@ describe('session naming', () => {
 
     await tau.renameSession('Named in Tau');
     expect(tau.sessionTitle.value).toBe('Named in Tau');
+    expect(tau.projectSessions(project)[0]?.title).toBe('Named in Tau');
     emitRpc(controller, {
       id: sentRequests(controller, 'set_session_name')[0]?.id,
       type: 'response',
@@ -2199,7 +2212,29 @@ describe('session naming', () => {
 
     await vi.waitFor(() => {
       expect(tau.sessionTitle.value).toBe('Named in Pi');
+      expect(tau.projectSessions(project)[0]?.title).toBe('Named in Pi');
     });
+  });
+
+  it('rolls the optimistic title back when sending the rename fails', async () => {
+    const { tau, project, controller } = await setupNamedSession();
+    const defaultInvoke = vi.mocked(invoke).getMockImplementation();
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === 'send_pi') throw new Error('Pi is unavailable');
+      return defaultInvoke?.(command, args);
+    });
+
+    try {
+      await tau.renameSession('Name that cannot be sent');
+
+      expect(controller.sessionName).toBe('naming-target');
+      expect(tau.sessionTitle.value).toBe('naming-target');
+      expect(tau.projectSessions(project)[0]?.title).toBe('naming-target');
+      expect(controller.status).toBe('Pi is unavailable');
+      expect(controller.pendingSessionRename).toBeUndefined();
+    } finally {
+      if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
+    }
   });
 
   it('leaves a session Pi has no file for unnamed', async () => {

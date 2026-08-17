@@ -116,6 +116,12 @@ interface EphemeralSession extends SessionSummary {
   phantom: boolean;
 }
 
+interface PendingSessionRename {
+  requestId: string;
+  previousName: string;
+  previousTitle: string;
+}
+
 interface PendingPrompt {
   message: string;
   optimisticId: string;
@@ -166,6 +172,7 @@ interface SessionController {
   commands: CommandOption[];
   commandsLoaded: boolean;
   pendingPrompt?: PendingPrompt;
+  pendingSessionRename?: PendingSessionRename;
   bootstrapStateRequestId: string;
   bootstrapSessionPath: string;
   runStateRequestId: string;
@@ -479,7 +486,12 @@ const settingsDisabled = computed(() => {
  */
 const canRenameSession = computed(() => {
   const controller = activeController.value;
-  return Boolean(controller && !controller.phantom && controller.ready);
+  return Boolean(
+    controller &&
+    !controller.phantom &&
+    controller.ready &&
+    !controller.pendingSessionRename,
+  );
 });
 
 function canArchiveSession(
@@ -741,6 +753,7 @@ function createController(
     commands: [],
     commandsLoaded: false,
     pendingPrompt: undefined,
+    pendingSessionRename: undefined,
     bootstrapStateRequestId: '',
     bootstrapSessionPath: '',
     runStateRequestId: '',

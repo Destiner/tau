@@ -698,18 +698,33 @@ function useTau() {
     );
     try {
       controller.status = '';
+      const requestId = nextRequestId('session-name');
+      controller.pendingSessionRename = {
+        requestId,
+        previousName: controller.sessionName,
+        previousTitle: sessionTitle.value,
+      };
       applySessionName(controller, next);
       try {
         await rpc(
           controller,
           {
-            id: nextRequestId('session-name'),
+            id: requestId,
             type: 'set_session_name',
             name: next,
           },
           actionSpan.context,
         );
       } catch (error) {
+        const pending = controller.pendingSessionRename;
+        if (pending?.requestId === requestId) {
+          applySessionName(
+            controller,
+            pending.previousName,
+            pending.previousTitle,
+          );
+          controller.pendingSessionRename = undefined;
+        }
         setControllerError(controller, error);
       }
     } finally {
