@@ -16,6 +16,7 @@ import { computed } from 'vue';
 
 import {
   FILE_PATH_ATTRIBUTE,
+  isPathOpenGesture,
   isWebUrl,
   parseFileReference,
   renderMarkdown,
@@ -66,11 +67,11 @@ function filePath(link: HTMLElement): string | null {
   return href ? (parseFileReference(href)?.path ?? null) : null;
 }
 
-async function openFile(path: string, basePath: string): Promise<void> {
+async function openLocalPath(path: string, basePath: string): Promise<void> {
   try {
     await openPath(resolveFilePath(basePath, path, await homeDirectory()));
   } catch (error) {
-    console.error('Could not open the file in its default app', error);
+    console.error('Could not open the path', error);
   }
 }
 
@@ -98,10 +99,12 @@ async function activate(event: Event): Promise<void> {
   const path = filePath(link);
   if (!path) return;
 
-  // A file is opened where it can be, and the window never follows the link out
-  // of the app where it cannot.
+  // Never let a relative markdown link navigate the webview. Opening it is a
+  // deliberate desktop gesture so an ordinary click can still place a caret.
   event.preventDefault();
-  if (props.basePath) await openFile(path, props.basePath);
+  if (props.basePath && isPathOpenGesture(event, window.navigator.platform)) {
+    await openLocalPath(path, props.basePath);
+  }
 }
 
 function handleKeydown(event: KeyboardEvent): void {

@@ -24,18 +24,28 @@ interface FileReference {
   path: string;
 }
 
+interface PathOpenGesture {
+  type: string;
+  key?: string;
+  button?: number;
+  metaKey?: boolean;
+  ctrlKey?: boolean;
+}
+
 /** Marks the anchors this module writes, and the only ones a click opens. */
 const FILE_PATH_ATTRIBUTE = 'data-tau-path';
 
 /**
- * A run of the characters a path is written with, plus a `:line:column` tail.
- * Whitespace ends the run, so a path written with a space in it is read as the
- * two paths it looks like, the way a terminal reads one.
+ * A path embedded in prose, plus a `:line:column` tail. Whitespace ends these
+ * candidates; a rooted path that fills its rendered line is handled separately
+ * so its spaces and punctuation are unambiguous.
  */
 const PATH_CANDIDATE = /[A-Za-z0-9~._/][A-Za-z0-9~._+@:/-]*/g;
 
-/** Text inside these is a link already or quoted verbatim, so it is left alone. */
+/** Existing links and fenced code blocks are left exactly as written. */
 const OPAQUE_ELEMENTS = new Set(['a', 'pre']);
+
+const APPLE_PLATFORM = /^(?:Mac|iPhone|iPad|iPod)/;
 
 const TAG = /<\/?([A-Za-z][^\s/>]*)[^>]*>/g;
 
@@ -132,16 +142,81 @@ function isWebUrl(value: string): boolean {
   }
 }
 
+/** Matches the desktop convention: Command-click on Apple, Control-click elsewhere. */
+function isPathOpenGesture(event: PathOpenGesture, platform: string): boolean {
+  if (event.type === 'keydown') return event.key === 'Enter';
+  if (event.type !== 'click' || event.button !== 0) return false;
+  return APPLE_PLATFORM.test(platform)
+    ? event.metaKey === true
+    : event.ctrlKey === true;
+}
+
 function linkTextRun(text: string): string {
+  return text
+    .split(/(\r?\n)/)
+    .map((line) => linkTextLine(line))
+    .join('');
+}
+
+function linkTextLine(text: string): string {
+  const standalone = linkStandaloneRootedPath(text);
+  if (standalone) return standalone;
+
   PATH_CANDIDATE.lastIndex = 0;
   return text.replace(PATH_CANDIDATE, (candidate) => {
     const reference = parseFileReference(candidate);
     if (!reference) return candidate;
     // Whatever the reference stopped short of is punctuation, not the path.
     const trailing = candidate.slice(reference.text.length);
-    const path = reference.path.replace(/"/g, '&quot;');
-    return `<a class="file-link" role="link" tabindex="0" ${FILE_PATH_ATTRIBUTE}="${path}">${reference.text}</a>${trailing}`;
+    return fileLink(reference.path, reference.text) + trailing;
   });
+}
+
+/** A whole rooted path has a clear end even when its name contains spaces. */
+function linkStandaloneRootedPath(text: string): string | null {
+  const leading = /^\s*/.exec(text)?.[0] ?? '';
+  const trailing = /\s*$/.exec(text)?.[0] ?? '';
+  const end = text.length - trailing.length;
+  const encodedCandidate = text.slice(leading.length, end);
+  if (!encodedCandidate) return null;
+
+  const candidate = decodeHtmlText(encodedCandidate);
+  if (!ROOTED_PATH.test(candidate)) return null;
+
+  const reference = parseFileReference(candidate);
+  if (!reference || reference.text !== candidate) return null;
+  return `${leading}${fileLink(reference.path, encodedCandidate)}${trailing}`;
+}
+
+function fileLink(path: string, text: string): string {
+  return `<a class="file-link" role="link" tabindex="0" ${FILE_PATH_ATTRIBUTE}="${escapeHtmlAttribute(path)}">${text}</a>`;
+}
+
+function decodeHtmlText(value: string): string {
+  return value.replace(
+    /&(?:amp|quot|apos|lt|gt|#\d+|#x[\da-f]+);/gi,
+    (entity) => {
+      const name = entity.slice(1, -1).toLowerCase();
+      if (name === 'amp') return '&';
+      if (name === 'quot') return '"';
+      if (name === 'apos') return "'";
+      if (name === 'lt') return '<';
+      if (name === 'gt') return '>';
+
+      const hexadecimal = name.startsWith('#x');
+      const digits = name.slice(hexadecimal ? 2 : 1);
+      const codePoint = Number.parseInt(digits, hexadecimal ? 16 : 10);
+      return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : entity;
+    },
+  );
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 function normalizePath(path: string): string {
@@ -162,7 +237,7 @@ function normalizePath(path: string): string {
   return (rooted ? '/' : '') + segments.join('/');
 }
 
-export type { MarkdownOptions, FileReference };
+export type { MarkdownOptions, FileReference, PathOpenGesture };
 
 export {
   FILE_PATH_ATTRIBUTE,
@@ -171,4 +246,5 @@ export {
   parseFileReference,
   resolveFilePath,
   isWebUrl,
+  isPathOpenGesture,
 };

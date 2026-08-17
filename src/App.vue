@@ -43,6 +43,7 @@
         :messages="messages"
         :show-working-indicator="showWorkingIndicator"
         :working-label="stopping ? 'Pi is stopping' : 'Pi is working'"
+        :base-path="transcriptBasePath"
       />
 
       <footer
@@ -152,6 +153,11 @@ const {
 
 const sessionIsEmpty = computed(
   () => canDraft.value && !sessionLoading.value && messages.value.length === 0,
+);
+const transcriptBasePath = computed(() =>
+  activeProject.value && !activeProject.value.connectionString
+    ? activeProject.value.workingDirectory
+    : undefined,
 );
 const showWorkingIndicator = computed(() => {
   if (stopping.value) return true;

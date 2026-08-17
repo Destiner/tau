@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  isPathOpenGesture,
   isWebUrl,
   linkFilePaths,
   parseFileReference,
@@ -63,6 +64,12 @@ describe('file references', () => {
     expect(parseFileReference('src/components/')?.path).toBe('src/components/');
   });
 
+  it('keeps spaces and shell punctuation in a rooted path', () => {
+    expect(
+      parseFileReference('~/Documents/file with spaces & (parens).txt')?.path,
+    ).toBe('~/Documents/file with spaces & (parens).txt');
+  });
+
   it('rejects prose that merely contains a separator', () => {
     expect(parseFileReference('and/or')).toBeNull();
     expect(parseFileReference('24/7')).toBeNull();
@@ -76,6 +83,55 @@ describe('file references', () => {
     expect(parseFileReference('/')).toBeNull();
     expect(parseFileReference('~/')).toBeNull();
     expect(parseFileReference('README.md')).toBeNull();
+  });
+});
+
+describe('path opening gesture', () => {
+  it('uses Command-click on Apple platforms', () => {
+    expect(
+      isPathOpenGesture(
+        { type: 'click', button: 0, metaKey: true },
+        'MacIntel',
+      ),
+    ).toBe(true);
+    expect(
+      isPathOpenGesture(
+        { type: 'click', button: 0, ctrlKey: true },
+        'MacIntel',
+      ),
+    ).toBe(false);
+  });
+
+  it('uses Control-click on Windows and Linux', () => {
+    for (const platform of ['Win32', 'Linux x86_64']) {
+      expect(
+        isPathOpenGesture(
+          { type: 'click', button: 0, ctrlKey: true },
+          platform,
+        ),
+      ).toBe(true);
+      expect(
+        isPathOpenGesture(
+          { type: 'click', button: 0, metaKey: true },
+          platform,
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it('ignores ordinary and non-primary clicks but keeps Enter accessible', () => {
+    expect(isPathOpenGesture({ type: 'click', button: 0 }, 'MacIntel')).toBe(
+      false,
+    );
+    expect(
+      isPathOpenGesture(
+        { type: 'click', button: 1, metaKey: true },
+        'MacIntel',
+      ),
+    ).toBe(false);
+    expect(
+      isPathOpenGesture({ type: 'keydown', key: 'Enter' }, 'MacIntel'),
+    ).toBe(true);
   });
 });
 
@@ -123,11 +179,11 @@ describe('linking file paths in markup', () => {
     );
   });
 
-  it('leaves links and code blocks as they are', () => {
+  it('leaves existing links and fenced code blocks alone', () => {
     const link = '<p><a href="https://example.com/a/b.md">a/b.md</a></p>';
     expect(linkFilePaths(link)).toBe(link);
 
-    const block = '<pre><code>cat src/App.vue\n</code></pre>';
+    const block = '<pre><code>/home/agent/rhinestone/sdk\n</code></pre>';
     expect(linkFilePaths(block)).toBe(block);
   });
 
@@ -137,6 +193,40 @@ describe('linking file paths in markup', () => {
     ).toBe(
       '<p><a href="https://x.dev">x</a> holds <a class="file-link" role="link" tabindex="0" data-tau-path="src/App.vue">src/App.vue</a></p>',
     );
+  });
+
+  it('detects absolute paths with hidden directories', () => {
+    expect(
+      linkFilePaths(
+        '<p><code>/home/agent/.pi/workflows/implement/RHI-5900/implementation-plan.md</code></p>',
+      ),
+    ).toContain(
+      'data-tau-path="/home/agent/.pi/workflows/implement/RHI-5900/implementation-plan.md"',
+    );
+  });
+
+  it('links standalone rooted paths containing spaces and punctuation', () => {
+    expect(
+      linkFilePaths('<p>/Users/destiner/Library/Application Support</p>'),
+    ).toBe(
+      '<p><a class="file-link" role="link" tabindex="0" data-tau-path="/Users/destiner/Library/Application Support">/Users/destiner/Library/Application Support</a></p>',
+    );
+
+    const paths = [
+      '/Users/destiner/Library/Application Support',
+      '/Users/destiner/Screen Studio Projects',
+      '/Users/destiner/Screen Studio Projects/My Recording 2026-08-17.screenstudio',
+      '/Users/destiner/Library/Caches/com.apple.Safari/Webpage Previews',
+      '~/Documents/file with spaces & (parens).txt',
+    ];
+    const encoded = paths.map((path) => path.replace(/&/g, '&amp;'));
+    const html = linkFilePaths(
+      encoded.map((path) => `<p>${path}</p>`).join(''),
+    );
+
+    for (const path of encoded) {
+      expect(html).toContain(`data-tau-path="${path}"`);
+    }
   });
 
   it('does not read attributes as text', () => {

@@ -36,10 +36,12 @@
                 v-if="messageAt(virtualRow.index)?.kind === 'user'"
                 class="user-bubble"
                 :source="messageAt(virtualRow.index)?.text ?? ''"
+                :base-path="basePath"
               />
               <MarkdownText
                 v-else-if="messageAt(virtualRow.index)?.kind === 'assistant'"
                 :source="messageAt(virtualRow.index)?.text ?? ''"
+                :base-path="basePath"
               />
               <div
                 v-else-if="messageAt(virtualRow.index)?.kind === 'thinking'"
@@ -48,6 +50,7 @@
                 <div class="thinking-label">Thinking</div>
                 <MarkdownText
                   :source="messageAt(virtualRow.index)?.text ?? ''"
+                  :base-path="basePath"
                 />
               </div>
               <ErrorNotice
@@ -107,6 +110,7 @@ const props = defineProps<{
   messages: TranscriptEntry[];
   showWorkingIndicator: boolean;
   workingLabel: string;
+  basePath?: string;
 }>();
 
 const transcript = ref<HTMLElement>();
