@@ -2,14 +2,17 @@
   <main class="transcript-fixture">
     <header class="transcript-fixture-header">
       <strong>Long transcript fixture</strong>
+      <span data-testid="fixture-session">{{ sessionKey }}</span>
       <span data-testid="fixture-count">{{ messages.length }} messages</span>
     </header>
     <TranscriptView
+      :key="sessionKey"
       ref="transcriptView"
       class="fixture-transcript"
       :messages="messages"
       :show-working-indicator="showWorkingIndicator"
       working-label="Pi is working"
+      :session-key="sessionKey"
     />
   </main>
 </template>
@@ -27,6 +30,7 @@ interface TranscriptFixtureApi {
   scrollToEnd(): void;
   setWorking(working: boolean): void;
   streamLatest(chunks?: number): Promise<void>;
+  switchSession(key: string): void;
 }
 
 declare global {
@@ -37,6 +41,8 @@ declare global {
 
 const messages = ref(createLongTranscript());
 const working = ref(false);
+/** Mirrors the app: a session change arrives as a keyed remount. */
+const sessionKey = ref('main');
 const transcriptView = ref<InstanceType<typeof TranscriptView>>();
 let sequence = messages.value.length;
 
@@ -103,12 +109,17 @@ function setWorking(next: boolean): void {
   working.value = next;
 }
 
+function switchSession(key: string): void {
+  sessionKey.value = key;
+}
+
 window.__TAU_TRANSCRIPT_FIXTURE__ = {
   appendMessage,
   replaceLatestMessage,
   scrollToEnd,
   setWorking,
   streamLatest,
+  switchSession,
 };
 
 onBeforeUnmount(() => {

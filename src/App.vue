@@ -44,6 +44,7 @@
         :show-working-indicator="showWorkingIndicator"
         :working-label="stopping ? 'Pi is stopping' : 'Pi is working'"
         :base-path="transcriptBasePath"
+        :session-key="state.activeControllerKey"
       />
 
       <footer

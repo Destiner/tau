@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test';
+
 import { expect, test } from './fixtures';
 
 const fixtureUrl = '/?fixture=long-transcript';
@@ -302,6 +304,49 @@ test('follows output again after the reader sends', async ({ page }) => {
   await expect.poll(() => transcript.evaluate(distanceFromEnd)).toBeLessThan(2);
 });
 
+test('returns a session to the place in history it was left', async ({
+  page,
+}) => {
+  const transcript = page.getByLabel('Tau transcript');
+  await transcript.evaluate((element) => {
+    element.scrollTop = element.scrollHeight * 0.45;
+  });
+  await page.waitForTimeout(150);
+
+  const before = await transcript.evaluate(anchorSnapshot);
+  expect(before).not.toBeNull();
+
+  await switchSession(page, 'other');
+  await switchSession(page, 'main');
+
+  const after = await transcript.evaluate(anchorSnapshot);
+  expect(after?.id).toBe(before?.id);
+  expect(Math.abs((after?.offset ?? 0) - (before?.offset ?? 0))).toBeLessThan(
+    2,
+  );
+});
+
+test('returns a session left at the end to the end it has grown', async ({
+  page,
+}) => {
+  const transcript = page.getByLabel('Tau transcript');
+  await expect.poll(() => transcript.evaluate(distanceFromEnd)).toBeLessThan(2);
+
+  await switchSession(page, 'other');
+
+  // The session goes on streaming while it is off screen, so the end it was
+  // left at is no longer the offset it was.
+  await page.evaluate(() => {
+    window.__TAU_TRANSCRIPT_FIXTURE__?.appendMessage();
+  });
+  await expect(page.getByTestId('fixture-count')).toHaveText('5001 messages');
+
+  await switchSession(page, 'main');
+
+  await expect.poll(() => transcript.evaluate(distanceFromEnd)).toBeLessThan(2);
+  await expect(page.locator('[data-index="5000"]')).toBeVisible();
+});
+
 test('keeps frame delivery and mounted rows bounded during a full sweep', async ({
   page,
   browserName,
@@ -367,6 +412,15 @@ test('keeps frame delivery and mounted rows bounded during a full sweep', async 
   expect(metrics.longTaskDuration).toBeLessThan(500);
   await expect(page.locator('[data-index="0"]')).toBeVisible();
 });
+
+async function switchSession(page: Page, key: string): Promise<void> {
+  await page.evaluate(
+    (next) => window.__TAU_TRANSCRIPT_FIXTURE__?.switchSession(next),
+    key,
+  );
+  await expect(page.getByTestId('fixture-session')).toHaveText(key);
+  await page.waitForTimeout(150);
+}
 
 function distanceFromEnd(element: HTMLElement): number {
   return element.scrollHeight - element.scrollTop - element.clientHeight;

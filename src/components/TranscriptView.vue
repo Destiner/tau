@@ -105,6 +105,7 @@ import {
 } from 'vue';
 
 import type { TranscriptEntry } from '../lib/pi/transcript';
+import { recallScroll, rememberScroll } from '../lib/transcript-scroll';
 
 import ErrorNotice from './ErrorNotice.vue';
 import SkillInvocation from './SkillInvocation.vue';
@@ -118,6 +119,8 @@ const props = defineProps<{
   showWorkingIndicator: boolean;
   workingLabel: string;
   basePath?: string;
+  /** Session this transcript belongs to, under which its position is kept. */
+  sessionKey?: string;
 }>();
 
 const transcript = ref<HTMLElement>();
@@ -133,13 +136,20 @@ const expandedEntries = ref(new Set<string>());
 const followThreshold = 48;
 
 /**
+ * Where this session was last left, if it has been read before. Taken once:
+ * the transcript is keyed by session, so another session arrives as another
+ * component rather than as a change to this one.
+ */
+const restored = recallScroll(props.sessionKey ?? '');
+
+/**
  * Whether output should follow the end. The virtualizer only follows appends,
  * which misses most of a turn: rows grow while they stream, and the working
  * indicator is swapped for the row it was standing in for at an unchanged row
  * count. Tracking the reader's own position instead follows every change, and
  * leaves history alone the moment they scroll away from the end.
  */
-let following = true;
+let following = restored?.following ?? true;
 
 const rowVirtualizer = useVirtualizer(
   computed(() => {
@@ -154,6 +164,13 @@ const rowVirtualizer = useVirtualizer(
         messages[index]?.id ?? workingRowKey,
       anchorTo: 'end' as const,
       scrollEndThreshold: followThreshold,
+      /**
+       * The measured sizes this session was left with, so the first render is
+       * laid out as the reader left it rather than out of estimates, and the
+       * offset restored below means the same content it did then.
+       */
+      initialMeasurementsCache: restored?.measurements,
+      initialOffset: restored?.offset,
       overscan: 8,
       paddingStart: 28,
       paddingEnd: 30,
@@ -182,7 +199,7 @@ const contentSignature = computed(() =>
 let viewportObserver: ResizeObserver | undefined;
 
 onMounted(() => {
-  void nextTick(scrollToEnd);
+  void nextTick(restoreScroll);
 
   const element = transcript.value;
   if (!element || typeof ResizeObserver === 'undefined') return;
@@ -209,6 +226,11 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   viewportObserver?.disconnect();
+  rememberScroll(props.sessionKey ?? '', {
+    offset: rowVirtualizer.value.scrollOffset ?? 0,
+    following,
+    measurements: rowVirtualizer.value.takeSnapshot(),
+  });
 });
 
 watch(contentSignature, () => {
@@ -217,6 +239,23 @@ watch(contentSignature, () => {
     if (following) rowVirtualizer.value.scrollToEnd();
   });
 });
+
+/**
+ * Takes up the position this session was left at. A reader who left at the end
+ * is given the end as it stands now rather than the pixel it was then, since
+ * the session goes on streaming while it is off screen.
+ *
+ * The offset is asked for rather than written to scrollTop directly: the
+ * virtualizer starts out believing it, and only a scroll it made itself keeps
+ * its next update from undoing it.
+ */
+function restoreScroll(): void {
+  if (following) {
+    scrollToEnd();
+    return;
+  }
+  rowVirtualizer.value.scrollToOffset(restored?.offset ?? 0);
+}
 
 function scrollToEnd(): void {
   following = true;
