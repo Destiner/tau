@@ -41,6 +41,14 @@ async function mountApp(): Promise<void> {
     app.mount('#app');
     return;
   }
+  if (import.meta.env.DEV && fixture === 'extension-dialog') {
+    const { default: ExtensionDialogFixture } =
+      await import('./dev/ExtensionDialogFixture.vue');
+    const app = createApp(ExtensionDialogFixture);
+    app.config.errorHandler = vueErrorHandler;
+    app.mount('#app');
+    return;
+  }
 
   const app = createApp(App);
   app.config.errorHandler = vueErrorHandler;

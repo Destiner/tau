@@ -6,80 +6,82 @@
     :aria-label="title"
     @submit.prevent="handleSubmit"
   >
-    <header class="extension-dialog-header">
-      <span class="extension-dialog-context">
-        {{ projectName }} · {{ sessionName }}
-      </span>
+    <div class="extension-dialog-body">
+      <header class="extension-dialog-header">
+        <span class="extension-dialog-context">
+          {{ projectName }} · {{ sessionName }}
+        </span>
+        <MarkdownText
+          class="extension-dialog-title"
+          inline
+          :source="title"
+          :base-path="workingDirectory"
+        />
+      </header>
+
       <MarkdownText
-        class="extension-dialog-title"
-        inline
-        :source="title"
+        v-if="message"
+        class="extension-dialog-message"
+        :source="message"
         :base-path="workingDirectory"
       />
-    </header>
 
-    <MarkdownText
-      v-if="message"
-      class="extension-dialog-message"
-      :source="message"
-      :base-path="workingDirectory"
-    />
-
-    <div
-      v-if="method === 'select'"
-      class="extension-dialog-options"
-      role="listbox"
-      @keydown="handleSelectKeydown"
-    >
-      <button
-        v-for="(option, index) in options"
-        :id="`extension-dialog-option-${index}`"
-        :key="`${index}:${option}`"
-        class="extension-dialog-option"
-        :class="{ selected: index === selectedIndex }"
-        type="button"
-        role="option"
-        :aria-selected="index === selectedIndex"
-        @mouseenter="() => highlight(index)"
-        @click="() => chooseOption(option)"
-      >
-        {{ option }}
-      </button>
       <div
-        v-if="options?.length === 0"
-        class="extension-dialog-empty"
+        v-if="method === 'select'"
+        class="extension-dialog-options"
+        role="listbox"
+        @keydown="handleSelectKeydown"
       >
-        No options available
+        <button
+          v-for="(option, index) in options"
+          :id="`extension-dialog-option-${index}`"
+          :key="`${index}:${option}`"
+          class="extension-dialog-option"
+          :class="{ selected: index === selectedIndex }"
+          type="button"
+          role="option"
+          :aria-selected="index === selectedIndex"
+          @mouseenter="() => highlight(index)"
+          @click="() => chooseOption(option)"
+        >
+          {{ option }}
+        </button>
+        <div
+          v-if="options?.length === 0"
+          class="extension-dialog-empty"
+        >
+          No options available
+        </div>
       </div>
+
+      <UiContextMenu
+        v-else-if="method === 'input'"
+        :items="() => textFieldItems(() => dialogInput?.input)"
+      >
+        <UiInput
+          ref="dialogInput"
+          v-model="draft"
+          type="text"
+          autocomplete="off"
+          :placeholder="placeholder"
+          :aria-label="title"
+        />
+      </UiContextMenu>
+
+      <UiContextMenu
+        v-else-if="method === 'editor'"
+        :items="() => textFieldItems(() => dialogInput?.input)"
+      >
+        <UiTextarea
+          ref="dialogInput"
+          v-model="draft"
+          rows="6"
+          :aria-label="title"
+          @keydown.meta.enter.prevent="handleSubmit"
+          @keydown.ctrl.enter.prevent="handleSubmit"
+        />
+      </UiContextMenu>
     </div>
-
-    <UiContextMenu
-      v-else-if="method === 'input'"
-      :items="() => textFieldItems(() => dialogInput?.input)"
-    >
-      <UiInput
-        ref="dialogInput"
-        v-model="draft"
-        type="text"
-        autocomplete="off"
-        :placeholder="placeholder"
-        :aria-label="title"
-      />
-    </UiContextMenu>
-
-    <UiContextMenu
-      v-else-if="method === 'editor'"
-      :items="() => textFieldItems(() => dialogInput?.input)"
-    >
-      <UiTextarea
-        ref="dialogInput"
-        v-model="draft"
-        rows="6"
-        :aria-label="title"
-        @keydown.meta.enter.prevent="handleSubmit"
-        @keydown.ctrl.enter.prevent="handleSubmit"
-      />
-    </UiContextMenu>
 
     <footer class="extension-dialog-actions">
       <template v-if="method === 'confirm'">
@@ -156,7 +158,11 @@ const selectedIndex = ref(0);
 onMounted(() => {
   void nextTick(() => {
     if (props.method === 'select') {
-      document.getElementById('extension-dialog-option-0')?.focus();
+      // Scrolling the first option into view would skip the question above it,
+      // which is the part the reader has to see before choosing.
+      document
+        .getElementById('extension-dialog-option-0')
+        ?.focus({ preventScroll: true });
     } else if (props.method === 'confirm') {
       primaryAction.value?.button?.focus();
     } else {
@@ -216,8 +222,25 @@ function handleSelectKeydown(event: KeyboardEvent): void {
   gap: 8px;
 }
 
+/*
+ * The prompt scrolls as one piece rather than region by region: a workflow can
+ * ask a question longer than the pane, and scrolling the options alone left the
+ * question and the actions to overflow the composer and leave the screen.
+ * `min-height` is what lets this shrink inside the flex column at all.
+ */
+.extension-dialog-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  gap: 8px;
+  overscroll-behavior: contain;
+}
+
 .extension-dialog-header {
   display: flex;
+  flex: none;
   flex-direction: column;
   min-width: 0;
   gap: 4px;
@@ -234,11 +257,10 @@ function handleSelectKeydown(event: KeyboardEvent): void {
 }
 
 .extension-dialog-message {
-  overflow-y: auto;
+  flex: none;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
-  overscroll-behavior: contain;
 }
 
 .extension-dialog-context {
@@ -250,10 +272,8 @@ function handleSelectKeydown(event: KeyboardEvent): void {
 }
 
 .extension-dialog-options {
+  flex: none;
   min-height: 32px;
-  max-height: min(240px, 35vh);
-  overflow-y: auto;
-  overscroll-behavior: contain;
 }
 
 .extension-dialog-option {
@@ -283,8 +303,10 @@ function handleSelectKeydown(event: KeyboardEvent): void {
   font-size: 12px;
 }
 
+/* Kept out of the scrolling body so a long question never hides the way out. */
 .extension-dialog-actions {
   display: flex;
+  flex: none;
   justify-content: flex-start;
   gap: 4px;
 }
