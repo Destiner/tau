@@ -311,6 +311,7 @@ pub fn register_session(
         .ok_or_else(|| "The project is not imported in Tau.".to_string())?;
     if let Some(remote) = project.remote.as_mut() {
         let name = session_name.unwrap_or_default();
+        let sort_at = last_user_message_at.unwrap_or_else(unix_timestamp_millis);
         if let Some(session) = remote
             .sessions
             .iter_mut()
@@ -319,6 +320,9 @@ pub fn register_session(
             session.path = session_path;
             if let Some(timestamp) = last_user_message_at {
                 session.last_active = timestamp;
+                session.sort_at = timestamp;
+            } else if session.sort_at == 0 {
+                session.sort_at = sort_at;
             }
             if !name.is_empty() {
                 session.name = Some(name);
@@ -330,6 +334,7 @@ pub fn register_session(
                 name: (!name.is_empty()).then_some(name),
                 archived: false,
                 last_active: last_user_message_at.unwrap_or_default(),
+                sort_at,
             });
         }
         write_json_atomic(&project_registry_path()?, &projects)?;
@@ -555,6 +560,7 @@ fn list_remote_sessions(remote: &RemoteProjectRecord) -> Vec<SessionSummary> {
         .iter()
         .map(|session| {
             let last_user_message_at = timestamp_millis(session.last_active);
+            let sort_at = timestamp_millis(session.sort_at).max(last_user_message_at);
             SessionSummary {
                 id: session.id.clone(),
                 path: session.path.clone(),
@@ -565,8 +571,9 @@ fn list_remote_sessions(remote: &RemoteProjectRecord) -> Vec<SessionSummary> {
                         .filter(|name| !name.is_empty())
                         .unwrap_or("New session"),
                 ),
-                last_active: relative_timestamp(last_user_message_at),
+                last_active: relative_timestamp(sort_at),
                 last_user_message_at,
+                sort_at,
                 archived: session.archived,
                 selected: !session.archived && session.id == remote.active_session_id,
             }
@@ -608,16 +615,18 @@ fn list_project_sessions(project_path: &str) -> Result<Vec<SessionSummary>, Stri
             .and_then(|metadata| metadata.modified().ok())
             .unwrap_or(SystemTime::UNIX_EPOCH);
         let title = session_title(&parsed.name, record.name.as_deref(), &parsed.first_message);
+        let sort_at = parsed.sort_at();
         sessions.push(SessionSummary {
             id: parsed.id.clone(),
             path: path.to_string_lossy().into_owned(),
             title: single_line(&title),
-            last_active: if parsed.last_user_message_at == 0 {
+            last_active: if sort_at == 0 {
                 relative_time(modified)
             } else {
-                relative_timestamp(parsed.last_user_message_at)
+                relative_timestamp(sort_at)
             },
             last_user_message_at: parsed.last_user_message_at,
+            sort_at,
             archived: record.archived,
             selected: !record.archived && parsed.id == registry.active_session_id,
         });
@@ -642,7 +651,18 @@ struct ParsedSession {
     id: String,
     name: String,
     first_message: String,
+    first_agent_message_at: u64,
     last_user_message_at: u64,
+}
+
+impl ParsedSession {
+    fn sort_at(&self) -> u64 {
+        if self.last_user_message_at > 0 {
+            self.last_user_message_at
+        } else {
+            self.first_agent_message_at
+        }
+    }
 }
 
 fn parse_session_file(path: &Path) -> Result<Option<ParsedSession>, String> {
@@ -654,6 +674,7 @@ fn parse_session_file(path: &Path) -> Result<Option<ParsedSession>, String> {
         id: String::new(),
         name: String::new(),
         first_message: String::new(),
+        first_agent_message_at: 0,
         last_user_message_at: 0,
     };
     loop {
@@ -689,7 +710,8 @@ fn parse_session_file(path: &Path) -> Result<Option<ParsedSession>, String> {
                 let Some(message) = value.get("message") else {
                     continue;
                 };
-                if message.get("role").and_then(Value::as_str) == Some("user") {
+                let role = message.get("role").and_then(Value::as_str);
+                if role == Some("user") {
                     if parsed.first_message.is_empty() {
                         parsed.first_message = content_text(message.get("content"));
                     }
@@ -697,6 +719,12 @@ fn parse_session_file(path: &Path) -> Result<Option<ParsedSession>, String> {
                         parsed.last_user_message_at =
                             parsed.last_user_message_at.max(timestamp_millis(timestamp));
                     }
+                } else if role == Some("assistant") && parsed.first_agent_message_at == 0 {
+                    parsed.first_agent_message_at = message
+                        .get("timestamp")
+                        .and_then(Value::as_u64)
+                        .map(timestamp_millis)
+                        .unwrap_or_default();
                 }
             }
             _ => {}
@@ -732,10 +760,19 @@ fn single_line(value: &str) -> String {
 fn sort_sessions(sessions: &mut [SessionSummary]) {
     sessions.sort_by(|left, right| {
         right
-            .last_user_message_at
-            .cmp(&left.last_user_message_at)
+            .sort_at
+            .cmp(&left.sort_at)
             .then_with(|| left.id.cmp(&right.id))
     });
+}
+
+fn unix_timestamp_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
 }
 
 fn timestamp_millis(timestamp: u64) -> u64 {
@@ -831,6 +868,37 @@ mod tests {
         assert_eq!(parsed.id, "session-1");
         assert_eq!(parsed.first_message, "Port Tau");
         assert_eq!(parsed.last_user_message_at, 2_000_000);
+        assert_eq!(parsed.sort_at(), 2_000_000);
+    }
+
+    #[test]
+    fn userless_sessions_sort_by_the_first_agent_message() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("session.jsonl");
+        let mut file = File::create(&path).expect("session file");
+        writeln!(
+            file,
+            "{{\"type\":\"session\",\"version\":3,\"id\":\"session-1\",\"cwd\":\"/tmp\"}}"
+        )
+        .expect("header");
+        writeln!(
+            file,
+            "{{\"type\":\"message\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"Started by an extension\"}}],\"timestamp\":3000}}}}"
+        )
+        .expect("first agent message");
+        writeln!(
+            file,
+            "{{\"type\":\"message\",\"message\":{{\"role\":\"assistant\",\"content\":[],\"timestamp\":4000}}}}"
+        )
+        .expect("second agent message");
+
+        let parsed = parse_session_file(&path)
+            .expect("parsed file")
+            .expect("session");
+
+        assert_eq!(parsed.last_user_message_at, 0);
+        assert_eq!(parsed.first_agent_message_at, 3_000_000);
+        assert_eq!(parsed.sort_at(), 3_000_000);
     }
 
     #[test]
@@ -899,6 +967,7 @@ mod tests {
                     name: Some("Older session".into()),
                     archived: false,
                     last_active: 10,
+                    sort_at: 10,
                 },
                 RemoteSessionRecord {
                     id: "newer".into(),
@@ -906,6 +975,7 @@ mod tests {
                     name: Some("Newer session".into()),
                     archived: false,
                     last_active: 20,
+                    sort_at: 20,
                 },
             ],
         };
@@ -914,6 +984,40 @@ mod tests {
         assert_eq!(sessions[0].last_user_message_at, 20_000);
         assert!(sessions[0].selected);
         assert_eq!(sessions[1].title, "Older session");
+    }
+
+    #[test]
+    fn remote_userless_sessions_sort_by_registration_time() {
+        let remote = RemoteProjectRecord {
+            connection_string: "ssh build-box".into(),
+            working_directory: "/home/timur".into(),
+            host: "build-box".into(),
+            active_session_id: String::new(),
+            sessions: vec![
+                RemoteSessionRecord {
+                    id: "user-session".into(),
+                    path: "/remote/user.jsonl".into(),
+                    name: None,
+                    archived: false,
+                    last_active: 20,
+                    sort_at: 20,
+                },
+                RemoteSessionRecord {
+                    id: "agent-session".into(),
+                    path: "/remote/agent.jsonl".into(),
+                    name: None,
+                    archived: false,
+                    last_active: 0,
+                    sort_at: 30,
+                },
+            ],
+        };
+
+        let sessions = list_remote_sessions(&remote);
+
+        assert_eq!(sessions[0].id, "agent-session");
+        assert_eq!(sessions[0].last_user_message_at, 0);
+        assert_eq!(sessions[0].sort_at, 30_000);
     }
 
     #[test]
@@ -942,6 +1046,7 @@ mod tests {
                 name: Some("Remote session".into()),
                 archived: false,
                 last_active: 10,
+                sort_at: 10,
             }],
         };
         archive_remote_session(&mut remote, "remote-session").expect("archive remote session");

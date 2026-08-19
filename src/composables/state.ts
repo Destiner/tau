@@ -41,6 +41,8 @@ interface SessionSummary {
   title: string;
   lastActive: string;
   lastUserMessageAt: number;
+  /** Latest user message, falling back to the first agent message. */
+  sortAt: number;
   archived: boolean;
   selected: boolean;
 }
@@ -510,10 +512,17 @@ function projectSessions(project: ProjectSummary): SessionSummary[] {
       return rightPhantomCreatedAt - leftPhantomCreatedAt;
     }
     return (
-      sessionLastUserMessageAt(project.path, right) -
-      sessionLastUserMessageAt(project.path, left)
+      sessionSortAt(project.path, right) - sessionSortAt(project.path, left)
     );
   });
+}
+
+function sessionSortAt(projectPath: string, session: SessionSummary): number {
+  return Math.max(
+    session.sortAt,
+    session.lastUserMessageAt,
+    controllerForSession(projectPath, session.id)?.lastUserMessageAt ?? 0,
+  );
 }
 
 function sessionLastActive(
@@ -623,6 +632,7 @@ function createPhantomSession(
     title: 'New session',
     lastActive: 'now',
     lastUserMessageAt: 0,
+    sortAt: now,
     archived: false,
     selected: true,
     projectPath,

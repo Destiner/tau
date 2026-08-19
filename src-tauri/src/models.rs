@@ -74,6 +74,9 @@ pub struct RemoteSessionRecord {
     pub archived: bool,
     #[serde(default)]
     pub last_active: u64,
+    /// Latest user message, or registration time when an extension created the session.
+    #[serde(default)]
+    pub sort_at: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -105,6 +108,8 @@ pub struct SessionSummary {
     pub title: String,
     pub last_active: String,
     pub last_user_message_at: u64,
+    /// Latest user message, falling back to the first agent message.
+    pub sort_at: u64,
     pub archived: bool,
     pub selected: bool,
 }

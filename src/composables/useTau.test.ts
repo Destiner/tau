@@ -648,6 +648,35 @@ describe('session drafts and selection', () => {
     ).toBe(false);
   });
 
+  it('sorts user-message-less sessions by their first agent message', async () => {
+    const project: ProjectSummary = {
+      path: '/tmp/tau-agent-order-test',
+      name: 'tau-agent-order-test',
+      workingDirectory: '/tmp/tau-agent-order-test',
+      collapsed: false,
+      selected: true,
+      sessions: [
+        savedSession('older-agent-session', 0, 1_000),
+        savedSession('user-session', 2_000),
+        savedSession('newer-agent-session', 0, 3_000),
+      ],
+    };
+    mocks.workspace = {
+      activeProjectPath: project.path,
+      piPath: '/usr/local/bin/pi',
+      projects: [project],
+    };
+    const { initialize, projectSessions } = useTau();
+
+    await initialize();
+
+    expect(projectSessions(project).map((session) => session.id)).toEqual([
+      'newer-agent-session',
+      'user-session',
+      'older-agent-session',
+    ]);
+  });
+
   it('reorders sessions only when the user submits a message', async () => {
     const firstSession = savedSession('first', 1_000);
     const secondSession = savedSession('second', 2_000);
@@ -2811,13 +2840,18 @@ function controllerOf(controller: unknown): { syncing: boolean } {
   return controller as { syncing: boolean };
 }
 
-function savedSession(id: string, lastUserMessageAt = 0): SessionSummary {
+function savedSession(
+  id: string,
+  lastUserMessageAt = 0,
+  sortAt = lastUserMessageAt,
+): SessionSummary {
   return {
     id,
     path: `/tmp/${id}.jsonl`,
     title: id,
     lastActive: 'now',
     lastUserMessageAt,
+    sortAt,
     archived: false,
     selected: false,
   };
