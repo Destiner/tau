@@ -2,9 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import type { TranscriptEntry } from './transcript';
 import {
-  appendLocalErrors,
-  appendLocalNotices,
   hydrateTranscript,
+  mergeLocalEntries,
   messageFailure,
   parseSkillBlock,
   toolSummary,
@@ -309,11 +308,20 @@ Full instructions
   });
 });
 
-describe('appendLocalErrors', () => {
+describe('mergeLocalEntries', () => {
+  const notice = (id: string, anchor?: number): TranscriptEntry => ({
+    id,
+    kind: 'notice',
+    text: id,
+    noticeType: 'info',
+    ...(anchor === undefined ? {} : { anchor }),
+  });
+
   it('adds the failures Pi keeps nowhere to the hydrated list', () => {
-    const entries = appendLocalErrors(
+    const entries = mergeLocalEntries(
       hydrateTranscript([{ role: 'user', content: 'hello' }]),
-      ['Auto-compaction failed: overloaded'],
+      [{ text: 'Auto-compaction failed: overloaded', anchor: 1 }],
+      [],
     );
 
     expect(entries.map((entry) => entry.kind)).toEqual(['user', 'error']);
@@ -322,24 +330,89 @@ describe('appendLocalErrors', () => {
       text: 'Auto-compaction failed: overloaded',
     });
   });
-});
 
-describe('appendLocalNotices', () => {
   it('keeps extension notices that Pi messages cannot carry', () => {
-    const notice: TranscriptEntry = {
-      id: 'extension-notify:1',
-      kind: 'notice',
-      text: 'MCP servers refreshed',
-      noticeType: 'info',
-    };
-    const entries = appendLocalNotices(
+    const carried = notice('extension-notify:1', 1);
+    const entries = mergeLocalEntries(
       hydrateTranscript([{ role: 'user', content: 'hello' }]),
-      [notice],
+      [],
+      [carried],
     );
 
     expect(entries).toEqual([
       expect.objectContaining({ kind: 'user', text: 'hello' }),
-      notice,
+      carried,
+    ]);
+  });
+
+  it('holds a notice at its own spot as the transcript grows past it', () => {
+    const entries = mergeLocalEntries(
+      hydrateTranscript([
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: [{ type: 'text', text: 'first' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'second' }] },
+      ]),
+      [],
+      [notice('extension-notify:1', 1)],
+    );
+
+    expect(entries.map((entry) => entry.text)).toEqual([
+      'hello',
+      'extension-notify:1',
+      'first',
+      'second',
+    ]);
+  });
+
+  it('orders entries sharing a spot by arrival and settles later ones at the end', () => {
+    const entries = mergeLocalEntries(
+      hydrateTranscript([{ role: 'user', content: 'hello' }]),
+      [{ text: 'compaction failed', anchor: 1 }],
+      [notice('extension-notify:1', 0), notice('extension-notify:2', 9)],
+    );
+
+    expect(entries.map((entry) => entry.text)).toEqual([
+      'extension-notify:1',
+      'hello',
+      'compaction failed',
+      'extension-notify:2',
+    ]);
+  });
+
+  it('drops a notice already carried and never duplicates one', () => {
+    const carried = notice('extension-notify:1', 0);
+    const entries = mergeLocalEntries(
+      hydrateTranscript([]),
+      [],
+      [carried, carried],
+    );
+
+    expect(entries).toEqual([carried]);
+  });
+
+  it('adopts ids across a notice so rows below it keep their measured height', () => {
+    const messages = [
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: [{ type: 'text', text: 'first' }] },
+    ];
+    const previous = mergeLocalEntries(
+      hydrateTranscript(messages),
+      [],
+      [notice('extension-notify:1', 1)],
+    );
+
+    const settled = hydrateTranscript(
+      [
+        ...messages,
+        { role: 'assistant', content: [{ type: 'text', text: 'second' }] },
+      ],
+      previous,
+    );
+
+    expect(settled.map((entry) => entry.id)).toEqual([
+      'user-0',
+      'assistant-1',
+      'assistant-0',
     ]);
   });
 });

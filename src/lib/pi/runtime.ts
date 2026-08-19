@@ -55,11 +55,10 @@ import type { PiBridgeEvent } from './bridge';
 import { describePiError } from './error';
 import type { ModelOption } from './model-scope';
 import {
-  appendLocalErrors,
-  appendLocalNotices,
   asRecord,
   contentText,
   hydrateTranscript,
+  mergeLocalEntries,
   messageFailure,
   parseSkillBlock,
   stringValue,
@@ -608,6 +607,7 @@ function handleExtensionUIRequest(
       id,
       kind: 'notice',
       text: request.message,
+      ...anchorFields(controller),
       noticeType: extensionNotifyType(request.notifyType),
       ...(origin.workingDirectory ? { basePath: origin.workingDirectory } : {}),
     });
@@ -905,7 +905,10 @@ async function handleRpc(
   if (type === 'compaction_end') {
     const failure = stringValue(event.errorMessage);
     if (failure) {
-      controller.localErrors.push(failure);
+      controller.localErrors.push({
+        text: failure,
+        ...anchorFields(controller),
+      });
       pushError(controller, failure);
     }
     return;
@@ -1258,14 +1261,12 @@ async function handleResponse(
 
   if (command === 'get_messages' && data) {
     const previous = controller.messages;
-    controller.messages = appendLocalNotices(
-      appendLocalErrors(
-        hydrateTranscript(
-          Array.isArray(data.messages) ? data.messages : [],
-          previous,
-        ),
-        controller.localErrors,
+    controller.messages = mergeLocalEntries(
+      hydrateTranscript(
+        Array.isArray(data.messages) ? data.messages : [],
+        previous,
       ),
+      controller.localErrors,
       previous,
     );
     const pending = controller.pendingPrompt;
@@ -1807,6 +1808,20 @@ function cancelPendingPrompt(
   );
   controller.draft = prompt.message;
   setControllerError(controller, error);
+}
+
+/**
+ * The spot a local entry has to hold on to so a rebuild from Pi's messages puts
+ * it back where it was: the number of transcript rows Pi owns right now. A
+ * session whose transcript has not loaded yet reports none of them, and an
+ * entry anchored above history it actually followed would be worse than one
+ * left at the bottom, so that case claims no spot at all.
+ */
+function anchorFields(controller: SessionController): { anchor?: number } {
+  const rows = controller.messages.filter(
+    (message) => message.kind !== 'notice' && message.anchor === undefined,
+  ).length;
+  return rows === 0 ? {} : { anchor: rows };
 }
 
 function pushError(controller: SessionController, text: string): void {

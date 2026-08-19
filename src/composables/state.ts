@@ -9,7 +9,7 @@ import { computed, reactive } from 'vue';
 import type { CommandOption } from '../lib/commands';
 import { scopeModels } from '../lib/pi/model-scope';
 import type { ModelOption, ThinkingLevel } from '../lib/pi/model-scope';
-import type { TranscriptEntry } from '../lib/pi/transcript';
+import type { LocalError, TranscriptEntry } from '../lib/pi/transcript';
 import { asRecord, stringValue } from '../lib/pi/transcript';
 import { recordControllerTransition } from '../lib/telemetry';
 import type {
@@ -148,7 +148,7 @@ interface SessionController {
   lastUserMessageAt: number;
   messages: TranscriptEntry[];
   /** Failures Pi reports as events only; its message list never carries them. */
-  localErrors: string[];
+  localErrors: LocalError[];
   draft: string;
   status: string;
   currentModelProvider: string;

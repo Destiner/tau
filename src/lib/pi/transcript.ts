@@ -6,6 +6,11 @@ interface TranscriptEntry {
   kind:
     'user' | 'assistant' | 'thinking' | 'tool' | 'skill' | 'error' | 'notice';
   text: string;
+  /**
+   * Set on the entries Tau owns rather than Pi: how many Pi-owned rows preceded
+   * the entry when it arrived, so a rebuilt transcript can restore it there.
+   */
+  anchor?: number;
   noticeType?: TranscriptNoticeType;
   /** Base for file paths in extension notices; absent for remote projects. */
   basePath?: string;
@@ -17,6 +22,12 @@ interface TranscriptEntry {
   toolResult?: string;
   skillName?: string;
   skillPrompt?: string;
+}
+
+/** A failure Pi reported as an event, held with the spot it belongs in. */
+interface LocalError {
+  text: string;
+  anchor?: number;
 }
 
 interface ParsedSkillBlock {
@@ -151,10 +162,14 @@ function assignIds(
   entries: TranscriptEntry[],
   previous: TranscriptEntry[],
 ): TranscriptEntry[] {
+  // Only Pi-owned rows take part: the local entries sitting between them are
+  // merged back afterwards, and counting them here would stall the walk at the
+  // first one and cost every row below it the height the virtualizer measured.
+  const candidates = previous.filter((entry) => !isLocalEntry(entry));
   const adopted = new Map<number, string>();
   let cursor = 0;
   entries.forEach((entry, index) => {
-    const candidate = previous[cursor];
+    const candidate = candidates[cursor];
     if (!candidate || !holdsSameRow(entry, candidate)) return;
     adopted.set(index, candidate.id);
     cursor += 1;
@@ -201,32 +216,63 @@ function messageFailure(message: unknown): string {
   return stringValue(record.errorMessage);
 }
 
-/** Appends the failures Pi reports as events but never keeps in its messages. */
-function appendLocalErrors(
-  entries: TranscriptEntry[],
-  errors: string[],
-): TranscriptEntry[] {
-  errors.forEach((text, index) => {
-    entries.push({ id: `local-error-${index}`, kind: 'error', text });
-  });
-  return entries;
+/** Entries Tau carries itself, because Pi's message list cannot hold them. */
+function isLocalEntry(entry: TranscriptEntry): boolean {
+  return entry.kind === 'notice' || entry.anchor !== undefined;
 }
 
 /**
- * Carries extension notices across `get_messages`, whose Pi-owned transcript
- * cannot contain fire-and-forget extension UI events.
+ * Restores the entries Tau owns into a freshly hydrated transcript: the
+ * failures Pi reports as events but never keeps in its messages, and the
+ * fire-and-forget notices its extensions raise. Each one holds the number of
+ * Pi-owned rows that preceded it and goes back at that spot, because appending
+ * them instead walks them to the bottom of the transcript on every rebuild.
  */
-function appendLocalNotices(
+function mergeLocalEntries(
   entries: TranscriptEntry[],
+  errors: LocalError[],
   previous: TranscriptEntry[],
 ): TranscriptEntry[] {
-  const ids = new Set(entries.map((entry) => entry.id));
+  const locals: TranscriptEntry[] = errors.map((error, index) => ({
+    id: `local-error-${index}`,
+    kind: 'error',
+    text: error.text,
+    ...(error.anchor === undefined ? {} : { anchor: error.anchor }),
+  }));
+  const ids = new Set([...entries, ...locals].map((entry) => entry.id));
   for (const entry of previous) {
     if (entry.kind !== 'notice' || ids.has(entry.id)) continue;
-    entries.push(entry);
+    locals.push(entry);
     ids.add(entry.id);
   }
-  return entries;
+  if (locals.length === 0) return entries;
+
+  const ordered = locals
+    .map((entry, index) => ({ entry, index, anchor: anchorOf(entry, entries) }))
+    // Entries that share a spot keep the order they arrived in.
+    .sort(
+      (left, right) => left.anchor - right.anchor || left.index - right.index,
+    );
+
+  const merged: TranscriptEntry[] = [];
+  let cursor = 0;
+  for (const { entry, anchor } of ordered) {
+    // Resolving the spot here is what keeps an entry that arrived before the
+    // transcript had loaded from drifting again on the rebuild after this one.
+    merged.push(...entries.slice(cursor, anchor), { ...entry, anchor });
+    cursor = anchor;
+  }
+  merged.push(...entries.slice(cursor));
+  return merged;
+}
+
+/**
+ * Where a local entry belongs. An entry that arrived before any Pi-owned row
+ * was known has no spot to hold, and neither has one whose spot a compaction
+ * has since dropped; both settle at the bottom of the transcript as it stands.
+ */
+function anchorOf(entry: TranscriptEntry, entries: TranscriptEntry[]): number {
+  return Math.min(entry.anchor ?? entries.length, entries.length);
 }
 
 /** Parses the exact user-message envelope Pi records for `/skill:name`. */
@@ -310,14 +356,18 @@ function compactJson(value: unknown): string {
   }
 }
 
-export type { ParsedSkillBlock, TranscriptEntry, TranscriptNoticeType };
+export type {
+  LocalError,
+  ParsedSkillBlock,
+  TranscriptEntry,
+  TranscriptNoticeType,
+};
 
 export {
   hydrateTranscript,
   parseSkillBlock,
   messageFailure,
-  appendLocalErrors,
-  appendLocalNotices,
+  mergeLocalEntries,
   toolSummary,
   toolArgumentsText,
   toolResultText,

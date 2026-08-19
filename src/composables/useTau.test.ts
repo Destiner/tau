@@ -2206,6 +2206,9 @@ describe('turn failures', () => {
   it("keeps a failed compaction, which Pi's messages never carry", async () => {
     const { tau, controller, session } = await setupNamedSession();
 
+    // Compaction runs inside a turn, so the prompt that started it is already
+    // on the transcript and the failure belongs under it rather than above.
+    await settleWith(controller, session, [{ role: 'user', content: 'hello' }]);
     emitRpc(controller, {
       type: 'compaction_end',
       reason: 'threshold',
@@ -2214,7 +2217,7 @@ describe('turn failures', () => {
       errorMessage: 'Auto-compaction failed: overloaded',
     });
     await vi.waitFor(() => {
-      expect(controller.messages).toHaveLength(1);
+      expect(controller.messages).toHaveLength(2);
     });
 
     await settleWith(controller, session, [{ role: 'user', content: 'hello' }]);
@@ -2226,6 +2229,38 @@ describe('turn failures', () => {
     expect(controller.messages[1]?.text).toBe(
       'Auto-compaction failed: overloaded',
     );
+    tau.dispose();
+  });
+
+  it('leaves an extension notice where it was raised as the turn goes on', async () => {
+    const { tau, controller, session } = await setupNamedSession();
+
+    await settleWith(controller, session, [{ role: 'user', content: 'hello' }]);
+    emitRpc(controller, {
+      type: 'extension_ui_request',
+      id: 'notify-warning',
+      method: 'notify',
+      message: 'Approval is ready',
+      notifyType: 'warning',
+    });
+    await vi.waitFor(() => {
+      expect(controller.messages).toHaveLength(2);
+    });
+
+    await settleWith(controller, session, [
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: [{ type: 'text', text: 'a reply' }] },
+      { role: 'user', content: 'and again' },
+    ]);
+
+    expect(
+      controller.messages.map((message) => [message.kind, message.text]),
+    ).toEqual([
+      ['user', 'hello'],
+      ['notice', 'Approval is ready'],
+      ['assistant', 'a reply'],
+      ['user', 'and again'],
+    ]);
     tau.dispose();
   });
 
