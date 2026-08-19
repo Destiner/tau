@@ -17,6 +17,8 @@ Reports submitted from the sidebar are stored separately from content-free telem
 
 Each JSON line contains the user's description, its submission time, and the current Pi session ID only when the user explicitly includes it. Reports stay local and are retained until the file is removed.
 
+`issues.jsonl` is the inbox and Tau only ever appends to it. Reports that have been dealt with are moved by hand to `done.jsonl` beside it, keeping their original fields and gaining `resolvedAt`, a `resolution` of `fixed`, `deferred` or `not-an-issue`, the `commit` that fixed it where there is one, and a short `note`. Nothing reads either file: the split is a convention for working through reports, so an empty `issues.jsonl` means none are outstanding.
+
 ## Optional development OTLP export
 
 External export is disabled by default and no collector is bundled. Build with the opt-in feature:
