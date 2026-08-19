@@ -187,6 +187,34 @@ function handleKeydown(event: KeyboardEvent): void {
   color: var(--muted);
 }
 
+/*
+ * A table is laid out as a block so that a wider one scrolls within the text
+ * rather than stretching whatever holds it; `max-content` is what keeps the
+ * columns at their natural width instead of collapsing to the space left.
+ */
+.markdown :deep(table) {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin: 0.7em 0;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 0.94em;
+  overflow-wrap: normal;
+}
+
+.markdown :deep(th),
+.markdown :deep(td) {
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+
+.markdown :deep(th) {
+  background: var(--sunk);
+  font-weight: 600;
+}
+
 /* The hand belongs to links, and these are the only ones: they leave the app. */
 .markdown :deep(a) {
   color: var(--link);

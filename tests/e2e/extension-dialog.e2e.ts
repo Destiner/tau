@@ -51,6 +51,47 @@ test('scrolls the question and its options as one region', async ({ page }) => {
   expect(optionsScroll.scrollHeight).toBe(optionsScroll.clientHeight);
 });
 
+test('renders a table in the question as a table', async ({ page }) => {
+  const dialog = page.getByRole('dialog');
+  const header = dialog.locator('.extension-dialog-message th').first();
+  await expect(header).toBeVisible();
+
+  const style = await header.evaluate((element) => {
+    const computed = window.getComputedStyle(element);
+    return {
+      borderWidth: Number.parseFloat(computed.borderTopWidth),
+      padding: Number.parseFloat(computed.paddingLeft),
+      background: computed.backgroundColor,
+      textAlign: computed.textAlign,
+    };
+  });
+  expect(style.borderWidth).toBeGreaterThan(0);
+  expect(style.padding).toBeGreaterThan(0);
+  expect(style.background).not.toBe('rgba(0, 0, 0, 0)');
+  expect(style.textAlign).toBe('left');
+});
+
+test('scrolls a table wider than the question inside itself', async ({
+  page,
+}) => {
+  const dialog = page.getByRole('dialog');
+  const table = dialog.locator('.extension-dialog-message table');
+  const body = dialog.locator('.extension-dialog-body');
+
+  const width = await table.evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  }));
+  expect(width.scrollWidth).toBeGreaterThan(width.clientWidth);
+
+  // The table takes the sideways scrolling, so the prompt keeps its own width.
+  const bodyWidth = await body.evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  }));
+  expect(bodyWidth.scrollWidth).toBe(bodyWidth.clientWidth);
+});
+
 test('reaches an option below the fold and reports the choice', async ({
   page,
 }) => {
