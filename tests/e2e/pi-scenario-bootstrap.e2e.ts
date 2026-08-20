@@ -1,0 +1,33 @@
+import { expect, test } from './fixtures';
+
+const scenarioUrl = '/?test-scenario=saved-session-bootstrap';
+
+test('boots the real app into a deterministic saved session', async ({
+  page,
+}) => {
+  await page.goto(scenarioUrl);
+
+  await expect(page.getByRole('heading', { name: 'Main' })).toBeVisible();
+  await expect(page.getByText('Tau fixture', { exact: true })).toBeVisible();
+  await expect(page.getByText('Main', { exact: true })).toHaveCount(2);
+
+  const composer = page.getByRole('textbox', { name: 'Message Pi' });
+  await expect(composer).toBeEnabled();
+  await expect(page.getByRole('combobox', { name: 'Model' })).toHaveValue(
+    'fixture/alpha',
+  );
+  await expect(
+    page.getByRole('combobox', { name: 'Thinking effort' }),
+  ).toHaveValue('high');
+  await expect(page.getByLabel('Tau transcript')).toHaveCount(0);
+  await expect(page.getByText('Loading', { exact: true })).toHaveCount(0);
+
+  const timeline = await page.evaluate(() =>
+    window.__TAU_PI_SCENARIO__?.timeline(),
+  );
+  expect(timeline).toHaveLength(12);
+  expect(timeline?.at(-1)).toMatchObject({
+    kind: 'output',
+    output: 'response get_messages -> $bootstrap-messages',
+  });
+});

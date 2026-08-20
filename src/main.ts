@@ -50,6 +50,17 @@ async function mountApp(): Promise<void> {
     return;
   }
 
+  if (import.meta.env.DEV) {
+    const testScenario = new URLSearchParams(window.location.search).get(
+      'test-scenario',
+    );
+    if (testScenario) {
+      const { default: installPiScenarioAdapter } =
+        await import('./dev/pi-scenario-adapter');
+      installPiScenarioAdapter(testScenario);
+    }
+  }
+
   const app = createApp(App);
   app.config.errorHandler = vueErrorHandler;
   app.mount('#app');

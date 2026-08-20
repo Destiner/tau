@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import savedSessionStreamThenStaleGeneration from './saved-session-stream-then-stale-generation';
+import savedSessionStreamThenStaleGeneration, {
+  savedSessionBootstrap,
+} from './saved-session-stream-then-stale-generation';
 
 import {
   PiScenarioEngine,
@@ -24,6 +26,27 @@ function consumeRequest(
 }
 
 describe('PiScenarioEngine', () => {
+  it('offers an exact bootstrap checkpoint without consuming prompt steps', () => {
+    const engine = new PiScenarioEngine(savedSessionBootstrap);
+
+    engine.bindRuntime('main', 'runtime-dynamic-47');
+    takeRequiredOutput(engine);
+    for (const [id, type] of [
+      ['models', 'get_available_models'],
+      ['commands', 'get_commands'],
+      ['state', 'get_state'],
+      ['efforts', 'get_available_thinking_levels'],
+      ['messages', 'get_messages'],
+    ] as const) {
+      consumeRequest(engine, id, type);
+      takeRequiredOutput(engine);
+    }
+
+    expect(engine.takeOutput()).toBeUndefined();
+    expect(() => engine.verifyComplete()).not.toThrow();
+    expect(engine.timeline()).toHaveLength(12);
+  });
+
   it('runs the complete bootstrap, prompt, stream, settlement, and stale event exchange in memory', () => {
     const engine = new PiScenarioEngine(savedSessionStreamThenStaleGeneration);
 

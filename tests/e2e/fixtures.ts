@@ -35,18 +35,30 @@ const test = base.extend({
 
     await use(page);
 
+    const failures: string[] = [];
+    const scenario = await page.evaluate(() =>
+      window.__TAU_PI_SCENARIO__?.verify(),
+    );
+    if (scenario && !scenario.ok) {
+      failures.push(
+        `Pi scenario mismatch:\n${scenario.error ?? 'Unknown scenario failure.'}\nTimeline:\n${scenario.timeline
+          .map((entry) => JSON.stringify(entry))
+          .join('\n')}`,
+      );
+    }
     if (pageErrors.length > 0) {
-      throw new Error(
+      failures.push(
         `Test produced ${pageErrors.length} unexpected page error(s):\n${pageErrors
           .map((error) => error.stack ?? error.message)
           .join('\n---\n')}`,
       );
     }
     if (consoleErrors.length > 0) {
-      throw new Error(
+      failures.push(
         `Test produced ${consoleErrors.length} unexpected console.error call(s):\n${consoleErrors.join('\n---\n')}`,
       );
     }
+    if (failures.length > 0) throw new Error(failures.join('\n---\n'));
   },
 });
 

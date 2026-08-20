@@ -9,6 +9,93 @@ const state = {
   thinkingLevel: 'high',
 };
 
+const runtimes = [
+  { key: runtime, generation: 2, sessionId: 'session-main' },
+] as const;
+const bootstrapSteps = [
+  { kind: 'runtime-event', runtime, event: 'started' },
+  {
+    kind: 'request',
+    runtime,
+    capture: 'bootstrap-models',
+    match: { type: 'get_available_models' },
+  },
+  {
+    kind: 'response',
+    request: 'bootstrap-models',
+    command: 'get_available_models',
+    data: {
+      models: [
+        {
+          provider: 'fixture',
+          id: 'alpha',
+          name: 'Alpha',
+          reasoning: true,
+        },
+      ],
+    },
+  },
+  {
+    kind: 'request',
+    runtime,
+    capture: 'bootstrap-commands',
+    match: { type: 'get_commands' },
+  },
+  {
+    kind: 'response',
+    request: 'bootstrap-commands',
+    command: 'get_commands',
+    data: { commands: [] },
+  },
+  {
+    kind: 'request',
+    runtime,
+    capture: 'bootstrap-state',
+    match: { type: 'get_state' },
+  },
+  {
+    kind: 'response',
+    request: 'bootstrap-state',
+    command: 'get_state',
+    data: { ...state, isStreaming: false },
+  },
+  {
+    kind: 'request',
+    runtime,
+    capture: 'bootstrap-efforts',
+    match: { type: 'get_available_thinking_levels' },
+  },
+  {
+    kind: 'response',
+    request: 'bootstrap-efforts',
+    command: 'get_available_thinking_levels',
+    data: { levels: ['off', 'high'] },
+  },
+  {
+    kind: 'request',
+    runtime,
+    capture: 'bootstrap-messages',
+    match: { type: 'get_messages' },
+  },
+  {
+    kind: 'response',
+    request: 'bootstrap-messages',
+    command: 'get_messages',
+    data: { messages: [] },
+  },
+] as const;
+
+const savedSessionBootstrap = definePiScenario({
+  metadata: {
+    name: 'saved-session-bootstrap',
+    purpose: 'Bootstrap a selected saved session into a stable ready UI.',
+    qualityRule: 'State correctness and session locality',
+    schemaVersion: 1,
+  },
+  runtimes,
+  steps: bootstrapSteps,
+});
+
 const savedSessionStreamThenStaleGeneration = definePiScenario({
   metadata: {
     name: 'saved-session-stream-then-stale-generation',
@@ -17,78 +104,9 @@ const savedSessionStreamThenStaleGeneration = definePiScenario({
     qualityRule: 'State correctness and session locality',
     schemaVersion: 1,
   },
-  runtimes: [{ key: runtime, generation: 2, sessionId: 'session-main' }],
+  runtimes,
   steps: [
-    { kind: 'runtime-event', runtime, event: 'started' },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'bootstrap-models',
-      match: { type: 'get_available_models' },
-    },
-    {
-      kind: 'response',
-      request: 'bootstrap-models',
-      command: 'get_available_models',
-      data: {
-        models: [
-          {
-            provider: 'fixture',
-            id: 'alpha',
-            name: 'Alpha',
-            reasoning: true,
-          },
-        ],
-      },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'bootstrap-commands',
-      match: { type: 'get_commands' },
-    },
-    {
-      kind: 'response',
-      request: 'bootstrap-commands',
-      command: 'get_commands',
-      data: { commands: [] },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'bootstrap-state',
-      match: { type: 'get_state' },
-    },
-    {
-      kind: 'response',
-      request: 'bootstrap-state',
-      command: 'get_state',
-      data: { ...state, isStreaming: false },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'bootstrap-efforts',
-      match: { type: 'get_available_thinking_levels' },
-    },
-    {
-      kind: 'response',
-      request: 'bootstrap-efforts',
-      command: 'get_available_thinking_levels',
-      data: { levels: ['off', 'high'] },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'bootstrap-messages',
-      match: { type: 'get_messages' },
-    },
-    {
-      kind: 'response',
-      request: 'bootstrap-messages',
-      command: 'get_messages',
-      data: { messages: [] },
-    },
+    ...bootstrapSteps,
     {
       kind: 'request',
       runtime,
@@ -188,4 +206,7 @@ const savedSessionStreamThenStaleGeneration = definePiScenario({
   ],
 });
 
-export default savedSessionStreamThenStaleGeneration;
+export {
+  savedSessionBootstrap,
+  savedSessionStreamThenStaleGeneration as default,
+};
