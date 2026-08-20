@@ -1,5 +1,9 @@
 import savedSessionCommandReplacement from './saved-session-command-replacement';
 import {
+  savedSessionBootstrapProcessExit,
+  savedSessionPromptProcessExit,
+} from './saved-session-process-failures';
+import {
   savedSessionBootstrap,
   savedSessionConversation,
   savedSessionStaleGeneration,
@@ -14,6 +18,8 @@ const scenarios = [
   savedSessionStaleGeneration,
   savedSessionCommandReplacement,
   savedSessionUnacknowledgedAbort,
+  savedSessionBootstrapProcessExit,
+  savedSessionPromptProcessExit,
 ] as const satisfies readonly PiScenario[];
 
 const catalogue = new Map<string, PiScenario>(

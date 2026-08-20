@@ -711,6 +711,15 @@ function clearExtensionUiState(): void {
   state.extensionDialogs.splice(0);
 }
 
+const piConnectionFailureMessage =
+  'The Pi connection failed. Select the session again to reconnect.';
+const piProcessExitMessage =
+  'The Pi process stopped unexpectedly. Select the session again to reconnect.';
+const remotePiConnectionFailureMessage =
+  'The remote Pi connection failed. Check the connection and try again.';
+const remotePiProcessExitMessage =
+  'The remote Pi process stopped unexpectedly. Check the connection and try again.';
+
 async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
   const controller = controllerByRuntimeId(event.runtimeId);
   if (!controller) return;
@@ -742,7 +751,9 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
   }
   if (event.kind === 'stderr') return;
   if (event.kind === 'error') {
-    const message = event.message || 'The Pi connection failed.';
+    const message = controller.connectingRemote
+      ? remotePiConnectionFailureMessage
+      : piConnectionFailureMessage;
     if (controller.connectingRemote) {
       presentRemoteConnectionError(controller, message);
       return;
@@ -764,7 +775,9 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     const message =
       event.code === 0
         ? ''
-        : event.message || 'The Pi process stopped unexpectedly.';
+        : controller.connectingRemote
+          ? remotePiProcessExitMessage
+          : piProcessExitMessage;
     if (controller.connectingRemote) {
       presentRemoteConnectionError(
         controller,
@@ -2125,4 +2138,6 @@ export {
   stopControllerProcess,
   pendingRpcCount,
   oldestPendingRpcAgeMs,
+  piConnectionFailureMessage,
+  piProcessExitMessage,
 };

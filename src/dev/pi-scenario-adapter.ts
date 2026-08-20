@@ -71,6 +71,11 @@ const PROJECT_PATH = '/fixture/tau-project';
 const SESSION_ID = 'session-main';
 const SESSION_PATH = `${PROJECT_PATH}/session-main.jsonl`;
 const MAIN_SESSION = { id: SESSION_ID, path: SESSION_PATH, name: 'Main' };
+const BACKUP_SESSION = {
+  id: 'session-backup',
+  path: `${PROJECT_PATH}/session-backup.jsonl`,
+  name: 'Backup',
+};
 const REPLACEMENT_SESSION = {
   id: 'session-plan-42',
   path: `${PROJECT_PATH}/session-plan-42.jsonl`,
@@ -107,6 +112,18 @@ const REQUIRED_NATIVE_COUNTS = {
     register_session: 3,
     set_active_session: 3,
   },
+  'saved-session-bootstrap-process-exit': {
+    load_workspace: 1,
+    read_model_scope: 2,
+    register_session: 1,
+    set_active_session: 1,
+  },
+  'saved-session-prompt-process-exit': {
+    load_workspace: 1,
+    read_model_scope: 2,
+    register_session: 3,
+    set_active_session: 6,
+  },
 } as const;
 
 const initialWorkspace: WorkspaceSnapshot = {
@@ -135,6 +152,23 @@ const initialWorkspace: WorkspaceSnapshot = {
   ],
 };
 
+function scenarioWorkspace(scenarioName: string): WorkspaceSnapshot {
+  const workspace = structuredClone(initialWorkspace);
+  if (scenarioName === 'saved-session-prompt-process-exit') {
+    workspace.projects[0]?.sessions.push({
+      id: BACKUP_SESSION.id,
+      path: BACKUP_SESSION.path,
+      title: BACKUP_SESSION.name,
+      lastActive: '2026-01-02T03:04:04.000Z',
+      lastUserMessageAt: 0,
+      sortAt: 0,
+      archived: false,
+      selected: false,
+    });
+  }
+  return workspace;
+}
+
 function installPiScenarioAdapter(scenarioName: string): void {
   const scenario = findPiScenario(scenarioName);
   if (!scenario) {
@@ -147,8 +181,9 @@ function installPiScenarioAdapter(scenarioName: string): void {
 
   const engine = new PiScenarioEngine(scenario);
   const nativeCounts = new Map<string, number>();
-  let workspace = structuredClone(initialWorkspace);
-  let boundRuntimeId = '';
+  let workspace = scenarioWorkspace(scenarioName);
+  const boundRuntimeIds = new Set<string>();
+  const startCounts = new Map<string, number>();
   let adapterFailure: Error | undefined;
 
   function count(command: string): number {
@@ -207,16 +242,20 @@ function installPiScenarioAdapter(scenarioName: string): void {
       if (command === 'start_pi') {
         const value = startPiArgs(args);
         count(command);
-        if (boundRuntimeId) throw new Error('start_pi may only run once.');
-        boundRuntimeId = value.runtimeId;
-        const generation = engine.bindRuntime('main', value.runtimeId);
+        const runtimeKey = scenarioRuntimeKey(
+          scenarioName,
+          value.sessionPath,
+          startCounts,
+        );
+        boundRuntimeIds.add(value.runtimeId);
+        const generation = engine.bindRuntime(runtimeKey, value.runtimeId);
         await drainOutputs();
         return generation;
       }
       if (command === 'send_pi') {
         const value = sendPiArgs(args);
         count(command);
-        requireBoundRuntime(value.runtimeId, boundRuntimeId, command);
+        requireBoundRuntime(value.runtimeId, boundRuntimeIds, command);
         engine.consumeRequest(value.runtimeId, value.request);
         await drainOutputs();
         return null;
@@ -224,12 +263,16 @@ function installPiScenarioAdapter(scenarioName: string): void {
       if (command === 'stop_pi') {
         const runtimeId = requiredString(args, 'runtimeId', command);
         count(command);
-        requireBoundRuntime(runtimeId, boundRuntimeId, command);
+        requireBoundRuntime(runtimeId, boundRuntimeIds, command);
         return null;
       }
       if (command === 'register_session') {
         const invocation = count(command);
-        const expected = expectedNativeSession(scenarioName, invocation);
+        const expected = expectedNativeSession(
+          scenarioName,
+          command,
+          invocation,
+        );
         registerSessionArgs(args, expected);
         if (expected.id === REPLACEMENT_SESSION.id) {
           workspace = replacementWorkspace();
@@ -238,10 +281,16 @@ function installPiScenarioAdapter(scenarioName: string): void {
       }
       if (command === 'set_active_session') {
         const invocation = count(command);
-        const expected = expectedNativeSession(scenarioName, invocation);
+        const expected = expectedNativeSession(
+          scenarioName,
+          command,
+          invocation,
+        );
         setActiveSessionArgs(args, expected);
         if (expected.id === REPLACEMENT_SESSION.id) {
           workspace = replacementWorkspace();
+        } else {
+          selectWorkspaceSession(workspace, expected.id);
         }
         return structuredClone(workspace);
       }
@@ -322,7 +371,7 @@ function bridgeEvent(output: ResolvedPiOutput): PiBridgeEvent {
     generation: output.runtime.generation,
   };
   if (output.kind === 'runtime-event') {
-    return { ...base, kind: output.value.kind };
+    return { ...base, ...output.value };
   }
   return { ...base, kind: 'rpc', line: JSON.stringify(output.value) };
 }
@@ -334,7 +383,12 @@ function startPiArgs(args: Record<string, unknown>): StartPiArgs {
     sessionPath: requiredString(args, 'sessionPath', 'start_pi'),
   };
   requireEqual(value.projectPath, PROJECT_PATH, 'start_pi.projectPath');
-  requireEqual(value.sessionPath, SESSION_PATH, 'start_pi.sessionPath');
+  if (
+    value.sessionPath !== SESSION_PATH &&
+    value.sessionPath !== BACKUP_SESSION.path
+  ) {
+    throw new Error('start_pi.sessionPath must identify a fixture session.');
+  }
   return value;
 }
 
@@ -389,6 +443,7 @@ function setActiveSessionArgs(
 
 function expectedNativeSession(
   scenarioName: string,
+  command: 'register_session' | 'set_active_session',
   invocation: number,
 ): NativeSessionIdentity {
   if (
@@ -397,7 +452,57 @@ function expectedNativeSession(
   ) {
     return REPLACEMENT_SESSION;
   }
+  if (scenarioName === 'saved-session-prompt-process-exit') {
+    const sequence =
+      command === 'register_session'
+        ? [MAIN_SESSION, BACKUP_SESSION, MAIN_SESSION]
+        : [
+            MAIN_SESSION,
+            BACKUP_SESSION,
+            BACKUP_SESSION,
+            MAIN_SESSION,
+            MAIN_SESSION,
+            BACKUP_SESSION,
+          ];
+    const expected = sequence[invocation - 1];
+    if (!expected) throw new Error(`${command} ran too many times.`);
+    return expected;
+  }
   return MAIN_SESSION;
+}
+
+function scenarioRuntimeKey(
+  scenarioName: string,
+  sessionPath: string,
+  startCounts: Map<string, number>,
+): string {
+  const count = (startCounts.get(sessionPath) ?? 0) + 1;
+  startCounts.set(sessionPath, count);
+  if (scenarioName === 'saved-session-bootstrap-process-exit') {
+    if (sessionPath !== SESSION_PATH || count > 2) {
+      throw new Error('Bootstrap recovery used an unexpected runtime start.');
+    }
+    return count === 1 ? 'failed-bootstrap' : 'recovered-main';
+  }
+  if (scenarioName === 'saved-session-prompt-process-exit') {
+    if (count > 1) throw new Error('A process-failure session started twice.');
+    return sessionPath === BACKUP_SESSION.path ? 'backup' : 'main';
+  }
+  if (count > 1) throw new Error('start_pi may only run once per session.');
+  return 'main';
+}
+
+function selectWorkspaceSession(
+  workspace: WorkspaceSnapshot,
+  sessionId: string,
+): void {
+  for (const project of workspace.projects) {
+    project.selected = project.path === PROJECT_PATH;
+    for (const session of project.sessions) {
+      session.selected = session.id === sessionId;
+    }
+  }
+  workspace.activeProjectPath = PROJECT_PATH;
 }
 
 function replacementWorkspace(): WorkspaceSnapshot {
@@ -443,10 +548,10 @@ function requireEqual(actual: string, expected: string, label: string): void {
 
 function requireBoundRuntime(
   runtimeId: string,
-  boundRuntimeId: string,
+  boundRuntimeIds: ReadonlySet<string>,
   command: string,
 ): void {
-  if (!boundRuntimeId || runtimeId !== boundRuntimeId) {
+  if (!boundRuntimeIds.has(runtimeId)) {
     throw new Error(`${command} used an unbound runtime.`);
   }
 }

@@ -24,6 +24,8 @@ The `saved-session-command-replacement` scenario makes `/mock 42` available in t
 
 The `saved-session-unacknowledged-abort` scenario accepts `Stop this fixture`, streams `Partial reply.`, and pauses at `abort-request-consumed` after Stop sends one abort. Release that gate to await Tau's bounded state probe, then release `before-abort-timeout-probe-response` to report Pi idle and hydrate the preserved partial turn. The abort and prompt themselves are never acknowledged.
 
+The process-failure scenarios expose each transport transition without exposing its raw payload in the product UI. `saved-session-bootstrap-process-exit` pauses before failure, after the bridge error, and after exit; after the final gate, selecting `Main` exercises the product's real reconnect path and completes a clean bootstrap. `saved-session-prompt-process-exit` first bootstraps `Main` and `Backup`; select `Backup`, return to `Main`, submit `Fail this fixture`, then use its three gates to inspect partial-output preservation and failure isolation.
+
 ## Inspect and control a paused scenario
 
 The browser console exposes `window.__TAU_PI_SCENARIO__` only while a scenario is selected. Its methods are:

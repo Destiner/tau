@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import savedSessionCommandReplacement from './saved-session-command-replacement';
+import {
+  rawBridgeError,
+  rawExitMessage,
+  rawStderr,
+  savedSessionBootstrapProcessExit,
+} from './saved-session-process-failures';
 import savedSessionStreamThenStaleGeneration, {
   savedSessionBootstrap,
   savedSessionConversation,
@@ -70,6 +76,71 @@ describe('PiScenarioEngine', () => {
     expect(engine.isComplete()).toBe(true);
     expect(() => engine.verifyComplete()).not.toThrow();
     expect(engine.timeline()).toHaveLength(12);
+  });
+
+  it('resolves production-shaped process outputs and rebinds a restarted runtime', () => {
+    const engine = new PiScenarioEngine(savedSessionBootstrapProcessExit);
+    expect(engine.bindRuntime('failed-bootstrap', 'runtime-dynamic-47')).toBe(
+      2,
+    );
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { kind: 'started' },
+    });
+    for (const type of [
+      'get_available_models',
+      'get_commands',
+      'get_state',
+    ] as const) {
+      consumeRequest(engine, `failed-${type}`, type);
+    }
+
+    expect(engine.takeOutput()).toBeUndefined();
+    engine.releaseGate('before-bootstrap-process-failure');
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { kind: 'stderr', message: rawStderr },
+    });
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { kind: 'error', message: rawBridgeError },
+    });
+    expect(engine.takeOutput()).toBeUndefined();
+    engine.releaseGate('after-bootstrap-bridge-error');
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { kind: 'exited', code: 47, message: rawExitMessage },
+    });
+    expect(engine.takeOutput()).toBeUndefined();
+    engine.releaseGate('after-bootstrap-process-exit');
+    expect(engine.takeOutput()).toBeUndefined();
+
+    expect(engine.bindRuntime('recovered-main', 'runtime-dynamic-47')).toBe(3);
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      runtime: { key: 'recovered-main', generation: 3 },
+      value: { kind: 'started' },
+    });
+    for (const [id, type] of [
+      ['models', 'get_available_models'],
+      ['commands', 'get_commands'],
+      ['state', 'get_state'],
+      ['efforts', 'get_available_thinking_levels'],
+      ['messages', 'get_messages'],
+    ] as const) {
+      consumeRequest(engine, id, type);
+      takeRequiredOutput(engine);
+    }
+
+    expect(engine.timeline()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'output',
+          output: 'runtime-event failed-bootstrap@current stderr',
+        }),
+        expect.objectContaining({
+          kind: 'output',
+          output: 'runtime-event failed-bootstrap@current exited',
+        }),
+      ]),
+    );
+    expect(JSON.stringify(engine.timeline())).not.toContain('RAW_');
+    expect(() => engine.verifyComplete()).not.toThrow();
   });
 
   it('holds a command replacement identity until its immediate probe is gated', () => {

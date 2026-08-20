@@ -423,6 +423,62 @@ describe('Pi RPC span lifecycle', () => {
     expect(end).toHaveBeenCalledWith('abandoned_process_exit');
   });
 
+  it('bounds a process failure without exposing raw bridge diagnostics', async () => {
+    const {
+      handleBridgeEvent,
+      piConnectionFailureMessage,
+      piProcessExitMessage,
+    } = await import('./runtime');
+    const controller = makeController({
+      starting: true,
+      streaming: true,
+      working: true,
+      stopping: true,
+      messages: [
+        { id: 'optimistic', kind: 'user', text: 'Keep this prompt' },
+        { id: 'partial', kind: 'assistant', text: 'Keep this partial reply' },
+      ],
+    });
+    state.controllers.push(controller);
+
+    await handleBridgeEvent({
+      runtimeId: controller.runtimeId,
+      generation: controller.generation,
+      kind: 'stderr',
+      message: 'RAW_STDERR_SECRET_SENTINEL',
+    });
+    await handleBridgeEvent({
+      runtimeId: controller.runtimeId,
+      generation: controller.generation,
+      kind: 'error',
+      message: 'RAW_BRIDGE_ERROR_SECRET_SENTINEL',
+    });
+    expect(controller.status).toBe(piConnectionFailureMessage);
+
+    await handleBridgeEvent({
+      runtimeId: controller.runtimeId,
+      generation: controller.generation,
+      kind: 'exited',
+      code: 47,
+      message: 'Pi exited with status 47. RAW_EXIT_SECRET_SENTINEL',
+    });
+
+    expect(controller).toMatchObject({
+      generation: 0,
+      ready: false,
+      starting: false,
+      streaming: false,
+      stopping: false,
+      working: false,
+      status: piProcessExitMessage,
+    });
+    expect(controller.messages.map(({ text }) => text)).toEqual([
+      'Keep this prompt',
+      'Keep this partial reply',
+    ]);
+    expect(JSON.stringify(controller)).not.toContain('RAW_');
+  });
+
   it('abandons pending spans for the old generation on a generation change', async () => {
     const { rpc, handleBridgeEvent } = await import('./runtime');
     const controller = makeController({ generation: 1 });

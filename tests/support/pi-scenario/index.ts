@@ -135,12 +135,28 @@ interface ScriptedPiEvent {
   event: PiRpcEvent;
 }
 
-interface ScriptedRuntimeEvent {
-  kind: 'runtime-event';
-  runtime: string;
-  generation?: number;
-  event: 'started';
-}
+type ScriptedRuntimeEvent =
+  | {
+      kind: 'runtime-event';
+      runtime: string;
+      generation?: number;
+      event: 'started';
+    }
+  | {
+      kind: 'runtime-event';
+      runtime: string;
+      generation?: number;
+      event: 'stderr' | 'error';
+      message: string;
+    }
+  | {
+      kind: 'runtime-event';
+      runtime: string;
+      generation?: number;
+      event: 'exited';
+      code?: number;
+      message?: string;
+    };
 
 type ScriptedPiOutput =
   ScriptedPiResponse | ScriptedPiEvent | ScriptedRuntimeEvent;
@@ -193,7 +209,10 @@ interface ResolvedPiEvent {
 interface ResolvedRuntimeEvent {
   kind: 'runtime-event';
   runtime: ResolvedRuntime;
-  value: { kind: 'started' };
+  value:
+    | { kind: 'started' }
+    | { kind: 'stderr' | 'error'; message: string }
+    | { kind: 'exited'; code?: number; message?: string };
 }
 
 type ResolvedPiOutput =
@@ -407,7 +426,7 @@ class PiScenarioEngine {
     const existingKey = this.#runtimeKeyById.get(runtimeId);
     if (existingKey && existingKey !== runtimeKey) {
       throw new Error(
-        `Runtime id ${runtimeId} is already bound to ${existingKey}.`,
+        `Runtime id ${runtimeId} is already active as ${existingKey}.`,
       );
     }
     const existingBinding = this.#bindingsByKey.get(runtimeKey);
@@ -496,6 +515,10 @@ class PiScenarioEngine {
       }
     }
 
+    if (next.kind !== 'response' && !this.#bindingsByKey.has(next.runtime)) {
+      return undefined;
+    }
+
     const resolved = this.#resolveOutput(next);
     this.#stepIndex += 1;
     this.#record({
@@ -504,6 +527,9 @@ class PiScenarioEngine {
       generation: resolved.runtime.generation,
       output: this.#outputLabel(next),
     });
+    if (resolved.kind === 'runtime-event' && resolved.value.kind === 'exited') {
+      this.#runtimeKeyById.delete(resolved.runtime.id);
+    }
     return resolved;
   }
 
@@ -689,6 +715,28 @@ class PiScenarioEngine {
     const runtime = this.#resolvedRuntime(output.runtime, generation);
     if (output.kind === 'event') {
       return { kind: 'event', runtime, value: output.event };
+    }
+    if (output.event === 'stderr' || output.event === 'error') {
+      return {
+        kind: 'runtime-event',
+        runtime,
+        value: { kind: output.event, message: output.message },
+      };
+    }
+    if (output.event === 'exited') {
+      return {
+        kind: 'runtime-event',
+        runtime,
+        value: {
+          kind: output.event,
+          ...('code' in output && output.code !== undefined
+            ? { code: output.code }
+            : {}),
+          ...('message' in output && output.message !== undefined
+            ? { message: output.message }
+            : {}),
+        },
+      };
     }
     return { kind: 'runtime-event', runtime, value: { kind: output.event } };
   }
