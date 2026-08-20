@@ -101,6 +101,12 @@ const REQUIRED_NATIVE_COUNTS = {
     register_session: 2,
     set_active_session: 2,
   },
+  'saved-session-unacknowledged-abort': {
+    load_workspace: 1,
+    read_model_scope: 1,
+    register_session: 3,
+    set_active_session: 3,
+  },
 } as const;
 
 const initialWorkspace: WorkspaceSnapshot = {

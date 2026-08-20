@@ -4,6 +4,7 @@ import {
   savedSessionConversation,
   savedSessionStaleGeneration,
 } from './saved-session-stream-then-stale-generation';
+import savedSessionUnacknowledgedAbort from './saved-session-unacknowledged-abort';
 
 import type { PiScenario, PiScenarioMetadata } from './index';
 
@@ -12,6 +13,7 @@ const scenarios = [
   savedSessionConversation,
   savedSessionStaleGeneration,
   savedSessionCommandReplacement,
+  savedSessionUnacknowledgedAbort,
 ] as const satisfies readonly PiScenario[];
 
 const catalogue = new Map<string, PiScenario>(

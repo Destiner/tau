@@ -22,6 +22,8 @@ The stale-generation scenario starts in the saved `Main` session. Submit exactly
 
 The `saved-session-command-replacement` scenario makes `/mock 42` available in the real composer. Submitting it pauses after Tau sends its immediate command identity probe. Release `before-command-replacement-identity` to return the replacement identity and finish registering and selecting `42 • plan`; the command itself does not enter the transcript.
 
+The `saved-session-unacknowledged-abort` scenario accepts `Stop this fixture`, streams `Partial reply.`, and pauses at `abort-request-consumed` after Stop sends one abort. Release that gate to await Tau's bounded state probe, then release `before-abort-timeout-probe-response` to report Pi idle and hydrate the preserved partial turn. The abort and prompt themselves are never acknowledged.
+
 ## Inspect and control a paused scenario
 
 The browser console exposes `window.__TAU_PI_SCENARIO__` only while a scenario is selected. Its methods are:

@@ -6,6 +6,7 @@ import savedSessionStreamThenStaleGeneration, {
   savedSessionConversation,
   savedSessionStaleGeneration,
 } from './saved-session-stream-then-stale-generation';
+import savedSessionUnacknowledgedAbort from './saved-session-unacknowledged-abort';
 
 import {
   PiScenarioEngine,
@@ -124,6 +125,85 @@ describe('PiScenarioEngine', () => {
       takeRequiredOutput(engine);
     }
 
+    expect(() => engine.verifyComplete()).not.toThrow();
+  });
+
+  it('holds an unacknowledged abort until its timeout probe reports idle', () => {
+    const engine = new PiScenarioEngine(savedSessionUnacknowledgedAbort);
+    engine.bindRuntime('main', 'runtime-dynamic-47');
+    takeRequiredOutput(engine);
+
+    for (const [id, type] of [
+      ['models', 'get_available_models'],
+      ['commands', 'get_commands'],
+      ['state', 'get_state'],
+      ['efforts', 'get_available_thinking_levels'],
+      ['messages', 'get_messages'],
+    ] as const) {
+      consumeRequest(engine, id, type);
+      takeRequiredOutput(engine);
+    }
+
+    consumeRequest(engine, 'prompt', 'prompt', {
+      message: 'Stop this fixture',
+    });
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { type: 'agent_start' },
+    });
+    consumeRequest(engine, 'run-state', 'get_state');
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { data: { isStreaming: true } },
+    });
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: {
+        type: 'message_update',
+        assistantMessageEvent: { delta: 'Partial reply.' },
+      },
+    });
+
+    consumeRequest(engine, 'abort', 'abort');
+    expect(engine.takeOutput()).toBeUndefined();
+    expect(engine.gates()[0]).toMatchObject({
+      name: 'abort-request-consumed',
+      reached: true,
+      released: false,
+    });
+    engine.releaseGate('abort-request-consumed');
+    expect(engine.takeOutput()).toBeUndefined();
+
+    consumeRequest(engine, 'abort-probe', 'get_state');
+    expect(engine.takeOutput()).toBeUndefined();
+    expect(engine.gates()[1]).toMatchObject({
+      name: 'before-abort-timeout-probe-response',
+      reached: true,
+      released: false,
+    });
+    engine.releaseGate('before-abort-timeout-probe-response');
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { id: 'abort-probe', data: { isStreaming: false } },
+    });
+    consumeRequest(engine, 'abort-efforts', 'get_available_thinking_levels');
+    takeRequiredOutput(engine);
+    consumeRequest(engine, 'abort-messages', 'get_messages');
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: {
+        data: {
+          messages: [
+            { role: 'user', content: 'Stop this fixture' },
+            { role: 'assistant', content: [{ text: 'Partial reply.' }] },
+          ],
+        },
+      },
+    });
+
+    const serialized = JSON.stringify(savedSessionUnacknowledgedAbort.steps);
+    expect(serialized).not.toContain('agent_settled');
+    expect(serialized).not.toContain('"command":"prompt"');
+    expect(
+      savedSessionUnacknowledgedAbort.steps.filter(
+        (step) => step.kind === 'request' && step.match.type === 'abort',
+      ),
+    ).toHaveLength(1);
     expect(() => engine.verifyComplete()).not.toThrow();
   });
 
