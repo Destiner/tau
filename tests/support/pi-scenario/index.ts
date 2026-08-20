@@ -40,7 +40,6 @@ interface PiScenarioMetadata {
 interface PiScenarioRuntime {
   key: string;
   generation: number;
-  sessionId?: string;
 }
 
 interface ExpectedPiRequest {
@@ -830,20 +829,14 @@ function definePiScenario<const Scenario extends PiScenario>(
 export {
   PiScenarioEngine,
   definePiScenario,
-  type ExpectedPiRequest,
   type PiMessage,
   type PiRequestMatcher,
   type PiRpcEvent,
-  type PiRpcMethod,
   type PiScenario,
-  type PiScenarioGate,
   type PiScenarioGateState,
   type PiScenarioMetadata,
-  type PiScenarioRuntime,
   type PiScenarioStep,
   type PiScenarioTimelineEntry,
   type PiState,
   type ResolvedPiOutput,
-  type ResolvedRuntime,
-  type ScriptedPiOutput,
 };

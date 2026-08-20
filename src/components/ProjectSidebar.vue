@@ -2,6 +2,7 @@
   <aside
     ref="sidebar"
     class="sidebar"
+    aria-label="Projects and sessions"
   >
     <header
       class="sidebar-titlebar"
@@ -93,6 +94,9 @@
               <button
                 class="session-select"
                 type="button"
+                :aria-current="
+                  isSessionSelected(project, session) ? 'page' : undefined
+                "
                 @click="() => selectSession(project, session)"
               >
                 <UiStatusDot

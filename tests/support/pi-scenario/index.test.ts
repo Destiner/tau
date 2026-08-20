@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import phantomCommandRegistration from './phantom-command-registration';
 import savedSessionCommandReplacement from './saved-session-command-replacement';
 import {
   rawBridgeError,
@@ -140,6 +141,59 @@ describe('PiScenarioEngine', () => {
       ]),
     );
     expect(JSON.stringify(engine.timeline())).not.toContain('RAW_');
+    expect(() => engine.verifyComplete()).not.toThrow();
+  });
+
+  it('registers a phantom command session when its identity sync remains streaming', () => {
+    const engine = new PiScenarioEngine(phantomCommandRegistration);
+    engine.bindRuntime('main', 'runtime-dynamic-47');
+    takeRequiredOutput(engine);
+    for (const [id, type] of [
+      ['models', 'get_available_models'],
+      ['commands', 'get_commands'],
+      ['state', 'get_state'],
+      ['efforts', 'get_available_thinking_levels'],
+      ['messages', 'get_messages'],
+    ] as const) {
+      consumeRequest(engine, id, type);
+      takeRequiredOutput(engine);
+    }
+
+    engine.bindRuntime('phantom', 'runtime-dynamic-82');
+    takeRequiredOutput(engine);
+    for (const [id, type] of [
+      ['phantom-models', 'get_available_models'],
+      ['phantom-commands', 'get_commands'],
+      ['phantom-state', 'get_state'],
+      ['phantom-efforts', 'get_available_thinking_levels'],
+      ['phantom-messages', 'get_messages'],
+    ] as const) {
+      engine.consumeRequest('runtime-dynamic-82', { id, type });
+      takeRequiredOutput(engine);
+    }
+    engine.consumeRequest('runtime-dynamic-82', {
+      id: 'command',
+      type: 'prompt',
+      message: '/mcp',
+    });
+    takeRequiredOutput(engine);
+    engine.consumeRequest('runtime-dynamic-82', {
+      id: 'command-sync',
+      type: 'get_state',
+    });
+
+    expect(engine.takeOutput()).toBeUndefined();
+    engine.releaseGate('before-streaming-command-sync');
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: {
+        id: 'command-sync',
+        data: {
+          sessionId: 'session-mcp',
+          sessionName: 'MCP workflow',
+          isStreaming: true,
+        },
+      },
+    });
     expect(() => engine.verifyComplete()).not.toThrow();
   });
 

@@ -7,6 +7,8 @@
  */
 import { test as base, expect } from '@playwright/test';
 
+import formatScenarioMismatch from './scenario-mismatch';
+
 /** WebKit reports the browser's own benign `ResizeObserver loop limit
  * exceeded`/`ResizeObserver loop completed with undelivered notifications`
  * notification as a `pageerror` with no stack — not an application error,
@@ -40,11 +42,7 @@ const test = base.extend({
       window.__TAU_PI_SCENARIO__?.verify(),
     );
     if (scenario && !scenario.ok) {
-      failures.push(
-        `Pi scenario mismatch:\n${scenario.error ?? 'Unknown scenario failure.'}\nTimeline:\n${scenario.timeline
-          .map((entry) => JSON.stringify(entry))
-          .join('\n')}`,
-      );
+      failures.push(formatScenarioMismatch(scenario.error, scenario.timeline));
     }
     if (pageErrors.length > 0) {
       failures.push(

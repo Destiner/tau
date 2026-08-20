@@ -1,102 +1,14 @@
-import { definePiScenario, type PiScenarioStep } from './index';
+import {
+  backupSessionState,
+  mainSessionState,
+  successfulBootstrapSteps,
+} from './fixtures';
 
-const projectPath = '/fixture/tau-project';
-const mainSession = {
-  sessionId: 'session-main',
-  sessionFile: `${projectPath}/session-main.jsonl`,
-  sessionName: 'Main',
-  model: { provider: 'fixture', id: 'alpha', name: 'Alpha' },
-  thinkingLevel: 'high',
-};
-const backupSession = {
-  ...mainSession,
-  sessionId: 'session-backup',
-  sessionFile: `${projectPath}/session-backup.jsonl`,
-  sessionName: 'Backup',
-};
+import { definePiScenario, type PiScenarioStep } from './index';
 
 const rawStderr = 'RAW_STDERR_SECRET_SENTINEL';
 const rawBridgeError = 'RAW_BRIDGE_ERROR_SECRET_SENTINEL';
 const rawExitMessage = 'Pi exited with status 47. RAW_EXIT_SECRET_SENTINEL';
-
-function successfulBootstrap(
-  runtime: string,
-  capturePrefix: string,
-  state: typeof mainSession,
-): readonly PiScenarioStep[] {
-  return [
-    { kind: 'runtime-event', runtime, event: 'started' },
-    {
-      kind: 'request',
-      runtime,
-      capture: `${capturePrefix}-models`,
-      match: { type: 'get_available_models' },
-    },
-    {
-      kind: 'response',
-      request: `${capturePrefix}-models`,
-      command: 'get_available_models',
-      data: {
-        models: [
-          {
-            provider: 'fixture',
-            id: 'alpha',
-            name: 'Alpha',
-            reasoning: true,
-          },
-        ],
-      },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: `${capturePrefix}-commands`,
-      match: { type: 'get_commands' },
-    },
-    {
-      kind: 'response',
-      request: `${capturePrefix}-commands`,
-      command: 'get_commands',
-      data: { commands: [] },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: `${capturePrefix}-state`,
-      match: { type: 'get_state' },
-    },
-    {
-      kind: 'response',
-      request: `${capturePrefix}-state`,
-      command: 'get_state',
-      data: { ...state, isStreaming: false },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: `${capturePrefix}-efforts`,
-      match: { type: 'get_available_thinking_levels' },
-    },
-    {
-      kind: 'response',
-      request: `${capturePrefix}-efforts`,
-      command: 'get_available_thinking_levels',
-      data: { levels: ['off', 'high'] },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: `${capturePrefix}-messages`,
-      match: { type: 'get_messages' },
-    },
-    {
-      kind: 'response',
-      request: `${capturePrefix}-messages`,
-      command: 'get_messages',
-      data: { messages: [] },
-    },
-  ];
-}
 
 function processFailure(
   runtime: string,
@@ -132,8 +44,8 @@ const savedSessionBootstrapProcessExit = definePiScenario({
     schemaVersion: 1,
   },
   runtimes: [
-    { key: 'failed-bootstrap', generation: 2, sessionId: 'session-main' },
-    { key: 'recovered-main', generation: 3, sessionId: 'session-main' },
+    { key: 'failed-bootstrap', generation: 2 },
+    { key: 'recovered-main', generation: 3 },
   ],
   steps: [
     { kind: 'runtime-event', runtime: 'failed-bootstrap', event: 'started' },
@@ -154,7 +66,11 @@ const savedSessionBootstrapProcessExit = definePiScenario({
         }) as PiScenarioStep,
     ),
     ...processFailure('failed-bootstrap', 'bootstrap'),
-    ...successfulBootstrap('recovered-main', 'recovered-main', mainSession),
+    ...successfulBootstrapSteps(
+      'recovered-main',
+      'recovered-main',
+      mainSessionState,
+    ),
   ],
 });
 
@@ -167,12 +83,16 @@ const savedSessionPromptProcessExit = definePiScenario({
     schemaVersion: 1,
   },
   runtimes: [
-    { key: 'main', generation: 2, sessionId: 'session-main' },
-    { key: 'backup', generation: 1, sessionId: 'session-backup' },
+    { key: 'main', generation: 2 },
+    { key: 'backup', generation: 1 },
   ],
   steps: [
-    ...successfulBootstrap('main', 'main-bootstrap', mainSession),
-    ...successfulBootstrap('backup', 'backup-bootstrap', backupSession),
+    ...successfulBootstrapSteps('main', 'main-bootstrap', mainSessionState),
+    ...successfulBootstrapSteps(
+      'backup',
+      'backup-bootstrap',
+      backupSessionState,
+    ),
     {
       kind: 'request',
       runtime: 'main',
@@ -190,7 +110,7 @@ const savedSessionPromptProcessExit = definePiScenario({
       kind: 'response',
       request: 'failing-run-state',
       command: 'get_state',
-      data: { ...mainSession, isStreaming: true },
+      data: { ...mainSessionState, isStreaming: true },
     },
     {
       kind: 'event',

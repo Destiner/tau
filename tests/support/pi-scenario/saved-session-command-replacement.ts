@@ -1,27 +1,19 @@
+import {
+  fixtureModels,
+  fixtureThinkingLevels,
+  mainSessionState,
+} from './fixtures';
+
 import { definePiScenario } from './index';
 
 const runtime = 'main';
-const oldState = {
-  sessionId: 'session-main',
-  sessionFile: '/fixture/tau-project/session-main.jsonl',
-  sessionName: 'Main',
-  model: { provider: 'fixture', id: 'alpha', name: 'Alpha' },
-  thinkingLevel: 'high',
-};
+const oldState = mainSessionState;
 const replacementState = {
   ...oldState,
   sessionId: 'session-plan-42',
   sessionFile: '/fixture/tau-project/session-plan-42.jsonl',
   sessionName: '42 • plan',
 };
-const models = [
-  {
-    provider: 'fixture',
-    id: 'alpha',
-    name: 'Alpha',
-    reasoning: true,
-  },
-] as const;
 const commands = [
   {
     name: 'mock',
@@ -39,7 +31,7 @@ const savedSessionCommandReplacement = definePiScenario({
       'docs/quality.md §5 State correctness and the Locality principle',
     schemaVersion: 1,
   },
-  runtimes: [{ key: runtime, generation: 2, sessionId: oldState.sessionId }],
+  runtimes: [{ key: runtime, generation: 2 }],
   steps: [
     { kind: 'runtime-event', runtime, event: 'started' },
     {
@@ -52,7 +44,7 @@ const savedSessionCommandReplacement = definePiScenario({
       kind: 'response',
       request: 'bootstrap-models',
       command: 'get_available_models',
-      data: { models },
+      data: { models: fixtureModels },
     },
     {
       kind: 'request',
@@ -88,7 +80,7 @@ const savedSessionCommandReplacement = definePiScenario({
       kind: 'response',
       request: 'bootstrap-efforts',
       command: 'get_available_thinking_levels',
-      data: { levels: ['off', 'high'] },
+      data: { levels: fixtureThinkingLevels },
     },
     {
       kind: 'request',
@@ -136,7 +128,7 @@ const savedSessionCommandReplacement = definePiScenario({
       kind: 'response',
       request: 'replacement-models',
       command: 'get_available_models',
-      data: { models },
+      data: { models: fixtureModels },
     },
     {
       kind: 'request',
@@ -160,7 +152,7 @@ const savedSessionCommandReplacement = definePiScenario({
       kind: 'response',
       request: 'replacement-efforts',
       command: 'get_available_thinking_levels',
-      data: { levels: ['off', 'high'] },
+      data: { levels: fixtureThinkingLevels },
     },
     {
       kind: 'request',

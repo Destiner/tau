@@ -1,89 +1,18 @@
+import {
+  fixtureThinkingLevels,
+  mainSessionState,
+  successfulBootstrapSteps,
+} from './fixtures';
+
 import { definePiScenario } from './index';
 
 const runtime = 'main';
-const state = {
-  sessionId: 'session-main',
-  sessionFile: '/fixture/tau-project/session-main.jsonl',
-  sessionName: 'Main',
-  model: { provider: 'fixture', id: 'alpha', name: 'Alpha' },
-  thinkingLevel: 'high',
-};
-
-const runtimes = [
-  { key: runtime, generation: 2, sessionId: 'session-main' },
-] as const;
-const bootstrapSteps = [
-  { kind: 'runtime-event', runtime, event: 'started' },
-  {
-    kind: 'request',
-    runtime,
-    capture: 'bootstrap-models',
-    match: { type: 'get_available_models' },
-  },
-  {
-    kind: 'response',
-    request: 'bootstrap-models',
-    command: 'get_available_models',
-    data: {
-      models: [
-        {
-          provider: 'fixture',
-          id: 'alpha',
-          name: 'Alpha',
-          reasoning: true,
-        },
-      ],
-    },
-  },
-  {
-    kind: 'request',
-    runtime,
-    capture: 'bootstrap-commands',
-    match: { type: 'get_commands' },
-  },
-  {
-    kind: 'response',
-    request: 'bootstrap-commands',
-    command: 'get_commands',
-    data: { commands: [] },
-  },
-  {
-    kind: 'request',
-    runtime,
-    capture: 'bootstrap-state',
-    match: { type: 'get_state' },
-  },
-  {
-    kind: 'response',
-    request: 'bootstrap-state',
-    command: 'get_state',
-    data: { ...state, isStreaming: false },
-  },
-  {
-    kind: 'request',
-    runtime,
-    capture: 'bootstrap-efforts',
-    match: { type: 'get_available_thinking_levels' },
-  },
-  {
-    kind: 'response',
-    request: 'bootstrap-efforts',
-    command: 'get_available_thinking_levels',
-    data: { levels: ['off', 'high'] },
-  },
-  {
-    kind: 'request',
-    runtime,
-    capture: 'bootstrap-messages',
-    match: { type: 'get_messages' },
-  },
-  {
-    kind: 'response',
-    request: 'bootstrap-messages',
-    command: 'get_messages',
-    data: { messages: [] },
-  },
-] as const;
+const runtimes = [{ key: runtime, generation: 2 }] as const;
+const bootstrapSteps = successfulBootstrapSteps(
+  runtime,
+  'bootstrap',
+  mainSessionState,
+);
 
 const savedSessionBootstrap = definePiScenario({
   metadata: {
@@ -115,7 +44,7 @@ const streamingConversationSteps = [
     kind: 'response',
     request: 'run-state',
     command: 'get_state',
-    data: { ...state, isStreaming: true },
+    data: { ...mainSessionState, isStreaming: true },
   },
   {
     kind: 'event',
@@ -151,7 +80,7 @@ const settledConversationSteps = [
     kind: 'response',
     request: 'settled-state',
     command: 'get_state',
-    data: { ...state, isStreaming: false },
+    data: { ...mainSessionState, isStreaming: false },
   },
   {
     kind: 'request',
@@ -163,7 +92,7 @@ const settledConversationSteps = [
     kind: 'response',
     request: 'settled-efforts',
     command: 'get_available_thinking_levels',
-    data: { levels: ['off', 'high'] },
+    data: { levels: fixtureThinkingLevels },
   },
   {
     kind: 'request',
@@ -204,6 +133,28 @@ const savedSessionConversation = definePiScenario({
   steps: conversationSteps,
 });
 
+const staleGenerationOutput = {
+  kind: 'event',
+  runtime,
+  generation: 1,
+  event: {
+    type: 'message_update',
+    assistantMessageEvent: {
+      type: 'text_delta',
+      delta: 'STALE_GENERATION_SENTINEL',
+    },
+  },
+} as const;
+const staleSteps = [
+  ...streamingConversationSteps,
+  {
+    kind: 'gate',
+    name: 'before-stale-generation-output',
+    required: true,
+  },
+  staleGenerationOutput,
+] as const;
+
 const savedSessionStaleGeneration = definePiScenario({
   metadata: {
     name: 'saved-session-stale-generation',
@@ -213,26 +164,7 @@ const savedSessionStaleGeneration = definePiScenario({
     schemaVersion: 1,
   },
   runtimes,
-  steps: [
-    ...streamingConversationSteps,
-    {
-      kind: 'gate',
-      name: 'before-stale-generation-output',
-      required: true,
-    },
-    {
-      kind: 'event',
-      runtime,
-      generation: 1,
-      event: {
-        type: 'message_update',
-        assistantMessageEvent: {
-          type: 'text_delta',
-          delta: 'STALE_GENERATION_SENTINEL',
-        },
-      },
-    },
-  ],
+  steps: staleSteps,
 });
 
 const savedSessionStreamThenStaleGeneration = definePiScenario({
@@ -251,18 +183,7 @@ const savedSessionStreamThenStaleGeneration = definePiScenario({
       name: 'before-stale-generation-output',
       required: true,
     },
-    {
-      kind: 'event',
-      runtime,
-      generation: 1,
-      event: {
-        type: 'message_update',
-        assistantMessageEvent: {
-          type: 'text_delta',
-          delta: 'STALE_GENERATION_SENTINEL',
-        },
-      },
-    },
+    staleGenerationOutput,
     {
       kind: 'gate',
       name: 'after-stale-generation-output',

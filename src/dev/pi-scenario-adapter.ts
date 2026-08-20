@@ -35,7 +35,7 @@ interface BrowserPiScenarioApi {
 interface StartPiArgs {
   runtimeId: string;
   projectPath: string;
-  sessionPath: string;
+  sessionPath: string | null;
 }
 
 interface SendPiArgs {
@@ -81,6 +81,11 @@ const REPLACEMENT_SESSION = {
   path: `${PROJECT_PATH}/session-plan-42.jsonl`,
   name: '42 • plan',
 };
+const COMMAND_SESSION = {
+  id: 'session-mcp',
+  path: `${PROJECT_PATH}/session-mcp.jsonl`,
+  name: 'MCP workflow',
+};
 const REQUIRED_NATIVE_COUNTS = {
   'saved-session-bootstrap': {
     load_workspace: 1,
@@ -104,6 +109,13 @@ const REQUIRED_NATIVE_COUNTS = {
     load_workspace: 1,
     read_model_scope: 1,
     register_session: 2,
+    set_active_session: 2,
+  },
+  'phantom-command-registration': {
+    load_workspace: 1,
+    read_model_scope: 2,
+    register_session: 2,
+    set_active_project: 1,
     set_active_session: 2,
   },
   'saved-session-unacknowledged-abort': {
@@ -276,7 +288,19 @@ function installPiScenarioAdapter(scenarioName: string): void {
         registerSessionArgs(args, expected);
         if (expected.id === REPLACEMENT_SESSION.id) {
           workspace = replacementWorkspace();
+        } else if (expected.id === COMMAND_SESSION.id) {
+          workspace = commandSessionWorkspace();
         }
+        return structuredClone(workspace);
+      }
+      if (command === 'set_active_project') {
+        count(command);
+        requireEqual(
+          requiredString(args, 'path', command),
+          PROJECT_PATH,
+          'set_active_project.path',
+        );
+        selectWorkspaceSession(workspace, '');
         return structuredClone(workspace);
       }
       if (command === 'set_active_session') {
@@ -377,13 +401,18 @@ function bridgeEvent(output: ResolvedPiOutput): PiBridgeEvent {
 }
 
 function startPiArgs(args: Record<string, unknown>): StartPiArgs {
+  const sessionPath = args.sessionPath;
+  if (sessionPath !== null && typeof sessionPath !== 'string') {
+    throw new Error('start_pi.sessionPath must be a string or null.');
+  }
   const value = {
     runtimeId: requiredString(args, 'runtimeId', 'start_pi'),
     projectPath: requiredString(args, 'projectPath', 'start_pi'),
-    sessionPath: requiredString(args, 'sessionPath', 'start_pi'),
+    sessionPath,
   };
   requireEqual(value.projectPath, PROJECT_PATH, 'start_pi.projectPath');
   if (
+    value.sessionPath !== null &&
     value.sessionPath !== SESSION_PATH &&
     value.sessionPath !== BACKUP_SESSION.path
   ) {
@@ -452,6 +481,9 @@ function expectedNativeSession(
   ) {
     return REPLACEMENT_SESSION;
   }
+  if (scenarioName === 'phantom-command-registration' && invocation === 2) {
+    return COMMAND_SESSION;
+  }
   if (scenarioName === 'saved-session-prompt-process-exit') {
     const sequence =
       command === 'register_session'
@@ -473,11 +505,12 @@ function expectedNativeSession(
 
 function scenarioRuntimeKey(
   scenarioName: string,
-  sessionPath: string,
+  sessionPath: string | null,
   startCounts: Map<string, number>,
 ): string {
-  const count = (startCounts.get(sessionPath) ?? 0) + 1;
-  startCounts.set(sessionPath, count);
+  const pathKey = sessionPath ?? '<new-session>';
+  const count = (startCounts.get(pathKey) ?? 0) + 1;
+  startCounts.set(pathKey, count);
   if (scenarioName === 'saved-session-bootstrap-process-exit') {
     if (sessionPath !== SESSION_PATH || count > 2) {
       throw new Error('Bootstrap recovery used an unexpected runtime start.');
@@ -487,6 +520,10 @@ function scenarioRuntimeKey(
   if (scenarioName === 'saved-session-prompt-process-exit') {
     if (count > 1) throw new Error('A process-failure session started twice.');
     return sessionPath === BACKUP_SESSION.path ? 'backup' : 'main';
+  }
+  if (scenarioName === 'phantom-command-registration') {
+    if (count > 1) throw new Error('A command session started twice.');
+    return sessionPath === null ? 'phantom' : 'main';
   }
   if (count > 1) throw new Error('start_pi may only run once per session.');
   return 'main';
@@ -503,6 +540,27 @@ function selectWorkspaceSession(
     }
   }
   workspace.activeProjectPath = PROJECT_PATH;
+}
+
+function commandSessionWorkspace(): WorkspaceSnapshot {
+  const workspace = structuredClone(initialWorkspace);
+  const project = workspace.projects[0];
+  const oldSession = project?.sessions[0];
+  if (!project || !oldSession) {
+    throw new Error('Command fixture requires the initial saved session.');
+  }
+  oldSession.selected = false;
+  project.sessions.push({
+    id: COMMAND_SESSION.id,
+    path: COMMAND_SESSION.path,
+    title: COMMAND_SESSION.name,
+    lastActive: '2026-01-02T03:04:06.000Z',
+    lastUserMessageAt: 0,
+    sortAt: 2,
+    archived: false,
+    selected: true,
+  });
+  return workspace;
 }
 
 function replacementWorkspace(): WorkspaceSnapshot {

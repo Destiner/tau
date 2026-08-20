@@ -1,3 +1,4 @@
+import { fixtureThinkingLevels, mainSessionState } from './fixtures';
 import { savedSessionBootstrap } from './saved-session-stream-then-stale-generation';
 
 import { definePiScenario } from './index';
@@ -5,13 +6,6 @@ import { definePiScenario } from './index';
 const runtime = 'main';
 const prompt = 'Stop this fixture';
 const partialReply = 'Partial reply.';
-const state = {
-  sessionId: 'session-main',
-  sessionFile: '/fixture/tau-project/session-main.jsonl',
-  sessionName: 'Main',
-  model: { provider: 'fixture', id: 'alpha', name: 'Alpha' },
-  thinkingLevel: 'high',
-};
 
 const savedSessionUnacknowledgedAbort = definePiScenario({
   metadata: {
@@ -42,7 +36,7 @@ const savedSessionUnacknowledgedAbort = definePiScenario({
       kind: 'response',
       request: 'run-state',
       command: 'get_state',
-      data: { ...state, isStreaming: true },
+      data: { ...mainSessionState, isStreaming: true },
     },
     {
       kind: 'event',
@@ -78,7 +72,7 @@ const savedSessionUnacknowledgedAbort = definePiScenario({
       kind: 'response',
       request: 'abort-timeout-probe',
       command: 'get_state',
-      data: { ...state, isStreaming: false },
+      data: { ...mainSessionState, isStreaming: false },
     },
     {
       kind: 'request',
@@ -90,7 +84,7 @@ const savedSessionUnacknowledgedAbort = definePiScenario({
       kind: 'response',
       request: 'abort-efforts',
       command: 'get_available_thinking_levels',
-      data: { levels: ['off', 'high'] },
+      data: { levels: fixtureThinkingLevels },
     },
     {
       kind: 'request',

@@ -22,6 +22,8 @@ The stale-generation scenario starts in the saved `Main` session. Submit exactly
 
 The `saved-session-command-replacement` scenario makes `/mock 42` available in the real composer. Submitting it pauses after Tau sends its immediate command identity probe. Release `before-command-replacement-identity` to return the replacement identity and finish registering and selecting `42 • plan`; the command itself does not enter the transcript.
 
+The `phantom-command-registration` scenario starts from the visible New session action. Submit `/mcp`, then release `before-streaming-command-sync`. The command-created `MCP workflow` session must become a selected, archivable row even though Pi still reports it as streaming; the command itself never appears as a transcript message.
+
 The `saved-session-unacknowledged-abort` scenario accepts `Stop this fixture`, streams `Partial reply.`, and pauses at `abort-request-consumed` after Stop sends one abort. Release that gate to await Tau's bounded state probe, then release `before-abort-timeout-probe-response` to report Pi idle and hydrate the preserved partial turn. The abort and prompt themselves are never acknowledged.
 
 The process-failure scenarios expose each transport transition without exposing its raw payload in the product UI. `saved-session-bootstrap-process-exit` pauses before failure, after the bridge error, and after exit; after the final gate, selecting `Main` exercises the product's real reconnect path and completes a clean bootstrap. `saved-session-prompt-process-exit` first bootstraps `Main` and `Backup`; select `Backup`, return to `Main`, submit `Fail this fixture`, then use its three gates to inspect partial-output preservation and failure isolation.
@@ -51,6 +53,12 @@ Scenario source lives in `tests/support/pi-scenario/`. Each typed scenario has s
 `catalogue.ts` is the single browser-scenario catalogue. Add a scenario there once; the interactive command's validation/list and the browser adapter both read it. Native command fixtures remain in `src/dev/pi-scenario-adapter.ts`, outside the Pi protocol engine.
 
 Playwright selects scenarios directly with `?test-scenario=<name>`, so headless tests do not use the interactive wrapper. Full-app scenario tests must import the shared fixture from `tests/e2e/fixtures.ts` to verify scenario completion and fail on browser errors.
+
+## From a failure report to a regression
+
+For a future failure, inspect the journal context first without copying private content into fixtures or diagnostics. Minimize the causal RPC exchange into one typed scenario, reproduce it interactively with `bun run repro`, and add assertions against visible product behavior rather than controller internals. Keep the minimized scenario in the catalogue as the regression once it fails before the fix and passes afterward.
+
+Use the browser fake for real-App orchestration and visible behavior, and the fake stdio executable only for native spawn, JSONL, event-tagging, and process-lifecycle coverage. Use the separate real-Pi canary only to detect drift in the installed Pi's safe read-only contract; it is not a deterministic reproduction runner and does not replace either fake-based layer.
 
 ## Real Pi compatibility canary
 

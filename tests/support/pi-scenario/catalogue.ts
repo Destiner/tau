@@ -1,3 +1,4 @@
+import phantomCommandRegistration from './phantom-command-registration';
 import savedSessionCommandReplacement from './saved-session-command-replacement';
 import {
   savedSessionBootstrapProcessExit,
@@ -17,6 +18,7 @@ const scenarios = [
   savedSessionConversation,
   savedSessionStaleGeneration,
   savedSessionCommandReplacement,
+  phantomCommandRegistration,
   savedSessionUnacknowledgedAbort,
   savedSessionBootstrapProcessExit,
   savedSessionPromptProcessExit,

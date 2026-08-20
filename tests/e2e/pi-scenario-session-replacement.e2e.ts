@@ -55,14 +55,17 @@ test('registers and selects a session replaced by an extension command', async (
   await expect(
     page.getByRole('heading', { name: replacementName }),
   ).toBeVisible();
-  const replacementRow = page
-    .locator('.session-row')
-    .filter({ hasText: replacementName });
-  const oldRow = page.locator('.session-row').filter({ hasText: 'Main' });
+  const sidebar = page.getByRole('complementary', {
+    name: 'Projects and sessions',
+  });
+  const replacementRow = sidebar.getByRole('button', {
+    name: new RegExp(`^${replacementName}\\b`),
+  });
+  const oldRow = sidebar.getByRole('button', { name: /^Main\b/ });
   await expect(replacementRow).toHaveCount(1);
-  await expect(replacementRow).toHaveClass(/\bselected\b/);
+  await expect(replacementRow).toHaveAttribute('aria-current', 'page');
   await expect(oldRow).toHaveCount(1);
-  await expect(oldRow).not.toHaveClass(/\bselected\b/);
+  await expect(oldRow).not.toHaveAttribute('aria-current', 'page');
   await expect(page.getByText(command, { exact: true })).toHaveCount(0);
   await expect(page.getByLabel('Tau transcript')).toHaveCount(0);
   await expect(composer).toBeEnabled();

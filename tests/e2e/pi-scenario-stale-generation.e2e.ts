@@ -48,7 +48,9 @@ async function snapshotVisibleSession(
   page: Page,
 ): Promise<VisibleSessionSnapshot> {
   return page.evaluate(() => {
-    const selected = [...document.querySelectorAll('.session-row.selected')];
+    const selected = [
+      ...document.querySelectorAll('button[aria-current="page"]'),
+    ];
     const composer = document.querySelector<HTMLTextAreaElement>(
       'textarea[aria-label="Message Pi"]',
     );
