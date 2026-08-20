@@ -96,6 +96,106 @@ const savedSessionBootstrap = definePiScenario({
   steps: bootstrapSteps,
 });
 
+const conversationSteps = [
+  ...bootstrapSteps,
+  {
+    kind: 'request',
+    runtime,
+    capture: 'prompt',
+    match: { type: 'prompt', message: 'Explain the fixture' },
+  },
+  { kind: 'event', runtime, event: { type: 'agent_start' } },
+  {
+    kind: 'request',
+    runtime,
+    capture: 'run-state',
+    match: { type: 'get_state' },
+  },
+  {
+    kind: 'response',
+    request: 'run-state',
+    command: 'get_state',
+    data: { ...state, isStreaming: true },
+  },
+  {
+    kind: 'event',
+    runtime,
+    event: {
+      type: 'message_update',
+      assistantMessageEvent: {
+        type: 'text_delta',
+        delta: 'Deterministic ',
+      },
+    },
+  },
+  {
+    kind: 'event',
+    runtime,
+    event: {
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: 'reply.' },
+    },
+  },
+  { kind: 'response', request: 'prompt', command: 'prompt' },
+  { kind: 'event', runtime, event: { type: 'agent_settled' } },
+  {
+    kind: 'request',
+    runtime,
+    capture: 'settled-state',
+    match: { type: 'get_state' },
+  },
+  {
+    kind: 'response',
+    request: 'settled-state',
+    command: 'get_state',
+    data: { ...state, isStreaming: false },
+  },
+  {
+    kind: 'request',
+    runtime,
+    capture: 'settled-efforts',
+    match: { type: 'get_available_thinking_levels' },
+  },
+  {
+    kind: 'response',
+    request: 'settled-efforts',
+    command: 'get_available_thinking_levels',
+    data: { levels: ['off', 'high'] },
+  },
+  {
+    kind: 'request',
+    runtime,
+    capture: 'settled-messages',
+    match: { type: 'get_messages' },
+  },
+  {
+    kind: 'response',
+    request: 'settled-messages',
+    command: 'get_messages',
+    data: {
+      messages: [
+        { role: 'user', content: 'Explain the fixture' },
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Deterministic reply.' }],
+        },
+      ],
+    },
+  },
+] as const;
+
+const savedSessionConversation = definePiScenario({
+  metadata: {
+    name: 'saved-session-conversation',
+    purpose:
+      'Submit through the real composer, stream one reply, and finish settled.',
+    qualityRule: 'State correctness and session locality',
+    schemaVersion: 1,
+  },
+  runtimes,
+  steps: conversationSteps,
+});
+
 const savedSessionStreamThenStaleGeneration = definePiScenario({
   metadata: {
     name: 'saved-session-stream-then-stale-generation',
@@ -106,91 +206,7 @@ const savedSessionStreamThenStaleGeneration = definePiScenario({
   },
   runtimes,
   steps: [
-    ...bootstrapSteps,
-    {
-      kind: 'request',
-      runtime,
-      capture: 'prompt',
-      match: { type: 'prompt', message: 'Explain the fixture' },
-    },
-    { kind: 'event', runtime, event: { type: 'agent_start' } },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'run-state',
-      match: { type: 'get_state' },
-    },
-    {
-      kind: 'response',
-      request: 'run-state',
-      command: 'get_state',
-      data: { ...state, isStreaming: true },
-    },
-    {
-      kind: 'event',
-      runtime,
-      event: {
-        type: 'message_update',
-        assistantMessageEvent: {
-          type: 'text_delta',
-          delta: 'Deterministic ',
-        },
-      },
-    },
-    {
-      kind: 'event',
-      runtime,
-      event: {
-        type: 'message_update',
-        assistantMessageEvent: { type: 'text_delta', delta: 'reply.' },
-      },
-    },
-    { kind: 'response', request: 'prompt', command: 'prompt' },
-    { kind: 'event', runtime, event: { type: 'agent_settled' } },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'settled-state',
-      match: { type: 'get_state' },
-    },
-    {
-      kind: 'response',
-      request: 'settled-state',
-      command: 'get_state',
-      data: { ...state, isStreaming: false },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'settled-efforts',
-      match: { type: 'get_available_thinking_levels' },
-    },
-    {
-      kind: 'response',
-      request: 'settled-efforts',
-      command: 'get_available_thinking_levels',
-      data: { levels: ['off', 'high'] },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'settled-messages',
-      match: { type: 'get_messages' },
-    },
-    {
-      kind: 'response',
-      request: 'settled-messages',
-      command: 'get_messages',
-      data: {
-        messages: [
-          { role: 'user', content: 'Explain the fixture' },
-          {
-            role: 'assistant',
-            content: [{ type: 'text', text: 'Deterministic reply.' }],
-          },
-        ],
-      },
-    },
+    ...conversationSteps,
     {
       kind: 'event',
       runtime,
@@ -208,5 +224,6 @@ const savedSessionStreamThenStaleGeneration = definePiScenario({
 
 export {
   savedSessionBootstrap,
+  savedSessionConversation,
   savedSessionStreamThenStaleGeneration as default,
 };

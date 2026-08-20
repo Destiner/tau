@@ -1,6 +1,7 @@
 import type { InvokeArgs } from '@tauri-apps/api/core';
 import { emit } from '@tauri-apps/api/event';
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
+import { nextTick } from 'vue';
 
 import {
   PiScenarioEngine,
@@ -8,7 +9,10 @@ import {
   type PiScenarioTimelineEntry,
   type ResolvedPiOutput,
 } from '../../tests/support/pi-scenario';
-import { savedSessionBootstrap } from '../../tests/support/pi-scenario/saved-session-stream-then-stale-generation';
+import {
+  savedSessionBootstrap,
+  savedSessionConversation,
+} from '../../tests/support/pi-scenario/saved-session-stream-then-stale-generation';
 import type { WorkspaceSnapshot } from '../composables/state';
 import type { PiBridgeEvent } from '../lib/pi/bridge';
 
@@ -57,12 +61,21 @@ const SESSION_ID = 'session-main';
 const SESSION_PATH = `${PROJECT_PATH}/session-main.jsonl`;
 const SCENARIOS: Readonly<Record<string, PiScenario>> = {
   [savedSessionBootstrap.metadata.name]: savedSessionBootstrap,
+  [savedSessionConversation.metadata.name]: savedSessionConversation,
 };
 const REQUIRED_NATIVE_COUNTS = {
-  load_workspace: 1,
-  read_model_scope: 1,
-  register_session: 1,
-  set_active_session: 1,
+  [savedSessionBootstrap.metadata.name]: {
+    load_workspace: 1,
+    read_model_scope: 1,
+    register_session: 1,
+    set_active_session: 1,
+  },
+  [savedSessionConversation.metadata.name]: {
+    load_workspace: 1,
+    read_model_scope: 1,
+    register_session: 3,
+    set_active_session: 3,
+  },
 } as const;
 
 const workspace: WorkspaceSnapshot = {
@@ -119,7 +132,23 @@ function installPiScenarioAdapter(scenarioName: string): void {
     let output: ResolvedPiOutput | undefined;
     while ((output = engine.takeOutput())) {
       await emit<PiBridgeEvent>('pi-event', bridgeEvent(output));
+      await yieldToRenderedState();
     }
+  }
+
+  async function yieldToRenderedState(): Promise<void> {
+    // Event listeners are asynchronous; flush one task and Vue update so each
+    // ordered fake output is independently observable without a timer.
+    await new Promise<void>((resolve) => {
+      const channel = new MessageChannel();
+      channel.port1.onmessage = (): void => {
+        channel.port1.close();
+        channel.port2.close();
+        resolve();
+      };
+      channel.port2.postMessage(null);
+    });
+    await nextTick();
   }
 
   async function handleCommand(
@@ -197,7 +226,9 @@ function installPiScenarioAdapter(scenarioName: string): void {
       if (adapterFailure) throw adapterFailure;
       engine.verifyComplete();
       for (const [command, expected] of Object.entries(
-        REQUIRED_NATIVE_COUNTS,
+        REQUIRED_NATIVE_COUNTS[
+          scenarioName as keyof typeof REQUIRED_NATIVE_COUNTS
+        ],
       )) {
         const actual = nativeCounts.get(command) ?? 0;
         if (actual !== expected) {

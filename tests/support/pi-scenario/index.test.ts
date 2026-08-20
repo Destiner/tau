@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import savedSessionStreamThenStaleGeneration, {
   savedSessionBootstrap,
+  savedSessionConversation,
 } from './saved-session-stream-then-stale-generation';
 
 import {
@@ -45,6 +46,19 @@ describe('PiScenarioEngine', () => {
     expect(engine.takeOutput()).toBeUndefined();
     expect(() => engine.verifyComplete()).not.toThrow();
     expect(engine.timeline()).toHaveLength(12);
+  });
+
+  it('keeps a complete conversation checkpoint before the stale-generation event', () => {
+    expect(savedSessionConversation.steps).toEqual(
+      savedSessionStreamThenStaleGeneration.steps.slice(0, -1),
+    );
+    expect(savedSessionConversation.steps.at(-1)).toMatchObject({
+      kind: 'response',
+      command: 'get_messages',
+    });
+    expect(JSON.stringify(savedSessionConversation)).not.toContain(
+      'STALE_GENERATION_SENTINEL',
+    );
   });
 
   it('runs the complete bootstrap, prompt, stream, settlement, and stale event exchange in memory', () => {
