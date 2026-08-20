@@ -65,6 +65,7 @@ describe('PiScenarioEngine', () => {
     }
 
     expect(engine.takeOutput()).toBeUndefined();
+    expect(engine.isComplete()).toBe(true);
     expect(() => engine.verifyComplete()).not.toThrow();
     expect(engine.timeline()).toHaveLength(12);
   });

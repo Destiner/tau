@@ -195,6 +195,11 @@ impl Telemetry {
         Telemetry::new(resolve_telemetry_dir(), Arc::new(store::SystemClock))
     }
 
+    #[cfg(test)]
+    pub(crate) fn for_test(dir: PathBuf) -> Self {
+        Telemetry::new(dir, Arc::new(store::SystemClock))
+    }
+
     fn new(dir: PathBuf, clock: Arc<dyn store::Clock>) -> Self {
         let previous_run_unclean = previous_run_was_unclean(&dir);
         write_run_marker(&dir);

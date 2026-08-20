@@ -542,16 +542,20 @@ class PiScenarioEngine {
     return this.#timeline.map((entry) => structuredClone(entry));
   }
 
+  isComplete(): boolean {
+    return (
+      this.#stepIndex === this.#scenario.steps.length &&
+      this.gates().every(
+        (gate) => !gate.required || (gate.reached && gate.released),
+      )
+    );
+  }
+
   verifyComplete(): void {
     const unfinishedGates = this.gates().filter(
       (gate) => gate.required && (!gate.reached || !gate.released),
     );
-    if (
-      this.#stepIndex === this.#scenario.steps.length &&
-      unfinishedGates.length === 0
-    ) {
-      return;
-    }
+    if (this.isComplete()) return;
     const remaining = this.#scenario.steps.slice(this.#stepIndex);
     const requests = remaining
       .filter((step): step is ExpectedPiRequest => step.kind === 'request')

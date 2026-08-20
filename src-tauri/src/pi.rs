@@ -14,7 +14,7 @@ use std::{
     thread,
     time::Duration,
 };
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 const MAX_RPC_LINE_BYTES: usize = 64 * 1024 * 1024;
 const STDERR_TAIL_LINES: usize = 8;
@@ -53,13 +53,24 @@ struct PiProcess {
     stdin: Arc<Mutex<ChildStdin>>,
 }
 
-#[derive(Clone)]
-struct PiReaderContext {
-    app: AppHandle,
+struct PiReaderContext<R: Runtime> {
+    app: AppHandle<R>,
     manager: Arc<Mutex<PiManager>>,
     child: Arc<Mutex<Child>>,
     runtime_id: String,
     generation: u64,
+}
+
+impl<R: Runtime> Clone for PiReaderContext<R> {
+    fn clone(&self) -> Self {
+        Self {
+            app: self.app.clone(),
+            manager: Arc::clone(&self.manager),
+            child: Arc::clone(&self.child),
+            runtime_id: self.runtime_id.clone(),
+            generation: self.generation,
+        }
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -184,19 +195,39 @@ pub fn start_pi(
     project_path: String,
     session_path: Option<String>,
 ) -> Result<u64, String> {
-    validate_runtime_id(&runtime_id)?;
-    validate_start_paths(&project_path, session_path.as_deref())?;
     let command_span = telemetry_context
         .as_ref()
         .and_then(|context| telemetry.start_command_span(context, "start_pi"));
     let span_context = command_span.as_ref().map(|span| span.span_context());
 
+    start_pi_with(
+        app,
+        &state,
+        &telemetry,
+        span_context.as_ref(),
+        runtime_id,
+        project_path,
+        session_path,
+    )
+}
+
+fn start_pi_with<R: Runtime>(
+    app: AppHandle<R>,
+    state: &PiState,
+    telemetry: &Telemetry,
+    span_context: Option<&opentelemetry::trace::SpanContext>,
+    runtime_id: String,
+    project_path: String,
+    session_path: Option<String>,
+) -> Result<u64, String> {
+    validate_runtime_id(&runtime_id)?;
+    validate_start_paths(&project_path, session_path.as_deref())?;
     let resolved_pi_path = resolve_pi_binary();
     telemetry.record_process_lifecycle(
         "pi.process.resolved",
         &runtime_id,
         None,
-        span_context.as_ref(),
+        span_context,
         &[(
             "tau.process.resolution",
             TelemetryValue::String(
@@ -222,14 +253,7 @@ pub fn start_pi(
     if let Some(path) = session_path {
         command.args(["--session", &path]);
     }
-    spawn_command(
-        app,
-        state,
-        &telemetry,
-        span_context.as_ref(),
-        runtime_id,
-        command,
-    )
+    spawn_command(app, state, telemetry, span_context, runtime_id, command)
 }
 
 #[tauri::command]
@@ -253,7 +277,7 @@ pub fn start_pi_remote(
     let remote_command = remote_pi_command(&working_directory, session_path.as_deref());
     spawn_command(
         app,
-        state,
+        &state,
         &telemetry,
         span_context.as_ref(),
         runtime_id,
@@ -388,7 +412,7 @@ fn push_directory(directories: &mut Vec<PathBuf>, directory: PathBuf) {
 /// telemetry log if the emission itself fails — e.g. the webview is gone.
 /// `app.emit`'s own error is never recorded: only the bounded, reviewed
 /// event kind that failed to reach the frontend.
-fn emit_pi_event(app: &AppHandle, event: PiEvent<'_>) {
+fn emit_pi_event<R: Runtime>(app: &AppHandle<R>, event: PiEvent<'_>) {
     let runtime_id = event.runtime_id.to_string();
     let generation = event.generation;
     let kind = event.kind;
@@ -432,9 +456,9 @@ fn line_drop_reason(bytes: &[u8]) -> Option<&'static str> {
     }
 }
 
-fn spawn_command(
-    app: AppHandle,
-    state: State<'_, PiState>,
+fn spawn_command<R: Runtime>(
+    app: AppHandle<R>,
+    state: &PiState,
     telemetry: &Telemetry,
     span_context: Option<&opentelemetry::trace::SpanContext>,
     runtime_id: String,
@@ -532,6 +556,10 @@ pub fn send_pi(
     runtime_id: String,
     request: Value,
 ) -> Result<(), String> {
+    send_pi_to_state(&state, runtime_id, request)
+}
+
+fn send_pi_to_state(state: &PiState, runtime_id: String, request: Value) -> Result<(), String> {
     let line = serde_json::to_vec(&request)
         .map_err(|error| format!("Could not encode the Pi request: {error}"))?;
     if line.len() > MAX_RPC_LINE_BYTES {
@@ -611,8 +639,8 @@ fn stop_process(process: PiProcess) {
     }
 }
 
-fn spawn_stdout_reader(
-    context: PiReaderContext,
+fn spawn_stdout_reader<R: Runtime>(
+    context: PiReaderContext<R>,
     stdout: impl std::io::Read + Send + 'static,
     stderr_tail: StderrTail,
     stderr_reader: thread::JoinHandle<()>,
@@ -746,8 +774,8 @@ fn spawn_stdout_reader(
     });
 }
 
-fn spawn_stderr_reader(
-    context: PiReaderContext,
+fn spawn_stderr_reader<R: Runtime>(
+    context: PiReaderContext<R>,
     stderr: impl std::io::Read + Send + 'static,
     stderr_tail: StderrTail,
 ) -> thread::JoinHandle<()> {
@@ -835,13 +863,307 @@ fn pi_exit_message(code: Option<i32>, stderr: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    use std::sync::mpsc::{Receiver, TryRecvError};
+    use tauri::{Listener, Manager};
+
+    const TEST_SCENARIO_ENV: &str = "TAU_PI_TEST_SCENARIO";
+    const TEST_FAULT_ENV: &str = "TAU_PI_TEST_FAULT";
+    const TEST_PROJECT_ENV: &str = "TAU_PI_TEST_PROJECT_PATH";
+    const TEST_SESSION_ENV: &str = "TAU_PI_TEST_SESSION_PATH";
+    const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
+    static ENVIRONMENT_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvironmentGuard {
+        previous: Vec<(&'static str, Option<OsString>)>,
+    }
+
+    impl EnvironmentGuard {
+        fn set(values: &[(&'static str, Option<&OsStr>)]) -> Self {
+            let previous = values
+                .iter()
+                .map(|(key, _)| (*key, env::var_os(key)))
+                .collect();
+            for (key, value) in values {
+                if let Some(value) = value {
+                    env::set_var(key, value);
+                } else {
+                    env::remove_var(key);
+                }
+            }
+            Self { previous }
+        }
+    }
+
+    impl Drop for EnvironmentGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.previous.drain(..) {
+                if let Some(value) = value {
+                    env::set_var(key, value);
+                } else {
+                    env::remove_var(key);
+                }
+            }
+        }
+    }
 
     #[test]
     fn configured_pi_path_takes_priority() {
+        let _lock = ENVIRONMENT_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let current = std::env::current_exe().expect("current executable");
-        std::env::set_var("TAU_PI_PATH", &current);
+        let _environment = EnvironmentGuard::set(&[("TAU_PI_PATH", Some(current.as_os_str()))]);
         assert_eq!(resolve_pi_binary(), Some(current));
-        std::env::remove_var("TAU_PI_PATH");
+    }
+
+    #[test]
+    fn fake_pi_round_trips_jsonl_and_cleans_up_after_successful_exit() {
+        let _lock = ENVIRONMENT_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let fixture = NativePiFixture::new(None);
+        let (app, events) = fixture.app_and_events();
+        let handle = app.handle().clone();
+        let state = handle.state::<PiState>();
+        let telemetry = handle.state::<Telemetry>();
+
+        let generation = start_pi_with(
+            handle.clone(),
+            &state,
+            &telemetry,
+            None,
+            "native-main".into(),
+            fixture.project_string(),
+            Some(fixture.session_string()),
+        )
+        .expect("start fake Pi");
+        assert_eq!(generation, 1);
+        let started = expect_outer_event(&events, "started", generation);
+        assert_eq!(started["runtimeId"], "native-main");
+
+        for (id, request_type) in [
+            ("models", "get_available_models"),
+            ("commands", "get_commands"),
+            ("state", "get_state"),
+            ("efforts", "get_available_thinking_levels"),
+            ("messages", "get_messages"),
+        ] {
+            send_pi_to_state(
+                &state,
+                "native-main".into(),
+                json!({
+                    "id": id,
+                    "type": request_type,
+                }),
+            )
+            .expect("send bootstrap request");
+            expect_rpc(&events, generation, "response", Some(id));
+        }
+
+        send_pi_to_state(
+            &state,
+            "native-main".into(),
+            json!({"id": "prompt", "type": "prompt", "message": "Explain the fixture"}),
+        )
+        .expect("send prompt");
+        expect_rpc(&events, generation, "agent_start", None);
+
+        send_pi_to_state(
+            &state,
+            "native-main".into(),
+            json!({"id": "run-state", "type": "get_state"}),
+        )
+        .expect("send running state request");
+        expect_rpc(&events, generation, "response", Some("run-state"));
+        expect_rpc(&events, generation, "message_update", None);
+        expect_rpc(&events, generation, "message_update", None);
+        expect_rpc(&events, generation, "response", Some("prompt"));
+        expect_rpc(&events, generation, "agent_settled", None);
+
+        for (id, request_type) in [
+            ("settled-state", "get_state"),
+            ("settled-efforts", "get_available_thinking_levels"),
+            ("settled-messages", "get_messages"),
+        ] {
+            send_pi_to_state(
+                &state,
+                "native-main".into(),
+                json!({
+                    "id": id,
+                    "type": request_type,
+                }),
+            )
+            .expect("send settlement request");
+            expect_rpc(&events, generation, "response", Some(id));
+        }
+
+        let exited = expect_outer_event(&events, "exited", generation);
+        assert_eq!(exited["runtimeId"], "native-main");
+        assert_eq!(exited["code"], 0);
+        assert!(exited.get("message").is_none());
+        assert!(state.inner.lock().expect("Pi manager").processes.is_empty());
+    }
+
+    #[test]
+    fn fake_pi_malformed_stdout_is_dropped_and_lifecycle_is_cleaned_up() {
+        let _lock = ENVIRONMENT_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let fixture = NativePiFixture::new(Some(OsStr::new("malformed-stdout")));
+        let (app, events) = fixture.app_and_events();
+        let handle = app.handle().clone();
+        let state = handle.state::<PiState>();
+        let telemetry = handle.state::<Telemetry>();
+
+        let generation = start_pi_with(
+            handle.clone(),
+            &state,
+            &telemetry,
+            None,
+            "native-malformed".into(),
+            fixture.project_string(),
+            Some(fixture.session_string()),
+        )
+        .expect("start fake Pi");
+        let started = expect_outer_event(&events, "started", generation);
+        assert_eq!(started["runtimeId"], "native-malformed");
+        let exited = expect_outer_event(&events, "exited", generation);
+        assert_eq!(exited["runtimeId"], "native-malformed");
+        assert_eq!(exited["code"], 0);
+        assert!(state.inner.lock().expect("Pi manager").processes.is_empty());
+        assert_eq!(events.try_recv(), Err(TryRecvError::Empty));
+    }
+
+    #[test]
+    fn fake_pi_nonzero_exit_forwards_bounded_failure_and_cleans_up() {
+        let _lock = ENVIRONMENT_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let fixture = NativePiFixture::new(Some(OsStr::new("nonzero-exit")));
+        let (app, events) = fixture.app_and_events();
+        let handle = app.handle().clone();
+        let state = handle.state::<PiState>();
+        let telemetry = handle.state::<Telemetry>();
+
+        let generation = start_pi_with(
+            handle.clone(),
+            &state,
+            &telemetry,
+            None,
+            "native-failure".into(),
+            fixture.project_string(),
+            Some(fixture.session_string()),
+        )
+        .expect("start fake Pi");
+        let started = expect_outer_event(&events, "started", generation);
+        assert_eq!(started["runtimeId"], "native-failure");
+        let stderr = expect_outer_event(&events, "stderr", generation);
+        assert_eq!(stderr["message"], "scripted transport failure");
+        let exited = expect_outer_event(&events, "exited", generation);
+        assert_eq!(exited["runtimeId"], "native-failure");
+        assert_eq!(exited["code"], 23);
+        assert_eq!(
+            exited["message"],
+            "Pi exited with status 23. scripted transport failure"
+        );
+        assert!(state.inner.lock().expect("Pi manager").processes.is_empty());
+    }
+
+    struct NativePiFixture {
+        _root: tempfile::TempDir,
+        project: PathBuf,
+        session: PathBuf,
+        _environment: EnvironmentGuard,
+    }
+
+    impl NativePiFixture {
+        fn new(fault: Option<&OsStr>) -> Self {
+            let root = tempfile::tempdir().expect("native Pi fixture directory");
+            let project = root.path().join("project");
+            std::fs::create_dir(&project).expect("fixture project");
+            let project = project.canonicalize().expect("canonical fixture project");
+            let session = project.join("session.jsonl");
+            std::fs::write(&session, "").expect("fixture session");
+            let session = session.canonicalize().expect("canonical fixture session");
+            let adapter = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../scripts/pi-stdio-adapter.ts")
+                .canonicalize()
+                .expect("fake Pi adapter");
+            let environment = EnvironmentGuard::set(&[
+                ("TAU_PI_PATH", Some(adapter.as_os_str())),
+                (
+                    TEST_SCENARIO_ENV,
+                    Some(OsStr::new("saved-session-conversation")),
+                ),
+                (TEST_FAULT_ENV, fault),
+                (TEST_PROJECT_ENV, Some(project.as_os_str())),
+                (TEST_SESSION_ENV, Some(session.as_os_str())),
+            ]);
+            Self {
+                _root: root,
+                project,
+                session,
+                _environment: environment,
+            }
+        }
+
+        fn app_and_events(
+            &self,
+        ) -> (
+            tauri::App<tauri::test::MockRuntime>,
+            Receiver<serde_json::Value>,
+        ) {
+            let telemetry_dir = self._root.path().join("telemetry");
+            let app = tauri::test::mock_builder()
+                .manage(PiState::default())
+                .manage(Telemetry::for_test(telemetry_dir))
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("mock Tauri app");
+            let (sender, receiver) = mpsc::channel();
+            app.listen("pi-event", move |event| {
+                let value = serde_json::from_str(event.payload()).expect("serialized Pi event");
+                let _ = sender.send(value);
+            });
+            (app, receiver)
+        }
+
+        fn project_string(&self) -> String {
+            self.project.to_string_lossy().into_owned()
+        }
+
+        fn session_string(&self) -> String {
+            self.session.to_string_lossy().into_owned()
+        }
+    }
+
+    fn expect_outer_event(
+        events: &Receiver<serde_json::Value>,
+        kind: &str,
+        generation: u64,
+    ) -> serde_json::Value {
+        let event = events
+            .recv_timeout(EVENT_TIMEOUT)
+            .unwrap_or_else(|error| panic!("waiting for {kind} Pi event: {error}"));
+        assert_eq!(event["generation"], generation);
+        assert_eq!(event["kind"], kind);
+        event
+    }
+
+    fn expect_rpc(
+        events: &Receiver<serde_json::Value>,
+        generation: u64,
+        rpc_type: &str,
+        id: Option<&str>,
+    ) {
+        let event = expect_outer_event(events, "rpc", generation);
+        let line: serde_json::Value =
+            serde_json::from_str(event["line"].as_str().expect("RPC event line"))
+                .expect("production-shaped RPC JSON");
+        assert_eq!(line["type"], rpc_type);
+        if let Some(id) = id {
+            assert_eq!(line["id"], id);
+        }
     }
 
     #[test]
