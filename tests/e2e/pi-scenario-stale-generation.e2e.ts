@@ -2,10 +2,8 @@ import type { Page } from '@playwright/test';
 
 import { expect, test } from './fixtures';
 
-const scenarioUrl =
-  '/?test-scenario=saved-session-stream-then-stale-generation';
+const scenarioUrl = '/?test-scenario=saved-session-stale-generation';
 const beforeStaleGate = 'before-stale-generation-output';
-const afterStaleGate = 'after-stale-generation-output';
 const prompt = 'Explain the fixture';
 const reply = 'Deterministic reply.';
 const sentinel = 'STALE_GENERATION_SENTINEL';
@@ -43,16 +41,6 @@ function expectWorkingActiveSession(snapshot: VisibleSessionSnapshot): void {
     stopVisible: true,
     statuses: [],
     workingIndicators: 1,
-  });
-}
-
-function expectSettledActiveSession(snapshot: VisibleSessionSnapshot): void {
-  expectActiveSessionTranscript(snapshot);
-  expect(snapshot).toMatchObject({
-    sendVisible: true,
-    stopVisible: false,
-    statuses: [],
-    workingIndicators: 0,
   });
 }
 
@@ -109,39 +97,40 @@ test('ignores gated output from a stale runtime generation', async ({
   }, beforeStaleGate);
   const beforeRelease = await snapshotVisibleSession(page);
 
-  await page.evaluate(
-    async ({ releaseGate, reachedGate }) => {
-      const scenario = window.__TAU_PI_SCENARIO__;
-      if (!scenario) throw new Error('Pi scenario API is unavailable.');
-      await scenario.releaseGate(releaseGate);
-      await scenario.waitForGate(reachedGate);
-    },
-    { releaseGate: beforeStaleGate, reachedGate: afterStaleGate },
-  );
+  await page.evaluate(async (gateName) => {
+    const scenario = window.__TAU_PI_SCENARIO__;
+    if (!scenario) throw new Error('Pi scenario API is unavailable.');
+    await scenario.releaseGate(gateName);
+  }, beforeStaleGate);
   const afterRelease = await snapshotVisibleSession(page);
 
   expectWorkingActiveSession(beforeRelease);
   expect(afterRelease).toEqual(beforeRelease);
 
-  const paused = await page.evaluate(() => ({
-    gates: window.__TAU_PI_SCENARIO__?.gates(),
-    timeline: window.__TAU_PI_SCENARIO__?.timeline(),
-  }));
-  expect(paused.gates).toEqual([
+  const completed = await page.evaluate(() => {
+    const scenario = window.__TAU_PI_SCENARIO__;
+    if (!scenario) throw new Error('Pi scenario API is unavailable.');
+    return {
+      scenario: scenario.scenario(),
+      gates: scenario.gates(),
+      verification: scenario.verify(),
+      timeline: scenario.timeline(),
+    };
+  });
+  expect(completed.scenario).toMatchObject({
+    name: 'saved-session-stale-generation',
+    schemaVersion: 1,
+  });
+  expect(completed.gates).toEqual([
     {
       name: beforeStaleGate,
       required: true,
       reached: true,
       released: true,
     },
-    {
-      name: afterStaleGate,
-      required: true,
-      reached: true,
-      released: false,
-    },
   ]);
-  expect(paused.timeline?.slice(-3)).toEqual([
+  expect(completed.verification.ok).toBe(true);
+  expect(completed.timeline.slice(-2)).toEqual([
     expect.objectContaining({
       kind: 'gate-released',
       gate: beforeStaleGate,
@@ -151,19 +140,5 @@ test('ignores gated output from a stale runtime generation', async ({
       generation: 1,
       output: 'event main@1 message_update',
     }),
-    expect.objectContaining({ kind: 'gate-reached', gate: afterStaleGate }),
   ]);
-
-  await page.evaluate(async (gateName) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Pi scenario API is unavailable.');
-    await scenario.releaseGate(gateName);
-  }, afterStaleGate);
-
-  await expect(page.getByRole('button', { name: 'Stop Pi' })).toHaveCount(0);
-  await expect(
-    page.getByRole('button', { name: 'Send message' }),
-  ).toBeVisible();
-  await expect(composer).toBeEnabled();
-  expectSettledActiveSession(await snapshotVisibleSession(page));
 });

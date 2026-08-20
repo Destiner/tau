@@ -19,6 +19,8 @@ bun tauri dev
 
 Tau talks to Pi over RPC: Rust starts `pi --mode rpc` directly and exchanges JSONL with it. Remote projects run the same mode over SSH.
 
+Deterministic Pi failures can be run against the real development app; the stale-generation workflow is `bun run repro -- saved-session-stale-generation`. See [deterministic reproduction scenarios](docs/reproduction-scenarios.md) for available scenarios and the browser-console controls.
+
 ## Workflows and extensions
 
 Tau uses Pi's native extension runtime and supports workflow-critical non-modal prompts, custom tools and hooks, session replacement, notifications, and editor prefill. See the [extension support matrix and compatibility fixture](docs/extensions.md) for supported and deferred APIs.

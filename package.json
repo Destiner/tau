@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "repro": "bun scripts/repro.ts",
     "build": "bun run typecheck && vite build",
     "preview": "vite preview",
     "format": "prettier --write .",

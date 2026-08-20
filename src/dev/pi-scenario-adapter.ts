@@ -5,15 +5,15 @@ import { nextTick } from 'vue';
 
 import {
   PiScenarioEngine,
-  type PiScenario,
   type PiScenarioGateState,
+  type PiScenarioMetadata,
   type PiScenarioTimelineEntry,
   type ResolvedPiOutput,
 } from '../../tests/support/pi-scenario';
-import savedSessionStreamThenStaleGeneration, {
-  savedSessionBootstrap,
-  savedSessionConversation,
-} from '../../tests/support/pi-scenario/saved-session-stream-then-stale-generation';
+import {
+  findPiScenario,
+  piScenarioCatalogue,
+} from '../../tests/support/pi-scenario/catalogue';
 import type { WorkspaceSnapshot } from '../composables/state';
 import type { PiBridgeEvent } from '../lib/pi/bridge';
 
@@ -24,6 +24,7 @@ interface ScenarioVerification {
 }
 
 interface BrowserPiScenarioApi {
+  scenario(): PiScenarioMetadata;
   verify(): ScenarioVerification;
   timeline(): readonly PiScenarioTimelineEntry[];
   gates(): readonly PiScenarioGateState[];
@@ -63,30 +64,24 @@ declare global {
 const PROJECT_PATH = '/fixture/tau-project';
 const SESSION_ID = 'session-main';
 const SESSION_PATH = `${PROJECT_PATH}/session-main.jsonl`;
-const SCENARIOS: Readonly<Record<string, PiScenario>> = {
-  [savedSessionBootstrap.metadata.name]: savedSessionBootstrap,
-  [savedSessionConversation.metadata.name]: savedSessionConversation,
-  [savedSessionStreamThenStaleGeneration.metadata.name]:
-    savedSessionStreamThenStaleGeneration,
-};
 const REQUIRED_NATIVE_COUNTS = {
-  [savedSessionBootstrap.metadata.name]: {
+  'saved-session-bootstrap': {
     load_workspace: 1,
     read_model_scope: 1,
     register_session: 1,
     set_active_session: 1,
   },
-  [savedSessionConversation.metadata.name]: {
+  'saved-session-conversation': {
     load_workspace: 1,
     read_model_scope: 1,
     register_session: 3,
     set_active_session: 3,
   },
-  [savedSessionStreamThenStaleGeneration.metadata.name]: {
+  'saved-session-stale-generation': {
     load_workspace: 1,
     read_model_scope: 1,
-    register_session: 3,
-    set_active_session: 3,
+    register_session: 2,
+    set_active_session: 2,
   },
 } as const;
 
@@ -117,10 +112,12 @@ const workspace: WorkspaceSnapshot = {
 };
 
 function installPiScenarioAdapter(scenarioName: string): void {
-  const scenario = SCENARIOS[scenarioName];
+  const scenario = findPiScenario(scenarioName);
   if (!scenario) {
     throw new Error(
-      `Unknown browser Pi scenario ${JSON.stringify(scenarioName)}. Available: ${Object.keys(SCENARIOS).join(', ')}.`,
+      `Unknown browser Pi scenario ${JSON.stringify(scenarioName)}. Available: ${piScenarioCatalogue()
+        .map(({ name }) => name)
+        .join(', ')}.`,
     );
   }
 
@@ -262,6 +259,7 @@ function installPiScenarioAdapter(scenarioName: string): void {
   mockWindows('main');
   mockIPC(handleCommand, { shouldMockEvents: true });
   window.__TAU_PI_SCENARIO__ = {
+    scenario: (): PiScenarioMetadata => structuredClone(scenario.metadata),
     verify: verification,
     timeline: (): readonly PiScenarioTimelineEntry[] => engine.timeline(),
     gates: (): readonly PiScenarioGateState[] => engine.gates(),

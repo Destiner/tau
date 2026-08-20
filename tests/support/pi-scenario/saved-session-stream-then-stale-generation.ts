@@ -204,6 +204,37 @@ const savedSessionConversation = definePiScenario({
   steps: conversationSteps,
 });
 
+const savedSessionStaleGeneration = definePiScenario({
+  metadata: {
+    name: 'saved-session-stale-generation',
+    purpose:
+      'Pause a working saved session, deliver one stale generation delta, and end without settlement.',
+    qualityRule: 'State correctness and session locality',
+    schemaVersion: 1,
+  },
+  runtimes,
+  steps: [
+    ...streamingConversationSteps,
+    {
+      kind: 'gate',
+      name: 'before-stale-generation-output',
+      required: true,
+    },
+    {
+      kind: 'event',
+      runtime,
+      generation: 1,
+      event: {
+        type: 'message_update',
+        assistantMessageEvent: {
+          type: 'text_delta',
+          delta: 'STALE_GENERATION_SENTINEL',
+        },
+      },
+    },
+  ],
+});
+
 const savedSessionStreamThenStaleGeneration = definePiScenario({
   metadata: {
     name: 'saved-session-stream-then-stale-generation',
@@ -244,5 +275,6 @@ const savedSessionStreamThenStaleGeneration = definePiScenario({
 export {
   savedSessionBootstrap,
   savedSessionConversation,
+  savedSessionStaleGeneration,
   savedSessionStreamThenStaleGeneration as default,
 };

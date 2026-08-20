@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import savedSessionStreamThenStaleGeneration, {
   savedSessionBootstrap,
   savedSessionConversation,
+  savedSessionStaleGeneration,
 } from './saved-session-stream-then-stale-generation';
 
 import {
@@ -94,6 +95,33 @@ describe('PiScenarioEngine', () => {
     expect(JSON.stringify(savedSessionConversation)).not.toContain(
       'STALE_GENERATION_SENTINEL',
     );
+  });
+
+  it('keeps the browser stale-generation regression minimal and unsettled', () => {
+    const afterStaleGateIndex =
+      savedSessionStreamThenStaleGeneration.steps.findIndex(
+        (step) =>
+          step.kind === 'gate' && step.name === 'after-stale-generation-output',
+      );
+
+    expect(savedSessionStaleGeneration.metadata.name).toBe(
+      'saved-session-stale-generation',
+    );
+    expect(savedSessionStaleGeneration.steps).toEqual(
+      savedSessionStreamThenStaleGeneration.steps.slice(0, afterStaleGateIndex),
+    );
+    expect(
+      savedSessionStaleGeneration.steps.filter((step) => step.kind === 'gate'),
+    ).toEqual([
+      {
+        kind: 'gate',
+        name: 'before-stale-generation-output',
+        required: true,
+      },
+    ]);
+    const serializedSteps = JSON.stringify(savedSessionStaleGeneration.steps);
+    expect(serializedSteps).not.toContain('agent_settled');
+    expect(serializedSteps).not.toContain('"command":"prompt"');
   });
 
   it('runs the complete bootstrap, prompt, stream, settlement, and stale event exchange in memory', () => {
