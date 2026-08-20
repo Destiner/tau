@@ -96,7 +96,7 @@ const savedSessionBootstrap = definePiScenario({
   steps: bootstrapSteps,
 });
 
-const conversationSteps = [
+const streamingConversationSteps = [
   ...bootstrapSteps,
   {
     kind: 'request',
@@ -136,6 +136,9 @@ const conversationSteps = [
       assistantMessageEvent: { type: 'text_delta', delta: 'reply.' },
     },
   },
+] as const;
+
+const settledConversationSteps = [
   { kind: 'response', request: 'prompt', command: 'prompt' },
   { kind: 'event', runtime, event: { type: 'agent_settled' } },
   {
@@ -184,6 +187,11 @@ const conversationSteps = [
   },
 ] as const;
 
+const conversationSteps = [
+  ...streamingConversationSteps,
+  ...settledConversationSteps,
+] as const;
+
 const savedSessionConversation = definePiScenario({
   metadata: {
     name: 'saved-session-conversation',
@@ -200,13 +208,18 @@ const savedSessionStreamThenStaleGeneration = definePiScenario({
   metadata: {
     name: 'saved-session-stream-then-stale-generation',
     purpose:
-      'Bootstrap a saved session, stream one reply, settle, and ignore a stale generation delta.',
+      'Bootstrap a saved session, stream one reply, ignore a stale generation delta, and settle.',
     qualityRule: 'State correctness and session locality',
     schemaVersion: 1,
   },
   runtimes,
   steps: [
-    ...conversationSteps,
+    ...streamingConversationSteps,
+    {
+      kind: 'gate',
+      name: 'before-stale-generation-output',
+      required: true,
+    },
     {
       kind: 'event',
       runtime,
@@ -219,6 +232,12 @@ const savedSessionStreamThenStaleGeneration = definePiScenario({
         },
       },
     },
+    {
+      kind: 'gate',
+      name: 'after-stale-generation-output',
+      required: true,
+    },
+    ...settledConversationSteps,
   ],
 });
 

@@ -6,10 +6,11 @@ import { nextTick } from 'vue';
 import {
   PiScenarioEngine,
   type PiScenario,
+  type PiScenarioGateState,
   type PiScenarioTimelineEntry,
   type ResolvedPiOutput,
 } from '../../tests/support/pi-scenario';
-import {
+import savedSessionStreamThenStaleGeneration, {
   savedSessionBootstrap,
   savedSessionConversation,
 } from '../../tests/support/pi-scenario/saved-session-stream-then-stale-generation';
@@ -25,6 +26,9 @@ interface ScenarioVerification {
 interface BrowserPiScenarioApi {
   verify(): ScenarioVerification;
   timeline(): readonly PiScenarioTimelineEntry[];
+  gates(): readonly PiScenarioGateState[];
+  waitForGate(name: string): Promise<void>;
+  releaseGate(name: string): Promise<void>;
 }
 
 interface StartPiArgs {
@@ -62,6 +66,8 @@ const SESSION_PATH = `${PROJECT_PATH}/session-main.jsonl`;
 const SCENARIOS: Readonly<Record<string, PiScenario>> = {
   [savedSessionBootstrap.metadata.name]: savedSessionBootstrap,
   [savedSessionConversation.metadata.name]: savedSessionConversation,
+  [savedSessionStreamThenStaleGeneration.metadata.name]:
+    savedSessionStreamThenStaleGeneration,
 };
 const REQUIRED_NATIVE_COUNTS = {
   [savedSessionBootstrap.metadata.name]: {
@@ -71,6 +77,12 @@ const REQUIRED_NATIVE_COUNTS = {
     set_active_session: 1,
   },
   [savedSessionConversation.metadata.name]: {
+    load_workspace: 1,
+    read_model_scope: 1,
+    register_session: 3,
+    set_active_session: 3,
+  },
+  [savedSessionStreamThenStaleGeneration.metadata.name]: {
     load_workspace: 1,
     read_model_scope: 1,
     register_session: 3,
@@ -252,6 +264,22 @@ function installPiScenarioAdapter(scenarioName: string): void {
   window.__TAU_PI_SCENARIO__ = {
     verify: verification,
     timeline: (): readonly PiScenarioTimelineEntry[] => engine.timeline(),
+    gates: (): readonly PiScenarioGateState[] => engine.gates(),
+    waitForGate: async (name: string): Promise<void> => {
+      try {
+        await engine.waitForGateReached(name);
+      } catch (error) {
+        throw rememberFailure(error);
+      }
+    },
+    releaseGate: async (name: string): Promise<void> => {
+      try {
+        engine.releaseGate(name);
+        await drainOutputs();
+      } catch (error) {
+        throw rememberFailure(error);
+      }
+    },
   };
 }
 

@@ -145,7 +145,13 @@ interface ScriptedRuntimeEvent {
 type ScriptedPiOutput =
   ScriptedPiResponse | ScriptedPiEvent | ScriptedRuntimeEvent;
 
-type PiScenarioStep = ExpectedPiRequest | ScriptedPiOutput;
+interface PiScenarioGate {
+  kind: 'gate';
+  name: string;
+  required: true;
+}
+
+type PiScenarioStep = ExpectedPiRequest | ScriptedPiOutput | PiScenarioGate;
 
 interface PiScenario {
   metadata: PiScenarioMetadata;
@@ -193,6 +199,13 @@ interface ResolvedRuntimeEvent {
 type ResolvedPiOutput =
   ResolvedPiResponse | ResolvedPiEvent | ResolvedRuntimeEvent;
 
+interface PiScenarioGateState {
+  name: string;
+  required: true;
+  reached: boolean;
+  released: boolean;
+}
+
 type PiScenarioTimelineEntry =
   | {
       sequence: number;
@@ -214,6 +227,11 @@ type PiScenarioTimelineEntry =
       runtime: string;
       generation: number;
       output: string;
+    }
+  | {
+      sequence: number;
+      kind: 'gate-reached' | 'gate-released';
+      gate: string;
     };
 
 type TimelineEntryWithoutSequence = PiScenarioTimelineEntry extends infer Entry
@@ -231,6 +249,10 @@ interface CapturedRequest {
 interface RuntimeBinding {
   id: string;
   definition: PiScenarioRuntime;
+}
+
+interface MutableGateState extends PiScenarioGateState {
+  waiters: Array<() => void>;
 }
 
 const RPC_METHODS = new Set<PiRpcMethod>([
@@ -367,6 +389,7 @@ class PiScenarioEngine {
   readonly #captures = new Map<string, CapturedRequest>();
   readonly #consumedRequestIds = new Map<string, Map<string, string>>();
   readonly #timeline: PiScenarioTimelineEntry[] = [];
+  readonly #gates = new Map<string, MutableGateState>();
   #stepIndex = 0;
 
   constructor(scenario: PiScenario) {
@@ -456,8 +479,22 @@ class PiScenarioEngine {
   }
 
   takeOutput(): ResolvedPiOutput | undefined {
-    const next = this.#scenario.steps[this.#stepIndex];
+    let next = this.#scenario.steps[this.#stepIndex];
     if (!next || next.kind === 'request') return undefined;
+    if (next.kind === 'gate') {
+      const gate = this.#requiredGate(next.name);
+      if (!gate.reached) {
+        gate.reached = true;
+        this.#record({ kind: 'gate-reached', gate: gate.name });
+        for (const resolve of gate.waiters.splice(0)) resolve();
+      }
+      if (!gate.released) return undefined;
+      this.#stepIndex += 1;
+      next = this.#scenario.steps[this.#stepIndex];
+      if (!next || next.kind === 'request' || next.kind === 'gate') {
+        return this.takeOutput();
+      }
+    }
 
     const resolved = this.#resolveOutput(next);
     this.#stepIndex += 1;
@@ -470,12 +507,51 @@ class PiScenarioEngine {
     return resolved;
   }
 
+  waitForGateReached(name: string): Promise<void> {
+    const gate = this.#requiredGate(name);
+    if (gate.reached) return Promise.resolve();
+    return new Promise((resolve) => gate.waiters.push(resolve));
+  }
+
+  releaseGate(name: string): void {
+    const gate = this.#requiredGate(name);
+    if (!gate.reached) {
+      throw this.#failure(
+        `Gate ${stableJson(name)} was released before it was reached.`,
+      );
+    }
+    if (gate.released) {
+      throw this.#failure(
+        `Gate ${stableJson(name)} was released more than once.`,
+      );
+    }
+    gate.released = true;
+    this.#record({ kind: 'gate-released', gate: name });
+  }
+
+  gates(): readonly PiScenarioGateState[] {
+    return [...this.#gates.values()].map((gate) => ({
+      name: gate.name,
+      required: gate.required,
+      reached: gate.reached,
+      released: gate.released,
+    }));
+  }
+
   timeline(): readonly PiScenarioTimelineEntry[] {
     return this.#timeline.map((entry) => structuredClone(entry));
   }
 
   verifyComplete(): void {
-    if (this.#stepIndex === this.#scenario.steps.length) return;
+    const unfinishedGates = this.gates().filter(
+      (gate) => gate.required && (!gate.reached || !gate.released),
+    );
+    if (
+      this.#stepIndex === this.#scenario.steps.length &&
+      unfinishedGates.length === 0
+    ) {
+      return;
+    }
     const remaining = this.#scenario.steps.slice(this.#stepIndex);
     const requests = remaining
       .filter((step): step is ExpectedPiRequest => step.kind === 'request')
@@ -483,9 +559,20 @@ class PiScenarioEngine {
         (step) => `${step.runtime}.${step.capture} ${stableJson(step.match)}`,
       );
     const outputs = remaining
-      .filter((step): step is ScriptedPiOutput => step.kind !== 'request')
+      .filter(
+        (step): step is ScriptedPiOutput =>
+          step.kind !== 'request' && step.kind !== 'gate',
+      )
       .map((step) => this.#outputLabel(step));
     const details = [
+      unfinishedGates.length > 0
+        ? `Unfinished required gates:\n${unfinishedGates
+            .map(
+              (gate) =>
+                `- ${gate.name}: ${gate.reached ? 'reached' : 'never reached'}, ${gate.released ? 'released' : 'unreleased'}`,
+            )
+            .join('\n')}\nGate states: ${stableJson(this.gates())}`
+        : '',
       requests.length > 0
         ? `Unconsumed expectations:\n${requests.map((item) => `- ${item}`).join('\n')}`
         : '',
@@ -516,6 +603,21 @@ class PiScenarioEngine {
 
     const captures = new Map<string, ExpectedPiRequest>();
     for (const step of this.#scenario.steps) {
+      if (step.kind === 'gate') {
+        if (!step.name || this.#gates.has(step.name)) {
+          throw new Error(
+            `Scenario gate ${stableJson(step.name)} must have a unique non-empty name.`,
+          );
+        }
+        this.#gates.set(step.name, {
+          name: step.name,
+          required: step.required,
+          reached: false,
+          released: false,
+          waiters: [],
+        });
+        continue;
+      }
       if (step.kind === 'request') {
         if (!this.#runtimeDefinitions.has(step.runtime)) {
           throw new Error(
@@ -546,6 +648,13 @@ class PiScenarioEngine {
         throw new Error(`Output uses unknown runtime ${step.runtime}.`);
       }
     }
+  }
+
+  #requiredGate(name: string): MutableGateState {
+    const gate = this.#gates.get(name);
+    if (!gate)
+      throw this.#failure(`Unknown scenario gate ${stableJson(name)}.`);
+    return gate;
   }
 
   #resolveOutput(output: ScriptedPiOutput): ResolvedPiOutput {
@@ -600,9 +709,11 @@ class PiScenarioEngine {
     const expectedValue =
       expected?.kind === 'request'
         ? { runtime: expected.runtime, request: expected.match }
-        : expected
-          ? { next: this.#outputLabel(expected) }
-          : { next: 'end of scenario' };
+        : expected?.kind === 'gate'
+          ? { next: `gate ${expected.name}` }
+          : expected
+            ? { next: this.#outputLabel(expected) }
+            : { next: 'end of scenario' };
     const actualValue = {
       runtime: runtimeKey ?? `unbound:${runtimeId}`,
       request: actual,
@@ -673,6 +784,8 @@ export {
   type PiRpcEvent,
   type PiRpcMethod,
   type PiScenario,
+  type PiScenarioGate,
+  type PiScenarioGateState,
   type PiScenarioMetadata,
   type PiScenarioRuntime,
   type PiScenarioStep,

@@ -26,6 +26,26 @@ function consumeRequest(
   engine.consumeRequest('runtime-dynamic-47', { id, type, ...fields });
 }
 
+function gatedOutputScenario(): PiScenarioEngine {
+  return new PiScenarioEngine(
+    definePiScenario({
+      metadata: {
+        name: 'gated-output',
+        purpose: 'Exercise explicit gate transitions.',
+        qualityRule: 'Deterministic diagnostics',
+        schemaVersion: 1,
+      },
+      runtimes: [{ key: 'main', generation: 1 }],
+      steps: [
+        { kind: 'gate', name: 'first', required: true },
+        { kind: 'event', runtime: 'main', event: { type: 'agent_start' } },
+        { kind: 'gate', name: 'second', required: true },
+        { kind: 'event', runtime: 'main', event: { type: 'agent_settled' } },
+      ],
+    }),
+  );
+}
+
 describe('PiScenarioEngine', () => {
   it('offers an exact bootstrap checkpoint without consuming prompt steps', () => {
     const engine = new PiScenarioEngine(savedSessionBootstrap);
@@ -48,13 +68,28 @@ describe('PiScenarioEngine', () => {
     expect(engine.timeline()).toHaveLength(12);
   });
 
-  it('keeps a complete conversation checkpoint before the stale-generation event', () => {
-    expect(savedSessionConversation.steps).toEqual(
-      savedSessionStreamThenStaleGeneration.steps.slice(0, -1),
-    );
+  it('keeps the bootstrap and complete conversation checkpoints unchanged by the stale interleaving', () => {
+    const sharedConversationSteps =
+      savedSessionStreamThenStaleGeneration.steps.filter(
+        (step) =>
+          step.kind !== 'gate' &&
+          !(
+            step.kind === 'event' &&
+            'generation' in step &&
+            step.generation === 1
+          ),
+      );
+
+    expect(savedSessionBootstrap.steps.at(-1)).toMatchObject({
+      kind: 'response',
+      command: 'get_messages',
+      request: 'bootstrap-messages',
+    });
+    expect(savedSessionConversation.steps).toEqual(sharedConversationSteps);
     expect(savedSessionConversation.steps.at(-1)).toMatchObject({
       kind: 'response',
       command: 'get_messages',
+      request: 'settled-messages',
     });
     expect(JSON.stringify(savedSessionConversation)).not.toContain(
       'STALE_GENERATION_SENTINEL',
@@ -115,6 +150,46 @@ describe('PiScenarioEngine', () => {
         assistantMessageEvent: { delta: 'reply.' },
       },
     });
+    expect(engine.takeOutput()).toBeUndefined();
+    expect(engine.gates()).toEqual([
+      {
+        name: 'before-stale-generation-output',
+        required: true,
+        reached: true,
+        released: false,
+      },
+      {
+        name: 'after-stale-generation-output',
+        required: true,
+        reached: false,
+        released: false,
+      },
+    ]);
+    engine.releaseGate('before-stale-generation-output');
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      kind: 'event',
+      runtime: { key: 'main', id: 'runtime-dynamic-47', generation: 1 },
+      value: {
+        type: 'message_update',
+        assistantMessageEvent: { delta: 'STALE_GENERATION_SENTINEL' },
+      },
+    });
+    expect(engine.takeOutput()).toBeUndefined();
+    expect(engine.gates()).toEqual([
+      {
+        name: 'before-stale-generation-output',
+        required: true,
+        reached: true,
+        released: true,
+      },
+      {
+        name: 'after-stale-generation-output',
+        required: true,
+        reached: true,
+        released: false,
+      },
+    ]);
+    engine.releaseGate('after-stale-generation-output');
     expect(takeRequiredOutput(engine)).toMatchObject({
       kind: 'response',
       value: { id: 'prompt-518', command: 'prompt' },
@@ -145,19 +220,10 @@ describe('PiScenarioEngine', () => {
         },
       },
     });
-    expect(takeRequiredOutput(engine)).toMatchObject({
-      kind: 'event',
-      runtime: { key: 'main', id: 'runtime-dynamic-47', generation: 1 },
-      value: {
-        type: 'message_update',
-        assistantMessageEvent: { delta: 'STALE_GENERATION_SENTINEL' },
-      },
-    });
-
     expect(engine.takeOutput()).toBeUndefined();
     expect(() => engine.verifyComplete()).not.toThrow();
     expect(engine.timeline().map((entry) => entry.sequence)).toEqual(
-      Array.from({ length: 27 }, (_, index) => index + 1),
+      Array.from({ length: 31 }, (_, index) => index + 1),
     );
   });
 
@@ -295,6 +361,94 @@ describe('PiScenarioEngine', () => {
       }),
     ).toThrowError(
       /Unexpected Pi request[\s\S]*Expected prompt[\s\S]*Wrong prompt[\s\S]*message: expected "Expected prompt", received "Wrong prompt"[\s\S]*Timeline:/,
+    );
+  });
+
+  it('waits for gates and preserves deterministic release ordering', async () => {
+    const engine = gatedOutputScenario();
+    engine.bindRuntime('main', 'runtime-dynamic-47');
+    let firstReached = false;
+    const waiting = engine.waitForGateReached('first').then(() => {
+      firstReached = true;
+    });
+
+    expect(engine.takeOutput()).toBeUndefined();
+    await waiting;
+    expect(firstReached).toBe(true);
+    engine.releaseGate('first');
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { type: 'agent_start' },
+    });
+    expect(engine.takeOutput()).toBeUndefined();
+    await engine.waitForGateReached('second');
+    engine.releaseGate('second');
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { type: 'agent_settled' },
+    });
+
+    expect(engine.timeline().map(({ kind }) => kind)).toEqual([
+      'runtime-bound',
+      'gate-reached',
+      'gate-released',
+      'output',
+      'gate-reached',
+      'gate-released',
+      'output',
+    ]);
+    engine.verifyComplete();
+  });
+
+  it('fails clearly for unknown gates and invalid release transitions', () => {
+    const beforeReach = gatedOutputScenario();
+    beforeReach.bindRuntime('main', 'runtime-dynamic-47');
+    expect(() => beforeReach.releaseGate('missing')).toThrowError(
+      /Unknown scenario gate "missing"/,
+    );
+    expect(() => beforeReach.releaseGate('first')).toThrowError(
+      /Gate "first" was released before it was reached/,
+    );
+
+    const duplicate = gatedOutputScenario();
+    duplicate.bindRuntime('main', 'runtime-dynamic-47');
+    duplicate.takeOutput();
+    duplicate.releaseGate('first');
+    expect(() => duplicate.releaseGate('first')).toThrowError(
+      /Gate "first" was released more than once/,
+    );
+    expect(() => duplicate.waitForGateReached('missing')).toThrowError(
+      /Unknown scenario gate "missing"/,
+    );
+  });
+
+  it('rejects duplicate gate definitions and reports every unfinished required gate', () => {
+    expect(
+      () =>
+        new PiScenarioEngine(
+          definePiScenario({
+            metadata: {
+              name: 'duplicate-gates',
+              purpose: 'Reject ambiguous gate names.',
+              qualityRule: 'Diagnostics',
+              schemaVersion: 1,
+            },
+            runtimes: [{ key: 'main', generation: 1 }],
+            steps: [
+              { kind: 'gate', name: 'same', required: true },
+              { kind: 'gate', name: 'same', required: true },
+            ],
+          }),
+        ),
+    ).toThrowError(/gate "same" must have a unique non-empty name/);
+
+    const neverReached = gatedOutputScenario();
+    neverReached.bindRuntime('main', 'runtime-dynamic-47');
+    expect(() => neverReached.verifyComplete()).toThrowError(
+      /Unfinished required gates:[\s\S]*first: never reached, unreleased[\s\S]*second: never reached, unreleased[\s\S]*Gate states:/,
+    );
+
+    neverReached.takeOutput();
+    expect(() => neverReached.verifyComplete()).toThrowError(
+      /first: reached, unreleased[\s\S]*second: never reached, unreleased[\s\S]*Timeline:[\s\S]*gate-reached/,
     );
   });
 
