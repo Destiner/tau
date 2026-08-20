@@ -45,3 +45,15 @@ Scenario source lives in `tests/support/pi-scenario/`. Each typed scenario has s
 `catalogue.ts` is the single browser-scenario catalogue. Add a scenario there once; the interactive command's validation/list and the browser adapter both read it. Native command fixtures remain in `src/dev/pi-scenario-adapter.ts`, outside the Pi protocol engine.
 
 Playwright selects scenarios directly with `?test-scenario=<name>`, so headless tests do not use the interactive wrapper. Full-app scenario tests must import the shared fixture from `tests/e2e/fixtures.ts` to verify scenario completion and fail on browser errors.
+
+## Real Pi compatibility canary
+
+The scenarios above and the native bridge tests use scripted fakes and run in the deterministic default suites. A separate, explicit canary checks the small read-only RPC surface against an installed Pi executable:
+
+```sh
+bun run test:pi-contract
+```
+
+Pi must be available on `PATH`, or `TAU_PI_PATH` must point to its executable. The canary reports the Pi version it exercised and fails clearly when Pi is missing or incompatible. It runs Pi in an isolated temporary working/config/session directory with offline mode enabled and tools, extensions, skills, prompt templates, themes, context files, and project approval disabled. The child receives no provider credentials. It sends only `get_available_models`, `get_commands`, `get_state`, `get_available_thinking_levels`, and `get_messages`; it never sends a prompt or invokes a command, model, provider, SSH host, or external service.
+
+The checks cover JSONL/process usability, dynamic response IDs, and only fields Tau consumes. They deliberately do not snapshot catalogue contents, provider names, paths, optional fields, or ordering. This command is not part of `bun run test`, Playwright, Cargo, or any other default suite.

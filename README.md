@@ -63,3 +63,5 @@ bun tauri build
 ```
 
 The Playwright suite runs the UI against a development-only 5,000-message transcript fixture in Chromium and WebKit. Install its browsers once with `bun x playwright install chromium webkit`.
+
+The installed Pi RPC contract is checked separately and only when explicitly requested with `bun run test:pi-contract`; it is not part of the deterministic default suites. See [deterministic reproduction scenarios](docs/reproduction-scenarios.md#real-pi-compatibility-canary) for its isolation and prerequisites.

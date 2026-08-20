@@ -16,6 +16,7 @@
     "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.node.json --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:pi-contract": "bun scripts/pi-contract.ts",
     "tauri": "tauri"
   },
   "dependencies": {
