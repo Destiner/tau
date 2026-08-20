@@ -20,6 +20,8 @@ The command validates the name before starting Vite and opens the selected `test
 
 The stale-generation scenario starts in the saved `Main` session. Submit exactly `Explain the fixture` in the composer. It streams `Deterministic reply.` and pauses before delivering the stale output. Inspect the working state, then release its one gate and confirm the visible working state is unchanged.
 
+The `saved-session-command-replacement` scenario makes `/mock 42` available in the real composer. Submitting it pauses after Tau sends its immediate command identity probe. Release `before-command-replacement-identity` to return the replacement identity and finish registering and selecting `42 • plan`; the command itself does not enter the transcript.
+
 ## Inspect and control a paused scenario
 
 The browser console exposes `window.__TAU_PI_SCENARIO__` only while a scenario is selected. Its methods are:

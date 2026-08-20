@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import savedSessionCommandReplacement from './saved-session-command-replacement';
 import savedSessionStreamThenStaleGeneration, {
   savedSessionBootstrap,
   savedSessionConversation,
@@ -68,6 +69,62 @@ describe('PiScenarioEngine', () => {
     expect(engine.isComplete()).toBe(true);
     expect(() => engine.verifyComplete()).not.toThrow();
     expect(engine.timeline()).toHaveLength(12);
+  });
+
+  it('holds a command replacement identity until its immediate probe is gated', () => {
+    const engine = new PiScenarioEngine(savedSessionCommandReplacement);
+    engine.bindRuntime('main', 'runtime-dynamic-47');
+    takeRequiredOutput(engine);
+
+    for (const [id, type] of [
+      ['models', 'get_available_models'],
+      ['commands', 'get_commands'],
+      ['state', 'get_state'],
+      ['efforts', 'get_available_thinking_levels'],
+      ['messages', 'get_messages'],
+    ] as const) {
+      consumeRequest(engine, id, type);
+      takeRequiredOutput(engine);
+    }
+
+    consumeRequest(engine, 'command', 'prompt', { message: '/mock 42' });
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { id: 'command', command: 'prompt' },
+    });
+    consumeRequest(engine, 'identity', 'get_state');
+    expect(engine.takeOutput()).toBeUndefined();
+    expect(engine.gates()).toEqual([
+      {
+        name: 'before-command-replacement-identity',
+        required: true,
+        reached: true,
+        released: false,
+      },
+    ]);
+
+    engine.releaseGate('before-command-replacement-identity');
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: {
+        id: 'identity',
+        command: 'get_state',
+        data: {
+          sessionId: 'session-plan-42',
+          sessionFile: '/fixture/tau-project/session-plan-42.jsonl',
+          sessionName: '42 • plan',
+        },
+      },
+    });
+    for (const [id, type] of [
+      ['replacement-models', 'get_available_models'],
+      ['replacement-commands', 'get_commands'],
+      ['replacement-efforts', 'get_available_thinking_levels'],
+      ['replacement-messages', 'get_messages'],
+    ] as const) {
+      consumeRequest(engine, id, type);
+      takeRequiredOutput(engine);
+    }
+
+    expect(() => engine.verifyComplete()).not.toThrow();
   });
 
   it('keeps the bootstrap and complete conversation checkpoints unchanged by the stale interleaving', () => {

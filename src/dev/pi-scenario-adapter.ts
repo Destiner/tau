@@ -55,6 +55,12 @@ interface SetActiveSessionArgs {
   sessionId: string;
 }
 
+interface NativeSessionIdentity {
+  id: string;
+  path: string;
+  name: string;
+}
+
 declare global {
   interface Window {
     __TAU_PI_SCENARIO__?: BrowserPiScenarioApi;
@@ -64,6 +70,12 @@ declare global {
 const PROJECT_PATH = '/fixture/tau-project';
 const SESSION_ID = 'session-main';
 const SESSION_PATH = `${PROJECT_PATH}/session-main.jsonl`;
+const MAIN_SESSION = { id: SESSION_ID, path: SESSION_PATH, name: 'Main' };
+const REPLACEMENT_SESSION = {
+  id: 'session-plan-42',
+  path: `${PROJECT_PATH}/session-plan-42.jsonl`,
+  name: '42 • plan',
+};
 const REQUIRED_NATIVE_COUNTS = {
   'saved-session-bootstrap': {
     load_workspace: 1,
@@ -83,9 +95,15 @@ const REQUIRED_NATIVE_COUNTS = {
     register_session: 2,
     set_active_session: 2,
   },
+  'saved-session-command-replacement': {
+    load_workspace: 1,
+    read_model_scope: 1,
+    register_session: 2,
+    set_active_session: 2,
+  },
 } as const;
 
-const workspace: WorkspaceSnapshot = {
+const initialWorkspace: WorkspaceSnapshot = {
   activeProjectPath: PROJECT_PATH,
   piPath: '/fixture/bin/pi',
   projects: [
@@ -123,11 +141,14 @@ function installPiScenarioAdapter(scenarioName: string): void {
 
   const engine = new PiScenarioEngine(scenario);
   const nativeCounts = new Map<string, number>();
+  let workspace = structuredClone(initialWorkspace);
   let boundRuntimeId = '';
   let adapterFailure: Error | undefined;
 
-  function count(command: string): void {
-    nativeCounts.set(command, (nativeCounts.get(command) ?? 0) + 1);
+  function count(command: string): number {
+    const next = (nativeCounts.get(command) ?? 0) + 1;
+    nativeCounts.set(command, next);
+    return next;
   }
 
   function rememberFailure(error: unknown): Error {
@@ -201,13 +222,21 @@ function installPiScenarioAdapter(scenarioName: string): void {
         return null;
       }
       if (command === 'register_session') {
-        registerSessionArgs(args);
-        count(command);
+        const invocation = count(command);
+        const expected = expectedNativeSession(scenarioName, invocation);
+        registerSessionArgs(args, expected);
+        if (expected.id === REPLACEMENT_SESSION.id) {
+          workspace = replacementWorkspace();
+        }
         return structuredClone(workspace);
       }
       if (command === 'set_active_session') {
-        setActiveSessionArgs(args);
-        count(command);
+        const invocation = count(command);
+        const expected = expectedNativeSession(scenarioName, invocation);
+        setActiveSessionArgs(args, expected);
+        if (expected.id === REPLACEMENT_SESSION.id) {
+          workspace = replacementWorkspace();
+        }
         return structuredClone(workspace);
       }
       if (command === 'ingest_telemetry') {
@@ -312,6 +341,7 @@ function sendPiArgs(args: Record<string, unknown>): SendPiArgs {
 
 function registerSessionArgs(
   args: Record<string, unknown>,
+  expected: NativeSessionIdentity,
 ): RegisterSessionArgs {
   const value = {
     projectPath: requiredString(args, 'projectPath', 'register_session'),
@@ -320,14 +350,23 @@ function registerSessionArgs(
     sessionName: requiredString(args, 'sessionName', 'register_session'),
   };
   requireEqual(value.projectPath, PROJECT_PATH, 'register_session.projectPath');
-  requireEqual(value.sessionId, SESSION_ID, 'register_session.sessionId');
-  requireEqual(value.sessionPath, SESSION_PATH, 'register_session.sessionPath');
-  requireEqual(value.sessionName, 'Main', 'register_session.sessionName');
+  requireEqual(value.sessionId, expected.id, 'register_session.sessionId');
+  requireEqual(
+    value.sessionPath,
+    expected.path,
+    'register_session.sessionPath',
+  );
+  requireEqual(
+    value.sessionName,
+    expected.name,
+    'register_session.sessionName',
+  );
   return value;
 }
 
 function setActiveSessionArgs(
   args: Record<string, unknown>,
+  expected: NativeSessionIdentity,
 ): SetActiveSessionArgs {
   const value = {
     projectPath: requiredString(args, 'projectPath', 'set_active_session'),
@@ -338,8 +377,42 @@ function setActiveSessionArgs(
     PROJECT_PATH,
     'set_active_session.projectPath',
   );
-  requireEqual(value.sessionId, SESSION_ID, 'set_active_session.sessionId');
+  requireEqual(value.sessionId, expected.id, 'set_active_session.sessionId');
   return value;
+}
+
+function expectedNativeSession(
+  scenarioName: string,
+  invocation: number,
+): NativeSessionIdentity {
+  if (
+    scenarioName === 'saved-session-command-replacement' &&
+    invocation === 2
+  ) {
+    return REPLACEMENT_SESSION;
+  }
+  return MAIN_SESSION;
+}
+
+function replacementWorkspace(): WorkspaceSnapshot {
+  const workspace = structuredClone(initialWorkspace);
+  const project = workspace.projects[0];
+  const oldSession = project?.sessions[0];
+  if (!project || !oldSession) {
+    throw new Error('Replacement fixture requires the initial saved session.');
+  }
+  oldSession.selected = false;
+  project.sessions.push({
+    id: REPLACEMENT_SESSION.id,
+    path: REPLACEMENT_SESSION.path,
+    title: REPLACEMENT_SESSION.name,
+    lastActive: '2026-01-02T03:04:06.000Z',
+    lastUserMessageAt: 0,
+    sortAt: 2,
+    archived: false,
+    selected: true,
+  });
+  return workspace;
 }
 
 function requiredString(

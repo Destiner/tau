@@ -1,3 +1,4 @@
+import savedSessionCommandReplacement from './saved-session-command-replacement';
 import {
   savedSessionBootstrap,
   savedSessionConversation,
@@ -10,6 +11,7 @@ const scenarios = [
   savedSessionBootstrap,
   savedSessionConversation,
   savedSessionStaleGeneration,
+  savedSessionCommandReplacement,
 ] as const satisfies readonly PiScenario[];
 
 const catalogue = new Map<string, PiScenario>(

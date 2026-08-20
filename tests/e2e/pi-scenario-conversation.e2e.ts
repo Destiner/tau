@@ -13,6 +13,7 @@ interface VisibleConversationState {
 test('submits and settles a deterministic streamed conversation', async ({
   page,
 }) => {
+  await page.clock.install();
   await page.goto(scenarioUrl);
 
   const composer = page.getByRole('textbox', { name: 'Message Pi' });
@@ -53,6 +54,8 @@ test('submits and settles a deterministic streamed conversation', async ({
   });
 
   await composer.fill(prompt);
+  const pauseTarget = await page.evaluate(() => Date.now() + 1_000);
+  await page.clock.pauseAt(pauseTarget);
   await page.getByRole('button', { name: 'Send message' }).click();
 
   await expect(page.getByText(prompt, { exact: true })).toBeVisible();
