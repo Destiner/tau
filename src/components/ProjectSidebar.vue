@@ -41,15 +41,16 @@
             "
             @click="() => toggleProject(project)"
           >
+            <UiStatusDot
+              v-if="project.collapsed"
+              class="project-status"
+              :tone="projectIndicator(project) || undefined"
+              :label="indicatorLabel(projectIndicator(project))"
+            />
             <span>{{ project.name }}</span>
             <UiIcon
               name="chevron"
               :class="{ expanded: !project.collapsed }"
-            />
-            <UiStatusDot
-              v-if="projectIndicator(project)"
-              :tone="projectIndicator(project) || undefined"
-              :label="indicatorLabel(projectIndicator(project))"
             />
           </button>
           <UiIconButton
@@ -525,6 +526,12 @@ function isTitlebarControl(target: EventTarget | null): boolean {
 
 .project-toggle svg.expanded {
   transform: translateY(1px) rotate(90deg);
+}
+
+/* Nudged down with the chevron so both sit on the label's optical center. */
+.project-status {
+  margin-right: 4px;
+  transform: translateY(1px);
 }
 
 .project-toggle span {
