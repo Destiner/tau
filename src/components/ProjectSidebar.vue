@@ -13,6 +13,8 @@
     <div
       ref="projectList"
       class="project-list"
+      @pointerenter="holdSessionOrder"
+      @pointerleave="releaseSessionOrder"
     >
       <div
         v-for="project in state.workspace?.projects"
@@ -81,7 +83,7 @@
           class="session-list"
         >
           <UiContextMenu
-            v-for="session in projectSessions(project)"
+            v-for="session in orderedSessions(project)"
             :key="session.id"
             :items="() => sessionMenuItems(project, session)"
           >
@@ -125,7 +127,7 @@
             </div>
           </UiContextMenu>
           <div
-            v-if="projectSessions(project).length === 0"
+            v-if="orderedSessions(project).length === 0"
             class="empty-sessions"
           >
             No active sessions
@@ -192,6 +194,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue';
 
 import type { ProjectSummary, SessionSummary } from '../composables/state';
 import useTau from '../composables/useTau';
+import { applyHeldOrder, heldSessionIds } from '../lib/session-order';
 import {
   MAX_SIDEBAR_WIDTH,
   MIN_SIDEBAR_WIDTH,
@@ -243,6 +246,8 @@ const {
 const projectList = ref<HTMLElement>();
 const sidebar = ref<HTMLElement>();
 const projectMenuOpen = ref(false);
+/** Held session ids by project path, empty whenever the list is not hovered. */
+const heldOrder = ref(new Map<string, string[]>());
 let projectSortable: Sortable | undefined;
 
 onMounted(() => {
@@ -251,6 +256,32 @@ onMounted(() => {
 onBeforeUnmount(() => {
   projectSortable?.destroy();
 });
+
+/**
+ * Freezes the session order under the pointer. Only a mouse aims at a row it
+ * can see; a touch or pen lands where it lands, and holding for one would
+ * leave the order frozen until the next time a pointer happens to leave.
+ */
+function holdSessionOrder(event: PointerEvent): void {
+  if (event.pointerType !== 'mouse') return;
+  heldOrder.value = new Map(
+    (state.workspace?.projects ?? []).map((project) => [
+      project.path,
+      heldSessionIds(projectSessions(project)),
+    ]),
+  );
+}
+
+function releaseSessionOrder(): void {
+  if (heldOrder.value.size > 0) heldOrder.value = new Map();
+}
+
+function orderedSessions(project: ProjectSummary): SessionSummary[] {
+  return applyHeldOrder(
+    projectSessions(project),
+    heldOrder.value.get(project.path) ?? [],
+  );
+}
 
 /** The project menu's two ways to add a project. */
 const projectMenuItems: UiMenuItem[] = [
