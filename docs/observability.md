@@ -6,7 +6,7 @@ Tau continuously writes content-free OpenTelemetry JSONL under its profile data 
 - production: `tau/telemetry/`
 - signals: `traces.jsonl`, `logs.jsonl`, and `metrics.jsonl`, plus rotated segments
 
-Retention is bounded to seven days and 32 MiB. Telemetry failure does not fail product operations. Records contain operation names, lifecycle state, timings, outcomes, counts, sanitized source basenames, and relevant session/runtime identifiers. They do not contain prompts, transcripts, drafts, tool or extension payloads, file/clipboard contents, paths, SSH commands, connection strings, stderr, credentials, or raw errors.
+Retention is bounded to seven days and 256 MiB. Telemetry failure does not fail product operations. Records contain operation names, lifecycle state, timings, outcomes, counts, sanitized source basenames, and relevant session/runtime identifiers. They do not contain prompts, transcripts, drafts, tool or extension payloads, file/clipboard contents, paths, SSH commands, connection strings, stderr, credentials, or raw errors.
 
 ## User issue reports
 

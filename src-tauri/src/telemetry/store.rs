@@ -73,7 +73,7 @@ impl StoreConfig {
     pub const fn production() -> Self {
         StoreConfig {
             max_age: Duration::from_secs(7 * 24 * 60 * 60),
-            max_total_bytes: 32 * 1024 * 1024,
+            max_total_bytes: 256 * 1024 * 1024,
             segment_rotation_bytes: 1024 * 1024,
         }
     }
