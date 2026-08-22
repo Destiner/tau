@@ -1,5 +1,8 @@
 import phantomCommandRegistration from './phantom-command-registration';
 import savedSessionCommandReplacement from './saved-session-command-replacement';
+import savedSessionExtensionPrompt, {
+  emptySessionExtensionPrompt,
+} from './saved-session-extension-prompt';
 import {
   savedSessionHistory,
   savedSessionLongHistory,
@@ -30,6 +33,8 @@ const scenarios = [
   savedSessionHistory,
   savedSessionShortHistory,
   savedSessionLongHistory,
+  savedSessionExtensionPrompt,
+  emptySessionExtensionPrompt,
 ] as const satisfies readonly PiScenario[];
 
 const catalogue = new Map<string, PiScenario>(

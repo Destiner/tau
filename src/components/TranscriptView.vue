@@ -6,7 +6,7 @@
     @scroll="handleScroll"
   >
     <div
-      v-if="virtualRows.length"
+      v-if="virtualRows.length || prompt"
       class="message-list-shell"
     >
       <div
@@ -88,6 +88,31 @@
           </template>
         </div>
       </div>
+
+      <!--
+        An interactive prompt is the last thing in the transcript rather than a
+        row of it: the virtualizer unmounts rows the reader scrolls away from,
+        which would drop the focus and the caret of a prompt still waiting to
+        be answered.
+      -->
+      <div
+        v-if="prompt"
+        ref="promptRow"
+        class="message prompt"
+      >
+        <ExtensionDialog
+          :draft="prompt.draft"
+          :method="prompt.method"
+          :title="prompt.title"
+          :message="prompt.message"
+          :options="prompt.options"
+          :placeholder="prompt.placeholder"
+          :working-directory="prompt.workingDirectory"
+          @update:draft="forwardPromptDraft"
+          @submit="forwardPromptSubmit"
+          @cancel="forwardPromptCancel"
+        />
+      </div>
     </div>
   </section>
 </template>
@@ -104,10 +129,12 @@ import {
   watch,
 } from 'vue';
 
+import type { ExtensionDialog as ExtensionPrompt } from '../composables/state';
 import type { TranscriptEntry } from '../lib/pi/transcript';
 import { recallScroll, rememberScroll } from '../lib/transcript-scroll';
 
 import ErrorNotice from './ErrorNotice.vue';
+import ExtensionDialog from './ExtensionDialog.vue';
 import SkillInvocation from './SkillInvocation.vue';
 import ToolCall from './ToolCall.vue';
 import TranscriptNotice from './TranscriptNotice.vue';
@@ -121,9 +148,18 @@ const props = defineProps<{
   basePath?: string;
   /** Session this transcript belongs to, under which its position is kept. */
   sessionKey?: string;
+  /** The interactive prompt this session is waiting on, if there is one. */
+  prompt?: ExtensionPrompt;
+}>();
+
+const emit = defineEmits<{
+  'prompt-submit': [value: string | boolean];
+  'prompt-cancel': [];
+  'prompt-draft': [value: string];
 }>();
 
 const transcript = ref<HTMLElement>();
+const promptRow = ref<HTMLElement>();
 const workingRowKey = 'tau-working-indicator';
 
 /**
@@ -193,6 +229,7 @@ const contentSignature = computed(() =>
     props.messages[props.messages.length - 1]?.id ?? '',
     props.showWorkingIndicator,
     totalSize.value,
+    props.prompt?.key ?? '',
   ].join('|'),
 );
 
@@ -224,6 +261,28 @@ onMounted(() => {
   viewportObserver.observe(element);
 });
 
+/**
+ * The prompt sits below the rows the virtualizer measures, so its height is
+ * part of the end without being part of the total it knows about. The same
+ * clamped offset the viewport uses takes that end up as the prompt grows.
+ */
+watch(promptRow, (row, previous) => {
+  if (previous) viewportObserver?.unobserve(previous);
+  if (row) viewportObserver?.observe(row);
+});
+
+/**
+ * A prompt is a question the session cannot go on without, so it is brought to
+ * the reader wherever they were — the composer it replaces was never a place
+ * they could scroll away from.
+ */
+watch(
+  () => props.prompt?.key,
+  (key) => {
+    if (key) void nextTick(scrollToEnd);
+  },
+);
+
 onBeforeUnmount(() => {
   viewportObserver?.disconnect();
   rememberScroll(props.sessionKey ?? '', {
@@ -236,7 +295,7 @@ onBeforeUnmount(() => {
 watch(contentSignature, () => {
   if (!following) return;
   void nextTick(() => {
-    if (following) rowVirtualizer.value.scrollToEnd();
+    if (following) scrollToLatest();
   });
 });
 
@@ -259,6 +318,20 @@ function restoreScroll(): void {
 
 function scrollToEnd(): void {
   following = true;
+  scrollToLatest();
+}
+
+/**
+ * The end of the rows, or the end of the element when a prompt hangs below
+ * them: an offset past the end is clamped to the live maximum, and unlike a
+ * bare scrollTop write it is one the virtualizer knows about.
+ */
+function scrollToLatest(): void {
+  const element = transcript.value;
+  if (props.prompt && element) {
+    rowVirtualizer.value.scrollToOffset(element.scrollHeight);
+    return;
+  }
   rowVirtualizer.value.scrollToEnd();
 }
 
@@ -268,6 +341,18 @@ function handleScroll(): void {
   following =
     element.scrollHeight - element.scrollTop - element.clientHeight <=
     followThreshold;
+}
+
+function forwardPromptDraft(value: string): void {
+  emit('prompt-draft', value);
+}
+
+function forwardPromptSubmit(value: string | boolean): void {
+  emit('prompt-submit', value);
+}
+
+function forwardPromptCancel(): void {
+  emit('prompt-cancel');
 }
 
 function measureRow(element: Element | ComponentPublicInstance | null): void {
@@ -375,6 +460,7 @@ defineExpose({ scrollToEnd });
 .message.assistant,
 .message.error,
 .message.notice,
+.message.prompt,
 .stream-state {
   margin-right: 20px;
   margin-left: 8px;

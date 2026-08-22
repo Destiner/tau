@@ -45,28 +45,21 @@
         :working-label="stopping ? 'Pi is stopping' : 'Pi is working'"
         :base-path="transcriptBasePath"
         :session-key="state.activeControllerKey"
+        :prompt="activeExtensionDialog"
+        @prompt-submit="handleExtensionSubmit"
+        @prompt-cancel="cancelExtensionDialog"
+        @prompt-draft="updateExtensionDraft"
       />
 
+      <!--
+        A prompt takes the composer's place rather than sitting above it: the
+        session is waiting on an answer, so there is nothing to send.
+      -->
       <footer
-        v-if="!sessionLoading"
+        v-if="!sessionLoading && !activeExtensionDialog"
         class="composer-area"
       >
-        <ExtensionDialog
-          v-if="activeExtensionDialog"
-          v-model:draft="activeExtensionDialog.draft"
-          :method="activeExtensionDialog.method"
-          :title="activeExtensionDialog.title"
-          :message="activeExtensionDialog.message"
-          :options="activeExtensionDialog.options"
-          :placeholder="activeExtensionDialog.placeholder"
-          :project-name="activeExtensionDialog.projectName"
-          :session-name="activeExtensionDialog.sessionName"
-          :working-directory="activeExtensionDialog.workingDirectory"
-          @submit="handleExtensionSubmit"
-          @cancel="cancelExtensionDialog"
-        />
         <ComposerBar
-          v-else
           ref="composerBar"
           :header-element="() => sessionHeader?.header"
           @send="handleComposerSend"
@@ -103,7 +96,6 @@ import {
 } from 'vue';
 
 import ComposerBar from './components/ComposerBar.vue';
-import ExtensionDialog from './components/ExtensionDialog.vue';
 import ProjectSidebar from './components/ProjectSidebar.vue';
 import RemoteDialog from './components/RemoteDialog.vue';
 import SessionHeader from './components/SessionHeader.vue';
@@ -154,7 +146,11 @@ const {
  */
 
 const sessionIsEmpty = computed(
-  () => canDraft.value && !sessionLoading.value && messages.value.length === 0,
+  () =>
+    canDraft.value &&
+    !sessionLoading.value &&
+    messages.value.length === 0 &&
+    !activeExtensionDialog.value,
 );
 const transcriptBasePath = computed(() =>
   activeProject.value && !activeProject.value.connectionString
@@ -292,6 +288,10 @@ function handleComposerSend(): void {
 
 function handleExtensionSubmit(value: string | boolean): void {
   void submitExtensionDialog(value);
+}
+
+function updateExtensionDraft(value: string): void {
+  if (activeExtensionDialog.value) activeExtensionDialog.value.draft = value;
 }
 
 function handleChooseDirectory(
@@ -465,10 +465,6 @@ function isTitlebarControl(target: EventTarget | null): boolean {
 
 .empty-session .composer-area {
   border-top: 0;
-}
-
-.empty-session .composer-area:has(.extension-composer) {
-  justify-content: flex-end;
 }
 
 .empty-session :deep(.composer textarea) {

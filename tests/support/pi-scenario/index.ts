@@ -125,7 +125,19 @@ type PiRpcEvent =
       type: 'message_update';
       assistantMessageEvent: { type: 'text_delta'; delta: string };
     }
-  | { type: 'agent_settled' };
+  | { type: 'agent_settled' }
+  | {
+      type: 'extension_ui_request';
+      id: string;
+      method: 'select' | 'confirm' | 'input' | 'editor';
+      title: string;
+      message?: string;
+      options?: readonly string[];
+      placeholder?: string;
+      prefill?: string;
+      /** How long the request stands before Pi stops waiting for an answer. */
+      timeout?: number;
+    };
 
 interface ScriptedPiEvent {
   kind: 'event';

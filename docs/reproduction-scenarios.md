@@ -28,6 +28,8 @@ The `saved-session-unacknowledged-abort` scenario accepts `Stop this fixture`, s
 
 The history scenarios open a saved session whose transcript arrives already complete, as one created elsewhere does — by a workflow extension, or on another machine. `saved-session-short-history` holds one turn and cannot scroll, `saved-session-history` fills the viewport, and `saved-session-long-history` is read back through rows that were only ever estimated. Nothing is submitted in any of them: the whole point is the first render.
 
+The `saved-session-extension-prompt` scenario opens a saved session and has its extension ask a question. The prompt renders at the end of the transcript and the composer is gone while it stands; it carries its own short Pi timeout, so the composer comes back a second and a half later without an answer being sent. Nothing is submitted.
+
 The process-failure scenarios expose each transport transition without exposing its raw payload in the product UI. `saved-session-bootstrap-process-exit` pauses before failure, after the bridge error, and after exit; after the final gate, selecting `Main` exercises the product's real reconnect path and completes a clean bootstrap. `saved-session-prompt-process-exit` first bootstraps `Main` and `Backup`; select `Backup`, return to `Main`, submit `Fail this fixture`, then use its three gates to inspect partial-output preservation and failure isolation.
 
 ## Inspect and control a paused scenario
