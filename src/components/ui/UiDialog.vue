@@ -42,19 +42,22 @@ withDefaults(
  * attribute does not reach them, so they are styled with :global on
  * their namespaced classes. */
 :global(.ui-dialog-overlay) {
-  display: flex;
   position: fixed;
   z-index: 20;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 68px 18px 18px;
   background: var(--scrim);
   inset: 0;
 }
 
+/* The panel is a sibling of the overlay, not a child, so it positions
+ * itself: top-centered, clear of the title bar. */
 :global(.ui-dialog-content) {
-  width: min(440px, 100%);
+  position: fixed;
+  z-index: 21;
+  top: 68px;
+  left: 50%;
+  width: min(440px, calc(100% - 36px));
   padding: 8px;
+  transform: translateX(-50%);
   border: 1px solid var(--border);
   border-radius: 9px;
   background: var(--panel-raised);
@@ -62,7 +65,7 @@ withDefaults(
 }
 
 :global(.ui-dialog-content.width-md) {
-  width: min(480px, 100%);
+  width: min(480px, calc(100% - 36px));
 }
 
 /* The title is announced, not shown: the panel explains itself. */

@@ -50,6 +50,15 @@ async function mountApp(): Promise<void> {
     return;
   }
 
+  if (import.meta.env.DEV && fixture === 'remote-dialog') {
+    const { default: RemoteDialogFixture } =
+      await import('./dev/RemoteDialogFixture.vue');
+    const app = createApp(RemoteDialogFixture);
+    app.config.errorHandler = vueErrorHandler;
+    app.mount('#app');
+    return;
+  }
+
   if (import.meta.env.DEV) {
     const testScenario = new URLSearchParams(window.location.search).get(
       'test-scenario',
