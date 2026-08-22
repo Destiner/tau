@@ -42,6 +42,7 @@ function testController(
     unread: false,
     lastUserMessageAt: 0,
     messages: [],
+    messagesLoaded: false,
     localErrors: [],
     draft: '',
     status: '',

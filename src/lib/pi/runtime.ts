@@ -58,6 +58,7 @@ import {
   asRecord,
   contentText,
   hydrateTranscript,
+  localErrorId,
   mergeLocalEntries,
   messageFailure,
   parseSkillBlock,
@@ -918,11 +919,22 @@ async function handleRpc(
   if (type === 'compaction_end') {
     const failure = stringValue(event.errorMessage);
     if (failure) {
-      controller.localErrors.push({
+      const error = {
+        key: controller.streamSequence++,
         text: failure,
         ...anchorFields(controller),
+      };
+      controller.localErrors.push(error);
+      // The row shown now and the one merged back later are the same row: it
+      // carries the failure's own id and spot rather than passing for a Pi row,
+      // which would both stall id adoption and count towards later anchors.
+      controller.messages.push({
+        id: localErrorId(error.key),
+        kind: 'error',
+        text: failure,
+        ...(error.anchor === undefined ? {} : { anchor: error.anchor }),
       });
-      pushError(controller, failure);
+      if (!isControllerSelected(controller)) controller.unread = true;
     }
     return;
   }
@@ -1274,6 +1286,7 @@ async function handleResponse(
 
   if (command === 'get_messages' && data) {
     const previous = controller.messages;
+    controller.messagesLoaded = true;
     controller.messages = mergeLocalEntries(
       hydrateTranscript(
         Array.isArray(data.messages) ? data.messages : [],
@@ -1825,16 +1838,19 @@ function cancelPendingPrompt(
 
 /**
  * The spot a local entry has to hold on to so a rebuild from Pi's messages puts
- * it back where it was: the number of transcript rows Pi owns right now. A
- * session whose transcript has not loaded yet reports none of them, and an
- * entry anchored above history it actually followed would be worse than one
- * left at the bottom, so that case claims no spot at all.
+ * it back where it was: the number of transcript rows Pi owns right now, zero
+ * of them included. A session whose transcript has not loaded yet cannot tell a
+ * session without history from one whose history has yet to arrive, and an entry
+ * anchored above history it actually followed would be worse than one left at
+ * the bottom, so only that case claims no spot at all.
  */
 function anchorFields(controller: SessionController): { anchor?: number } {
-  const rows = controller.messages.filter(
-    (message) => message.kind !== 'notice' && message.anchor === undefined,
-  ).length;
-  return rows === 0 ? {} : { anchor: rows };
+  if (!controller.messagesLoaded) return {};
+  return {
+    anchor: controller.messages.filter(
+      (message) => message.kind !== 'notice' && message.anchor === undefined,
+    ).length,
+  };
 }
 
 function pushError(controller: SessionController, text: string): void {

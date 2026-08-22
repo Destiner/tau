@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { TranscriptEntry } from './transcript';
+import type { LocalError, TranscriptEntry } from './transcript';
 import {
   hydrateTranscript,
   mergeLocalEntries,
@@ -320,13 +320,13 @@ describe('mergeLocalEntries', () => {
   it('adds the failures Pi keeps nowhere to the hydrated list', () => {
     const entries = mergeLocalEntries(
       hydrateTranscript([{ role: 'user', content: 'hello' }]),
-      [{ text: 'Auto-compaction failed: overloaded', anchor: 1 }],
+      [{ key: 4, text: 'Auto-compaction failed: overloaded', anchor: 1 }],
       [],
     );
 
     expect(entries.map((entry) => entry.kind)).toEqual(['user', 'error']);
     expect(entries[1]).toMatchObject({
-      id: 'local-error-0',
+      id: 'local-error-4',
       text: 'Auto-compaction failed: overloaded',
     });
   });
@@ -367,7 +367,7 @@ describe('mergeLocalEntries', () => {
   it('orders entries sharing a spot by arrival and settles later ones at the end', () => {
     const entries = mergeLocalEntries(
       hydrateTranscript([{ role: 'user', content: 'hello' }]),
-      [{ text: 'compaction failed', anchor: 1 }],
+      [{ key: 0, text: 'compaction failed', anchor: 1 }],
       [notice('extension-notify:1', 0), notice('extension-notify:2', 9)],
     );
 
@@ -376,6 +376,35 @@ describe('mergeLocalEntries', () => {
       'hello',
       'compaction failed',
       'extension-notify:2',
+    ]);
+  });
+
+  it('holds a failure with no spot where the first rebuild settled it', () => {
+    const failure: LocalError = { key: 0, text: 'compaction failed' };
+    const settled = mergeLocalEntries(
+      hydrateTranscript([{ role: 'user', content: 'hello' }]),
+      [failure],
+      [],
+    );
+
+    expect(settled.map((entry) => entry.text)).toEqual([
+      'hello',
+      'compaction failed',
+    ]);
+
+    const grown = mergeLocalEntries(
+      hydrateTranscript([
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: [{ type: 'text', text: 'a reply' }] },
+      ]),
+      [failure],
+      settled,
+    );
+
+    expect(grown.map((entry) => entry.text)).toEqual([
+      'hello',
+      'compaction failed',
+      'a reply',
     ]);
   });
 

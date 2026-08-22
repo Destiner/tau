@@ -2220,6 +2220,7 @@ describe('turn failures', () => {
       expect(controller.messages).toHaveLength(2);
     });
 
+    const raised = controller.messages[1]?.id;
     await settleWith(controller, session, [{ role: 'user', content: 'hello' }]);
 
     expect(controller.messages.map((entry) => entry.kind)).toEqual([
@@ -2229,6 +2230,9 @@ describe('turn failures', () => {
     expect(controller.messages[1]?.text).toBe(
       'Auto-compaction failed: overloaded',
     );
+    // The row shown while the turn ran and the one merged back are the same
+    // row, so the height the virtualizer measured for it still applies.
+    expect(controller.messages[1]?.id).toBe(raised);
     tau.dispose();
   });
 
@@ -2260,6 +2264,38 @@ describe('turn failures', () => {
       ['notice', 'Approval is ready'],
       ['assistant', 'a reply'],
       ['user', 'and again'],
+    ]);
+    tau.dispose();
+  });
+
+  it('leaves a notice raised before the first turn above it', async () => {
+    const { tau, controller, session } = await setupNamedSession();
+
+    // A session opened with no history: the notice belongs at the top, and the
+    // transcript having loaded empty is not the same as its not having loaded.
+    await settleWith(controller, session, []);
+    emitRpc(controller, {
+      type: 'extension_ui_request',
+      id: 'notify-info',
+      method: 'notify',
+      message: 'Extension loaded',
+      notifyType: 'info',
+    });
+    await vi.waitFor(() => {
+      expect(controller.messages).toHaveLength(1);
+    });
+
+    await settleWith(controller, session, [
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: [{ type: 'text', text: 'a reply' }] },
+    ]);
+
+    expect(
+      controller.messages.map((message) => [message.kind, message.text]),
+    ).toEqual([
+      ['notice', 'Extension loaded'],
+      ['user', 'hello'],
+      ['assistant', 'a reply'],
     ]);
     tau.dispose();
   });

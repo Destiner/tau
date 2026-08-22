@@ -147,6 +147,9 @@ interface SessionController {
   unread: boolean;
   lastUserMessageAt: number;
   messages: TranscriptEntry[];
+  /** Whether `get_messages` has answered once, so an empty transcript can be
+   * read as a session without history rather than one that has yet to load. */
+  messagesLoaded: boolean;
   /** Failures Pi reports as events only; its message list never carries them. */
   localErrors: LocalError[];
   draft: string;
@@ -731,6 +734,7 @@ function createController(
     unread: false,
     lastUserMessageAt: session.lastUserMessageAt,
     messages: [],
+    messagesLoaded: false,
     localErrors: [],
     draft: '',
     status: '',

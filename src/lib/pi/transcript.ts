@@ -26,8 +26,15 @@ interface TranscriptEntry {
 
 /** A failure Pi reported as an event, held with the spot it belongs in. */
 interface LocalError {
+  /** Names the row across rebuilds, and stays unique as runs come and go. */
+  key: number;
   text: string;
   anchor?: number;
+}
+
+/** The id a failure keeps whether it is streamed in or merged back. */
+function localErrorId(key: number): string {
+  return `local-error-${key}`;
 }
 
 interface ParsedSkillBlock {
@@ -227,14 +234,19 @@ function isLocalEntry(entry: TranscriptEntry): boolean {
  * fire-and-forget notices its extensions raise. Each one holds the number of
  * Pi-owned rows that preceded it and goes back at that spot, because appending
  * them instead walks them to the bottom of the transcript on every rebuild.
+ *
+ * An entry with no spot to claim is given the one it lands in, on the entry
+ * itself and on the failure it was built from, so a row that settled at the
+ * bottom of a transcript it preceded stays there instead of following the tail.
  */
 function mergeLocalEntries(
   entries: TranscriptEntry[],
   errors: LocalError[],
   previous: TranscriptEntry[],
 ): TranscriptEntry[] {
-  const locals: TranscriptEntry[] = errors.map((error, index) => ({
-    id: `local-error-${index}`,
+  const held = new Map(errors.map((error) => [localErrorId(error.key), error]));
+  const locals: TranscriptEntry[] = errors.map((error) => ({
+    id: localErrorId(error.key),
     kind: 'error',
     text: error.text,
     ...(error.anchor === undefined ? {} : { anchor: error.anchor }),
@@ -259,6 +271,8 @@ function mergeLocalEntries(
   for (const { entry, anchor } of ordered) {
     // Resolving the spot here is what keeps an entry that arrived before the
     // transcript had loaded from drifting again on the rebuild after this one.
+    const error = held.get(entry.id);
+    if (error) error.anchor = anchor;
     merged.push(...entries.slice(cursor, anchor), { ...entry, anchor });
     cursor = anchor;
   }
@@ -365,6 +379,7 @@ export type {
 
 export {
   hydrateTranscript,
+  localErrorId,
   parseSkillBlock,
   messageFailure,
   mergeLocalEntries,
