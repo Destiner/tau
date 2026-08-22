@@ -1,6 +1,11 @@
 import phantomCommandRegistration from './phantom-command-registration';
 import savedSessionCommandReplacement from './saved-session-command-replacement';
 import {
+  savedSessionHistory,
+  savedSessionLongHistory,
+  savedSessionShortHistory,
+} from './saved-session-history';
+import {
   savedSessionBootstrapProcessExit,
   savedSessionPromptProcessExit,
 } from './saved-session-process-failures';
@@ -22,6 +27,9 @@ const scenarios = [
   savedSessionUnacknowledgedAbort,
   savedSessionBootstrapProcessExit,
   savedSessionPromptProcessExit,
+  savedSessionHistory,
+  savedSessionShortHistory,
+  savedSessionLongHistory,
 ] as const satisfies readonly PiScenario[];
 
 const catalogue = new Map<string, PiScenario>(

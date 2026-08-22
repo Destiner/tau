@@ -26,6 +26,8 @@ import createLongTranscript from './long-transcript';
 
 interface TranscriptFixtureApi {
   appendMessage(kind?: 'assistant' | 'tool'): string;
+  truncate(count: number): void;
+  hydrate(count: number): void;
   replaceLatestMessage(): string;
   scrollToEnd(): void;
   setWorking(working: boolean): void;
@@ -39,7 +41,21 @@ declare global {
   }
 }
 
-const messages = ref(createLongTranscript());
+/**
+ * How many messages to start with. A short transcript is a case of its own:
+ * one that does not fill the viewport cannot scroll, so anything the
+ * virtualizer asks the element to do is silently clamped.
+ */
+const initialCount = Number(
+  new URLSearchParams(window.location.search).get('count') ?? '',
+);
+const messages = ref(
+  createLongTranscript(
+    Number.isFinite(initialCount) && initialCount >= 0
+      ? initialCount
+      : undefined,
+  ),
+);
 const working = ref(false);
 /** Mirrors the app: a session change arrives as a keyed remount. */
 const sessionKey = ref('main');
@@ -101,6 +117,20 @@ async function streamLatest(chunks = 24): Promise<void> {
   working.value = false;
 }
 
+/** Mirrors a session opened mid-turn: history lands under the indicator. */
+function hydrate(count: number): void {
+  messages.value = createLongTranscript(count);
+  sequence = count;
+}
+
+/** Mirrors compaction: the transcript is replaced by a much shorter one. */
+function truncate(count: number): void {
+  messages.value = messages.value.slice(-count).map((message, index) => ({
+    ...message,
+    id: `${message.kind}-${index}`,
+  }));
+}
+
 function scrollToEnd(): void {
   transcriptView.value?.scrollToEnd();
 }
@@ -115,6 +145,8 @@ function switchSession(key: string): void {
 
 window.__TAU_TRANSCRIPT_FIXTURE__ = {
   appendMessage,
+  truncate,
+  hydrate,
   replaceLatestMessage,
   scrollToEnd,
   setWorking,
