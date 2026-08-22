@@ -192,6 +192,65 @@ onBeforeUnmount(clearCopied);
   margin: 0.7em 0;
 }
 
+/*
+ * Browser defaults indent a list about 40px, which is far wider than the
+ * 0.7em rhythm the blocks around it keep; the marker column only has to be
+ * wide enough to hold a marker.
+ */
+.markdown :deep(ul),
+.markdown :deep(ol) {
+  padding-left: 1.4em;
+}
+
+.markdown :deep(li) {
+  margin: 0.28em 0;
+}
+
+/* The text carries the list; the marker only has to say where an item starts. */
+.markdown :deep(li::marker) {
+  color: var(--faint);
+}
+
+/*
+ * A sublist and a loose item's paragraphs are inside an item rather than
+ * beside it, so they keep the list's own item spacing instead of picking up
+ * the full block margin the shared rule above would give them.
+ */
+.markdown :deep(li > ul),
+.markdown :deep(li > ol) {
+  margin: 0.15em 0 0;
+}
+
+.markdown :deep(li > p) {
+  margin: 0.28em 0;
+}
+
+.markdown :deep(li:first-child) {
+  margin-top: 0;
+}
+
+.markdown :deep(li:last-child) {
+  margin-bottom: 0;
+}
+
+/*
+ * A task item is marked by its checkbox, so the list marker would be a second
+ * one. The box hangs into the marker column it replaces rather than pushing
+ * the item across, which keeps task and plain items on one text column.
+ */
+.markdown :deep(li:has(> input[type='checkbox'])) {
+  list-style: none;
+}
+
+/* A checked box is content, not a disabled control: the global fade is not it. */
+.markdown :deep(li > input[type='checkbox']) {
+  width: 0.95em;
+  height: 0.95em;
+  margin: 0 0.45em 0 -1.4em;
+  opacity: 1;
+  vertical-align: -0.1em;
+}
+
 .markdown :deep(h1),
 .markdown :deep(h2),
 .markdown :deep(h3) {

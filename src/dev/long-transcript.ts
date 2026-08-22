@@ -6,6 +6,31 @@ const assistantParagraphs = [
   'New output follows the end only while the reader is already there. Scrolling into history leaves the viewport anchored to the same content.',
 ];
 
+/*
+ * Every list shape the markdown theme has a rule for, in one message: tight
+ * and loose items, nesting, ordered lists, and task lists mixed with plain
+ * items. It is placed near the end of the fixture so `bun run repro` opens on
+ * it, and repeated in the user bubble and the thinking block because both
+ * restyle markdown around it.
+ */
+const listShowcase = `- A tight item, whose marker should be quiet next to the text
+- An item with a sublist
+  - Nested one level
+    - And two, still tightly spaced
+- [ ] An unchecked task, with no bullet beside the box
+- [x] A checked task, readable rather than struck through
+- A plain item after the tasks, back on the marker column
+
+1. Ordered items number from the same column
+2. Second
+   1. Nested ordering
+
+- A loose item
+
+  with a second paragraph inside it
+
+- The item after a loose one`;
+
 function createLongTranscript(count = 5_000): TranscriptEntry[] {
   return Array.from({ length: count }, (_, index) => createMessage(index));
 }
@@ -20,6 +45,28 @@ function createMessage(index: number): TranscriptEntry {
       text: `# Native feel audit
 
 Inspect selection, scrolling, keyboard behavior, window behavior, and perceived performance.`,
+    };
+  }
+
+  if (index === 4_997) {
+    return {
+      id: 'fixture-markdown-showcase',
+      kind: 'assistant',
+      text: `**Markdown showcase** — lists and task lists.\n\n${listShowcase}`,
+    };
+  }
+  if (index === 4_996) {
+    return {
+      id: 'fixture-markdown-showcase-user',
+      kind: 'user',
+      text: `The same lists in a user bubble:\n\n${listShowcase}`,
+    };
+  }
+  if (index === 4_995) {
+    return {
+      id: 'fixture-markdown-showcase-thinking',
+      kind: 'thinking',
+      text: `The same lists at the thinking block's smaller size:\n\n${listShowcase}`,
     };
   }
 

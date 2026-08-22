@@ -69,6 +69,37 @@ test('shows skill use as a collapsed expandable block', async ({ page }) => {
   );
 });
 
+test('marks a task list with its checkbox alone, at full strength', async ({
+  page,
+}) => {
+  const showcase = page.locator(
+    '[data-message-id="fixture-markdown-showcase"]',
+  );
+  const task = showcase
+    .locator('li', { has: page.locator('input[type="checkbox"]') })
+    .first();
+  const plain = showcase.locator('li').first();
+
+  // The checkbox is the marker: a disc beside it would be a second one.
+  await expect(task).toHaveCSS('list-style-type', 'none');
+  await expect(plain).toHaveCSS('list-style-type', 'disc');
+
+  // Task boxes are disabled inputs, which the app fades everywhere else.
+  await expect(task.locator('input[type="checkbox"]')).toHaveCSS(
+    'opacity',
+    '1',
+  );
+
+  // The box hangs into the marker column, leaving both items on one text column.
+  const [checkbox, taskItem, plainItem] = await Promise.all([
+    task.locator('input[type="checkbox"]').boundingBox(),
+    task.boundingBox(),
+    plain.boundingBox(),
+  ]);
+  expect(taskItem?.x).toBeCloseTo(plainItem?.x ?? 0, 0);
+  expect(checkbox?.x ?? 0).toBeLessThan(taskItem?.x ?? 0);
+});
+
 test('copies a code block from a button the block reveals on hover', async ({
   page,
 }) => {
