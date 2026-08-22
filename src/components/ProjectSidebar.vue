@@ -517,6 +517,13 @@ function isTitlebarControl(target: EventTarget | null): boolean {
   min-height: 0;
 }
 
+/* The wrap sits between the sidebar and the scrolling list; without this,
+ * the list's min-content height propagates up and stretches the sidebar
+ * instead of scrolling. */
+.archived-wrap {
+  overflow: hidden;
+}
+
 .project-list {
   padding: 6px;
   overflow: auto;
