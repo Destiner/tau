@@ -135,6 +135,7 @@ function open(entry: ArchivedSessionEntry): void {
 <style scoped>
 .archived-list {
   flex: 1;
+  min-height: 0;
   padding: 6px;
   overflow: auto;
 }
