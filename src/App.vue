@@ -404,6 +404,7 @@ function isTitlebarControl(target: EventTarget | null): boolean {
 
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+
   /* Pin the single row to the viewport so an overflowing sidebar or session
    * pane scrolls inside itself instead of stretching the window layout. */
   grid-template-rows: minmax(0, 1fr);
