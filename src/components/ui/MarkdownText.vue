@@ -359,6 +359,8 @@ onBeforeUnmount(clearCopied);
  * A table is laid out as a block so that a wider one scrolls within the text
  * rather than stretching whatever holds it; `max-content` is what keeps the
  * columns at their natural width instead of collapsing to the space left.
+ * Separate borders are what let the table carry a single outer rule and a
+ * radius, which collapsed borders hand to the cells instead.
  */
 .markdown :deep(table) {
   display: block;
@@ -366,21 +368,53 @@ onBeforeUnmount(clearCopied);
   max-width: 100%;
   margin: 0.7em 0;
   overflow-x: auto;
-  border-collapse: collapse;
+  border-spacing: 0;
+  border-collapse: separate;
+  border: 1px solid var(--border);
+  border-radius: 8px;
   font-size: 0.94em;
   overflow-wrap: normal;
 }
 
 .markdown :deep(th),
 .markdown :deep(td) {
-  padding: 5px 9px;
-  border: 1px solid var(--border);
-  text-align: left;
+  padding: 6px 12px;
+}
+
+/*
+ * Only the rows are ruled: vertical lines would draw a grid around content
+ * the columns already separate.
+ */
+.markdown :deep(thead th) {
+  border-bottom: 1px solid var(--border);
+}
+
+.markdown :deep(tbody tr + tr > td) {
+  border-top: 1px solid var(--border);
 }
 
 .markdown :deep(th) {
   background: var(--sunk);
   font-weight: 600;
+}
+
+/* The radius is on the table, so the header has to leave its corners alone. */
+.markdown :deep(thead th:first-child) {
+  border-top-left-radius: 8px;
+}
+
+.markdown :deep(thead th:last-child) {
+  border-top-right-radius: 8px;
+}
+
+/*
+ * A column's alignment is written in markdown and arrives as an `align`
+ * attribute, which any rule of ours would outrank: left is the default for a
+ * column that did not ask for one, not something imposed on every column.
+ */
+.markdown :deep(th:not([align])),
+.markdown :deep(td:not([align])) {
+  text-align: left;
 }
 
 /* The hand belongs to links, and these are the only ones: they leave the app. */

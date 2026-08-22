@@ -31,6 +31,21 @@ const listShowcase = `- A tight item, whose marker should be quiet next to the t
 
 - The item after a loose one`;
 
+/*
+ * Both table shapes the theme has to hold: every column alignment markdown can
+ * ask for, and one wide enough to scroll inside the message column instead of
+ * stretching it.
+ */
+const tableShowcase = `| Default | Left | Center | Right |
+| ------- | :--- | :----: | ----: |
+| unaligned | left | center | right |
+| second row | a | b | 1,024 |
+
+| Session | Working directory | Extension | Last message |
+| --- | --- | --- | ---: |
+| tau-desktop | /Users/someone/code/tau/src-tauri | filesystem, telemetry, ssh | 3,204 |
+| pi-runtime | /Users/someone/code/pi/packages/runtime | filesystem | 87 |`;
+
 function createLongTranscript(count = 5_000): TranscriptEntry[] {
   return Array.from({ length: count }, (_, index) => createMessage(index));
 }
@@ -52,21 +67,21 @@ Inspect selection, scrolling, keyboard behavior, window behavior, and perceived 
     return {
       id: 'fixture-markdown-showcase',
       kind: 'assistant',
-      text: `**Markdown showcase** — lists and task lists.\n\n${listShowcase}`,
+      text: `**Markdown showcase** — lists, task lists, and tables.\n\n${listShowcase}\n\n${tableShowcase}`,
     };
   }
   if (index === 4_996) {
     return {
       id: 'fixture-markdown-showcase-user',
       kind: 'user',
-      text: `The same lists in a user bubble:\n\n${listShowcase}`,
+      text: `The same lists and tables in a user bubble:\n\n${listShowcase}\n\n${tableShowcase}`,
     };
   }
   if (index === 4_995) {
     return {
       id: 'fixture-markdown-showcase-thinking',
       kind: 'thinking',
-      text: `The same lists at the thinking block's smaller size:\n\n${listShowcase}`,
+      text: `The same lists and tables at the thinking block's smaller size:\n\n${listShowcase}\n\n${tableShowcase}`,
     };
   }
 

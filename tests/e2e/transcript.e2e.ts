@@ -100,6 +100,35 @@ test('marks a task list with its checkbox alone, at full strength', async ({
   expect(checkbox?.x ?? 0).toBeLessThan(taskItem?.x ?? 0);
 });
 
+test('aligns table columns the way the markdown asked', async ({ page }) => {
+  const headers = page
+    .locator('[data-message-id="fixture-markdown-showcase"] table')
+    .first()
+    .locator('thead th');
+
+  // Sanitizing keeps marked's `align` attribute, and the stylesheet defers to
+  // it: a left default that overrode it would make `|--:|` do nothing.
+  // WebKit and Chromium report an `align` attribute as `-webkit-<side>`.
+  await expect(headers.nth(0)).toHaveCSS('text-align', 'left');
+  await expect(headers.nth(1)).toHaveCSS('text-align', /^(?:-webkit-)?left$/);
+  await expect(headers.nth(2)).toHaveCSS('text-align', /^(?:-webkit-)?center$/);
+  await expect(headers.nth(3)).toHaveCSS('text-align', /^(?:-webkit-)?right$/);
+});
+
+test('keeps a table header visible against the user bubble', async ({
+  page,
+}) => {
+  const bubble = page.locator(
+    '[data-message-id="fixture-markdown-showcase-user"] .user-bubble',
+  );
+
+  const [header, bubbleBackground] = await Promise.all([
+    bubble.locator('thead th').first().evaluate(backgroundColor),
+    bubble.evaluate(backgroundColor),
+  ]);
+  expect(header).not.toBe(bubbleBackground);
+});
+
 test('copies a code block from a button the block reveals on hover', async ({
   page,
 }) => {
@@ -532,6 +561,10 @@ async function switchSession(page: Page, key: string): Promise<void> {
   );
   await expect(page.getByTestId('fixture-session')).toHaveText(key);
   await page.waitForTimeout(150);
+}
+
+function backgroundColor(element: HTMLElement): string {
+  return getComputedStyle(element).backgroundColor;
 }
 
 function distanceFromEnd(element: HTMLElement): number {

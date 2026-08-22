@@ -448,12 +448,14 @@ defineExpose({ scrollToEnd });
 }
 
 /*
- * Code sits on the bubble rather than the canvas, and the shared code
- * background is too close to it to read as a block of its own. The selector
- * is deep because the code lives in MarkdownText's rendered HTML.
+ * Code and table headers sit on the bubble rather than the canvas, and their
+ * shared sunk background is too close to it to read as a surface of their
+ * own. The selectors are deep because both live in MarkdownText's rendered
+ * HTML.
  */
 .user-bubble :deep(code),
-.user-bubble :deep(pre) {
+.user-bubble :deep(pre),
+.user-bubble :deep(th) {
   background: var(--panel-raised);
 }
 

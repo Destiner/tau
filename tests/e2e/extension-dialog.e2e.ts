@@ -75,13 +75,16 @@ test('renders a table in the question as a table', async ({ page }) => {
   const style = await header.evaluate((element) => {
     const computed = window.getComputedStyle(element);
     return {
-      borderWidth: Number.parseFloat(computed.borderTopWidth),
+      // Rows are ruled, columns are not: the header's rule is its underline.
+      rule: Number.parseFloat(computed.borderBottomWidth),
+      columnRule: Number.parseFloat(computed.borderRightWidth),
       padding: Number.parseFloat(computed.paddingLeft),
       background: computed.backgroundColor,
       textAlign: computed.textAlign,
     };
   });
-  expect(style.borderWidth).toBeGreaterThan(0);
+  expect(style.rule).toBeGreaterThan(0);
+  expect(style.columnRule).toBe(0);
   expect(style.padding).toBeGreaterThan(0);
   expect(style.background).not.toBe('rgba(0, 0, 0, 0)');
   expect(style.textAlign).toBe('left');
