@@ -77,7 +77,10 @@ import {
   normalizeSessionName,
   projectIndicator,
   projectSessions,
+  archivedSessionEntries,
+  relativeTimestamp,
   runtimeAvailable,
+  sessionLastUserMessageAt,
   sessionIndicator,
   sessionLastActive,
   sessionLoading,
@@ -465,6 +468,22 @@ function useTau() {
     }
   }
 
+  async function unarchiveSession(
+    project: ProjectSummary,
+    session: SessionSummary,
+  ): Promise<void> {
+    try {
+      state.workspace = await invokeTraced<WorkspaceSnapshot>(
+        'unarchive_session',
+        { projectPath: project.path, sessionId: session.id },
+      );
+      // The record is reachable again, but nothing selects it here: the
+      // archived list is a review surface, not a session switcher.
+    } catch (error) {
+      setActiveError(error);
+    }
+  }
+
   async function newSession(project: ProjectSummary): Promise<void> {
     const actionSpan = startActionSpan('session.new');
     try {
@@ -597,6 +616,18 @@ function useTau() {
           actionSpan.context,
         );
         return;
+      }
+
+      // Sending to a session whose record is still archived is an implicit
+      // unarchive: activity proves the session is wanted again.
+      const project = state.workspace?.projects.find(
+        (candidate) => candidate.path === controller.projectPath,
+      );
+      const sessionRecord = project?.sessions.find(
+        (candidate) => candidate.id === controller.sessionId,
+      );
+      if (project && sessionRecord?.archived) {
+        await unarchiveSession(project, sessionRecord);
       }
 
       controller.draft = '';
@@ -859,11 +890,15 @@ function useTau() {
     reorderProjects,
     removeProject,
     archiveSession,
+    unarchiveSession,
     newSession,
     selectSession,
     canArchiveSession,
     projectSessions,
+    archivedSessionEntries,
     sessionLastActive,
+    sessionLastUserMessageAt,
+    relativeTimestamp,
     isSessionSelected,
     sessionIndicator,
     isSessionUnread,

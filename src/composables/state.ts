@@ -39,6 +39,8 @@ interface SessionSummary {
   id: string;
   path: string;
   title: string;
+  /** The model id Pi last recorded for the session, empty when unknown. */
+  model?: string;
   lastActive: string;
   lastUserMessageAt: number;
   /** Latest user message, falling back to the first agent message. */
@@ -366,6 +368,36 @@ const activeController = computed(() =>
     (controller) => controller.key === state.activeControllerKey,
   ),
 );
+
+/** One flat row of the archived-sessions view: a session plus its project. */
+interface ArchivedSessionEntry {
+  projectPath: string;
+  projectName: string;
+  session: SessionSummary;
+}
+
+/**
+ * Archived sessions across every project, newest first. The view is not
+ * per-project by design: archive review is workspace-wide.
+ */
+const archivedSessionEntries = computed<ArchivedSessionEntry[]>(() => {
+  const entries: ArchivedSessionEntry[] = [];
+  for (const project of state.workspace?.projects ?? []) {
+    for (const session of project.sessions) {
+      if (!session.archived) continue;
+      entries.push({
+        projectPath: project.path,
+        projectName: project.name,
+        session,
+      });
+    }
+  }
+  return entries.sort(
+    (left, right) =>
+      right.session.sortAt - left.session.sortAt ||
+      right.session.lastUserMessageAt - left.session.lastUserMessageAt,
+  );
+});
 
 const messages = computed(
   () => activeController.value?.messages ?? emptyMessages,
@@ -1122,6 +1154,7 @@ export type {
   WorkspaceSnapshot,
   ProjectSummary,
   SessionSummary,
+  ArchivedSessionEntry,
   RemoteDirectoryEntry,
   RemoteDirectoryListing,
   ExtensionDialogMethod,
@@ -1178,6 +1211,7 @@ export {
   canRenameSession,
   canArchiveSession,
   projectSessions,
+  archivedSessionEntries,
   sessionLastActive,
   sessionLastUserMessageAt,
   isSessionSelected,

@@ -270,6 +270,37 @@ pub fn archive_session(
 }
 
 #[tauri::command]
+pub fn unarchive_session(
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
+    project_path: String,
+    session_id: String,
+) -> Result<WorkspaceSnapshot, String> {
+    let _span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "unarchive_session"));
+    let _write_guard = lock_storage_writes()?;
+    let mut projects = load_project_registry()?;
+    let project = projects
+        .projects
+        .iter_mut()
+        .find(|project| project.path == project_path)
+        .ok_or_else(|| "The project is not imported in Tau.".to_string())?;
+
+    if let Some(remote) = project.remote.as_mut() {
+        unarchive_remote_session(remote, &session_id)?;
+        write_json_atomic(&project_registry_path()?, &projects)?;
+        return snapshot(&projects);
+    }
+
+    let registry_path = local_registry_path(&project_path)?;
+    let mut registry: TauSessionRegistry = read_json_or_default(&registry_path)?;
+    unarchive_local_session(&mut registry, &session_id)?;
+    write_json_atomic(&registry_path, &registry)?;
+    snapshot(&projects)
+}
+
+#[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub fn register_session(
     telemetry: State<'_, Telemetry>,
@@ -431,6 +462,32 @@ fn archive_remote_session(
     if remote.active_session_id == session_id {
         remote.active_session_id.clear();
     }
+    Ok(())
+}
+
+fn unarchive_remote_session(
+    remote: &mut RemoteProjectRecord,
+    session_id: &str,
+) -> Result<(), String> {
+    let session = remote
+        .sessions
+        .iter_mut()
+        .find(|session| session.id == session_id)
+        .ok_or_else(|| "The session is not registered in Tau.".to_string())?;
+    session.archived = false;
+    Ok(())
+}
+
+fn unarchive_local_session(
+    registry: &mut TauSessionRegistry,
+    session_id: &str,
+) -> Result<(), String> {
+    let session = registry
+        .sessions
+        .iter_mut()
+        .find(|session| session.id == session_id)
+        .ok_or_else(|| "The session is not registered in Tau.".to_string())?;
+    session.archived = false;
     Ok(())
 }
 
@@ -628,6 +685,9 @@ fn list_remote_sessions(remote: &RemoteProjectRecord) -> Vec<SessionSummary> {
                         .filter(|name| !name.is_empty())
                         .unwrap_or("New session"),
                 ),
+                // Remote registries do not carry a model; the archived list
+                // omits the model line when it is empty.
+                model: String::new(),
                 last_active: relative_timestamp(sort_at),
                 last_user_message_at,
                 sort_at,
@@ -676,6 +736,7 @@ fn list_project_sessions(project_path: &str) -> Result<Vec<SessionSummary>, Stri
             id: parsed.id.clone(),
             path: path.to_string_lossy().into_owned(),
             title: single_line(&title),
+            model: parsed.model.clone(),
             last_active: if sort_at == 0 {
                 relative_time(modified)
             } else {
@@ -706,6 +767,8 @@ fn session_title(pi_name: &str, tau_name: Option<&str>, first_message: &str) -> 
 struct ParsedSession {
     id: String,
     name: String,
+    /// The model id of the last `model_change` Pi recorded, if any.
+    model: String,
     first_message: String,
     first_agent_message_at: u64,
     last_user_message_at: u64,
@@ -729,6 +792,7 @@ fn parse_session_file(path: &Path) -> Result<Option<ParsedSession>, String> {
     let mut parsed = ParsedSession {
         id: String::new(),
         name: String::new(),
+        model: String::new(),
         first_message: String::new(),
         first_agent_message_at: 0,
         last_user_message_at: 0,
@@ -761,6 +825,11 @@ fn parse_session_file(path: &Path) -> Result<Option<ParsedSession>, String> {
                     .and_then(Value::as_str)
                     .unwrap_or_default()
                     .to_string();
+            }
+            Some("model_change") => {
+                if let Some(model_id) = value.get("modelId").and_then(Value::as_str) {
+                    parsed.model = model_id.to_string();
+                }
             }
             Some("message") => {
                 let Some(message) = value.get("message") else {
@@ -925,6 +994,68 @@ mod tests {
         assert_eq!(parsed.first_message, "Port Tau");
         assert_eq!(parsed.last_user_message_at, 2_000_000);
         assert_eq!(parsed.sort_at(), 2_000_000);
+    }
+
+    #[test]
+    fn parses_the_last_recorded_model_change() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("session.jsonl");
+        let mut file = File::create(&path).expect("session file");
+        writeln!(
+            file,
+            "{{\"type\":\"session\",\"version\":3,\"id\":\"session-1\",\"cwd\":\"/tmp\"}}"
+        )
+        .expect("header");
+        writeln!(
+            file,
+            "{{\"type\":\"model_change\",\"provider\":\"openai-codex\",\"modelId\":\"gpt-5.5\"}}"
+        )
+        .expect("first model change");
+        writeln!(
+            file,
+            "{{\"type\":\"model_change\",\"provider\":\"anthropic\",\"modelId\":\"claude-opus-4-6\"}}"
+        )
+        .expect("second model change");
+        let parsed = parse_session_file(&path)
+            .expect("parsed file")
+            .expect("session");
+        assert_eq!(parsed.model, "claude-opus-4-6");
+    }
+
+    #[test]
+    fn unarchiving_sessions_preserves_the_record_and_keeps_selection() {
+        let mut local = TauSessionRegistry {
+            active_session_id: String::new(),
+            sessions: vec![TauSessionRecord {
+                id: "local-session".into(),
+                name: Some("Local session".into()),
+                archived: true,
+            }],
+            ..TauSessionRegistry::default()
+        };
+        unarchive_local_session(&mut local, "local-session").expect("unarchive local session");
+        assert!(!local.sessions[0].archived);
+        assert!(local.active_session_id.is_empty());
+
+        let mut remote = RemoteProjectRecord {
+            connection_string: "ssh build-box".into(),
+            working_directory: "/home/timur".into(),
+            host: "build-box".into(),
+            active_session_id: String::new(),
+            sessions: vec![RemoteSessionRecord {
+                id: "remote-session".into(),
+                path: "/remote/session.jsonl".into(),
+                name: Some("Remote session".into()),
+                archived: true,
+                last_active: 10,
+                sort_at: 10,
+            }],
+        };
+        unarchive_remote_session(&mut remote, "remote-session").expect("unarchive remote session");
+        assert!(!remote.sessions[0].archived);
+
+        let missing = unarchive_local_session(&mut local, "nope");
+        assert!(missing.is_err());
     }
 
     #[test]

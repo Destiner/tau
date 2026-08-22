@@ -112,6 +112,7 @@ const TAURI_INVOKE_COMMANDS = [
   'reorder_projects',
   'set_active_session',
   'archive_session',
+  'unarchive_session',
   'register_session',
   'probe_remote_project',
   'list_remote_directories',

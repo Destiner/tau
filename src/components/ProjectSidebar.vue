@@ -11,6 +11,15 @@
     ></header>
 
     <div
+      v-if="showingArchived"
+      class="archived-wrap"
+      @pointerenter="holdSessionOrder"
+      @pointerleave="releaseSessionOrder"
+    >
+      <ArchivedSessionsList />
+    </div>
+    <div
+      v-else
       ref="projectList"
       class="project-list"
       @pointerenter="holdSessionOrder"
@@ -161,6 +170,15 @@
             </UiIconButton>
           </template>
         </UiMenu>
+        <UiIconButton
+          size="lg"
+          :class="{ active: showingArchived }"
+          :label="showingArchived ? 'Show sessions' : 'Show archived sessions'"
+          :title="showingArchived ? 'Show sessions' : 'Show archived sessions'"
+          @click="toggleArchivedView"
+        >
+          <UiIcon name="archive" />
+        </UiIconButton>
       </div>
       <IssueReportPopover
         :session-id="state.activeSessionId || undefined"
@@ -202,6 +220,7 @@ import {
   persistSidebarWidth,
 } from '../lib/sidebar-width';
 
+import ArchivedSessionsList from './ArchivedSessionsList.vue';
 import IssueReportPopover from './IssueReportPopover.vue';
 import UiContextMenu from './ui/UiContextMenu.vue';
 import UiIcon from './ui/UiIcon.vue';
@@ -246,6 +265,13 @@ const {
 const projectList = ref<HTMLElement>();
 const sidebar = ref<HTMLElement>();
 const projectMenuOpen = ref(false);
+/** Whether the sidebar body shows the workspace-wide archived list. */
+const showingArchived = ref(false);
+
+function toggleArchivedView(): void {
+  showingArchived.value = !showingArchived.value;
+}
+
 /** Held session ids by project path, empty whenever the list is not hovered. */
 const heldOrder = ref(new Map<string, string[]>());
 let projectSortable: Sortable | undefined;
@@ -483,10 +509,28 @@ function isTitlebarControl(target: EventTarget | null): boolean {
   padding: 6px;
 }
 
-.project-list {
+.project-list,
+.archived-wrap {
+  display: flex;
   flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.project-list {
   padding: 6px;
   overflow: auto;
+}
+
+.project-menu-wrap {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.project-menu-wrap > .active {
+  background: var(--selected);
+  color: var(--text);
 }
 
 .project-row {

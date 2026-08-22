@@ -106,6 +106,9 @@ pub struct SessionSummary {
     pub id: String,
     pub path: String,
     pub title: String,
+    /// The model id Pi last recorded for the session, when known.
+    #[serde(default)]
+    pub model: String,
     pub last_active: String,
     pub last_user_message_at: u64,
     /// Latest user message, falling back to the first agent message.

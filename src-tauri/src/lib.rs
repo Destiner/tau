@@ -92,6 +92,7 @@ pub fn run() {
             storage::set_active_project,
             storage::set_active_session,
             storage::set_project_collapsed,
+            storage::unarchive_session,
             telemetry::ingest::ingest_telemetry,
         ])
         .build(tauri::generate_context!())

@@ -1,0 +1,218 @@
+<template>
+  <div class="archived-list">
+    <template
+      v-for="group in groups"
+      :key="group.label"
+    >
+      <button
+        class="group-head"
+        type="button"
+        :aria-expanded="!closedGroups.has(group.label)"
+        @click="() => toggleGroup(group.label)"
+      >
+        <span>{{ group.label }}</span>
+        <UiIcon
+          name="chevron"
+          :class="{ expanded: !closedGroups.has(group.label) }"
+        />
+      </button>
+      <template v-if="!closedGroups.has(group.label)">
+        <div
+          v-for="entry in group.items"
+          :key="entry.session.id"
+          class="row"
+        >
+          <div class="copy">
+            <span class="name">{{ entry.session.title }}</span>
+            <span class="meta">
+              <span class="project">{{ entry.projectName }}</span>
+              <template v-if="entry.session.model">
+                <span class="dot">·</span>
+                <span class="model">{{ entry.session.model }}</span>
+              </template>
+            </span>
+          </div>
+          <span class="time">{{ relativeTime(entry) }}</span>
+          <UiIconButton
+            class="unarchive"
+            size="md"
+            variant="reveal"
+            :label="`Unarchive ${entry.session.title}`"
+            title="Unarchive session"
+            @click="() => unarchive(entry)"
+          >
+            <UiIcon name="archive" />
+          </UiIconButton>
+        </div>
+      </template>
+    </template>
+    <div
+      v-if="groups.length === 0"
+      class="empty"
+    >
+      No archived sessions
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, ref } from 'vue';
+
+import type { ArchivedSessionEntry } from '../composables/state';
+import useTau from '../composables/useTau';
+import {
+  groupArchivedByTime,
+  type ArchivedGroup,
+} from '../lib/archived-groups';
+
+import UiIcon from './ui/UiIcon.vue';
+import UiIconButton from './ui/UiIconButton.vue';
+
+const {
+  archivedSessionEntries,
+  sessionLastUserMessageAt,
+  relativeTimestamp,
+  state,
+  unarchiveSession,
+} = useTau();
+
+const closedGroups = ref(new Set<string>());
+const groups = computed<ArchivedGroup<ArchivedSessionEntry>[]>(() =>
+  groupArchivedByTime(archivedSessionEntries.value, (entry) =>
+    sessionLastUserMessageAt(entry.projectPath, entry.session),
+  ),
+);
+
+function toggleGroup(label: string): void {
+  const next = new Set(closedGroups.value);
+  if (next.has(label)) next.delete(label);
+  else next.add(label);
+  closedGroups.value = next;
+}
+
+function relativeTime(entry: ArchivedSessionEntry): string {
+  return relativeTimestamp(
+    sessionLastUserMessageAt(entry.projectPath, entry.session),
+  );
+}
+
+function unarchive(entry: ArchivedSessionEntry): void {
+  const project = state.workspace?.projects.find(
+    (candidate) => candidate.path === entry.projectPath,
+  );
+  // Every archived entry belongs to an imported project by construction;
+  // the lookup only guards against a workspace swap mid-click.
+  if (project) void unarchiveSession(project, entry.session);
+}
+</script>
+
+<style scoped>
+.archived-list {
+  flex: 1;
+  padding: 6px;
+  overflow: auto;
+}
+
+.group-head {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 26px;
+  padding: 0 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  text-align: left;
+  gap: 4px;
+}
+
+.group-head svg {
+  width: 10px;
+  transition: transform 120ms ease;
+}
+
+.group-head svg.expanded {
+  transform: rotate(90deg);
+}
+
+.row {
+  display: flex;
+  position: relative;
+  align-items: stretch;
+  min-height: var(--session-row-height, 34px);
+  margin-top: 1px;
+  border-radius: 7px;
+}
+
+.row:hover {
+  background: var(--hover);
+}
+
+.copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  padding: 3px 7px;
+  gap: 2px;
+}
+
+.name {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  display: flex;
+  overflow: hidden;
+  gap: 4px;
+}
+
+.meta > span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.time {
+  flex: none;
+  align-self: flex-end;
+  padding: 0 8px 5px 6px;
+  color: var(--faint);
+  font-size: 10px;
+}
+
+/* The reveal button overlays the row; its box and states live in
+ * UiIconButton, and the timestamp yields while it is visible. */
+.unarchive {
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  transform: translateY(-50%);
+}
+
+.row:hover :deep(.unarchive),
+.row:focus-within :deep(.unarchive) {
+  opacity: 0.65;
+}
+
+.row:hover .time,
+.row:focus-within .time {
+  opacity: 0;
+}
+
+.empty {
+  display: flex;
+  align-items: center;
+  padding: 0 5px;
+  color: var(--faint);
+  font-size: 11px;
+}
+</style>

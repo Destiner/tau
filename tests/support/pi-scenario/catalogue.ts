@@ -1,3 +1,4 @@
+import archivedSessionsReview from './archived-sessions-review';
 import phantomCommandRegistration from './phantom-command-registration';
 import savedSessionCommandReplacement from './saved-session-command-replacement';
 import savedSessionExtensionPrompt, {
@@ -35,6 +36,7 @@ const scenarios = [
   savedSessionLongHistory,
   savedSessionExtensionPrompt,
   emptySessionExtensionPrompt,
+  archivedSessionsReview,
 ] as const satisfies readonly PiScenario[];
 
 const catalogue = new Map<string, PiScenario>(

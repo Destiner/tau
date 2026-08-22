@@ -87,6 +87,11 @@ const COMMAND_SESSION = {
   path: `${PROJECT_PATH}/session-mcp.jsonl`,
   name: 'MCP workflow',
 };
+const ARCHIVED_SESSION = {
+  id: 'session-archived',
+  path: `${PROJECT_PATH}/session-archived.jsonl`,
+  name: 'Older archived work',
+};
 const REQUIRED_NATIVE_COUNTS = {
   'saved-session-bootstrap': {
     load_workspace: 1,
@@ -149,6 +154,13 @@ const REQUIRED_NATIVE_COUNTS = {
     set_active_project: 1,
     set_active_session: 2,
   },
+  'archived-sessions-review': {
+    load_workspace: 1,
+    read_model_scope: 1,
+    register_session: 1,
+    set_active_session: 1,
+    unarchive_session: 1,
+  },
   'saved-session-unacknowledged-abort': {
     load_workspace: 1,
     read_model_scope: 1,
@@ -206,6 +218,21 @@ function scenarioWorkspace(scenarioName: string): WorkspaceSnapshot {
       lastUserMessageAt: 0,
       sortAt: 0,
       archived: false,
+      selected: false,
+    });
+  }
+  if (scenarioName === 'archived-sessions-review') {
+    workspace.projects[0]?.sessions.push({
+      id: ARCHIVED_SESSION.id,
+      path: ARCHIVED_SESSION.path,
+      title: ARCHIVED_SESSION.name,
+      model: 'alpha',
+      lastActive: '2026-01-02T03:04:03.000Z',
+      lastUserMessageAt: 0,
+      // A fixed past date keeps the row in the "Older" group regardless of
+      // when the scenario runs.
+      sortAt: Date.parse('2026-01-02T03:04:03.000Z'),
+      archived: true,
       selected: false,
     });
   }
@@ -347,6 +374,18 @@ function installPiScenarioAdapter(scenarioName: string): void {
         } else {
           selectWorkspaceSession(workspace, expected.id);
         }
+        return structuredClone(workspace);
+      }
+      if (command === 'unarchive_session') {
+        count(command);
+        const sessionId = requiredString(args, 'sessionId', command);
+        const session = workspace.projects
+          .flatMap((project) => project.sessions)
+          .find((candidate) => candidate.id === sessionId);
+        if (!session) {
+          throw new Error(`Unarchived unknown session ${sessionId}.`);
+        }
+        session.archived = false;
         return structuredClone(workspace);
       }
       if (command === 'ingest_telemetry') {
