@@ -36,11 +36,11 @@ defineExpose({
 <style scoped>
 .ui-button {
   min-width: 54px;
-  height: 26px;
+  height: var(--control-md);
   padding: 0 7px;
   border: 1px solid var(--border);
-  border-radius: 5px;
-  font-size: 11px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
 }
 
 .ui-button.secondary {
@@ -55,9 +55,9 @@ defineExpose({
 }
 
 .ui-button.md {
-  height: 30px;
+  height: var(--control-lg);
   padding: 0 10px;
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .ui-button:hover,

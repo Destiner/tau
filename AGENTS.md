@@ -39,6 +39,7 @@ Install Playwright once with `bun x playwright install chromium webkit`.
 
 ## Documentation
 
+- `docs/design-tokens.md` - Token semantics and the control height, type, and radius scales.
 - `docs/extensions.md` - Extension support matrix, runtime lifetime, and session replacement behavior.
 - `docs/observability.md` - Telemetry storage, privacy limits, issue reports, and optional OTLP export.
 - `docs/quality.md` - Product principles and the verification rubric for all UI work.

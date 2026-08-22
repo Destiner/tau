@@ -43,11 +43,11 @@ defineExpose({
 <style scoped>
 .ui-input {
   width: 100%;
-  border-radius: 5px;
+  border-radius: var(--radius-md);
   outline: 0;
   background: var(--canvas);
   color: var(--text);
-  line-height: 1.45;
+  line-height: var(--leading-ui);
 }
 
 .ui-input:focus {
@@ -67,19 +67,18 @@ defineExpose({
 }
 
 .ui-input[data-variant='bordered'] {
-  height: 30px;
+  height: var(--control-lg);
   padding: 5px 7px;
   border: 1px solid var(--border);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .ui-input[data-variant='mono'] {
-  height: 34px;
+  height: var(--control-lg);
   padding: 0 9px;
   border: 1px solid var(--border);
-  border-radius: 6px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .ui-input[data-variant='bare'] {
@@ -89,6 +88,6 @@ defineExpose({
   padding: 2px 5px;
   border: 0;
   background: transparent;
-  font-size: 13px;
+  font-size: var(--text-md);
 }
 </style>

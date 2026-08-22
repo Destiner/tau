@@ -46,35 +46,36 @@ withDefaults(
   flex: none;
   padding: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   place-items: center;
   background: transparent;
   color: var(--muted);
 }
 
 .ui-icon-button[data-size='lg'] {
-  width: 28px;
-  height: 28px;
+  width: var(--control-lg);
+  height: var(--control-lg);
+  border-radius: var(--radius-md);
   font-size: 16px;
 }
 
 .ui-icon-button[data-size='md'] {
-  width: 22px;
-  height: 22px;
+  width: var(--control-md);
+  height: var(--control-md);
+  border-radius: var(--radius-md);
   font-size: 12px;
 }
 
 .ui-icon-button[data-size='sm'] {
-  width: 20px;
-  height: 20px;
+  width: var(--control-sm);
+  height: var(--control-sm);
   font-size: 15px;
 }
 
 .ui-icon-button[data-size='xs'] {
-  width: 16px;
-  height: 16px;
+  width: var(--control-xs);
+  height: var(--control-xs);
   padding: 2px;
-  border-radius: 3px;
   font-size: 10px;
 }
 

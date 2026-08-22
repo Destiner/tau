@@ -59,7 +59,7 @@ withDefaults(
   padding: 8px;
   transform: translateX(-50%);
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: var(--radius-lg);
   background: var(--panel-raised);
   box-shadow: 0 14px 40px var(--shadow-strong);
 }

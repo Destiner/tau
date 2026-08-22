@@ -107,15 +107,15 @@ function handleChange(event: Event): void {
   grid-area: field;
   width: auto;
   min-width: 0;
-  height: 22px;
+  height: var(--control-sm);
   padding: 0 24px 0 5px;
   overflow: hidden;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   outline: 0;
   background: transparent;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   text-overflow: ellipsis;
   appearance: none;
   field-sizing: content;

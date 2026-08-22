@@ -42,12 +42,12 @@ defineExpose({
   width: 100%;
   padding: 5px 7px;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-md);
   outline: 0;
   background: var(--canvas);
   color: var(--text);
-  font-size: 12px;
-  line-height: 1.45;
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
 }
 
 .ui-textarea:focus {
