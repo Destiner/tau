@@ -598,7 +598,7 @@ function isTitlebarControl(target: EventTarget | null): boolean {
 /* stylelint-disable-next-line no-descending-specificity */
 .project-toggle svg {
   flex: none;
-  width: 13px;
+  width: 11px;
   transform: translateY(1px);
   color: var(--muted);
 }

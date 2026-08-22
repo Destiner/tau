@@ -156,14 +156,9 @@ function open(entry: ArchivedSessionEntry): void {
   gap: 4px;
 }
 
-/* The expanded chevron points down and rides the label's optical line;
- * collapsed it points sideways, where that offset would skew it. */
+/* The expanded chevron points down; collapsed it points sideways. */
 .group-head svg {
   width: 10px;
-}
-
-.group-head[aria-expanded='true'] svg {
-  transform: translateY(2px);
 }
 
 .row {
