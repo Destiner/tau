@@ -67,6 +67,7 @@
         />
         <ComposerBar
           v-else
+          ref="composerBar"
           :header-element="() => sessionHeader?.header"
           @send="handleComposerSend"
         />

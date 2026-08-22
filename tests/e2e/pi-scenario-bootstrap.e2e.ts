@@ -13,6 +13,8 @@ test('boots the real app into a deterministic saved session', async ({
 
   const composer = page.getByRole('textbox', { name: 'Message Pi' });
   await expect(composer).toBeEnabled();
+  // An opened session is ready to be typed into without a click first.
+  await expect(composer).toBeFocused();
   await expect(page.getByRole('combobox', { name: 'Model' })).toHaveValue(
     'fixture/alpha',
   );
