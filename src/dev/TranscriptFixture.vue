@@ -46,12 +46,11 @@ declare global {
  * one that does not fill the viewport cannot scroll, so anything the
  * virtualizer asks the element to do is silently clamped.
  */
-const initialCount = Number(
-  new URLSearchParams(window.location.search).get('count') ?? '',
-);
+const requestedCount = new URLSearchParams(window.location.search).get('count');
+const initialCount = Number(requestedCount);
 const messages = ref(
   createLongTranscript(
-    Number.isFinite(initialCount) && initialCount >= 0
+    requestedCount && Number.isFinite(initialCount) && initialCount >= 0
       ? initialCount
       : undefined,
   ),
