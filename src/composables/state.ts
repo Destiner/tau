@@ -476,11 +476,6 @@ const canCompose = computed(() => {
     : controller.ready;
 });
 
-/** An opened archived session stays archived until the reader sends. */
-const activeSessionArchived = computed(
-  () => activeSession.value?.archived === true,
-);
-
 const sessionTitle = computed(() => {
   const controller = activeController.value;
   return (
@@ -1213,7 +1208,6 @@ export {
   currentModelId,
   currentEffort,
   canDraft,
-  activeSessionArchived,
   sessionLoading,
   canCompose,
   sessionTitle,

@@ -27,13 +27,13 @@ test('reviews, opens, and unarchives an archived session', async ({ page }) => {
   await expect(row).toContainText('alpha');
 
   // Opening browses the transcript without resurrecting the session: the
-  // banner names the archive state and the composer stays live for sending,
-  // which is what would restore the session.
+  // record stays archived and only a send restores it.
   await row.locator('.copy').click();
-  await expect(page.locator('.archived-banner')).toContainText(
-    'This session is archived',
-  );
   await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
+
+  // The opened session is highlighted in the archived list, same as the
+  // active session in the project lists.
+  await expect(row).toHaveClass(/selected/);
 
   // The explicit action restores the session into its project's own list.
   await row.hover();

@@ -59,13 +59,6 @@
         v-if="!sessionLoading && !activeExtensionDialog"
         class="composer-area"
       >
-        <div
-          v-if="activeSessionArchived"
-          class="archived-banner"
-        >
-          <UiIcon name="archive" />
-          <span>This session is archived — sending a message restores it.</span>
-        </div>
         <ComposerBar
           ref="composerBar"
           :header-element="() => sessionHeader?.header"
@@ -107,7 +100,6 @@ import ProjectSidebar from './components/ProjectSidebar.vue';
 import RemoteDialog from './components/RemoteDialog.vue';
 import SessionHeader from './components/SessionHeader.vue';
 import TranscriptView from './components/TranscriptView.vue';
-import UiIcon from './components/ui/UiIcon.vue';
 import UiSpinner from './components/ui/UiSpinner.vue';
 import useTau from './composables/useTau';
 import { loadSidebarWidth } from './lib/sidebar-width';
@@ -132,7 +124,6 @@ const {
   activeProject,
   messages,
   canDraft,
-  activeSessionArchived,
   streaming,
   stopping,
   activeExtensionDialog,
@@ -462,23 +453,6 @@ function isTitlebarControl(target: EventTarget | null): boolean {
   padding: 6px 8px 8px 6px;
   border-top: 1px solid var(--border);
   background: var(--canvas);
-}
-
-.archived-banner {
-  display: flex;
-  align-items: center;
-  margin: 0 2px 6px;
-  padding: 5px 9px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  color: var(--muted);
-  font-size: 11px;
-  gap: 7px;
-}
-
-.archived-banner svg {
-  flex: none;
-  width: 12px;
 }
 
 .empty-session .composer-area,

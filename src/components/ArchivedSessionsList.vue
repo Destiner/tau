@@ -21,6 +21,11 @@
           v-for="entry in group.items"
           :key="entry.session.id"
           class="row"
+          :class="{
+            selected:
+              entry.projectPath === state.activeProjectPath &&
+              entry.session.id === state.activeSessionId,
+          }"
         >
           <button
             class="copy"
@@ -138,8 +143,8 @@ function open(entry: ArchivedSessionEntry): void {
   display: flex;
   align-items: center;
   width: 100%;
-  height: 26px;
-  margin-top: 10px;
+  height: 22px;
+  margin-top: 6px;
   padding: 0 5px;
   background: transparent;
   color: var(--muted);
@@ -149,15 +154,16 @@ function open(entry: ArchivedSessionEntry): void {
   gap: 4px;
 }
 
-/* The label's x-height sits low, so the chevron rides down with it. */
+/* A collapsed chevron points down and needs to ride the label's optical
+ * line; expanded it points sideways, where that offset would skew it. */
 .group-head svg {
   width: 10px;
-  transform: translateY(2px);
+  transform: translateY(1px);
   transition: transform 120ms ease;
 }
 
 .group-head svg.expanded {
-  transform: translateY(2px) rotate(90deg);
+  transform: rotate(90deg);
 }
 
 .row {
@@ -165,12 +171,15 @@ function open(entry: ArchivedSessionEntry): void {
   position: relative;
   align-items: stretch;
   min-height: var(--session-row-height, 34px);
-  margin-top: 1px;
   border-radius: 7px;
 }
 
 .row:hover {
   background: var(--hover);
+}
+
+.row.selected {
+  background: var(--selected);
 }
 
 .copy {
