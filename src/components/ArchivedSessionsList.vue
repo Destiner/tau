@@ -162,7 +162,7 @@ function open(entry: ArchivedSessionEntry): void {
 }
 
 .group-head svg.expanded {
-  transform: rotate(90deg) translateY(1px);
+  transform: rotate(90deg) translateY(2px);
 }
 
 .row {
