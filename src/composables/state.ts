@@ -355,13 +355,21 @@ const activeProject = computed(() =>
   ),
 );
 
-const activeSession = computed(() =>
-  activeProject.value
-    ? projectSessions(activeProject.value).find(
-        (session) => session.id === state.activeSessionId,
-      )
-    : undefined,
-);
+// An archived session is browsable: look past the per-project list, which
+// excludes archived rows. Ephemeral sessions are not workspace rows at all,
+// so they are searched first.
+const activeSession = computed(() => {
+  const project = activeProject.value;
+  if (!project) return undefined;
+  return (
+    state.ephemeralSessions.find(
+      (session) =>
+        session.id === state.activeSessionId &&
+        session.projectPath === project.path,
+    ) ??
+    project.sessions.find((session) => session.id === state.activeSessionId)
+  );
+});
 
 const activeController = computed(() =>
   state.controllers.find(
@@ -467,6 +475,11 @@ const canCompose = computed(() => {
     ? runtimeAvailable(activeProject.value)
     : controller.ready;
 });
+
+/** An opened archived session stays archived until the reader sends. */
+const activeSessionArchived = computed(
+  () => activeSession.value?.archived === true,
+);
 
 const sessionTitle = computed(() => {
   const controller = activeController.value;
@@ -684,9 +697,7 @@ function workspaceContainsSession(controller: SessionController): boolean {
   return (
     state.workspace?.projects
       .find((project) => project.path === controller.projectPath)
-      ?.sessions.some(
-        (session) => session.id === controller.sessionId && !session.archived,
-      ) === true
+      ?.sessions.some((session) => session.id === controller.sessionId) === true
   );
 }
 
@@ -1202,6 +1213,7 @@ export {
   currentModelId,
   currentEffort,
   canDraft,
+  activeSessionArchived,
   sessionLoading,
   canCompose,
   sessionTitle,

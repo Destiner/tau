@@ -326,14 +326,15 @@ describe('a workflow phase Pi hands back', () => {
       expect(controller.sessionId).toBe(PHASE_SESSION.id);
       expect(controller.status).toBe(UNAVAILABLE);
     });
-    // The registry still hides the row, so the ephemeral row is the only way
-    // back to a session Pi is running: it must survive.
-    expect(visibleSessions(tau).map((session) => session.id)).toContain(
+    // The registry still hides the row from the project list, but the
+    // archived list now carries the record, so the session stays reachable
+    // without an emergency ephemeral row.
+    expect(visibleSessions(tau).map((session) => session.id)).not.toContain(
       PHASE_SESSION.id,
     );
-    expect(tau.state.ephemeralSessions.map((session) => session.id)).toContain(
-      PHASE_SESSION.id,
-    );
+    expect(
+      tau.archivedSessionEntries.value.map((entry) => entry.session.id),
+    ).toContain(PHASE_SESSION.id);
     tau.dispose();
   });
 });

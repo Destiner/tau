@@ -429,7 +429,7 @@ fn select_remote_session(remote: &mut RemoteProjectRecord, session_id: &str) -> 
     if !remote
         .sessions
         .iter()
-        .any(|session| session.id == session_id && !session.archived)
+        .any(|session| session.id == session_id)
     {
         return Err("The selected session is not available in Tau.".into());
     }
@@ -441,7 +441,7 @@ fn select_local_session(registry: &mut TauSessionRegistry, session_id: &str) -> 
     if !registry
         .sessions
         .iter()
-        .any(|session| session.id == session_id && !session.archived)
+        .any(|session| session.id == session_id)
     {
         return Err("The selected session is not available in Tau.".into());
     }
@@ -1268,10 +1268,10 @@ mod tests {
             false,
         );
         assert!(remote.sessions[0].archived);
-        assert_eq!(
-            select_remote_session(&mut remote, "phase"),
-            Err("The selected session is not available in Tau.".to_string())
-        );
+        // An archived session stays browsable: opening it from the archived
+        // list selects the record without unarchiving it.
+        select_remote_session(&mut remote, "phase").expect("select archived session");
+        assert_eq!(remote.active_session_id, "phase");
 
         upsert_remote_session(
             &mut remote,
@@ -1296,7 +1296,8 @@ mod tests {
         };
         upsert_local_session(&mut local, "phase".into(), "Monitor".into(), false);
         assert!(local.sessions[0].archived);
-        assert!(select_local_session(&mut local, "phase").is_err());
+        select_local_session(&mut local, "phase").expect("select archived session");
+        assert_eq!(local.active_session_id, "phase");
         upsert_local_session(&mut local, "phase".into(), "Monitor".into(), true);
         assert!(!local.sessions[0].archived);
         select_local_session(&mut local, "phase").expect("select the adopted session");

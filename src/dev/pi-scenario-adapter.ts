@@ -156,9 +156,9 @@ const REQUIRED_NATIVE_COUNTS = {
   },
   'archived-sessions-review': {
     load_workspace: 1,
-    read_model_scope: 1,
-    register_session: 1,
-    set_active_session: 1,
+    read_model_scope: 2,
+    register_session: 2,
+    set_active_session: 3,
     unarchive_session: 1,
   },
   'saved-session-unacknowledged-abort': {
@@ -484,7 +484,8 @@ function startPiArgs(args: Record<string, unknown>): StartPiArgs {
   if (
     value.sessionPath !== null &&
     value.sessionPath !== SESSION_PATH &&
-    value.sessionPath !== BACKUP_SESSION.path
+    value.sessionPath !== BACKUP_SESSION.path &&
+    value.sessionPath !== ARCHIVED_SESSION.path
   ) {
     throw new Error('start_pi.sessionPath must identify a fixture session.');
   }
@@ -526,10 +527,15 @@ function registerSessionArgs(
     'register_session.sessionName',
   );
   // A session Pi hands over must be registered as adopted, or Tau cannot show
-  // a phase session again once its row has been archived.
+  // a phase session again once its row has been archived. Opening an already
+  // archived session is the exception: browsing must not resurrect it.
   requireEqual(
     String(value.adopted),
-    String(expected.id !== SESSION_ID && expected.id !== BACKUP_SESSION.id),
+    String(
+      expected.id !== SESSION_ID &&
+        expected.id !== BACKUP_SESSION.id &&
+        expected.id !== ARCHIVED_SESSION.id,
+    ),
     'register_session.adopted',
   );
   return value;
@@ -582,6 +588,10 @@ function expectedNativeSession(
     if (!expected) throw new Error(`${command} ran too many times.`);
     return expected;
   }
+  if (scenarioName === 'archived-sessions-review') {
+    // Opening the archived session selects its record without adopting it.
+    return invocation >= 2 ? ARCHIVED_SESSION : MAIN_SESSION;
+  }
   return MAIN_SESSION;
 }
 
@@ -608,6 +618,12 @@ function scenarioRuntimeKey(
     return sessionPath === null ? 'phantom' : 'main';
   }
   if (count > 1) throw new Error('start_pi may only run once per session.');
+  if (
+    scenarioName === 'archived-sessions-review' &&
+    sessionPath === '/fixture/tau-project/session-archived.jsonl'
+  ) {
+    return 'archived';
+  }
   return 'main';
 }
 

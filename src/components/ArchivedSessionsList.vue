@@ -22,7 +22,12 @@
           :key="entry.session.id"
           class="row"
         >
-          <div class="copy">
+          <button
+            class="copy"
+            type="button"
+            :aria-label="`Open ${entry.session.title}`"
+            @click="() => open(entry)"
+          >
             <span class="name">{{ entry.session.title }}</span>
             <span class="meta">
               <span class="project">{{ entry.projectName }}</span>
@@ -31,7 +36,7 @@
                 <span class="model">{{ entry.session.model }}</span>
               </template>
             </span>
-          </div>
+          </button>
           <span class="time">{{ relativeTime(entry) }}</span>
           <UiIconButton
             class="unarchive"
@@ -58,7 +63,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 
-import type { ArchivedSessionEntry } from '../composables/state';
+import type {
+  ArchivedSessionEntry,
+  ProjectSummary,
+} from '../composables/state';
 import useTau from '../composables/useTau';
 import {
   groupArchivedByTime,
@@ -70,6 +78,7 @@ import UiIconButton from './ui/UiIconButton.vue';
 
 const {
   archivedSessionEntries,
+  selectSession,
   sessionLastUserMessageAt,
   relativeTimestamp,
   state,
@@ -96,13 +105,25 @@ function relativeTime(entry: ArchivedSessionEntry): string {
   );
 }
 
-function unarchive(entry: ArchivedSessionEntry): void {
-  const project = state.workspace?.projects.find(
-    (candidate) => candidate.path === entry.projectPath,
-  );
+function archivedProject(
+  entry: ArchivedSessionEntry,
+): ProjectSummary | undefined {
   // Every archived entry belongs to an imported project by construction;
   // the lookup only guards against a workspace swap mid-click.
+  return state.workspace?.projects.find(
+    (candidate) => candidate.path === entry.projectPath,
+  );
+}
+
+function unarchive(entry: ArchivedSessionEntry): void {
+  const project = archivedProject(entry);
   if (project) void unarchiveSession(project, entry.session);
+}
+
+/** Opening browses the transcript; only sending restores the session. */
+function open(entry: ArchivedSessionEntry): void {
+  const project = archivedProject(entry);
+  if (project) void selectSession(project, entry.session);
 }
 </script>
 
@@ -118,6 +139,7 @@ function unarchive(entry: ArchivedSessionEntry): void {
   align-items: center;
   width: 100%;
   height: 26px;
+  margin-top: 10px;
   padding: 0 5px;
   background: transparent;
   color: var(--muted);
@@ -127,13 +149,15 @@ function unarchive(entry: ArchivedSessionEntry): void {
   gap: 4px;
 }
 
+/* The label's x-height sits low, so the chevron rides down with it. */
 .group-head svg {
   width: 10px;
+  transform: translateY(2px);
   transition: transform 120ms ease;
 }
 
 .group-head svg.expanded {
-  transform: rotate(90deg);
+  transform: translateY(2px) rotate(90deg);
 }
 
 .row {
@@ -156,6 +180,8 @@ function unarchive(entry: ArchivedSessionEntry): void {
   justify-content: center;
   min-width: 0;
   padding: 3px 7px;
+  background: transparent;
+  text-align: left;
   gap: 2px;
 }
 

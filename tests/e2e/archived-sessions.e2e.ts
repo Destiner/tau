@@ -2,22 +2,17 @@ import { expect, test } from './fixtures';
 
 /**
  * The archived-sessions view is a workspace-wide review surface: the footer
- * toggle swaps the project list for a flat, time-grouped list, and unarchiving
- * returns the row to its project. Unarchiving is only offered for sessions
- * whose project Tau still has open — which, in this scenario, is all of them.
+ * toggle swaps the project list for a flat, time-grouped list, rows open
+ * read-only, and a session comes back either through the unarchive action or
+ * by sending it a message.
  */
 const scenarioUrl = '/?test-scenario=archived-sessions-review';
 
-test('toggles to the archived list and unarchives a session back into place', async ({
-  page,
-}) => {
+test('reviews, opens, and unarchives an archived session', async ({ page }) => {
   await page.goto(scenarioUrl);
   await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
 
-  const toggle = page.getByRole('button', {
-    name: 'Show archived sessions',
-  });
-  await toggle.click();
+  await page.getByRole('button', { name: 'Show archived sessions' }).click();
 
   // The view replaces the project list and groups by time; the fixture
   // session's fixed past date always lands it in "Older".
@@ -31,8 +26,16 @@ test('toggles to the archived list and unarchives a session back into place', as
   await expect(row).toContainText('Tau fixture');
   await expect(row).toContainText('alpha');
 
-  // The unarchive action reveals on hover and returns the session to the
-  // project's own list.
+  // Opening browses the transcript without resurrecting the session: the
+  // banner names the archive state and the composer stays live for sending,
+  // which is what would restore the session.
+  await row.locator('.copy').click();
+  await expect(page.locator('.archived-banner')).toContainText(
+    'This session is archived',
+  );
+  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
+
+  // The explicit action restores the session into its project's own list.
   await row.hover();
   await row
     .getByRole('button', { name: 'Unarchive Older archived work' })
