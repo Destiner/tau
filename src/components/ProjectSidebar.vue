@@ -479,7 +479,9 @@ function isTitlebarControl(target: EventTarget | null): boolean {
   left: 3px;
   width: 25px;
   height: 29px;
-  transform: translateY(-50%);
+
+  /* Centered on the row, then nudged onto the label's optical center. */
+  transform: translateY(calc(-50% + 1px));
   color: var(--muted);
   touch-action: none;
   place-items: center;
