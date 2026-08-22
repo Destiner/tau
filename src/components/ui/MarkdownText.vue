@@ -253,7 +253,10 @@ onBeforeUnmount(clearCopied);
 
 .markdown :deep(h1),
 .markdown :deep(h2),
-.markdown :deep(h3) {
+.markdown :deep(h3),
+.markdown :deep(h4),
+.markdown :deep(h5),
+.markdown :deep(h6) {
   margin: 1.2em 0 0.55em;
   line-height: 1.25;
 }
@@ -268,6 +271,65 @@ onBeforeUnmount(clearCopied);
 
 .markdown :deep(h3) {
   font-size: 1.08em;
+}
+
+/*
+ * Past the third level the size has run out, so the deeper headings are said
+ * with weight and colour instead: browser defaults shrink h5 and h6 below the
+ * body text they introduce.
+ */
+.markdown :deep(h4) {
+  font-size: 1em;
+  font-weight: 650;
+}
+
+.markdown :deep(h5) {
+  font-size: 0.95em;
+  font-weight: 600;
+}
+
+.markdown :deep(h6) {
+  color: var(--muted);
+  font-size: 0.9em;
+  font-weight: 600;
+}
+
+/*
+ * A heading that opens a section under another heading needs no gap for the
+ * text between them, because there is none.
+ */
+.markdown
+  :deep(:where(h1, h2, h3, h4, h5, h6) + :where(h1, h2, h3, h4, h5, h6)) {
+  margin-top: 0.6em;
+}
+
+/* A rule between sections, not the browser's inset 3D groove. */
+.markdown :deep(hr) {
+  margin: 1.2em 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+/* An image is held to the message column rather than widening it. */
+.markdown :deep(img) {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+/* Struck text has been withdrawn, so it recedes rather than only wearing a line. */
+.markdown :deep(del) {
+  color: var(--muted);
+}
+
+/* A key is a thing to press: agent output names shortcuts often enough. */
+.markdown :deep(kbd) {
+  padding: 0.1em 0.35em;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--sunk);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
 }
 
 .markdown :deep(code) {
@@ -350,9 +412,17 @@ onBeforeUnmount(clearCopied);
 }
 
 .markdown :deep(blockquote) {
-  padding-left: 12px;
+  padding-left: 14px;
   border-left: 2px solid var(--border);
   color: var(--muted);
+}
+
+/*
+ * A quote inside a quote is another rule beside the first, so it keeps the
+ * spacing of the block it sits in rather than the full block margin.
+ */
+.markdown :deep(blockquote blockquote) {
+  margin: 0.4em 0;
 }
 
 /*

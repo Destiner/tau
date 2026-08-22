@@ -46,6 +46,28 @@ const tableShowcase = `| Default | Left | Center | Right |
 | tau-desktop | /Users/someone/code/tau/src-tauri | filesystem, telemetry, ssh | 3,204 |
 | pi-runtime | /Users/someone/code/pi/packages/runtime | filesystem | 87 |`;
 
+/*
+ * The elements that had no rules of their own until the theme grew some:
+ * every heading level, a rule, a struck run, a key, nested quotes, and an
+ * image wider than the message column it has to stay inside.
+ */
+const longTailShowcase = `# Heading one
+## Heading two directly under it
+### Heading three
+#### Heading four
+##### Heading five
+###### Heading six
+
+A paragraph with ~~a struck run that recedes~~ and a shortcut: press <kbd>Cmd</kbd> + <kbd>K</kbd>.
+
+---
+
+> A quote, ruled rather than boxed.
+>
+> > And one nested inside it.
+
+![An image wider than the message column](data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%271200%27%20height%3D%27160%27%3E%3Crect%20width%3D%271200%27%20height%3D%27160%27%20fill%3D%27%236e757f%27%2F%3E%3C%2Fsvg%3E)`;
+
 function createLongTranscript(count = 5_000): TranscriptEntry[] {
   return Array.from({ length: count }, (_, index) => createMessage(index));
 }
@@ -67,21 +89,21 @@ Inspect selection, scrolling, keyboard behavior, window behavior, and perceived 
     return {
       id: 'fixture-markdown-showcase',
       kind: 'assistant',
-      text: `**Markdown showcase** — lists, task lists, and tables.\n\n${listShowcase}\n\n${tableShowcase}`,
+      text: `**Markdown showcase** — lists, task lists, and tables.\n\n${listShowcase}\n\n${tableShowcase}\n\n${longTailShowcase}`,
     };
   }
   if (index === 4_996) {
     return {
       id: 'fixture-markdown-showcase-user',
       kind: 'user',
-      text: `The same lists and tables in a user bubble:\n\n${listShowcase}\n\n${tableShowcase}`,
+      text: `The same markdown in a user bubble:\n\n${listShowcase}\n\n${tableShowcase}\n\n${longTailShowcase}`,
     };
   }
   if (index === 4_995) {
     return {
       id: 'fixture-markdown-showcase-thinking',
       kind: 'thinking',
-      text: `The same lists and tables at the thinking block's smaller size:\n\n${listShowcase}\n\n${tableShowcase}`,
+      text: `The same markdown at the thinking block's smaller size:\n\n${listShowcase}\n\n${tableShowcase}\n\n${longTailShowcase}`,
     };
   }
 

@@ -129,6 +129,49 @@ test('keeps a table header visible against the user bubble', async ({
   expect(header).not.toBe(bubbleBackground);
 });
 
+test('holds a wide image inside the message column', async ({ page }) => {
+  const showcase = page.locator(
+    '[data-message-id="fixture-markdown-showcase"]',
+  );
+  const image = showcase.locator('img');
+
+  // The fixture image is far wider than any message column, and an image left
+  // at its natural size would widen the transcript rather than scale into it.
+  await expect(image).toHaveJSProperty('naturalWidth', 1_200);
+  const [drawn, column] = await Promise.all([
+    image.boundingBox(),
+    showcase.locator('.markdown').first().boundingBox(),
+  ]);
+  expect(drawn?.width ?? 0).toBeLessThanOrEqual(column?.width ?? 0);
+  expect(drawn?.width ?? 0).toBeGreaterThan(0);
+});
+
+test('keeps the reader at the end when a row grows after it was measured', async ({
+  page,
+}) => {
+  const image = page
+    .locator('[data-message-id="fixture-markdown-showcase"] img')
+    .first();
+  await expect(image).toHaveJSProperty('complete', true);
+
+  // A row measured before its image decoded grows once it does, which moves
+  // the end away from a reader who never scrolled: growth is not leaving.
+  await expect
+    .poll(() => page.getByLabel('Tau transcript').evaluate(distanceFromEnd))
+    .toBeLessThan(2);
+});
+
+test('keeps a key and a rule through sanitizing', async ({ page }) => {
+  const showcase = page.locator(
+    '[data-message-id="fixture-markdown-showcase"]',
+  );
+
+  // Inline HTML the agent writes for a shortcut, and a themed `hr`: both are
+  // dropped by a sanitizer that does not allow them.
+  await expect(showcase.locator('kbd').first()).toHaveText('Cmd');
+  await expect(showcase.locator('hr')).toHaveCSS('border-top-width', '1px');
+});
+
 test('copies a code block from a button the block reveals on hover', async ({
   page,
 }) => {

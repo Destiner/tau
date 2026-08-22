@@ -187,6 +187,12 @@ const restored = recallScroll(props.sessionKey ?? '');
  */
 let following = restored?.following ?? true;
 
+/**
+ * The offset the last scroll was seen at, which is how a scroll the reader
+ * made is told apart from one the content caused.
+ */
+let lastScrollOffset = restored?.offset ?? 0;
+
 const rowVirtualizer = useVirtualizer(
   computed(() => {
     const messages = props.messages;
@@ -322,25 +328,40 @@ function scrollToEnd(): void {
 }
 
 /**
- * The end of the rows, or the end of the element when a prompt hangs below
- * them: an offset past the end is clamped to the live maximum, and unlike a
- * bare scrollTop write it is one the virtualizer knows about.
+ * The end of the transcript, asked for as an offset past it: it is clamped to
+ * the live maximum, and unlike a bare scrollTop write it is one the
+ * virtualizer knows about.
+ *
+ * The last row is not the end. The bottom padding, and a prompt when the
+ * session is waiting on an answer, sit below it, and aiming at the row leaves
+ * the reader short of both.
  */
 function scrollToLatest(): void {
   const element = transcript.value;
-  if (props.prompt && element) {
+  if (element) {
     rowVirtualizer.value.scrollToOffset(element.scrollHeight);
     return;
   }
   rowVirtualizer.value.scrollToEnd();
 }
 
+/**
+ * Leaving the end is something the reader does, not something that happens to
+ * them: a row that grows after it was measured — an image that has only just
+ * decoded — moves the end away from a reader who has not scrolled at all, and
+ * reading that as leaving would strand them a row short of everything that
+ * followed. Only a scroll back up gives up the end; scrolling down to it takes
+ * it up again.
+ */
 function handleScroll(): void {
   const element = transcript.value;
   if (!element) return;
-  following =
-    element.scrollHeight - element.scrollTop - element.clientHeight <=
-    followThreshold;
+
+  const offset = element.scrollTop;
+  const atEnd =
+    element.scrollHeight - offset - element.clientHeight <= followThreshold;
+  following = offset < lastScrollOffset ? atEnd : following || atEnd;
+  lastScrollOffset = offset;
 }
 
 function forwardPromptDraft(value: string): void {
