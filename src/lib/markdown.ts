@@ -1,7 +1,9 @@
 import purify from 'dompurify';
-import { marked } from 'marked';
+import { marked, type Tokens } from 'marked';
 
-marked.use({ gfm: true, breaks: true });
+import highlightCode from './highlight';
+
+marked.use({ gfm: true, breaks: true, renderer: { code: renderCode } });
 
 interface MarkdownOptions {
   /**
@@ -38,8 +40,14 @@ const FILE_PATH_ATTRIBUTE = 'data-tau-path';
 /** Marks the copy buttons this module writes, and the only ones a click copies. */
 const CODE_COPY_ATTRIBUTE = 'data-tau-copy';
 
+/** Names a wrapped block's language for the label its stylesheet draws. */
+const CODE_LANGUAGE_ATTRIBUTE = 'data-tau-lang';
+
 /** A fenced block, whose end is unambiguous because `pre` cannot nest. */
 const CODE_BLOCK = /<pre\b[^>]*>[\s\S]*?<\/pre>/g;
+
+/** The language a block was fenced with, as marked and Shiki both write it. */
+const CODE_LANGUAGE = /<code[^>]*\bclass="(?:[^"]*\s)?language-([^"\s]+)/;
 
 /*
  * The button lives inside sanitized HTML rather than in the component tree, so
@@ -79,24 +87,43 @@ function renderMarkdown(source: string, options: MarkdownOptions = {}): string {
   const parsed = options.inline
     ? marked.parseInline(source, { async: false })
     : marked.parse(source, { async: false });
-  // The attribute belongs to this module: text that arrives already carrying
-  // one cannot pass itself off as a file the app resolved.
+  // These attributes belong to this module: text that arrives already carrying
+  // one cannot pass itself off as something the app wrote about it.
   const html = purify.sanitize(parsed as string, {
-    FORBID_ATTR: [FILE_PATH_ATTRIBUTE, CODE_COPY_ATTRIBUTE],
+    FORBID_ATTR: [
+      FILE_PATH_ATTRIBUTE,
+      CODE_COPY_ATTRIBUTE,
+      CODE_LANGUAGE_ATTRIBUTE,
+    ],
   });
   const linked = options.basePath ? linkFilePaths(html) : html;
   return options.inline ? linked : addCodeCopyButtons(linked);
 }
 
+/**
+ * Highlights a fenced block, or leaves marked to render it as it always has:
+ * a language we hold no grammar for is still perfectly readable code.
+ */
+function renderCode(token: Tokens.Code): string | false {
+  if (!token.lang) return false;
+  // marked's own output ends a block with a newline, and a block copied out of
+  // the transcript should still end in one.
+  const code = `${token.text.replace(/\n$/, '')}\n`;
+  return highlightCode(code, token.lang) ?? false;
+}
+
 /** Gives every fenced block a copy button, positioned against the wrapper so
- * that scrolling a wide block sideways does not carry the button off. */
+ * that scrolling a wide block sideways does not carry the button off. The
+ * language rides along on the wrapper because the label is drawn from it. */
 function addCodeCopyButtons(html: string): string {
   CODE_BLOCK.lastIndex = 0;
-  return html.replace(
-    CODE_BLOCK,
-    (block) =>
-      `<div class="code-block">${block}<button type="button" class="code-copy" ${CODE_COPY_ATTRIBUTE} aria-label="Copy code">${COPY_ICON}${COPIED_ICON}</button></div>`,
-  );
+  return html.replace(CODE_BLOCK, (block) => {
+    const language = CODE_LANGUAGE.exec(block)?.[1];
+    const label = language
+      ? ` ${CODE_LANGUAGE_ATTRIBUTE}="${escapeHtmlAttribute(language)}"`
+      : '';
+    return `<div class="code-block"${label}>${block}<button type="button" class="code-copy" ${CODE_COPY_ATTRIBUTE} aria-label="Copy code">${COPY_ICON}${COPIED_ICON}</button></div>`;
+  });
 }
 
 /** Rewrites the file paths in rendered markup as links, leaving markup alone. */
@@ -271,6 +298,7 @@ export type { MarkdownOptions, FileReference, PathOpenGesture };
 
 export {
   CODE_COPY_ATTRIBUTE,
+  CODE_LANGUAGE_ATTRIBUTE,
   FILE_PATH_ATTRIBUTE,
   addCodeCopyButtons,
   renderMarkdown,

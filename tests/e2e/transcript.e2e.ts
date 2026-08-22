@@ -172,6 +172,55 @@ test('keeps a key and a rule through sanitizing', async ({ page }) => {
   await expect(showcase.locator('hr')).toHaveCSS('border-top-width', '1px');
 });
 
+test('highlights a fenced block in both schemes at once', async ({ page }) => {
+  const block = page
+    .locator('[data-message-id="fixture-markdown-showcase"] .code-block')
+    .first();
+
+  await expect(block.locator('pre')).toHaveClass(/shiki/);
+
+  // A comment is a scope of its own, and the one place the palette leans on
+  // italics: a grammar that failed to load would leave the block one colour.
+  const comment = block.locator('span', { hasText: 'A comment' }).last();
+  await expect(comment).toHaveCSS('font-style', 'italic');
+
+  const light = await block.evaluate(tokenColors);
+  expect(light.length).toBeGreaterThan(3);
+
+  // Both schemes ride along on every token, so the dark palette is a repaint
+  // rather than another pass over the markdown.
+  await page.emulateMedia({ colorScheme: 'dark' });
+  const dark = await block.evaluate(tokenColors);
+  expect(dark.length).toBeGreaterThan(3);
+  expect(dark).not.toEqual(light);
+  await page.emulateMedia({ colorScheme: 'light' });
+});
+
+test('names a block the language it was fenced with', async ({ page }) => {
+  const showcase = page.locator(
+    '[data-message-id="fixture-markdown-showcase"]',
+  );
+  const block = showcase.locator('.code-block').first();
+
+  // The tag as written, not the grammar it resolves to: `console` is the label
+  // even though a shell grammar draws it.
+  await expect(block).toHaveAttribute('data-tau-lang', 'ts');
+  await expect(
+    showcase.locator('.code-block[data-tau-lang="console"]'),
+  ).toHaveCount(1);
+  // A fence that named no language has nothing to label.
+  await expect(
+    showcase.locator('.code-block:not([data-tau-lang])'),
+  ).toHaveCount(1);
+
+  // The label keeps the copy button's terms: shown to a reader who is pointing
+  // at the block, and out of the way otherwise.
+  await expect.poll(() => block.evaluate(labelOpacity)).toBe('0');
+  await block.hover();
+  await expect.poll(() => block.evaluate(labelOpacity)).not.toBe('0');
+  expect(await block.evaluate(labelContent)).toContain('ts');
+});
+
 test('copies a code block from a button the block reveals on hover', async ({
   page,
 }) => {
@@ -608,6 +657,20 @@ async function switchSession(page: Page, key: string): Promise<void> {
 
 function backgroundColor(element: HTMLElement): string {
   return getComputedStyle(element).backgroundColor;
+}
+
+/** The distinct colours a highlighted block's tokens are drawn in. */
+function tokenColors(element: HTMLElement): string[] {
+  const spans = Array.from(element.querySelectorAll<HTMLElement>('pre span'));
+  return [...new Set(spans.map((span) => getComputedStyle(span).color))];
+}
+
+function labelOpacity(element: HTMLElement): string {
+  return getComputedStyle(element, '::before').opacity;
+}
+
+function labelContent(element: HTMLElement): string {
+  return getComputedStyle(element, '::before').content;
 }
 
 function distanceFromEnd(element: HTMLElement): number {

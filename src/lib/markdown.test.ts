@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  CODE_LANGUAGE_ATTRIBUTE,
   addCodeCopyButtons,
   isPathOpenGesture,
   isWebUrl,
@@ -253,5 +254,24 @@ describe('code copy buttons', () => {
     const html = addCodeCopyButtons(block);
     expect(html).toContain(block);
     expect(html.match(/data-tau-copy/g)).toHaveLength(1);
+  });
+
+  it('carries the fenced language out to the wrapper the label is drawn on', () => {
+    // The class is what marked writes, and what a highlighted block keeps.
+    expect(
+      addCodeCopyButtons(
+        '<pre><code class="language-rust">fn main() {}\n</code></pre>',
+      ),
+    ).toContain(`<div class="code-block" ${CODE_LANGUAGE_ATTRIBUTE}="rust">`);
+    expect(
+      addCodeCopyButtons(
+        '<pre class="shiki"><code class="shiki-code language-ts"><span>a</span></code></pre>',
+      ),
+    ).toContain(`<div class="code-block" ${CODE_LANGUAGE_ATTRIBUTE}="ts">`);
+
+    // A fence that named no language has nothing to label.
+    expect(addCodeCopyButtons('<pre><code>plain\n</code></pre>')).toContain(
+      '<div class="code-block">',
+    );
   });
 });

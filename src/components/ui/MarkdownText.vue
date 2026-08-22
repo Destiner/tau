@@ -347,12 +347,58 @@ onBeforeUnmount(clearCopied);
   border: 1px solid var(--border);
   border-radius: 9px;
   background: var(--sunk);
+  tab-size: 2;
+}
+
+/*
+ * A highlighted block carries both schemes at once, as a custom property per
+ * token, and the scheme in use is chosen here rather than by re-rendering the
+ * markdown. Shiki's own backgrounds are left unused: the block keeps the sunk
+ * surface it has on whichever surface it sits.
+ */
+.markdown :deep(.shiki),
+.markdown :deep(.shiki span) {
+  color: var(--tau-code-light);
+  font-style: var(--tau-code-light-font-style, normal);
+  font-weight: var(--tau-code-light-font-weight, inherit);
+  text-decoration: var(--tau-code-light-text-decoration, none);
+}
+
+@media (prefers-color-scheme: dark) {
+  .markdown :deep(.shiki),
+  .markdown :deep(.shiki span) {
+    color: var(--tau-code-dark);
+    font-style: var(--tau-code-dark-font-style, normal);
+    font-weight: var(--tau-code-dark-font-weight, inherit);
+    text-decoration: var(--tau-code-dark-text-decoration, none);
+  }
 }
 
 /* The button is placed against the wrapper, not the block, so that scrolling a
  * wide block sideways leaves it where it is. */
 .markdown :deep(.code-block) {
   position: relative;
+}
+
+/*
+ * The language the block was fenced with, kept beside the copy button and shown
+ * on the same terms: what the block is written in is worth a glance, not a
+ * permanent badge over its first line.
+ */
+.markdown :deep(.code-block[data-tau-lang]::before) {
+  content: attr(data-tau-lang);
+  position: absolute;
+  top: 10px;
+  right: 30px;
+  opacity: 0;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.markdown :deep(.code-block[data-tau-lang]:hover::before) {
+  opacity: 0.7;
 }
 
 .markdown :deep(.code-copy) {

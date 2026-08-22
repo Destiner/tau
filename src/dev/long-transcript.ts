@@ -68,6 +68,49 @@ A paragraph with ~~a struck run that recedes~~ and a shortcut: press <kbd>Cmd</k
 
 ![An image wider than the message column](data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%271200%27%20height%3D%27160%27%3E%3Crect%20width%3D%271200%27%20height%3D%27160%27%20fill%3D%27%236e757f%27%2F%3E%3C%2Fsvg%3E)`;
 
+/*
+ * Fenced blocks in the languages the highlighter holds a grammar for, plus the
+ * two cases it does not highlight: a language it has no grammar for, and a
+ * fence that named none. The label a block wears is the tag as written, which
+ * is why one of these is fenced `console` rather than `bash`.
+ */
+const codeShowcase = `\`\`\`ts
+export async function load(id: string): Promise<Session | null> {
+  // A comment, italic in both schemes
+  const session = await invoke<Session>('load_session', { id });
+  return session ?? null;
+}
+\`\`\`
+
+\`\`\`rust
+#[tauri::command]
+fn load_session(id: &str) -> Result<Session, String> {
+    let path = format!("sessions/{id}.jsonl");
+    std::fs::read_to_string(path).map_err(|error| error.to_string())
+}
+\`\`\`
+
+\`\`\`console
+$ bun run test --reporter=dot 2>&1 | tail -3
+\`\`\`
+
+\`\`\`json
+{ "sessions": [{ "id": "tau", "archived": false, "turns": 12 }] }
+\`\`\`
+
+\`\`\`diff
+-const idle = 30_000;
++const idle = 60_000;
+\`\`\`
+
+\`\`\`swift
+let unknownToTheHighlighter = 1 < 2
+\`\`\`
+
+\`\`\`
+A fence that named no language at all.
+\`\`\``;
+
 function createLongTranscript(count = 5_000): TranscriptEntry[] {
   return Array.from({ length: count }, (_, index) => createMessage(index));
 }
@@ -89,21 +132,21 @@ Inspect selection, scrolling, keyboard behavior, window behavior, and perceived 
     return {
       id: 'fixture-markdown-showcase',
       kind: 'assistant',
-      text: `**Markdown showcase** — lists, task lists, and tables.\n\n${listShowcase}\n\n${tableShowcase}\n\n${longTailShowcase}`,
+      text: `**Markdown showcase** — lists, task lists, and tables.\n\n${listShowcase}\n\n${tableShowcase}\n\n${longTailShowcase}\n\n${codeShowcase}`,
     };
   }
   if (index === 4_996) {
     return {
       id: 'fixture-markdown-showcase-user',
       kind: 'user',
-      text: `The same markdown in a user bubble:\n\n${listShowcase}\n\n${tableShowcase}\n\n${longTailShowcase}`,
+      text: `The same markdown in a user bubble:\n\n${listShowcase}\n\n${tableShowcase}\n\n${longTailShowcase}\n\n${codeShowcase}`,
     };
   }
   if (index === 4_995) {
     return {
       id: 'fixture-markdown-showcase-thinking',
       kind: 'thinking',
-      text: `The same markdown at the thinking block's smaller size:\n\n${listShowcase}\n\n${tableShowcase}\n\n${longTailShowcase}`,
+      text: `The same markdown at the thinking block's smaller size:\n\n${listShowcase}\n\n${tableShowcase}\n\n${longTailShowcase}\n\n${codeShowcase}`,
     };
   }
 
