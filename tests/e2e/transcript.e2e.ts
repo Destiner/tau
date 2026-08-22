@@ -98,12 +98,22 @@ test('copies a code block from a button the block reveals on hover', async ({
   const message = page.locator('[data-message-id="fixture-assistant-4999"]');
   const block = message.locator('.code-block');
   const copy = block.getByRole('button', { name: 'Copy code' });
+  const box = (await block.boundingBox()) ?? {
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+  };
 
   await expect(block.locator('pre')).toContainText('const messageIndex = 4999');
   await expect(copy).toHaveCSS('opacity', '0');
 
   await block.hover();
-  await expect(copy).not.toHaveCSS('opacity', '0');
+  await expect(copy).toHaveCSS('opacity', '0.45');
+
+  // Pointing at the button itself is what takes it to full strength.
+  await copy.hover();
+  await expect(copy).toHaveCSS('opacity', '1');
 
   await copy.click();
   await expect
@@ -111,7 +121,10 @@ test('copies a code block from a button the block reveals on hover', async ({
     .toEqual(['const messageIndex = 4999;\nconsole.log({ messageIndex });\n']);
   await expect(copy).toHaveAttribute('data-copied', 'true');
 
-  // The acknowledgement is temporary, and leaves the button as it was.
+  // The acknowledgement belongs to the hovered block: leaving hides the button
+  // even while it is still showing, and it is temporary in any case.
+  await page.mouse.move(box.x + box.width / 2, box.y - 40);
+  await expect(copy).toHaveCSS('opacity', '0');
   await expect(copy).not.toHaveAttribute('data-copied', 'true', {
     timeout: 3_000,
   });

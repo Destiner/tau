@@ -255,9 +255,16 @@ onBeforeUnmount(clearCopied);
   opacity: 0.45;
 }
 
-.markdown :deep(.code-copy:hover),
-.markdown :deep(.code-copy:focus-visible),
-.markdown :deep(.code-copy[data-copied]) {
+/*
+ * Each of these has to carry the block as well: `.code-block:hover .code-copy`
+ * above is the more specific selector, so a bare `.code-copy:hover` would lose
+ * to it and the icon would never brighten. The copied state is hover-scoped
+ * for the same reason it is revealed by hover — the button belongs to the
+ * block under the pointer, and leaving takes the acknowledgement with it.
+ */
+.markdown :deep(.code-block .code-copy:focus-visible),
+.markdown :deep(.code-block:hover .code-copy:hover),
+.markdown :deep(.code-block:hover .code-copy[data-copied]) {
   outline: 0;
   opacity: 1;
 }
