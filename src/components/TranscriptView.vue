@@ -396,8 +396,9 @@ defineExpose({ scrollToEnd });
 
 .thinking-label {
   color: var(--muted);
-  font-size: 11px;
-  font-weight: 500;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+  line-height: 1.2;
 }
 
 .thinking-block .markdown {
