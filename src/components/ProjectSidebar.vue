@@ -42,7 +42,7 @@
             @click="() => toggleProject(project)"
           >
             <UiStatusDot
-              v-if="project.collapsed"
+              v-if="projectIndicator(project)"
               class="project-status"
               :tone="projectIndicator(project) || undefined"
               :label="indicatorLabel(projectIndicator(project))"
