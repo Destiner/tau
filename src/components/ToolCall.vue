@@ -18,7 +18,7 @@
               <UiIcon
                 v-if="expandable"
                 class="tool-disclosure"
-                name="chevron"
+                :name="expanded ? 'chevron-up' : 'chevron-down'"
               />
               <span
                 v-if="entry.toolRunning"
@@ -179,7 +179,6 @@ const expandable = computed(() =>
 /* The chevron points at what the click does: down to open, up to close. */
 .tool-disclosure {
   flex: none;
-  transform: rotate(90deg);
   transition: transform 120ms ease;
   opacity: 0;
   color: var(--faint);
@@ -189,10 +188,6 @@ const expandable = computed(() =>
 .tool-header:hover .tool-disclosure,
 .tool-header:focus-visible .tool-disclosure {
   opacity: 1;
-}
-
-.tool-call.expanded .tool-disclosure {
-  transform: rotate(-90deg);
 }
 
 .tool-details {

@@ -45,12 +45,13 @@ const CODE_BLOCK = /<pre\b[^>]*>[\s\S]*?<\/pre>/g;
  * The button lives inside sanitized HTML rather than in the component tree, so
  * its icons are markup here instead of a `UiIcon`. Both are drawn and the
  * stylesheet picks one, which keeps a copy down to a single attribute write.
+ * Phosphor regular paths, verbatim.
  */
 const COPY_ICON =
-  '<svg class="code-copy-idle" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3.5 6.5h10v10h-10zM6.5 6.5v-3h10v10h-3"/></svg>';
+  '<svg class="copy" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg>';
 
 const COPIED_ICON =
-  '<svg class="code-copy-done" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m4.5 10.5 4 4 7-8"/></svg>';
+  '<svg class="check" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg>';
 
 /**
  * A path embedded in prose, plus a `:line:column` tail. Whitespace ends these

@@ -273,18 +273,15 @@ onBeforeUnmount(clearCopied);
   display: block;
   width: 1em;
   height: 1em;
-  stroke-width: 1.6;
-  stroke-linecap: round;
-  stroke: currentcolor;
-  stroke-linejoin: round;
+  fill: currentcolor;
 }
 
-.markdown :deep(.code-copy .code-copy-done),
-.markdown :deep(.code-copy[data-copied] .code-copy-idle) {
+.markdown :deep(.code-copy .check),
+.markdown :deep(.code-copy[data-copied] .copy) {
   display: none;
 }
 
-.markdown :deep(.code-copy[data-copied] .code-copy-done) {
+.markdown :deep(.code-copy[data-copied] .check) {
   display: block;
 }
 

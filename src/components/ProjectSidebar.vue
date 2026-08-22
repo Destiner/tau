@@ -60,8 +60,7 @@
             />
             <span>{{ project.name }}</span>
             <UiIcon
-              name="chevron"
-              :class="{ expanded: !project.collapsed }"
+              :name="project.collapsed ? 'chevron-right' : 'chevron-down'"
             />
           </button>
           <UiIconButton
@@ -601,12 +600,7 @@ function isTitlebarControl(target: EventTarget | null): boolean {
   flex: none;
   width: 13px;
   transform: translateY(1px);
-  transition: transform 120ms ease;
   color: var(--muted);
-}
-
-.project-toggle svg.expanded {
-  transform: translateY(1px) rotate(90deg);
 }
 
 /* Nudged down with the chevron so both sit on the label's optical center. */

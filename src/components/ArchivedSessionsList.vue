@@ -12,8 +12,9 @@
       >
         <span>{{ group.label }}</span>
         <UiIcon
-          name="chevron"
-          :class="{ expanded: !closedGroups.has(group.label) }"
+          :name="
+            closedGroups.has(group.label) ? 'chevron-right' : 'chevron-down'
+          "
         />
       </button>
       <template v-if="!closedGroups.has(group.label)">
@@ -155,15 +156,14 @@ function open(entry: ArchivedSessionEntry): void {
   gap: 4px;
 }
 
-/* An expanded chevron points down and needs to ride the label's optical
- * line; collapsed it points sideways, where that offset would skew it. */
+/* The expanded chevron points down and rides the label's optical line;
+ * collapsed it points sideways, where that offset would skew it. */
 .group-head svg {
   width: 10px;
-  transition: transform 120ms ease;
 }
 
-.group-head svg.expanded {
-  transform: rotate(90deg) translateY(2px);
+.group-head[aria-expanded='true'] svg {
+  transform: translateY(2px);
 }
 
 .row {

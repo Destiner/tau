@@ -18,7 +18,7 @@
               <UiIcon
                 v-if="expandable"
                 class="skill-disclosure"
-                name="chevron"
+                :name="expanded ? 'chevron-up' : 'chevron-down'"
               />
             </span>
             <span class="skill-title">{{ entry.skillName || 'skill' }}</span>
@@ -143,8 +143,6 @@ const expandable = computed(() => Boolean(props.entry.text));
 
 .skill-disclosure {
   flex: none;
-  transform: rotate(90deg);
-  transition: transform 120ms ease;
   opacity: 0;
   color: var(--faint);
   font-size: 11px;
@@ -153,10 +151,6 @@ const expandable = computed(() => Boolean(props.entry.text));
 .skill-header:hover .skill-disclosure,
 .skill-header:focus-visible .skill-disclosure {
   opacity: 1;
-}
-
-.skill-invocation.expanded .skill-disclosure {
-  transform: rotate(-90deg);
 }
 
 .skill-details {
