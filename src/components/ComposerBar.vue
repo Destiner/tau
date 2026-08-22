@@ -350,4 +350,10 @@ defineExpose({ focus });
 .send-button {
   margin-left: auto;
 }
+
+/* Phosphor's stop and triangle read larger than the old glyphs at the same
+ * box size, so both are pulled in a touch inside the send/stop button. */
+.send-button svg {
+  font-size: 13px;
+}
 </style>
