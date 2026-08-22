@@ -12,7 +12,7 @@
 
     <div
       v-if="showingArchived"
-      class="archived-wrap"
+      class="sidebar-body archived-body"
       @pointerenter="holdSessionOrder"
       @pointerleave="releaseSessionOrder"
     >
@@ -21,7 +21,7 @@
     <div
       v-else
       ref="projectList"
-      class="project-list"
+      class="sidebar-body projects-body"
       @pointerenter="holdSessionOrder"
       @pointerleave="releaseSessionOrder"
     >
@@ -509,22 +509,19 @@ function isTitlebarControl(target: EventTarget | null): boolean {
   padding: 6px;
 }
 
-.project-list,
-.archived-wrap {
+/* Both sidebar bodies fill the space between titlebar and footer. The
+ * overflow boundary lives here, on the element directly under the sidebar:
+ * without it, a body's min-content height propagates up and stretches the
+ * sidebar instead of scrolling. */
+.sidebar-body {
   display: flex;
   flex: 1;
   flex-direction: column;
   min-height: 0;
-}
-
-/* The wrap sits between the sidebar and the scrolling list; without this,
- * the list's min-content height propagates up and stretches the sidebar
- * instead of scrolling. */
-.archived-wrap {
   overflow: hidden;
 }
 
-.project-list {
+.projects-body {
   padding: 6px;
   overflow: auto;
 }
