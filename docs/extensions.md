@@ -39,6 +39,12 @@ Pi hands out a session-opening context, `ExtensionCommandContext`, only to a com
 
 Stopping a runtime is what makes that state disappear. Reopening the session file restores the transcript, the marker entries, and the name, but not the handoff, so a phase that spans a user turn can complete in a process that has no way to open the session that comes next. Tau therefore keeps idle runtimes warm and releases only the least recently active ones past a limit, which covers the sessions a user moves between while a phase waits on them. A runtime lost with the app, with an SSH connection, or to that limit still leaves the workflow to be resumed by its own command.
 
+## Sessions Tau had archived
+
+A workflow resumed by its own command re-attaches to the phase session that is already on disk, which may be a session the user archived in the meantime. Registering that identity is Tau adopting a session Pi handed it, so the row comes back out of the archive: a session Tau is showing has to be one the user can select and return to.
+
+Adoption is limited to the identities Pi hands over — a replacement, the session a prompt just created, and the session an extension command leaves behind. Bootstraps and run-state polls only re-state a session Tau already opened, so a hidden session that keeps working does not put its row back on its own. Until Tau's registry agrees, the unregistered row stays in the sidebar, because it is the only handle on a session Pi is running.
+
 ## Sessions Pi never saved
 
 Pi buffers a session in memory and writes its file only once the session holds an assistant message, so a phase session cancelled before it answers is reported over RPC and exists nowhere else. Tau registers phase sessions as Pi reports them, because that is what puts a running phase in the sidebar, so such a session can outlive the runtime that held it as a row for a session that was never written. A local project lists the session directory and shows the row only once Pi writes it; a remote project lists what Tau registered, which is where the row survives.

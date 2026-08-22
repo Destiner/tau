@@ -48,6 +48,7 @@ interface RegisterSessionArgs {
   sessionId: string;
   sessionPath: string;
   sessionName: string;
+  adopted: boolean;
 }
 
 interface SetActiveSessionArgs {
@@ -432,11 +433,16 @@ function registerSessionArgs(
   args: Record<string, unknown>,
   expected: NativeSessionIdentity,
 ): RegisterSessionArgs {
+  const adopted = args.adopted;
+  if (typeof adopted !== 'boolean') {
+    throw new Error('register_session.adopted must be a boolean.');
+  }
   const value = {
     projectPath: requiredString(args, 'projectPath', 'register_session'),
     sessionId: requiredString(args, 'sessionId', 'register_session'),
     sessionPath: requiredString(args, 'sessionPath', 'register_session'),
     sessionName: requiredString(args, 'sessionName', 'register_session'),
+    adopted,
   };
   requireEqual(value.projectPath, PROJECT_PATH, 'register_session.projectPath');
   requireEqual(value.sessionId, expected.id, 'register_session.sessionId');
@@ -449,6 +455,13 @@ function registerSessionArgs(
     value.sessionName,
     expected.name,
     'register_session.sessionName',
+  );
+  // A session Pi hands over must be registered as adopted, or Tau cannot show
+  // a phase session again once its row has been archived.
+  requireEqual(
+    String(value.adopted),
+    String(expected.id !== SESSION_ID && expected.id !== BACKUP_SESSION.id),
+    'register_session.adopted',
   );
   return value;
 }

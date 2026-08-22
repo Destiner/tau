@@ -223,30 +223,15 @@ pub fn set_active_session(
         .ok_or_else(|| "The project is not imported in Tau.".to_string())?;
 
     if let Some(remote) = project.remote.as_mut() {
-        if !remote
-            .sessions
-            .iter()
-            .any(|session| session.id == session_id && !session.archived)
-        {
-            return Err("The selected session is not available in Tau.".into());
-        }
-        remote.active_session_id = session_id;
+        select_remote_session(remote, &session_id)?;
         projects.active_project_path = project_path;
         write_json_atomic(&project_registry_path()?, &projects)?;
         return snapshot(&projects);
     }
 
-    let session_dir = default_session_dir(&project_path)?;
-    let registry_path = session_dir.join(SESSION_REGISTRY_FILENAME);
+    let registry_path = local_registry_path(&project_path)?;
     let mut registry: TauSessionRegistry = read_json_or_default(&registry_path)?;
-    if !registry
-        .sessions
-        .iter()
-        .any(|session| session.id == session_id && !session.archived)
-    {
-        return Err("The selected session is not available in Tau.".into());
-    }
-    registry.active_session_id = session_id;
+    select_local_session(&mut registry, &session_id)?;
     projects.active_project_path = project_path;
     write_json_atomic(&registry_path, &registry)?;
     write_json_atomic(&project_registry_path()?, &projects)?;
@@ -277,8 +262,7 @@ pub fn archive_session(
         return snapshot(&projects);
     }
 
-    let session_dir = default_session_dir(&project_path)?;
-    let registry_path = session_dir.join(SESSION_REGISTRY_FILENAME);
+    let registry_path = local_registry_path(&project_path)?;
     let mut registry: TauSessionRegistry = read_json_or_default(&registry_path)?;
     archive_local_session(&mut registry, &session_id)?;
     write_json_atomic(&registry_path, &registry)?;
@@ -295,6 +279,10 @@ pub fn register_session(
     session_path: String,
     session_name: Option<String>,
     last_user_message_at: Option<u64>,
+    // Pi handing Tau this identity — a replacement or a materialized new
+    // session — is Tau adopting a session it is about to display, so the row
+    // has to exist and be reachable even if it was archived before.
+    adopted: Option<bool>,
 ) -> Result<WorkspaceSnapshot, String> {
     let _span = telemetry_context
         .as_ref()
@@ -302,6 +290,7 @@ pub fn register_session(
     if session_id.trim().is_empty() || session_id.len() > 256 {
         return Err("Pi returned an invalid session id.".into());
     }
+    let adopted = adopted.unwrap_or(false);
     let _write_guard = lock_storage_writes()?;
     let mut projects = load_project_registry()?;
     let project = projects
@@ -310,44 +299,81 @@ pub fn register_session(
         .find(|project| project.path == project_path)
         .ok_or_else(|| "The project is not imported in Tau.".to_string())?;
     if let Some(remote) = project.remote.as_mut() {
-        let name = session_name.unwrap_or_default();
-        let sort_at = last_user_message_at.unwrap_or_else(unix_timestamp_millis);
-        if let Some(session) = remote
-            .sessions
-            .iter_mut()
-            .find(|session| session.id == session_id)
-        {
-            session.path = session_path;
-            if let Some(timestamp) = last_user_message_at {
-                session.last_active = timestamp;
-                session.sort_at = timestamp;
-            } else if session.sort_at == 0 {
-                session.sort_at = sort_at;
-            }
-            if !name.is_empty() {
-                session.name = Some(name);
-            }
-        } else {
-            remote.sessions.push(RemoteSessionRecord {
-                id: session_id,
-                path: session_path,
-                name: (!name.is_empty()).then_some(name),
-                archived: false,
-                last_active: last_user_message_at.unwrap_or_default(),
-                sort_at,
-            });
-        }
+        upsert_remote_session(
+            remote,
+            session_id,
+            session_path,
+            session_name.unwrap_or_default(),
+            last_user_message_at,
+            adopted,
+        );
         write_json_atomic(&project_registry_path()?, &projects)?;
         return snapshot(&projects);
     }
 
-    let session_path = PathBuf::from(session_path);
-    let session_dir = session_path
-        .parent()
-        .ok_or_else(|| "Pi returned an invalid session path.".to_string())?;
-    let registry_path = session_dir.join(SESSION_REGISTRY_FILENAME);
+    if PathBuf::from(&session_path).parent().is_none() {
+        return Err("Pi returned an invalid session path.".into());
+    }
+    // The registry has to live where the snapshot reads it. Keying it off the
+    // session file's own folder loses every session Pi opened under another
+    // working directory, which registers a row nothing ever lists again.
+    let registry_path = local_registry_path(&project_path)?;
     let mut registry: TauSessionRegistry = read_json_or_default(&registry_path)?;
-    let name = session_name.unwrap_or_default();
+    upsert_local_session(
+        &mut registry,
+        session_id,
+        session_name.unwrap_or_default(),
+        adopted,
+    );
+    write_json_atomic(&registry_path, &registry)?;
+    snapshot(&projects)
+}
+
+fn upsert_remote_session(
+    remote: &mut RemoteProjectRecord,
+    session_id: String,
+    session_path: String,
+    name: String,
+    last_user_message_at: Option<u64>,
+    adopted: bool,
+) {
+    let sort_at = last_user_message_at.unwrap_or_else(unix_timestamp_millis);
+    if let Some(session) = remote
+        .sessions
+        .iter_mut()
+        .find(|session| session.id == session_id)
+    {
+        session.path = session_path;
+        if let Some(timestamp) = last_user_message_at {
+            session.last_active = timestamp;
+            session.sort_at = timestamp;
+        } else if session.sort_at == 0 {
+            session.sort_at = sort_at;
+        }
+        if !name.is_empty() {
+            session.name = Some(name);
+        }
+        if adopted {
+            session.archived = false;
+        }
+        return;
+    }
+    remote.sessions.push(RemoteSessionRecord {
+        id: session_id,
+        path: session_path,
+        name: (!name.is_empty()).then_some(name),
+        archived: false,
+        last_active: last_user_message_at.unwrap_or_default(),
+        sort_at,
+    });
+}
+
+fn upsert_local_session(
+    registry: &mut TauSessionRegistry,
+    session_id: String,
+    name: String,
+    adopted: bool,
+) {
     if let Some(session) = registry
         .sessions
         .iter_mut()
@@ -356,15 +382,40 @@ pub fn register_session(
         if !name.is_empty() {
             session.name = Some(name);
         }
-    } else {
-        registry.sessions.push(TauSessionRecord {
-            id: session_id,
-            name: (!name.is_empty()).then_some(name),
-            archived: false,
-        });
+        if adopted {
+            session.archived = false;
+        }
+        return;
     }
-    write_json_atomic(&registry_path, &registry)?;
-    snapshot(&projects)
+    registry.sessions.push(TauSessionRecord {
+        id: session_id,
+        name: (!name.is_empty()).then_some(name),
+        archived: false,
+    });
+}
+
+fn select_remote_session(remote: &mut RemoteProjectRecord, session_id: &str) -> Result<(), String> {
+    if !remote
+        .sessions
+        .iter()
+        .any(|session| session.id == session_id && !session.archived)
+    {
+        return Err("The selected session is not available in Tau.".into());
+    }
+    remote.active_session_id = session_id.to_string();
+    Ok(())
+}
+
+fn select_local_session(registry: &mut TauSessionRegistry, session_id: &str) -> Result<(), String> {
+    if !registry
+        .sessions
+        .iter()
+        .any(|session| session.id == session_id && !session.archived)
+    {
+        return Err("The selected session is not available in Tau.".into());
+    }
+    registry.active_session_id = session_id.to_string();
+    Ok(())
 }
 
 fn archive_remote_session(
@@ -545,6 +596,12 @@ pub fn pi_agent_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| "Could not locate the home folder.".into())
 }
 
+/// Local sessions are registered and read through one registry per project,
+/// so a session Pi opened elsewhere still belongs to the project that owns it.
+fn local_registry_path(project_path: &str) -> Result<PathBuf, String> {
+    Ok(default_session_dir(project_path)?.join(SESSION_REGISTRY_FILENAME))
+}
+
 fn default_session_dir(project_path: &str) -> Result<PathBuf, String> {
     let safe_path = project_path
         .trim_start_matches(['/', '\\'])
@@ -585,8 +642,7 @@ fn list_remote_sessions(remote: &RemoteProjectRecord) -> Vec<SessionSummary> {
 
 fn list_project_sessions(project_path: &str) -> Result<Vec<SessionSummary>, String> {
     let session_dir = default_session_dir(project_path)?;
-    let registry: TauSessionRegistry =
-        read_json_or_default(&session_dir.join(SESSION_REGISTRY_FILENAME))?;
+    let registry: TauSessionRegistry = read_json_or_default(&local_registry_path(project_path)?)?;
     if registry.sessions.is_empty() || !session_dir.is_dir() {
         return Ok(Vec::new());
     }
@@ -1052,6 +1108,101 @@ mod tests {
         archive_remote_session(&mut remote, "remote-session").expect("archive remote session");
         assert!(remote.sessions[0].archived);
         assert!(remote.active_session_id.is_empty());
+    }
+
+    #[test]
+    fn adopting_a_session_pi_handed_back_restores_its_row() {
+        let mut remote = RemoteProjectRecord {
+            connection_string: "ssh build-box".into(),
+            working_directory: "/home/timur".into(),
+            host: "build-box".into(),
+            active_session_id: String::new(),
+            sessions: vec![RemoteSessionRecord {
+                id: "phase".into(),
+                path: "/remote/phase.jsonl".into(),
+                name: Some("Monitor".into()),
+                archived: true,
+                last_active: 10,
+                sort_at: 10,
+            }],
+        };
+
+        // A registration Tau did not adopt leaves the archived row alone.
+        upsert_remote_session(
+            &mut remote,
+            "phase".into(),
+            "/remote/phase.jsonl".into(),
+            "Monitor".into(),
+            None,
+            false,
+        );
+        assert!(remote.sessions[0].archived);
+        assert_eq!(
+            select_remote_session(&mut remote, "phase"),
+            Err("The selected session is not available in Tau.".to_string())
+        );
+
+        upsert_remote_session(
+            &mut remote,
+            "phase".into(),
+            "/remote/phase.jsonl".into(),
+            "Monitor".into(),
+            None,
+            true,
+        );
+        assert!(!remote.sessions[0].archived);
+        assert_eq!(remote.sessions[0].last_active, 10);
+        select_remote_session(&mut remote, "phase").expect("select the adopted session");
+        assert_eq!(remote.active_session_id, "phase");
+
+        let mut local = TauSessionRegistry {
+            sessions: vec![TauSessionRecord {
+                id: "phase".into(),
+                name: Some("Monitor".into()),
+                archived: true,
+            }],
+            ..TauSessionRegistry::default()
+        };
+        upsert_local_session(&mut local, "phase".into(), "Monitor".into(), false);
+        assert!(local.sessions[0].archived);
+        assert!(select_local_session(&mut local, "phase").is_err());
+        upsert_local_session(&mut local, "phase".into(), "Monitor".into(), true);
+        assert!(!local.sessions[0].archived);
+        select_local_session(&mut local, "phase").expect("select the adopted session");
+        assert_eq!(local.active_session_id, "phase");
+    }
+
+    #[test]
+    fn unknown_sessions_stay_unselectable() {
+        let mut remote = RemoteProjectRecord {
+            connection_string: "ssh build-box".into(),
+            working_directory: "/home/timur".into(),
+            host: "build-box".into(),
+            active_session_id: String::new(),
+            sessions: Vec::new(),
+        };
+        assert!(select_remote_session(&mut remote, "missing").is_err());
+        let mut local = TauSessionRegistry::default();
+        assert!(select_local_session(&mut local, "missing").is_err());
+    }
+
+    #[test]
+    fn local_sessions_register_into_the_registry_the_project_lists() {
+        // Pi may open a session under another working directory; the row still
+        // belongs to the project, so both sides must use one registry file.
+        let registry = local_registry_path("/Users/timur/code/tau").expect("registry path");
+        assert_eq!(
+            registry,
+            default_session_dir("/Users/timur/code/tau")
+                .expect("session directory")
+                .join(SESSION_REGISTRY_FILENAME)
+        );
+        assert_ne!(
+            registry,
+            default_session_dir("/Users/timur/code/other")
+                .expect("other session directory")
+                .join(SESSION_REGISTRY_FILENAME)
+        );
     }
 
     #[test]

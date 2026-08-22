@@ -645,11 +645,16 @@ function createPhantomSession(
   };
 }
 
+// An archived record is not a row the user can reach, so a controller backed
+// by one is not represented in the workspace: its ephemeral row is the only
+// handle on the session and has to stay.
 function workspaceContainsSession(controller: SessionController): boolean {
   return (
     state.workspace?.projects
       .find((project) => project.path === controller.projectPath)
-      ?.sessions.some((session) => session.id === controller.sessionId) === true
+      ?.sessions.some(
+        (session) => session.id === controller.sessionId && !session.archived,
+      ) === true
   );
 }
 

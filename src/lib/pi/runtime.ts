@@ -1207,6 +1207,7 @@ async function handleResponse(
       );
       clearSessionReplacementWatch(controller);
       clearAbortWatch(controller);
+      rebindEphemeralSession(controller);
       controller.messages = [];
       controller.models = [];
       controller.efforts = [];
@@ -1241,7 +1242,15 @@ async function handleResponse(
       // replace, and Pi never writes one that holds no assistant message.
       !(resolvesPending && pending?.command)
     ) {
-      await registerConnectedSession(controller);
+      // Pi hands Tau an identity when it replaces the session, when it names
+      // the session a prompt just created, and when it answers for the
+      // session an extension command left behind. Bootstraps and run-state
+      // polls only re-state a session Tau already opened.
+      await registerConnectedSession(
+        controller,
+        undefined,
+        sessionChanged || Boolean(resolvesPending) || resolvesCommandSync,
+      );
     }
     if (controller.disposed) return;
 
@@ -1714,42 +1723,76 @@ async function persistSessionName(
 async function registerConnectedSession(
   controller: SessionController,
   parentContext?: TraceContext,
+  // Set when Pi handed Tau this identity rather than Tau opening a session it
+  // already listed: adopting a session means its row must exist and be
+  // reachable, even when Tau had archived it before Pi handed it back.
+  adopted = false,
 ): Promise<void> {
   try {
-    const workspace = await invokeTraced<WorkspaceSnapshot>(
-      'register_session',
-      {
-        projectPath: controller.projectPath,
-        sessionId: controller.sessionId,
-        sessionPath: controller.sessionPath,
-        sessionName:
-          controller.sessionName || firstUserMessage(controller) || null,
-        lastUserMessageAt:
-          controller.lastUserMessageAt > 0
-            ? controller.lastUserMessageAt
-            : null,
-      },
-      parentContext,
-    );
+    const workspace = await registerSession(controller, adopted, parentContext);
     if (controller.disposed) return;
     state.workspace = workspace;
     if (workspaceContainsSession(controller)) {
       removeRegisteredEphemeralSession(controller);
     }
-    if (isControllerSelected(controller)) {
-      state.activeSessionId = controller.sessionId;
-      state.activeSessionPath = controller.sessionPath;
-      state.workspace = await invokeTraced<WorkspaceSnapshot>(
-        'set_active_session',
-        {
-          projectPath: controller.projectPath,
-          sessionId: controller.sessionId,
-        },
-        parentContext,
-      );
-    }
+    if (!isControllerSelected(controller)) return;
+    state.activeSessionId = controller.sessionId;
+    state.activeSessionPath = controller.sessionPath;
+    state.workspace = await selectRegisteredSession(controller, parentContext);
   } catch (error) {
     setControllerError(controller, error);
+  }
+}
+
+function registerSession(
+  controller: SessionController,
+  adopted: boolean,
+  parentContext?: TraceContext,
+): Promise<WorkspaceSnapshot> {
+  return invokeTraced<WorkspaceSnapshot>(
+    'register_session',
+    {
+      projectPath: controller.projectPath,
+      sessionId: controller.sessionId,
+      sessionPath: controller.sessionPath,
+      sessionName:
+        controller.sessionName || firstUserMessage(controller) || null,
+      lastUserMessageAt:
+        controller.lastUserMessageAt > 0 ? controller.lastUserMessageAt : null,
+      adopted,
+    },
+    parentContext,
+  );
+}
+
+// A session Tau is showing has to be selectable. Tau's registry rejecting it
+// means the row and the live runtime disagree, so adopt the session Pi is
+// holding and select it once more rather than leaving it unreachable.
+async function selectRegisteredSession(
+  controller: SessionController,
+  parentContext?: TraceContext,
+): Promise<WorkspaceSnapshot> {
+  const select = (): Promise<WorkspaceSnapshot> =>
+    invokeTraced<WorkspaceSnapshot>(
+      'set_active_session',
+      {
+        projectPath: controller.projectPath,
+        sessionId: controller.sessionId,
+      },
+      parentContext,
+    );
+  try {
+    return await select();
+  } catch (error) {
+    if (
+      controller.phantom ||
+      !controller.sessionId ||
+      !controller.sessionPath
+    ) {
+      throw error;
+    }
+    state.workspace = await registerSession(controller, true, parentContext);
+    return await select();
   }
 }
 
@@ -1790,6 +1833,16 @@ async function persistProjectSelection(
   } catch (error) {
     setControllerError(controller, error);
   }
+}
+
+// An unregistered row keeps a session reachable while Tau's registry does
+// not, so a replacement has to move it onto the identity Pi handed over
+// instead of leaving it pointing at the session that was swapped out.
+function rebindEphemeralSession(controller: SessionController): void {
+  const session = ephemeralSessionByController(controller.key);
+  if (!session) return;
+  session.id = controller.sessionId;
+  session.path = controller.sessionPath;
 }
 
 function materializePendingSession(
