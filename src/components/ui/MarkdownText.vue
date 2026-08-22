@@ -11,10 +11,12 @@
 
 <script setup lang="ts">
 import { homeDir } from '@tauri-apps/api/path';
+import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { openPath, openUrl } from '@tauri-apps/plugin-opener';
-import { computed } from 'vue';
+import { computed, onBeforeUnmount } from 'vue';
 
 import {
+  CODE_COPY_ATTRIBUTE,
   FILE_PATH_ATTRIBUTE,
   isPathOpenGesture,
   isWebUrl,
@@ -36,7 +38,12 @@ const rendered = computed(() =>
   }),
 );
 
+/** How long a copied block keeps saying so before the icon returns. */
+const COPIED_FEEDBACK_MS = 1_200;
+
 let homePath: Promise<string> | null = null;
+let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+let copiedButton: HTMLElement | undefined;
 
 /** Asked for once, and asked for again if it ever fails. */
 function homeDirectory(): Promise<string> {
@@ -83,7 +90,46 @@ async function openWebLink(href: string): Promise<void> {
   }
 }
 
+function copyButtonAt(target: EventTarget | null): HTMLElement | null {
+  if (!(target instanceof Element)) return null;
+  const button = target.closest(`button[${CODE_COPY_ATTRIBUTE}]`);
+  return button instanceof HTMLElement ? button : null;
+}
+
+/** Marks the button that was just used, so the icon reports the copy landed. */
+function showCopied(button: HTMLElement): void {
+  clearCopied();
+  copiedButton = button;
+  button.dataset.copied = 'true';
+  copiedTimer = setTimeout(clearCopied, COPIED_FEEDBACK_MS);
+}
+
+function clearCopied(): void {
+  clearTimeout(copiedTimer);
+  copiedTimer = undefined;
+  delete copiedButton?.dataset.copied;
+  copiedButton = undefined;
+}
+
+async function copyCodeBlock(button: HTMLElement): Promise<void> {
+  const code = button.parentElement?.querySelector('pre')?.textContent;
+  if (!code) return;
+  try {
+    await writeText(code);
+  } catch (error) {
+    console.error('Could not copy the code block', error);
+    return;
+  }
+  showCopied(button);
+}
+
 async function activate(event: Event): Promise<void> {
+  const copy = copyButtonAt(event.target);
+  if (copy) {
+    await copyCodeBlock(copy);
+    return;
+  }
+
   const link = linkAt(event.target);
   if (!link) return;
 
@@ -108,8 +154,13 @@ async function activate(event: Event): Promise<void> {
 }
 
 function handleKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Enter') void activate(event);
+  // A copy button is a button: the browser turns Enter and Space into a click,
+  // so handling Enter here as well would copy twice.
+  if (event.key === 'Enter' && !copyButtonAt(event.target))
+    void activate(event);
 }
+
+onBeforeUnmount(clearCopied);
 </script>
 
 <style scoped>
@@ -136,7 +187,7 @@ function handleKeydown(event: KeyboardEvent): void {
 .markdown :deep(p),
 .markdown :deep(ul),
 .markdown :deep(ol),
-.markdown :deep(pre),
+.markdown :deep(.code-block),
 .markdown :deep(blockquote) {
   margin: 0.7em 0;
 }
@@ -169,11 +220,65 @@ function handleKeydown(event: KeyboardEvent): void {
 }
 
 .markdown :deep(pre) {
+  margin: 0;
   padding: 11px 12px;
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 9px;
   background: var(--sunk);
+}
+
+/* The button is placed against the wrapper, not the block, so that scrolling a
+ * wide block sideways leaves it where it is. */
+.markdown :deep(.code-block) {
+  position: relative;
+}
+
+.markdown :deep(.code-copy) {
+  display: grid;
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  padding: 4px;
+  border-radius: 4px;
+  opacity: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: default;
+  /* stylelint-disable-next-line property-no-vendor-prefix -- WKWebView needs the prefix before Safari 17.4 */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.markdown :deep(.code-block:hover .code-copy) {
+  opacity: 0.45;
+}
+
+.markdown :deep(.code-copy:hover),
+.markdown :deep(.code-copy:focus-visible),
+.markdown :deep(.code-copy[data-copied]) {
+  outline: 0;
+  opacity: 1;
+}
+
+.markdown :deep(.code-copy svg) {
+  display: block;
+  width: 1em;
+  height: 1em;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke: currentcolor;
+  stroke-linejoin: round;
+}
+
+.markdown :deep(.code-copy .code-copy-done),
+.markdown :deep(.code-copy[data-copied] .code-copy-idle) {
+  display: none;
+}
+
+.markdown :deep(.code-copy[data-copied] .code-copy-done) {
+  display: block;
 }
 
 .markdown :deep(pre code) {

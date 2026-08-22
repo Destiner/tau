@@ -35,6 +35,23 @@ interface PathOpenGesture {
 /** Marks the anchors this module writes, and the only ones a click opens. */
 const FILE_PATH_ATTRIBUTE = 'data-tau-path';
 
+/** Marks the copy buttons this module writes, and the only ones a click copies. */
+const CODE_COPY_ATTRIBUTE = 'data-tau-copy';
+
+/** A fenced block, whose end is unambiguous because `pre` cannot nest. */
+const CODE_BLOCK = /<pre\b[^>]*>[\s\S]*?<\/pre>/g;
+
+/*
+ * The button lives inside sanitized HTML rather than in the component tree, so
+ * its icons are markup here instead of a `UiIcon`. Both are drawn and the
+ * stylesheet picks one, which keeps a copy down to a single attribute write.
+ */
+const COPY_ICON =
+  '<svg class="code-copy-idle" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3.5 6.5h10v10h-10zM6.5 6.5v-3h10v10h-3"/></svg>';
+
+const COPIED_ICON =
+  '<svg class="code-copy-done" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m4.5 10.5 4 4 7-8"/></svg>';
+
 /**
  * A path embedded in prose, plus a `:line:column` tail. Whitespace ends these
  * candidates; a rooted path that fills its rendered line is handled separately
@@ -64,9 +81,21 @@ function renderMarkdown(source: string, options: MarkdownOptions = {}): string {
   // The attribute belongs to this module: text that arrives already carrying
   // one cannot pass itself off as a file the app resolved.
   const html = purify.sanitize(parsed as string, {
-    FORBID_ATTR: [FILE_PATH_ATTRIBUTE],
+    FORBID_ATTR: [FILE_PATH_ATTRIBUTE, CODE_COPY_ATTRIBUTE],
   });
-  return options.basePath ? linkFilePaths(html) : html;
+  const linked = options.basePath ? linkFilePaths(html) : html;
+  return options.inline ? linked : addCodeCopyButtons(linked);
+}
+
+/** Gives every fenced block a copy button, positioned against the wrapper so
+ * that scrolling a wide block sideways does not carry the button off. */
+function addCodeCopyButtons(html: string): string {
+  CODE_BLOCK.lastIndex = 0;
+  return html.replace(
+    CODE_BLOCK,
+    (block) =>
+      `<div class="code-block">${block}<button type="button" class="code-copy" ${CODE_COPY_ATTRIBUTE} aria-label="Copy code">${COPY_ICON}${COPIED_ICON}</button></div>`,
+  );
 }
 
 /** Rewrites the file paths in rendered markup as links, leaving markup alone. */
@@ -240,7 +269,9 @@ function normalizePath(path: string): string {
 export type { MarkdownOptions, FileReference, PathOpenGesture };
 
 export {
+  CODE_COPY_ATTRIBUTE,
   FILE_PATH_ATTRIBUTE,
+  addCodeCopyButtons,
   renderMarkdown,
   linkFilePaths,
   parseFileReference,

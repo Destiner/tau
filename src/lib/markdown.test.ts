@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  addCodeCopyButtons,
   isPathOpenGesture,
   isWebUrl,
   linkFilePaths,
@@ -232,5 +233,25 @@ describe('linking file paths in markup', () => {
   it('does not read attributes as text', () => {
     const image = '<p><img src="pictures/shot.png" alt="a/b.png"></p>';
     expect(linkFilePaths(image)).toBe(image);
+  });
+});
+
+describe('code copy buttons', () => {
+  it('wraps every fenced block, and only those', () => {
+    const html = addCodeCopyButtons(
+      '<p>prose with <code>inline</code></p><pre><code>const a = 1;\n</code></pre><p>more</p><pre>plain\n</pre>',
+    );
+    expect(html.match(/data-tau-copy/g)).toHaveLength(2);
+    expect(html).toContain(
+      '<div class="code-block"><pre><code>const a = 1;\n</code></pre><button type="button" class="code-copy" data-tau-copy aria-label="Copy code">',
+    );
+    expect(html).toContain('<p>prose with <code>inline</code></p>');
+  });
+
+  it('keeps a block that writes its own closing tag whole', () => {
+    const block = '<pre><code>echo "&lt;/pre&gt;"\n</code></pre>';
+    const html = addCodeCopyButtons(block);
+    expect(html).toContain(block);
+    expect(html.match(/data-tau-copy/g)).toHaveLength(1);
   });
 });

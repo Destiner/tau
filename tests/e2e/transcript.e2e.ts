@@ -4,6 +4,19 @@ import { expect, test } from './fixtures';
 
 const fixtureUrl = '/?fixture=long-transcript';
 
+declare global {
+  interface Window {
+    __TAU_CLIPBOARD_WRITES__?: string[];
+    __TAURI_INTERNALS__?: {
+      transformCallback: (callback: unknown) => unknown;
+      invoke: (
+        command: string,
+        payload?: { text?: string },
+      ) => Promise<unknown>;
+    };
+  }
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto(fixtureUrl);
   await expect(page.getByTestId('fixture-count')).toHaveText('5000 messages');
@@ -54,6 +67,54 @@ test('shows skill use as a collapsed expandable block', async ({ page }) => {
   await expect(skill.locator('.skill-details')).toContainText(
     'Inspect selection, scrolling, keyboard behavior',
   );
+});
+
+test('copies a code block from a button the block reveals on hover', async ({
+  page,
+}) => {
+  // The clipboard is a native command, which a browser test has to stand in
+  // for; the writes it records are what the assertion reads.
+  await page.addInitScript(() => {
+    const writes: string[] = [];
+    window.__TAU_CLIPBOARD_WRITES__ = writes;
+    window.__TAURI_INTERNALS__ = {
+      transformCallback: (callback: unknown): unknown => callback,
+      invoke: (
+        command: string,
+        payload?: { text?: string },
+      ): Promise<unknown> => {
+        if (
+          command === 'plugin:clipboard-manager|write_text' &&
+          payload?.text
+        ) {
+          writes.push(payload.text);
+        }
+        return Promise.resolve(null);
+      },
+    };
+  });
+  await page.goto(fixtureUrl);
+
+  const message = page.locator('[data-message-id="fixture-assistant-4999"]');
+  const block = message.locator('.code-block');
+  const copy = block.getByRole('button', { name: 'Copy code' });
+
+  await expect(block.locator('pre')).toContainText('const messageIndex = 4999');
+  await expect(copy).toHaveCSS('opacity', '0');
+
+  await block.hover();
+  await expect(copy).not.toHaveCSS('opacity', '0');
+
+  await copy.click();
+  await expect
+    .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
+    .toEqual(['const messageIndex = 4999;\nconsole.log({ messageIndex });\n']);
+  await expect(copy).toHaveAttribute('data-copied', 'true');
+
+  // The acknowledgement is temporary, and leaves the button as it was.
+  await expect(copy).not.toHaveAttribute('data-copied', 'true', {
+    timeout: 3_000,
+  });
 });
 
 test('opens a tool call in place and keeps it open across virtualization', async ({
