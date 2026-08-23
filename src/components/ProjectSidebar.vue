@@ -498,7 +498,6 @@ function isTitlebarControl(target: EventTarget | null): boolean {
   align-items: center;
   height: 30px;
   min-height: 30px;
-  border-bottom: 1px solid var(--border);
 }
 
 .sidebar-footer {
@@ -603,8 +602,10 @@ function isTitlebarControl(target: EventTarget | null): boolean {
   color: var(--muted);
 }
 
-/* Nudged down with the chevron so both sit on the label's optical center. */
+/* Nudged down with the chevron so both sit on the label's optical center. The
+ * indicator otherwise sits on a text baseline, which this row does not use. */
 .project-status {
+  align-self: center;
   margin-right: 4px;
   transform: translateY(1px);
 }
@@ -677,9 +678,11 @@ function isTitlebarControl(target: EventTarget | null): boolean {
   background: var(--selected);
 }
 
+/* Baseline, so the status indicator sits on the session title's baseline
+ * rather than in the middle of the row. */
 .session-select {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   width: 100%;
   min-width: 0;
   padding: 7px;

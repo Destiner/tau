@@ -25,10 +25,18 @@ withDefaults(
 </script>
 
 <style scoped>
+/*
+ * 7px, and it sits on the text baseline rather than in the middle of the row:
+ * a flex item with no content takes its bottom edge as its baseline, so in a
+ * baseline-aligned row the dot rests on the label's baseline, and the -1px
+ * sinks it the hair that makes it read as centred against lowercase letters.
+ */
 .ui-status-dot {
   flex: none;
-  width: 6px;
-  height: 6px;
+  align-self: baseline;
+  width: 7px;
+  height: 7px;
+  margin-bottom: -1px;
   border-radius: 50%;
   opacity: 0;
 }

@@ -7,8 +7,23 @@
         :class="`width-${width}`"
         :aria-busy="busy || undefined"
       >
-        <DialogTitle class="ui-dialog-title">{{ title }}</DialogTitle>
-        <slot />
+        <header class="ui-dialog-head">
+          <DialogTitle class="ui-dialog-title">{{ title }}</DialogTitle>
+          <DialogDescription
+            v-if="description"
+            class="ui-dialog-desc"
+            >{{ description }}</DialogDescription
+          >
+        </header>
+        <div class="ui-dialog-body">
+          <slot />
+        </div>
+        <footer
+          v-if="$slots.footer"
+          class="ui-dialog-foot"
+        >
+          <slot name="footer" />
+        </footer>
       </DialogContent>
     </DialogPortal>
   </DialogRoot>
@@ -17,6 +32,7 @@
 <script setup lang="ts">
 import {
   DialogContent,
+  DialogDescription,
   DialogOverlay,
   DialogPortal,
   DialogRoot,
@@ -27,13 +43,15 @@ const open = defineModel<boolean>('open', { default: false });
 
 withDefaults(
   defineProps<{
-    /** Accessible name, announced on open; the visible panel has no heading. */
+    /** Shown as the panel's heading, and announced on open. */
     title: string;
+    /** One line under the title, when the panel needs to explain itself. */
+    description?: string;
     /** Panel width: 440px for a connection, 480px for a directory browser. */
     width?: 'sm' | 'md';
     busy?: boolean;
   }>(),
-  { width: 'sm' },
+  { description: undefined, width: 'sm' },
 );
 </script>
 
@@ -48,15 +66,22 @@ withDefaults(
   inset: 0;
 }
 
-/* The panel is a sibling of the overlay, not a child, so it positions
- * itself: top-centered, clear of the title bar. */
+/*
+ * The panel is a sibling of the overlay, not a child, so it positions itself:
+ * top-centered, clear of the title bar. It does not animate in — an animation
+ * that touches `transform` drops the centring translate for its first frame,
+ * which reads as the panel sliding in from the right.
+ */
 :global(.ui-dialog-content) {
+  display: flex;
   position: fixed;
   z-index: 21;
   top: 68px;
   left: 50%;
+  flex-direction: column;
   width: min(440px, calc(100% - 36px));
-  padding: 8px;
+  max-height: calc(100vh - 120px);
+  overflow: hidden;
   transform: translateX(-50%);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -68,16 +93,50 @@ withDefaults(
   width: min(480px, calc(100% - 36px));
 }
 
-/* The title is announced, not shown: the panel explains itself. */
+/*
+ * Head, body and foot are parts, so a dialog stops re-rolling its own padding.
+ * Every margin is set explicitly: the title renders as an h2 and the
+ * description as a p, whose default margins are what spread the header out.
+ */
+:global(.ui-dialog-head) {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  gap: 3px;
+}
+
 :global(.ui-dialog-title) {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  overflow: hidden;
-  clip-path: inset(50%);
-  border: 0;
-  white-space: nowrap;
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-md);
+  font-weight: 500;
+  line-height: var(--leading-tight);
+}
+
+:global(.ui-dialog-desc) {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+}
+
+:global(.ui-dialog-body) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px;
+  overflow: auto;
+  gap: 8px;
+}
+
+:global(.ui-dialog-foot) {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  gap: 6px;
 }
 </style>

@@ -2,7 +2,7 @@
   <div
     id="command-menu"
     ref="menu"
-    class="command-menu"
+    class="command-menu ui-surface"
     :class="placement"
     :style="menuStyle"
     role="listbox"
@@ -12,11 +12,11 @@
       v-for="(command, index) in commands"
       :id="`command-option-${index}`"
       :key="`${command.source}:${command.name}`"
-      class="command-option"
-      :class="{ selected: index === selectedIndex }"
+      class="command-option ui-pick-row"
       type="button"
       role="option"
       tabindex="-1"
+      :data-cursor="index === selectedIndex || undefined"
       :aria-selected="index === selectedIndex"
       @mousedown.prevent
       @mouseenter="() => emit('highlight', index)"
@@ -86,12 +86,7 @@ defineExpose({
   left: 4px;
   width: min(540px, calc(100% - 8px));
   max-height: min(300px, calc(100vh - 90px));
-  padding: 4px;
   overflow-y: auto;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel-raised);
-  box-shadow: 0 10px 30px var(--shadow-soft);
   overscroll-behavior: contain;
 }
 
@@ -104,17 +99,11 @@ defineExpose({
   align-items: baseline;
   width: 100%;
   min-width: 0;
-  padding: 6px 7px;
-  border-radius: 5px;
+  padding: 5px 8px 6px;
   background: transparent;
   color: var(--text);
   text-align: left;
   gap: 10px;
-}
-
-.command-option:hover,
-.command-option.selected {
-  background: var(--selected);
 }
 
 .command-copy {
@@ -134,16 +123,20 @@ defineExpose({
 
 .command-name {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
-.command-description,
-.command-source {
+.command-description {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--text-xs);
+  line-height: var(--leading-ui);
 }
 
+/* The source sits on the description's line, not on the command's. */
 .command-source {
   flex: none;
+  align-self: flex-end;
+  color: var(--faint);
+  font-size: var(--text-xs);
 }
 </style>

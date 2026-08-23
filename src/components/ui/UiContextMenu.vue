@@ -1,4 +1,9 @@
 <template>
+  <!--
+    The surface and the item are styled in ui/surface.css: reka portals this
+    content to the body, where a scoped attribute never reaches it, and the two
+    menus used to answer that by carrying a copy of the stylesheet each.
+  -->
   <ContextMenuRoot>
     <ContextMenuTrigger as-child>
       <slot />
@@ -55,37 +60,3 @@ function runItem(item: UiMenuItem): void {
   item.run?.();
 }
 </script>
-
-<style scoped>
-/* reka portals the content to the body, which drops the scoped attribute,
- * so the menu is styled through :deep on its namespaced classes. */
-:global(.ui-menu) {
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--panel-raised);
-  box-shadow: 0 8px 24px var(--shadow-soft);
-}
-
-:global(.ui-menu-item) {
-  display: block;
-  width: 100%;
-  padding: 7px 8px;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text);
-  font-size: var(--text-sm);
-  text-align: left;
-}
-
-:global(.ui-menu-item:not([data-disabled]):hover),
-:global(.ui-menu-item:not([data-disabled])[data-highlighted]),
-:global(.ui-menu-item:not([data-disabled]):focus-visible) {
-  outline: 0;
-  background: var(--hover);
-}
-
-:global(.ui-menu-item[data-disabled]) {
-  color: var(--faint);
-}
-</style>

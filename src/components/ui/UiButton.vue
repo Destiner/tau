@@ -34,13 +34,30 @@ defineExpose({
 </script>
 
 <style scoped>
+/* stylelint-disable no-descending-specificity -- state rules are ordered by which should win: hover, then focus. */
+
+/*
+ * A button is as wide as its label. The old 54px floor is what made "No" look
+ * like a form submit, and hover is an explicit color rather than a brightness
+ * filter, which inverted its own meaning between the light and dark schemes.
+ */
 .ui-button {
-  min-width: 54px;
+  display: inline-flex;
+  align-items: center;
   height: var(--control-md);
-  padding: 0 7px;
+  padding: 0 9px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  font-size: var(--text-xs);
+  border-radius: var(--radius-sm);
+  outline: 2px solid transparent;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.ui-button.md {
+  height: var(--control-lg);
+  padding: 0 11px;
 }
 
 .ui-button.secondary {
@@ -54,15 +71,28 @@ defineExpose({
   color: var(--canvas);
 }
 
-.ui-button.md {
-  height: var(--control-lg);
-  padding: 0 10px;
-  font-size: var(--text-sm);
+.ui-button.secondary:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--muted) 45%, var(--border));
+  background: var(--hover);
+  color: var(--text);
 }
 
-.ui-button:hover,
+.ui-button.primary:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--text) 88%, var(--canvas));
+  background: color-mix(in srgb, var(--text) 88%, var(--canvas));
+}
+
+/*
+ * Focus is visible. `outline: 0` with nothing in its place left a keyboard
+ * user with no cursor at all in a dialog whose buttons are the only controls.
+ */
 .ui-button:focus-visible {
+  border-color: var(--accent);
   outline: 0;
-  filter: brightness(0.96);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.ui-button.primary:focus-visible {
+  border-color: var(--text);
 }
 </style>

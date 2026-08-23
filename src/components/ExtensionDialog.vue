@@ -30,10 +30,10 @@
         v-for="(option, index) in options"
         :id="`extension-prompt-option-${index}`"
         :key="`${index}:${option}`"
-        class="extension-prompt-option"
-        :class="{ selected: index === selectedIndex }"
+        class="extension-prompt-option ui-pick-row"
         type="button"
         role="option"
+        :data-cursor="index === selectedIndex || undefined"
         :aria-selected="index === selectedIndex"
         @mouseenter="() => highlight(index)"
         @click="() => chooseOption(option)"
@@ -216,7 +216,7 @@ function handleSelectKeydown(event: KeyboardEvent): void {
   flex-direction: column;
   padding: 9px 10px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--radius-lg);
   background: var(--panel-raised);
   gap: 8px;
 }
@@ -227,45 +227,46 @@ function handleSelectKeydown(event: KeyboardEvent): void {
  */
 .extension-prompt-title {
   color: var(--text);
-  font-size: 12px;
-  line-height: 1.45;
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
 }
 
 .extension-prompt-message {
   color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
 }
 
 .extension-prompt-options {
   min-height: 32px;
 }
 
+/*
+ * One row for the question's answers, on the app's pick-row rules: hover says
+ * the pointer is here, the cursor says the keyboard is. The option is focused
+ * as the arrows move, so focus takes the cursor's mark rather than a third one.
+ */
 .extension-prompt-option {
   display: block;
   width: 100%;
-  padding: 5px 7px;
-  border-radius: 5px;
+  padding: 5px 8px;
   background: transparent;
   color: var(--text);
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
   text-align: left;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.extension-prompt-option:hover,
-.extension-prompt-option:focus-visible,
-.extension-prompt-option.selected {
+.extension-prompt-option:focus-visible {
   outline: 0;
-  background: var(--selected);
 }
 
 .extension-prompt-empty {
-  padding: 5px 7px;
+  padding: 5px 8px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .extension-prompt-actions {

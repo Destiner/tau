@@ -1,0 +1,91 @@
+/*
+ * The two things the app repeats everywhere: a surface that floats over it, and
+ * a row the reader picks from.
+ *
+ * Global rather than scoped for two reasons. The menu and the context menu are
+ * portalled to the body by reka, where a scoped attribute never reaches them —
+ * and they used to answer that by carrying a byte-identical copy of this
+ * stylesheet each. The pick row is shared by four components that had four
+ * hover rules and four metrics between them.
+ */
+
+/* ── Floating surface ───────────────────────────────────────────────────── */
+
+.ui-surface {
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel-raised);
+  box-shadow: 0 8px 20px var(--shadow-soft);
+}
+
+/* ── Menu ───────────────────────────────────────────────────────────────── */
+
+.ui-menu {
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel-raised);
+  box-shadow: 0 8px 20px var(--shadow-soft);
+}
+
+.ui-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: var(--control-md);
+  padding: 0 8px;
+  border-radius: var(--radius-md);
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--text-sm);
+  text-align: left;
+}
+
+/*
+ * A menu has one cursor: the pointer moves the same highlight the arrow keys
+ * do, which is why hover and highlight are one rule here and two in a list.
+ */
+.ui-menu-item:not([data-disabled]):hover,
+.ui-menu-item:not([data-disabled])[data-highlighted] {
+  background: var(--hover);
+}
+
+.ui-menu-item[data-disabled] {
+  color: var(--faint);
+}
+
+/* ── Pick row ───────────────────────────────────────────────────────────── */
+
+/*
+ * A row in a list the reader is choosing from. Hover says "the pointer is
+ * here"; the cursor says "the keyboard is here, and Enter takes this one".
+ * They must not look the same — painting both with --selected is what hid the
+ * keyboard cursor under the pointer in every one of these lists.
+ */
+.ui-pick-row {
+  position: relative;
+  border-radius: var(--radius-md);
+}
+
+.ui-pick-row:hover {
+  background: var(--hover);
+}
+
+.ui-pick-row[data-cursor],
+.ui-pick-row:focus-visible {
+  background: var(--selected);
+}
+
+.ui-pick-row[data-cursor]::before,
+.ui-pick-row:focus-visible::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 0;
+  width: 2px;
+  border-radius: 0 1px 1px 0;
+  background: var(--accent);
+}

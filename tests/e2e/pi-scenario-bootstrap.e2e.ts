@@ -15,12 +15,14 @@ test('boots the real app into a deterministic saved session', async ({
   await expect(composer).toBeEnabled();
   // An opened session is ready to be typed into without a click first.
   await expect(composer).toBeFocused();
-  await expect(page.getByRole('combobox', { name: 'Model' })).toHaveValue(
-    'fixture/alpha',
+  // The selects are drawn by the app, so what they carry is the label the
+  // reader sees rather than the value the model is keyed by.
+  await expect(page.getByRole('combobox', { name: 'Model' })).toHaveText(
+    'Alpha · fixture',
   );
   await expect(
     page.getByRole('combobox', { name: 'Thinking effort' }),
-  ).toHaveValue('high');
+  ).toHaveText('High');
   await expect(page.getByLabel('Tau transcript')).toHaveCount(0);
   await expect(page.getByText('Loading', { exact: true })).toHaveCount(0);
 

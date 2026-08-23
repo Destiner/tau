@@ -145,12 +145,12 @@ function open(entry: ArchivedSessionEntry): void {
   display: flex;
   align-items: center;
   width: 100%;
-  height: 22px;
+  height: var(--control-sm);
   margin-top: 6px;
   padding: 0 5px;
   background: transparent;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 400;
   text-align: left;
   gap: 4px;
@@ -166,7 +166,7 @@ function open(entry: ArchivedSessionEntry): void {
   position: relative;
   align-items: stretch;
   min-height: var(--session-row-height, 34px);
-  border-radius: 7px;
+  border-radius: var(--radius-md);
 }
 
 .row:hover {
@@ -192,7 +192,7 @@ function open(entry: ArchivedSessionEntry): void {
 .name {
   overflow: hidden;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--text-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -206,17 +206,18 @@ function open(entry: ArchivedSessionEntry): void {
 .meta > span {
   overflow: hidden;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--text-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* The timestamp reads with the project line, not with the title above it. */
 .time {
   flex: none;
   align-self: flex-end;
-  padding: 0 8px 5px 6px;
+  padding: 0 8px 4px 6px;
   color: var(--faint);
-  font-size: 10px;
+  font-size: var(--text-xs);
 }
 
 /* The reveal button overlays the row; its box and states live in
@@ -243,6 +244,6 @@ function open(entry: ArchivedSessionEntry): void {
   align-items: center;
   padding: 0 5px;
   color: var(--faint);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 </style>

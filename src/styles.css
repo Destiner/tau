@@ -27,25 +27,27 @@
   font-synthesis: none;
 
   /*
-   * Three scales, documented in docs/design-tokens.md. A control's height
-   * picks its radius (xs/sm take --radius-sm, md/lg take --radius-md), and
-   * anything that floats over the app takes --radius-lg. Components use the
-   * tokens rather than the pixel values; the only bare lengths left are
-   * icon glyph sizes and one-off layout geometry.
+   * Three scales, documented in docs/design-tokens.md. Radius follows what a
+   * thing is rather than how tall it is: a mark takes --radius-xs, a control
+   * --radius-sm, a row or menu item --radius-md, and anything that floats over
+   * the app --radius-lg. Components use the tokens rather than the pixel
+   * values; the only bare lengths left are icon glyph sizes and one-off layout
+   * geometry.
    */
   --control-xs: 16px;
   --control-sm: 22px;
-  --control-md: 26px;
-  --control-lg: 30px;
+  --control-md: 24px;
+  --control-lg: 28px;
   --text-xs: 11px;
   --text-sm: 12px;
   --text-md: 13px;
   --text-lg: 14px;
   --leading-tight: 1.25;
   --leading-ui: 1.45;
+  --radius-xs: 3px;
   --radius-sm: 4px;
   --radius-md: 6px;
-  --radius-lg: 9px;
+  --radius-lg: 8px;
   --canvas: #fcfcfc;
   --panel: #f8f9fa;
   --panel-raised: #fff;

@@ -47,6 +47,7 @@ withDefaults(
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
+  outline: 2px solid transparent;
   place-items: center;
   background: transparent;
   color: var(--muted);
@@ -55,14 +56,12 @@ withDefaults(
 .ui-icon-button[data-size='lg'] {
   width: var(--control-lg);
   height: var(--control-lg);
-  border-radius: var(--radius-md);
   font-size: 16px;
 }
 
 .ui-icon-button[data-size='md'] {
   width: var(--control-md);
   height: var(--control-md);
-  border-radius: var(--radius-md);
   font-size: 12px;
 }
 
@@ -87,9 +86,15 @@ withDefaults(
   opacity: 0;
 }
 
+/*
+ * Focus is a ring, not only full opacity: a `reveal` button is invisible until
+ * its row is hovered, so opacity alone left a keyboard with nothing to see.
+ */
 .ui-icon-button:focus-visible {
   outline: 0;
   opacity: 1;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text);
 }
 
 .ui-icon-button[data-variant='fade']:hover:not(:disabled),
@@ -103,6 +108,7 @@ withDefaults(
 }
 
 .ui-icon-button[data-tone='danger']:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 20%, transparent);
   color: var(--danger);
 }
 

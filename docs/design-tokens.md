@@ -23,8 +23,8 @@ how important the control is — importance is carried by tone, not size.
 | -------------- | ----- | ----------------------------------------------------------------------------------------- |
 | `--control-xs` | 16px  | An affordance inside a line of text: the copy button on a tool row.                       |
 | `--control-sm` | 22px  | Dense chrome that sits beside content: the composer toolbar, a list group head.           |
-| `--control-md` | 26px  | The default control: buttons, and actions revealed on a list row.                         |
-| `--control-lg` | 30px  | Dialog-weight controls: fields and actions in a dialog, popover triggers, footer buttons. |
+| `--control-md` | 24px  | The default control: buttons, menu items, and actions revealed on a list row.             |
+| `--control-lg` | 28px  | Dialog-weight controls: fields and actions in a dialog, popover triggers, footer buttons. |
 
 Nothing else is a control height. A control that does not fit a rung is a sign
 the surface's density is undecided, not that the scale needs a fifth value.
@@ -46,14 +46,16 @@ Line height is `--leading-tight` (1.25) for a single line that may wrap tightly,
 
 ### Radius
 
-Radius follows the element's role, and for controls it follows the height rung,
-so the two scales stay in step.
+Radius follows what a thing _is_, not how tall it is. A control keeps the same
+corner whether it is a 22px toolbar select or a 28px dialog field, which is what
+makes a screen full of controls read as one set.
 
-| Token         | Value | Used for                                                              |
-| ------------- | ----- | --------------------------------------------------------------------- |
-| `--radius-sm` | 4px   | An `xs` or `sm` control, and inline marks: chips, small icon buttons. |
-| `--radius-md` | 6px   | An `md` or `lg` control, and a list row or menu item.                 |
-| `--radius-lg` | 9px   | Anything that floats over the app: dialog, menu, popover, notice.     |
+| Token         | Value | Used for                                                                     |
+| ------------- | ----- | ---------------------------------------------------------------------------- |
+| `--radius-xs` | 3px   | A mark: the checkbox box, and anything smaller than a control.               |
+| `--radius-sm` | 4px   | Any control: button, field, select trigger, icon button.                     |
+| `--radius-md` | 6px   | A row the reader picks from, a menu item, and an inline block like a notice. |
+| `--radius-lg` | 8px   | Anything that floats over the app: dialog, menu, popover, command menu.      |
 
 ## Color
 
@@ -107,9 +109,25 @@ These four carry meaning and are never decoration.
 indicator's three states, aliased so the indicator's meaning is named where it
 is read rather than inferred from a palette color.
 
+## Shared surfaces
+
+Two things the app repeats are in `src/components/ui/surface.css`, global because
+reka portals menus to the body where a scoped attribute never reaches them:
+
+- `.ui-surface` / `.ui-menu` / `.ui-menu-item` — the floating surface and its
+  row. A menu has one cursor, so hover and keyboard highlight are one rule.
+- `.ui-pick-row` — a row in a list the reader is choosing from. `:hover` says
+  the pointer is here; `[data-cursor]` says the keyboard is, and adds a 2px
+  accent rail. The two must never look alike, or the keyboard cursor disappears
+  under the pointer. Selection in place (a sidebar row, an archived session)
+  keeps `--selected` with no rail: it answers "where am I", not "what will Enter
+  take".
+
 ## Migration
 
-The primitives in `src/components/ui/` are on the tokens. App components still
-carry the pixel values they were written with, including the retired `9px` and
-`10px` labels; each is migrated as its part of the UI is reworked. New code uses
-the tokens.
+The primitives in `src/components/ui/` are on the tokens, as are the components
+that were reworked with them: the command menu, the extension prompt, the remote
+dialog, the archived list, the issue report, and the transcript notice. The rest
+still carry the pixel values they were written with, including the retired `9px`
+and `10px` labels; each is migrated as its part of the UI is reworked. New code
+uses the tokens.

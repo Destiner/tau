@@ -70,11 +70,11 @@
           v-for="(option, index) in directoryOptions"
           :id="`remote-directory-option-${index}`"
           :key="option.path"
-          class="remote-directory-option"
-          :class="{ selected: index === selectedIndex }"
+          class="remote-directory-option ui-pick-row"
           type="button"
           role="option"
           tabindex="-1"
+          :data-cursor="index === selectedIndex || undefined"
           :aria-selected="index === selectedIndex"
           :disabled="connecting"
           :title="option.path"
@@ -185,8 +185,10 @@ function scrollSelected(): void {
 </script>
 
 <style scoped>
+/* The dialog body is the flex column that spaces these two; this wrapper only
+ * groups them for the v-else. */
 .remote-directory-dialog {
-  gap: 6px;
+  display: contents;
 }
 
 .remote-directory-list {
@@ -198,21 +200,14 @@ function scrollSelected(): void {
 .remote-directory-option {
   display: block;
   width: 100%;
-  height: 30px;
-  padding: 0 9px;
+  height: var(--control-lg);
+  padding: 0 8px;
   overflow: hidden;
-  border-radius: 5px;
   background: transparent;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--text-sm);
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.remote-directory-option:hover,
-.remote-directory-option.selected {
-  background: var(--selected);
-  color: var(--text);
 }
 </style>

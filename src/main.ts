@@ -13,6 +13,7 @@ import {
 } from './lib/telemetry/heartbeat';
 import '@fontsource-variable/inter/wght.css';
 import './styles.css';
+import './components/ui/surface.css';
 
 // All four are synchronous, do no I/O, and never throw, so none delays
 // window reveal or mounting below. `startHeartbeat`/`installLongTaskObserver`

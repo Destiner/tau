@@ -11,7 +11,7 @@
     </PopoverTrigger>
     <PopoverPortal>
       <PopoverContent
-        class="issue-report-popover"
+        class="issue-report-popover ui-surface"
         side="top"
         align="end"
         :side-offset="5"
@@ -22,14 +22,11 @@
           class="issue-report-form"
           @submit.prevent="handleSubmit"
         >
-          <label class="session-option">
-            <input
-              v-model="includeCurrentSession"
-              type="checkbox"
-              :disabled="!sessionId || submitting"
-            />
-            <span>Include current session</span>
-          </label>
+          <UiCheckbox
+            v-model="includeCurrentSession"
+            :disabled="!sessionId || submitting"
+            >Include current session</UiCheckbox
+          >
 
           <label class="description-field">
             <span>Describe the issue</span>
@@ -82,6 +79,7 @@ import { ref, watch } from 'vue';
 import textFieldItems from '../lib/text-menu';
 
 import UiButton from './ui/UiButton.vue';
+import UiCheckbox from './ui/UiCheckbox.vue';
 import UiContextMenu from './ui/UiContextMenu.vue';
 import UiIcon from './ui/UiIcon.vue';
 import UiIconButton from './ui/UiIconButton.vue';
@@ -130,11 +128,7 @@ async function handleSubmit(): Promise<void> {
   z-index: 20;
   width: min(280px, calc(100vw - 18px));
   padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
   outline: 0;
-  background: var(--panel-raised);
-  box-shadow: 0 8px 24px var(--shadow-soft);
 }
 
 .issue-report-form {
@@ -143,25 +137,11 @@ async function handleSubmit(): Promise<void> {
   gap: 9px;
 }
 
-.session-option {
-  display: flex;
-  align-items: center;
-  color: var(--muted);
-  font-size: 11px;
-  gap: 6px;
-}
-
-.session-option input {
-  width: 13px;
-  height: 13px;
-  margin: 0;
-}
-
 .description-field {
   display: flex;
   flex-direction: column;
-  color: var(--text);
-  font-size: 11px;
+  color: var(--muted);
+  font-size: var(--text-xs);
   gap: 5px;
 }
 
@@ -173,8 +153,8 @@ async function handleSubmit(): Promise<void> {
 .issue-report-error {
   margin: 0;
   color: var(--danger);
-  font-size: 11px;
-  line-height: 1.4;
+  font-size: var(--text-xs);
+  line-height: var(--leading-ui);
 }
 
 .issue-report-actions {
