@@ -93,7 +93,7 @@ test('marks only the calls that are running or failed', async ({ page }) => {
   const done = page.locator('[data-message-id="fixture-tool-done"]');
 
   await expect(running.locator('.activity-mark.running')).toHaveCount(1);
-  await expect(failed.locator('.activity-mark.failed')).toHaveCount(1);
+  await expect(failed.locator('svg.activity-mark.failed')).toHaveCount(1);
   await expect(done.locator('.activity-mark')).toHaveCount(0);
 
   // A row with nothing to report reserves nothing, and the rows that do report

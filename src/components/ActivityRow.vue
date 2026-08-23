@@ -30,12 +30,13 @@
               role="status"
               aria-label="Running"
             ></span>
-            <span
+            <UiIcon
               v-else-if="entry.toolErrored"
               class="activity-mark failed"
+              name="cross"
               role="status"
               aria-label="Failed"
-            ></span>
+            />
           </span>
         </button>
       </template>
@@ -176,17 +177,29 @@ const expandable = computed(() => {
 }
 
 .activity-mark {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
+  flex: none;
+  width: 11px;
+  height: 11px;
 }
 
 .activity-mark.running {
+  position: relative;
+}
+
+.activity-mark.running::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
   background: var(--status-working);
 }
 
 .activity-mark.failed {
-  background: var(--danger);
+  color: var(--danger);
+  font-size: 11px;
 }
 
 .activity-name {
