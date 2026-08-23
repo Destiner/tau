@@ -224,6 +224,60 @@ test('keeps a key and a rule through sanitizing', async ({ page }) => {
   await expect(showcase.locator('hr')).toHaveCSS('border-top-width', '1px');
 });
 
+test('uses the real italic face and quieter emphasis weights', async ({
+  page,
+}) => {
+  const showcase = page.locator(
+    '[data-message-id="fixture-markdown-showcase"]',
+  );
+
+  await expect(showcase.locator('em')).toHaveCSS('font-style', 'italic');
+  await expect(showcase.locator('strong').first()).toHaveCSS(
+    'font-weight',
+    '600',
+  );
+  await expect(showcase.locator('h1')).toHaveCSS('font-weight', '650');
+
+  const italicLoaded = await page.evaluate(async () => {
+    await document.fonts.ready;
+    let found = false;
+    document.fonts.forEach((face) => {
+      if (face.family.includes('Inter Variable') && face.style === 'italic') {
+        found = true;
+      }
+    });
+    return found;
+  });
+  expect(italicLoaded).toBe(true);
+});
+
+test('keeps prose narrower than wide blocks and tightens code leading', async ({
+  page,
+}) => {
+  const showcase = page.locator(
+    '[data-message-id="fixture-markdown-showcase"]',
+  );
+  const markdown = showcase.locator('.markdown').first();
+  const prose = markdown.locator('> p').first();
+  const block = markdown.locator('.code-block').first();
+
+  const [markdownBox, proseBox, blockBox] = await Promise.all([
+    markdown.boundingBox(),
+    prose.boundingBox(),
+    block.boundingBox(),
+  ]);
+  expect(proseBox?.width ?? 0).toBeLessThan(markdownBox?.width ?? 0);
+  expect(blockBox?.width ?? 0).toBeCloseTo(markdownBox?.width ?? 0, 0);
+
+  const leading = await block.locator('code').evaluate((code) => {
+    const style = getComputedStyle(code);
+    return (
+      Number.parseFloat(style.lineHeight) / Number.parseFloat(style.fontSize)
+    );
+  });
+  expect(leading).toBeCloseTo(1.5, 2);
+});
+
 test('highlights a fenced block in both schemes at once', async ({ page }) => {
   const block = page
     .locator('[data-message-id="fixture-markdown-showcase"] .code-block')
@@ -271,6 +325,11 @@ test('names a block the language it was fenced with', async ({ page }) => {
   await block.hover();
   await expect.poll(() => block.evaluate(labelOpacity)).not.toBe('0');
   expect(await block.evaluate(labelContent)).toContain('ts');
+  expect(
+    await block.evaluate(
+      (element) => getComputedStyle(element, '::before').fontSize,
+    ),
+  ).toBe('11px');
 });
 
 test('draws a fenced diagram in the scheme around it', async ({ page }) => {

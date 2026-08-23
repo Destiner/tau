@@ -12,6 +12,7 @@ import {
   startHeartbeat,
 } from './lib/telemetry/heartbeat';
 import '@fontsource-variable/inter/wght.css';
+import '@fontsource-variable/inter/wght-italic.css';
 import './styles.css';
 import './components/ui/surface.css';
 

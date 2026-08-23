@@ -58,7 +58,7 @@ const longTailShowcase = `# Heading one
 ##### Heading five
 ###### Heading six
 
-A paragraph with ~~a struck run that recedes~~ and a shortcut: press <kbd>Cmd</kbd> + <kbd>K</kbd>.
+A paragraph with *real emphasis*, ~~a struck run that recedes~~, and a shortcut: press <kbd>Cmd</kbd> + <kbd>K</kbd>.
 
 ---
 

@@ -184,6 +184,27 @@ onBeforeUnmount(clearCopied);
   margin-bottom: 0;
 }
 
+/* Prose keeps a readable measure without taking width away from figures and
+ * structured content that benefit from the whole message column. */
+.markdown
+  :deep(
+    > :where(
+      p:not(:has(> img:only-child)),
+      ul,
+      ol,
+      blockquote,
+      h1,
+      h2,
+      h3,
+      h4,
+      h5,
+      h6,
+      hr
+    )
+  ) {
+  max-width: 80ch;
+}
+
 .markdown :deep(p),
 .markdown :deep(ul),
 .markdown :deep(ol),
@@ -252,6 +273,14 @@ onBeforeUnmount(clearCopied);
   vertical-align: -0.1em;
 }
 
+.markdown :deep(strong) {
+  font-weight: 600;
+}
+
+.markdown :deep(:where(h1, h2, h3, h4, h5, h6) strong) {
+  font-weight: inherit;
+}
+
 .markdown :deep(h1),
 .markdown :deep(h2),
 .markdown :deep(h3),
@@ -259,6 +288,7 @@ onBeforeUnmount(clearCopied);
 .markdown :deep(h5),
 .markdown :deep(h6) {
   margin: 1.2em 0 0.55em;
+  font-weight: 650;
   line-height: 1.25;
 }
 
@@ -281,7 +311,6 @@ onBeforeUnmount(clearCopied);
  */
 .markdown :deep(h4) {
   font-size: 1em;
-  font-weight: 650;
 }
 
 .markdown :deep(h5) {
@@ -348,6 +377,7 @@ onBeforeUnmount(clearCopied);
   border: 1px solid var(--border);
   border-radius: 9px;
   background: var(--sunk);
+  line-height: 1.5;
   tab-size: 2;
 }
 
@@ -420,7 +450,7 @@ onBeforeUnmount(clearCopied);
   opacity: 0;
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10px;
+  font-size: var(--text-xs);
   line-height: 1;
 }
 
