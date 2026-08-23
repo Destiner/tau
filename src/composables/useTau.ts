@@ -77,6 +77,7 @@ import {
   normalizeSessionName,
   projectIndicator,
   projectSessions,
+  promptSubmitting,
   archivedSessionEntries,
   relativeTimestamp,
   runtimeAvailable,
@@ -595,7 +596,8 @@ function useTau() {
       !message ||
       !canCompose.value ||
       controller.streaming ||
-      controller.stopping
+      controller.stopping ||
+      controller.promptSubmitting
     ) {
       return;
     }
@@ -618,6 +620,8 @@ function useTau() {
         return;
       }
 
+      controller.promptSubmitting = true;
+
       // Sending to a session whose record is still archived is an implicit
       // unarchive: activity proves the session is wanted again.
       const project = state.workspace?.projects.find(
@@ -630,7 +634,7 @@ function useTau() {
         await unarchiveSession(project, sessionRecord);
       }
 
-      controller.draft = '';
+      const optimisticId = `optimistic-user-${Date.now()}`;
       setControllerLifecycle(
         controller,
         { working: true },
@@ -638,11 +642,7 @@ function useTau() {
         actionSpan.context,
       );
       if (!command) {
-        appendOptimisticPrompt(
-          controller,
-          message,
-          `optimistic-user-${Date.now()}`,
-        );
+        appendOptimisticPrompt(controller, message, optimisticId);
       }
       controller.status = '';
       try {
@@ -653,10 +653,18 @@ function useTau() {
           { id: requestId, type: 'prompt', message },
           actionSpan.context,
         );
+        controller.promptSubmitting = false;
+        if (controller.draft === message) controller.draft = '';
         if (!command) {
           await registerConnectedSession(controller, actionSpan.context);
         }
       } catch (error) {
+        controller.promptSubmitting = false;
+        if (!command) {
+          controller.messages = controller.messages.filter(
+            (entry) => entry.id !== optimisticId,
+          );
+        }
         setControllerLifecycle(
           controller,
           { working: false },
@@ -862,6 +870,7 @@ function useTau() {
     status,
     streaming,
     stopping,
+    promptSubmitting,
     models,
     efforts,
     commands,

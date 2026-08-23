@@ -39,6 +39,7 @@ function testController(
     stopping: false,
     starting: false,
     working: false,
+    promptSubmitting: false,
     unread: false,
     lastUserMessageAt: 0,
     messages: [],

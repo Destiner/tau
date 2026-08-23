@@ -95,7 +95,7 @@ async function sendPhantomMessage(
     settingsStep: '',
     telemetryContext: parentContext,
   };
-  controller.draft = '';
+  controller.promptSubmitting = true;
   setControllerLifecycle(
     controller,
     { working: true },
@@ -114,11 +114,15 @@ async function sendPhantomMessage(
     );
     const stateRequestId = nextRequestId('state');
     controller.pendingPrompt.stateRequestId = stateRequestId;
-    await rpc(
-      controller,
-      { id: stateRequestId, type: 'get_state' },
-      parentContext,
-    );
+    try {
+      await rpc(
+        controller,
+        { id: stateRequestId, type: 'get_state' },
+        parentContext,
+      );
+    } catch (error) {
+      cancelPendingPrompt(controller, error);
+    }
     return;
   }
   await startController(controller, project, undefined, true, parentContext);
@@ -519,7 +523,7 @@ async function respondToExtensionDialog(
   response: Record<string, unknown>,
   parentContext?: TraceContext,
 ): Promise<void> {
-  discardExtensionDialog(dialog.key);
+  if (dialog.submitting) return;
   const controller = controllerByKey(dialog.controllerKey);
   if (
     !controller ||
@@ -527,15 +531,21 @@ async function respondToExtensionDialog(
     controller.runtimeId !== dialog.runtimeId ||
     controller.generation !== dialog.generation
   ) {
+    discardExtensionDialog(dialog.key);
     return;
   }
+
+  dialog.submitting = true;
+  dialog.error = '';
   try {
     await rpc(controller, response, parentContext);
+    discardExtensionDialog(dialog.key);
     // An answered dialog is a common point for a workflow to open its next
     // session, and that swap is not reported by any event.
     watchSessionReplacement(controller);
-  } catch (error) {
-    setControllerError(controller, error);
+  } catch {
+    dialog.submitting = false;
+    dialog.error = 'The response could not be sent. Try again.';
   }
 }
 
@@ -569,6 +579,8 @@ function handleExtensionUIRequest(
         ? { workingDirectory: origin.workingDirectory }
         : {}),
       draft: typeof request.prefill === 'string' ? request.prefill : '',
+      submitting: false,
+      error: '',
       ...(typeof request.message === 'string'
         ? { message: request.message }
         : {}),
@@ -1510,7 +1522,10 @@ async function dispatchPendingPrompt(
       { id: requestId, type: 'prompt', message: prompt.message },
       prompt.telemetryContext,
     );
+    controller.promptSubmitting = false;
+    if (controller.draft === prompt.message) controller.draft = '';
   } catch (error) {
+    controller.promptSubmitting = false;
     setControllerLifecycle(
       controller,
       { working: false },
@@ -1518,7 +1533,9 @@ async function dispatchPendingPrompt(
       prompt.telemetryContext,
     );
     controller.commandPromptRequestId = '';
-    controller.draft = prompt.message;
+    if (!controller.draft || controller.draft === prompt.message) {
+      controller.draft = prompt.message;
+    }
     setControllerError(controller, error);
   }
 }
@@ -1876,6 +1893,7 @@ function cancelPendingPrompt(
     return;
   }
   controller.pendingPrompt = undefined;
+  controller.promptSubmitting = false;
   setControllerLifecycle(
     controller,
     { starting: false, working: false },
@@ -1885,7 +1903,9 @@ function cancelPendingPrompt(
   controller.messages = controller.messages.filter(
     (message) => message.id !== prompt.optimisticId,
   );
-  controller.draft = prompt.message;
+  if (!controller.draft || controller.draft === prompt.message) {
+    controller.draft = prompt.message;
+  }
   setControllerError(controller, error);
 }
 
@@ -2100,11 +2120,6 @@ async function stopControllerProcess(
 ): Promise<void> {
   if (!controller.generation && !controller.starting) return;
   const generation = controller.generation;
-  clearSessionReplacementWatch(controller);
-  clearAbortWatch(controller);
-  discardControllerDialogs(controller, generation);
-  abandonPendingRpcSpans(controller.runtimeId, generation, 'abandoned_stop');
-  flushStreamAggregate(controller.runtimeId, generation);
   try {
     await invokeTraced(
       'stop_pi',
@@ -2113,8 +2128,14 @@ async function stopControllerProcess(
     );
   } catch (error) {
     setControllerError(controller, error);
+    return;
   }
   if (controller.generation !== generation) return;
+  clearSessionReplacementWatch(controller);
+  clearAbortWatch(controller);
+  discardControllerDialogs(controller, generation);
+  abandonPendingRpcSpans(controller.runtimeId, generation, 'abandoned_stop');
+  flushStreamAggregate(controller.runtimeId, generation);
   controller.generation = 0;
   setControllerLifecycle(
     controller,

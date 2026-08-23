@@ -841,6 +841,8 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
+    static PANIC_HOOK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn segment_files_are_distinct_jsonl_files() {
         let files = [TRACE_SEGMENT_FILE, LOG_SEGMENT_FILE, METRIC_SEGMENT_FILE];
@@ -1630,6 +1632,10 @@ mod tests {
     #[test]
     fn panic_hook_calls_the_previous_hook_and_records_a_sanitized_location_only() {
         use std::panic::AssertUnwindSafe;
+
+        let _hook_guard = PANIC_HOOK_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         use std::sync::atomic::{AtomicBool, Ordering};
 
         let (telemetry, _directory) = test_telemetry();
@@ -1690,6 +1696,10 @@ mod tests {
     fn panic_hook_never_persists_any_forbidden_content_canary_as_the_panic_message() {
         use privacy::FORBIDDEN_CONTENT_CANARIES;
         use std::panic::AssertUnwindSafe;
+
+        let _hook_guard = PANIC_HOOK_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
 
         let (telemetry, _directory) = test_telemetry();
         let original_hook = std::panic::take_hook();

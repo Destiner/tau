@@ -126,6 +126,7 @@ const {
   canDraft,
   streaming,
   stopping,
+  promptSubmitting,
   activeExtensionDialog,
   sessionLoading,
   initialize,
@@ -269,6 +270,15 @@ watch(
 
 watch(sessionLoading, (loading) => {
   if (loading) return;
+  void nextTick(() => {
+    if (!state.remoteDialogOpen && !activeExtensionDialog.value) {
+      composerBar.value?.focus();
+    }
+  });
+});
+
+watch(promptSubmitting, (submitting) => {
+  if (submitting) return;
   void nextTick(() => {
     if (!state.remoteDialogOpen && !activeExtensionDialog.value) {
       composerBar.value?.focus();

@@ -382,6 +382,8 @@ describe('session drafts and selection', () => {
 
     draft.value = 'Start background work';
     await sendMessage();
+    expect(controller.promptSubmitting).toBe(true);
+    expect(draft.value).toBe('Start background work');
     emitRpc(controller, {
       id: controller.pendingPrompt?.stateRequestId,
       type: 'response',
@@ -409,7 +411,9 @@ describe('session drafts and selection', () => {
     });
     await vi.waitFor(() => {
       expect(controller.pendingPrompt).toBeUndefined();
+      expect(controller.promptSubmitting).toBe(false);
     });
+    expect(draft.value).toBe('');
 
     await newSession(project);
 
@@ -1446,6 +1450,56 @@ describe('session replacement hardening', () => {
 });
 
 describe('extension UI protocol', () => {
+  it('keeps a response draft in place until Pi accepts it', async () => {
+    const { firstController, firstSession, project, tau } =
+      await setupExtensionControllers();
+    await tau.selectSession(project, firstSession);
+    emitRpc(firstController, {
+      type: 'extension_ui_request',
+      id: 'pending-response',
+      method: 'input',
+      title: 'Issue ID',
+    });
+    const dialog = tau.activeExtensionDialog.value;
+    if (!dialog) throw new Error('Expected the extension prompt');
+    dialog.draft = 'ENG-42';
+
+    const defaultInvoke = vi.mocked(invoke).getMockImplementation();
+    let rejectSend: ((error: Error) => void) | undefined;
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      const request = (args as { request?: { type?: string } })?.request;
+      if (command === 'send_pi' && request?.type === 'extension_ui_response') {
+        await new Promise<never>((_resolve, reject) => {
+          rejectSend = reject;
+        });
+      }
+      return defaultInvoke?.(command, args);
+    });
+
+    try {
+      const submission = tau.submitExtensionDialog(dialog.draft);
+      await vi.waitFor(() => {
+        expect(dialog.submitting).toBe(true);
+      });
+      expect(dialog.draft).toBe('ENG-42');
+
+      rejectSend?.(new Error('Pi is unavailable'));
+      await submission;
+
+      expect(tau.activeExtensionDialog.value).toBe(dialog);
+      expect(dialog.submitting).toBe(false);
+      expect(dialog.draft).toBe('ENG-42');
+      expect(dialog.error).toBe('The response could not be sent. Try again.');
+
+      if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
+      await tau.submitExtensionDialog(dialog.draft);
+      expect(tau.activeExtensionDialog.value).toBeUndefined();
+    } finally {
+      if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
+      tau.dispose();
+    }
+  });
+
   it('keeps dialogs in their originating session while users switch freely', async () => {
     const {
       firstController,
@@ -2315,6 +2369,73 @@ describe('turn failures', () => {
       expect(controller.status).toBe('Retrying (1/3): Overloaded');
     });
     tau.dispose();
+  });
+});
+
+describe('prompt submission', () => {
+  it('keeps a saved-session draft until Pi accepts the request', async () => {
+    const { tau, controller } = await setupNamedSession();
+    const defaultInvoke = vi.mocked(invoke).getMockImplementation();
+    let acceptSend: (() => void) | undefined;
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      const request = (args as { request?: { type?: string } })?.request;
+      if (command === 'send_pi' && request?.type === 'prompt') {
+        await new Promise<void>((resolve) => {
+          acceptSend = resolve;
+        });
+        return;
+      }
+      return defaultInvoke?.(command, args);
+    });
+
+    try {
+      tau.draft.value = 'Keep this until delivery';
+      const submission = tau.sendMessage();
+      await vi.waitFor(() => {
+        expect(controller.promptSubmitting).toBe(true);
+      });
+      expect(tau.promptSubmitting.value).toBe(true);
+      expect(tau.canCompose.value).toBe(false);
+      expect(tau.draft.value).toBe('Keep this until delivery');
+
+      acceptSend?.();
+      await submission;
+
+      expect(controller.promptSubmitting).toBe(false);
+      expect(tau.promptSubmitting.value).toBe(false);
+      expect(tau.draft.value).toBe('');
+    } finally {
+      if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
+    }
+  });
+
+  it('keeps a saved-session draft when delivery fails', async () => {
+    const { tau, controller } = await setupNamedSession();
+    const defaultInvoke = vi.mocked(invoke).getMockImplementation();
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      const request = (args as { request?: { type?: string } })?.request;
+      if (command === 'send_pi' && request?.type === 'prompt') {
+        throw new Error('Pi is unavailable');
+      }
+      return defaultInvoke?.(command, args);
+    });
+
+    try {
+      tau.draft.value = 'Keep this after failure';
+      await tau.sendMessage();
+
+      expect(controller.promptSubmitting).toBe(false);
+      expect(tau.canCompose.value).toBe(true);
+      expect(tau.draft.value).toBe('Keep this after failure');
+      expect(
+        controller.messages.some(
+          (entry) =>
+            entry.kind === 'user' && entry.text === 'Keep this after failure',
+        ),
+      ).toBe(false);
+    } finally {
+      if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
+    }
   });
 });
 

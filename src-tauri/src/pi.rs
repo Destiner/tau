@@ -9,10 +9,13 @@ use std::{
     ffi::{OsStr, OsString},
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
-    process::{Child, ChildStdin, Command, Stdio},
-    sync::{mpsc, Arc, Mutex, OnceLock},
+    process::{Child, ChildStdin, Command, ExitStatus, Stdio},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc, Mutex, OnceLock,
+    },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
@@ -20,6 +23,10 @@ const MAX_RPC_LINE_BYTES: usize = 64 * 1024 * 1024;
 const STDERR_TAIL_LINES: usize = 8;
 const STDERR_LINE_CHARS: usize = 2048;
 const LOGIN_SHELL_TIMEOUT: Duration = Duration::from_secs(5);
+const PI_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+const PI_STOP_TIMEOUT: Duration = Duration::from_secs(3);
+const PI_WRITER_QUEUE_CAPACITY: usize = 32;
+const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const LOGIN_SHELL_PATH_MARKER: &str = "__TAU_PATH__";
 /// Shells disagree about flags: tcsh rejects `-l` unless it stands alone, and
 /// shells that are not POSIX-like may reject bundling altogether. The
@@ -35,9 +42,18 @@ pub struct PiState {
 
 impl Drop for PiState {
     fn drop(&mut self) {
-        if let Ok(mut manager) = self.inner.lock() {
-            stop_all_processes(&mut manager);
-        }
+        let processes = self
+            .inner
+            .lock()
+            .map(|mut manager| {
+                manager
+                    .processes
+                    .drain()
+                    .map(|(_, process)| process)
+                    .collect()
+            })
+            .unwrap_or_default();
+        stop_all_processes(processes);
     }
 }
 
@@ -47,10 +63,17 @@ struct PiManager {
     processes: HashMap<String, PiProcess>,
 }
 
+#[derive(Clone)]
 struct PiProcess {
     generation: u64,
     child: Arc<Mutex<Child>>,
-    stdin: Arc<Mutex<ChildStdin>>,
+    writer: mpsc::SyncSender<PiWriteRequest>,
+    usable: Arc<AtomicBool>,
+}
+
+struct PiWriteRequest {
+    line: Vec<u8>,
+    result: mpsc::SyncSender<std::io::Result<()>>,
 }
 
 struct PiReaderContext<R: Runtime> {
@@ -469,7 +492,7 @@ fn spawn_command<R: Runtime>(
         .lock()
         .map_err(|_| "Pi process state is unavailable.".to_string())?;
     let replaced_generation = manager.processes.get(&runtime_id).map(|p| p.generation);
-    stop_runtime_process(&mut manager, &runtime_id);
+    stop_runtime_process(&mut manager, &runtime_id)?;
     if let Some(generation) = replaced_generation {
         telemetry.record_process_lifecycle(
             "pi.process.stopped",
@@ -507,6 +530,13 @@ fn spawn_command<R: Runtime>(
         .take()
         .ok_or_else(|| "Pi did not expose an error stream.".to_string())?;
     let child = Arc::new(Mutex::new(child));
+    let writer = match spawn_stdin_writer(stdin) {
+        Ok(writer) => writer,
+        Err(error) => {
+            let _ = stop_child(&child);
+            return Err(error);
+        }
+    };
     let stderr_tail = Arc::new(Mutex::new(VecDeque::with_capacity(STDERR_TAIL_LINES)));
 
     manager.processes.insert(
@@ -514,7 +544,8 @@ fn spawn_command<R: Runtime>(
         PiProcess {
             generation,
             child: Arc::clone(&child),
-            stdin: Arc::new(Mutex::new(stdin)),
+            writer,
+            usable: Arc::new(AtomicBool::new(true)),
         },
     );
 
@@ -551,22 +582,65 @@ fn spawn_command<R: Runtime>(
 }
 
 #[tauri::command]
-pub fn send_pi(
+pub fn send_pi<R: Runtime>(
+    app: AppHandle<R>,
     state: State<'_, PiState>,
     runtime_id: String,
     request: Value,
 ) -> Result<(), String> {
-    send_pi_to_state(&state, runtime_id, request)
+    let result = send_pi_to_state(&state, runtime_id.clone(), request);
+    if result.is_err() {
+        let failed_generation = state.inner.lock().ok().and_then(|manager| {
+            manager.processes.get(&runtime_id).and_then(|process| {
+                (!process.usable.load(Ordering::Acquire)).then_some(process.generation)
+            })
+        });
+        if let Some(generation) = failed_generation {
+            emit_pi_event(
+                &app,
+                PiEvent {
+                    runtime_id: &runtime_id,
+                    generation,
+                    kind: "exited",
+                    line: None,
+                    message: None,
+                    code: Some(1),
+                },
+            );
+        }
+    }
+    result
+}
+
+fn spawn_stdin_writer(mut stdin: ChildStdin) -> Result<mpsc::SyncSender<PiWriteRequest>, String> {
+    let (sender, receiver) = mpsc::sync_channel::<PiWriteRequest>(PI_WRITER_QUEUE_CAPACITY);
+    thread::Builder::new()
+        .name("tau-pi-stdin".into())
+        .spawn(move || {
+            while let Ok(request) = receiver.recv() {
+                let result = stdin.write_all(&request.line).and_then(|_| stdin.flush());
+                let failed = result.is_err();
+                let _ = request.result.send(result);
+                if failed {
+                    break;
+                }
+            }
+        })
+        .map_err(|_| {
+            "Tau could not start the Pi input stream. Reopen the session and try again.".to_string()
+        })?;
+    Ok(sender)
 }
 
 fn send_pi_to_state(state: &PiState, runtime_id: String, request: Value) -> Result<(), String> {
-    let line = serde_json::to_vec(&request)
+    let mut line = serde_json::to_vec(&request)
         .map_err(|error| format!("Could not encode the Pi request: {error}"))?;
     if line.len() > MAX_RPC_LINE_BYTES {
         return Err("The Pi request is too large.".into());
     }
+    line.push(b'\n');
 
-    let stdin = {
+    let process = {
         let manager = state
             .inner
             .lock()
@@ -574,17 +648,53 @@ fn send_pi_to_state(state: &PiState, runtime_id: String, request: Value) -> Resu
         manager
             .processes
             .get(&runtime_id)
-            .map(|process| Arc::clone(&process.stdin))
+            .cloned()
             .ok_or_else(|| "The selected Pi runtime is not running.".to_string())?
     };
-    let mut stdin = stdin
-        .lock()
-        .map_err(|_| "Pi input stream is unavailable.".to_string())?;
-    stdin
-        .write_all(&line)
-        .and_then(|_| stdin.write_all(b"\n"))
-        .and_then(|_| stdin.flush())
-        .map_err(|error| format!("Could not send a request to pi: {error}"))
+    send_pi_line(&process, line, PI_WRITE_TIMEOUT)
+}
+
+fn send_pi_line(process: &PiProcess, line: Vec<u8>, timeout: Duration) -> Result<(), String> {
+    if !process.usable.load(Ordering::Acquire) {
+        return Err("Pi is no longer accepting requests. Restart Tau and try again.".into());
+    }
+    let (result_sender, result_receiver) = mpsc::sync_channel(1);
+    process
+        .writer
+        .try_send(PiWriteRequest {
+            line,
+            result: result_sender,
+        })
+        .map_err(|error| match error {
+            mpsc::TrySendError::Full(_) => {
+                "Pi is still accepting another request. Try again.".to_string()
+            }
+            mpsc::TrySendError::Disconnected(_) => {
+                "The Pi input stream is unavailable. Reopen the session and try again.".to_string()
+            }
+        })?;
+
+    match result_receiver.recv_timeout(timeout) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(_)) => {
+            process.usable.store(false, Ordering::Release);
+            Err("Pi could not accept the request. Reopen the session and try again.".into())
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            process.usable.store(false, Ordering::Release);
+            Err("The Pi input stream closed before accepting the request. Try again.".into())
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            process.usable.store(false, Ordering::Release);
+            if stop_process(process).is_err() {
+                return Err(
+                    "Pi stopped responding and Tau could not stop it. Restart Tau and try again."
+                        .into(),
+                );
+            }
+            Err("Pi did not accept the request in time. Try again.".into())
+        }
+    }
 }
 
 #[tauri::command]
@@ -603,7 +713,7 @@ pub fn stop_pi(
         .lock()
         .map_err(|_| "Pi process state is unavailable.".to_string())?;
     let stopped_generation = manager.processes.get(&runtime_id).map(|p| p.generation);
-    stop_runtime_process(&mut manager, &runtime_id);
+    stop_runtime_process(&mut manager, &runtime_id)?;
     if let Some(generation) = stopped_generation {
         telemetry.record_process_lifecycle(
             "pi.process.stopped",
@@ -620,22 +730,71 @@ pub fn stop_pi(
     Ok(())
 }
 
-fn stop_runtime_process(manager: &mut PiManager, runtime_id: &str) {
-    if let Some(process) = manager.processes.remove(runtime_id) {
-        stop_process(process);
+fn stop_runtime_process(manager: &mut PiManager, runtime_id: &str) -> Result<(), String> {
+    let Some(process) = manager.processes.remove(runtime_id) else {
+        return Ok(());
+    };
+    if let Err(error) = stop_process(&process) {
+        manager.processes.insert(runtime_id.to_string(), process);
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn stop_all_processes(processes: Vec<PiProcess>) {
+    for process in processes {
+        let _ = stop_process(&process);
     }
 }
 
-fn stop_all_processes(manager: &mut PiManager) {
-    for (_, process) in manager.processes.drain() {
-        stop_process(process);
+fn stop_process(process: &PiProcess) -> Result<(), String> {
+    stop_child(&process.child)
+}
+
+fn stop_child(child: &Arc<Mutex<Child>>) -> Result<(), String> {
+    let deadline = Instant::now() + PI_STOP_TIMEOUT;
+    let mut kill_sent = false;
+    loop {
+        match child.try_lock() {
+            Ok(mut child) => {
+                if child
+                    .try_wait()
+                    .map_err(|_| "Tau could not check whether Pi stopped. Try again.".to_string())?
+                    .is_some()
+                {
+                    return Ok(());
+                }
+                if !kill_sent {
+                    child
+                        .kill()
+                        .map_err(|_| "Tau could not stop Pi. Try again.".to_string())?;
+                    kill_sent = true;
+                }
+            }
+            Err(std::sync::TryLockError::WouldBlock) => {}
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err("Pi process state is unavailable. Try again.".into());
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err("Pi did not stop in time. Try again.".into());
+        }
+        thread::sleep(PROCESS_POLL_INTERVAL);
     }
 }
 
-fn stop_process(process: PiProcess) {
-    if let Ok(mut child) = process.child.lock() {
-        let _ = child.kill();
-        let _ = child.wait();
+fn wait_for_child(child: &Arc<Mutex<Child>>) -> Option<ExitStatus> {
+    loop {
+        match child.try_lock() {
+            Ok(mut child) => match child.try_wait() {
+                Ok(Some(status)) => return Some(status),
+                Ok(None) => {}
+                Err(_) => return None,
+            },
+            Err(std::sync::TryLockError::WouldBlock) => {}
+            Err(std::sync::TryLockError::Poisoned(_)) => return None,
+        }
+        thread::sleep(PROCESS_POLL_INTERVAL);
     }
 }
 
@@ -723,8 +882,10 @@ fn spawn_stdout_reader<R: Runtime>(
             }
         }
 
-        let status = child.lock().ok().and_then(|mut child| child.wait().ok());
-        let _ = stderr_reader.join();
+        let status = wait_for_child(&child);
+        // Descendants may inherit stderr after Pi exits. The tail is
+        // best-effort, so they must not delay process cleanup or failure UI.
+        drop(stderr_reader);
         let code = status.as_ref().and_then(|status| status.code());
         let succeeded = status.as_ref().is_some_and(|status| status.success());
         let should_emit = manager.lock().is_ok_and(|mut current| {
@@ -1313,11 +1474,16 @@ mod tests {
             .processes
             .insert("second".into(), sleeping_process(2));
 
-        stop_runtime_process(&mut manager, "first");
+        stop_runtime_process(&mut manager, "first").expect("stop first runtime");
 
         assert!(!manager.processes.contains_key("first"));
         assert!(manager.processes.contains_key("second"));
-        stop_all_processes(&mut manager);
+        let processes = manager
+            .processes
+            .drain()
+            .map(|(_, process)| process)
+            .collect();
+        stop_all_processes(processes);
         assert!(manager.processes.is_empty());
     }
 
@@ -1331,7 +1497,44 @@ mod tests {
         PiProcess {
             generation,
             child: Arc::new(Mutex::new(child)),
-            stdin: Arc::new(Mutex::new(stdin)),
+            writer: spawn_stdin_writer(stdin).expect("stdin writer"),
+            usable: Arc::new(AtomicBool::new(true)),
         }
+    }
+
+    #[test]
+    fn a_blocked_pi_write_returns_within_its_timeout() {
+        let process = sleeping_process(1);
+        let started = Instant::now();
+
+        let error = send_pi_line(
+            &process,
+            vec![b'x'; 1024 * 1024],
+            Duration::from_millis(100),
+        )
+        .expect_err("an unread pipe should time out");
+
+        assert_eq!(error, "Pi did not accept the request in time. Try again.");
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(
+            send_pi_line(&process, b"retry\n".to_vec(), Duration::from_millis(100))
+                .expect_err("a timed-out runtime stays unavailable"),
+            "Pi is no longer accepting requests. Restart Tau and try again.",
+        );
+        stop_process(&process).expect("timed-out process is stopped");
+    }
+
+    #[test]
+    fn waiting_for_exit_does_not_block_process_termination() {
+        let process = sleeping_process(1);
+        let child = Arc::clone(&process.child);
+        let waiter = thread::spawn(move || wait_for_child(&child));
+        thread::sleep(Duration::from_millis(25));
+        let started = Instant::now();
+
+        stop_process(&process).expect("stop process while its exit is watched");
+
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(waiter.join().expect("exit watcher").is_some());
     }
 }

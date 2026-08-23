@@ -77,6 +77,7 @@ function makeController(
     stopping: false,
     starting: false,
     working: false,
+    promptSubmitting: false,
     unread: false,
     lastUserMessageAt: 0,
     messages: [],
@@ -116,12 +117,57 @@ beforeEach(async () => {
   mockInvoke.mockClear();
   rpcSpans.clear();
   state.controllers.splice(0);
+  state.workspace = null;
   const telemetry = await import('../telemetry');
   vi.mocked(telemetry.recordControllerTransition).mockClear();
   vi.mocked(telemetry.recordRpcResponseAnomaly).mockClear();
   vi.mocked(telemetry.recordStreamAggregate).mockClear();
   vi.mocked(telemetry.invokeTraced).mockClear();
   vi.mocked(telemetry.startRpcSpan).mockClear();
+});
+
+describe('prompt delivery', () => {
+  it('restores a resumed phantom draft when its first request cannot be sent', async () => {
+    const { sendPhantomMessage } = await import('./runtime');
+    const controller = makeController({
+      phantom: true,
+      ready: true,
+      generation: 1,
+      draft: 'Keep this draft',
+    });
+    state.workspace = {
+      activeProjectPath: '/tmp/project',
+      piPath: '/usr/local/bin/pi',
+      projects: [
+        {
+          path: '/tmp/project',
+          name: 'project',
+          workingDirectory: '/tmp/project',
+          collapsed: false,
+          selected: true,
+          sessions: [],
+        },
+      ],
+    };
+    let rejectSend: ((error: Error) => void) | undefined;
+    mockInvoke.mockImplementationOnce(
+      () =>
+        new Promise<never>((_resolve, reject) => {
+          rejectSend = reject;
+        }),
+    );
+
+    const delivery = sendPhantomMessage(controller, 'Keep this draft', false);
+    controller.draft = 'A newer draft';
+    rejectSend?.(new Error('Pi is unavailable'));
+    await delivery;
+
+    expect(controller.promptSubmitting).toBe(false);
+    expect(controller.pendingPrompt).toBeUndefined();
+    expect(controller.draft).toBe('A newer draft');
+    expect(controller.messages).toEqual([]);
+    expect(controller.status).toBe('Pi is unavailable');
+  });
 });
 
 describe('skill transcript events', () => {
@@ -521,6 +567,28 @@ describe('Pi RPC span lifecycle', () => {
       command: 'get_state',
       success: true,
     });
+  });
+
+  it('keeps the runtime state intact when process termination fails', async () => {
+    const telemetry = await import('../telemetry');
+    const { stopControllerProcess } = await import('./runtime');
+    const controller = makeController({
+      generation: 1,
+      ready: true,
+      working: true,
+      messages: [{ id: 'message-1', kind: 'assistant', text: 'Keep this' }],
+    });
+    vi.mocked(telemetry.invokeTraced).mockRejectedValueOnce(
+      new Error('Pi did not stop in time. Try again.'),
+    );
+
+    await stopControllerProcess(controller);
+
+    expect(controller.generation).toBe(1);
+    expect(controller.ready).toBe(true);
+    expect(controller.working).toBe(true);
+    expect(controller.messages).toHaveLength(1);
+    expect(controller.status).toBe('Pi did not stop in time. Try again.');
   });
 
   it('abandons pending spans when the controller stops', async () => {

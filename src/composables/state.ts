@@ -73,6 +73,8 @@ interface ExtensionDialog {
   placeholder?: string;
   prefill?: string;
   draft: string;
+  submitting: boolean;
+  error: string;
   timeout?: number;
   controllerKey: string;
   runtimeId: string;
@@ -146,6 +148,7 @@ interface SessionController {
   stopping: boolean;
   starting: boolean;
   working: boolean;
+  promptSubmitting: boolean;
   unread: boolean;
   lastUserMessageAt: number;
   messages: TranscriptEntry[];
@@ -425,6 +428,9 @@ const status = computed(
 );
 const streaming = computed(() => activeController.value?.streaming === true);
 const stopping = computed(() => activeController.value?.stopping === true);
+const promptSubmitting = computed(
+  () => activeController.value?.promptSubmitting === true,
+);
 const models = computed(() => {
   const controller = activeController.value;
   if (!controller) return emptyModels;
@@ -470,7 +476,7 @@ const sessionLoading = computed(() => {
 const canCompose = computed(() => {
   const controller = activeController.value;
   if (!activeProject.value || !activeSession.value || !controller) return false;
-  if (controller.starting) return false;
+  if (controller.starting || controller.promptSubmitting) return false;
   return controller.phantom
     ? runtimeAvailable(activeProject.value)
     : controller.ready;
@@ -774,6 +780,7 @@ function createController(
     stopping: false,
     starting: false,
     working: false,
+    promptSubmitting: false,
     unread: false,
     lastUserMessageAt: session.lastUserMessageAt,
     messages: [],
@@ -1200,6 +1207,7 @@ export {
   status,
   streaming,
   stopping,
+  promptSubmitting,
   models,
   efforts,
   commands,

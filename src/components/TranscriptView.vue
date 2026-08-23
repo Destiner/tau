@@ -92,6 +92,8 @@
           :message="prompt.message"
           :options="prompt.options"
           :placeholder="prompt.placeholder"
+          :submitting="prompt.submitting"
+          :error="prompt.error"
           :working-directory="prompt.workingDirectory"
           @update:draft="forwardPromptDraft"
           @submit="forwardPromptSubmit"

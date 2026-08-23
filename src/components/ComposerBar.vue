@@ -9,7 +9,7 @@
   <div
     ref="composer"
     class="composer"
-    :class="{ disabled: !canDraft }"
+    :class="{ disabled: !canDraft || promptSubmitting }"
     @keydown.escape.prevent.stop="dismissCommandMenu"
   >
     <CommandMenu
@@ -30,7 +30,7 @@
         rows="4"
         maxlength="32768"
         placeholder="Message π"
-        :disabled="!canDraft"
+        :disabled="!canDraft || promptSubmitting"
         :aria-expanded="commandMenuActive"
         :aria-controls="commandMenuActive ? 'command-menu' : undefined"
         :aria-activedescendant="
@@ -146,6 +146,7 @@ const {
   effortLabels,
   efforts,
   models,
+  promptSubmitting,
   selectEffort,
   selectModel,
   settingsDisabled,

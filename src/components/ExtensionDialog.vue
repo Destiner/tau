@@ -4,6 +4,7 @@
     role="dialog"
     aria-modal="false"
     :aria-label="title"
+    :aria-busy="submitting || undefined"
     @submit.prevent="handleSubmit"
   >
     <MarkdownText
@@ -35,6 +36,7 @@
         role="option"
         :data-cursor="index === selectedIndex || undefined"
         :aria-selected="index === selectedIndex"
+        :disabled="submitting"
         @mouseenter="() => highlight(index)"
         @click="() => chooseOption(option)"
       >
@@ -59,6 +61,7 @@
         autocomplete="off"
         :placeholder="placeholder"
         :aria-label="title"
+        :disabled="submitting"
       />
     </UiContextMenu>
 
@@ -71,10 +74,19 @@
         v-model="draft"
         rows="6"
         :aria-label="title"
+        :disabled="submitting"
         @keydown.meta.enter.prevent="handleSubmit"
         @keydown.ctrl.enter.prevent="handleSubmit"
       />
     </UiContextMenu>
+
+    <p
+      v-if="error"
+      class="extension-prompt-error"
+      role="status"
+    >
+      {{ error }}
+    </p>
 
     <footer class="extension-prompt-actions">
       <template v-if="method === 'confirm'">
@@ -82,6 +94,7 @@
           ref="primaryAction"
           variant="primary"
           type="button"
+          :disabled="submitting"
           @click="confirm"
         >
           Confirm
@@ -89,6 +102,7 @@
         <UiButton
           variant="secondary"
           type="button"
+          :disabled="submitting"
           @click="reject"
         >
           No
@@ -98,12 +112,14 @@
         v-else-if="method === 'input' || method === 'editor'"
         variant="primary"
         type="submit"
+        :disabled="submitting"
       >
         Submit
       </UiButton>
       <UiButton
         variant="secondary"
         type="button"
+        :disabled="submitting"
         @click="cancel"
       >
         Cancel
@@ -113,7 +129,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onMounted, ref } from 'vue';
+import { nextTick, onMounted, ref, watch } from 'vue';
 
 import textFieldItems from '../lib/text-menu';
 
@@ -131,6 +147,8 @@ const props = defineProps<{
   message?: string;
   options?: string[];
   placeholder?: string;
+  submitting: boolean;
+  error: string;
   /** Base for the file paths in the text; absent when the project is remote. */
   workingDirectory?: string;
 }>();
@@ -152,47 +170,63 @@ const selectedIndex = ref(0);
  * on the control rather than on the question above it.
  */
 onMounted(() => {
-  void nextTick(() => {
-    if (props.method === 'select') {
-      document
-        .getElementById('extension-prompt-option-0')
-        ?.focus({ preventScroll: true });
-    } else if (props.method === 'confirm') {
-      primaryAction.value?.button?.focus({ preventScroll: true });
-    } else {
-      dialogInput.value?.input?.focus({ preventScroll: true });
-    }
-  });
+  void nextTick(focusDialog);
 });
+
+watch(
+  () => props.submitting,
+  (submitting, wasSubmitting) => {
+    if (!submitting && wasSubmitting) void nextTick(focusDialog);
+  },
+);
+
+function focusDialog(): void {
+  if (props.method === 'select') {
+    document
+      .getElementById('extension-prompt-option-0')
+      ?.focus({ preventScroll: true });
+  } else if (props.method === 'confirm') {
+    primaryAction.value?.button?.focus({ preventScroll: true });
+  } else {
+    dialogInput.value?.input?.focus({ preventScroll: true });
+  }
+}
 
 function highlight(index: number): void {
   selectedIndex.value = index;
 }
 
 function chooseOption(value: string): void {
-  emit('submit', value);
+  if (!props.submitting) emit('submit', value);
 }
 
 function confirm(): void {
-  emit('submit', true);
+  if (!props.submitting) emit('submit', true);
 }
 
 function reject(): void {
-  emit('submit', false);
+  if (!props.submitting) emit('submit', false);
 }
 
 function cancel(): void {
-  emit('cancel');
+  if (!props.submitting) emit('cancel');
 }
 
 function handleSubmit(): void {
-  if (props.method !== 'input' && props.method !== 'editor') return;
+  if (
+    props.submitting ||
+    (props.method !== 'input' && props.method !== 'editor')
+  ) {
+    return;
+  }
   emit('submit', draft.value);
 }
 
 function handleSelectKeydown(event: KeyboardEvent): void {
   const options = props.options ?? [];
-  if (props.method !== 'select' || options.length === 0) return;
+  if (props.submitting || props.method !== 'select' || options.length === 0) {
+    return;
+  }
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
     event.preventDefault();
     const delta = event.key === 'ArrowDown' ? 1 : -1;
@@ -267,6 +301,12 @@ function handleSelectKeydown(event: KeyboardEvent): void {
   padding: 5px 8px;
   color: var(--muted);
   font-size: var(--text-sm);
+}
+
+.extension-prompt-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--text-xs);
 }
 
 .extension-prompt-actions {

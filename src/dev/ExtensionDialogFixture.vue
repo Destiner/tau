@@ -56,6 +56,8 @@ const prompt = reactive<ExtensionDialog>({
   message,
   options: Array.from({ length: 12 }, (_, index) => `label-${index}`),
   draft: '',
+  submitting: false,
+  error: '',
   controllerKey: 'fixture-controller',
   runtimeId: 'fixture-runtime',
   generation: 1,
