@@ -295,7 +295,12 @@ function focus(): void {
   composerInput.value?.focus();
 }
 
-defineExpose({ focus });
+defineExpose({
+  focus,
+  get input() {
+    return composerInput.value;
+  },
+});
 </script>
 
 <style scoped>

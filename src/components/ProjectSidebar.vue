@@ -180,6 +180,7 @@
             >
               <template #trigger>
                 <UiIconButton
+                  ref="openProjectButton"
                   size="lg"
                   label="Open project"
                   :disabled="projectActionsDisabled"
@@ -291,6 +292,7 @@ const {
 
 const projectList = ref<HTMLElement>();
 const sidebar = ref<HTMLElement>();
+const openProjectButton = ref<InstanceType<typeof UiIconButton>>();
 const projectMenuOpen = ref(false);
 /** Whether the sidebar body shows the workspace-wide archived list. */
 const showingArchived = ref(false);
@@ -486,6 +488,12 @@ function isTitlebarControl(target: EventTarget | null): boolean {
     Boolean(target.closest('button, a, input, select, textarea'))
   );
 }
+
+defineExpose({
+  get openProjectButton() {
+    return openProjectButton.value?.button;
+  },
+});
 </script>
 
 <style scoped>

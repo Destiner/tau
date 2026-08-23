@@ -9,6 +9,7 @@
         class="ui-dialog-content"
         :class="`width-${width}`"
         :aria-busy="busy || undefined"
+        @close-auto-focus="handleCloseAutoFocus"
       >
         <header class="ui-dialog-head">
           <DialogTitle class="ui-dialog-title">{{ title }}</DialogTitle>
@@ -53,13 +54,22 @@ const props = withDefaults(
     /** Panel width: 440px for a connection, 480px for a directory browser. */
     width?: 'sm' | 'md';
     busy?: boolean;
+    /** Persistent control that receives focus after this dialog closes. */
+    returnFocus?: () => HTMLElement | undefined;
   }>(),
-  { description: undefined, width: 'sm' },
+  { description: undefined, width: 'sm', returnFocus: undefined },
 );
 
 function handleOpenChange(next: boolean): void {
   if (!next && props.busy) return;
   open.value = next;
+}
+
+function handleCloseAutoFocus(event: Event): void {
+  const target = props.returnFocus?.();
+  if (!target) return;
+  event.preventDefault();
+  target.focus({ preventScroll: true });
 }
 </script>
 

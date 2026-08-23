@@ -8,6 +8,7 @@
     "
     :width="step === 'connection' ? 'sm' : 'md'"
     :busy="connecting"
+    :return-focus="returnFocus"
   >
     <form
       v-if="step === 'connection'"
@@ -138,6 +139,7 @@ const props = defineProps<{
   connectionError: string;
   connecting: boolean;
   directoryOptions: RemoteDirectoryOption[];
+  returnFocus?: () => HTMLElement | undefined;
 }>();
 
 const emit = defineEmits<{

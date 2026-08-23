@@ -8,6 +8,7 @@
     :style="{ '--sidebar-width': `${sidebarWidth}px` }"
   >
     <ProjectSidebar
+      ref="projectSidebar"
       v-model:sidebar-width="sidebarWidth"
       v-model:resizing="resizingSidebar"
     />
@@ -78,6 +79,7 @@
       :connection-error="state.remoteConnectionError"
       :connecting="state.remoteConnecting"
       :directory-options="remoteDirectoryOptions"
+      :return-focus="remoteDialogReturnFocus"
       @submit-connection="submitRemoteConnection"
       @choose-directory="handleChooseDirectory"
     />
@@ -111,6 +113,7 @@ const LOADING_INDICATOR_DELAY_MS = 200;
 const EDITABLE_SELECTOR = 'input, textarea, select';
 
 const transcriptView = ref<InstanceType<typeof TranscriptView>>();
+const projectSidebar = ref<InstanceType<typeof ProjectSidebar>>();
 const sessionHeader = ref<InstanceType<typeof SessionHeader>>();
 const composerBar = ref<InstanceType<typeof ComposerBar>>();
 const windowFocused = ref(true);
@@ -291,6 +294,13 @@ function focusComposer(): void {
   composerBar.value?.focus();
 }
 
+function remoteDialogReturnFocus(): HTMLElement | undefined {
+  if (state.remoteDialogMode === 'retry' && composerBar.value?.input) {
+    return composerBar.value.input;
+  }
+  return projectSidebar.value?.openProjectButton;
+}
+
 /** A send starts with the transcript pinned to its end. */
 function handleComposerSend(): void {
   transcriptView.value?.scrollToEnd();
@@ -347,19 +357,7 @@ function handleDocumentContextMenu(event: MouseEvent): void {
 
 function handleDocumentKeydown(event: KeyboardEvent): void {
   if (event.defaultPrevented) return;
-  if (event.key === 'Escape') {
-    handleEscape(event);
-    return;
-  }
   suppressSystemBeep(event);
-}
-
-/** Escape closes the innermost surface that is open, innermost first. */
-function handleEscape(event: KeyboardEvent): void {
-  if (activeExtensionDialog.value) {
-    event.preventDefault();
-    void cancelExtensionDialog();
-  }
 }
 
 /**

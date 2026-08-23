@@ -114,8 +114,9 @@ Concurrency bugs are the worst UX bugs.
 
 - When transient UI closes, focus lands somewhere deliberate — never
   dropped on the document body. `[e2e]`
-- Escape means one thing: dismiss the topmost transient layer. It is never
-  destructive. `[audit]`
+- Escape dismisses only the topmost dismissible transient layer. If the
+  topmost surface cannot be safely dismissed, Escape does nothing; it is never
+  destructive. `[e2e]`
 - The current accessibility level (semantics, roles, live regions) is the
   bar: maintained in changed code, neither regressed nor expanded. `[audit]`
 

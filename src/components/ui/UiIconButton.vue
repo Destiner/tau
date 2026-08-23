@@ -1,5 +1,6 @@
 <template>
   <button
+    ref="button"
     type="button"
     class="ui-icon-button"
     :data-size="size"
@@ -14,6 +15,8 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue';
+
 withDefaults(
   defineProps<{
     /**
@@ -39,6 +42,14 @@ withDefaults(
     tone: 'default',
   },
 );
+
+const button = ref<HTMLButtonElement>();
+
+defineExpose({
+  get button() {
+    return button.value;
+  },
+});
 </script>
 
 <style scoped>

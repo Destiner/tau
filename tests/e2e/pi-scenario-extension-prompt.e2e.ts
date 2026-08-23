@@ -55,3 +55,31 @@ test('renders a prompt asked of a session that holds nothing yet', async ({
   );
   await expect(transcript.locator('.message')).toHaveCount(1);
 });
+
+test('Escape dismisses only a dismissible layer above the prompt', async ({
+  page,
+}) => {
+  await page.goto(scenarioUrl);
+
+  const prompt = page.getByRole('dialog', {
+    name: 'Which label should the release carry?',
+  });
+  await expect(prompt).toBeVisible();
+
+  // The workflow question cannot be dismissed without cancelling it, so an
+  // unclaimed Escape leaves both it and its current answer alone.
+  await page.keyboard.press('Escape');
+  await expect(prompt).toBeVisible();
+
+  const trigger = page.getByRole('button', { name: 'Open project' });
+  await trigger.click();
+  await page.getByRole('menuitem', { name: 'Open Remote Project' }).click();
+  const remoteDialog = page.getByRole('dialog', { name: 'SSH connection' });
+  await expect(remoteDialog).toBeVisible();
+
+  await page.keyboard.press('Escape');
+
+  await expect(remoteDialog).toHaveCount(0);
+  await expect(prompt).toBeVisible();
+  await expect(trigger).toBeFocused();
+});
