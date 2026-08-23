@@ -29,6 +29,30 @@ for (const step of ['connection', 'directory'] as const) {
   });
 }
 
+for (const step of ['connection', 'directory'] as const) {
+  test(`renders the ${step} error below its input`, async ({ page }) => {
+    await page.goto(`/?fixture=remote-dialog&step=${step}&error=true`);
+
+    const input = page.getByRole('textbox');
+    const error = page.getByRole('alert');
+    await expect(error).toHaveText(
+      'The remote connection failed. Check the connection and try again.',
+    );
+    const errorId = await error.getAttribute('id');
+    expect(errorId).not.toBeNull();
+    await expect(input).toHaveAttribute('aria-describedby', errorId ?? '');
+    expect(await input.getAttribute('title')).toBeNull();
+
+    const inputBox = await input.boundingBox();
+    const errorBox = await error.boundingBox();
+    expect(inputBox).not.toBeNull();
+    expect(errorBox).not.toBeNull();
+    if (inputBox && errorBox) {
+      expect(errorBox.y).toBeGreaterThanOrEqual(inputBox.y + inputBox.height);
+    }
+  });
+}
+
 test('cannot be dismissed while a connection is pending', async ({ page }) => {
   await page.goto('/?fixture=remote-dialog&connecting=true');
 

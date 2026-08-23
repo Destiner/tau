@@ -47,7 +47,7 @@ function testController(
     localErrors: [],
     draft: '',
     status: '',
-    retainStatusOnSelection: false,
+    actionError: '',
     currentModelProvider: '',
     currentModelId: '',
     currentModelName: '',

@@ -7,7 +7,7 @@
       v-model:selected-index="selectedIndex"
       :step="step"
       mode="add"
-      connection-error=""
+      :connection-error="connectionError"
       :connecting="connecting"
       :directory-options="directoryOptions"
       @submit-connection="showDirectories"
@@ -21,15 +21,16 @@ import { ref } from 'vue';
 
 import RemoteDialog from '../components/RemoteDialog.vue';
 
+const search = new URLSearchParams(window.location.search);
 const step = ref<'connection' | 'directory'>(
-  new URLSearchParams(window.location.search).get('step') === 'directory'
-    ? 'directory'
-    : 'connection',
+  search.get('step') === 'directory' ? 'directory' : 'connection',
 );
 
 const open = ref(true);
-const connecting =
-  new URLSearchParams(window.location.search).get('connecting') === 'true';
+const connecting = search.get('connecting') === 'true';
+const connectionError = search.has('error')
+  ? 'The remote connection failed. Check the connection and try again.'
+  : '';
 const connectionString = ref('ssh user@example -p 1234');
 const directoryFilter = ref('');
 const selectedIndex = ref(0);

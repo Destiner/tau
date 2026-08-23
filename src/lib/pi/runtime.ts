@@ -28,8 +28,8 @@ import {
   presentRemoteConnectionError,
   replacementProbeDelays,
   replacementProbeTimers,
-  setActiveError,
   setControllerError,
+  setWorkspaceError,
   setControllerLifecycle,
   state,
   touchController,
@@ -1920,7 +1920,7 @@ async function persistExpandedProject(
       parentContext,
     );
   } catch (error) {
-    setActiveError(error);
+    setWorkspaceError(error);
   }
 }
 

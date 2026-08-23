@@ -11,6 +11,7 @@
   >
     <form
       v-if="step === 'connection'"
+      class="remote-connection-form"
       @submit.prevent="submitConnection"
     >
       <UiContextMenu
@@ -27,12 +28,22 @@
           autocapitalize="off"
           spellcheck="false"
           placeholder="ssh user@example -p 1234"
-          :aria-label="connectionError || 'SSH connection string'"
+          aria-label="SSH connection string"
+          :aria-describedby="
+            connectionError ? 'remote-connection-error' : undefined
+          "
           :aria-invalid="Boolean(connectionError)"
-          :title="connectionError"
           :readonly="connecting || mode === 'retry'"
         />
       </UiContextMenu>
+      <p
+        v-if="connectionError"
+        id="remote-connection-error"
+        class="remote-dialog-error"
+        role="alert"
+      >
+        {{ connectionError }}
+      </p>
     </form>
 
     <div
@@ -55,12 +66,22 @@
           aria-label="Filter remote directories"
           aria-controls="remote-directory-list"
           :aria-activedescendant="`remote-directory-option-${selectedIndex}`"
+          :aria-describedby="
+            connectionError ? 'remote-directory-error' : undefined
+          "
           :aria-invalid="Boolean(connectionError)"
-          :title="connectionError"
           :readonly="connecting"
           @keydown="handleDirectoryKeydown"
         />
       </UiContextMenu>
+      <p
+        v-if="connectionError"
+        id="remote-directory-error"
+        class="remote-dialog-error"
+        role="alert"
+      >
+        {{ connectionError }}
+      </p>
       <div
         id="remote-directory-list"
         class="remote-directory-list"
@@ -185,10 +206,23 @@ function scrollSelected(): void {
 </script>
 
 <style scoped>
+.remote-connection-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 /* The dialog body is the flex column that spaces these two; this wrapper only
  * groups them for the v-else. */
 .remote-directory-dialog {
   display: contents;
+}
+
+.remote-dialog-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--text-xs);
+  line-height: var(--leading-ui);
 }
 
 .remote-directory-list {

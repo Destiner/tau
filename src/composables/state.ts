@@ -159,7 +159,7 @@ interface SessionController {
   localErrors: LocalError[];
   draft: string;
   status: string;
-  retainStatusOnSelection: boolean;
+  actionError: string;
   currentModelProvider: string;
   currentModelId: string;
   currentModelName: string;
@@ -432,7 +432,10 @@ const draft = computed({
   },
 });
 const status = computed(
-  () => activeController.value?.status || state.workspaceStatus,
+  () =>
+    activeController.value?.status ||
+    activeController.value?.actionError ||
+    state.workspaceStatus,
 );
 const streaming = computed(() => activeController.value?.streaming === true);
 const stopping = computed(() => activeController.value?.stopping === true);
@@ -491,6 +494,7 @@ const canCompose = computed(() => {
   if (!activeProject.value || !activeSession.value || !controller) return false;
   if (
     controller.starting ||
+    controller.working ||
     controller.promptSubmitting ||
     projectActionsDisabled.value
   )
@@ -816,7 +820,7 @@ function createController(
     localErrors: [],
     draft: '',
     status: '',
-    retainStatusOnSelection: false,
+    actionError: '',
     currentModelProvider: '',
     currentModelId: '',
     currentModelName: '',
@@ -1088,10 +1092,25 @@ function setControllerError(
   controller.status = errorMessage(error);
 }
 
-function setActiveError(error: unknown): void {
-  const controller = activeController.value;
-  if (controller) setControllerError(controller, error);
-  else state.workspaceStatus = errorMessage(error);
+function setControllerActionError(
+  controller: SessionController,
+  error: unknown,
+): void {
+  controller.actionError = errorMessage(error);
+}
+
+function clearControllerActionError(
+  controller: SessionController | undefined,
+): void {
+  if (controller) controller.actionError = '';
+}
+
+function setWorkspaceError(error: unknown): void {
+  state.workspaceStatus = errorMessage(error);
+}
+
+function clearWorkspaceError(): void {
+  state.workspaceStatus = '';
 }
 
 const MAX_STATE_SUMMARY_COUNT = 1_000_000;
@@ -1300,7 +1319,10 @@ export {
   finishRemoteConnection,
   errorMessage,
   setControllerError,
-  setActiveError,
+  setControllerActionError,
+  clearControllerActionError,
+  setWorkspaceError,
+  clearWorkspaceError,
   classifyControllerLifecycle,
   setControllerLifecycle,
   buildStateSnapshot,

@@ -279,8 +279,7 @@ watch(sessionLoading, (loading) => {
   });
 });
 
-watch(promptSubmitting, (submitting) => {
-  if (submitting) return;
+watch(promptSubmitting, () => {
   void nextTick(() => {
     if (!state.remoteDialogOpen && !activeExtensionDialog.value) {
       composerBar.value?.focus();

@@ -2373,7 +2373,7 @@ describe('turn failures', () => {
 });
 
 describe('prompt submission', () => {
-  it('keeps a saved-session draft until Pi accepts the request', async () => {
+  it('keeps the draft through delivery and blocks repeat prompts while working', async () => {
     const { tau, controller } = await setupNamedSession();
     const defaultInvoke = vi.mocked(invoke).getMockImplementation();
     let acceptSend: (() => void) | undefined;
@@ -2403,7 +2403,13 @@ describe('prompt submission', () => {
 
       expect(controller.promptSubmitting).toBe(false);
       expect(tau.promptSubmitting.value).toBe(false);
+      expect(tau.canCompose.value).toBe(false);
       expect(tau.draft.value).toBe('');
+
+      tau.draft.value = 'Wait for the current prompt';
+      await tau.sendMessage();
+      expect(sentRequests(controller, 'prompt')).toHaveLength(1);
+      expect(tau.draft.value).toBe('Wait for the current prompt');
     } finally {
       if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
     }
@@ -2606,7 +2612,11 @@ describe('project removal', () => {
       expect(tau.isProjectRemoving(project.path)).toBe(false);
       expect(controller.disposed).toBe(false);
       expect(controller.draft).toBe('Keep this draft');
-      expect(controller.status).toBe('Could not update the project registry');
+      expect(controller.status).toBe('');
+      expect(tau.state.workspaceStatus).toBe(
+        'Could not update the project registry',
+      );
+      expect(tau.status.value).toBe('Could not update the project registry');
       expect(stoppedRuntimes()).toEqual([]);
     } finally {
       if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
@@ -2740,8 +2750,36 @@ describe('session settings', () => {
   });
 });
 
+describe('workspace action status', () => {
+  it('clears a stale action error when the action is retried', async () => {
+    const { tau, project, controller } = await setupNamedSession();
+    const defaultInvoke = vi.mocked(invoke).getMockImplementation();
+    let attempts = 0;
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === 'set_project_collapsed' && attempts++ === 0) {
+        throw new Error('Could not update the project');
+      }
+      return defaultInvoke?.(command, args);
+    });
+
+    try {
+      await tau.toggleProject(project);
+      expect(tau.state.workspaceStatus).toBe('Could not update the project');
+      expect(controller.status).toBe('');
+      expect(tau.status.value).toBe('Could not update the project');
+
+      await tau.toggleProject(project);
+      expect(tau.state.workspaceStatus).toBe('');
+      expect(tau.status.value).toBe('');
+    } finally {
+      if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
+      tau.dispose();
+    }
+  });
+});
+
 describe('archive failure locality', () => {
-  it('keeps a delayed archive failure on its originating session', async () => {
+  it('keeps a delayed archive failure local until the action is retried', async () => {
     const {
       tau,
       project,
@@ -2752,9 +2790,10 @@ describe('archive failure locality', () => {
     } = await setupExtensionControllers();
     await tau.selectSession(project, firstSession);
     const defaultInvoke = vi.mocked(invoke).getMockImplementation();
+    let archiveAttempts = 0;
     let rejectArchive: ((error: unknown) => void) | undefined;
     vi.mocked(invoke).mockImplementation(async (command, args) => {
-      if (command === 'archive_session') {
+      if (command === 'archive_session' && archiveAttempts++ === 0) {
         return await new Promise<WorkspaceSnapshot>((_resolve, reject) => {
           rejectArchive = reject;
         });
@@ -2769,12 +2808,30 @@ describe('archive failure locality', () => {
       rejectArchive?.(new Error('Could not archive the session'));
       await archive;
 
-      expect(firstController.status).toBe('Could not archive the session');
+      expect(firstController.actionError).toBe('Could not archive the session');
       expect(firstController.unread).toBe(true);
-      expect(secondController.status).toBe('');
+      expect(secondController.actionError).toBe('');
 
       await tau.selectSession(project, firstSession);
       expect(tau.status.value).toBe('Could not archive the session');
+
+      mocks.workspace = {
+        ...(mocks.workspace as WorkspaceSnapshot),
+        projects: [
+          {
+            ...project,
+            sessions: project.sessions.map((session) =>
+              session.id === firstSession.id
+                ? { ...session, archived: true, selected: false }
+                : { ...session, selected: session.id === secondSession.id },
+            ),
+          },
+        ],
+      };
+      await tau.archiveSession(project, firstSession);
+
+      expect(firstController.actionError).toBe('');
+      expect(tau.status.value).toBe('');
     } finally {
       if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
       tau.dispose();

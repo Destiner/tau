@@ -49,8 +49,10 @@ import {
   canDraft,
   canRenameSession,
   clearActiveSession,
+  clearControllerActionError,
   clearRemoteDirectoryBrowser,
   clearRemoteRetry,
+  clearWorkspaceError,
   commands,
   controllerByKey,
   controllerByRuntimeId,
@@ -91,10 +93,11 @@ import {
   sessionLastActive,
   sessionLoading,
   sessionTitle,
-  setActiveError,
   setActiveSessionView,
+  setControllerActionError,
   setControllerError,
   setControllerLifecycle,
+  setWorkspaceError,
   settingsDisabled,
   state,
   status,
@@ -207,6 +210,7 @@ function useTau() {
 
   async function addLocalProject(): Promise<void> {
     if (projectActionsDisabled.value) return;
+    clearWorkspaceError();
     try {
       const selection = await open({
         directory: true,
@@ -222,12 +226,13 @@ function useTau() {
         state.activeProjectPath = state.workspace.activeProjectPath;
       }
     } catch (error) {
-      setActiveError(error);
+      setWorkspaceError(error);
     }
   }
 
   function openRemoteProjectDialog(): void {
     if (projectActionsDisabled.value) return;
+    clearWorkspaceError();
     clearRemoteRetry();
     state.remoteDialogMode = 'add';
     state.remoteDialogStep = 'connection';
@@ -357,13 +362,14 @@ function useTau() {
 
   async function toggleProject(project: ProjectSummary): Promise<void> {
     if (projectActionsDisabled.value) return;
+    clearWorkspaceError();
     try {
       state.workspace = await invokeTraced<WorkspaceSnapshot>(
         'set_project_collapsed',
         { path: project.path, collapsed: !project.collapsed },
       );
     } catch (error) {
-      setActiveError(error);
+      setWorkspaceError(error);
     }
   }
 
@@ -384,6 +390,7 @@ function useTau() {
       return;
     }
 
+    clearWorkspaceError();
     const projects = [...workspace.projects];
     const [project] = projects.splice(fromIndex, 1);
     if (!project) return;
@@ -397,18 +404,16 @@ function useTau() {
       );
     } catch (error) {
       state.workspace = workspace;
-      setActiveError(error);
+      setWorkspaceError(error);
     }
   }
 
   async function removeProject(project: ProjectSummary): Promise<void> {
     if (projectActionsDisabled.value) return;
+    clearWorkspaceError();
     state.removingProjectPaths.push(project.path);
     const projectControllers = state.controllers.filter(
       (controller) => controller.projectPath === project.path,
-    );
-    const selectedController = projectControllers.find(
-      (controller) => controller.key === state.activeControllerKey,
     );
 
     try {
@@ -432,9 +437,7 @@ function useTau() {
       );
       removeProjectUiState(project.path);
     } catch (error) {
-      const controller = selectedController ?? projectControllers[0];
-      if (controller) setControllerError(controller, error);
-      else state.workspaceStatus = errorMessage(error);
+      setWorkspaceError(error);
     } finally {
       state.removingProjectPaths = state.removingProjectPaths.filter(
         (path) => path !== project.path,
@@ -447,7 +450,9 @@ function useTau() {
     session: SessionSummary,
   ): Promise<void> {
     if (!canArchiveSession(project, session)) return;
+    clearWorkspaceError();
     const controller = controllerForSession(project.path, session.id);
+    clearControllerActionError(controller);
     const discardedViewWasSelected =
       state.activeProjectPath === project.path &&
       state.activeSessionId === session.id;
@@ -493,11 +498,8 @@ function useTau() {
       else await newSession(updatedProject);
     } catch (error) {
       const errorController = controller ?? ensureController(project, session);
-      setControllerError(errorController, error);
-      if (!isSessionSelected(project, session)) {
-        errorController.unread = true;
-        errorController.retainStatusOnSelection = true;
-      }
+      setControllerActionError(errorController, error);
+      if (!isSessionSelected(project, session)) errorController.unread = true;
     }
   }
 
@@ -506,6 +508,7 @@ function useTau() {
     session: SessionSummary,
   ): Promise<void> {
     if (projectActionsDisabled.value) return;
+    clearWorkspaceError();
     try {
       state.workspace = await invokeTraced<WorkspaceSnapshot>(
         'unarchive_session',
@@ -514,12 +517,13 @@ function useTau() {
       // The record is reachable again, but nothing selects it here: the
       // archived list is a review surface, not a session switcher.
     } catch (error) {
-      setActiveError(error);
+      setWorkspaceError(error);
     }
   }
 
   async function newSession(project: ProjectSummary): Promise<void> {
     if (projectActionsDisabled.value) return;
+    clearWorkspaceError();
     const actionSpan = startActionSpan('session.new');
     try {
       const previous = activeController.value;
@@ -600,10 +604,8 @@ function useTau() {
 
       removeEmptyActivePhantom();
       const controller = ensureController(project, session);
-      const retainStatus = controller.retainStatusOnSelection;
       setActiveSessionView(project, session, controller);
-      if (!retainStatus) controller.status = '';
-      controller.retainStatusOnSelection = false;
+      controller.status = '';
       controller.unread = false;
       await persistProjectSelection(
         project.path,
@@ -634,6 +636,7 @@ function useTau() {
       !canCompose.value ||
       controller.streaming ||
       controller.stopping ||
+      controller.working ||
       controller.promptSubmitting ||
       projectActionsDisabled.value
     ) {

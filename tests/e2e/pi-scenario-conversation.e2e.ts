@@ -10,6 +10,85 @@ interface VisibleConversationState {
   working: boolean;
 }
 
+test('keeps the composer editable but blocks repeat sends during delivery', async ({
+  page,
+}) => {
+  await page.goto(scenarioUrl);
+
+  const composer = page.getByRole('textbox', { name: 'Message Pi' });
+  const send = page.getByRole('button', { name: 'Send message' });
+  await expect(composer).toBeEnabled();
+
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __TAU_PROMPT_DELIVERY__?: {
+        attempts: number;
+        release: () => void;
+      };
+    };
+    const internals = window.__TAURI_INTERNALS__;
+    if (!internals) throw new Error('Expected mocked Tauri internals.');
+    const invoke = internals.invoke;
+    let release: (() => void) | undefined;
+    const delivery = {
+      attempts: 0,
+      release: (): void => release?.(),
+    };
+    testWindow.__TAU_PROMPT_DELIVERY__ = delivery;
+    internals.invoke = async (command, args): Promise<unknown> => {
+      const request = (args as Record<string, unknown> | undefined)?.request as
+        { type?: string } | undefined;
+      if (command === 'send_pi' && request?.type === 'prompt') {
+        delivery.attempts += 1;
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      }
+      return await invoke(command, args);
+    };
+  });
+  await composer.fill(prompt);
+  await send.click();
+  await page.waitForFunction(
+    () =>
+      (
+        window as Window & {
+          __TAU_PROMPT_DELIVERY__?: { attempts: number };
+        }
+      ).__TAU_PROMPT_DELIVERY__?.attempts === 1,
+  );
+
+  await expect(composer).toBeEnabled();
+  await expect(composer).toBeFocused();
+  await expect(send).toBeDisabled();
+
+  const nextDraft = 'Ask a follow-up';
+  await composer.fill(nextDraft);
+  await composer.press('Enter');
+  await expect(send).toBeDisabled();
+  expect(
+    await page.evaluate(
+      () =>
+        (
+          window as Window & {
+            __TAU_PROMPT_DELIVERY__?: { attempts: number };
+          }
+        ).__TAU_PROMPT_DELIVERY__?.attempts,
+    ),
+  ).toBe(1);
+
+  await page.evaluate(() =>
+    (
+      window as Window & {
+        __TAU_PROMPT_DELIVERY__?: { release: () => void };
+      }
+    ).__TAU_PROMPT_DELIVERY__?.release(),
+  );
+  await expect(page.getByText(completeReply, { exact: true })).toBeVisible();
+  await expect(composer).toHaveValue(nextDraft);
+  await expect(send).toBeEnabled();
+});
+
 test('submits and settles a deterministic streamed conversation', async ({
   page,
 }) => {

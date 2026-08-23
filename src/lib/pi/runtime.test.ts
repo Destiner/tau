@@ -85,7 +85,7 @@ function makeController(
     localErrors: [],
     draft: '',
     status: '',
-    retainStatusOnSelection: false,
+    actionError: '',
     currentModelProvider: '',
     currentModelId: '',
     currentModelName: '',
