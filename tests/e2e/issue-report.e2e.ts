@@ -7,15 +7,15 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('submits an issue with optional session context', async ({ page }) => {
-  const trigger = page.getByRole('button', { name: 'Report an issue' });
+  const trigger = page.getByRole('button', { name: 'Report an Issue' });
   await trigger.click();
 
-  const dialog = page.getByRole('dialog', { name: 'Report an issue' });
+  const dialog = page.getByRole('dialog', { name: 'Report an Issue' });
   const includeSession = dialog.getByRole('checkbox', {
-    name: 'Include current session',
+    name: 'Include Current Session',
   });
   const description = dialog.getByRole('textbox', {
-    name: 'Describe the issue',
+    name: 'Describe the Issue',
   });
   await expect(includeSession).not.toBeChecked();
 
@@ -42,11 +42,11 @@ test('submits an issue with optional session context', async ({ page }) => {
 test('keeps the description available after dismissal or failure', async ({
   page,
 }) => {
-  const trigger = page.getByRole('button', { name: 'Report an issue' });
+  const trigger = page.getByRole('button', { name: 'Report an Issue' });
   await trigger.click();
-  const dialog = page.getByRole('dialog', { name: 'Report an issue' });
+  const dialog = page.getByRole('dialog', { name: 'Report an Issue' });
   const description = dialog.getByRole('textbox', {
-    name: 'Describe the issue',
+    name: 'Describe the Issue',
   });
 
   await description.fill('Keep this draft');

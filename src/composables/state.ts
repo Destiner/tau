@@ -91,7 +91,7 @@ const effortLabels: Record<ThinkingLevel, string> = {
   low: 'Low',
   medium: 'Medium',
   high: 'High',
-  xhigh: 'Extra high',
+  xhigh: 'Extra High',
   max: 'Max',
 };
 
@@ -114,6 +114,12 @@ interface PendingSessionRename {
   requestId: string;
   previousName: string;
   previousTitle: string;
+}
+
+interface SubmittedPrompt {
+  requestId: string;
+  message: string;
+  optimisticId?: string;
 }
 
 interface PendingPrompt {
@@ -172,6 +178,7 @@ interface SessionController {
   commands: CommandOption[];
   commandsLoaded: boolean;
   pendingPrompt?: PendingPrompt;
+  submittedPrompt?: SubmittedPrompt;
   pendingSessionRename?: PendingSessionRename;
   bootstrapStateRequestId: string;
   bootstrapSessionPath: string;
@@ -510,7 +517,7 @@ const sessionTitle = computed(() => {
     controller?.sessionName ||
     activeSession.value?.title ||
     firstUserMessage(controller) ||
-    'New session'
+    'New Session'
   );
 });
 
@@ -710,7 +717,7 @@ function createPhantomSession(
   return {
     id: `phantom-${now}-${phantomSequence}`,
     path: '',
-    title: 'New session',
+    title: 'New Session',
     lastActive: 'now',
     lastUserMessageAt: 0,
     sortAt: now,
@@ -804,7 +811,7 @@ function createController(
     projectPath: project.path,
     sessionId: session.id,
     sessionPath: session.path,
-    sessionName: session.title === 'New session' ? '' : session.title,
+    sessionName: session.title === 'New Session' ? '' : session.title,
     phantom,
     generation: 0,
     ready: false,
@@ -833,6 +840,7 @@ function createController(
     commands: [],
     commandsLoaded: false,
     pendingPrompt: undefined,
+    submittedPrompt: undefined,
     pendingSessionRename: undefined,
     bootstrapStateRequestId: '',
     bootstrapSessionPath: '',
@@ -936,7 +944,7 @@ function relativeTimestamp(timestamp: number): string {
 }
 
 function draftTitle(value: string): string {
-  return normalizeSessionName(value) || 'New session';
+  return normalizeSessionName(value) || 'New Session';
 }
 
 function normalizeSessionName(value: string): string {
@@ -1028,7 +1036,7 @@ function applyRemoteDirectoryListing(
 
 function presentRemoteConnectionError(
   controller: SessionController,
-  error: unknown,
+  message: string,
 ): void {
   setControllerLifecycle(
     controller,
@@ -1044,7 +1052,7 @@ function presentRemoteConnectionError(
     'bridge_event_failed',
   );
   controller.runStateRequestId = '';
-  controller.status = errorMessage(error);
+  controller.status = message;
   if (!isControllerSelected(controller)) return;
 
   const project = state.workspace?.projects.find(
@@ -1081,22 +1089,18 @@ function finishRemoteConnection(controller: SessionController): void {
   }
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function setControllerError(
   controller: SessionController,
-  error: unknown,
+  message: string,
 ): void {
-  controller.status = errorMessage(error);
+  controller.status = message;
 }
 
 function setControllerActionError(
   controller: SessionController,
-  error: unknown,
+  message: string,
 ): void {
-  controller.actionError = errorMessage(error);
+  controller.actionError = message;
 }
 
 function clearControllerActionError(
@@ -1105,8 +1109,8 @@ function clearControllerActionError(
   if (controller) controller.actionError = '';
 }
 
-function setWorkspaceError(error: unknown): void {
-  state.workspaceStatus = errorMessage(error);
+function setWorkspaceError(message: string): void {
+  state.workspaceStatus = message;
 }
 
 function clearWorkspaceError(): void {
@@ -1317,7 +1321,6 @@ export {
   presentRemoteConnectionError,
   clearRemoteRetry,
   finishRemoteConnection,
-  errorMessage,
   setControllerError,
   setControllerActionError,
   clearControllerActionError,

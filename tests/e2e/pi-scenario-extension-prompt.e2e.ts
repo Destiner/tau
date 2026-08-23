@@ -15,7 +15,7 @@ test('renders an extension prompt in the transcript in place of the composer', a
   await page.goto(scenarioUrl);
 
   const composer = page.getByRole('textbox', { name: 'Message Pi' });
-  const transcript = page.getByLabel('Tau transcript');
+  const transcript = page.getByLabel('Transcript');
   const prompt = page.getByRole('dialog', {
     name: 'Which label should the release carry?',
   });
@@ -42,7 +42,7 @@ test('renders a prompt asked of a session that holds nothing yet', async ({
 }) => {
   await page.goto('/?test-scenario=empty-session-extension-prompt');
 
-  const transcript = page.getByLabel('Tau transcript');
+  const transcript = page.getByLabel('Transcript');
   const prompt = transcript.getByRole('dialog', {
     name: 'Which label should the release carry?',
   });
@@ -71,10 +71,10 @@ test('Escape dismisses only a dismissible layer above the prompt', async ({
   await page.keyboard.press('Escape');
   await expect(prompt).toBeVisible();
 
-  const trigger = page.getByRole('button', { name: 'Open project' });
+  const trigger = page.getByRole('button', { name: 'Open Project' });
   await trigger.click();
   await page.getByRole('menuitem', { name: 'Open Remote Project' }).click();
-  const remoteDialog = page.getByRole('dialog', { name: 'SSH connection' });
+  const remoteDialog = page.getByRole('dialog', { name: 'SSH Connection' });
   await expect(remoteDialog).toBeVisible();
 
   await page.keyboard.press('Escape');

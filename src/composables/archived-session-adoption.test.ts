@@ -90,7 +90,7 @@ vi.mock('@tauri-apps/api/core', () => ({
         mocks.records.push({
           id,
           path: args?.sessionPath as string,
-          name: name || 'New session',
+          name: name || 'New Session',
           archived: false,
         });
         return snapshot();
@@ -324,7 +324,9 @@ describe('a workflow phase Pi hands back', () => {
 
     await vi.waitFor(() => {
       expect(controller.sessionId).toBe(PHASE_SESSION.id);
-      expect(controller.status).toBe(UNAVAILABLE);
+      expect(controller.status).toBe(
+        'This session could not be saved. Continue here, then try reopening it.',
+      );
     });
     // The registry still hides the row from the project list, but the
     // archived list now carries the record, so the session stays reachable

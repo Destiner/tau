@@ -14,7 +14,7 @@ const scenarioUrl = '/?test-scenario=saved-session-history';
 /** How much blank canvas sits above the topmost rendered row. */
 async function gapAboveFirstRow(page: Page): Promise<number> {
   return await page.evaluate(() => {
-    const element = document.querySelector('[aria-label="Tau transcript"]');
+    const element = document.querySelector('[aria-label="Transcript"]');
     if (!element) return -1;
     const tops = Array.from(document.querySelectorAll('[data-index]')).map(
       (row) => row.getBoundingClientRect().top,
@@ -32,7 +32,7 @@ test('opens a session that already holds a transcript at its end', async ({
   await page.goto(scenarioUrl);
   await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
 
-  const transcript = page.getByLabel('Tau transcript');
+  const transcript = page.getByLabel('Transcript');
   await expect(transcript).toContainText('Reply 11.');
 
   // The reader arrives at the end of the transcript, on rendered content: a
@@ -61,7 +61,7 @@ test('renders the start of a long history the reader scrolls back to', async ({
   await page.goto('/?test-scenario=saved-session-long-history');
   await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
 
-  const transcript = page.getByLabel('Tau transcript');
+  const transcript = page.getByLabel('Transcript');
   await expect(transcript).toContainText('Reply 59.');
 
   // Reading back through rows that were only ever estimated is where a window

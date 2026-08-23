@@ -21,9 +21,9 @@ test('boots the real app into a deterministic saved session', async ({
     'Alpha · fixture',
   );
   await expect(
-    page.getByRole('combobox', { name: 'Thinking effort' }),
+    page.getByRole('combobox', { name: 'Thinking Effort' }),
   ).toHaveText('High');
-  await expect(page.getByLabel('Tau transcript')).toHaveCount(0);
+  await expect(page.getByLabel('Transcript')).toHaveCount(0);
   await expect(page.getByText('Loading', { exact: true })).toHaveCount(0);
 
   const timeline = await page.evaluate(() =>

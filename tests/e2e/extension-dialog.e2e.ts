@@ -10,7 +10,7 @@ test.beforeEach(async ({ page }) => {
 test('opens the transcript at a question larger than the pane', async ({
   page,
 }) => {
-  const transcript = page.getByLabel('Tau transcript');
+  const transcript = page.getByLabel('Transcript');
   const prompt = page.getByRole('dialog');
   await expect(prompt).toBeVisible();
 
@@ -38,7 +38,7 @@ test('scrolls the question, its options, and the transcript as one region', asyn
 }) => {
   const prompt = page.getByRole('dialog');
   const options = prompt.getByRole('listbox');
-  const transcript = page.getByLabel('Tau transcript');
+  const transcript = page.getByLabel('Transcript');
 
   // Only the transcript scrolls: nothing inside the prompt is a region of
   // its own, so the question, the options, and the history read as one view.

@@ -15,7 +15,7 @@ test('registers and selects a session replaced by an extension command', async (
   await expect(page.getByRole('heading', { name: 'Main' })).toBeVisible();
 
   await composer.fill(command);
-  await page.getByRole('button', { name: 'Send message' }).click();
+  await page.getByRole('button', { name: 'Send Message' }).click();
   await page.evaluate((gate) => {
     const scenario = window.__TAU_PI_SCENARIO__;
     if (!scenario) throw new Error('Expected the browser Pi scenario API.');
@@ -25,7 +25,7 @@ test('registers and selects a session replaced by an extension command', async (
   await expect(composer).toHaveValue('');
   await expect(page.getByRole('heading', { name: 'Main' })).toBeVisible();
   await expect(page.getByText(command, { exact: true })).toHaveCount(0);
-  await expect(page.getByLabel('Tau transcript')).toHaveCount(0);
+  await expect(page.getByLabel('Transcript')).toHaveCount(0);
 
   const pausedTimeline = await page.evaluate(() =>
     window.__TAU_PI_SCENARIO__?.timeline(),
@@ -56,7 +56,7 @@ test('registers and selects a session replaced by an extension command', async (
     page.getByRole('heading', { name: replacementName }),
   ).toBeVisible();
   const sidebar = page.getByRole('complementary', {
-    name: 'Projects and sessions',
+    name: 'Projects and Sessions',
   });
   const replacementRow = sidebar.getByRole('button', {
     name: new RegExp(`^${replacementName}\\b`),
@@ -67,7 +67,7 @@ test('registers and selects a session replaced by an extension command', async (
   await expect(oldRow).toHaveCount(1);
   await expect(oldRow).not.toHaveAttribute('aria-current', 'page');
   await expect(page.getByText(command, { exact: true })).toHaveCount(0);
-  await expect(page.getByLabel('Tau transcript')).toHaveCount(0);
+  await expect(page.getByLabel('Transcript')).toHaveCount(0);
   await expect(composer).toBeEnabled();
 
   const verification = await page.evaluate(() =>

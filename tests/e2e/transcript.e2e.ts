@@ -32,7 +32,7 @@ test('renders a long transcript without pagination controls or an oversized DOM'
   expect(renderedRows).toBeGreaterThan(0);
   expect(renderedRows).toBeLessThan(50);
 
-  const transcript = page.getByLabel('Tau transcript');
+  const transcript = page.getByLabel('Transcript');
   await transcript.evaluate((element) => {
     element.scrollTop = 0;
   });
@@ -209,7 +209,7 @@ test('keeps the reader at the end when a row grows after it was measured', async
   // A row measured before its image decoded grows once it does, which moves
   // the end away from a reader who never scrolled: growth is not leaving.
   await expect
-    .poll(() => page.getByLabel('Tau transcript').evaluate(distanceFromEnd))
+    .poll(() => page.getByLabel('Transcript').evaluate(distanceFromEnd))
     .toBeLessThan(2);
 });
 
@@ -343,7 +343,7 @@ test('copies a code block from a button the block reveals on hover', async ({
 
   const message = page.locator('[data-message-id="fixture-assistant-4999"]');
   const block = message.locator('.code-block');
-  const copy = block.getByRole('button', { name: 'Copy code' });
+  const copy = block.getByRole('button', { name: 'Copy Code' });
   const box = (await block.boundingBox()) ?? {
     x: 0,
     y: 0,
@@ -379,7 +379,7 @@ test('copies a code block from a button the block reveals on hover', async ({
 test('opens a tool call in place and keeps it open across virtualization', async ({
   page,
 }) => {
-  const transcript = page.getByLabel('Tau transcript');
+  const transcript = page.getByLabel('Transcript');
   await transcript.evaluate((element) => {
     element.scrollTop = element.scrollHeight * 0.45;
   });
@@ -417,7 +417,7 @@ test('opens a tool call in place and keeps it open across virtualization', async
 test('does not move a reader in history when output changes', async ({
   page,
 }) => {
-  const transcript = page.getByLabel('Tau transcript');
+  const transcript = page.getByLabel('Transcript');
   await transcript.evaluate((element) => {
     element.scrollTop = element.scrollHeight * 0.45;
   });
@@ -451,7 +451,7 @@ test('does not move a reader in history when output changes', async ({
 });
 
 test('keeps streaming output pinned to the end', async ({ page }) => {
-  const transcript = page.getByLabel('Tau transcript');
+  const transcript = page.getByLabel('Transcript');
   await page.evaluate(() => {
     window.__TAU_TRANSCRIPT_FIXTURE__?.scrollToEnd();
   });
@@ -468,7 +468,7 @@ test('keeps streaming output pinned to the end', async ({ page }) => {
 test('follows a row appended while the working indicator is shown', async ({
   page,
 }) => {
-  const transcript = page.getByLabel('Tau transcript');
+  const transcript = page.getByLabel('Transcript');
   await page.evaluate(() => {
     window.__TAU_TRANSCRIPT_FIXTURE__?.scrollToEnd();
     window.__TAU_TRANSCRIPT_FIXTURE__?.setWorking(true);
@@ -487,7 +487,7 @@ test('follows a row appended while the working indicator is shown', async ({
 test('follows the reply that replaces the working indicator', async ({
   page,
 }) => {
-  const transcript = page.getByLabel('Tau transcript');
+  const transcript = page.getByLabel('Transcript');
   await page.evaluate(() => {
     window.__TAU_TRANSCRIPT_FIXTURE__?.scrollToEnd();
     window.__TAU_TRANSCRIPT_FIXTURE__?.setWorking(true);
@@ -509,7 +509,7 @@ test('follows the reply that replaces the working indicator', async ({
 test('stops following output once the reader scrolls back', async ({
   page,
 }) => {
-  const transcript = page.getByLabel('Tau transcript');
+  const transcript = page.getByLabel('Transcript');
   await page.evaluate(() => {
     window.__TAU_TRANSCRIPT_FIXTURE__?.scrollToEnd();
   });
@@ -544,7 +544,7 @@ test('stops following output once the reader scrolls back', async ({
 test('follows output again once the reader returns to the end', async ({
   page,
 }) => {
-  const transcript = page.getByLabel('Tau transcript');
+  const transcript = page.getByLabel('Transcript');
   await transcript.hover();
   await page.mouse.wheel(0, -400);
   await page.waitForTimeout(150);
@@ -563,7 +563,7 @@ test('follows output again once the reader returns to the end', async ({
 test('keeps the reader at the end when the viewport shrinks under them', async ({
   page,
 }) => {
-  const transcript = page.getByLabel('Tau transcript');
+  const transcript = page.getByLabel('Transcript');
   await page.evaluate(() => {
     window.__TAU_TRANSCRIPT_FIXTURE__?.scrollToEnd();
   });
@@ -585,7 +585,7 @@ test('keeps the reader at the end when the viewport shrinks under them', async (
 test('leaves a reader in history where they are when the viewport shrinks', async ({
   page,
 }) => {
-  const transcript = page.getByLabel('Tau transcript');
+  const transcript = page.getByLabel('Transcript');
   await transcript.hover();
   await page.mouse.wheel(0, -400);
   await page.waitForTimeout(150);
@@ -602,7 +602,7 @@ test('leaves a reader in history where they are when the viewport shrinks', asyn
 });
 
 test('follows output again after the reader sends', async ({ page }) => {
-  const transcript = page.getByLabel('Tau transcript');
+  const transcript = page.getByLabel('Transcript');
   await transcript.hover();
   await page.mouse.wheel(0, -400);
   await page.waitForTimeout(150);
@@ -623,7 +623,7 @@ test('follows output again after the reader sends', async ({ page }) => {
 test('returns a session to the place in history it was left', async ({
   page,
 }) => {
-  const transcript = page.getByLabel('Tau transcript');
+  const transcript = page.getByLabel('Transcript');
   await transcript.evaluate((element) => {
     element.scrollTop = element.scrollHeight * 0.45;
   });
@@ -645,7 +645,7 @@ test('returns a session to the place in history it was left', async ({
 test('returns a session left at the end to the end it has grown', async ({
   page,
 }) => {
-  const transcript = page.getByLabel('Tau transcript');
+  const transcript = page.getByLabel('Transcript');
   await expect.poll(() => transcript.evaluate(distanceFromEnd)).toBeLessThan(2);
 
   await switchSession(page, 'other');
@@ -669,7 +669,7 @@ test('keeps frame delivery and mounted rows bounded during a full sweep', async 
 }) => {
   test.skip(browserName !== 'chromium', 'Frame timing is asserted in Chromium');
 
-  const transcript = page.getByLabel('Tau transcript');
+  const transcript = page.getByLabel('Transcript');
   const metrics = await transcript.evaluate(async (element) => {
     const intervals: number[] = [];
     let maximumRows = 0;

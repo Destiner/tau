@@ -683,7 +683,7 @@ fn list_remote_sessions(remote: &RemoteProjectRecord) -> Vec<SessionSummary> {
                         .name
                         .as_deref()
                         .filter(|name| !name.is_empty())
-                        .unwrap_or("New session"),
+                        .unwrap_or("New Session"),
                 ),
                 // Remote registries do not carry a model; the archived list
                 // omits the model line when it is empty.
@@ -761,7 +761,7 @@ fn session_title(pi_name: &str, tau_name: Option<&str>, first_message: &str) -> 
             return candidate.to_string();
         }
     }
-    "New session".into()
+    "New Session".into()
 }
 
 struct ParsedSession {
@@ -1099,7 +1099,7 @@ mod tests {
             "Renamed in Tau"
         );
         assert_eq!(session_title("", None, "Port Tau"), "Port Tau");
-        assert_eq!(session_title("", Some(""), ""), "New session");
+        assert_eq!(session_title("", Some(""), ""), "New Session");
     }
 
     #[test]

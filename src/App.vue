@@ -43,7 +43,7 @@
         ref="transcriptView"
         :messages="messages"
         :show-working-indicator="showWorkingIndicator"
-        :working-label="stopping ? 'Pi is stopping' : 'Pi is working'"
+        :working-label="stopping ? 'Stopping' : 'Working'"
         :base-path="transcriptBasePath"
         :session-key="state.activeControllerKey"
         :prompt="activeExtensionDialog"

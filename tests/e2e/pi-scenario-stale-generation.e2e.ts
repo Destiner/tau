@@ -60,13 +60,12 @@ async function snapshotVisibleSession(
     };
     return {
       transcript:
-        document.querySelector('[aria-label="Tau transcript"]')?.textContent ??
-        '',
+        document.querySelector('[aria-label="Transcript"]')?.textContent ?? '',
       selectedSessionCount: selected.length,
       selectedSessionText: selected[0]?.textContent ?? '',
       heading: document.querySelector('h1')?.textContent ?? '',
       composerEnabled: Boolean(composer && !composer.disabled),
-      sendVisible: visible('button[aria-label="Send message"]'),
+      sendVisible: visible('button[aria-label="Send Message"]'),
       stopVisible: visible('button[aria-label="Stop Pi"]'),
       statuses: [...document.querySelectorAll('[role="status"]')].map(
         (element) =>
@@ -90,7 +89,7 @@ test('ignores gated output from a stale runtime generation', async ({
   const composer = page.getByRole('textbox', { name: 'Message Pi' });
   await expect(composer).toBeEnabled();
   await composer.fill(prompt);
-  await page.getByRole('button', { name: 'Send message' }).click();
+  await page.getByRole('button', { name: 'Send Message' }).click();
 
   await page.evaluate(async (gateName) => {
     const scenario = window.__TAU_PI_SCENARIO__;

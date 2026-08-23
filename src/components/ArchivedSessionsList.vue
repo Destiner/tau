@@ -45,7 +45,7 @@
             </span>
           </button>
           <span class="time">{{ relativeTime(entry) }}</span>
-          <UiTooltip text="Unarchive session">
+          <UiTooltip text="Unarchive Session">
             <UiIconButton
               class="unarchive"
               size="md"

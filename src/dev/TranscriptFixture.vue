@@ -11,7 +11,7 @@
       class="fixture-transcript"
       :messages="messages"
       :show-working-indicator="showWorkingIndicator"
-      working-label="Pi is working"
+      working-label="Working"
       :session-key="sessionKey"
     />
   </main>

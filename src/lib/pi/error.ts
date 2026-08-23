@@ -1,97 +1,116 @@
-/**
- * A failed turn arrives from Pi as one string: a short prefix naming the
- * provider and status, then the provider's own JSON payload verbatim. The
- * sentence a reader needs is inside that payload, so the string is reduced to
- * the two parts worth showing rather than printed whole.
- */
+type PiErrorKind =
+  | 'authentication'
+  | 'credit'
+  | 'rate-limit'
+  | 'unavailable'
+  | 'network'
+  | 'context-limit'
+  | 'model-unavailable'
+  | 'invalid-request'
+  | 'unknown';
+
 interface PiErrorDescription {
-  /** The provider and status, e.g. `OpenAI API error (401)`. */
+  kind: PiErrorKind;
   label: string;
-  /** The sentence to read, taken from the payload when it carries one. */
   message: string;
 }
 
-/** How much of a message a row shows before the rest is left to the session file. */
-const messageLimit = 400;
+const errorMessages: Record<PiErrorKind, string> = {
+  authentication:
+    'The model provider could not authenticate this request. Check the provider credentials and try again.',
+  credit:
+    'The account has no available credit for this request. Add credit or choose another model, then try again.',
+  'rate-limit':
+    'The model provider is receiving too many requests. Wait a moment or choose another model, then try again.',
+  unavailable:
+    'The model provider is temporarily unavailable. Wait a moment or choose another model, then try again.',
+  network:
+    'The model provider could not be reached. Check the connection and try again.',
+  'context-limit':
+    'This conversation is too long for the selected model. Start a new session or choose a model with a larger context window.',
+  'model-unavailable':
+    'The selected model is unavailable to this account. Choose another model and try again.',
+  'invalid-request':
+    'The model provider could not process this request. Edit it or choose another model.',
+  unknown: 'The reply failed. Try again or choose another model.',
+};
 
 function describePiError(raw: string): PiErrorDescription {
-  const text = raw.trim();
-  if (!text) return { label: 'Error', message: 'Pi reported an error.' };
-
-  const payload = parseTrailingJson(text);
-  const message = payload ? payloadMessage(payload.value) : '';
-  if (!message) return { label: 'Error', message: clamp(firstLine(text)) };
-
+  const kind = classifyPiError(raw);
   return {
-    label: labelFrom(payload?.prefix ?? '') || 'Error',
-    message: clamp(message),
+    kind,
+    label: 'Reply Failed',
+    message: errorMessages[kind],
   };
 }
 
-/**
- * The payload runs to the end of the string, so the first brace opens it. A
- * provider that wraps its JSON in more prose parses as nothing and falls back
- * to the raw string, which the row shows as it stands.
- */
-function parseTrailingJson(
-  text: string,
-): { prefix: string; value: unknown } | undefined {
-  const start = text.indexOf('{');
-  if (start < 0) return undefined;
-  try {
-    return {
-      prefix: text.slice(0, start),
-      value: JSON.parse(text.slice(start)),
-    };
-  } catch {
-    return undefined;
+function classifyPiError(raw: string): PiErrorKind {
+  const text = raw.toLocaleLowerCase();
+  if (
+    /\b401\b|unauthori[sz]ed|authentication|api[ _-]?key|credential/.test(text)
+  ) {
+    return 'authentication';
+  }
+  if (
+    /insufficient[ _-]?quota|credit|billing|insufficient (?:balance|funds)|exceeded your current quota/.test(
+      text,
+    )
+  ) {
+    return 'credit';
+  }
+  if (/\b429\b|rate[ _-]?limit|too many requests/.test(text)) {
+    return 'rate-limit';
+  }
+  if (/\b402\b|quota/.test(text)) {
+    return 'credit';
+  }
+  if (
+    /context (?:length|limit|window)|maximum context|max(?:imum)? tokens|conversation is too long/.test(
+      text,
+    )
+  ) {
+    return 'context-limit';
+  }
+  if (
+    /model[^\n]*(?:not found|unavailable|not available|access denied)|unsupported model|does not exist/.test(
+      text,
+    )
+  ) {
+    return 'model-unavailable';
+  }
+  if (
+    /network|fetch failed|connection (?:failed|reset|refused)|timed? out|timeout|dns|socket|unreachable/.test(
+      text,
+    )
+  ) {
+    return 'network';
+  }
+  if (
+    /\b5(?:02|03|04|29)\b|overload|temporarily unavailable|server unavailable|capacity/.test(
+      text,
+    )
+  ) {
+    return 'unavailable';
+  }
+  if (/\b400\b|bad request|invalid request|unprocessable/.test(text)) {
+    return 'invalid-request';
+  }
+  return 'unknown';
+}
+
+function retryPiErrorMessage(kind: PiErrorKind): string {
+  switch (kind) {
+    case 'rate-limit':
+      return 'The model provider is receiving too many requests.';
+    case 'unavailable':
+      return 'The model provider is temporarily unavailable.';
+    case 'network':
+      return 'The model provider could not be reached.';
+    default:
+      return 'The reply failed.';
   }
 }
 
-function payloadMessage(value: unknown): string {
-  const record = asRecord(value);
-  if (!record) return '';
-  if (typeof record.message === 'string') return record.message.trim();
-  const nested = record.error;
-  if (typeof nested === 'string') return nested.trim();
-  const nestedRecord = asRecord(nested);
-  if (nestedRecord && typeof nestedRecord.message === 'string') {
-    return nestedRecord.message.trim();
-  }
-  return '';
-}
+export type { PiErrorDescription, PiErrorKind };
 
-/**
- * Trims the separator the prefix ends on, and the word every row already says.
- * A prefix that is only a status code is named as one, since a number alone in
- * the label position reads as a count of something.
- */
-function labelFrom(prefix: string): string {
-  const label = prefix
-    .trim()
-    .replace(/[:\-–—]+$/, '')
-    .replace(/^error:?\s*/i, '')
-    .trim();
-  return /^\d{3}$/.test(label) ? `HTTP ${label}` : label;
-}
-
-function firstLine(text: string): string {
-  const [line] = text.split('\n');
-  return (line ?? text).trim();
-}
-
-function clamp(text: string): string {
-  return text.length > messageLimit
-    ? `${text.slice(0, messageLimit).trimEnd()}…`
-    : text;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-export type { PiErrorDescription };
-
-export { describePiError };
+export { describePiError, retryPiErrorMessage };

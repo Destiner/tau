@@ -22,8 +22,9 @@ from a rule here. If it isn't, the rubric is missing a rule, not an entry.
 ## Principles
 
 - **Minimal core.** Adding anything costs; removing anything gains. Extra
-  capability belongs in extensions. Empty surfaces are intentionally
-  quiet — no hints, tips, or filler.
+  capability belongs in extensions. Empty surfaces avoid hints, tips, and
+  decorative filler; concise factual copy is useful when blankness would be
+  ambiguous.
 - **Locality.** Everything renders where its context lives: a message
   belonging to a session appears in that session's transcript; session
   state lives in that session's indicators; a dialog's failure lands in
@@ -69,8 +70,9 @@ from a rule here. If it isn't, the rubric is missing a rule, not an entry.
 - Failures surface by locality: in the turn, session, or dialog they belong
   to. A background session's failure waits behind its status indicator
   until the user looks. `[audit]`
-- Error copy states what happened and what to do next, in a sentence. Raw
-  payloads, codes, or stack traces never reach the UI unparsed. `[audit]`
+- Every error has reviewed, operation-specific plain-language copy stating
+  what happened and what to do next. Raw technical details never reach the UI.
+  `[audit]`
 - Failure is distinguishable from slowness: within bounded time the user
   learns an operation failed, and why. `[unit]`
 - Where retry makes sense, it is offered in place — a failure is never a
@@ -135,13 +137,15 @@ Concurrency bugs are the worst UX bugs.
 
 ## 8. Copy
 
-- Voice: terse, sentence case, no exclamation marks, no anthropomorphizing.
-  `[audit]`
+- Voice is terse. Controls, menu items, tooltips, and headings use title case;
+  statuses, validation, errors, placeholders, and explanatory prose use
+  sentence case. No exclamation marks or anthropomorphizing. `[audit]`
 - Minimal: if a sentence can be removed and the UI still makes sense,
   remove it. `[audit]`
 - Status messages describe current state, not history. `[audit]`
-- Empty states stay quiet; where one needs an affordance, it is one line
-  plus the action. `[audit]`
+- Empty states are concise and intentional. A short factual label is useful
+  when blankness could be mistaken for loading, failure, or missing content;
+  an action appears only when there is a useful next step. `[audit]`
 
 ## 9. Performance
 

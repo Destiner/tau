@@ -20,7 +20,7 @@ interface ViewportState {
 async function viewportState(page: Page): Promise<ViewportState> {
   return await page.evaluate(() => {
     const element = document.querySelector(
-      '[aria-label="Tau transcript"]',
+      '[aria-label="Transcript"]',
     ) as HTMLElement | null;
     const rows = Array.from(document.querySelectorAll('[data-index]'));
     if (!element || rows.length === 0) {
@@ -44,9 +44,7 @@ test('renders a transcript that arrives under the working indicator', async ({
   await page.evaluate(() =>
     window.__TAU_TRANSCRIPT_FIXTURE__?.setWorking(true),
   );
-  await expect(
-    page.getByRole('status', { name: 'Pi is working' }),
-  ).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Working' })).toBeVisible();
 
   // A session opened mid-turn shows the indicator first and its history next.
   await page.evaluate(() => window.__TAU_TRANSCRIPT_FIXTURE__?.hydrate(40));
@@ -66,7 +64,7 @@ test('lands on rendered content in a session that shrank while away', async ({
 
   // Read back into history, so the position kept for this session is its own
   // rather than the end, which is always given back as the end.
-  const transcript = page.getByLabel('Tau transcript');
+  const transcript = page.getByLabel('Transcript');
   await transcript.hover();
   for (let step = 0; step < 4; step += 1) {
     await page.mouse.wheel(0, -600);

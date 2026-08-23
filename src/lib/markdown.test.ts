@@ -261,7 +261,7 @@ describe('code copy buttons', () => {
     );
     expect(html.match(/data-tau-copy/g)).toHaveLength(2);
     expect(html).toContain(
-      '<div class="code-block"><pre><code>const a = 1;\n</code></pre><button type="button" class="code-copy" data-tau-copy aria-label="Copy code">',
+      '<div class="code-block"><pre><code>const a = 1;\n</code></pre><button type="button" class="code-copy" data-tau-copy aria-label="Copy Code">',
     );
     expect(html).toContain('<p>prose with <code>inline</code></p>');
   });

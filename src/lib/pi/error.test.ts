@@ -1,64 +1,86 @@
 import { describe, expect, it } from 'vitest';
 
-import { describePiError } from './error';
+import { describePiError, retryPiErrorMessage } from './error';
 
-describe('pi error', () => {
-  it('reads the sentence out of a provider payload', () => {
-    const raw = `402: {"message":"This request requires more credits.","code":402,"metadata":{"limit_source":"openrouter_credits"}}`;
-
+describe('Pi error copy', () => {
+  it.each([
+    [
+      `401: {"message":"Incorrect API key provided."}`,
+      'authentication',
+      'The model provider could not authenticate this request. Check the provider credentials and try again.',
+    ],
+    [
+      `402: {"message":"This request requires more credits."}`,
+      'credit',
+      'The account has no available credit for this request. Add credit or choose another model, then try again.',
+    ],
+    [
+      `429: {"error":{"code":"insufficient_quota"}}`,
+      'credit',
+      'The account has no available credit for this request. Add credit or choose another model, then try again.',
+    ],
+    [
+      '429: rate limit quota exceeded',
+      'rate-limit',
+      'The model provider is receiving too many requests. Wait a moment or choose another model, then try again.',
+    ],
+    [
+      'Maximum context length exceeded',
+      'context-limit',
+      'This conversation is too long for the selected model. Start a new session or choose a model with a larger context window.',
+    ],
+    [
+      'The selected model is not available for this account',
+      'model-unavailable',
+      'The selected model is unavailable to this account. Choose another model and try again.',
+    ],
+    [
+      'TypeError: fetch failed',
+      'network',
+      'The model provider could not be reached. Check the connection and try again.',
+    ],
+    [
+      `529 {"error":{"message":"Overloaded"}}`,
+      'unavailable',
+      'The model provider is temporarily unavailable. Wait a moment or choose another model, then try again.',
+    ],
+    [
+      '400: invalid request',
+      'invalid-request',
+      'The model provider could not process this request. Edit it or choose another model.',
+    ],
+  ] as const)('maps %s to reviewed copy', (raw, kind, message) => {
     expect(describePiError(raw)).toEqual({
-      label: 'HTTP 402',
-      message: 'This request requires more credits.',
+      kind,
+      label: 'Reply Failed',
+      message,
     });
   });
 
-  it('keeps a named provider and status as the label', () => {
-    const raw = `OpenAI API error (401): {"message":"Incorrect API key provided.","type":"invalid_request_error"}`;
+  it('uses fixed fallback copy without exposing raw technical details', () => {
+    const canary =
+      '500 RAW_PAYLOAD_CANARY\n at run (/Users/tau/project/index.ts:4:2)';
+    const description = describePiError(canary);
 
-    expect(describePiError(raw)).toMatchObject({
-      label: 'OpenAI API error (401)',
-      message: 'Incorrect API key provided.',
+    expect(description).toEqual({
+      kind: 'unknown',
+      label: 'Reply Failed',
+      message: 'The reply failed. Try again or choose another model.',
     });
+    expect(JSON.stringify(description)).not.toContain('RAW_PAYLOAD_CANARY');
+    expect(JSON.stringify(description)).not.toContain('/Users/tau');
   });
 
-  it('reads a message nested under an error object', () => {
-    const raw = `529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`;
-
-    expect(describePiError(raw)).toMatchObject({
-      label: 'HTTP 529',
-      message: 'Overloaded',
-    });
-  });
-
-  it('shows a plain error whole', () => {
-    expect(describePiError('terminated')).toEqual({
-      label: 'Error',
-      message: 'terminated',
-    });
-  });
-
-  /** A stack has one line worth reading; the session file keeps the rest. */
-  it('summarises a multi-line error by its first line', () => {
-    const raw = 'TypeError: fetch failed\n    at node:internal/deps/undici';
-
-    expect(describePiError(raw).message).toBe('TypeError: fetch failed');
-  });
-
-  it('falls back to the raw text when the payload will not parse', () => {
-    const raw = `500 {"message":"truncated payload`;
-
-    expect(describePiError(raw)).toEqual({ label: 'Error', message: raw });
-  });
-
-  it('clamps a message that would fill the row', () => {
-    const message = 'x'.repeat(600);
-    const description = describePiError(`400: {"message":"${message}"}`);
-
-    expect(description.message).toHaveLength(401);
-    expect(description.message.endsWith('…')).toBe(true);
-  });
-
-  it('describes an empty error rather than showing nothing', () => {
-    expect(describePiError('   ').label).toBe('Error');
+  it('uses terse reviewed reasons while retrying', () => {
+    expect(retryPiErrorMessage('rate-limit')).toBe(
+      'The model provider is receiving too many requests.',
+    );
+    expect(retryPiErrorMessage('unavailable')).toBe(
+      'The model provider is temporarily unavailable.',
+    );
+    expect(retryPiErrorMessage('network')).toBe(
+      'The model provider could not be reached.',
+    );
+    expect(retryPiErrorMessage('authentication')).toBe('The reply failed.');
   });
 });

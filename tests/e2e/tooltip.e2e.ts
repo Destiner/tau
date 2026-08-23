@@ -44,12 +44,12 @@ test('names icon-only controls on hover without native titles', async ({
   await page.goto(scenarioUrl);
   await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
 
-  const openProject = page.getByRole('button', { name: 'Open project' });
+  const openProject = page.getByRole('button', { name: 'Open Project' });
   await expect(openProject).not.toHaveAttribute('title', /./);
 
   await openProject.hover();
   await expect(
-    page.locator('.ui-tooltip', { hasText: 'Open project' }),
+    page.locator('.ui-tooltip', { hasText: 'Open Project' }),
   ).toBeVisible();
 
   // The trigger still triggers, and its menu still knows where the button is.
@@ -61,15 +61,15 @@ test('names icon-only controls on hover without native titles', async ({
   await page.keyboard.press('Escape');
   await expect(menu).toHaveCount(0);
 
-  const reportIssue = page.getByRole('button', { name: 'Report an issue' });
+  const reportIssue = page.getByRole('button', { name: 'Report an Issue' });
   await expect(reportIssue).not.toHaveAttribute('title', /./);
   await reportIssue.hover();
   await expect(
-    page.locator('.ui-tooltip', { hasText: 'Report an issue' }),
+    page.locator('.ui-tooltip', { hasText: 'Report an Issue' }),
   ).toBeVisible();
   const reportIssueBox = await reportIssue.boundingBox();
   await reportIssue.click();
-  const popover = page.getByRole('dialog', { name: 'Report an issue' });
+  const popover = page.getByRole('dialog', { name: 'Report an Issue' });
   await expect(popover).toBeVisible();
   await expectAnchoredTo(popover, reportIssueBox);
   await page.keyboard.press('Escape');
@@ -78,11 +78,11 @@ test('names icon-only controls on hover without native titles', async ({
   const projectRow = page.locator('.project-row').first();
   await projectRow.hover();
   const newSession = projectRow.getByRole('button', {
-    name: /^New session in/,
+    name: /^New Session in/,
   });
   await newSession.hover();
   await expect(
-    page.locator('.ui-tooltip', { hasText: 'New session' }),
+    page.locator('.ui-tooltip', { hasText: 'New Session' }),
   ).toBeVisible();
 
   // Moving off the trigger takes the tooltip with it.
@@ -97,11 +97,11 @@ test('shows the tooltip to a keyboard, not only to a pointer', async ({
   await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
 
   const newSession = page
-    .getByRole('button', { name: 'New session', exact: true })
+    .getByRole('button', { name: 'New Session', exact: true })
     .first();
   await newSession.focus();
   await expect(
-    page.locator('.ui-tooltip', { hasText: 'New session' }),
+    page.locator('.ui-tooltip', { hasText: 'New Session' }),
   ).toBeVisible();
 
   await newSession.blur();

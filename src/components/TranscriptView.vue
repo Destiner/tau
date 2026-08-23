@@ -2,7 +2,7 @@
   <section
     ref="transcript"
     class="transcript"
-    aria-label="Tau transcript"
+    aria-label="Transcript"
     @scroll="handleScroll"
   >
     <div
@@ -46,6 +46,7 @@
               <ErrorNotice
                 v-else-if="messageAt(virtualRow.index)?.kind === 'error'"
                 :text="messageAt(virtualRow.index)?.text ?? ''"
+                :label="messageAt(virtualRow.index)?.errorLabel"
               />
               <TranscriptNotice
                 v-else-if="messageAt(virtualRow.index)?.kind === 'notice'"

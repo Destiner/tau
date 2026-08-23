@@ -167,9 +167,11 @@ describe('prompt delivery', () => {
 
     expect(controller.promptSubmitting).toBe(false);
     expect(controller.pendingPrompt).toBeUndefined();
-    expect(controller.draft).toBe('A newer draft');
+    expect(controller.draft).toBe('Keep this draft\n\nA newer draft');
     expect(controller.messages).toEqual([]);
-    expect(controller.status).toBe('Pi is unavailable');
+    expect(controller.status).toBe(
+      'The message could not be sent. Reopen the session and try again.',
+    );
   });
 });
 
@@ -591,7 +593,9 @@ describe('Pi RPC span lifecycle', () => {
     expect(controller.ready).toBe(true);
     expect(controller.working).toBe(true);
     expect(controller.messages).toHaveLength(1);
-    expect(controller.status).toBe('Pi did not stop in time. Try again.');
+    expect(controller.status).toBe(
+      'The Pi process could not be closed. Restart Tau and try again.',
+    );
   });
 
   it('abandons pending spans when the controller stops', async () => {

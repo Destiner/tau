@@ -16,7 +16,7 @@ test('keeps the composer editable but blocks repeat sends during delivery', asyn
   await page.goto(scenarioUrl);
 
   const composer = page.getByRole('textbox', { name: 'Message Pi' });
-  const send = page.getByRole('button', { name: 'Send message' });
+  const send = page.getByRole('button', { name: 'Send Message' });
   await expect(composer).toBeEnabled();
 
   await page.evaluate(() => {
@@ -102,11 +102,10 @@ test('submits and settles a deterministic streamed conversation', async ({
     const states: VisibleConversationState[] = [];
     const record = (): void => {
       const transcript =
-        document.querySelector('[aria-label="Tau transcript"]')?.textContent ??
-        '';
+        document.querySelector('[aria-label="Transcript"]')?.textContent ?? '';
       const working = Boolean(
         document.querySelector(
-          '[aria-label="Pi is working"], [aria-label="Working"], [aria-label="Stop Pi"]',
+          '[aria-label="Working"], [aria-label="Stopping"], [aria-label="Stop Pi"]',
         ),
       );
       const next = { transcript, working };
@@ -135,19 +134,17 @@ test('submits and settles a deterministic streamed conversation', async ({
   await composer.fill(prompt);
   const pauseTarget = await page.evaluate(() => Date.now() + 1_000);
   await page.clock.pauseAt(pauseTarget);
-  await page.getByRole('button', { name: 'Send message' }).click();
+  await page.getByRole('button', { name: 'Send Message' }).click();
 
   await expect(page.getByText(prompt, { exact: true })).toBeVisible();
   await expect(page.getByText(completeReply, { exact: true })).toBeVisible();
   await expect(composer).toHaveValue('');
   await expect(composer).toBeEnabled();
   await expect(
-    page.getByRole('button', { name: 'Send message' }),
+    page.getByRole('button', { name: 'Send Message' }),
   ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Stop Pi' })).toHaveCount(0);
-  await expect(page.getByRole('status', { name: 'Pi is working' })).toHaveCount(
-    0,
-  );
+  await expect(page.getByRole('status', { name: 'Working' })).toHaveCount(0);
   await expect(page.getByRole('img', { name: 'Working' })).toHaveCount(0);
   await expect(
     page.getByText('STALE_GENERATION_SENTINEL', { exact: true }),

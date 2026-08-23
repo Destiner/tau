@@ -4,13 +4,13 @@
     registers with the nearest popper root, and from inside the tooltip that
     would be the tooltip's own.
   -->
-  <UiTooltip text="Report an issue">
+  <UiTooltip text="Report an Issue">
     <span class="issue-report-trigger">
       <PopoverRoot v-model:open="open">
         <PopoverTrigger as-child>
           <UiIconButton
             size="lg"
-            label="Report an issue"
+            label="Report an Issue"
           >
             <UiIcon name="bug" />
           </UiIconButton>
@@ -21,7 +21,7 @@
             side="top"
             align="end"
             :side-offset="5"
-            aria-label="Report an issue"
+            aria-label="Report an Issue"
             :aria-busy="submitting || undefined"
           >
             <form
@@ -31,11 +31,11 @@
               <UiCheckbox
                 v-model="includeCurrentSession"
                 :disabled="!sessionId || submitting"
-                >Include current session</UiCheckbox
+                >Include Current Session</UiCheckbox
               >
 
               <label class="description-field">
-                <span>Describe the issue</span>
+                <span>Describe the Issue</span>
                 <UiContextMenu
                   :items="() => textFieldItems(() => descriptionInput?.input)"
                 >
@@ -45,7 +45,7 @@
                     rows="6"
                     maxlength="10000"
                     :readonly="submitting"
-                    aria-label="Describe the issue"
+                    aria-label="Describe the Issue"
                   />
                 </UiContextMenu>
               </label>

@@ -51,10 +51,10 @@ test('keeps a partial failed prompt local to its owning session', async ({
   await expect(page.getByRole('heading', { name: 'Main' })).toBeVisible();
 
   await composer.fill(prompt);
-  await page.getByRole('button', { name: 'Send message' }).click();
+  await page.getByRole('button', { name: 'Send Message' }).click();
   await waitForGate(page, beforeFailure);
 
-  const transcript = page.getByLabel('Tau transcript');
+  const transcript = page.getByLabel('Transcript');
   await expect(transcript).toContainText(prompt);
   await expect(transcript).toContainText(partial);
   await expect(page.getByRole('button', { name: 'Stop Pi' })).toBeEnabled();
@@ -73,7 +73,7 @@ test('keeps a partial failed prompt local to its owning session', async ({
   await expect(page.getByRole('button', { name: 'Stop Pi' })).toHaveCount(0);
   await expect(page.getByRole('img', { name: 'Working' })).toHaveCount(0);
   await expect(
-    page.getByRole('status', { name: /Pi is (?:working|stopping)/ }),
+    page.getByRole('status', { name: /^(?:Working|Stopping)$/ }),
   ).toHaveCount(0);
   await expect(transcript).toContainText(prompt);
   await expect(transcript).toContainText(partial);
@@ -83,7 +83,7 @@ test('keeps a partial failed prompt local to its owning session', async ({
   await page.getByRole('button', { name: /^Backup\b/ }).click();
   await expect(page.getByRole('heading', { name: 'Backup' })).toBeVisible();
   await expect(page.getByRole('status')).toHaveCount(0);
-  await expect(page.getByLabel('Tau transcript')).toHaveCount(0);
+  await expect(page.getByLabel('Transcript')).toHaveCount(0);
   await expect(page.locator('body')).not.toContainText(prompt);
   await expect(page.locator('body')).not.toContainText(partial);
   await expect(page.locator('body')).not.toContainText(processFailure);

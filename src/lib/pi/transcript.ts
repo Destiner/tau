@@ -1,11 +1,15 @@
+import { describePiError } from './error';
+import type { PiErrorDescription } from './error';
+
 type TranscriptNoticeType = 'info' | 'warning' | 'error';
 
 interface TranscriptEntry {
   id: string;
-  /** An `error` entry holds Pi's own error string in `text`, unparsed. */
   kind:
     'user' | 'assistant' | 'thinking' | 'tool' | 'skill' | 'error' | 'notice';
   text: string;
+  /** Reviewed label for a plain-language error entry. */
+  errorLabel?: string;
   /**
    * Set on the entries Tau owns rather than Pi: how many Pi-owned rows preceded
    * the entry when it arrived, so a rebuilt transcript can restore it there.
@@ -28,6 +32,7 @@ interface TranscriptEntry {
 interface LocalError {
   /** Names the row across rebuilds, and stays unique as runs come and go. */
   key: number;
+  label: string;
   text: string;
   anchor?: number;
 }
@@ -118,7 +123,14 @@ function hydrateTranscript(
       }
       // A turn that failed carries its reason beside content that is usually
       // empty, so the row stands for the reply the reader never got.
-      if (failure) entries.push({ id: '', kind: 'error', text: failure });
+      if (failure) {
+        entries.push({
+          id: '',
+          kind: 'error',
+          text: failure.message,
+          errorLabel: failure.label,
+        });
+      }
       continue;
     }
 
@@ -216,11 +228,12 @@ function holdsSameRow(
  * The reason a turn failed, or nothing. An aborted turn also carries a reason,
  * and it is the reader's own stop rather than a failure to report.
  */
-function messageFailure(message: unknown): string {
+function messageFailure(message: unknown): PiErrorDescription | undefined {
   const record = asRecord(message);
-  if (!record || stringValue(record.role) !== 'assistant') return '';
-  if (stringValue(record.stopReason) !== 'error') return '';
-  return stringValue(record.errorMessage);
+  if (!record || stringValue(record.role) !== 'assistant') return undefined;
+  if (stringValue(record.stopReason) !== 'error') return undefined;
+  const raw = stringValue(record.errorMessage);
+  return raw ? describePiError(raw) : undefined;
 }
 
 /** Entries Tau carries itself, because Pi's message list cannot hold them. */
@@ -249,6 +262,7 @@ function mergeLocalEntries(
     id: localErrorId(error.key),
     kind: 'error',
     text: error.text,
+    errorLabel: error.label,
     ...(error.anchor === undefined ? {} : { anchor: error.anchor }),
   }));
   const ids = new Set([...entries, ...locals].map((entry) => entry.id));

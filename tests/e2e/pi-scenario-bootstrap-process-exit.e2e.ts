@@ -53,7 +53,7 @@ test('bounds a bootstrap process exit and reconnects from the session row', asyn
   await expect(page.getByRole('img', { name: 'Working' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Stop Pi' })).toHaveCount(0);
   await expect(
-    page.getByRole('button', { name: 'Send message' }),
+    page.getByRole('button', { name: 'Send Message' }),
   ).toBeDisabled();
   await expectNoRawFailure(page);
 
@@ -66,7 +66,7 @@ test('bounds a bootstrap process exit and reconnects from the session row', asyn
   await expect(page.getByText('Loading', { exact: true })).toHaveCount(0);
   await composer.fill('Recovery is available');
   await expect(
-    page.getByRole('button', { name: 'Send message' }),
+    page.getByRole('button', { name: 'Send Message' }),
   ).toBeEnabled();
   await composer.fill('');
   await expectNoRawFailure(page);

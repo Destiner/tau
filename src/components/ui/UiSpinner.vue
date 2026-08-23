@@ -18,7 +18,7 @@ withDefaults(
   defineProps<{
     label?: string;
   }>(),
-  { label: 'Pi is working' },
+  { label: 'Working' },
 );
 </script>
 

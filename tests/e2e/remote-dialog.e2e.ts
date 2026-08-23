@@ -83,11 +83,11 @@ test('restores focus to the open-project trigger after dismissal', async ({
 }) => {
   await page.goto('/?test-scenario=saved-session-bootstrap');
 
-  const trigger = page.getByRole('button', { name: 'Open project' });
+  const trigger = page.getByRole('button', { name: 'Open Project' });
   await trigger.click();
   await page.getByRole('menuitem', { name: 'Open Remote Project' }).click();
 
-  const dialog = page.getByRole('dialog', { name: 'SSH connection' });
+  const dialog = page.getByRole('dialog', { name: 'SSH Connection' });
   await expect(dialog).toBeVisible();
   await page.keyboard.press('Escape');
 

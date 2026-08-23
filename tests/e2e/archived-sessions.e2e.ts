@@ -12,7 +12,7 @@ test('reviews, opens, and unarchives an archived session', async ({ page }) => {
   await page.goto(scenarioUrl);
   await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
 
-  await page.getByRole('button', { name: 'Show archived sessions' }).click();
+  await page.getByRole('button', { name: 'Show Archived Sessions' }).click();
 
   // The view replaces the project list and groups by time; the fixture
   // session's fixed past date always lands it in "Older".
@@ -42,7 +42,7 @@ test('reviews, opens, and unarchives an archived session', async ({ page }) => {
     .click();
   await expect(archivedList.getByText('No archived sessions')).toBeVisible();
 
-  await page.getByRole('button', { name: 'Show sessions' }).click();
+  await page.getByRole('button', { name: 'Show Sessions' }).click();
   await expect(
     page.locator('.session-row').filter({ hasText: 'Older archived work' }),
   ).toBeVisible();

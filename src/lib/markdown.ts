@@ -141,7 +141,7 @@ function addCodeCopyButtons(html: string): string {
     const label = language
       ? ` ${CODE_LANGUAGE_ATTRIBUTE}="${escapeHtmlAttribute(language)}"`
       : '';
-    return `<div class="code-block"${label}>${block}<button type="button" class="code-copy" ${CODE_COPY_ATTRIBUTE} aria-label="Copy code">${COPY_ICON}${COPIED_ICON}</button></div>`;
+    return `<div class="code-block"${label}>${block}<button type="button" class="code-copy" ${CODE_COPY_ATTRIBUTE} aria-label="Copy Code">${COPY_ICON}${COPIED_ICON}</button></div>`;
   });
 }
 

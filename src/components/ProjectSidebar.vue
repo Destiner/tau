@@ -2,7 +2,7 @@
   <aside
     ref="sidebar"
     class="sidebar"
-    aria-label="Projects and sessions"
+    aria-label="Projects and Sessions"
   >
     <header
       class="sidebar-titlebar"
@@ -36,7 +36,7 @@
           class="project-row"
           :class="{ selected: project.path === state.activeProjectPath }"
         >
-          <UiTooltip text="Drag to reorder">
+          <UiTooltip text="Drag to Reorder">
             <span
               class="project-drag-handle"
               aria-hidden="true"
@@ -66,19 +66,19 @@
               :name="project.collapsed ? 'chevron-right' : 'chevron-down'"
             />
           </button>
-          <UiTooltip text="New session">
+          <UiTooltip text="New Session">
             <UiIconButton
               class="row-action"
               size="md"
               variant="reveal"
-              :label="`New session in ${project.name}`"
+              :label="`New Session in ${project.name}`"
               :disabled="projectActionsDisabled"
               @click="() => newSession(project)"
             >
               <UiIcon name="plus" />
             </UiIconButton>
           </UiTooltip>
-          <UiTooltip text="Remove project">
+          <UiTooltip text="Remove Project">
             <UiIconButton
               class="row-action"
               size="md"
@@ -131,7 +131,7 @@
               </button>
               <UiTooltip
                 v-if="canArchiveSession(project, session)"
-                text="Archive session"
+                text="Archive Session"
               >
                 <UiIconButton
                   class="session-archive"
@@ -171,7 +171,7 @@
           registers with the nearest popper root, and from inside the tooltip
           that would be the tooltip's own.
         -->
-        <UiTooltip text="Open project">
+        <UiTooltip text="Open Project">
           <span class="project-menu-trigger">
             <UiMenu
               v-model:open="projectMenuOpen"
@@ -182,7 +182,7 @@
                 <UiIconButton
                   ref="openProjectButton"
                   size="lg"
-                  label="Open project"
+                  label="Open Project"
                   :disabled="projectActionsDisabled"
                 >
                   <UiIcon name="folder" />
@@ -192,13 +192,13 @@
           </span>
         </UiTooltip>
         <UiTooltip
-          :text="showingArchived ? 'Show sessions' : 'Show archived sessions'"
+          :text="showingArchived ? 'Show Sessions' : 'Show Archived Sessions'"
         >
           <UiIconButton
             size="lg"
             :class="{ active: showingArchived }"
             :label="
-              showingArchived ? 'Show sessions' : 'Show archived sessions'
+              showingArchived ? 'Show Sessions' : 'Show Archived Sessions'
             "
             @click="toggleArchivedView"
           >
@@ -215,7 +215,7 @@
     <div
       class="sidebar-resize-handle"
       role="separator"
-      aria-label="Resize sidebar"
+      aria-label="Resize Sidebar"
       aria-orientation="vertical"
       :aria-valuemin="MIN_SIDEBAR_WIDTH"
       :aria-valuemax="MAX_SIDEBAR_WIDTH"

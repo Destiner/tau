@@ -1,6 +1,7 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 
+import { errorCopy } from '../lib/error-copy';
 import type { PiBridgeEvent } from '../lib/pi/bridge';
 import type { ThinkingLevel } from '../lib/pi/model-scope';
 import {
@@ -18,6 +19,7 @@ import {
   invokesExtensionCommand,
   persistExpandedProject,
   persistProjectSelection,
+  recoverSubmittedPrompt,
   registerConnectedSession,
   releaseIdleRuntimes,
   releaseRuntime,
@@ -68,7 +70,6 @@ import {
   effortLabels,
   efforts,
   ensureController,
-  errorMessage,
   indicatorLabel,
   inheritControllerSettings,
   isProjectRemoving,
@@ -132,7 +133,7 @@ function useTau() {
   async function initialize(): Promise<void> {
     if (!unlisten) {
       unlisten = await listen<PiBridgeEvent>('pi-event', ({ payload }) => {
-        void handleBridgeEvent(payload).catch((error) => {
+        void handleBridgeEvent(payload).catch(() => {
           const controller = controllerByRuntimeId(payload.runtimeId);
           if (!controller) return;
           setControllerLifecycle(
@@ -140,7 +141,7 @@ function useTau() {
             { syncing: false },
             'bridge_event_failed',
           );
-          setControllerError(controller, error);
+          setControllerError(controller, errorCopy.bridgeEvent);
           releaseRuntime(controller);
         });
       });
@@ -163,8 +164,7 @@ function useTau() {
         setActiveSessionView(selectedProject, selectedSession, controller);
         const needsLocalRuntime = !selectedProject.connectionString;
         if (needsLocalRuntime && !state.workspace.piPath) {
-          controller.status =
-            'Pi was not found. Install pi or set TAU_PI_PATH, then restart Tau.';
+          controller.status = 'Pi was not found. Install Pi, then restart Tau.';
           return;
         }
         await startController(
@@ -173,7 +173,7 @@ function useTau() {
           selectedSession.path,
         );
       }
-    } catch (error) {
+    } catch {
       const controller = activeController.value;
       if (controller) {
         setControllerLifecycle(
@@ -181,7 +181,9 @@ function useTau() {
           { starting: false },
           'workspace_load_failed',
         );
-        setControllerError(controller, error);
+        setControllerError(controller, errorCopy.loadWorkspace);
+      } else {
+        setWorkspaceError(errorCopy.loadWorkspace);
       }
     }
   }
@@ -211,13 +213,19 @@ function useTau() {
   async function addLocalProject(): Promise<void> {
     if (projectActionsDisabled.value) return;
     clearWorkspaceError();
+    let selection: string | null;
     try {
-      const selection = await open({
+      selection = await open({
         directory: true,
         multiple: false,
-        title: 'Choose a project folder',
+        title: 'Choose a Project Folder',
       });
-      if (!selection) return;
+    } catch {
+      setWorkspaceError(errorCopy.folderPicker);
+      return;
+    }
+    if (!selection) return;
+    try {
       state.workspace = await invokeTraced<WorkspaceSnapshot>(
         'import_project',
         { path: selection },
@@ -225,8 +233,8 @@ function useTau() {
       if (!state.activeProjectPath) {
         state.activeProjectPath = state.workspace.activeProjectPath;
       }
-    } catch (error) {
-      setWorkspaceError(error);
+    } catch {
+      setWorkspaceError(errorCopy.importProject);
     }
   }
 
@@ -249,10 +257,7 @@ function useTau() {
       ? controllerByKey(state.remoteRetry.controllerKey)
       : undefined;
     if (state.remoteDialogMode === 'retry' && retryController?.pendingPrompt) {
-      cancelPendingPrompt(
-        retryController,
-        'The remote connection was cancelled.',
-      );
+      cancelPendingPrompt(retryController, '');
     }
     clearRemoteRetry();
     state.remoteDialogOpen = false;
@@ -282,8 +287,8 @@ function useTau() {
       applyRemoteDirectoryListing(listing, true);
       state.remoteConnectionString = listing.connectionString;
       state.remoteDialogStep = 'directory';
-    } catch (error) {
-      state.remoteConnectionError = errorMessage(error);
+    } catch {
+      state.remoteConnectionError = errorCopy.remoteConnection;
     } finally {
       state.remoteConnecting = false;
     }
@@ -326,8 +331,11 @@ function useTau() {
         else state.remoteDirectoryHistory.push(currentDirectory);
         applyRemoteDirectoryListing(listing);
       }
-    } catch (error) {
-      state.remoteConnectionError = errorMessage(error);
+    } catch {
+      state.remoteConnectionError =
+        choice === 'select'
+          ? errorCopy.importRemoteProject
+          : errorCopy.remoteDirectory;
     } finally {
       state.remoteConnecting = false;
     }
@@ -340,8 +348,7 @@ function useTau() {
       (item) => item.path === retry?.projectPath,
     );
     if (!retry || !controller || !project?.connectionString) {
-      state.remoteConnectionError =
-        'The remote session is no longer available.';
+      state.remoteConnectionError = errorCopy.remoteSessionUnavailable;
       return;
     }
 
@@ -354,9 +361,9 @@ function useTau() {
         retry.sessionPath,
         retry.preserveMessages,
       );
-    } catch (error) {
+    } catch {
       state.remoteConnecting = false;
-      state.remoteConnectionError = errorMessage(error);
+      state.remoteConnectionError = errorCopy.remoteConnection;
     }
   }
 
@@ -368,8 +375,8 @@ function useTau() {
         'set_project_collapsed',
         { path: project.path, collapsed: !project.collapsed },
       );
-    } catch (error) {
-      setWorkspaceError(error);
+    } catch {
+      setWorkspaceError(errorCopy.sidebarChange);
     }
   }
 
@@ -402,9 +409,9 @@ function useTau() {
         'reorder_projects',
         { projectPaths: projects.map((candidate) => candidate.path) },
       );
-    } catch (error) {
+    } catch {
       state.workspace = workspace;
-      setWorkspaceError(error);
+      setWorkspaceError(errorCopy.projectOrder);
     }
   }
 
@@ -436,8 +443,8 @@ function useTau() {
         ),
       );
       removeProjectUiState(project.path);
-    } catch (error) {
-      setWorkspaceError(error);
+    } catch {
+      setWorkspaceError(errorCopy.removeProject);
     } finally {
       state.removingProjectPaths = state.removingProjectPaths.filter(
         (path) => path !== project.path,
@@ -496,9 +503,9 @@ function useTau() {
       const nextSession = projectSessions(updatedProject)[0];
       if (nextSession) await selectSession(updatedProject, nextSession);
       else await newSession(updatedProject);
-    } catch (error) {
+    } catch {
       const errorController = controller ?? ensureController(project, session);
-      setControllerActionError(errorController, error);
+      setControllerActionError(errorController, errorCopy.archiveSession);
       if (!isSessionSelected(project, session)) errorController.unread = true;
     }
   }
@@ -516,8 +523,8 @@ function useTau() {
       );
       // The record is reachable again, but nothing selects it here: the
       // archived list is a review surface, not a session switcher.
-    } catch (error) {
-      setWorkspaceError(error);
+    } catch {
+      setWorkspaceError(errorCopy.restoreSession);
     }
   }
 
@@ -689,23 +696,24 @@ function useTau() {
       try {
         const requestId = nextRequestId('prompt');
         if (command) controller.commandPromptRequestId = requestId;
+        controller.submittedPrompt = {
+          requestId,
+          message,
+          ...(command ? {} : { optimisticId }),
+        };
         await rpc(
           controller,
           { id: requestId, type: 'prompt', message },
           actionSpan.context,
         );
         controller.promptSubmitting = false;
-        if (controller.draft === message) controller.draft = '';
+        if (controller.draft.trim() === message) controller.draft = '';
         if (!command) {
           await registerConnectedSession(controller, actionSpan.context);
         }
-      } catch (error) {
+      } catch {
         controller.promptSubmitting = false;
-        if (!command) {
-          controller.messages = controller.messages.filter(
-            (entry) => entry.id !== optimisticId,
-          );
-        }
+        recoverSubmittedPrompt(controller);
         setControllerLifecycle(
           controller,
           { working: false },
@@ -713,7 +721,7 @@ function useTau() {
           actionSpan.context,
         );
         controller.commandPromptRequestId = '';
-        setControllerError(controller, error);
+        setControllerError(controller, errorCopy.messageSend);
       }
     } finally {
       actionSpan.end();
@@ -747,7 +755,7 @@ function useTau() {
           { id: nextRequestId('abort'), type: 'abort' },
           actionSpan.context,
         );
-      } catch (error) {
+      } catch {
         clearAbortWatch(controller);
         setControllerLifecycle(
           controller,
@@ -755,7 +763,7 @@ function useTau() {
           'stop_failed',
           actionSpan.context,
         );
-        setControllerError(controller, error);
+        setControllerError(controller, errorCopy.stopWork);
       }
     } finally {
       actionSpan.end();
@@ -794,12 +802,12 @@ function useTau() {
           },
           actionSpan.context,
         );
-      } catch (error) {
+      } catch {
         if (controller.pendingSettingRequestId === requestId) {
           controller.pendingSettingRequestId = '';
           clearSettingRequestWatch(controller);
         }
-        setControllerError(controller, error);
+        setControllerError(controller, errorCopy.modelChange);
       }
     } finally {
       actionSpan.end();
@@ -834,7 +842,7 @@ function useTau() {
           },
           actionSpan.context,
         );
-      } catch (error) {
+      } catch {
         const pending = controller.pendingSessionRename;
         if (pending?.requestId === requestId) {
           applySessionName(
@@ -844,7 +852,7 @@ function useTau() {
           );
           controller.pendingSessionRename = undefined;
         }
-        setControllerError(controller, error);
+        setControllerError(controller, errorCopy.sessionRename);
       }
     } finally {
       actionSpan.end();
@@ -884,13 +892,13 @@ function useTau() {
           },
           actionSpan.context,
         );
-      } catch (error) {
+      } catch {
         if (controller.pendingSettingRequestId === requestId) {
           controller.pendingSettingRequestId = '';
           controller.pendingEffort = '';
           clearSettingRequestWatch(controller);
         }
-        setControllerError(controller, error);
+        setControllerError(controller, errorCopy.effortChange);
       }
     } finally {
       actionSpan.end();

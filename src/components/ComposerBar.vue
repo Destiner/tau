@@ -58,7 +58,7 @@
         :options="effortOptions"
         :fallback-label="currentEffortLabel"
         :disabled="settingsDisabled || efforts.length === 0"
-        aria-label="Thinking effort"
+        aria-label="Thinking Effort"
         :max-width="110"
         @update:model-value="handleEffortChange"
       />
@@ -80,14 +80,14 @@
       </UiTooltip>
       <UiTooltip
         v-else
-        text="Send message"
+        text="Send Message"
       >
         <UiIconButton
           class="send-button"
           size="sm"
           variant="fill"
           :disabled="!canCompose || !draft.trim()"
-          label="Send message"
+          label="Send Message"
           @click="send"
         >
           <UiIcon name="triangle" />

@@ -3,8 +3,8 @@
     v-model:open="open"
     :title="
       step === 'connection'
-        ? 'SSH connection'
-        : 'Choose remote working directory'
+        ? 'SSH Connection'
+        : 'Choose Remote Working Directory'
     "
     :width="step === 'connection' ? 'sm' : 'md'"
     :busy="connecting"
@@ -29,7 +29,7 @@
           autocapitalize="off"
           spellcheck="false"
           placeholder="ssh user@example -p 1234"
-          aria-label="SSH connection string"
+          aria-label="SSH Connection String"
           :aria-describedby="
             connectionError ? 'remote-connection-error' : undefined
           "
@@ -64,7 +64,7 @@
           autocapitalize="off"
           spellcheck="false"
           placeholder="Filter directories"
-          aria-label="Filter remote directories"
+          aria-label="Filter Remote Directories"
           aria-controls="remote-directory-list"
           :aria-activedescendant="`remote-directory-option-${selectedIndex}`"
           :aria-describedby="

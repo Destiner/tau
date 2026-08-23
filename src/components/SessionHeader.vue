@@ -13,7 +13,7 @@
         type="text"
         maxlength="240"
         spellcheck="false"
-        aria-label="Session name"
+        aria-label="Session Name"
         @blur="commitSessionRename"
         @keydown.enter.prevent="commitSessionRename"
         @keydown.escape.prevent="cancelSessionRename"
@@ -21,7 +21,7 @@
       <h1 v-else>
         <UiTooltip
           v-if="canRenameSession"
-          text="Rename session"
+          text="Rename Session"
           side="bottom"
         >
           <button
@@ -41,13 +41,13 @@
     </div>
     <UiTooltip
       v-if="activeProject"
-      text="New session"
+      text="New Session"
       side="bottom"
     >
       <UiIconButton
         class="session-new-button"
         size="lg"
-        label="New session"
+        label="New Session"
         :disabled="projectActionsDisabled"
         @click="handleNewSession"
       >

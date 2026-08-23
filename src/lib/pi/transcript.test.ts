@@ -260,7 +260,11 @@ Full instructions
     ]);
 
     expect(result.map((entry) => entry.kind)).toEqual(['user', 'error']);
-    expect(result[1]?.text).toBe(errorMessage);
+    expect(result[1]).toMatchObject({
+      errorLabel: 'Reply Failed',
+      text: 'The account has no available credit for this request. Add credit or choose another model, then try again.',
+    });
+    expect(result[1]?.text).not.toContain(errorMessage);
   });
 
   it('keeps the text of a turn that failed part way through', () => {
@@ -294,7 +298,12 @@ Full instructions
     const errorMessage = '429: rate limited';
     const streamed: TranscriptEntry[] = [
       { id: 'user-0', kind: 'user', text: 'hello' },
-      { id: 'stream-error-0', kind: 'error', text: errorMessage },
+      {
+        id: 'stream-error-0',
+        kind: 'error',
+        text: 'The model provider is receiving too many requests. Wait a moment or choose another model, then try again.',
+        errorLabel: 'Reply Failed',
+      },
     ];
     const settled = hydrateTranscript(
       [
@@ -320,14 +329,22 @@ describe('mergeLocalEntries', () => {
   it('adds the failures Pi keeps nowhere to the hydrated list', () => {
     const entries = mergeLocalEntries(
       hydrateTranscript([{ role: 'user', content: 'hello' }]),
-      [{ key: 4, text: 'Auto-compaction failed: overloaded', anchor: 1 }],
+      [
+        {
+          key: 4,
+          label: 'Conversation Not Shortened',
+          text: 'The conversation could not be shortened.',
+          anchor: 1,
+        },
+      ],
       [],
     );
 
     expect(entries.map((entry) => entry.kind)).toEqual(['user', 'error']);
     expect(entries[1]).toMatchObject({
       id: 'local-error-4',
-      text: 'Auto-compaction failed: overloaded',
+      errorLabel: 'Conversation Not Shortened',
+      text: 'The conversation could not be shortened.',
     });
   });
 
@@ -367,7 +384,14 @@ describe('mergeLocalEntries', () => {
   it('orders entries sharing a spot by arrival and settles later ones at the end', () => {
     const entries = mergeLocalEntries(
       hydrateTranscript([{ role: 'user', content: 'hello' }]),
-      [{ key: 0, text: 'compaction failed', anchor: 1 }],
+      [
+        {
+          key: 0,
+          label: 'Conversation Not Shortened',
+          text: 'compaction failed',
+          anchor: 1,
+        },
+      ],
       [notice('extension-notify:1', 0), notice('extension-notify:2', 9)],
     );
 
@@ -380,7 +404,11 @@ describe('mergeLocalEntries', () => {
   });
 
   it('holds a failure with no spot where the first rebuild settled it', () => {
-    const failure: LocalError = { key: 0, text: 'compaction failed' };
+    const failure: LocalError = {
+      key: 0,
+      label: 'Conversation Not Shortened',
+      text: 'compaction failed',
+    };
     const settled = mergeLocalEntries(
       hydrateTranscript([{ role: 'user', content: 'hello' }]),
       [failure],
@@ -469,18 +497,23 @@ describe('messageFailure', () => {
         stopReason: 'error',
         errorMessage: '402: out of credits',
       }),
-    ).toBe('402: out of credits');
+    ).toEqual({
+      kind: 'credit',
+      label: 'Reply Failed',
+      message:
+        'The account has no available credit for this request. Add credit or choose another model, then try again.',
+    });
   });
 
   it('ignores anything that is not a failed assistant turn', () => {
-    expect(messageFailure({ role: 'user', content: 'hello' })).toBe('');
+    expect(messageFailure({ role: 'user', content: 'hello' })).toBeUndefined();
     expect(
       messageFailure({
         role: 'assistant',
         stopReason: 'aborted',
         errorMessage: 'Aborted',
       }),
-    ).toBe('');
-    expect(messageFailure(undefined)).toBe('');
+    ).toBeUndefined();
+    expect(messageFailure(undefined)).toBeUndefined();
   });
 });

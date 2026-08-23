@@ -4,7 +4,7 @@
       class="fixture-transcript"
       :messages="messages"
       :show-working-indicator="false"
-      working-label="Pi is working"
+      working-label="Working"
       session-key="extension-dialog-fixture"
       :prompt="answered ? undefined : prompt"
       @prompt-submit="handleSubmit"

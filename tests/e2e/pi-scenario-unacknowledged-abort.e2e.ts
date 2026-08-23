@@ -28,7 +28,7 @@ test('recovers when Pi never acknowledges an abort', async ({ page }) => {
   await page.goto(scenarioUrl);
 
   const composer = page.getByRole('textbox', { name: 'Message Pi' });
-  const send = page.getByRole('button', { name: 'Send message' });
+  const send = page.getByRole('button', { name: 'Send Message' });
   await expect(composer).toBeEnabled();
   await composer.fill(prompt);
   await send.click();
@@ -43,9 +43,7 @@ test('recovers when Pi never acknowledges an abort', async ({ page }) => {
   await waitForGate(page, abortConsumedGate);
 
   await expect(stop).toBeDisabled();
-  await expect(
-    page.getByRole('status', { name: 'Pi is stopping' }),
-  ).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Stopping' })).toBeVisible();
   const requestsBeforeRepeat = await page.evaluate(
     () =>
       window.__TAU_PI_SCENARIO__
@@ -100,8 +98,8 @@ test('recovers when Pi never acknowledges an abort', async ({ page }) => {
   await expect(composer).toBeEnabled();
   await expect(page.getByRole('status')).toHaveCount(0);
   await expect(page.getByRole('img', { name: 'Working' })).toHaveCount(0);
-  await expect(page.getByLabel('Tau transcript')).toContainText(prompt);
-  await expect(page.getByLabel('Tau transcript')).toContainText(partialReply);
+  await expect(page.getByLabel('Transcript')).toContainText(prompt);
+  await expect(page.getByLabel('Transcript')).toContainText(partialReply);
   await expect(page.getByText(prompt, { exact: true })).toBeVisible();
   await expect(page.getByText(partialReply, { exact: true })).toBeVisible();
 

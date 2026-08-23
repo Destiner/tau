@@ -42,6 +42,7 @@ import {
   type WorkspaceSnapshot,
 } from '../../composables/state';
 import type { CommandOption } from '../commands';
+import { errorCopy, rpcFailureCopy } from '../error-copy';
 import {
   invokeTraced,
   recordRpcResponseAnomaly,
@@ -52,7 +53,7 @@ import type { PiRpcMethod, PiRpcOutcome } from '../telemetry/attributes';
 import type { TraceContext } from '../telemetry/trace-context';
 
 import type { PiBridgeEvent } from './bridge';
-import { describePiError } from './error';
+import { describePiError, retryPiErrorMessage } from './error';
 import type { ModelOption } from './model-scope';
 import {
   asRecord,
@@ -120,8 +121,8 @@ async function sendPhantomMessage(
         { id: stateRequestId, type: 'get_state' },
         parentContext,
       );
-    } catch (error) {
-      cancelPendingPrompt(controller, error);
+    } catch {
+      cancelPendingPrompt(controller, errorCopy.messageSend);
     }
     return;
   }
@@ -155,6 +156,7 @@ async function startController(
   controller.commandSyncRequestId = '';
   controller.replacementProbeRequestId = '';
   controller.pendingSessionRename = undefined;
+  controller.submittedPrompt = undefined;
   controller.pendingEffort = '';
   controller.pendingSettingRequestId = '';
   controller.abortProbeRequestId = '';
@@ -207,7 +209,7 @@ async function startController(
       return;
     }
     await requestBootstrap(controller, parentContext);
-  } catch (error) {
+  } catch {
     clearRemoteConnectionWatch(controller);
     setControllerLifecycle(
       controller,
@@ -215,10 +217,13 @@ async function startController(
       'controller_start_failed',
       parentContext,
     );
+    const message = project.connectionString
+      ? errorCopy.remoteConnection
+      : errorCopy.piStart;
     if (project.connectionString)
-      presentRemoteConnectionError(controller, error);
-    else setControllerError(controller, error);
-    if (controller.pendingPrompt) cancelPendingPrompt(controller, error);
+      presentRemoteConnectionError(controller, message);
+    else setControllerError(controller, message);
+    if (controller.pendingPrompt) cancelPendingPrompt(controller, message);
   }
 }
 
@@ -622,12 +627,14 @@ function handleExtensionUIRequest(
     if (controller.messages.some((message) => message.id === id)) return;
 
     const origin = extensionRequestOrigin(controller);
+    const noticeType = extensionNotifyType(request.notifyType);
     controller.messages.push({
       id,
       kind: 'notice',
-      text: request.message,
+      text:
+        noticeType === 'error' ? errorCopy.extensionFailure : request.message,
       ...anchorFields(controller),
-      noticeType: extensionNotifyType(request.notifyType),
+      noticeType,
       ...(origin.workingDirectory ? { basePath: origin.workingDirectory } : {}),
     });
     if (!isControllerSelected(controller)) controller.unread = true;
@@ -655,10 +662,10 @@ function isExtensionDialogMethod(
 }
 
 function extensionDialogTitle(method: ExtensionDialogMethod): string {
-  if (method === 'select') return 'Choose an option';
+  if (method === 'select') return 'Choose an Option';
   if (method === 'confirm') return 'Confirm';
-  if (method === 'input') return 'Enter a value';
-  return 'Edit text';
+  if (method === 'input') return 'Enter a Value';
+  return 'Edit Text';
 }
 
 function extensionNotifyType(value: unknown): TranscriptNoticeType {
@@ -684,7 +691,7 @@ function extensionRequestOrigin(controller: SessionController): {
       ephemeral?.title ||
       saved?.title ||
       firstUserMessage(controller) ||
-      'New session',
+      'New Session',
     // A remote project's files are on the other host, where nothing local can
     // open them, so its paths are left as text.
     ...(project && !project.connectionString
@@ -775,10 +782,7 @@ function watchSettingRequest(controller: SessionController): void {
       if (!controller.pendingSettingRequestId) return;
       controller.pendingSettingRequestId = '';
       controller.pendingEffort = '';
-      setControllerError(
-        controller,
-        'Pi did not confirm the setting. Try again.',
-      );
+      setControllerError(controller, errorCopy.settingConfirmation);
     }, settingRequestTimeoutMs),
   );
 }
@@ -986,7 +990,7 @@ async function handleRpc(
   // the run ends, and a retry can hold that off for the length of its backoff.
   if (type === 'message_end') {
     const failure = messageFailure(event.message);
-    if (failure) pushError(controller, failure);
+    if (failure) pushError(controller, failure.message, failure.label);
     return;
   }
   /**
@@ -995,11 +999,11 @@ async function handleRpc(
    * to every list hydrated until the next run begins.
    */
   if (type === 'compaction_end') {
-    const failure = stringValue(event.errorMessage);
-    if (failure) {
+    if (stringValue(event.errorMessage)) {
       const error = {
         key: controller.streamSequence++,
-        text: failure,
+        label: 'Conversation Not Shortened',
+        text: 'The conversation could not be shortened. Start a new session or choose a model with a larger context window.',
         ...anchorFields(controller),
       };
       controller.localErrors.push(error);
@@ -1009,7 +1013,8 @@ async function handleRpc(
       controller.messages.push({
         id: localErrorId(error.key),
         kind: 'error',
-        text: failure,
+        text: error.text,
+        errorLabel: error.label,
         ...(error.anchor === undefined ? {} : { anchor: error.anchor }),
       });
       if (!isControllerSelected(controller)) controller.unread = true;
@@ -1074,7 +1079,7 @@ async function handleRpc(
     return;
   }
   if (type === 'extension_error') {
-    controller.status = stringValue(event.error) || 'A Pi extension failed.';
+    controller.status = errorCopy.extensionFailure;
   }
 }
 
@@ -1123,6 +1128,9 @@ async function handleResponse(
   const resolvesPendingSetting =
     Boolean(controller.pendingSettingRequestId) &&
     responseId === controller.pendingSettingRequestId;
+  const resolvesSubmittedPrompt =
+    command === 'prompt' &&
+    controller.submittedPrompt?.requestId === responseId;
   if (
     command === 'prompt' &&
     Boolean(controller.commandPromptRequestId) &&
@@ -1130,6 +1138,7 @@ async function handleResponse(
   ) {
     controller.commandPromptRequestId = '';
     if (response.success === true) {
+      if (resolvesSubmittedPrompt) controller.submittedPrompt = undefined;
       setControllerLifecycle(
         controller,
         { working: controller.streaming },
@@ -1141,11 +1150,7 @@ async function handleResponse(
     }
   }
   if (response.success !== true) {
-    const error = asRecord(response.error);
-    controller.status =
-      stringValue(error?.message) ||
-      stringValue(response.error) ||
-      `Pi rejected ${command || 'the request'}.`;
+    controller.status = rpcFailureCopy(command);
     if (resolvesPendingSetting) {
       controller.pendingSettingRequestId = '';
       controller.pendingEffort = '';
@@ -1194,6 +1199,7 @@ async function handleResponse(
       );
     }
     if (command === 'prompt') {
+      if (resolvesSubmittedPrompt) recoverSubmittedPrompt(controller);
       setControllerLifecycle(
         controller,
         { working: false },
@@ -1221,10 +1227,14 @@ async function handleResponse(
         );
         controller.pendingSessionRename = undefined;
       }
-      await rpc(controller, {
-        id: nextRequestId('session-name-state'),
-        type: 'get_state',
-      });
+      try {
+        await rpc(controller, {
+          id: nextRequestId('session-name-state'),
+          type: 'get_state',
+        });
+      } catch {
+        // The confirmed title is already restored; resync is cosmetic here.
+      }
     }
     return;
   }
@@ -1454,6 +1464,7 @@ async function handleResponse(
   }
 
   if (command === 'prompt') {
+    if (resolvesSubmittedPrompt) controller.submittedPrompt = undefined;
     setControllerLifecycle(
       controller,
       { working: controller.streaming },
@@ -1486,12 +1497,12 @@ async function handleResponse(
         id: stateRequestId,
         type: 'get_state',
       });
-    } catch (error) {
+    } catch {
       if (controller.pendingSettingRequestId === stateRequestId) {
         controller.pendingSettingRequestId = '';
         clearSettingRequestWatch(controller);
       }
-      setControllerError(controller, error);
+      setControllerError(controller, errorCopy.modelChange);
     }
     return;
   }
@@ -1613,15 +1624,21 @@ async function dispatchPendingPrompt(
   try {
     const requestId = nextRequestId('prompt');
     if (prompt.command) controller.commandPromptRequestId = requestId;
+    controller.submittedPrompt = {
+      requestId,
+      message: prompt.message,
+      ...(prompt.command ? {} : { optimisticId: prompt.optimisticId }),
+    };
     await rpc(
       controller,
       { id: requestId, type: 'prompt', message: prompt.message },
       prompt.telemetryContext,
     );
     controller.promptSubmitting = false;
-    if (controller.draft === prompt.message) controller.draft = '';
-  } catch (error) {
+    if (controller.draft.trim() === prompt.message) controller.draft = '';
+  } catch {
     controller.promptSubmitting = false;
+    recoverSubmittedPrompt(controller);
     setControllerLifecycle(
       controller,
       { working: false },
@@ -1629,10 +1646,7 @@ async function dispatchPendingPrompt(
       prompt.telemetryContext,
     );
     controller.commandPromptRequestId = '';
-    if (!controller.draft || controller.draft === prompt.message) {
-      controller.draft = prompt.message;
-    }
-    setControllerError(controller, error);
+    setControllerError(controller, errorCopy.messageSend);
   }
 }
 
@@ -1642,9 +1656,9 @@ async function syncAfterCommand(controller: SessionController): Promise<void> {
   controller.commandSyncRequestId = requestId;
   try {
     await rpc(controller, { id: requestId, type: 'get_state' });
-  } catch (error) {
+  } catch {
     controller.commandSyncRequestId = '';
-    setControllerError(controller, error);
+    setControllerError(controller, errorCopy.sessionRefresh);
   }
 }
 
@@ -1718,14 +1732,14 @@ async function probeAbort(controller: SessionController): Promise<void> {
   controller.abortProbeRequestId = requestId;
   try {
     await rpc(controller, { id: requestId, type: 'get_state' });
-  } catch (error) {
+  } catch {
     controller.abortProbeRequestId = '';
     setControllerLifecycle(
       controller,
       { stopping: false },
       'abort_probe_failed',
     );
-    setControllerError(controller, error);
+    setControllerError(controller, errorCopy.stopWork);
   }
 }
 
@@ -1741,8 +1755,8 @@ function unstoppedStatus(controller: SessionController): string {
     .reverse()
     .find((entry) => entry.kind === 'tool' && entry.toolRunning);
   return tool?.toolName
-    ? `Pi is still running ${tool.toolName} and stops once it returns.`
-    : 'Pi has not stopped yet and stops once its current work finishes.';
+    ? `Running ${tool.toolName}; stopping when it finishes.`
+    : 'Stopping after current work finishes.';
 }
 
 function appendOptimisticPrompt(
@@ -1852,8 +1866,8 @@ async function registerConnectedSession(
     state.activeSessionId = controller.sessionId;
     state.activeSessionPath = controller.sessionPath;
     state.workspace = await selectRegisteredSession(controller, parentContext);
-  } catch (error) {
-    setControllerError(controller, error);
+  } catch {
+    setControllerError(controller, errorCopy.sessionRegistration);
   }
 }
 
@@ -1919,8 +1933,8 @@ async function persistExpandedProject(
       { path: projectPath, collapsed: false },
       parentContext,
     );
-  } catch (error) {
-    setWorkspaceError(error);
+  } catch {
+    setWorkspaceError(errorCopy.sidebarChange);
   }
 }
 
@@ -1943,8 +1957,8 @@ async function persistProjectSelection(
         parentContext,
       );
     }
-  } catch (error) {
-    setControllerError(controller, error);
+  } catch {
+    setControllerError(controller, errorCopy.workspaceSelection);
   }
 }
 
@@ -1979,13 +1993,29 @@ function materializePendingSession(
   }
 }
 
+function recoverSubmittedPrompt(controller: SessionController): void {
+  const submitted = controller.submittedPrompt;
+  if (!submitted) return;
+  controller.submittedPrompt = undefined;
+  if (controller.draft.trim() !== submitted.message) {
+    controller.draft = controller.draft
+      ? `${submitted.message}\n\n${controller.draft}`
+      : submitted.message;
+  }
+  if (submitted.optimisticId) {
+    controller.messages = controller.messages.filter(
+      (message) => message.id !== submitted.optimisticId,
+    );
+  }
+}
+
 function cancelPendingPrompt(
   controller: SessionController,
-  error: unknown,
+  message: string,
 ): void {
   const prompt = controller.pendingPrompt;
   if (!prompt) {
-    setControllerError(controller, error);
+    setControllerError(controller, message);
     return;
   }
   controller.pendingPrompt = undefined;
@@ -1999,10 +2029,12 @@ function cancelPendingPrompt(
   controller.messages = controller.messages.filter(
     (message) => message.id !== prompt.optimisticId,
   );
-  if (!controller.draft || controller.draft === prompt.message) {
-    controller.draft = prompt.message;
+  if (controller.draft.trim() !== prompt.message) {
+    controller.draft = controller.draft
+      ? `${prompt.message}\n\n${controller.draft}`
+      : prompt.message;
   }
-  setControllerError(controller, error);
+  setControllerError(controller, message);
 }
 
 /**
@@ -2022,29 +2054,25 @@ function anchorFields(controller: SessionController): { anchor?: number } {
   };
 }
 
-function pushError(controller: SessionController, text: string): void {
+function pushError(
+  controller: SessionController,
+  text: string,
+  label = 'Reply Failed',
+): void {
   controller.messages.push({
     id: `stream-error-${controller.streamSequence++}`,
     kind: 'error',
     text,
+    errorLabel: label,
   });
   if (!isControllerSelected(controller)) controller.unread = true;
 }
 
-/** How much of a reason a retry line carries before the composer is pushed down. */
-const retryReasonLimit = 120;
-
 function retryStatus(event: Record<string, unknown>): string {
   const attempt = String(event.attempt ?? '');
   const maxAttempts = event.maxAttempts ? `/${String(event.maxAttempts)}` : '';
-  const reason = describePiError(stringValue(event.errorMessage)).message;
-  const trimmed =
-    reason.length > retryReasonLimit
-      ? `${reason.slice(0, retryReasonLimit).trimEnd()}…`
-      : reason;
-  return trimmed
-    ? `Retrying (${attempt}${maxAttempts}): ${trimmed}`
-    : `Retrying (${attempt}${maxAttempts})…`;
+  const failure = describePiError(stringValue(event.errorMessage));
+  return `Retrying (${attempt}${maxAttempts}): ${retryPiErrorMessage(failure.kind)}`;
 }
 
 function appendStream(
@@ -2097,8 +2125,7 @@ async function retireUnsavedSession(
     state.activeSessionId = session.id;
     state.activeSessionPath = '';
   }
-  controller.status =
-    'That session was never saved by Pi, so this is a new one.';
+  controller.status = errorCopy.unsavedSession;
 }
 
 function removeEmptyActivePhantom(): void {
@@ -2225,8 +2252,8 @@ async function stopControllerProcess(
       { runtimeId: controller.runtimeId },
       parentContext,
     );
-  } catch (error) {
-    setControllerError(controller, error);
+  } catch {
+    setControllerError(controller, errorCopy.closePi);
     return;
   }
   if (controller.generation !== generation) return;
@@ -2320,9 +2347,9 @@ export {
   persistExpandedProject,
   persistProjectSelection,
   materializePendingSession,
+  recoverSubmittedPrompt,
   cancelPendingPrompt,
   pushError,
-  retryReasonLimit,
   retryStatus,
   appendStream,
   retireUnsavedSession,
