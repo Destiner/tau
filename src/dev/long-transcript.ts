@@ -142,6 +142,53 @@ Inspect selection, scrolling, keyboard behavior, window behavior, and perceived 
       text: `The same markdown in a user bubble:\n\n${listShowcase}\n\n${tableShowcase}\n\n${longTailShowcase}\n\n${codeShowcase}`,
     };
   }
+  // One of each activity state, at a fixed index, so a test can name it.
+  if (index === 4_994) {
+    return {
+      id: 'fixture-tool-running',
+      kind: 'tool',
+      text: 'bun run test -- transcript',
+      toolCallId: 'fixture-call-running',
+      toolName: 'bash',
+      toolRunning: true,
+      toolErrored: false,
+      toolArguments: '{\n  "command": "bun run test -- transcript"\n}',
+    };
+  }
+  if (index === 4_993) {
+    return {
+      id: 'fixture-tool-failed',
+      kind: 'tool',
+      text: 'src/components/TranscriptView.vue',
+      toolCallId: 'fixture-call-failed',
+      toolName: 'edit',
+      toolRunning: false,
+      toolErrored: true,
+      toolArguments: '{\n  "path": "src/components/TranscriptView.vue"\n}',
+      toolResult: 'Error: no match found for the replacement anchor.',
+    };
+  }
+  if (index === 4_992) {
+    return {
+      id: 'fixture-tool-done',
+      kind: 'tool',
+      text: 'src/lib/pi/runtime.ts',
+      toolCallId: 'fixture-call-done',
+      toolName: 'read',
+      toolRunning: false,
+      toolErrored: false,
+      toolArguments: '{\n  "path": "src/lib/pi/runtime.ts"\n}',
+      toolResult: 'Read 120 lines from the runtime.',
+    };
+  }
+  if (index === 4_991) {
+    return {
+      id: 'fixture-thinking-trace',
+      kind: 'thinking',
+      text: 'The adoption walk stops at the first local error row, which would strand every row below it.',
+    };
+  }
+
   if (index === 4_995) {
     return {
       id: 'fixture-markdown-showcase-thinking',

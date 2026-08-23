@@ -40,32 +40,79 @@ test('renders a long transcript without pagination controls or an oversized DOM'
   expect(await page.locator('.message').count()).toBeLessThan(50);
 });
 
-test('shows skill use as a collapsed expandable block', async ({ page }) => {
+test('shows skill use as a collapsed expandable row', async ({ page }) => {
   const skill = page.locator('[data-message-id="fixture-skill-4998"]');
-  const header = skill.locator('.skill-header');
+  const header = skill.locator('.activity-header');
 
-  await expect(skill.locator('.skill-label')).toHaveText('skill');
-  await expect(skill.locator('.skill-title')).toHaveText(
+  await expect(skill.locator('.activity-name')).toHaveText('skill');
+  await expect(skill.locator('.activity-argument')).toHaveText(
     'desktop-app-native-feel',
   );
   await expect(header).not.toContainText(
     'Focus on keyboard behavior and perceived performance',
   );
   await expect(header).toHaveAttribute('aria-expanded', 'false');
-  await expect(skill.locator('.skill-details')).toHaveCount(0);
+  await expect(skill.locator('.activity-details')).toHaveCount(0);
 
   await header.click();
 
   await expect(header).toHaveAttribute('aria-expanded', 'true');
-  await expect(skill.locator('.skill-detail-label')).toHaveText([
+  await expect(skill.locator('.activity-detail-label')).toHaveText([
     'Prompt',
     'Instructions',
   ]);
-  await expect(skill.locator('.skill-details')).toContainText(
+  await expect(skill.locator('.activity-details')).toContainText(
     'Focus on keyboard behavior and perceived performance',
   );
-  await expect(skill.locator('.skill-details')).toContainText(
+  await expect(skill.locator('.activity-details')).toContainText(
     'Inspect selection, scrolling, keyboard behavior',
+  );
+});
+
+test('keeps a thought behind its label until it is opened', async ({
+  page,
+}) => {
+  const thought = page.locator('[data-message-id="fixture-thinking-trace"]');
+  const header = thought.locator('.activity-header');
+
+  await expect(thought.locator('.activity-name')).toHaveText('thinking');
+  await expect(thought).not.toContainText('The adoption walk stops');
+  await expect(header).toHaveAttribute('aria-expanded', 'false');
+
+  await header.click();
+
+  await expect(header).toHaveAttribute('aria-expanded', 'true');
+  await expect(thought.locator('.activity-details')).toContainText(
+    'The adoption walk stops at the first local error row',
+  );
+});
+
+test('marks only the calls that are running or failed', async ({ page }) => {
+  const running = page.locator('[data-message-id="fixture-tool-running"]');
+  const failed = page.locator('[data-message-id="fixture-tool-failed"]');
+  const done = page.locator('[data-message-id="fixture-tool-done"]');
+
+  await expect(running.locator('.activity-mark.running')).toHaveCount(1);
+  await expect(failed.locator('.activity-mark.failed')).toHaveCount(1);
+  await expect(done.locator('.activity-mark')).toHaveCount(0);
+
+  // The slot is held either way, so a run of rows keeps one column.
+  await expect(done.locator('.activity-mark-slot')).toHaveCount(1);
+});
+
+test('names the failed result as an error when the row is opened', async ({
+  page,
+}) => {
+  const failed = page.locator('[data-message-id="fixture-tool-failed"]');
+
+  await failed.locator('.activity-header').click();
+
+  await expect(failed.locator('.activity-detail-label')).toHaveText([
+    'Arguments',
+    'Error',
+  ]);
+  await expect(failed.locator('.activity-detail-body.failed')).toContainText(
+    'no match found for the replacement anchor',
   );
 });
 
@@ -292,20 +339,16 @@ test('opens a tool call in place and keeps it open across virtualization', async
   await page.waitForTimeout(150);
 
   const id = await page
-    .locator('.tool-call')
+    .locator('[data-message-id^="fixture-tool-"]')
     .first()
-    .evaluate(
-      (element) =>
-        (element.closest('[data-message-id]') as HTMLElement | null)?.dataset
-          .messageId ?? '',
-    );
+    .evaluate((element) => (element as HTMLElement).dataset.messageId ?? '');
   const call = page.locator(`[data-message-id="${id}"]`);
-  const header = call.locator('.tool-header');
+  const header = call.locator('.activity-header');
   await expect(header).toHaveAttribute('aria-expanded', 'false');
-  await expect(call.locator('.tool-details')).toHaveCount(0);
+  await expect(call.locator('.activity-details')).toHaveCount(0);
 
   await header.click();
-  await expect(call.locator('.tool-detail-label').first()).toHaveText(
+  await expect(call.locator('.activity-detail-label').first()).toHaveText(
     'Arguments',
   );
   await expect(header).toHaveAttribute('aria-expanded', 'true');

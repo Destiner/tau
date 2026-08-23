@@ -43,16 +43,6 @@
                 :source="messageAt(virtualRow.index)?.text ?? ''"
                 :base-path="basePath"
               />
-              <div
-                v-else-if="messageAt(virtualRow.index)?.kind === 'thinking'"
-                class="thinking-block"
-              >
-                <div class="thinking-label">Thinking</div>
-                <MarkdownText
-                  :source="messageAt(virtualRow.index)?.text ?? ''"
-                  :base-path="basePath"
-                />
-              </div>
               <ErrorNotice
                 v-else-if="messageAt(virtualRow.index)?.kind === 'error'"
                 :text="messageAt(virtualRow.index)?.text ?? ''"
@@ -63,16 +53,11 @@
                 :text="messageAt(virtualRow.index)?.text ?? ''"
                 :base-path="messageAt(virtualRow.index)?.basePath"
               />
-              <SkillInvocation
-                v-else-if="messageAt(virtualRow.index)?.kind === 'skill'"
-                :entry="messageAt(virtualRow.index)!"
-                :expanded="isEntryExpanded(virtualRow.index)"
-                @toggle="() => toggleEntry(virtualRow.index)"
-              />
-              <ToolCall
+              <ActivityRow
                 v-else
                 :entry="messageAt(virtualRow.index)!"
                 :expanded="isEntryExpanded(virtualRow.index)"
+                :base-path="basePath"
                 @toggle="() => toggleEntry(virtualRow.index)"
               />
             </article>
@@ -133,10 +118,9 @@ import type { ExtensionDialog as ExtensionPrompt } from '../composables/state';
 import type { TranscriptEntry } from '../lib/pi/transcript';
 import { recallScroll, rememberScroll } from '../lib/transcript-scroll';
 
+import ActivityRow from './ActivityRow.vue';
 import ErrorNotice from './ErrorNotice.vue';
 import ExtensionDialog from './ExtensionDialog.vue';
-import SkillInvocation from './SkillInvocation.vue';
-import ToolCall from './ToolCall.vue';
 import TranscriptNotice from './TranscriptNotice.vue';
 import MarkdownText from './ui/MarkdownText.vue';
 import UiSpinner from './ui/UiSpinner.vue';
@@ -413,10 +397,9 @@ function isActivity(
 
 function estimateRowSize(message: TranscriptEntry | undefined): number {
   if (!message) return 42;
-  if (message.kind === 'tool' || message.kind === 'skill') return 58;
+  if (isActivity(message.kind)) return 26;
   if (message.kind === 'error' || message.kind === 'notice') return 88;
   if (message.kind === 'user') return 76;
-  if (message.kind === 'thinking') return 112;
   return 144;
 }
 
@@ -489,34 +472,20 @@ defineExpose({ scrollToEnd });
   margin-left: 8px;
 }
 
+/*
+ * Activity is a line of text rather than a block, so it hangs off the same
+ * left edge as the reply it belongs to instead of being indented under it.
+ */
 .message.thinking,
 .message.tool,
 .message.skill {
-  margin-right: 32px;
-  margin-left: 20px;
+  margin-right: 20px;
+  margin-left: 8px;
 }
 
-.thinking-block {
-  padding: 9px 10px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--panel-raised);
-}
-
-.thinking-label {
-  color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 9px;
-  line-height: 1.2;
-}
-
-.thinking-block .markdown {
-  margin-top: 6px;
-  font-size: 12px;
-}
-
+/* A run of activity is one thing; only its last row is followed by a gap. */
 .message.compact {
-  padding-bottom: 7px;
+  padding-bottom: 0;
 }
 
 .stream-state {

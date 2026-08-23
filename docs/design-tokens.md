@@ -21,7 +21,7 @@ how important the control is — importance is carried by tone, not size.
 
 | Token          | Value | Used for                                                                                  |
 | -------------- | ----- | ----------------------------------------------------------------------------------------- |
-| `--control-xs` | 16px  | An affordance inside a line of text: the copy button on a tool row.                       |
+| `--control-xs` | 16px  | An affordance inside a line of text: the copy button on a code block.                     |
 | `--control-sm` | 22px  | Dense chrome that sits beside content: the composer toolbar, a list group head.           |
 | `--control-md` | 24px  | The default control: buttons, menu items, and actions revealed on a list row.             |
 | `--control-lg` | 28px  | Dialog-weight controls: fields and actions in a dialog, popover triggers, footer buttons. |
