@@ -9,9 +9,21 @@
           type="button"
           class="activity-header"
         >
+          <span
+            class="activity-name"
+            :class="{ thinking: entry.kind === 'thinking' }"
+            >{{ name }}</span
+          >
+          <span class="activity-argument">{{ argument }}</span>
+          <UiIcon
+            v-if="expandable"
+            class="activity-disclosure"
+            :name="expanded ? 'chevron-up' : 'chevron-down'"
+          />
           <!--
             A call that is running or has failed is the only one worth a mark;
-            the slot is held either way so a run of rows stays in one column.
+            the slot is held either way so a run of rows stays in one column,
+            at the end of the line rather than in front of what it says.
           -->
           <span class="activity-mark-slot">
             <span
@@ -27,17 +39,6 @@
               aria-label="Failed"
             ></span>
           </span>
-          <span
-            class="activity-name"
-            :class="{ thinking: entry.kind === 'thinking' }"
-            >{{ name }}</span
-          >
-          <span class="activity-argument">{{ argument }}</span>
-          <UiIcon
-            v-if="expandable"
-            class="activity-disclosure"
-            :name="expanded ? 'chevron-up' : 'chevron-down'"
-          />
         </button>
       </template>
       <template #content>
@@ -152,7 +153,7 @@ const expandable = computed(() => {
 <style scoped>
 .activity-header {
   display: grid;
-  grid-template-columns: 8px auto minmax(0, 1fr) 12px;
+  grid-template-columns: auto minmax(0, 1fr) 12px 8px;
   align-items: center;
   width: 100%;
   min-width: 0;
@@ -237,7 +238,7 @@ const expandable = computed(() => {
 .activity-details {
   display: flex;
   flex-direction: column;
-  margin: 4px 0 2px 22px;
+  margin: 4px 0 2px 14px;
   padding-left: 10px;
   border-left: 1px solid var(--border);
   gap: 8px;
