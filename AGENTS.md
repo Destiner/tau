@@ -17,7 +17,8 @@ Native Tauri desktop UI for the Pi coding agent, with a Vue frontend and Rust ba
 - `cargo fmt --check --manifest-path src-tauri/Cargo.toml` - Check Rust formatting.
 - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` - Lint Rust.
 - `cargo test --manifest-path src-tauri/Cargo.toml` - Run Rust tests.
-- `bun tauri build` - Build the distributable app.
+- `bun tauri build` - Build an unsigned host-architecture app for local testing.
+- `bun run release:macos` - Build and verify the Apple Silicon, signed, notarized macOS DMG.
 
 Install Playwright once with `bun x playwright install chromium webkit`.
 
@@ -43,4 +44,5 @@ Install Playwright once with `bun x playwright install chromium webkit`.
 - `docs/extensions.md` - Extension support matrix, runtime lifetime, and session replacement behavior.
 - `docs/observability.md` - Telemetry storage, privacy limits, issue reports, and optional OTLP export.
 - `docs/quality.md` - Product principles and the verification rubric for all UI work.
+- `docs/releases.md` - macOS signing, notarization, and artifact verification.
 - `docs/reproduction-scenarios.md` - Scenario authoring, interactive controls, regression workflow, and Pi canary scope.

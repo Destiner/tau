@@ -17,6 +17,8 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:pi-contract": "bun scripts/pi-contract.ts",
+    "release:macos": "bun scripts/release-macos.ts",
+    "verify:macos-release": "bun scripts/release-macos.ts --verify-only",
     "tauri": "tauri"
   },
   "dependencies": {

@@ -3,14 +3,17 @@ use crate::telemetry::{trace_context::TraceContext, Telemetry};
 use std::{
     env,
     ffi::OsStr,
+    io::Read,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
+    sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
 use tauri::State;
 
 const SSH_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+const SSH_OUTPUT_LIMIT_BYTES: usize = 8 * 1024 * 1024;
 const SSH_OPTIONS: [&str; 8] = [
     "-o",
     "BatchMode=yes",
@@ -22,6 +25,12 @@ const SSH_OPTIONS: [&str; 8] = [
     "StrictHostKeyChecking=accept-new",
 ];
 const DIRECTORY_MARKER: &[u8] = b"TAU_REMOTE_DIRECTORY";
+const DIRECTORY_END_MARKER: &[u8] = b"TAU_REMOTE_END_DIRECTORY";
+const SSH_OPTIONS_WITH_ARGUMENTS: [char; 22] = [
+    'B', 'b', 'c', 'D', 'E', 'e', 'F', 'I', 'i', 'J', 'L', 'l', 'm', 'O', 'o', 'P', 'p', 'Q', 'R',
+    'S', 'W', 'w',
+];
+const REMOTE_SHELL_LAUNCHER: &str = r#"case "${SHELL##*/}" in csh|tcsh) command='if ( -r ~/.login ) source ~/.login; '"$1"; exec "$SHELL" -i -c "$command" ;; *) exec "$SHELL" -lic "$1" ;; esac"#;
 
 pub struct SshConnection {
     executable: PathBuf,
@@ -61,25 +70,71 @@ impl SshConnection {
             resolve_ssh_binary()?
         };
 
-        if words.is_empty() {
-            return Err("The SSH connection string does not include a destination.".into());
-        }
+        let arguments = normalize_ssh_arguments(words)?;
 
         Ok(Self {
             executable,
-            arguments: words,
+            arguments,
             connection_string: connection_string.to_string(),
         })
     }
 
     pub fn command(&self, remote_command: &str) -> Command {
         let mut command = Command::new(&self.executable);
+        let (destination, options) = self
+            .arguments
+            .split_last()
+            .expect("validated SSH connection arguments");
         command
+            .args(options)
             .args(SSH_OPTIONS)
-            .args(&self.arguments)
+            .arg(destination)
             .arg(remote_command);
         command
     }
+}
+
+fn normalize_ssh_arguments(words: Vec<String>) -> Result<Vec<String>, String> {
+    let mut options = Vec::new();
+    let mut destination = None;
+    let mut words = words.into_iter();
+    while let Some(word) = words.next() {
+        if word == "--" {
+            if destination.is_some() {
+                return Err("The SSH connection string has more than one destination.".into());
+            }
+            destination = words.next();
+            if words.next().is_some() {
+                return Err("The SSH connection string includes a remote command.".into());
+            }
+            break;
+        }
+        if let Some(option) = word.strip_prefix('-').filter(|value| !value.is_empty()) {
+            if option.starts_with('-') {
+                return Err("Use OpenSSH short options in the connection string.".into());
+            }
+            let separate_argument = option.char_indices().any(|(index, name)| {
+                SSH_OPTIONS_WITH_ARGUMENTS.contains(&name)
+                    && index + name.len_utf8() == option.len()
+            });
+            options.push(word);
+            if separate_argument {
+                options.push(words.next().ok_or_else(|| {
+                    "An SSH option in the connection string is missing its value.".to_string()
+                })?);
+            }
+            continue;
+        }
+        if destination.replace(word).is_some() {
+            return Err("The SSH connection string includes a remote command.".into());
+        }
+    }
+
+    let destination = destination
+        .filter(|destination| !destination.is_empty())
+        .ok_or_else(|| "The SSH connection string does not include a destination.".to_string())?;
+    options.push(destination);
+    Ok(options)
 }
 
 #[tauri::command]
@@ -135,25 +190,48 @@ fn run_ssh_command(connection: &SshConnection, remote_command: &str) -> Result<O
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("Could not start SSH: {error}"))?;
-    let started = Instant::now();
-    loop {
-        if child
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "SSH did not expose an output stream.".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "SSH did not expose an error stream.".to_string())?;
+    let (stdout_sender, stdout_receiver) = mpsc::channel();
+    let (stderr_sender, stderr_receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = stdout_sender.send(read_bounded(stdout, SSH_OUTPUT_LIMIT_BYTES));
+    });
+    thread::spawn(move || {
+        let _ = stderr_sender.send(read_bounded(stderr, SSH_OUTPUT_LIMIT_BYTES));
+    });
+
+    let deadline = Instant::now() + SSH_COMMAND_TIMEOUT;
+    let status = loop {
+        if let Some(status) = child
             .try_wait()
             .map_err(|error| format!("Could not wait for SSH: {error}"))?
-            .is_some()
         {
-            break;
+            break status;
         }
-        if started.elapsed() >= SSH_COMMAND_TIMEOUT {
+        if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
             return Err("SSH connection timed out.".into());
         }
         thread::sleep(Duration::from_millis(50));
+    };
+    let (stdout, stdout_overflow) = receive_ssh_output(&stdout_receiver, deadline)?;
+    let (stderr, stderr_overflow) = receive_ssh_output(&stderr_receiver, deadline)?;
+    if stdout_overflow || stderr_overflow {
+        return Err("The SSH response was too large.".into());
     }
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("Could not read the SSH response: {error}"))?;
+    let output = Output {
+        status,
+        stdout,
+        stderr,
+    };
 
     if output.status.success() {
         Ok(output)
@@ -167,12 +245,48 @@ fn run_ssh_command(connection: &SshConnection, remote_command: &str) -> Result<O
     }
 }
 
+fn receive_ssh_output(
+    receiver: &mpsc::Receiver<std::io::Result<(Vec<u8>, bool)>>,
+    deadline: Instant,
+) -> Result<(Vec<u8>, bool), String> {
+    let remaining = deadline
+        .checked_duration_since(Instant::now())
+        .ok_or_else(|| "SSH connection timed out.".to_string())?;
+    receiver
+        .recv_timeout(remaining)
+        .map_err(|error| match error {
+            mpsc::RecvTimeoutError::Timeout => "SSH connection timed out.".to_string(),
+            mpsc::RecvTimeoutError::Disconnected => "Could not read the SSH response.".to_string(),
+        })?
+        .map_err(|error| format!("Could not read the SSH response: {error}"))
+}
+
+fn read_bounded(mut reader: impl Read, limit: usize) -> std::io::Result<(Vec<u8>, bool)> {
+    let mut output = Vec::new();
+    let mut overflow = false;
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            return Ok((output, overflow));
+        }
+        let remaining = limit.saturating_sub(output.len());
+        output.extend_from_slice(&buffer[..read.min(remaining)]);
+        overflow |= read > remaining;
+    }
+}
+
 fn remote_directory_command(working_directory: Option<&str>) -> String {
-    let inspect = r#"printf '\nTAU_REMOTE_DIRECTORY\000%s\000%s\000' "$(hostname)" "$(pwd -P)" && find -L . ! -name . -prune -type d -print0"#;
-    working_directory.map_or_else(
-        || inspect.to_string(),
-        |path| format!("cd {} && {inspect}", shell_words::quote(path)),
-    )
+    let inspect = r#"printf '\nTAU_REMOTE_DIRECTORY\000%s\000%s\000' "$(hostname)" "$(pwd -P)" && find -L . ! -name . -prune -type d -print0 && printf 'TAU_REMOTE_END_DIRECTORY\000'"#;
+    let (script, argument) = working_directory.map_or((inspect.to_string(), None), |path| {
+        (format!("cd \"$1\" && {inspect}"), Some(path))
+    });
+    let mut command = format!("exec /bin/sh -c {} tau", shell_words::quote(&script));
+    if let Some(path) = argument {
+        command.push(' ');
+        command.push_str(&shell_words::quote(path));
+    }
+    command
 }
 
 fn parse_directory_listing(
@@ -194,9 +308,17 @@ fn parse_directory_listing(
         .map(|value| String::from_utf8_lossy(value).into_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "SSH connected, but the remote directory was not reported.".to_string())?;
-    let mut directories = fields
+    let directory_start = marker_index + 3;
+    let directory_end = fields
         .iter()
-        .skip(marker_index + 3)
+        .skip(directory_start)
+        .position(|field| *field == DIRECTORY_END_MARKER)
+        .map(|index| directory_start + index)
+        .ok_or_else(|| {
+            "SSH connected, but the remote directory list was incomplete.".to_string()
+        })?;
+    let mut directories = fields[directory_start..directory_end]
+        .iter()
         .filter_map(|value| {
             let value = String::from_utf8_lossy(value);
             let name = value.strip_prefix("./").unwrap_or(&value);
@@ -233,9 +355,14 @@ pub fn remote_pi_command(working_directory: &str, session_path: Option<&str>) ->
         command.push_str(" --session ");
         command.push_str(&shell_words::quote(path));
     }
+    remote_login_shell_command(&command)
+}
+
+pub fn remote_login_shell_command(command: &str) -> String {
     format!(
-        "exec \"${{SHELL:-/bin/sh}}\" -lc {}",
-        shell_words::quote(&command)
+        "exec /bin/sh -c {} tau {}",
+        shell_words::quote(REMOTE_SHELL_LAUNCHER),
+        shell_words::quote(command),
     )
 }
 
@@ -277,9 +404,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn drains_oversized_ssh_output_without_storing_it_all() {
+        let (output, overflow) = read_bounded(&b"0123456789"[..], 4).expect("bounded output");
+        assert_eq!(output, b"0123");
+        assert!(overflow);
+    }
+
+    #[test]
     fn parses_full_and_destination_only_connections() {
         let full = SshConnection::parse("ssh user@example -p 1234").expect("full command");
-        assert_eq!(full.arguments, ["user@example", "-p", "1234"]);
+        assert_eq!(full.arguments, ["-p", "1234", "user@example"]);
+        let conventional =
+            SshConnection::parse("ssh -p 1234 user@example").expect("conventional command");
+        assert_eq!(conventional.arguments, full.arguments);
+        let clustered =
+            SshConnection::parse("ssh -vp 1234 user@example").expect("clustered options");
+        assert_eq!(clustered.arguments, ["-vp", "1234", "user@example"]);
 
         let destination = SshConnection::parse("user@example").expect("destination");
         assert_eq!(destination.arguments, ["user@example"]);
@@ -294,20 +434,73 @@ mod tests {
         assert!(command.contains("Project files"));
         assert!(command.contains("session"));
         assert!(command.contains("pi --mode rpc"));
+        assert!(command.contains("/bin/sh -c"));
+    }
+
+    #[test]
+    fn supports_csh_remote_login_environments() {
+        let shell = Path::new("/bin/csh");
+        if !shell.is_file() {
+            return;
+        }
+        let output = Command::new(shell)
+            .args([
+                "-c",
+                &remote_login_shell_command("printf tau-remote-shell-ok"),
+            ])
+            .env("SHELL", shell)
+            .output()
+            .expect("csh remote shell fixture");
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"tau-remote-shell-ok");
+    }
+
+    #[test]
+    fn rejects_remote_commands_in_connection_strings() {
+        let error = SshConnection::parse("ssh build-box uptime")
+            .err()
+            .expect("remote command rejection");
+        assert!(error.contains("remote command"));
     }
 
     #[test]
     fn quotes_directories_when_browsing() {
         let command = remote_directory_command(Some("/home/timur/Project files"));
-        assert!(command.starts_with("cd '/home/timur/Project files'"));
+        assert!(command.contains("/bin/sh -c"));
+        assert!(command.contains("Project files"));
         assert!(command.contains("TAU_REMOTE_DIRECTORY"));
+        assert!(command.contains("TAU_REMOTE_END_DIRECTORY"));
+    }
+
+    #[test]
+    fn browses_directories_through_a_csh_remote_environment() {
+        let shell = Path::new("/bin/csh");
+        if !shell.is_file() {
+            return;
+        }
+        let directory = tempfile::tempdir().expect("remote directory fixture");
+        std::fs::create_dir(directory.path().join("Alpha Project")).expect("remote child");
+        let output = Command::new(shell)
+            .args([
+                "-c",
+                &remote_directory_command(Some(
+                    directory.path().to_str().expect("UTF-8 fixture path"),
+                )),
+            ])
+            .output()
+            .expect("csh remote directory fixture");
+        assert!(output.status.success());
+        let listing = parse_directory_listing("ssh build-box", &output.stdout)
+            .expect("remote directory listing");
+        assert_eq!(listing.directories.len(), 1);
+        assert_eq!(listing.directories[0].name, "Alpha Project");
     }
 
     #[test]
     fn parses_directory_listings_after_login_output() {
         let listing = parse_directory_listing(
             "ssh build-box",
-            b"Welcome\nTAU_REMOTE_DIRECTORY\0build-box\0/home/timur\0./beta\0./Alpha Project\0",
+            b"Welcome\nTAU_REMOTE_DIRECTORY\0build-box\0/home/timur\0./beta\0./Alpha Project\0TAU_REMOTE_END_DIRECTORY\0logout banner",
         )
         .expect("directory listing");
         assert_eq!(listing.host, "build-box");

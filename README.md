@@ -4,6 +4,10 @@ A Tauri desktop UI for the [Pi coding agent](https://pi.dev), built with Vue and
 
 Tau keeps the original app's project and session layout while replacing Pi's own frontend. Production projects are stored in `~/Library/Application Support/tau/projects.json`; development builds use an isolated `tau-dev` app profile and `.tau-dev.json` session metadata. Both profiles keep the underlying Pi session files in the same Pi project session directories.
 
+## Requirements
+
+The packaged app supports Apple Silicon Macs running macOS 26 or later. Pi and the runtime used by its executable must already be installed and work in the user's terminal. Bun and Rust are development dependencies only.
+
 ## Development
 
 Requirements:
@@ -46,6 +50,10 @@ Remote projects use the system OpenSSH client and start directory browsing from 
 ## Local observability
 
 Tau continuously retains bounded, content-free OpenTelemetry data locally for diagnostics. See [local observability](docs/observability.md) for storage, privacy, and optional development OTLP export details.
+
+## macOS releases
+
+The maintainer signing, notarization, and verification process is documented in [macOS releases](docs/releases.md).
 
 ## Checks
 

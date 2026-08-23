@@ -3,7 +3,7 @@ use crate::{
         ProjectRecord, ProjectRegistry, ProjectSummary, RemoteProjectRecord, RemoteSessionRecord,
         SessionSummary, TauSessionRecord, TauSessionRegistry, WorkspaceSnapshot,
     },
-    pi::resolve_pi_binary,
+    pi::{login_shell_pi_agent_dir, resolve_pi_binary},
     profile::{APP_DIRECTORY_NAME, SESSION_REGISTRY_FILENAME},
     telemetry::{trace_context::TraceContext, Telemetry},
 };
@@ -11,6 +11,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
+    ffi::{OsStr, OsString},
     fs::{self, File},
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
@@ -645,12 +646,31 @@ fn project_name(path: &str) -> String {
 }
 
 pub fn pi_agent_dir() -> Result<PathBuf, String> {
-    if let Some(path) = std::env::var_os("PI_CODING_AGENT_DIR") {
-        return Ok(PathBuf::from(path));
+    if let Some(path) = configured_pi_agent_dir(std::env::var_os("PI_CODING_AGENT_DIR"), None) {
+        return Ok(path);
+    }
+    if let Some(path) =
+        configured_pi_agent_dir(None, login_shell_pi_agent_dir().map(OsString::as_os_str))
+    {
+        return Ok(path);
     }
     dirs::home_dir()
         .map(|path| path.join(".pi/agent"))
         .ok_or_else(|| "Could not locate the home folder.".into())
+}
+
+fn configured_pi_agent_dir(
+    inherited: Option<OsString>,
+    login_shell: Option<&OsStr>,
+) -> Option<PathBuf> {
+    inherited
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            login_shell
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from)
+        })
 }
 
 /// Local sessions are registered and read through one registry per project,
@@ -965,6 +985,21 @@ mod tests {
     fn default_session_path_matches_pi_encoding() {
         let path = default_session_dir("/Users/timur/code/tau").expect("session path");
         assert!(path.ends_with(".pi/agent/sessions/--Users-timur-code-tau--"));
+    }
+
+    #[test]
+    fn configured_agent_directory_prefers_the_inherited_environment() {
+        assert_eq!(
+            configured_pi_agent_dir(
+                Some(OsString::from("/inherited/pi")),
+                Some(OsStr::new("/login/pi")),
+            ),
+            Some(PathBuf::from("/inherited/pi")),
+        );
+        assert_eq!(
+            configured_pi_agent_dir(None, Some(OsStr::new("/login/pi"))),
+            Some(PathBuf::from("/login/pi")),
+        );
     }
 
     #[test]
