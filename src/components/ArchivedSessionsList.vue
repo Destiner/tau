@@ -44,16 +44,17 @@
             </span>
           </button>
           <span class="time">{{ relativeTime(entry) }}</span>
-          <UiIconButton
-            class="unarchive"
-            size="md"
-            variant="reveal"
-            :label="`Unarchive ${entry.session.title}`"
-            title="Unarchive session"
-            @click="() => unarchive(entry)"
-          >
-            <UiIcon name="archive" />
-          </UiIconButton>
+          <UiTooltip text="Unarchive session">
+            <UiIconButton
+              class="unarchive"
+              size="md"
+              variant="reveal"
+              :label="`Unarchive ${entry.session.title}`"
+              @click="() => unarchive(entry)"
+            >
+              <UiIcon name="archive" />
+            </UiIconButton>
+          </UiTooltip>
         </div>
       </template>
     </template>
@@ -81,6 +82,7 @@ import {
 
 import UiIcon from './ui/UiIcon.vue';
 import UiIconButton from './ui/UiIconButton.vue';
+import UiTooltip from './ui/UiTooltip.vue';
 
 const {
   archivedSessionEntries,

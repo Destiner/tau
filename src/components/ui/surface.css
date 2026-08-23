@@ -1,8 +1,8 @@
 /*
- * The two things the app repeats everywhere: a surface that floats over it, and
- * a row the reader picks from.
+ * The things the app repeats everywhere: a surface that floats over it, the
+ * tooltip, and a row the reader picks from.
  *
- * Global rather than scoped for two reasons. The menu and the context menu are
+ * Global rather than scoped for two reasons. The menus and the tooltip are
  * portalled to the body by reka, where a scoped attribute never reaches them —
  * and they used to answer that by carrying a byte-identical copy of this
  * stylesheet each. The pick row is shared by four components that had four
@@ -54,6 +54,41 @@
 
 .ui-menu-item[data-disabled] {
   color: var(--faint);
+}
+
+/* ── Tooltip ────────────────────────────────────────────────────────────── */
+
+/*
+ * The one surface that arrives without being asked for, which is why it is the
+ * one that fades in, and why it takes a control's corner rather than a
+ * floating panel's: at this size an 8px radius reads as a bubble.
+ */
+.ui-tooltip {
+  max-width: 260px;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-raised);
+  box-shadow: 0 8px 20px var(--shadow-soft);
+  color: var(--text);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+}
+
+.ui-tooltip[data-state='delayed-open'] {
+  animation: ui-tooltip-in 70ms ease-out;
+}
+
+@keyframes ui-tooltip-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-tooltip[data-state='delayed-open'] {
+    animation: none;
+  }
 }
 
 /* ── Pick row ───────────────────────────────────────────────────────────── */

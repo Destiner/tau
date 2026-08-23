@@ -62,29 +62,37 @@
         :max-width="110"
         @update:model-value="handleEffortChange"
       />
-      <UiIconButton
+      <UiTooltip
         v-if="streaming"
-        class="send-button stop"
-        size="sm"
-        variant="fill"
-        tone="danger"
-        :disabled="stopping"
-        label="Stop Pi"
-        @click="stop"
+        text="Stop Pi"
       >
-        <UiIcon name="stop" />
-      </UiIconButton>
-      <UiIconButton
+        <UiIconButton
+          class="send-button stop"
+          size="sm"
+          variant="fill"
+          tone="danger"
+          :disabled="stopping"
+          label="Stop Pi"
+          @click="stop"
+        >
+          <UiIcon name="stop" />
+        </UiIconButton>
+      </UiTooltip>
+      <UiTooltip
         v-else
-        class="send-button"
-        size="sm"
-        variant="fill"
-        :disabled="!canCompose || !draft.trim()"
-        label="Send message"
-        @click="send"
+        text="Send message"
       >
-        <UiIcon name="triangle" />
-      </UiIconButton>
+        <UiIconButton
+          class="send-button"
+          size="sm"
+          variant="fill"
+          :disabled="!canCompose || !draft.trim()"
+          label="Send message"
+          @click="send"
+        >
+          <UiIcon name="triangle" />
+        </UiIconButton>
+      </UiTooltip>
     </div>
   </div>
 </template>
@@ -116,6 +124,7 @@ import UiContextMenu from './ui/UiContextMenu.vue';
 import UiIcon from './ui/UiIcon.vue';
 import UiIconButton from './ui/UiIconButton.vue';
 import UiSelect from './ui/UiSelect.vue';
+import UiTooltip from './ui/UiTooltip.vue';
 
 const props = defineProps<{
   /** Resolves the session header, against which the command menu measures. */

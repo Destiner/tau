@@ -35,13 +35,14 @@
           class="project-row"
           :class="{ selected: project.path === state.activeProjectPath }"
         >
-          <span
-            class="project-drag-handle"
-            title="Drag to reorder"
-            aria-hidden="true"
-          >
-            <UiIcon name="grip" />
-          </span>
+          <UiTooltip text="Drag to reorder">
+            <span
+              class="project-drag-handle"
+              aria-hidden="true"
+            >
+              <UiIcon name="grip" />
+            </span>
+          </UiTooltip>
           <button
             class="project-toggle"
             type="button"
@@ -63,27 +64,29 @@
               :name="project.collapsed ? 'chevron-right' : 'chevron-down'"
             />
           </button>
-          <UiIconButton
-            class="row-action"
-            size="md"
-            variant="reveal"
-            :label="`New session in ${project.name}`"
-            title="New session"
-            @click="() => newSession(project)"
-          >
-            <UiIcon name="plus" />
-          </UiIconButton>
-          <UiIconButton
-            class="row-action"
-            size="md"
-            variant="reveal"
-            tone="danger"
-            :label="`Remove ${project.name}`"
-            title="Remove project"
-            @click="() => removeProject(project)"
-          >
-            <UiIcon name="trash" />
-          </UiIconButton>
+          <UiTooltip text="New session">
+            <UiIconButton
+              class="row-action"
+              size="md"
+              variant="reveal"
+              :label="`New session in ${project.name}`"
+              @click="() => newSession(project)"
+            >
+              <UiIcon name="plus" />
+            </UiIconButton>
+          </UiTooltip>
+          <UiTooltip text="Remove project">
+            <UiIconButton
+              class="row-action"
+              size="md"
+              variant="reveal"
+              tone="danger"
+              :label="`Remove ${project.name}`"
+              @click="() => removeProject(project)"
+            >
+              <UiIcon name="trash" />
+            </UiIconButton>
+          </UiTooltip>
         </div>
 
         <div
@@ -121,17 +124,20 @@
                   }}</span>
                 </span>
               </button>
-              <UiIconButton
+              <UiTooltip
                 v-if="canArchiveSession(project, session)"
-                class="session-archive"
-                size="md"
-                variant="reveal"
-                :label="`Archive ${session.title}`"
-                title="Archive session"
-                @click="() => archiveSession(project, session)"
+                text="Archive session"
               >
-                <UiIcon name="archive" />
-              </UiIconButton>
+                <UiIconButton
+                  class="session-archive"
+                  size="md"
+                  variant="reveal"
+                  :label="`Archive ${session.title}`"
+                  @click="() => archiveSession(project, session)"
+                >
+                  <UiIcon name="archive" />
+                </UiIconButton>
+              </UiTooltip>
             </div>
           </UiContextMenu>
           <div
@@ -154,30 +160,43 @@
 
     <footer class="sidebar-footer">
       <div class="project-menu-wrap">
-        <UiMenu
-          v-model:open="projectMenuOpen"
-          :items="projectMenuItems"
-          :min-width="176"
-        >
-          <template #trigger>
-            <UiIconButton
-              size="lg"
-              label="Open project"
-              title="Open project"
+        <!--
+          The tooltip wraps the menu, not the menu's trigger: a trigger
+          registers with the nearest popper root, and from inside the tooltip
+          that would be the tooltip's own.
+        -->
+        <UiTooltip text="Open project">
+          <span class="project-menu-trigger">
+            <UiMenu
+              v-model:open="projectMenuOpen"
+              :items="projectMenuItems"
+              :min-width="176"
             >
-              <UiIcon name="folder" />
-            </UiIconButton>
-          </template>
-        </UiMenu>
-        <UiIconButton
-          size="lg"
-          :class="{ active: showingArchived }"
-          :label="showingArchived ? 'Show sessions' : 'Show archived sessions'"
-          :title="showingArchived ? 'Show sessions' : 'Show archived sessions'"
-          @click="toggleArchivedView"
+              <template #trigger>
+                <UiIconButton
+                  size="lg"
+                  label="Open project"
+                >
+                  <UiIcon name="folder" />
+                </UiIconButton>
+              </template>
+            </UiMenu>
+          </span>
+        </UiTooltip>
+        <UiTooltip
+          :text="showingArchived ? 'Show sessions' : 'Show archived sessions'"
         >
-          <UiIcon name="archive" />
-        </UiIconButton>
+          <UiIconButton
+            size="lg"
+            :class="{ active: showingArchived }"
+            :label="
+              showingArchived ? 'Show sessions' : 'Show archived sessions'
+            "
+            @click="toggleArchivedView"
+          >
+            <UiIcon name="archive" />
+          </UiIconButton>
+        </UiTooltip>
       </div>
       <IssueReportPopover
         :session-id="state.activeSessionId || undefined"
@@ -227,6 +246,7 @@ import UiIconButton from './ui/UiIconButton.vue';
 import UiMenu from './ui/UiMenu.vue';
 import type { UiMenuItem } from './ui/UiMenu.vue';
 import UiStatusDot from './ui/UiStatusDot.vue';
+import UiTooltip from './ui/UiTooltip.vue';
 
 const props = defineProps<{
   sidebarWidth: number;
@@ -528,6 +548,11 @@ function isTitlebarControl(target: EventTarget | null): boolean {
   display: flex;
   align-items: center;
   gap: 2px;
+}
+
+/* Only there to be something the tooltip can point at; it is the button. */
+.project-menu-trigger {
+  display: flex;
 }
 
 .project-menu-wrap > .active {

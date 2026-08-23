@@ -1,70 +1,78 @@
 <template>
-  <PopoverRoot v-model:open="open">
-    <PopoverTrigger as-child>
-      <UiIconButton
-        size="lg"
-        label="Report an issue"
-        title="Report an issue"
-      >
-        <UiIcon name="bug" />
-      </UiIconButton>
-    </PopoverTrigger>
-    <PopoverPortal>
-      <PopoverContent
-        class="issue-report-popover ui-surface"
-        side="top"
-        align="end"
-        :side-offset="5"
-        aria-label="Report an issue"
-        :aria-busy="submitting || undefined"
-      >
-        <form
-          class="issue-report-form"
-          @submit.prevent="handleSubmit"
-        >
-          <UiCheckbox
-            v-model="includeCurrentSession"
-            :disabled="!sessionId || submitting"
-            >Include current session</UiCheckbox
+  <!--
+    The tooltip is outside `PopoverRoot`, not around the trigger: a trigger
+    registers with the nearest popper root, and from inside the tooltip that
+    would be the tooltip's own.
+  -->
+  <UiTooltip text="Report an issue">
+    <span class="issue-report-trigger">
+      <PopoverRoot v-model:open="open">
+        <PopoverTrigger as-child>
+          <UiIconButton
+            size="lg"
+            label="Report an issue"
           >
-
-          <label class="description-field">
-            <span>Describe the issue</span>
-            <UiContextMenu
-              :items="() => textFieldItems(() => descriptionInput?.input)"
-            >
-              <UiTextarea
-                ref="descriptionInput"
-                v-model="description"
-                rows="6"
-                maxlength="10000"
-                :readonly="submitting"
-                aria-label="Describe the issue"
-              />
-            </UiContextMenu>
-          </label>
-
-          <p
-            v-if="error"
-            class="issue-report-error"
-            role="alert"
+            <UiIcon name="bug" />
+          </UiIconButton>
+        </PopoverTrigger>
+        <PopoverPortal>
+          <PopoverContent
+            class="issue-report-popover ui-surface"
+            side="top"
+            align="end"
+            :side-offset="5"
+            aria-label="Report an issue"
+            :aria-busy="submitting || undefined"
           >
-            {{ error }}
-          </p>
-
-          <footer class="issue-report-actions">
-            <UiButton
-              variant="primary"
-              type="submit"
-              :disabled="submitting || !description.trim()"
+            <form
+              class="issue-report-form"
+              @submit.prevent="handleSubmit"
             >
-              Submit
-            </UiButton>
-          </footer>
-        </form>
-      </PopoverContent>
-    </PopoverPortal>
-  </PopoverRoot>
+              <UiCheckbox
+                v-model="includeCurrentSession"
+                :disabled="!sessionId || submitting"
+                >Include current session</UiCheckbox
+              >
+
+              <label class="description-field">
+                <span>Describe the issue</span>
+                <UiContextMenu
+                  :items="() => textFieldItems(() => descriptionInput?.input)"
+                >
+                  <UiTextarea
+                    ref="descriptionInput"
+                    v-model="description"
+                    rows="6"
+                    maxlength="10000"
+                    :readonly="submitting"
+                    aria-label="Describe the issue"
+                  />
+                </UiContextMenu>
+              </label>
+
+              <p
+                v-if="error"
+                class="issue-report-error"
+                role="alert"
+              >
+                {{ error }}
+              </p>
+
+              <footer class="issue-report-actions">
+                <UiButton
+                  variant="primary"
+                  type="submit"
+                  :disabled="submitting || !description.trim()"
+                >
+                  Submit
+                </UiButton>
+              </footer>
+            </form>
+          </PopoverContent>
+        </PopoverPortal>
+      </PopoverRoot>
+    </span>
+  </UiTooltip>
 </template>
 
 <script setup lang="ts">
@@ -84,6 +92,7 @@ import UiContextMenu from './ui/UiContextMenu.vue';
 import UiIcon from './ui/UiIcon.vue';
 import UiIconButton from './ui/UiIconButton.vue';
 import UiTextarea from './ui/UiTextarea.vue';
+import UiTooltip from './ui/UiTooltip.vue';
 
 const props = defineProps<{
   sessionId?: string;
@@ -124,6 +133,11 @@ async function handleSubmit(): Promise<void> {
 </script>
 
 <style scoped>
+/* Only there to be something the tooltip can point at; it is the button. */
+.issue-report-trigger {
+  display: flex;
+}
+
 :global(.issue-report-popover) {
   z-index: 20;
   width: min(280px, calc(100vw - 18px));

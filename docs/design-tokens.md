@@ -53,9 +53,13 @@ makes a screen full of controls read as one set.
 | Token         | Value | Used for                                                                     |
 | ------------- | ----- | ---------------------------------------------------------------------------- |
 | `--radius-xs` | 3px   | A mark: the checkbox box, and anything smaller than a control.               |
-| `--radius-sm` | 4px   | Any control: button, field, select trigger, icon button.                     |
+| `--radius-sm` | 4px   | Any control: button, field, select trigger, icon button, and the tooltip.    |
 | `--radius-md` | 6px   | A row the reader picks from, a menu item, and an inline block like a notice. |
 | `--radius-lg` | 8px   | Anything that floats over the app: dialog, menu, popover, command menu.      |
+
+The tooltip is the one floating surface that does not take `--radius-lg`: it is
+two words on 3px of padding, and at that size an 8px corner reads as a bubble
+rather than as part of the same set as the controls it labels.
 
 ## Color
 

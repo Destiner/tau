@@ -7,7 +7,6 @@
     :data-variant="variant"
     :data-reveal="variant === 'reveal' || undefined"
     :aria-label="label"
-    :title="title || undefined"
     :disabled="disabled || undefined"
   >
     <slot />
@@ -17,9 +16,12 @@
 <script setup lang="ts">
 withDefaults(
   defineProps<{
-    /** Aria-label; an icon button has no readable text of its own. */
+    /**
+     * Aria-label; an icon button has no readable text of its own. A pointer
+     * gets the same label from a `UiTooltip` around the button — the native
+     * `title` is not used, so that one hover layer answers for the whole app.
+     */
     label: string;
-    title?: string;
     disabled?: boolean;
     /** Box size: 28, 22, 20, or 16 px. */
     size?: 'lg' | 'md' | 'sm' | 'xs';
@@ -33,7 +35,6 @@ withDefaults(
   }>(),
   {
     size: 'md',
-    title: undefined,
     variant: 'fade',
     tone: 'default',
   },
