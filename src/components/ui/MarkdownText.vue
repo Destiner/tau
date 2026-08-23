@@ -376,14 +376,17 @@ onBeforeUnmount(clearCopied);
 }
 
 /*
- * A drawn diagram is a figure in the prose rather than a block on a surface of
- * its own: the fence it was written as had one, but a picture that carries its
- * own boxes and strokes does not need a second frame around it. Its colours
- * are the app's own tokens, passed to the renderer as references, so the
- * scheme it is in is the one around it.
+ * A drawn diagram is ruled like the block its source would have been, but not
+ * filled like one: the rule says where the figure begins and ends, and the
+ * page it is drawn on is the one the message is on. Its colours are the app's
+ * own tokens, passed to the renderer as references, so the scheme it is in is
+ * the one around it.
  */
 .markdown :deep(.diagram) {
   width: 100%;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
 }
 
 /*

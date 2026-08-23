@@ -293,6 +293,12 @@ test('draws a fenced diagram in the scheme around it', async ({ page }) => {
     showcase.locator('.code-block[data-tau-lang="mermaid"]'),
   ).toHaveCount(2);
 
+  // Ruled like the block its source would have been, but not filled like one:
+  // the page a diagram is drawn on is the one the message is on.
+  const block = showcase.locator('.diagram').first();
+  await expect(block).toHaveCSS('border-top-width', '1px');
+  await expect(block).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+
   // Held to the message column rather than widening it.
   const width = await diagram.evaluate(
     (svg) =>
