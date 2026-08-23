@@ -155,10 +155,16 @@ async function startController(
   controller.commandSyncRequestId = '';
   controller.replacementProbeRequestId = '';
   controller.pendingSessionRename = undefined;
+  controller.pendingEffort = '';
+  controller.pendingSettingRequestId = '';
   controller.abortProbeRequestId = '';
+  controller.remoteConnectionTimedOut = false;
+  clearSettingRequestWatch(controller);
   touchController(controller);
   clearSessionReplacementWatch(controller);
   clearAbortWatch(controller);
+  clearRemoteConnectionWatch(controller);
+  if (project.connectionString) watchRemoteConnection(controller);
   if (!preserveMessages && controller.messages.length === 0) {
     controller.messages = [];
   }
@@ -193,16 +199,16 @@ async function startController(
         parentContext,
       );
     }
-    if (controller.disposed) {
-      await invokeTraced(
-        'stop_pi',
-        { runtimeId: controller.runtimeId },
-        parentContext,
-      );
+    if (
+      controller.disposed ||
+      (project.connectionString && !controller.connectingRemote)
+    ) {
+      await stopControllerProcess(controller, parentContext, false);
       return;
     }
     await requestBootstrap(controller, parentContext);
   } catch (error) {
+    clearRemoteConnectionWatch(controller);
     setControllerLifecycle(
       controller,
       { starting: false, connectingRemote: false, syncing: false },
@@ -732,6 +738,57 @@ const remotePiConnectionFailureMessage =
   'The remote Pi connection failed. Check the connection and try again.';
 const remotePiProcessExitMessage =
   'The remote Pi process stopped unexpectedly. Check the connection and try again.';
+const remoteConnectionTimeoutMessage =
+  'The remote connection timed out. Check the connection and try again.';
+const remoteConnectionTimeoutMs = 10_000;
+const settingRequestTimeoutMs = 10_000;
+const remoteConnectionTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const settingRequestTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function watchRemoteConnection(controller: SessionController): void {
+  clearRemoteConnectionWatch(controller);
+  remoteConnectionTimers.set(
+    controller.key,
+    setTimeout(() => {
+      remoteConnectionTimers.delete(controller.key);
+      if (controller.disposed || !controller.connectingRemote) return;
+      controller.remoteConnectionTimedOut = true;
+      presentRemoteConnectionError(controller, remoteConnectionTimeoutMessage);
+      void stopControllerProcess(controller, undefined, false);
+    }, remoteConnectionTimeoutMs),
+  );
+}
+
+function clearRemoteConnectionWatch(controller: SessionController): void {
+  const timer = remoteConnectionTimers.get(controller.key);
+  if (!timer) return;
+  remoteConnectionTimers.delete(controller.key);
+  clearTimeout(timer);
+}
+
+function watchSettingRequest(controller: SessionController): void {
+  clearSettingRequestWatch(controller);
+  settingRequestTimers.set(
+    controller.key,
+    setTimeout(() => {
+      settingRequestTimers.delete(controller.key);
+      if (!controller.pendingSettingRequestId) return;
+      controller.pendingSettingRequestId = '';
+      controller.pendingEffort = '';
+      setControllerError(
+        controller,
+        'Pi did not confirm the setting. Try again.',
+      );
+    }, settingRequestTimeoutMs),
+  );
+}
+
+function clearSettingRequestWatch(controller: SessionController): void {
+  const timer = settingRequestTimers.get(controller.key);
+  if (!timer) return;
+  settingRequestTimers.delete(controller.key);
+  clearTimeout(timer);
+}
 
 async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
   const controller = controllerByRuntimeId(event.runtimeId);
@@ -768,9 +825,13 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
       ? remotePiConnectionFailureMessage
       : piConnectionFailureMessage;
     if (controller.connectingRemote) {
+      clearRemoteConnectionWatch(controller);
       presentRemoteConnectionError(controller, message);
       return;
     }
+    controller.pendingEffort = '';
+    controller.pendingSettingRequestId = '';
+    clearSettingRequestWatch(controller);
     if (controller.pendingPrompt) cancelPendingPrompt(controller, message);
     else setControllerError(controller, message);
     return;
@@ -784,6 +845,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     flushStreamAggregate(controller.runtimeId, event.generation);
     clearSessionReplacementWatch(controller);
     clearAbortWatch(controller);
+    clearRemoteConnectionWatch(controller);
     discardControllerDialogs(controller, event.generation);
     const message =
       event.code === 0
@@ -813,6 +875,10 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
       'process_exited',
     );
     controller.runStateRequestId = '';
+    controller.pendingEffort = '';
+    controller.pendingSettingRequestId = '';
+    controller.remoteConnectionTimedOut = false;
+    clearSettingRequestWatch(controller);
     controller.generation = 0;
     controller.status = message;
   }
@@ -1033,6 +1099,7 @@ async function handleResponse(
     });
   }
   const responseContext = pendingResult.context;
+  if (controller.remoteConnectionTimedOut) return;
   const resolvesRunState =
     command === 'get_state' &&
     Boolean(controller.runStateRequestId) &&
@@ -1053,6 +1120,9 @@ async function handleResponse(
     Boolean(controller.abortProbeRequestId) &&
     responseId === controller.abortProbeRequestId;
   if (resolvesAbortProbe) controller.abortProbeRequestId = '';
+  const resolvesPendingSetting =
+    Boolean(controller.pendingSettingRequestId) &&
+    responseId === controller.pendingSettingRequestId;
   if (
     command === 'prompt' &&
     Boolean(controller.commandPromptRequestId) &&
@@ -1076,6 +1146,11 @@ async function handleResponse(
       stringValue(error?.message) ||
       stringValue(response.error) ||
       `Pi rejected ${command || 'the request'}.`;
+    if (resolvesPendingSetting) {
+      controller.pendingSettingRequestId = '';
+      controller.pendingEffort = '';
+      clearSettingRequestWatch(controller);
+    }
     const pending = controller.pendingPrompt;
     const failedPendingSetting =
       Boolean(pending?.settingsRequestId) &&
@@ -1167,6 +1242,10 @@ async function handleResponse(
     controller.currentModelId = stringValue(model?.id);
     controller.currentModelName = stringValue(model?.name);
     controller.currentEffort = normalizeEffort(data.thinkingLevel);
+    if (resolvesPendingSetting) {
+      controller.pendingSettingRequestId = '';
+      clearSettingRequestWatch(controller);
+    }
     const piSessionId = stringValue(data.sessionId);
     const piSessionPath = stringValue(data.sessionFile);
     const pending = controller.pendingPrompt;
@@ -1198,6 +1277,7 @@ async function handleResponse(
     const nowStreaming = data.isStreaming === true;
     controller.status =
       resolvesAbortProbe && nowStreaming ? unstoppedStatus(controller) : '';
+    clearRemoteConnectionWatch(controller);
     finishRemoteConnection(controller);
 
     if (resolvesPending && pending) {
@@ -1226,6 +1306,8 @@ async function handleResponse(
       controller.commands = [];
       controller.commandsLoaded = false;
       controller.pendingEffort = '';
+      controller.pendingSettingRequestId = '';
+      clearSettingRequestWatch(controller);
       syncingAfterSessionChange = true;
     }
     setControllerLifecycle(
@@ -1395,10 +1477,22 @@ async function handleResponse(
       await applyPendingSessionEffort(controller, true);
       return;
     }
-    await rpc(controller, {
-      id: nextRequestId('model-state'),
-      type: 'get_state',
-    });
+    const stateRequestId = nextRequestId('model-state');
+    if (resolvesPendingSetting) {
+      controller.pendingSettingRequestId = stateRequestId;
+    }
+    try {
+      await rpc(controller, {
+        id: stateRequestId,
+        type: 'get_state',
+      });
+    } catch (error) {
+      if (controller.pendingSettingRequestId === stateRequestId) {
+        controller.pendingSettingRequestId = '';
+        clearSettingRequestWatch(controller);
+      }
+      setControllerError(controller, error);
+    }
     return;
   }
 
@@ -1415,10 +1509,12 @@ async function handleResponse(
       await requestPendingMessages(controller);
       return;
     }
-    if (controller.pendingEffort) {
-      controller.currentEffort = controller.pendingEffort;
+    if (resolvesPendingSetting) {
+      controller.currentEffort = controller.pendingEffort || 'off';
+      controller.pendingEffort = '';
+      controller.pendingSettingRequestId = '';
+      clearSettingRequestWatch(controller);
     }
-    controller.pendingEffort = '';
     controller.status = '';
   }
 }
@@ -2093,6 +2189,8 @@ function canReleaseRuntime(controller: SessionController): boolean {
     !controller.working &&
     !controller.starting &&
     !controller.syncing &&
+    !controller.pendingSettingRequestId &&
+    !controller.pendingSessionRename &&
     !controllerHasPendingDialog(controller) &&
     !watchingSessionReplacement(controller)
   );
@@ -2117,6 +2215,7 @@ function releaseIdleRuntimes(): void {
 async function stopControllerProcess(
   controller: SessionController,
   parentContext?: TraceContext,
+  restartSelected = true,
 ): Promise<void> {
   if (!controller.generation && !controller.starting) return;
   const generation = controller.generation;
@@ -2133,6 +2232,7 @@ async function stopControllerProcess(
   if (controller.generation !== generation) return;
   clearSessionReplacementWatch(controller);
   clearAbortWatch(controller);
+  clearRemoteConnectionWatch(controller);
   discardControllerDialogs(controller, generation);
   abandonPendingRpcSpans(controller.runtimeId, generation, 'abandoned_stop');
   flushStreamAggregate(controller.runtimeId, generation);
@@ -2153,8 +2253,13 @@ async function stopControllerProcess(
   );
   controller.runStateRequestId = '';
   controller.abortProbeRequestId = '';
+  controller.pendingEffort = '';
+  controller.pendingSettingRequestId = '';
+  controller.remoteConnectionTimedOut = false;
+  clearSettingRequestWatch(controller);
 
   if (
+    restartSelected &&
     isControllerSelected(controller) &&
     !controller.disposed &&
     !controller.phantom
@@ -2201,6 +2306,10 @@ export {
   watchAbort,
   probeAbort,
   clearAbortWatch,
+  watchRemoteConnection,
+  clearRemoteConnectionWatch,
+  watchSettingRequest,
+  clearSettingRequestWatch,
   unstoppedStatus,
   appendOptimisticPrompt,
   skillInvocation,
@@ -2230,4 +2339,7 @@ export {
   oldestPendingRpcAgeMs,
   piConnectionFailureMessage,
   piProcessExitMessage,
+  remoteConnectionTimeoutMessage,
+  remoteConnectionTimeoutMs,
+  settingRequestTimeoutMs,
 };

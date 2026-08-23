@@ -29,6 +29,7 @@
         v-for="project in state.workspace?.projects"
         :key="project.path"
         class="project-group"
+        :class="{ removing: projectActionsDisabled }"
         :data-id="project.path"
       >
         <div
@@ -51,6 +52,7 @@
                 ? `${project.connectionString} · ${project.workingDirectory}`
                 : project.workingDirectory
             "
+            :disabled="projectActionsDisabled"
             @click="() => toggleProject(project)"
           >
             <UiStatusDot
@@ -70,6 +72,7 @@
               size="md"
               variant="reveal"
               :label="`New session in ${project.name}`"
+              :disabled="projectActionsDisabled"
               @click="() => newSession(project)"
             >
               <UiIcon name="plus" />
@@ -82,6 +85,7 @@
               variant="reveal"
               tone="danger"
               :label="`Remove ${project.name}`"
+              :disabled="projectActionsDisabled"
               @click="() => removeProject(project)"
             >
               <UiIcon name="trash" />
@@ -111,6 +115,7 @@
                 :aria-current="
                   isSessionSelected(project, session) ? 'page' : undefined
                 "
+                :disabled="projectActionsDisabled"
                 @click="() => selectSession(project, session)"
               >
                 <UiStatusDot
@@ -133,6 +138,7 @@
                   size="md"
                   variant="reveal"
                   :label="`Archive ${session.title}`"
+                  :disabled="projectActionsDisabled"
                   @click="() => archiveSession(project, session)"
                 >
                   <UiIcon name="archive" />
@@ -176,6 +182,7 @@
                 <UiIconButton
                   size="lg"
                   label="Open project"
+                  :disabled="projectActionsDisabled"
                 >
                   <UiIcon name="folder" />
                 </UiIconButton>
@@ -263,6 +270,7 @@ const {
   archiveSession,
   canArchiveSession,
   indicatorLabel,
+  projectActionsDisabled,
   isSessionSelected,
   isSessionUnread,
   markSessionRead,
@@ -329,25 +337,31 @@ function orderedSessions(project: ProjectSummary): SessionSummary[] {
 }
 
 /** The project menu's two ways to add a project. */
-const projectMenuItems: UiMenuItem[] = [
-  {
-    label: 'Open Local Project',
-    run: () => void addLocalProject(),
-  },
-  {
-    label: 'Open Remote Project',
-    run: () => void openRemoteProjectDialog(),
-  },
-];
+function projectMenuItems(): UiMenuItem[] {
+  return [
+    {
+      label: 'Open Local Project',
+      disabled: projectActionsDisabled.value,
+      run: () => void addLocalProject(),
+    },
+    {
+      label: 'Open Remote Project',
+      disabled: projectActionsDisabled.value,
+      run: () => void openRemoteProjectDialog(),
+    },
+  ];
+}
 
 function sessionMenuItems(
   project: ProjectSummary,
   session: SessionSummary,
 ): UiMenuItem[] {
   const unread = isSessionUnread(project, session);
+  const disabled = projectActionsDisabled.value;
   const items: UiMenuItem[] = [
     {
       label: unread ? 'Mark as Read' : 'Mark as Unread',
+      disabled,
       run: () =>
         unread
           ? markSessionRead(project, session)
@@ -357,6 +371,7 @@ function sessionMenuItems(
   if (canArchiveSession(project, session)) {
     items.push({
       label: 'Archive Session',
+      disabled,
       run: () => void archiveSession(project, session),
     });
   }
@@ -374,6 +389,7 @@ function setupProjectReordering(): void {
     dragClass: 'project-sortable-drag',
     forceFallback: true,
     fallbackOnBody: true,
+    filter: '.project-group.removing',
     fallbackTolerance: 3,
     onEnd: finishProjectReordering,
   });

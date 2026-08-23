@@ -1,5 +1,8 @@
 <template>
-  <DialogRoot v-model:open="open">
+  <DialogRoot
+    :open="open"
+    @update:open="handleOpenChange"
+  >
     <DialogPortal>
       <DialogOverlay class="ui-dialog-overlay" />
       <DialogContent
@@ -41,7 +44,7 @@ import {
 
 const open = defineModel<boolean>('open', { default: false });
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     /** Shown as the panel's heading, and announced on open. */
     title: string;
@@ -53,6 +56,11 @@ withDefaults(
   }>(),
   { description: undefined, width: 'sm' },
 );
+
+function handleOpenChange(next: boolean): void {
+  if (!next && props.busy) return;
+  open.value = next;
+}
 </script>
 
 <style scoped>

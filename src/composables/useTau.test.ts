@@ -2573,6 +2573,300 @@ describe('session naming', () => {
   });
 });
 
+describe('project removal', () => {
+  it('persists removal before disposing controllers and blocks project actions meanwhile', async () => {
+    const { tau, project, controller } = await setupNamedSession();
+    const defaultInvoke = vi.mocked(invoke).getMockImplementation();
+    let rejectRemoval: ((error: unknown) => void) | undefined;
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === 'remove_project') {
+        return await new Promise<WorkspaceSnapshot>((_resolve, reject) => {
+          rejectRemoval = reject;
+        });
+      }
+      return defaultInvoke?.(command, args);
+    });
+
+    try {
+      controller.draft = 'Keep this draft';
+      const controllerCount = tau.state.controllers.length;
+      const removal = tau.removeProject(project);
+      await vi.waitFor(() => {
+        expect(tau.isProjectRemoving(project.path)).toBe(true);
+      });
+
+      expect(controller.disposed).toBe(false);
+      expect(stoppedRuntimes()).toEqual([]);
+      await tau.newSession(project);
+      expect(tau.state.controllers).toHaveLength(controllerCount);
+
+      rejectRemoval?.(new Error('Could not update the project registry'));
+      await removal;
+
+      expect(tau.isProjectRemoving(project.path)).toBe(false);
+      expect(controller.disposed).toBe(false);
+      expect(controller.draft).toBe('Keep this draft');
+      expect(controller.status).toBe('Could not update the project registry');
+      expect(stoppedRuntimes()).toEqual([]);
+    } finally {
+      if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
+      tau.dispose();
+    }
+  });
+
+  it('stops and discards project controllers only after persistence succeeds', async () => {
+    const { tau, project, controller } = await setupNamedSession();
+    const defaultInvoke = vi.mocked(invoke).getMockImplementation();
+    let finishRemoval: ((workspace: WorkspaceSnapshot) => void) | undefined;
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === 'remove_project') {
+        return await new Promise<WorkspaceSnapshot>((resolve) => {
+          finishRemoval = resolve;
+        });
+      }
+      return defaultInvoke?.(command, args);
+    });
+
+    try {
+      const removal = tau.removeProject(project);
+      await vi.waitFor(() => expect(finishRemoval).toBeDefined());
+      expect(controller.disposed).toBe(false);
+      expect(stoppedRuntimes()).toEqual([]);
+
+      finishRemoval?.({ activeProjectPath: '', piPath: null, projects: [] });
+      await removal;
+
+      expect(stoppedRuntimes()).toEqual([controller.runtimeId]);
+      expect(tau.state.controllers).not.toContain(controller);
+      expect(tau.state.workspace?.projects).toEqual([]);
+      expect(tau.state.activeProjectPath).toBe('');
+    } finally {
+      if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
+      tau.dispose();
+    }
+  });
+});
+
+describe('session settings', () => {
+  it('disables both selectors until an effort request resolves', async () => {
+    const { tau, controller } = await setupNamedSession();
+    controller.efforts = ['high', 'max'];
+
+    await tau.selectEffort('high');
+    const request = sentRequests(controller, 'set_thinking_level')[0];
+    expect(request).toBeDefined();
+    expect(tau.settingsDisabled.value).toBe(true);
+
+    await tau.selectEffort('max');
+    expect(sentRequests(controller, 'set_thinking_level')).toHaveLength(1);
+
+    emitRpc(controller, {
+      id: request?.id,
+      type: 'response',
+      command: 'set_thinking_level',
+      success: true,
+    });
+    await vi.waitFor(() => {
+      expect(tau.settingsDisabled.value).toBe(false);
+    });
+    expect(controller.currentEffort).toBe('high');
+    tau.dispose();
+  });
+
+  it('unlocks selectors when Pi never confirms a setting', async () => {
+    const { tau, controller } = await setupNamedSession();
+    controller.efforts = ['high'];
+    vi.useFakeTimers();
+
+    try {
+      await tau.selectEffort('high');
+      expect(tau.settingsDisabled.value).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(tau.settingsDisabled.value).toBe(false);
+      expect(controller.pendingEffort).toBe('');
+      expect(controller.status).toBe(
+        'Pi did not confirm the setting. Try again.',
+      );
+    } finally {
+      vi.useRealTimers();
+      tau.dispose();
+    }
+  });
+
+  it('keeps both selectors disabled until a model change is read back', async () => {
+    const { tau, controller, session } = await setupNamedSession();
+    controller.models = [
+      { provider: 'provider', id: 'alpha', name: 'Alpha', reasoning: true },
+      { provider: 'provider', id: 'beta', name: 'Beta', reasoning: true },
+    ];
+
+    await tau.selectModel('provider/beta');
+    const request = sentRequests(controller, 'set_model')[0];
+    expect(request).toBeDefined();
+    expect(tau.settingsDisabled.value).toBe(true);
+
+    emitRpc(controller, {
+      id: request?.id,
+      type: 'response',
+      command: 'set_model',
+      success: true,
+    });
+    await vi.waitFor(() => {
+      expect(sentRequests(controller, 'get_state')).toHaveLength(1);
+    });
+    expect(tau.settingsDisabled.value).toBe(true);
+
+    emitRpc(controller, {
+      id: sentRequests(controller, 'get_state')[0]?.id,
+      type: 'response',
+      command: 'get_state',
+      success: true,
+      data: {
+        model: { provider: 'provider', id: 'beta', name: 'Beta' },
+        thinkingLevel: 'off',
+        sessionId: session.id,
+        sessionFile: session.path,
+        sessionName: session.title,
+        isStreaming: false,
+      },
+    });
+    await vi.waitFor(() => {
+      expect(tau.settingsDisabled.value).toBe(false);
+    });
+    expect(controller.currentModelId).toBe('beta');
+    tau.dispose();
+  });
+});
+
+describe('archive failure locality', () => {
+  it('keeps a delayed archive failure on its originating session', async () => {
+    const {
+      tau,
+      project,
+      firstSession,
+      secondSession,
+      firstController,
+      secondController,
+    } = await setupExtensionControllers();
+    await tau.selectSession(project, firstSession);
+    const defaultInvoke = vi.mocked(invoke).getMockImplementation();
+    let rejectArchive: ((error: unknown) => void) | undefined;
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === 'archive_session') {
+        return await new Promise<WorkspaceSnapshot>((_resolve, reject) => {
+          rejectArchive = reject;
+        });
+      }
+      return defaultInvoke?.(command, args);
+    });
+
+    try {
+      const archive = tau.archiveSession(project, firstSession);
+      await vi.waitFor(() => expect(rejectArchive).toBeDefined());
+      await tau.selectSession(project, secondSession);
+      rejectArchive?.(new Error('Could not archive the session'));
+      await archive;
+
+      expect(firstController.status).toBe('Could not archive the session');
+      expect(firstController.unread).toBe(true);
+      expect(secondController.status).toBe('');
+
+      await tau.selectSession(project, firstSession);
+      expect(tau.status.value).toBe('Could not archive the session');
+    } finally {
+      if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
+      tau.dispose();
+    }
+  });
+});
+
+describe('remote connection timeout', () => {
+  it('unlocks retry UI and stops a runtime that never becomes ready', async () => {
+    vi.useFakeTimers();
+    const defaultInvoke = vi.mocked(invoke).getMockImplementation();
+    let finishStop: (() => void) | undefined;
+    try {
+      const session = savedSession('remote-timeout');
+      const project: ProjectSummary = {
+        path: 'ssh:timeout',
+        name: 'remote',
+        workingDirectory: '/home/user/project',
+        connectionString: 'user@example',
+        collapsed: false,
+        selected: true,
+        sessions: [session],
+      };
+      const workspace: WorkspaceSnapshot = {
+        activeProjectPath: project.path,
+        piPath: null,
+        projects: [project],
+      };
+      mocks.workspace = workspace;
+      const tau = useTau();
+      tau.dispose();
+      tau.state.workspace = workspace;
+      tau.state.activeProjectPath = '';
+      tau.state.activeSessionId = '';
+      tau.state.activeSessionPath = '';
+      tau.state.activeControllerKey = '';
+      tau.state.controllers.splice(0);
+      tau.state.ephemeralSessions.splice(0);
+      vi.mocked(invoke).mockClear();
+      vi.mocked(invoke).mockImplementation(async (command, args) => {
+        if (command === 'stop_pi') {
+          await new Promise<void>((resolve) => {
+            finishStop = resolve;
+          });
+          return;
+        }
+        return defaultInvoke?.(command, args);
+      });
+
+      await tau.selectSession(project, session);
+      const controller = tau.state.controllers[0];
+      if (!controller) throw new Error('Expected a remote controller');
+      expect(controller.connectingRemote).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      await Promise.resolve();
+
+      expect(tau.state.remoteConnecting).toBe(false);
+      expect(tau.state.remoteDialogOpen).toBe(true);
+      expect(tau.state.remoteConnectionError).toBe(
+        'The remote connection timed out. Check the connection and try again.',
+      );
+      expect(stoppedRuntimes()).toContain(controller.runtimeId);
+
+      emitRpc(controller, {
+        id: controller.bootstrapStateRequestId,
+        type: 'response',
+        command: 'get_state',
+        success: true,
+        data: {
+          model: { provider: 'provider', id: 'alpha', name: 'Alpha' },
+          thinkingLevel: 'off',
+          sessionId: session.id,
+          sessionFile: session.path,
+          sessionName: session.title,
+          isStreaming: false,
+        },
+      });
+      await Promise.resolve();
+      expect(tau.state.remoteDialogOpen).toBe(true);
+      expect(tau.state.remoteRetry?.controllerKey).toBe(controller.key);
+
+      finishStop?.();
+      await Promise.resolve();
+      tau.dispose();
+    } finally {
+      if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('runtime retention', () => {
   it('keeps an idle runtime warm when the user switches away', async () => {
     const { project, sessions, tau } = await setupIdleRuntimes(2);

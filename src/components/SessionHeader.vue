@@ -48,6 +48,7 @@
         class="session-new-button"
         size="lg"
         label="New session"
+        :disabled="projectActionsDisabled"
         @click="handleNewSession"
       >
         <UiIcon name="plus" />
@@ -71,6 +72,7 @@ const emit = defineEmits<{ 'composer-focus': [] }>();
 const {
   activeProject,
   canRenameSession,
+  projectActionsDisabled,
   newSession,
   renameSession,
   sessionTitle,

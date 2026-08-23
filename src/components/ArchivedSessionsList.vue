@@ -32,6 +32,7 @@
             class="copy"
             type="button"
             :aria-label="`Open ${entry.session.title}`"
+            :disabled="projectActionsDisabled"
             @click="() => open(entry)"
           >
             <span class="name">{{ entry.session.title }}</span>
@@ -50,6 +51,7 @@
               size="md"
               variant="reveal"
               :label="`Unarchive ${entry.session.title}`"
+              :disabled="projectActionsDisabled"
               @click="() => unarchive(entry)"
             >
               <UiIcon name="archive" />
@@ -86,6 +88,7 @@ import UiTooltip from './ui/UiTooltip.vue';
 
 const {
   archivedSessionEntries,
+  projectActionsDisabled,
   selectSession,
   sessionLastUserMessageAt,
   relativeTimestamp,

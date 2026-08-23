@@ -10,7 +10,9 @@ import {
   cancelPendingPrompt,
   clearAbortWatch,
   clearExtensionUiState,
+  clearRemoteConnectionWatch,
   clearSessionReplacementWatch,
+  clearSettingRequestWatch,
   discardUnregisteredEphemeralSession,
   handleBridgeEvent,
   invokesExtensionCommand,
@@ -28,6 +30,7 @@ import {
   stopControllerProcess,
   submitExtensionDialog as sendExtensionDialogResponse,
   watchAbort,
+  watchSettingRequest,
 } from '../lib/pi/runtime';
 import {
   invokeTraced,
@@ -39,6 +42,7 @@ import {
   activeController,
   activeExtensionDialog,
   activeProject,
+  projectActionsDisabled,
   applyRemoteDirectoryListing,
   canArchiveSession,
   canCompose,
@@ -65,6 +69,7 @@ import {
   errorMessage,
   indicatorLabel,
   inheritControllerSettings,
+  isProjectRemoving,
   isSessionSelected,
   isSessionUnread,
   markSessionRead,
@@ -184,6 +189,8 @@ function useTau() {
     for (const controller of state.controllers) {
       clearSessionReplacementWatch(controller);
       clearAbortWatch(controller);
+      clearRemoteConnectionWatch(controller);
+      clearSettingRequestWatch(controller);
     }
     clearExtensionUiState();
   }
@@ -199,6 +206,7 @@ function useTau() {
   }
 
   async function addLocalProject(): Promise<void> {
+    if (projectActionsDisabled.value) return;
     try {
       const selection = await open({
         directory: true,
@@ -219,6 +227,7 @@ function useTau() {
   }
 
   function openRemoteProjectDialog(): void {
+    if (projectActionsDisabled.value) return;
     clearRemoteRetry();
     state.remoteDialogMode = 'add';
     state.remoteDialogStep = 'connection';
@@ -347,6 +356,7 @@ function useTau() {
   }
 
   async function toggleProject(project: ProjectSummary): Promise<void> {
+    if (projectActionsDisabled.value) return;
     try {
       state.workspace = await invokeTraced<WorkspaceSnapshot>(
         'set_project_collapsed',
@@ -364,6 +374,7 @@ function useTau() {
     const workspace = state.workspace;
     if (
       !workspace ||
+      state.removingProjectPaths.length > 0 ||
       fromIndex < 0 ||
       fromIndex >= workspace.projects.length ||
       toIndex < 0 ||
@@ -391,27 +402,43 @@ function useTau() {
   }
 
   async function removeProject(project: ProjectSummary): Promise<void> {
+    if (projectActionsDisabled.value) return;
+    state.removingProjectPaths.push(project.path);
     const projectControllers = state.controllers.filter(
       (controller) => controller.projectPath === project.path,
     );
-    for (const controller of projectControllers) controller.disposed = true;
-    await Promise.all(
-      projectControllers.map((controller) => stopControllerProcess(controller)),
+    const selectedController = projectControllers.find(
+      (controller) => controller.key === state.activeControllerKey,
     );
 
     try {
       const removingActiveView = project.path === state.activeProjectPath;
-      removeProjectUiState(project.path);
-      state.workspace = await invokeTraced<WorkspaceSnapshot>(
+      const workspace = await invokeTraced<WorkspaceSnapshot>(
         'remove_project',
         { path: project.path },
       );
-      if (removingActiveView) clearActiveSession();
+      state.workspace = workspace;
+      if (removingActiveView && state.activeProjectPath === project.path) {
+        clearActiveSession();
+      }
       if (!state.activeProjectPath) {
         state.activeProjectPath = state.workspace.activeProjectPath;
       }
+      for (const controller of projectControllers) controller.disposed = true;
+      await Promise.all(
+        projectControllers.map((controller) =>
+          stopControllerProcess(controller),
+        ),
+      );
+      removeProjectUiState(project.path);
     } catch (error) {
-      setActiveError(error);
+      const controller = selectedController ?? projectControllers[0];
+      if (controller) setControllerError(controller, error);
+      else state.workspaceStatus = errorMessage(error);
+    } finally {
+      state.removingProjectPaths = state.removingProjectPaths.filter(
+        (path) => path !== project.path,
+      );
     }
   }
 
@@ -465,7 +492,12 @@ function useTau() {
       if (nextSession) await selectSession(updatedProject, nextSession);
       else await newSession(updatedProject);
     } catch (error) {
-      setActiveError(error);
+      const errorController = controller ?? ensureController(project, session);
+      setControllerError(errorController, error);
+      if (!isSessionSelected(project, session)) {
+        errorController.unread = true;
+        errorController.retainStatusOnSelection = true;
+      }
     }
   }
 
@@ -473,6 +505,7 @@ function useTau() {
     project: ProjectSummary,
     session: SessionSummary,
   ): Promise<void> {
+    if (projectActionsDisabled.value) return;
     try {
       state.workspace = await invokeTraced<WorkspaceSnapshot>(
         'unarchive_session',
@@ -486,6 +519,7 @@ function useTau() {
   }
 
   async function newSession(project: ProjectSummary): Promise<void> {
+    if (projectActionsDisabled.value) return;
     const actionSpan = startActionSpan('session.new');
     try {
       const previous = activeController.value;
@@ -531,6 +565,7 @@ function useTau() {
     project: ProjectSummary,
     session: SessionSummary,
   ): Promise<void> {
+    if (projectActionsDisabled.value) return;
     const actionSpan = startActionSpan(
       'session.select',
       controllerTelemetryScope(
@@ -565,8 +600,10 @@ function useTau() {
 
       removeEmptyActivePhantom();
       const controller = ensureController(project, session);
+      const retainStatus = controller.retainStatusOnSelection;
       setActiveSessionView(project, session, controller);
-      controller.status = '';
+      if (!retainStatus) controller.status = '';
+      controller.retainStatusOnSelection = false;
       controller.unread = false;
       await persistProjectSelection(
         project.path,
@@ -597,7 +634,8 @@ function useTau() {
       !canCompose.value ||
       controller.streaming ||
       controller.stopping ||
-      controller.promptSubmitting
+      controller.promptSubmitting ||
+      projectActionsDisabled.value
     ) {
       return;
     }
@@ -681,7 +719,12 @@ function useTau() {
 
   async function stop(): Promise<void> {
     const controller = activeController.value;
-    if (!controller?.streaming || controller.stopping) return;
+    if (
+      !controller?.streaming ||
+      controller.stopping ||
+      projectActionsDisabled.value
+    )
+      return;
     const actionSpan = startActionSpan(
       'session.stop',
       controllerTelemetryScope(controller),
@@ -734,11 +777,14 @@ function useTau() {
         controller.currentModelName = model.name;
         return;
       }
+      const requestId = nextRequestId('set-model');
+      controller.pendingSettingRequestId = requestId;
+      watchSettingRequest(controller);
       try {
         await rpc(
           controller,
           {
-            id: nextRequestId('set-model'),
+            id: requestId,
             type: 'set_model',
             provider: model.provider,
             modelId: model.id,
@@ -746,6 +792,10 @@ function useTau() {
           actionSpan.context,
         );
       } catch (error) {
+        if (controller.pendingSettingRequestId === requestId) {
+          controller.pendingSettingRequestId = '';
+          clearSettingRequestWatch(controller);
+        }
         setControllerError(controller, error);
       }
     } finally {
@@ -817,19 +867,26 @@ function useTau() {
         controller.currentEffort = level;
         return;
       }
+      const requestId = nextRequestId('set-effort');
       controller.pendingEffort = level;
+      controller.pendingSettingRequestId = requestId;
+      watchSettingRequest(controller);
       try {
         await rpc(
           controller,
           {
-            id: nextRequestId('set-effort'),
+            id: requestId,
             type: 'set_thinking_level',
             level,
           },
           actionSpan.context,
         );
       } catch (error) {
-        controller.pendingEffort = '';
+        if (controller.pendingSettingRequestId === requestId) {
+          controller.pendingSettingRequestId = '';
+          controller.pendingEffort = '';
+          clearSettingRequestWatch(controller);
+        }
         setControllerError(controller, error);
       }
     } finally {
@@ -838,6 +895,8 @@ function useTau() {
   }
 
   async function submitExtensionDialog(value: string | boolean): Promise<void> {
+    const controller = activeController.value;
+    if (!controller || projectActionsDisabled.value) return;
     const actionSpan = startActionSpan(
       'extension.dialog.submit',
       controllerTelemetryScope(activeController.value),
@@ -850,6 +909,8 @@ function useTau() {
   }
 
   async function cancelExtensionDialog(): Promise<void> {
+    const controller = activeController.value;
+    if (!controller || projectActionsDisabled.value) return;
     const actionSpan = startActionSpan(
       'extension.dialog.cancel',
       controllerTelemetryScope(activeController.value),
@@ -864,6 +925,7 @@ function useTau() {
   return {
     state,
     activeProject,
+    projectActionsDisabled,
     activeController,
     messages,
     draft,
@@ -903,6 +965,7 @@ function useTau() {
     newSession,
     selectSession,
     canArchiveSession,
+    isProjectRemoving,
     projectSessions,
     archivedSessionEntries,
     sessionLastActive,

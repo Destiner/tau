@@ -8,7 +8,7 @@
       :step="step"
       mode="add"
       connection-error=""
-      :connecting="false"
+      :connecting="connecting"
       :directory-options="directoryOptions"
       @submit-connection="showDirectories"
       @choose-directory="showDirectories"
@@ -28,6 +28,8 @@ const step = ref<'connection' | 'directory'>(
 );
 
 const open = ref(true);
+const connecting =
+  new URLSearchParams(window.location.search).get('connecting') === 'true';
 const connectionString = ref('ssh user@example -p 1234');
 const directoryFilter = ref('');
 const selectedIndex = ref(0);

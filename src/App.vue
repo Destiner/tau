@@ -46,6 +46,7 @@
         :base-path="transcriptBasePath"
         :session-key="state.activeControllerKey"
         :prompt="activeExtensionDialog"
+        :prompt-disabled="projectActionsDisabled"
         @prompt-submit="handleExtensionSubmit"
         @prompt-cancel="cancelExtensionDialog"
         @prompt-draft="updateExtensionDraft"
@@ -122,6 +123,7 @@ let loadingIndicatorTimer: ReturnType<typeof setTimeout> | undefined;
 const {
   state,
   activeProject,
+  projectActionsDisabled,
   messages,
   canDraft,
   streaming,

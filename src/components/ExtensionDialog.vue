@@ -36,7 +36,7 @@
         role="option"
         :data-cursor="index === selectedIndex || undefined"
         :aria-selected="index === selectedIndex"
-        :disabled="submitting"
+        :disabled="submitting || disabled"
         @mouseenter="() => highlight(index)"
         @click="() => chooseOption(option)"
       >
@@ -61,7 +61,7 @@
         autocomplete="off"
         :placeholder="placeholder"
         :aria-label="title"
-        :disabled="submitting"
+        :disabled="submitting || disabled"
       />
     </UiContextMenu>
 
@@ -74,7 +74,7 @@
         v-model="draft"
         rows="6"
         :aria-label="title"
-        :disabled="submitting"
+        :disabled="submitting || disabled"
         @keydown.meta.enter.prevent="handleSubmit"
         @keydown.ctrl.enter.prevent="handleSubmit"
       />
@@ -94,7 +94,7 @@
           ref="primaryAction"
           variant="primary"
           type="button"
-          :disabled="submitting"
+          :disabled="submitting || disabled"
           @click="confirm"
         >
           Confirm
@@ -102,7 +102,7 @@
         <UiButton
           variant="secondary"
           type="button"
-          :disabled="submitting"
+          :disabled="submitting || disabled"
           @click="reject"
         >
           No
@@ -112,14 +112,14 @@
         v-else-if="method === 'input' || method === 'editor'"
         variant="primary"
         type="submit"
-        :disabled="submitting"
+        :disabled="submitting || disabled"
       >
         Submit
       </UiButton>
       <UiButton
         variant="secondary"
         type="button"
-        :disabled="submitting"
+        :disabled="submitting || disabled"
         @click="cancel"
       >
         Cancel
@@ -148,6 +148,7 @@ const props = defineProps<{
   options?: string[];
   placeholder?: string;
   submitting: boolean;
+  disabled?: boolean;
   error: string;
   /** Base for the file paths in the text; absent when the project is remote. */
   workingDirectory?: string;
@@ -197,24 +198,25 @@ function highlight(index: number): void {
 }
 
 function chooseOption(value: string): void {
-  if (!props.submitting) emit('submit', value);
+  if (!props.submitting && !props.disabled) emit('submit', value);
 }
 
 function confirm(): void {
-  if (!props.submitting) emit('submit', true);
+  if (!props.submitting && !props.disabled) emit('submit', true);
 }
 
 function reject(): void {
-  if (!props.submitting) emit('submit', false);
+  if (!props.submitting && !props.disabled) emit('submit', false);
 }
 
 function cancel(): void {
-  if (!props.submitting) emit('cancel');
+  if (!props.submitting && !props.disabled) emit('cancel');
 }
 
 function handleSubmit(): void {
   if (
     props.submitting ||
+    props.disabled ||
     (props.method !== 'input' && props.method !== 'editor')
   ) {
     return;
@@ -224,7 +226,12 @@ function handleSubmit(): void {
 
 function handleSelectKeydown(event: KeyboardEvent): void {
   const options = props.options ?? [];
-  if (props.submitting || props.method !== 'select' || options.length === 0) {
+  if (
+    props.submitting ||
+    props.disabled ||
+    props.method !== 'select' ||
+    options.length === 0
+  ) {
     return;
   }
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {

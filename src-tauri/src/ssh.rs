@@ -10,7 +10,7 @@ use std::{
 };
 use tauri::State;
 
-const SSH_COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
+const SSH_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 const SSH_OPTIONS: [&str; 8] = [
     "-o",
     "BatchMode=yes",

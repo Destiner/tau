@@ -71,7 +71,7 @@
           size="sm"
           variant="fill"
           tone="danger"
-          :disabled="stopping"
+          :disabled="stopping || !canDraft"
           label="Stop Pi"
           @click="stop"
         >

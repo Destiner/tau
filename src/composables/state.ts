@@ -159,11 +159,13 @@ interface SessionController {
   localErrors: LocalError[];
   draft: string;
   status: string;
+  retainStatusOnSelection: boolean;
   currentModelProvider: string;
   currentModelId: string;
   currentModelName: string;
   currentEffort: ThinkingLevel;
   pendingEffort: ThinkingLevel | '';
+  pendingSettingRequestId: string;
   models: ModelOption[];
   modelScope: string[];
   efforts: ThinkingLevel[];
@@ -180,6 +182,7 @@ interface SessionController {
   replacementProbeRequestId: string;
   abortProbeRequestId: string;
   connectingRemote: boolean;
+  remoteConnectionTimedOut: boolean;
   syncing: boolean;
   lastActiveSequence: number;
   disposed: boolean;
@@ -298,6 +301,7 @@ const state = reactive({
   remoteDirectoryFilter: '',
   remoteDirectorySelectedIndex: 0,
   remoteRetry: undefined as RemoteRetry | undefined,
+  removingProjectPaths: [] as string[],
   requestSequence: 0,
 });
 
@@ -356,6 +360,10 @@ const activeProject = computed(() =>
   state.workspace?.projects.find(
     (project) => project.path === state.activeProjectPath,
   ),
+);
+
+const projectActionsDisabled = computed(
+  () => state.removingProjectPaths.length > 0,
 );
 
 // An archived session is browsable: look past the per-project list, which
@@ -458,7 +466,12 @@ const currentEffort = computed(
 );
 
 const canDraft = computed(() =>
-  Boolean(activeProject.value && activeSession.value && activeController.value),
+  Boolean(
+    activeProject.value &&
+    activeSession.value &&
+    activeController.value &&
+    !projectActionsDisabled.value,
+  ),
 );
 
 /**
@@ -476,7 +489,12 @@ const sessionLoading = computed(() => {
 const canCompose = computed(() => {
   const controller = activeController.value;
   if (!activeProject.value || !activeSession.value || !controller) return false;
-  if (controller.starting || controller.promptSubmitting) return false;
+  if (
+    controller.starting ||
+    controller.promptSubmitting ||
+    projectActionsDisabled.value
+  )
+    return false;
   return controller.phantom
     ? runtimeAvailable(activeProject.value)
     : controller.ready;
@@ -508,7 +526,9 @@ const settingsDisabled = computed(() => {
     (!controller.ready && !controller.phantom) ||
     controller.streaming ||
     controller.stopping ||
-    controller.starting
+    controller.starting ||
+    Boolean(controller.pendingSettingRequestId) ||
+    projectActionsDisabled.value
   );
 });
 
@@ -523,15 +543,23 @@ const canRenameSession = computed(() => {
     controller &&
     !controller.phantom &&
     controller.ready &&
-    !controller.pendingSessionRename,
+    !controller.pendingSessionRename &&
+    !projectActionsDisabled.value,
   );
 });
+
+function isProjectRemoving(projectPath: string): boolean {
+  return state.removingProjectPaths.includes(projectPath);
+}
 
 function canArchiveSession(
   project: ProjectSummary,
   session: SessionSummary,
 ): boolean {
-  return ephemeralSession(project.path, session.id)?.phantom !== true;
+  return (
+    !projectActionsDisabled.value &&
+    ephemeralSession(project.path, session.id)?.phantom !== true
+  );
 }
 
 function projectSessions(project: ProjectSummary): SessionSummary[] {
@@ -788,11 +816,13 @@ function createController(
     localErrors: [],
     draft: '',
     status: '',
+    retainStatusOnSelection: false,
     currentModelProvider: '',
     currentModelId: '',
     currentModelName: '',
     currentEffort: 'off',
     pendingEffort: '',
+    pendingSettingRequestId: '',
     models: [],
     modelScope: [],
     efforts: [],
@@ -809,6 +839,7 @@ function createController(
     replacementProbeRequestId: '',
     abortProbeRequestId: '',
     connectingRemote: false,
+    remoteConnectionTimedOut: false,
     syncing: false,
     lastActiveSequence: (activitySequence += 1),
     disposed: false,
@@ -1200,6 +1231,7 @@ export {
   emptyEfforts,
   emptyCommands,
   activeProject,
+  projectActionsDisabled,
   activeSession,
   activeController,
   messages,
@@ -1223,6 +1255,7 @@ export {
   currentEffortLabel,
   settingsDisabled,
   canRenameSession,
+  isProjectRemoving,
   canArchiveSession,
   projectSessions,
   archivedSessionEntries,

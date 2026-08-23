@@ -29,6 +29,17 @@ for (const step of ['connection', 'directory'] as const) {
   });
 }
 
+test('cannot be dismissed while a connection is pending', async ({ page }) => {
+  await page.goto('/?fixture=remote-dialog&connecting=true');
+
+  const panel = page.getByRole('dialog');
+  await expect(panel).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(panel).toBeVisible();
+  await page.locator('.ui-dialog-overlay').click({ position: { x: 5, y: 5 } });
+  await expect(panel).toBeVisible();
+});
+
 test('keeps a margin from the window edges when it is narrower than the panel', async ({
   page,
 }) => {

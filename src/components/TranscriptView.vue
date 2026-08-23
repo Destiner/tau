@@ -93,6 +93,7 @@
           :options="prompt.options"
           :placeholder="prompt.placeholder"
           :submitting="prompt.submitting"
+          :disabled="promptDisabled"
           :error="prompt.error"
           :working-directory="prompt.workingDirectory"
           @update:draft="forwardPromptDraft"
@@ -136,6 +137,7 @@ const props = defineProps<{
   sessionKey?: string;
   /** The interactive prompt this session is waiting on, if there is one. */
   prompt?: ExtensionPrompt;
+  promptDisabled?: boolean;
 }>();
 
 const emit = defineEmits<{
