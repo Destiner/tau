@@ -94,23 +94,20 @@
 /* ── Pick row ───────────────────────────────────────────────────────────── */
 
 /*
- * A row in a list the reader is choosing from. Hover says "the pointer is
- * here"; the cursor says "the keyboard is here, and Enter takes this one".
- * They must not look the same — painting both with --selected is what hid the
- * keyboard cursor under the pointer in every one of these lists.
+ * A row in a list the reader is choosing from. The pointer moves the cursor in
+ * every one of these lists, so hover and cursor are one state and take the
+ * menu's tint; the accent bar, not a darker fill, is what says "Enter takes
+ * this one".
  */
 .ui-pick-row {
   position: relative;
   border-radius: var(--radius-md);
 }
 
-.ui-pick-row:hover {
-  background: var(--hover);
-}
-
+.ui-pick-row:hover,
 .ui-pick-row[data-cursor],
 .ui-pick-row:focus-visible {
-  background: var(--selected);
+  background: var(--hover);
 }
 
 .ui-pick-row[data-cursor]::before,
