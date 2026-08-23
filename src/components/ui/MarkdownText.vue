@@ -188,6 +188,7 @@ onBeforeUnmount(clearCopied);
 .markdown :deep(ul),
 .markdown :deep(ol),
 .markdown :deep(.code-block),
+.markdown :deep(.diagram),
 .markdown :deep(blockquote) {
   margin: 0.7em 0;
 }
@@ -372,6 +373,31 @@ onBeforeUnmount(clearCopied);
     font-weight: var(--tau-code-dark-font-weight, inherit);
     text-decoration: var(--tau-code-dark-text-decoration, none);
   }
+}
+
+/*
+ * A drawn diagram keeps the surface its source would have had, because it is
+ * the same fence either way. Its colours are the app's own tokens, passed to
+ * the renderer as references, so the scheme it is in is the one around it.
+ */
+.markdown :deep(.diagram) {
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--sunk);
+}
+
+/*
+ * Held to the message column rather than widening it: a diagram wider than the
+ * column scales down whole, which is how a picture is read, instead of
+ * scrolling sideways the way its source would.
+ */
+.markdown :deep(.diagram svg) {
+  display: block;
+  max-width: 100%;
+  height: auto;
 }
 
 /* The button is placed against the wrapper, not the block, so that scrolling a

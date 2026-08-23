@@ -111,6 +111,35 @@ let unknownToTheHighlighter = 1 < 2
 A fence that named no language at all.
 \`\`\``;
 
+/*
+ * The diagram kinds a transcript is likely to be sent, plus the two fences
+ * that stay source: one the parser cannot read, and one that is still arriving
+ * and has not reached its closing fence.
+ */
+const diagramShowcase = `\`\`\`mermaid
+graph TD
+  Prompt[Prompt] --> Runtime{Session live?}
+  Runtime -->|Yes| Send[Send over RPC]
+  Runtime -->|No| Start[Start Pi]
+  Start --> Send
+  Send --> Stream[Stream the answer]
+\`\`\`
+
+\`\`\`mermaid
+sequenceDiagram
+  Tau->>Pi: prompt
+  Pi-->>Tau: delta
+  Pi-->>Tau: done
+\`\`\`
+
+\`\`\`mermaid
+not a diagram the parser can read
+\`\`\`
+
+\`\`\`mermaid
+graph TD
+  Arriving[Still streaming] --> Unclosed[No closing fence yet]`;
+
 function createLongTranscript(count = 5_000): TranscriptEntry[] {
   return Array.from({ length: count }, (_, index) => createMessage(index));
 }
@@ -132,7 +161,7 @@ Inspect selection, scrolling, keyboard behavior, window behavior, and perceived 
     return {
       id: 'fixture-markdown-showcase',
       kind: 'assistant',
-      text: `**Markdown showcase** — lists, task lists, and tables.\n\n${listShowcase}\n\n${tableShowcase}\n\n${longTailShowcase}\n\n${codeShowcase}`,
+      text: `**Markdown showcase** — lists, task lists, and tables.\n\n${listShowcase}\n\n${tableShowcase}\n\n${longTailShowcase}\n\n${codeShowcase}\n\n${diagramShowcase}`,
     };
   }
   if (index === 4_996) {

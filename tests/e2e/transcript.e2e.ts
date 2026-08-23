@@ -273,6 +273,42 @@ test('names a block the language it was fenced with', async ({ page }) => {
   expect(await block.evaluate(labelContent)).toContain('ts');
 });
 
+test('draws a fenced diagram in the scheme around it', async ({ page }) => {
+  const showcase = page.locator(
+    '[data-message-id="fixture-markdown-showcase"]',
+  );
+  const diagram = showcase.locator('.diagram svg').first();
+
+  // The renderer is loaded only once a transcript holds a diagram.
+  await expect(showcase.locator('.diagram')).toHaveCount(2, {
+    timeout: 20_000,
+  });
+  await expect(
+    diagram.locator('text', { hasText: 'Session live?' }),
+  ).toHaveCount(1);
+
+  // A fence the parser cannot read, and one that has not reached its closing
+  // fence, both stay the source the reader was sent.
+  await expect(
+    showcase.locator('.code-block[data-tau-lang="mermaid"]'),
+  ).toHaveCount(2);
+
+  // Held to the message column rather than widening it.
+  const width = await diagram.evaluate(
+    (svg) =>
+      svg.getBoundingClientRect().width /
+      (svg.closest('.markdown')?.getBoundingClientRect().width ?? 1),
+  );
+  expect(width).toBeLessThanOrEqual(1);
+
+  // Every colour is a reference to a token the app draws itself with, so the
+  // other scheme is a repaint rather than another diagram.
+  const light = await diagram.evaluate(diagramColors);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  expect(await diagram.evaluate(diagramColors)).not.toEqual(light);
+  await page.emulateMedia({ colorScheme: 'light' });
+});
+
 test('copies a code block from a button the block reveals on hover', async ({
   page,
 }) => {
@@ -711,6 +747,16 @@ function backgroundColor(element: HTMLElement): string {
 function tokenColors(element: HTMLElement): string[] {
   const spans = Array.from(element.querySelectorAll<HTMLElement>('pre span'));
   return [...new Set(spans.map((span) => getComputedStyle(span).color))];
+}
+
+/** The fills a drawn diagram is painted with, which its theme decides. */
+function diagramColors(element: SVGElement): string[] {
+  const painted = Array.from(
+    element.querySelectorAll<SVGElement>('rect, text, polyline'),
+  );
+  return [
+    ...new Set(painted.map((node) => getComputedStyle(node).fill)),
+  ].sort();
 }
 
 function labelOpacity(element: HTMLElement): string {

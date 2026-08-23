@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CODE_LANGUAGE_ATTRIBUTE,
   addCodeCopyButtons,
+  isClosedFence,
   isPathOpenGesture,
   isWebUrl,
   linkFilePaths,
@@ -234,6 +235,22 @@ describe('linking file paths in markup', () => {
   it('does not read attributes as text', () => {
     const image = '<p><img src="pictures/shot.png" alt="a/b.png"></p>';
     expect(linkFilePaths(image)).toBe(image);
+  });
+});
+
+describe('closed fences', () => {
+  it('reads a block that reached its closing fence', () => {
+    expect(isClosedFence('```mermaid\ngraph TD\n  A --> B\n```')).toBe(true);
+    expect(isClosedFence('~~~\nplain\n~~~\n')).toBe(true);
+    expect(isClosedFence('```mermaid\n```')).toBe(true);
+  });
+
+  it('reads a block that is still arriving', () => {
+    // What every delta of a streamed answer ends in, and the case a diagram is
+    // not drawn for: half of one is not a diagram.
+    expect(isClosedFence('```mermaid\ngraph TD\n  A --> B\n')).toBe(false);
+    expect(isClosedFence('```mermaid\ngraph TD\n  A --> ``')).toBe(false);
+    expect(isClosedFence('```mermaid')).toBe(false);
   });
 });
 

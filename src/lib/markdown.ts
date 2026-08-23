@@ -2,6 +2,7 @@ import purify from 'dompurify';
 import { marked, type Tokens } from 'marked';
 
 import highlightCode from './highlight';
+import renderDiagram from './mermaid';
 
 marked.use({ gfm: true, breaks: true, renderer: { code: renderCode } });
 
@@ -68,8 +69,8 @@ const COPIED_ICON =
  */
 const PATH_CANDIDATE = /[A-Za-z0-9~._/][A-Za-z0-9~._+@:/-]*/g;
 
-/** Existing links and fenced code blocks are left exactly as written. */
-const OPAQUE_ELEMENTS = new Set(['a', 'pre']);
+/** Existing links, fenced code blocks, and diagrams are left exactly as written. */
+const OPAQUE_ELEMENTS = new Set(['a', 'pre', 'svg']);
 
 const APPLE_PLATFORM = /^(?:Mac|iPhone|iPad|iPod)/;
 
@@ -82,6 +83,9 @@ const TRAILING_PUNCTUATION = /[.,;:!?]+$/;
 const ROOTED_PATH = /^(?:\/|\.{1,2}\/|~\/)/;
 
 const NAMED_FILE = /\/[^/]*\.[A-Za-z0-9]{1,10}$/;
+
+/** A fence's closing run, which the source of an unfinished block has not reached. */
+const CLOSING_FENCE = /(?:^|\n)[ \t]*(?:`{3,}|~{3,})$/;
 
 function renderMarkdown(source: string, options: MarkdownOptions = {}): string {
   const parsed = options.inline
@@ -101,15 +105,30 @@ function renderMarkdown(source: string, options: MarkdownOptions = {}): string {
 }
 
 /**
- * Highlights a fenced block, or leaves marked to render it as it always has:
- * a language we hold no grammar for is still perfectly readable code.
+ * Draws a fenced diagram or highlights a fenced block, or leaves marked to
+ * render it as it always has: a language we hold no grammar for is still
+ * perfectly readable code, and so is a diagram that cannot be drawn.
  */
 function renderCode(token: Tokens.Code): string | false {
   if (!token.lang) return false;
   // marked's own output ends a block with a newline, and a block copied out of
   // the transcript should still end in one.
   const code = `${token.text.replace(/\n$/, '')}\n`;
+
+  // Only a closed fence is a whole diagram. A streamed one arrives a line at a
+  // time, and drawing each prefix would lay out a diagram per delta and move
+  // the reader's page around under a picture that keeps changing shape.
+  if (isClosedFence(token.raw)) {
+    const diagram = renderDiagram(code, token.lang);
+    if (diagram) return `<div class="diagram">${diagram}</div>`;
+  }
+
   return highlightCode(code, token.lang) ?? false;
+}
+
+/** Whether a fenced block's source reached its closing fence. */
+function isClosedFence(raw: string): boolean {
+  return CLOSING_FENCE.test(raw.trimEnd());
 }
 
 /** Gives every fenced block a copy button, positioned against the wrapper so
@@ -302,6 +321,7 @@ export {
   FILE_PATH_ATTRIBUTE,
   addCodeCopyButtons,
   renderMarkdown,
+  isClosedFence,
   linkFilePaths,
   parseFileReference,
   resolveFilePath,
