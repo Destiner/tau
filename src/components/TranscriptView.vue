@@ -450,7 +450,7 @@ defineExpose({ scrollToEnd });
 }
 
 .user-bubble {
-  max-width: min(78%, 650px);
+  max-width: 90%;
   padding: 9px 13px;
   border-radius: 7px;
   background: var(--user);
