@@ -84,6 +84,12 @@ const ROOTED_PATH = /^(?:\/|\.{1,2}\/|~\/)/;
 
 const NAMED_FILE = /\/[^/]*\.[A-Za-z0-9]{1,10}$/;
 
+const HTML_ENTITY_PREFIX = /^&(?:amp|quot|apos|lt|gt|#\d+|#x[\da-f]+);/i;
+
+const HTML_ENTITY_SUFFIX = /&(?:amp|quot|apos|lt|gt|#\d+|#x[\da-f]+);$/i;
+
+const EDGE_WHITESPACE = /^\s|\s$/;
+
 /** A fence's closing run, which the source of an unfinished block has not reached. */
 const CLOSING_FENCE = /(?:^|\n)[ \t]*(?:`{3,}|~{3,})$/;
 
@@ -183,15 +189,26 @@ function parseFileReference(candidate: string): FileReference | null {
   const text = candidate.replace(TRAILING_PUNCTUATION, '');
   const path = LINE_SUFFIX.exec(text)?.[1] ?? text;
 
-  if (!path.includes('/') || path.includes('//')) return null;
+  if (!path.includes('/') || path.includes('//') || hasControlCharacter(path)) {
+    return null;
+  }
 
   const rooted = ROOTED_PATH.test(path);
-  // A root on its own names no file, whoever it belongs to.
+  // Segment-edge spaces are legal on disk but much more likely to be prose.
   const body = rooted ? path.replace(ROOTED_PATH, '') : path;
-  if (body.split('/').filter(Boolean).length === 0) return null;
+  const segments = body.split('/').filter(Boolean);
+  if (
+    segments.length === 0 ||
+    segments.some((segment) => EDGE_WHITESPACE.test(segment))
+  ) {
+    return null;
+  }
 
   const directory = path.endsWith('/');
-  if (!rooted && !directory && !NAMED_FILE.test(path)) return null;
+  const namedFile = NAMED_FILE.test(path);
+  if (!rooted && !directory && !namedFile) return null;
+  // A lone rooted word is also how slash commands and markup tags are written.
+  if (rooted && segments.length === 1 && !directory && !namedFile) return null;
 
   return { text, path };
 }
@@ -239,13 +256,34 @@ function linkTextLine(text: string): string {
   if (standalone) return standalone;
 
   PATH_CANDIDATE.lastIndex = 0;
-  return text.replace(PATH_CANDIDATE, (candidate) => {
+  return text.replace(PATH_CANDIDATE, (candidate, offset: number) => {
+    if (touchesHtmlEntity(text, offset, candidate.length)) return candidate;
+
     const reference = parseFileReference(candidate);
     if (!reference) return candidate;
     // Whatever the reference stopped short of is punctuation, not the path.
     const trailing = candidate.slice(reference.text.length);
     return fileLink(reference.path, reference.text) + trailing;
   });
+}
+
+function hasControlCharacter(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 0x1f || codePoint === 0x7f;
+  });
+}
+
+/** Encoded markup punctuation does not turn the text beside it into a path. */
+function touchesHtmlEntity(
+  text: string,
+  offset: number,
+  length: number,
+): boolean {
+  return (
+    HTML_ENTITY_SUFFIX.test(text.slice(0, offset)) ||
+    HTML_ENTITY_PREFIX.test(text.slice(offset + length))
+  );
 }
 
 /** A whole rooted path has a clear end even when its name contains spaces. */

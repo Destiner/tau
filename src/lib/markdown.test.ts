@@ -80,6 +80,23 @@ describe('file references', () => {
     expect(parseFileReference('2026/08/14')).toBeNull();
   });
 
+  it('rejects ambiguous single-word roots and segment-edge spaces', () => {
+    for (const candidate of [
+      '/pre',
+      '/usage',
+      './build',
+      '~/Documents',
+      '/ expanded',
+      '/Users/tim /notes.md',
+    ]) {
+      expect(parseFileReference(candidate)).toBeNull();
+    }
+
+    expect(parseFileReference('/README.md')?.path).toBe('/README.md');
+    expect(parseFileReference('/tmp/')?.path).toBe('/tmp/');
+    expect(parseFileReference('/etc/hosts')?.path).toBe('/etc/hosts');
+  });
+
   it('rejects URLs and paths with nothing in them', () => {
     expect(parseFileReference('https://example.com/docs/guide.md')).toBeNull();
     expect(parseFileReference('//shared/report.md')).toBeNull();
@@ -180,6 +197,17 @@ describe('linking file paths in markup', () => {
     expect(linkFilePaths('<p><code>docs/extensions.md</code></p>')).toBe(
       '<p><code><a class="file-link" role="link" tabindex="0" data-tau-path="docs/extensions.md">docs/extensions.md</a></code></p>',
     );
+  });
+
+  it('does not link slash commands or encoded markup as paths', () => {
+    for (const html of [
+      '<p><code>/usage</code></p>',
+      '<p><code>/ expanded </code></p>',
+      '<p><code>&lt;/pre&gt;</code></p>',
+      '<p><code>&lt;/nested/tag&gt;</code></p>',
+    ]) {
+      expect(linkFilePaths(html)).toBe(html);
+    }
   });
 
   it('leaves existing links and fenced code blocks alone', () => {
