@@ -9,23 +9,21 @@
           type="button"
           class="activity-header"
         >
-          <span
-            class="activity-name"
-            :class="{ thinking: entry.kind === 'thinking' }"
-            >{{ name }}</span
-          >
+          <span class="activity-name">{{ name }}</span>
           <span class="activity-argument">{{ argument }}</span>
-          <UiIcon
-            v-if="expandable"
-            class="activity-disclosure"
-            :name="expanded ? 'chevron-up' : 'chevron-down'"
-          />
           <!--
-            A call that is running or has failed is the only one worth a mark;
-            the slot is held either way so a run of rows stays in one column,
-            at the end of the line rather than in front of what it says.
+            The disclosure keeps its place whether or not the row has one, so
+            the mark after it lands in the same column on every row that
+            carries one. A row with nothing to report ends at the argument.
           -->
-          <span class="activity-mark-slot">
+          <span class="activity-end">
+            <span class="activity-disclosure-slot">
+              <UiIcon
+                v-if="expandable"
+                class="activity-disclosure"
+                :name="expanded ? 'chevron-up' : 'chevron-down'"
+              />
+            </span>
             <span
               v-if="entry.toolRunning"
               class="activity-mark running"
@@ -153,7 +151,7 @@ const expandable = computed(() => {
 <style scoped>
 .activity-header {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 12px 8px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   width: 100%;
   min-width: 0;
@@ -171,11 +169,10 @@ const expandable = computed(() => {
   background: var(--hover);
 }
 
-.activity-mark-slot {
+.activity-end {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 8px;
+  gap: 6px;
 }
 
 .activity-mark {
@@ -199,10 +196,6 @@ const expandable = computed(() => {
   line-height: var(--leading-tight);
 }
 
-.activity-name.thinking {
-  font-style: italic;
-}
-
 .activity-header:enabled:hover .activity-name {
   color: var(--text);
 }
@@ -215,6 +208,13 @@ const expandable = computed(() => {
   line-height: var(--leading-tight);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.activity-disclosure-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
 }
 
 /* The chevron points at what the click does: down to open, up to close. */

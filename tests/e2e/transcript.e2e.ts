@@ -96,8 +96,13 @@ test('marks only the calls that are running or failed', async ({ page }) => {
   await expect(failed.locator('.activity-mark.failed')).toHaveCount(1);
   await expect(done.locator('.activity-mark')).toHaveCount(0);
 
-  // The slot is held either way, so a run of rows keeps one column.
-  await expect(done.locator('.activity-mark-slot')).toHaveCount(1);
+  // A row with nothing to report reserves nothing, and the rows that do report
+  // still end in one column.
+  const runningBox = await running.locator('.activity-mark').boundingBox();
+  const failedBox = await failed.locator('.activity-mark').boundingBox();
+  expect(runningBox).not.toBeNull();
+  expect(failedBox).not.toBeNull();
+  expect(Math.abs((runningBox?.x ?? 0) - (failedBox?.x ?? 0))).toBeLessThan(1);
 });
 
 test('names the failed result as an error when the row is opened', async ({
