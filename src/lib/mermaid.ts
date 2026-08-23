@@ -17,9 +17,15 @@ type DiagramRenderer = typeof import('beautiful-mermaid').renderMermaidSVG;
  * `accent` is the arrow heads, and it is the text colour rather than Tau's
  * accent: the accent means attention somewhere in the app, and every arrow in
  * a diagram is not it.
+ *
+ * `bg` is the surface a diagram is drawn on rather than one it draws: nothing
+ * is painted behind it, and the library mixes its faint washes towards this.
+ * The canvas is what a message sits on; a bubble's own wash is near enough to
+ * it that a 12% mix cannot tell them apart. `surface` is what lifts a node off
+ * that page now that the diagram has no block of its own to sit in.
  */
 const THEME = {
-  bg: 'var(--sunk)',
+  bg: 'var(--canvas)',
   fg: 'var(--text)',
   line: 'var(--faint)',
   accent: 'var(--text)',
@@ -33,9 +39,10 @@ const OPTIONS = {
   // The app's own typeface, which it bundles. The library asks for the name
   // over the network as well; `withoutRemoteFonts` takes that request out.
   font: 'Inter Variable',
-  // The block's own surface is drawn by its wrapper, so the canvas is only
-  // the room the strokes at its edge need.
+  // A figure in the prose, not a block on a surface of its own.
   transparent: true,
+  // Room for the strokes at the diagram's own edge. The space around the
+  // figure is the block margin's to give.
   padding: 12,
 } as const;
 

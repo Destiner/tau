@@ -168,7 +168,7 @@ Inspect selection, scrolling, keyboard behavior, window behavior, and perceived 
     return {
       id: 'fixture-markdown-showcase-user',
       kind: 'user',
-      text: `The same markdown in a user bubble:\n\n${listShowcase}\n\n${tableShowcase}\n\n${longTailShowcase}\n\n${codeShowcase}`,
+      text: `The same markdown in a user bubble:\n\n${listShowcase}\n\n${tableShowcase}\n\n${longTailShowcase}\n\n${codeShowcase}\n\n${diagramShowcase}`,
     };
   }
   // One of each activity state, at a fixed index, so a test can name it.
@@ -222,7 +222,7 @@ Inspect selection, scrolling, keyboard behavior, window behavior, and perceived 
     return {
       id: 'fixture-markdown-showcase-thinking',
       kind: 'thinking',
-      text: `The same markdown at the thinking block's smaller size:\n\n${listShowcase}\n\n${tableShowcase}\n\n${longTailShowcase}\n\n${codeShowcase}`,
+      text: `The same markdown at the thinking block's smaller size:\n\n${listShowcase}\n\n${tableShowcase}\n\n${longTailShowcase}\n\n${codeShowcase}\n\n${diagramShowcase}`,
     };
   }
 

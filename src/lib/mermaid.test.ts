@@ -37,7 +37,7 @@ describe('drawing a fenced diagram', () => {
 
     // References rather than values, so the scheme in use is the app's.
     expect(svg).toContain('--fg:var(--text)');
-    expect(svg).toContain('--bg:var(--sunk)');
+    expect(svg).toContain('--bg:var(--canvas)');
     // Every colour the library reads is given, including the three whose names
     // Tau's own tokens share: an underived one would inherit the app's value.
     for (const name of ['line', 'accent', 'muted', 'surface', 'border']) {
