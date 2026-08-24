@@ -258,6 +258,7 @@ onMounted(() => {
    */
   viewportObserver = new ResizeObserver(() => {
     if (following) rowVirtualizer.value.scrollToOffset(element.scrollHeight);
+    reconcileUnscrollableOffset();
   });
   viewportObserver.observe(element);
 });
@@ -286,17 +287,22 @@ watch(
 
 onBeforeUnmount(() => {
   viewportObserver?.disconnect();
+  const element = transcript.value;
+  const offset =
+    element && element.scrollHeight <= element.clientHeight
+      ? element.scrollTop
+      : (rowVirtualizer.value.scrollOffset ?? 0);
   rememberScroll(props.sessionKey ?? '', {
-    offset: rowVirtualizer.value.scrollOffset ?? 0,
+    offset,
     following,
     measurements: rowVirtualizer.value.takeSnapshot(),
   });
 });
 
 watch(contentSignature, () => {
-  if (!following) return;
   void nextTick(() => {
     if (following) scrollToLatest();
+    else reconcileUnscrollableOffset();
   });
 });
 
@@ -315,6 +321,7 @@ function restoreScroll(): void {
     return;
   }
   rowVirtualizer.value.scrollToOffset(restored?.offset ?? 0);
+  reconcileUnscrollableOffset();
 }
 
 function scrollToEnd(): void {
@@ -335,9 +342,28 @@ function scrollToLatest(): void {
   const element = transcript.value;
   if (element) {
     rowVirtualizer.value.scrollToOffset(element.scrollHeight);
+    reconcileUnscrollableOffset();
     return;
   }
   rowVirtualizer.value.scrollToEnd();
+}
+
+/**
+ * An end-anchored virtualizer can cache a positive offset after asking an
+ * underfilled scroller to move: the browser clamps the write to zero and emits
+ * no event to report that authoritative value. Let its own observer read the
+ * clamped position before overscan removes early rows from the DOM.
+ */
+function reconcileUnscrollableOffset(): void {
+  const element = transcript.value;
+  if (
+    element &&
+    element.scrollHeight <= element.clientHeight &&
+    element.scrollTop === 0 &&
+    (rowVirtualizer.value.scrollOffset ?? 0) !== 0
+  ) {
+    element.dispatchEvent(new Event('scroll'));
+  }
 }
 
 /**

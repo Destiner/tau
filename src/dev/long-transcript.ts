@@ -144,6 +144,33 @@ function createLongTranscript(count = 5_000): TranscriptEntry[] {
   return Array.from({ length: count }, (_, index) => createMessage(index));
 }
 
+function createCompactToolTranscript(): TranscriptEntry[] {
+  const user: TranscriptEntry = {
+    id: 'fixture-compact-user',
+    kind: 'user',
+    text: 'The first message must stay visible.',
+  };
+  const tools = Array.from({ length: 23 }, (_, index): TranscriptEntry => {
+    const number = index + 1;
+    return {
+      id: `fixture-compact-tool-${number}`,
+      kind: 'tool',
+      text: `/tmp/tau-fixture/compact-${number}.jsonl`,
+      toolCallId: `fixture-compact-call-${number}`,
+      toolName: 'read',
+      toolRunning: false,
+      toolErrored: false,
+      toolArguments: JSON.stringify(
+        { path: `/tmp/compact-${number}` },
+        null,
+        2,
+      ),
+      toolResult: `Read compact result ${number}.\n${'A measured detail line. '.repeat(4)}`,
+    };
+  });
+  return [user, ...tools];
+}
+
 function createMessage(index: number): TranscriptEntry {
   if (index === 4_998) {
     return {
@@ -277,4 +304,5 @@ Inspect selection, scrolling, keyboard behavior, window behavior, and perceived 
   };
 }
 
+export { createCompactToolTranscript };
 export default createLongTranscript;
