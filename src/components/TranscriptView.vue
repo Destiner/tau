@@ -37,11 +37,13 @@
                 class="user-bubble"
                 :source="messageAt(virtualRow.index)?.text ?? ''"
                 :base-path="basePath"
+                :copy-paths="copyPaths"
               />
               <MarkdownText
                 v-else-if="messageAt(virtualRow.index)?.kind === 'assistant'"
                 :source="messageAt(virtualRow.index)?.text ?? ''"
                 :base-path="basePath"
+                :copy-paths="copyPaths"
               />
               <ErrorNotice
                 v-else-if="messageAt(virtualRow.index)?.kind === 'error'"
@@ -53,12 +55,14 @@
                 :type="messageAt(virtualRow.index)?.noticeType ?? 'info'"
                 :text="messageAt(virtualRow.index)?.text ?? ''"
                 :base-path="messageAt(virtualRow.index)?.basePath"
+                :copy-paths="copyPaths"
               />
               <ActivityRow
                 v-else
                 :entry="messageAt(virtualRow.index)!"
                 :expanded="isEntryExpanded(virtualRow.index)"
                 :base-path="basePath"
+                :copy-paths="copyPaths"
                 @toggle="() => toggleEntry(virtualRow.index)"
               />
             </article>
@@ -134,6 +138,8 @@ const props = defineProps<{
   showWorkingIndicator: boolean;
   workingLabel: string;
   basePath?: string;
+  /** Remote file paths copy rather than opening in the local file manager. */
+  copyPaths?: boolean;
   /** Session this transcript belongs to, under which its position is kept. */
   sessionKey?: string;
   /** The interactive prompt this session is waiting on, if there is one. */

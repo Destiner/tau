@@ -12,12 +12,10 @@ interface MarkdownOptions {
    * lists, or quotes. A prompt's title is a sentence rather than a document.
    */
   inline?: boolean;
-  /**
-   * Directory that relative file paths are resolved against. Passing it turns
-   * the file paths in the text into links; a remote project's files are not on
-   * this machine, so it passes nothing and its paths stay as text.
-   */
+  /** Directory that local file paths are resolved against before opening. */
   basePath?: string;
+  /** Remote paths are links that copy instead of opening on this machine. */
+  copyPaths?: boolean;
 }
 
 interface FileReference {
@@ -69,7 +67,7 @@ const COPIED_ICON =
  */
 const PATH_CANDIDATE = /[A-Za-z0-9~._/][A-Za-z0-9~._+@:/-]*/g;
 
-/** Existing links, fenced code blocks, and diagrams are left exactly as written. */
+/** Existing links and diagrams are left exactly as written. */
 const OPAQUE_ELEMENTS = new Set(['a', 'pre', 'svg']);
 
 const APPLE_PLATFORM = /^(?:Mac|iPhone|iPad|iPod)/;
@@ -106,7 +104,10 @@ function renderMarkdown(source: string, options: MarkdownOptions = {}): string {
       CODE_LANGUAGE_ATTRIBUTE,
     ],
   });
-  const linked = options.basePath ? linkFilePaths(html) : html;
+  const linked =
+    options.basePath || options.copyPaths
+      ? linkFilePaths(html, options.copyPaths)
+      : html;
   return options.inline ? linked : addCodeCopyButtons(linked);
 }
 
@@ -152,7 +153,7 @@ function addCodeCopyButtons(html: string): string {
 }
 
 /** Rewrites the file paths in rendered markup as links, leaving markup alone. */
-function linkFilePaths(html: string): string {
+function linkFilePaths(html: string, includeCodeBlocks = false): string {
   let output = '';
   let plainFrom = 0;
   let opaque: string | null = null;
@@ -161,7 +162,7 @@ function linkFilePaths(html: string): string {
   TAG.lastIndex = 0;
   for (let tag = TAG.exec(html); tag; tag = TAG.exec(html)) {
     const text = html.slice(plainFrom, tag.index);
-    output += opaque ? text : linkTextRun(text);
+    output += opaque ? text : linkTextRun(text, includeCodeBlocks);
     output += tag[0];
     plainFrom = tag.index + tag[0].length;
 
@@ -170,14 +171,19 @@ function linkFilePaths(html: string): string {
     if (opaque === name) {
       depth += closing ? -1 : 1;
       if (depth === 0) opaque = null;
-    } else if (!opaque && !closing && OPAQUE_ELEMENTS.has(name)) {
+    } else if (
+      !opaque &&
+      !closing &&
+      OPAQUE_ELEMENTS.has(name) &&
+      (!includeCodeBlocks || name !== 'pre')
+    ) {
       opaque = name;
       depth = 1;
     }
   }
 
   const tail = html.slice(plainFrom);
-  return output + (opaque ? tail : linkTextRun(tail));
+  return output + (opaque ? tail : linkTextRun(tail, includeCodeBlocks));
 }
 
 /**
@@ -244,15 +250,15 @@ function isPathOpenGesture(event: PathOpenGesture, platform: string): boolean {
     : event.ctrlKey === true;
 }
 
-function linkTextRun(text: string): string {
+function linkTextRun(text: string, copyPaths: boolean): string {
   return text
     .split(/(\r?\n)/)
-    .map((line) => linkTextLine(line))
+    .map((line) => linkTextLine(line, copyPaths))
     .join('');
 }
 
-function linkTextLine(text: string): string {
-  const standalone = linkStandaloneRootedPath(text);
+function linkTextLine(text: string, copyPaths: boolean): string {
+  const standalone = linkStandaloneRootedPath(text, copyPaths);
   if (standalone) return standalone;
 
   PATH_CANDIDATE.lastIndex = 0;
@@ -263,7 +269,7 @@ function linkTextLine(text: string): string {
     if (!reference) return candidate;
     // Whatever the reference stopped short of is punctuation, not the path.
     const trailing = candidate.slice(reference.text.length);
-    return fileLink(reference.path, reference.text) + trailing;
+    return fileLink(reference.path, reference.text, copyPaths) + trailing;
   });
 }
 
@@ -287,7 +293,10 @@ function touchesHtmlEntity(
 }
 
 /** A whole rooted path has a clear end even when its name contains spaces. */
-function linkStandaloneRootedPath(text: string): string | null {
+function linkStandaloneRootedPath(
+  text: string,
+  copyPaths: boolean,
+): string | null {
   const leading = /^\s*/.exec(text)?.[0] ?? '';
   const trailing = /\s*$/.exec(text)?.[0] ?? '';
   const end = text.length - trailing.length;
@@ -299,11 +308,15 @@ function linkStandaloneRootedPath(text: string): string | null {
 
   const reference = parseFileReference(candidate);
   if (!reference || reference.text !== candidate) return null;
-  return `${leading}${fileLink(reference.path, encodedCandidate)}${trailing}`;
+  return `${leading}${fileLink(reference.path, encodedCandidate, copyPaths)}${trailing}`;
 }
 
-function fileLink(path: string, text: string): string {
-  return `<a class="file-link" role="link" tabindex="0" ${FILE_PATH_ATTRIBUTE}="${escapeHtmlAttribute(path)}">${text}</a>`;
+function fileLink(path: string, text: string, copyPath = false): string {
+  const escapedPath = escapeHtmlAttribute(path);
+  const semantics = copyPath
+    ? `role="button" tabindex="0" aria-label="Copy path ${escapedPath}"`
+    : 'role="link" tabindex="0"';
+  return `<a class="file-link" ${semantics} ${FILE_PATH_ATTRIBUTE}="${escapedPath}">${text}</a>`;
 }
 
 function decodeHtmlText(value: string): string {

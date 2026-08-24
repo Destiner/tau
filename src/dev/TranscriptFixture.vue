@@ -12,6 +12,7 @@
       :messages="messages"
       :show-working-indicator="showWorkingIndicator"
       working-label="Working"
+      :copy-paths="remote"
       :session-key="sessionKey"
     />
   </main>
@@ -46,7 +47,9 @@ declare global {
  * one that does not fill the viewport cannot scroll, so anything the
  * virtualizer asks the element to do is silently clamped.
  */
-const requestedCount = new URLSearchParams(window.location.search).get('count');
+const parameters = new URLSearchParams(window.location.search);
+const requestedCount = parameters.get('count');
+const remote = parameters.get('remote') === 'true';
 const initialCount = Number(requestedCount);
 const messages = ref(
   createLongTranscript(
@@ -55,6 +58,20 @@ const messages = ref(
       : undefined,
   ),
 );
+
+if (remote) {
+  messages.value.push({
+    id: 'fixture-remote-paths',
+    kind: 'assistant',
+    text: `\`\`\`md
+Repo /home/agent/rhinestone/orchestrator
+Plan /home/agent/.pi/workflows/implement/RHI-6092/implementation-plan.md
+/usage
+/ expanded
+</pre>
+\`\`\``,
+  });
+}
 const working = ref(false);
 /** Mirrors the app: a session change arrives as a keyed remount. */
 const sessionKey = ref('main');

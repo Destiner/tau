@@ -1,19 +1,28 @@
 <template>
-  <!-- eslint-disable vue/no-v-html -- renderMarkdown sanitizes with DOMPurify -->
-  <div
-    class="markdown"
-    @click="activate"
-    @keydown="handleKeydown"
-    v-html="rendered"
-  ></div>
-  <!-- eslint-enable vue/no-v-html -->
+  <div class="markdown-shell">
+    <!-- eslint-disable vue/no-v-html -- renderMarkdown sanitizes with DOMPurify -->
+    <div
+      v-bind="$attrs"
+      class="markdown"
+      @click="activate"
+      @keydown="handleKeydown"
+      v-html="rendered"
+    ></div>
+    <span
+      v-if="copiedPath"
+      class="copy-feedback"
+      role="status"
+      >Path copied</span
+    >
+    <!-- eslint-enable vue/no-v-html -->
+  </div>
 </template>
 
 <script setup lang="ts">
 import { homeDir } from '@tauri-apps/api/path';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { openPath, openUrl } from '@tauri-apps/plugin-opener';
-import { computed, onBeforeUnmount } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
 
 import {
   CODE_COPY_ATTRIBUTE,
@@ -29,12 +38,17 @@ const props = defineProps<{
   source: string;
   inline?: boolean;
   basePath?: string;
+  /** Remote file paths copy rather than opening a local file manager. */
+  copyPaths?: boolean;
 }>();
+
+defineOptions({ inheritAttrs: false });
 
 const rendered = computed(() =>
   renderMarkdown(props.source, {
     ...(props.inline ? { inline: true } : {}),
     ...(props.basePath ? { basePath: props.basePath } : {}),
+    ...(props.copyPaths ? { copyPaths: true } : {}),
   }),
 );
 
@@ -43,7 +57,8 @@ const COPIED_FEEDBACK_MS = 1_200;
 
 let homePath: Promise<string> | null = null;
 let copiedTimer: ReturnType<typeof setTimeout> | undefined;
-let copiedButton: HTMLElement | undefined;
+let copiedElement: HTMLElement | undefined;
+const copiedPath = ref('');
 
 /** Asked for once, and asked for again if it ever fails. */
 function homeDirectory(): Promise<string> {
@@ -97,18 +112,20 @@ function copyButtonAt(target: EventTarget | null): HTMLElement | null {
 }
 
 /** Marks the button that was just used, so the icon reports the copy landed. */
-function showCopied(button: HTMLElement): void {
+function showCopied(element: HTMLElement, path?: string): void {
   clearCopied();
-  copiedButton = button;
-  button.dataset.copied = 'true';
+  copiedElement = element;
+  copiedElement.dataset.copied = 'true';
+  copiedPath.value = path ?? '';
   copiedTimer = setTimeout(clearCopied, COPIED_FEEDBACK_MS);
 }
 
 function clearCopied(): void {
   clearTimeout(copiedTimer);
   copiedTimer = undefined;
-  delete copiedButton?.dataset.copied;
-  copiedButton = undefined;
+  delete copiedElement?.dataset.copied;
+  copiedElement = undefined;
+  copiedPath.value = '';
 }
 
 async function copyCodeBlock(button: HTMLElement): Promise<void> {
@@ -121,6 +138,16 @@ async function copyCodeBlock(button: HTMLElement): Promise<void> {
     return;
   }
   showCopied(button);
+}
+
+async function copyRemotePath(link: HTMLElement, path: string): Promise<void> {
+  try {
+    await writeText(path);
+  } catch (error) {
+    console.error('Could not copy the remote path', error);
+    return;
+  }
+  showCopied(link, path);
 }
 
 async function activate(event: Event): Promise<void> {
@@ -145,9 +172,13 @@ async function activate(event: Event): Promise<void> {
   const path = filePath(link);
   if (!path) return;
 
-  // Never let a relative markdown link navigate the webview. Opening it is a
-  // deliberate desktop gesture so an ordinary click can still place a caret.
+  // Never let a relative markdown link navigate the webview. Remote file
+  // links copy their actual remote path; local ones keep the desktop gesture.
   event.preventDefault();
+  if (props.copyPaths) {
+    await copyRemotePath(link, path);
+    return;
+  }
   if (props.basePath && isPathOpenGesture(event, window.navigator.platform)) {
     await openLocalPath(path, props.basePath);
   }
@@ -155,15 +186,25 @@ async function activate(event: Event): Promise<void> {
 
 function handleKeydown(event: KeyboardEvent): void {
   // A copy button is a button: the browser turns Enter and Space into a click,
-  // so handling Enter here as well would copy twice.
-  if (event.key === 'Enter' && !copyButtonAt(event.target))
-    void activate(event);
+  // so handling those here as well would copy twice.
+  if (copyButtonAt(event.target)) return;
+  const remotePathButton =
+    props.copyPaths &&
+    event.key === ' ' &&
+    linkAt(event.target)?.hasAttribute(FILE_PATH_ATTRIBUTE);
+  if (event.key === 'Enter' || remotePathButton) void activate(event);
 }
 
 onBeforeUnmount(clearCopied);
 </script>
 
 <style scoped>
+/* Keep the component's status region out of layout while forwarding callers'
+ * classes to the markdown surface they have always styled. */
+.markdown-shell {
+  display: contents;
+}
+
 /* The rendered HTML carries no scoped attributes, so its descendants are
  * reached with :deep; the class itself is Tau's only markdown surface. */
 .markdown {
@@ -610,6 +651,23 @@ onBeforeUnmount(clearCopied);
 .markdown :deep(.file-link:focus-visible) {
   outline: 0;
   text-decoration: underline;
+}
+
+.markdown :deep(.file-link[data-copied]::after) {
+  content: 'Copied';
+  margin-left: 0.4em;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  text-decoration: none;
+}
+
+.copy-feedback {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 /* Dragging content out of the transcript is a browser gesture, not an app one. */

@@ -51,6 +51,7 @@
               class="activity-prose"
               :source="entry.text"
               :base-path="basePath"
+              :copy-paths="copyPaths"
             />
           </template>
           <template v-else-if="entry.kind === 'skill'">
@@ -112,6 +113,7 @@ const props = defineProps<{
   entry: TranscriptEntry;
   expanded: boolean;
   basePath?: string;
+  copyPaths?: boolean;
 }>();
 
 const emit = defineEmits<{ toggle: [] }>();

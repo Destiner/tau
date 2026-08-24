@@ -45,6 +45,7 @@
         :show-working-indicator="showWorkingIndicator"
         :working-label="stopping ? 'Stopping' : 'Working'"
         :base-path="transcriptBasePath"
+        :copy-paths="Boolean(activeProject?.connectionString)"
         :session-key="state.activeControllerKey"
         :prompt="activeExtensionDialog"
         :prompt-disabled="projectActionsDisabled"

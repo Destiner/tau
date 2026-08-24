@@ -435,6 +435,67 @@ test('copies a code block from a button the block reveals on hover', async ({
   });
 });
 
+test('copies remote paths from fenced transcript markdown', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const writes: string[] = [];
+    window.__TAU_CLIPBOARD_WRITES__ = writes;
+    window.__TAURI_INTERNALS__ = {
+      transformCallback: (callback: unknown): unknown => callback,
+      invoke: (
+        command: string,
+        payload?: { text?: string },
+      ): Promise<unknown> => {
+        if (
+          command === 'plugin:clipboard-manager|write_text' &&
+          payload?.text
+        ) {
+          writes.push(payload.text);
+        }
+        return Promise.resolve(null);
+      },
+    };
+  });
+  await page.goto(`${fixtureUrl}&remote=true`);
+
+  const message = page.locator('[data-message-id="fixture-remote-paths"]');
+  const repo = message.getByRole('button', {
+    name: 'Copy path /home/agent/rhinestone/orchestrator',
+  });
+  const plan = message.getByRole('button', {
+    name: 'Copy path /home/agent/.pi/workflows/implement/RHI-6092/implementation-plan.md',
+  });
+
+  await expect(repo).toBeVisible();
+  await expect(plan).toBeVisible();
+  await expect(
+    message.getByText('/usage', { exact: true }),
+  ).not.toHaveAttribute('data-tau-path');
+  await expect(
+    message.getByText('/ expanded ', { exact: true }),
+  ).not.toHaveAttribute('data-tau-path');
+  await expect(
+    message.getByText('</pre>', { exact: true }),
+  ).not.toHaveAttribute('data-tau-path');
+
+  await repo.click();
+  await expect
+    .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
+    .toEqual(['/home/agent/rhinestone/orchestrator']);
+  await expect(repo).toHaveAttribute('data-copied', 'true');
+  await expect(message.getByRole('status')).toHaveText('Path copied');
+
+  await plan.focus();
+  await plan.press('Space');
+  await expect
+    .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
+    .toEqual([
+      '/home/agent/rhinestone/orchestrator',
+      '/home/agent/.pi/workflows/implement/RHI-6092/implementation-plan.md',
+    ]);
+});
+
 test('opens a tool call in place and keeps it open across virtualization', async ({
   page,
 }) => {

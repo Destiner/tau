@@ -9,6 +9,7 @@
       :inline="inline"
       :source="text"
       :base-path="basePath"
+      :copy-paths="copyPaths"
     />
   </div>
 </template>
@@ -26,11 +27,13 @@ const props = withDefaults(
     text: string;
     label?: string;
     basePath?: string;
+    copyPaths?: boolean;
     inline?: boolean;
   }>(),
   {
     label: '',
     basePath: undefined,
+    copyPaths: false,
     inline: false,
   },
 );

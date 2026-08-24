@@ -218,6 +218,22 @@ describe('linking file paths in markup', () => {
     expect(linkFilePaths(block)).toBe(block);
   });
 
+  it('links paths in fenced blocks when they are remote copy targets', () => {
+    const html =
+      '<pre><code>Repo /home/agent/rhinestone/orchestrator\nPlan /home/agent/.pi/workflows/implement/RHI-6092/implementation-plan.md\n/usage\n/ expanded \n&lt;/pre&gt;\n</code></pre>';
+    const linked = linkFilePaths(html, true);
+
+    expect(linked).toContain(
+      'data-tau-path="/home/agent/rhinestone/orchestrator"',
+    );
+    expect(linked).toContain(
+      'data-tau-path="/home/agent/.pi/workflows/implement/RHI-6092/implementation-plan.md"',
+    );
+    expect(linked).not.toContain('data-tau-path="/usage"');
+    expect(linked).not.toContain('data-tau-path="/ expanded"');
+    expect(linked).not.toContain('data-tau-path="/pre"');
+  });
+
   it('resumes after the element it skipped', () => {
     expect(
       linkFilePaths('<p><a href="https://x.dev">x</a> holds src/App.vue</p>'),
