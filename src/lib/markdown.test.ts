@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CODE_LANGUAGE_ATTRIBUTE,
   addCodeCopyButtons,
+  addDiagramExpandButtons,
   isClosedFence,
   isPathOpenGesture,
   isWebUrl,
@@ -360,5 +361,34 @@ describe('code copy buttons', () => {
     expect(addCodeCopyButtons('<pre><code>plain\n</code></pre>')).toContain(
       '<div class="code-block">',
     );
+  });
+});
+
+describe('diagram expand buttons', () => {
+  it('marks every drawn diagram, and only those', () => {
+    const html = addDiagramExpandButtons(
+      '<div class="diagram"><svg width="10" height="5"><g></g></svg></div>' +
+        '<p>prose</p>' +
+        '<div class="diagram">not a drawing</div>' +
+        '<pre><code>graph TD\n</code></pre>',
+    );
+
+    expect(html.match(/data-tau-expand/g)).toHaveLength(1);
+    // Inside the figure it expands, after the drawing itself.
+    expect(html).toContain(
+      '</svg><button type="button" class="diagram-expand" data-tau-expand aria-label="Expand Diagram">',
+    );
+    // A wrapper holding anything but a drawn svg is not a figure to expand.
+    expect(html).toContain('<div class="diagram">not a drawing</div>');
+    expect(html).toContain('<pre><code>graph TD\n</code></pre>');
+  });
+
+  it('gives each of several diagrams its own button', () => {
+    const figure =
+      '<div class="diagram"><svg width="2" height="1"></svg></div>';
+    const html = addDiagramExpandButtons(`${figure}<p>between</p>${figure}`);
+
+    expect(html.match(/data-tau-expand/g)).toHaveLength(2);
+    expect(html).toContain('<p>between</p>');
   });
 });

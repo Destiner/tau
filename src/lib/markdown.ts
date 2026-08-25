@@ -39,6 +39,9 @@ const FILE_PATH_ATTRIBUTE = 'data-tau-path';
 /** Marks the copy buttons this module writes, and the only ones a click copies. */
 const CODE_COPY_ATTRIBUTE = 'data-tau-copy';
 
+/** Marks the expand buttons this module writes, and the only ones a click expands. */
+const DIAGRAM_EXPAND_ATTRIBUTE = 'data-tau-expand';
+
 /** Names a wrapped block's language for the label its stylesheet draws. */
 const CODE_LANGUAGE_ATTRIBUTE = 'data-tau-lang';
 
@@ -59,6 +62,15 @@ const COPY_ICON =
 
 const COPIED_ICON =
   '<svg class="check" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg>';
+
+const EXPAND_ICON =
+  '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M216,48V88a8,8,0,0,1-16,0V56H168a8,8,0,0,1,0-16h40A8,8,0,0,1,216,48ZM88,200H56V168a8,8,0,0,0-16,0v40a8,8,0,0,0,8,8H88a8,8,0,0,0,0-16Zm120-40a8,8,0,0,0-8,8v32H168a8,8,0,0,0,0,16h40a8,8,0,0,0,8-8V168A8,8,0,0,0,208,160ZM88,40H48a8,8,0,0,0-8,8V88a8,8,0,0,0,16,0V56H88a8,8,0,0,0,0-16Z"/></svg>';
+
+/**
+ * A drawn diagram's wrapper, holding exactly the svg the renderer drew. The
+ * lazy close is safe for the renderer's output, which never nests an svg.
+ */
+const DIAGRAM_BLOCK = /<div class="diagram"><svg[\s\S]*?<\/svg><\/div>/g;
 
 /**
  * A path embedded in prose, plus a `:line:column` tail. Whitespace ends these
@@ -106,6 +118,7 @@ function renderMarkdown(source: string, options: MarkdownOptions = {}): string {
       FILE_PATH_ATTRIBUTE,
       CODE_COPY_ATTRIBUTE,
       CODE_LANGUAGE_ATTRIBUTE,
+      DIAGRAM_EXPAND_ATTRIBUTE,
     ],
   });
   const withoutEmptyTableHeaders = removeEmptyTableHeaders(html);
@@ -113,7 +126,9 @@ function renderMarkdown(source: string, options: MarkdownOptions = {}): string {
     options.basePath || options.copyPaths
       ? linkFilePaths(withoutEmptyTableHeaders, options.copyPaths)
       : withoutEmptyTableHeaders;
-  return options.inline ? linked : addCodeCopyButtons(linked);
+  return options.inline
+    ? linked
+    : addDiagramExpandButtons(addCodeCopyButtons(linked));
 }
 
 /**
@@ -167,6 +182,19 @@ function addCodeCopyButtons(html: string): string {
       : '';
     return `<div class="code-block"${label}>${block}<button type="button" class="code-copy" ${CODE_COPY_ATTRIBUTE} aria-label="Copy Code">${COPY_ICON}${COPIED_ICON}</button></div>`;
   });
+}
+
+/** Gives every drawn diagram an expand button on the copy button's terms:
+ * against the wrapper, and injected after sanitizing so the attribute marks
+ * buttons the app wrote rather than ones the text brought with it. */
+function addDiagramExpandButtons(html: string): string {
+  DIAGRAM_BLOCK.lastIndex = 0;
+  return html.replace(DIAGRAM_BLOCK, (block) =>
+    block.replace(
+      /<\/div>$/,
+      `<button type="button" class="diagram-expand" ${DIAGRAM_EXPAND_ATTRIBUTE} aria-label="Expand Diagram">${EXPAND_ICON}</button></div>`,
+    ),
+  );
 }
 
 /** Rewrites the file paths in rendered markup as links, leaving markup alone. */
@@ -386,8 +414,10 @@ export type { MarkdownOptions, FileReference, PathOpenGesture };
 export {
   CODE_COPY_ATTRIBUTE,
   CODE_LANGUAGE_ATTRIBUTE,
+  DIAGRAM_EXPAND_ATTRIBUTE,
   FILE_PATH_ATTRIBUTE,
   addCodeCopyButtons,
+  addDiagramExpandButtons,
   renderMarkdown,
   isClosedFence,
   linkFilePaths,

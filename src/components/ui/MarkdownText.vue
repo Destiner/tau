@@ -15,6 +15,14 @@
       >Path copied</span
     >
     <!-- eslint-enable vue/no-v-html -->
+    <DiagramViewer
+      v-if="viewer"
+      :svg="viewer.svg"
+      :width="viewer.width"
+      :height="viewer.height"
+      :return-focus="viewerReturnFocus"
+      @close="closeViewer"
+    />
   </div>
 </template>
 
@@ -26,6 +34,7 @@ import { computed, onBeforeUnmount, ref } from 'vue';
 
 import {
   CODE_COPY_ATTRIBUTE,
+  DIAGRAM_EXPAND_ATTRIBUTE,
   FILE_PATH_ATTRIBUTE,
   isPathOpenGesture,
   isWebUrl,
@@ -33,6 +42,8 @@ import {
   renderMarkdown,
   resolveFilePath,
 } from '../../lib/markdown';
+
+import DiagramViewer from './DiagramViewer.vue';
 
 const props = defineProps<{
   source: string;
@@ -111,6 +122,48 @@ function copyButtonAt(target: EventTarget | null): HTMLElement | null {
   return button instanceof HTMLElement ? button : null;
 }
 
+interface DiagramView {
+  svg: string;
+  width: number;
+  height: number;
+}
+
+const viewer = ref<DiagramView | null>(null);
+let viewerTrigger: HTMLElement | undefined;
+
+function expandButtonAt(target: EventTarget | null): HTMLElement | null {
+  if (!(target instanceof Element)) return null;
+  const button = target.closest(`button[${DIAGRAM_EXPAND_ATTRIBUTE}]`);
+  return button instanceof HTMLElement ? button : null;
+}
+
+/** The size the diagram was drawn at, which the viewer lays its canvas out for. */
+function diagramSize(svg: SVGSVGElement): { width: number; height: number } {
+  const width = Number.parseFloat(svg.getAttribute('width') ?? '');
+  const height = Number.parseFloat(svg.getAttribute('height') ?? '');
+  if (width > 0 && height > 0) return { width, height };
+  const box = svg.viewBox.baseVal;
+  return { width: box.width, height: box.height };
+}
+
+function openDiagram(button: HTMLElement): void {
+  const svg = button.parentElement?.querySelector('svg');
+  if (!svg) return;
+  const { width, height } = diagramSize(svg);
+  if (!(width > 0 && height > 0)) return;
+  viewerTrigger = button;
+  viewer.value = { svg: svg.outerHTML, width, height };
+}
+
+/** The viewer hands focus back to the button that opened it, if it is still here. */
+function viewerReturnFocus(): HTMLElement | undefined {
+  return viewerTrigger?.isConnected ? viewerTrigger : undefined;
+}
+
+function closeViewer(): void {
+  viewer.value = null;
+}
+
 /** Marks the button that was just used, so the icon reports the copy landed. */
 function showCopied(element: HTMLElement, path?: string): void {
   clearCopied();
@@ -157,6 +210,12 @@ async function activate(event: Event): Promise<void> {
     return;
   }
 
+  const expand = expandButtonAt(event.target);
+  if (expand) {
+    openDiagram(expand);
+    return;
+  }
+
   const link = linkAt(event.target);
   if (!link) return;
 
@@ -185,9 +244,9 @@ async function activate(event: Event): Promise<void> {
 }
 
 function handleKeydown(event: KeyboardEvent): void {
-  // A copy button is a button: the browser turns Enter and Space into a click,
-  // so handling those here as well would copy twice.
-  if (copyButtonAt(event.target)) return;
+  // A copy or expand button is a button: the browser turns Enter and Space
+  // into a click, so handling those here as well would act twice.
+  if (copyButtonAt(event.target) || expandButtonAt(event.target)) return;
   const remotePathButton =
     props.copyPaths &&
     event.key === ' ' &&
@@ -454,6 +513,7 @@ onBeforeUnmount(clearCopied);
  * the one around it.
  */
 .markdown :deep(.diagram) {
+  position: relative;
   width: 100%;
   padding: 4px;
   border: 1px solid var(--border);
@@ -476,6 +536,47 @@ onBeforeUnmount(clearCopied);
  * wide block sideways leaves it where it is. */
 .markdown :deep(.code-block) {
   position: relative;
+}
+
+/*
+ * The expand button keeps the copy button's terms: revealed by pointing at
+ * the figure, bright under the pointer. It backs itself with the canvas the
+ * diagram is drawn on, so it stays legible over the figure's own strokes.
+ */
+.markdown :deep(.diagram-expand) {
+  display: grid;
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 4px;
+  border-radius: 4px;
+  opacity: 0;
+  background: var(--canvas);
+  color: var(--muted);
+  font-size: 13px;
+  cursor: default;
+  /* stylelint-disable-next-line property-no-vendor-prefix -- WKWebView needs the prefix before Safari 17.4 */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.markdown :deep(.diagram:hover .diagram-expand) {
+  opacity: 0.45;
+}
+
+/* Each carries the figure as well, for the same reason the copy button does:
+ * the hover reveal above is the more specific selector. */
+.markdown :deep(.diagram .diagram-expand:focus-visible),
+.markdown :deep(.diagram:hover .diagram-expand:hover) {
+  outline: 0;
+  opacity: 1;
+}
+
+.markdown :deep(.diagram-expand svg) {
+  display: block;
+  width: 1em;
+  height: 1em;
+  fill: currentcolor;
 }
 
 /*

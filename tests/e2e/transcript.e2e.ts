@@ -395,6 +395,95 @@ test('draws a fenced diagram in the scheme around it', async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'light' });
 });
 
+test('expands a drawn diagram into a fullscreen pan-and-zoom viewer', async ({
+  page,
+}) => {
+  const showcase = page.locator(
+    '[data-message-id="fixture-markdown-showcase"]',
+  );
+  const figure = showcase.locator('.diagram').first();
+  const button = figure.locator('.diagram-expand');
+
+  await expect(showcase.locator('.diagram')).toHaveCount(2, {
+    timeout: 20_000,
+  });
+  // Only drawn diagrams carry the button; the fences that stayed source do not.
+  await expect(showcase.locator('.diagram-expand')).toHaveCount(2);
+
+  // The button keeps the copy button's terms: revealed by pointing at the figure.
+  await expect
+    .poll(() => button.evaluate((element) => getComputedStyle(element).opacity))
+    .toBe('0');
+  await figure.hover();
+  await expect
+    .poll(() => button.evaluate((element) => getComputedStyle(element).opacity))
+    .not.toBe('0');
+
+  await button.click();
+  const viewer = page.locator('.diagram-viewer');
+  await expect(viewer).toBeVisible();
+
+  // The same drawing, laid out at the size it was drawn at rather than the
+  // squeezed one the column showed.
+  const plane = viewer.locator('.viewer-plane');
+  await expect(plane.locator('text', { hasText: 'Session live?' })).toHaveCount(
+    1,
+  );
+  const naturalWidth = await figure.evaluate((element) =>
+    Number.parseFloat(
+      element.querySelector('svg')?.getAttribute('width') ?? '',
+    ),
+  );
+  expect(
+    await plane.evaluate((element) => Number.parseFloat(element.style.width)),
+  ).toBeCloseTo(naturalWidth, 3);
+
+  // A pinch arrives as a ctrl-wheel, and zooms; a plain wheel pans in place.
+  const canvas = viewer.locator('.viewer-canvas');
+  const scaleOf = (): Promise<number> =>
+    plane.evaluate((element) =>
+      Number.parseFloat(
+        /scale\(([\d.]+)\)/.exec(element.style.transform)?.[1] ?? '',
+      ),
+    );
+  const fitted = await scaleOf();
+  await canvas.dispatchEvent('wheel', {
+    deltaY: -200,
+    ctrlKey: true,
+    clientX: 400,
+    clientY: 300,
+  });
+  expect(await scaleOf()).toBeGreaterThan(fitted);
+
+  const panned = await plane.evaluate((element) => element.style.transform);
+  await canvas.dispatchEvent('wheel', { deltaX: 40, deltaY: 60 });
+  expect(await plane.evaluate((element) => element.style.transform)).not.toBe(
+    panned,
+  );
+  expect(await scaleOf()).toBeGreaterThan(fitted);
+
+  // Dragging pans without closing: the viewer only leaves on a clean click.
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 120, box.y + box.height / 2);
+  await page.mouse.up();
+  await expect(viewer).toBeVisible();
+
+  // The viewer wears no chrome, so a plain click is the exit, and focus
+  // returns to the button that opened it.
+  await canvas.click({ position: { x: 40, y: 40 } });
+  await expect(viewer).toHaveCount(0);
+  await expect(button).toBeFocused();
+
+  // The whole loop works from the keyboard: Enter reopens, Escape closes.
+  await page.keyboard.press('Enter');
+  await expect(viewer).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(viewer).toHaveCount(0);
+  await expect(button).toBeFocused();
+});
+
 test('copies a code block from a button the block reveals on hover', async ({
   page,
 }) => {
