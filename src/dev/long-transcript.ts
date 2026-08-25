@@ -44,7 +44,15 @@ const tableShowcase = `| Default | Left | Center | Right |
 | Session | Working directory | Extension | Last message |
 | --- | --- | --- | ---: |
 | tau-desktop | /Users/someone/code/tau/src-tauri | filesystem, telemetry, ssh | 3,204 |
-| pi-runtime | /Users/someone/code/pi/packages/runtime | filesystem | 87 |`;
+| pi-runtime | /Users/someone/code/pi/packages/runtime | filesystem | 87 |
+
+| | |
+| :--- | ---: |
+| left | right |
+
+| | Kept |
+| :--- | ---: |
+| left | right |`;
 
 /*
  * The elements that had no rules of their own until the theme grew some:

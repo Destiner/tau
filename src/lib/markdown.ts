@@ -91,6 +91,10 @@ const EDGE_WHITESPACE = /^\s|\s$/;
 /** A fence's closing run, which the source of an unfinished block has not reached. */
 const CLOSING_FENCE = /(?:^|\n)[ \t]*(?:`{3,}|~{3,})$/;
 
+/** A GFM table has one header row; only a row with no rendered cell content is omitted. */
+const EMPTY_TABLE_HEADER =
+  /^\s*<tr\b[^>]*>(?:\s*<th\b[^>]*>\s*<\/th>\s*)+<\/tr>\s*$/;
+
 function renderMarkdown(source: string, options: MarkdownOptions = {}): string {
   const parsed = options.inline
     ? marked.parseInline(source, { async: false })
@@ -104,11 +108,24 @@ function renderMarkdown(source: string, options: MarkdownOptions = {}): string {
       CODE_LANGUAGE_ATTRIBUTE,
     ],
   });
+  const withoutEmptyTableHeaders = removeEmptyTableHeaders(html);
   const linked =
     options.basePath || options.copyPaths
-      ? linkFilePaths(html, options.copyPaths)
-      : html;
+      ? linkFilePaths(withoutEmptyTableHeaders, options.copyPaths)
+      : withoutEmptyTableHeaders;
   return options.inline ? linked : addCodeCopyButtons(linked);
+}
+
+/**
+ * GFM requires a header delimiter even when a table is really a list of rows.
+ * Marked correctly emits that empty row as a thead; remove it after sanitizing
+ * so alignment on the body cells and every non-empty header stay untouched.
+ */
+function removeEmptyTableHeaders(html: string): string {
+  return html.replace(
+    /<thead\b[^>]*>([\s\S]*?)<\/thead>/g,
+    (section, contents) => (EMPTY_TABLE_HEADER.test(contents) ? '' : section),
+  );
 }
 
 /**
@@ -374,6 +391,7 @@ export {
   renderMarkdown,
   isClosedFence,
   linkFilePaths,
+  removeEmptyTableHeaders,
   parseFileReference,
   resolveFilePath,
   isWebUrl,

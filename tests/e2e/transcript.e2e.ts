@@ -167,6 +167,27 @@ test('aligns table columns the way the markdown asked', async ({ page }) => {
   await expect(headers.nth(3)).toHaveCSS('text-align', /^(?:-webkit-)?right$/);
 });
 
+test('omits a wholly empty table header but keeps partial headers and alignment', async ({
+  page,
+}) => {
+  const tables = page.locator(
+    '[data-message-id="fixture-markdown-showcase"] table',
+  );
+  const emptyHeader = tables.nth(2);
+  const partialHeader = tables.nth(3);
+
+  await expect(emptyHeader.locator('thead')).toHaveCount(0);
+  await expect(emptyHeader.locator('tbody td').first()).toHaveCSS(
+    'text-align',
+    /^(?:-webkit-)?left$/,
+  );
+  await expect(emptyHeader.locator('tbody td').nth(1)).toHaveCSS(
+    'text-align',
+    /^(?:-webkit-)?right$/,
+  );
+  await expect(partialHeader.locator('thead th')).toHaveText(['', 'Kept']);
+});
+
 test('keeps a table header visible against the user bubble', async ({
   page,
 }) => {

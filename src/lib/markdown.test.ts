@@ -7,6 +7,7 @@ import {
   isPathOpenGesture,
   isWebUrl,
   linkFilePaths,
+  removeEmptyTableHeaders,
   parseFileReference,
   resolveFilePath,
 } from './markdown';
@@ -279,6 +280,31 @@ describe('linking file paths in markup', () => {
   it('does not read attributes as text', () => {
     const image = '<p><img src="pictures/shot.png" alt="a/b.png"></p>';
     expect(linkFilePaths(image)).toBe(image);
+  });
+});
+
+describe('table headers', () => {
+  it('removes a header section only when every rendered header cell is empty', () => {
+    expect(
+      removeEmptyTableHeaders(
+        '<table>\n<thead>\n<tr>\n<th align="left"></th>\n<th align="right"></th>\n</tr>\n</thead>\n<tbody><tr><td align="left">one</td><td align="right">two</td></tr></tbody>\n</table>',
+      ),
+    ).toBe(
+      '<table>\n\n<tbody><tr><td align="left">one</td><td align="right">two</td></tr></tbody>\n</table>',
+    );
+  });
+
+  it('keeps partially populated and non-empty headers unchanged', () => {
+    const headers = [
+      '<thead><tr><th></th><th>Kept</th></tr></thead>',
+      '<thead><tr><th><img src="heading.png" alt=""></th></tr></thead>',
+    ];
+
+    for (const header of headers) {
+      expect(removeEmptyTableHeaders(`<table>${header}</table>`)).toBe(
+        `<table>${header}</table>`,
+      );
+    }
   });
 });
 
