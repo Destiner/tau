@@ -41,7 +41,10 @@
         </button>
       </template>
       <template #content>
-        <div class="activity-details">
+        <div
+          class="activity-details"
+          :class="{ 'activity-tool-details': entry.kind === 'tool' }"
+        >
           <!--
             Reasoning and instructions are prose the reader asked to see, so
             they are rendered rather than shown as the payload they arrived in.
@@ -259,6 +262,11 @@ const expandable = computed(() => {
   gap: 8px;
 }
 
+.activity-tool-details {
+  max-height: min(520px, 65vh);
+  overflow-y: auto;
+}
+
 .activity-detail {
   display: flex;
   flex-direction: column;
@@ -274,9 +282,7 @@ const expandable = computed(() => {
 }
 
 .activity-detail-body {
-  max-height: 260px;
   margin: 0;
-  overflow: auto;
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: var(--text-xs);

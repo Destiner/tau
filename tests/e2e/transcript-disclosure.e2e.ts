@@ -67,6 +67,48 @@ test.beforeEach(async ({ page }) => {
   await expectWholeTranscript(page);
 });
 
+test('scrolls an expanded tool call as one payload', async ({ page }) => {
+  await page.goto('/?fixture=long-transcript&verbose-tool=true');
+
+  const tool = page.locator('[data-message-id="fixture-verbose-tool"]');
+  await tool.locator('.activity-header').click();
+
+  const details = tool.locator('.activity-details');
+  await expect(details).toBeVisible();
+  await expect
+    .poll(() =>
+      details.evaluate((element) => ({
+        clientHeight: element.clientHeight,
+        overflowY: getComputedStyle(element).overflowY,
+        scrollHeight: element.scrollHeight,
+        nestedScrollers: Array.from(
+          element.querySelectorAll<HTMLElement>('.activity-detail-body'),
+        ).filter((body) => {
+          const style = getComputedStyle(body);
+          return (
+            body.scrollHeight > body.clientHeight &&
+            (style.overflowY === 'auto' || style.overflowY === 'scroll')
+          );
+        }).length,
+      })),
+    )
+    .toMatchObject({ overflowY: 'auto', nestedScrollers: 0 });
+  await expect
+    .poll(() =>
+      details.evaluate(
+        (element) => element.scrollHeight > element.clientHeight,
+      ),
+    )
+    .toBe(true);
+
+  await details.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect
+    .poll(() => details.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
+});
+
 test('keeps early rows mounted when an underfilled tool run is expanded', async ({
   page,
 }) => {

@@ -144,6 +144,31 @@ function createLongTranscript(count = 5_000): TranscriptEntry[] {
   return Array.from({ length: count }, (_, index) => createMessage(index));
 }
 
+function createVerboseToolTranscript(): TranscriptEntry[] {
+  const lines = Array.from(
+    { length: 40 },
+    (_, index) => `Detail line ${index + 1}.`,
+  ).join('\n');
+
+  return [
+    {
+      id: 'fixture-verbose-tool',
+      kind: 'tool',
+      text: '/tmp/tau-fixture/verbose.jsonl',
+      toolCallId: 'fixture-verbose-call',
+      toolName: 'read',
+      toolRunning: false,
+      toolErrored: false,
+      toolArguments: JSON.stringify(
+        { path: '/tmp/tau-fixture/verbose.jsonl', lines },
+        null,
+        2,
+      ),
+      toolResult: lines,
+    },
+  ];
+}
+
 function createCompactToolTranscript(): TranscriptEntry[] {
   const user: TranscriptEntry = {
     id: 'fixture-compact-user',
@@ -304,5 +329,5 @@ Inspect selection, scrolling, keyboard behavior, window behavior, and perceived 
   };
 }
 
-export { createCompactToolTranscript };
+export { createCompactToolTranscript, createVerboseToolTranscript };
 export default createLongTranscript;

@@ -25,6 +25,7 @@ import TranscriptView from '../components/TranscriptView.vue';
 
 import createLongTranscript, {
   createCompactToolTranscript,
+  createVerboseToolTranscript,
 } from './long-transcript';
 
 interface TranscriptFixtureApi {
@@ -52,16 +53,19 @@ declare global {
 const parameters = new URLSearchParams(window.location.search);
 const requestedCount = parameters.get('count');
 const compactTools = parameters.get('compact-tools') === 'true';
+const verboseTool = parameters.get('verbose-tool') === 'true';
 const remote = parameters.get('remote') === 'true';
 const initialCount = Number(requestedCount);
 const messages = ref(
-  compactTools
-    ? createCompactToolTranscript()
-    : createLongTranscript(
-        requestedCount && Number.isFinite(initialCount) && initialCount >= 0
-          ? initialCount
-          : undefined,
-      ),
+  verboseTool
+    ? createVerboseToolTranscript()
+    : compactTools
+      ? createCompactToolTranscript()
+      : createLongTranscript(
+          requestedCount && Number.isFinite(initialCount) && initialCount >= 0
+            ? initialCount
+            : undefined,
+        ),
 );
 
 if (remote) {
