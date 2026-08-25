@@ -24,3 +24,8 @@ test-results
 *.njsproj
 *.sln
 *.sw?
+
+# Agent skills are part of the repo (ignored by global excludes otherwise)
+!.agents/
+!.claude/
+.claude/settings.local.json
