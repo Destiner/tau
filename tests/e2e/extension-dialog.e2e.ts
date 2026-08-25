@@ -67,6 +67,17 @@ test('scrolls the question, its options, and the transcript as one region', asyn
   ).toBeVisible();
 });
 
+test('preserves block markdown carried in the dialog title', async ({
+  page,
+}) => {
+  const title = page.locator('.extension-prompt-title');
+
+  await expect(title.locator('p')).toHaveCount(2);
+  await expect(title.locator('.code-block pre code')).toHaveText(
+    "const label = 'release';",
+  );
+});
+
 test('renders a table in the question as a table', async ({ page }) => {
   const prompt = page.getByRole('dialog');
   const header = prompt.locator('.extension-prompt-message th').first();

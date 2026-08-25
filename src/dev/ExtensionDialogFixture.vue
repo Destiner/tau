@@ -22,7 +22,14 @@ import TranscriptView from '../components/TranscriptView.vue';
 import type { ExtensionDialog } from '../composables/state';
 import type { TranscriptEntry } from '../lib/pi/transcript';
 
-const title = 'Which label should the pull request carry?';
+const title = [
+  'Which label should the pull request carry?',
+  '',
+  'Preview:',
+  '```ts',
+  "const label = 'release';",
+  '```',
+].join('\n');
 
 /** Long enough, and wide enough, to overflow the pane on any window. */
 const message = [

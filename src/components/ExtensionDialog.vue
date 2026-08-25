@@ -9,7 +9,6 @@
   >
     <MarkdownText
       class="extension-prompt-title"
-      inline
       :source="title"
       :base-path="workingDirectory"
     />
@@ -262,10 +261,7 @@ function handleSelectKeydown(event: KeyboardEvent): void {
   gap: 8px;
 }
 
-/*
- * A prompt is a sentence a workflow is saying, not a document's heading, so
- * its title is set as the text around it and separated by colour alone.
- */
+/* The protocol's title may be a Markdown document rather than one sentence. */
 .extension-prompt-title {
   color: var(--text);
   font-size: var(--text-sm);
