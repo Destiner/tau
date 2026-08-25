@@ -143,6 +143,7 @@ const PI_RPC_METHODS = [
   'get_commands',
   'get_available_thinking_levels',
   'get_messages',
+  'get_entries',
   'set_model',
   'set_thinking_level',
   'set_session_name',

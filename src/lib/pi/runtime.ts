@@ -59,6 +59,8 @@ import {
   asRecord,
   contentText,
   hydrateTranscript,
+  historyLayersFromEntries,
+  historyPrefix,
   localErrorId,
   mergeLocalEntries,
   messageFailure,
@@ -152,6 +154,8 @@ async function startController(
   controller.bootstrapSessionPath = sessionPath ?? '';
   controller.runStateRequestId = '';
   controller.startMessagesRequestId = '';
+  controller.historyRequestId = '';
+  setHistoryLoading(controller, false);
   controller.commandPromptRequestId = '';
   controller.commandSyncRequestId = '';
   controller.replacementProbeRequestId = '';
@@ -879,6 +883,8 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
       'process_exited',
     );
     controller.runStateRequestId = '';
+    controller.historyRequestId = '';
+    setHistoryLoading(controller, false);
     controller.pendingEffort = '';
     controller.pendingSettingRequestId = '';
     controller.remoteConnectionTimedOut = false;
@@ -1018,6 +1024,10 @@ async function handleRpc(
         ...(error.anchor === undefined ? {} : { anchor: error.anchor }),
       });
       if (!isControllerSelected(controller)) controller.unread = true;
+    } else if (asRecord(event.result)) {
+      // A new compaction redraws every history boundary. Keep the visible rows
+      // until the settled hydration arrives, but discard the old projection.
+      resetHistory(controller);
     }
     return;
   }
@@ -1083,6 +1093,83 @@ async function handleRpc(
   }
 }
 
+function resetHistory(controller: SessionController): void {
+  controller.historyLayers = [];
+  controller.firstVisibleHistoryLayer = 0;
+  controller.historyPrefixLength = 0;
+  controller.historyRequestId = '';
+}
+
+function setHistoryLoading(
+  controller: SessionController,
+  loading: boolean,
+): void {
+  const marker = controller.messages.find(
+    (entry) => entry.kind === 'compaction' && entry.historyAvailable,
+  );
+  if (marker) marker.historyLoading = loading;
+}
+
+/** Replaces only the compacted tail; loaded raw history remains above it. */
+function applyHistoryTail(
+  controller: SessionController,
+  tail: ReturnType<typeof hydrateTranscript>,
+): void {
+  if (controller.historyLayers.length === 0) {
+    if (controller.historyRequestId) {
+      const marker = tail.find((entry) => entry.kind === 'compaction');
+      if (marker) marker.historyLoading = true;
+    }
+    controller.historyPrefixLength = 0;
+    controller.messages = tail;
+    return;
+  }
+
+  const latestBoundary = tail.find((entry) => entry.kind === 'compaction');
+  if (latestBoundary) {
+    latestBoundary.historyAvailable = false;
+    latestBoundary.historyLoading = false;
+  }
+  const prefix = historyPrefix(
+    controller.historyLayers,
+    controller.firstVisibleHistoryLayer,
+  );
+  controller.historyPrefixLength = prefix.length;
+  controller.messages = [...prefix, ...tail];
+}
+
+function revealCachedHistory(controller: SessionController): void {
+  if (controller.historyLayers.length === 0) return;
+  controller.firstVisibleHistoryLayer = Math.max(
+    0,
+    controller.firstVisibleHistoryLayer - 1,
+  );
+  const tail = controller.messages.slice(controller.historyPrefixLength);
+  applyHistoryTail(controller, tail);
+}
+
+async function requestEarlierHistory(
+  controller: SessionController,
+): Promise<void> {
+  if (controller.disposed || !controller.generation) return;
+  if (controller.historyRequestId) return;
+  if (controller.historyLayers.length > 0) {
+    revealCachedHistory(controller);
+    return;
+  }
+
+  const requestId = nextRequestId('history');
+  controller.historyRequestId = requestId;
+  setHistoryLoading(controller, true);
+  try {
+    await rpc(controller, { id: requestId, type: 'get_entries' });
+  } catch {
+    controller.historyRequestId = '';
+    setHistoryLoading(controller, false);
+    controller.status = errorCopy.historyLoad;
+  }
+}
+
 async function handleResponse(
   controller: SessionController,
   response: Record<string, unknown>,
@@ -1128,6 +1215,10 @@ async function handleResponse(
   const resolvesPendingSetting =
     Boolean(controller.pendingSettingRequestId) &&
     responseId === controller.pendingSettingRequestId;
+  const resolvesHistory =
+    command === 'get_entries' &&
+    Boolean(controller.historyRequestId) &&
+    responseId === controller.historyRequestId;
   const resolvesSubmittedPrompt =
     command === 'prompt' &&
     controller.submittedPrompt?.requestId === responseId;
@@ -1150,7 +1241,13 @@ async function handleResponse(
     }
   }
   if (response.success !== true) {
-    controller.status = rpcFailureCopy(command);
+    controller.status = resolvesHistory
+      ? errorCopy.historyLoad
+      : rpcFailureCopy(command);
+    if (resolvesHistory) {
+      controller.historyRequestId = '';
+      setHistoryLoading(controller, false);
+    }
     if (resolvesPendingSetting) {
       controller.pendingSettingRequestId = '';
       controller.pendingEffort = '';
@@ -1311,6 +1408,7 @@ async function handleResponse(
       clearAbortWatch(controller);
       rebindEphemeralSession(controller);
       controller.messages = [];
+      resetHistory(controller);
       controller.models = [];
       controller.efforts = [];
       controller.commands = [];
@@ -1399,15 +1497,17 @@ async function handleResponse(
 
   if (command === 'get_messages' && data) {
     const previous = controller.messages;
+    const previousTail = previous.slice(controller.historyPrefixLength);
     controller.messagesLoaded = true;
-    controller.messages = mergeLocalEntries(
+    const tail = mergeLocalEntries(
       hydrateTranscript(
         Array.isArray(data.messages) ? data.messages : [],
-        previous,
+        previousTail,
       ),
       controller.localErrors,
-      previous,
+      previousTail,
     );
+    applyHistoryTail(controller, tail);
     const pending = controller.pendingPrompt;
     const resolvesPending =
       Boolean(pending?.messagesRequestId) &&
@@ -1427,6 +1527,32 @@ async function handleResponse(
     // A hidden session that finishes hydrating has nothing left to wait for,
     // so this is where a runtime the user has moved on from is accounted for.
     releaseIdleRuntimes();
+    return;
+  }
+
+  if (command === 'get_entries' && data && resolvesHistory) {
+    controller.historyRequestId = '';
+    const layers = historyLayersFromEntries(
+      Array.isArray(data.entries) ? data.entries : [],
+      stringValue(data.leafId),
+    );
+    if (layers.length === 0) {
+      const marker = controller.messages.find(
+        (entry) => entry.kind === 'compaction' && entry.historyAvailable,
+      );
+      if (marker) {
+        marker.historyAvailable = false;
+        marker.historyLoading = false;
+      }
+      return;
+    }
+    controller.historyLayers = layers;
+    // The first activation reveals exactly one layer. Older layers remain
+    // behind the new boundary placed at the top of the transcript.
+    controller.firstVisibleHistoryLayer = layers.length - 1;
+    const tail = controller.messages.slice(controller.historyPrefixLength);
+    applyHistoryTail(controller, tail);
+    controller.status = '';
     return;
   }
 
@@ -2280,6 +2406,8 @@ async function stopControllerProcess(
   );
   controller.runStateRequestId = '';
   controller.abortProbeRequestId = '';
+  controller.historyRequestId = '';
+  setHistoryLoading(controller, false);
   controller.pendingEffort = '';
   controller.pendingSettingRequestId = '';
   controller.remoteConnectionTimedOut = false;
@@ -2321,6 +2449,7 @@ export {
   handleBridgeEvent,
   handleRpc,
   handleResponse,
+  requestEarlierHistory,
   applyPendingSessionSettings,
   applyPendingSessionEffort,
   requestPendingMessages,

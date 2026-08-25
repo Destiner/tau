@@ -21,6 +21,7 @@ import {
   persistProjectSelection,
   recoverSubmittedPrompt,
   registerConnectedSession,
+  requestEarlierHistory,
   releaseIdleRuntimes,
   releaseRuntime,
   removeEmptyActivePhantom,
@@ -905,6 +906,12 @@ function useTau() {
     }
   }
 
+  async function loadEarlierHistory(): Promise<void> {
+    const controller = activeController.value;
+    if (!controller) return;
+    await requestEarlierHistory(controller);
+  }
+
   async function submitExtensionDialog(value: string | boolean): Promise<void> {
     const controller = activeController.value;
     if (!controller || projectActionsDisabled.value) return;
@@ -991,6 +998,7 @@ function useTau() {
     indicatorLabel,
     sendMessage,
     stop,
+    loadEarlierHistory,
     submitExtensionDialog,
     cancelExtensionDialog,
     renameSession,

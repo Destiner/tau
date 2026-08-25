@@ -20,6 +20,7 @@ const methods = [
   'get_state',
   'get_available_thinking_levels',
   'get_messages',
+  'get_entries',
 ] as const;
 
 type Method = (typeof methods)[number];
@@ -418,6 +419,16 @@ function validateMessages(response: JsonRecord): void {
   );
 }
 
+function validateEntries(response: JsonRecord): void {
+  const data = responseData(response, 'get_entries');
+  requireArray(data.entries, 'get_entries.data.entries');
+  if (data.leafId !== null && typeof data.leafId !== 'string') {
+    throw new ContractError(
+      'get_entries.data.leafId must be a string or null.',
+    );
+  }
+}
+
 function isolatedEnvironment(root: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     HOME: root,
@@ -548,6 +559,7 @@ async function main(): Promise<void> {
       thinkingLevel,
     );
     validateMessages(await rpc.request('get_messages'));
+    validateEntries(await rpc.request('get_entries'));
     await rpc.close();
 
     console.log(

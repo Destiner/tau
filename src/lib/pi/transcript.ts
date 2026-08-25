@@ -6,8 +6,19 @@ type TranscriptNoticeType = 'info' | 'warning' | 'error';
 interface TranscriptEntry {
   id: string;
   kind:
-    'user' | 'assistant' | 'thinking' | 'tool' | 'skill' | 'error' | 'notice';
+    | 'user'
+    | 'assistant'
+    | 'thinking'
+    | 'tool'
+    | 'skill'
+    | 'error'
+    | 'notice'
+    | 'compaction';
   text: string;
+  /** Whether activating this compaction boundary can reveal an older layer. */
+  historyAvailable?: boolean;
+  /** The older layer behind this boundary is currently being requested. */
+  historyLoading?: boolean;
   /** Reviewed label for a plain-language error entry. */
   errorLabel?: string;
   /**
@@ -47,6 +58,12 @@ interface ParsedSkillBlock {
   location: string;
   content: string;
   userMessage?: string;
+}
+
+interface HistoryLayer {
+  /** Stable id for the compaction boundary immediately before this layer. */
+  markerId: string;
+  rows: TranscriptEntry[];
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -172,9 +189,124 @@ function hydrateTranscript(
         toolErrored: numberValue(message.exitCode) !== 0,
         toolResult: toolResultText(message.output),
       });
+      continue;
+    }
+
+    if (role === 'compactionSummary') {
+      entries.push({
+        id: '',
+        kind: 'compaction',
+        text: '',
+        historyAvailable: true,
+        historyLoading: false,
+      });
     }
   }
   return assignIds(entries, previous);
+}
+
+/**
+ * Splits the raw history hidden by the latest compaction into progressively
+ * older layers. Pi owns the append-only tree; Tau only projects the active
+ * branch and leaves the current compacted tail to `get_messages`.
+ */
+function historyLayersFromEntries(
+  values: unknown[],
+  leafId: string,
+): HistoryLayer[] {
+  const entries = values
+    .map(asRecord)
+    .filter((entry): entry is JsonRecord => Boolean(entry));
+  const byId = new Map(
+    entries
+      .map((entry) => [stringValue(entry.id), entry] as const)
+      .filter(([id]) => Boolean(id)),
+  );
+  const path: JsonRecord[] = [];
+  const seen = new Set<string>();
+  let cursor = leafId;
+  while (cursor && !seen.has(cursor)) {
+    seen.add(cursor);
+    const entry = byId.get(cursor);
+    if (!entry) return [];
+    path.push(entry);
+    cursor = stringValue(entry.parentId);
+  }
+  path.reverse();
+
+  const indexById = new Map(
+    path.map((entry, index) => [stringValue(entry.id), index]),
+  );
+  const compactions = path
+    .map((entry, index) => ({ entry, index }))
+    .filter(({ entry }) => entry.type === 'compaction');
+  const latest = compactions[compactions.length - 1];
+  const latestStart = latest
+    ? indexById.get(stringValue(latest.entry.firstKeptEntryId))
+    : undefined;
+  if (latestStart === undefined || latestStart <= 0) return [];
+
+  const cutoffs = new Set<number>([0, latestStart]);
+  for (const { entry, index } of compactions) {
+    if (index >= (latest?.index ?? 0)) continue;
+    const cutoff = indexById.get(stringValue(entry.firstKeptEntryId));
+    if (cutoff !== undefined && cutoff > 0 && cutoff < latestStart) {
+      cutoffs.add(cutoff);
+    }
+  }
+  const ordered = [...cutoffs].sort((left, right) => left - right);
+  const layers: HistoryLayer[] = [];
+  for (let index = 0; index < ordered.length - 1; index += 1) {
+    const start = ordered[index] ?? 0;
+    const end = ordered[index + 1] ?? latestStart;
+    const messages = path
+      .slice(start, end)
+      .filter((entry) => entry.type === 'message')
+      .map((entry) => entry.message);
+    const rowPrefix = stringValue(path[start]?.id) || `root-${index}`;
+    const rows = hydrateTranscript(messages).map((row) => ({
+      ...row,
+      id: `history-${rowPrefix}-${row.id}`,
+      historyAvailable: false,
+      historyLoading: false,
+    }));
+    if (rows.length === 0) continue;
+    layers.push({
+      markerId: `history-compaction-${rowPrefix}`,
+      rows,
+    });
+  }
+  return layers;
+}
+
+/** The loaded prefix for one reveal depth, including every boundary it spans. */
+function historyPrefix(
+  layers: HistoryLayer[],
+  firstVisibleLayer: number,
+): TranscriptEntry[] {
+  const prefix: TranscriptEntry[] = [];
+  if (firstVisibleLayer > 0) {
+    prefix.push({
+      id: layers[firstVisibleLayer]?.markerId ?? 'history-compaction',
+      kind: 'compaction',
+      text: '',
+      historyAvailable: true,
+      historyLoading: false,
+    });
+  }
+  for (let index = firstVisibleLayer; index < layers.length; index += 1) {
+    if (index > firstVisibleLayer) {
+      prefix.push({
+        id: layers[index]?.markerId ?? `history-compaction-${index}`,
+        kind: 'compaction',
+        text: '',
+        historyAvailable: false,
+        historyLoading: false,
+      });
+    }
+    prefix.push(...(layers[index]?.rows ?? []));
+  }
+  return prefix;
 }
 
 function assignIds(
@@ -385,6 +517,7 @@ function compactJson(value: unknown): string {
 }
 
 export type {
+  HistoryLayer,
   LocalError,
   ParsedSkillBlock,
   TranscriptEntry,
@@ -393,6 +526,8 @@ export type {
 
 export {
   hydrateTranscript,
+  historyLayersFromEntries,
+  historyPrefix,
   localErrorId,
   parseSkillBlock,
   messageFailure,

@@ -82,6 +82,10 @@ function makeController(
     lastUserMessageAt: 0,
     messages: [],
     messagesLoaded: false,
+    historyLayers: [],
+    firstVisibleHistoryLayer: 0,
+    historyPrefixLength: 0,
+    historyRequestId: '',
     localErrors: [],
     draft: '',
     status: '',
@@ -262,6 +266,138 @@ Full review instructions
         skillName: 'pr-review',
       },
     ]);
+  });
+});
+
+describe('compacted history', () => {
+  it('loads one earlier layer while keeping the compacted tail in place', async () => {
+    const { handleResponse, requestEarlierHistory } = await import('./runtime');
+    const controller = makeController({
+      messages: [
+        {
+          id: 'compaction-0',
+          kind: 'compaction',
+          text: '',
+          historyAvailable: true,
+          historyLoading: false,
+        },
+        { id: 'user-1', kind: 'user', text: 'current question' },
+      ],
+      messagesLoaded: true,
+    });
+
+    await requestEarlierHistory(controller);
+    expect(controller.historyRequestId).toMatch(/history-/);
+    expect(controller.messages[0]).toMatchObject({ historyLoading: true });
+
+    const requestId = controller.historyRequestId;
+    await handleResponse(controller, {
+      id: requestId,
+      command: 'get_entries',
+      success: true,
+      data: {
+        leafId: 'd',
+        entries: [
+          {
+            type: 'message',
+            id: 'a',
+            parentId: null,
+            message: { role: 'user', content: 'root question' },
+          },
+          {
+            type: 'message',
+            id: 'b',
+            parentId: 'a',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'root reply' }],
+            },
+          },
+          {
+            type: 'message',
+            id: 'c',
+            parentId: 'b',
+            message: { role: 'user', content: 'current question' },
+          },
+          {
+            type: 'compaction',
+            id: 'd',
+            parentId: 'c',
+            firstKeptEntryId: 'c',
+            summary: 'summary',
+          },
+        ],
+      },
+    });
+
+    expect(controller.historyRequestId).toBe('');
+    expect(controller.messages.map((message) => message.text)).toEqual([
+      'root question',
+      'root reply',
+      '',
+      'current question',
+    ]);
+    expect(controller.messages[2]).toMatchObject({
+      id: 'compaction-0',
+      kind: 'compaction',
+      historyAvailable: false,
+      historyLoading: false,
+    });
+
+    await handleResponse(controller, {
+      id: 'messages-after-history',
+      command: 'get_messages',
+      success: true,
+      data: {
+        messages: [
+          { role: 'compactionSummary', summary: 'summary' },
+          { role: 'user', content: 'current question' },
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'new reply' }],
+          },
+        ],
+      },
+    });
+    expect(controller.messages.map((message) => message.text)).toEqual([
+      'root question',
+      'root reply',
+      '',
+      'current question',
+      'new reply',
+    ]);
+  });
+
+  it('keeps the divider retryable when loading entries fails', async () => {
+    const { handleResponse, requestEarlierHistory } = await import('./runtime');
+    const controller = makeController({
+      messages: [
+        {
+          id: 'compaction-0',
+          kind: 'compaction',
+          text: '',
+          historyAvailable: true,
+          historyLoading: false,
+        },
+      ],
+    });
+
+    await requestEarlierHistory(controller);
+    const requestId = controller.historyRequestId;
+    await handleResponse(controller, {
+      id: requestId,
+      command: 'get_entries',
+      success: false,
+    });
+
+    expect(controller.historyRequestId).toBe('');
+    expect(controller.messages[0]).toMatchObject({
+      historyAvailable: true,
+      historyLoading: false,
+    });
+    expect(controller.status).toBe(
+      'Earlier messages could not be loaded. Try again.',
+    );
   });
 });
 

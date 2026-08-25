@@ -45,6 +45,13 @@
                 :base-path="basePath"
                 :copy-paths="copyPaths"
               />
+              <CompactionDivider
+                v-else-if="messageAt(virtualRow.index)?.kind === 'compaction'"
+                :entry="messageAt(virtualRow.index)!"
+                @load="
+                  (element) => requestEarlierHistory(virtualRow.index, element)
+                "
+              />
               <ErrorNotice
                 v-else-if="messageAt(virtualRow.index)?.kind === 'error'"
                 :text="messageAt(virtualRow.index)?.text ?? ''"
@@ -127,6 +134,7 @@ import type { TranscriptEntry } from '../lib/pi/transcript';
 import { recallScroll, rememberScroll } from '../lib/transcript-scroll';
 
 import ActivityRow from './ActivityRow.vue';
+import CompactionDivider from './CompactionDivider.vue';
 import ErrorNotice from './ErrorNotice.vue';
 import ExtensionDialog from './ExtensionDialog.vue';
 import TranscriptNotice from './TranscriptNotice.vue';
@@ -151,6 +159,7 @@ const emit = defineEmits<{
   'prompt-submit': [value: string | boolean];
   'prompt-cancel': [];
   'prompt-draft': [value: string];
+  'load-history': [];
 }>();
 
 const transcript = ref<HTMLElement>();
@@ -233,6 +242,12 @@ const contentSignature = computed(() =>
     props.prompt?.key ?? '',
   ].join('|'),
 );
+const historySignature = computed(() =>
+  [props.messages.length, props.messages[0]?.id ?? ''].join('|'),
+);
+
+let pendingHistoryAnchor:
+  { messageId: string; viewportTop: number } | undefined;
 
 let viewportObserver: ResizeObserver | undefined;
 
@@ -304,6 +319,10 @@ watch(contentSignature, () => {
     if (following) scrollToLatest();
     else reconcileUnscrollableOffset();
   });
+});
+
+watch(historySignature, () => {
+  if (pendingHistoryAnchor) void nextTick(restoreHistoryAnchor);
 });
 
 /**
@@ -385,6 +404,46 @@ function handleScroll(): void {
   lastScrollOffset = offset;
 }
 
+function requestEarlierHistory(index: number, element: HTMLElement): void {
+  const messageId = messageAt(index)?.id;
+  if (!messageId) return;
+  pendingHistoryAnchor = {
+    messageId,
+    viewportTop: element.getBoundingClientRect().top,
+  };
+  following = false;
+  emit('load-history');
+}
+
+/** Keeps the activated divider under the pointer while rows appear above it. */
+async function restoreHistoryAnchor(): Promise<void> {
+  const anchor = pendingHistoryAnchor;
+  if (!anchor) return;
+  const index = props.messages.findIndex(
+    (message) => message.id === anchor.messageId,
+  );
+  if (index < 0) {
+    pendingHistoryAnchor = undefined;
+    return;
+  }
+
+  rowVirtualizer.value.scrollToIndex(index, { align: 'start' });
+  await nextTick();
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  const row = [
+    ...(transcript.value?.querySelectorAll<HTMLElement>('[data-message-id]') ??
+      []),
+  ].find((element) => element.dataset.messageId === anchor.messageId);
+  if (row) {
+    const offset =
+      rowVirtualizer.value.scrollOffset ?? transcript.value?.scrollTop ?? 0;
+    rowVirtualizer.value.scrollToOffset(
+      offset + row.getBoundingClientRect().top - anchor.viewportTop,
+    );
+  }
+  pendingHistoryAnchor = undefined;
+}
+
 function forwardPromptDraft(value: string): void {
   emit('prompt-draft', value);
 }
@@ -435,6 +494,7 @@ function isActivity(
 function estimateRowSize(message: TranscriptEntry | undefined): number {
   if (!message) return 42;
   if (isActivity(message.kind)) return 26;
+  if (message.kind === 'compaction') return 54;
   if (message.kind === 'error' || message.kind === 'notice') return 88;
   if (message.kind === 'user') return 76;
   return 144;
@@ -518,6 +578,12 @@ defineExpose({ scrollToEnd });
 .message.skill {
   margin-right: 20px;
   margin-left: 8px;
+}
+
+.message.compaction {
+  margin-right: 20px;
+  margin-left: 8px;
+  padding-bottom: 0;
 }
 
 /* A run of activity is one thing; only its last row is followed by a gap. */

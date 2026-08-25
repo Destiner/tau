@@ -9,7 +9,11 @@ import { computed, reactive } from 'vue';
 import type { CommandOption } from '../lib/commands';
 import { scopeModels } from '../lib/pi/model-scope';
 import type { ModelOption, ThinkingLevel } from '../lib/pi/model-scope';
-import type { LocalError, TranscriptEntry } from '../lib/pi/transcript';
+import type {
+  HistoryLayer,
+  LocalError,
+  TranscriptEntry,
+} from '../lib/pi/transcript';
 import { asRecord, stringValue } from '../lib/pi/transcript';
 import { recordControllerTransition } from '../lib/telemetry';
 import type {
@@ -161,6 +165,14 @@ interface SessionController {
   /** Whether `get_messages` has answered once, so an empty transcript can be
    * read as a session without history rather than one that has yet to load. */
   messagesLoaded: boolean;
+  /** Raw-history layers fetched on demand from Pi's append-only entry tree. */
+  historyLayers: HistoryLayer[];
+  /** First raw-history layer currently rendered above the compacted tail. */
+  firstVisibleHistoryLayer: number;
+  /** Number of rendered rows that belong to the raw-history prefix. */
+  historyPrefixLength: number;
+  /** Correlates the one full-history request this controller may have in flight. */
+  historyRequestId: string;
   /** Failures Pi reports as events only; its message list never carries them. */
   localErrors: LocalError[];
   draft: string;
@@ -824,6 +836,10 @@ function createController(
     lastUserMessageAt: session.lastUserMessageAt,
     messages: [],
     messagesLoaded: false,
+    historyLayers: [],
+    firstVisibleHistoryLayer: 0,
+    historyPrefixLength: 0,
+    historyRequestId: '',
     localErrors: [],
     draft: '',
     status: '',
@@ -1181,6 +1197,7 @@ function buildStateSnapshot(): StateSnapshot {
       runtimeCount = Math.min(MAX_STATE_SUMMARY_COUNT, runtimeCount + 1);
     }
     for (const message of controller.messages) {
+      if (message.kind === 'compaction') continue;
       if (message.kind === 'notice') {
         notificationCount = Math.min(
           MAX_STATE_SUMMARY_COUNT,

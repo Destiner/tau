@@ -52,6 +52,7 @@
         @prompt-submit="handleExtensionSubmit"
         @prompt-cancel="cancelExtensionDialog"
         @prompt-draft="updateExtensionDraft"
+        @load-history="loadEarlierHistory"
       />
 
       <!--
@@ -142,6 +143,7 @@ const {
   chooseRemoteDirectory,
   newSession,
   sendMessage,
+  loadEarlierHistory,
   submitExtensionDialog,
   cancelExtensionDialog,
 } = useTau();

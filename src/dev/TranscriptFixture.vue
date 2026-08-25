@@ -14,6 +14,7 @@
       working-label="Working"
       :copy-paths="remote"
       :session-key="sessionKey"
+      @load-history="loadCompactedHistory"
     />
   </main>
 </template>
@@ -55,17 +56,35 @@ const requestedCount = parameters.get('count');
 const compactTools = parameters.get('compact-tools') === 'true';
 const verboseTool = parameters.get('verbose-tool') === 'true';
 const remote = parameters.get('remote') === 'true';
+const compacted = parameters.get('compacted') === 'true';
 const initialCount = Number(requestedCount);
-const messages = ref(
-  verboseTool
-    ? createVerboseToolTranscript()
-    : compactTools
-      ? createCompactToolTranscript()
-      : createLongTranscript(
-          requestedCount && Number.isFinite(initialCount) && initialCount >= 0
-            ? initialCount
+const initialMessages = verboseTool
+  ? createVerboseToolTranscript()
+  : compactTools
+    ? createCompactToolTranscript()
+    : createLongTranscript(
+        requestedCount && Number.isFinite(initialCount) && initialCount >= 0
+          ? initialCount
+          : compacted
+            ? 12
             : undefined,
-        ),
+      );
+const messages = ref(
+  compacted
+    ? [
+        {
+          id: 'fixture-compaction',
+          kind: 'compaction' as const,
+          text: '',
+          historyAvailable: true,
+          historyLoading: false,
+        },
+        ...initialMessages.map((message) => ({
+          ...message,
+          id: `current-${message.id}`,
+        })),
+      ]
+    : initialMessages,
 );
 
 if (remote) {
@@ -154,6 +173,28 @@ function truncate(count: number): void {
     ...message,
     id: `${message.kind}-${index}`,
   }));
+}
+
+function loadCompactedHistory(): void {
+  const boundary = messages.value.findIndex(
+    (message) => message.id === 'fixture-compaction',
+  );
+  if (boundary < 0 || !messages.value[boundary]?.historyAvailable) return;
+  const marker = {
+    ...messages.value[boundary]!,
+    historyAvailable: false,
+    historyLoading: false,
+  };
+  const older = createLongTranscript(16).map((message) => ({
+    ...message,
+    id: `history-${message.id}`,
+  }));
+  messages.value = [
+    ...messages.value.slice(0, boundary),
+    ...older,
+    marker,
+    ...messages.value.slice(boundary + 1),
+  ];
 }
 
 function scrollToEnd(): void {

@@ -9,6 +9,7 @@ const errorCopy = {
     'A Pi extension failed. Review the extension setup and try again.',
   extensionResponse: 'The response could not be sent. Try again.',
   folderPicker: 'The folder picker could not be opened. Try again.',
+  historyLoad: 'Earlier messages could not be loaded. Try again.',
   importProject:
     'The project could not be added. Choose the folder again or try another folder.',
   importRemoteProject:

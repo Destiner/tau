@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import type { LocalError, TranscriptEntry } from './transcript';
 import {
   hydrateTranscript,
+  historyLayersFromEntries,
+  historyPrefix,
   mergeLocalEntries,
   messageFailure,
   parseSkillBlock,
@@ -73,6 +75,24 @@ describe('hydrateTranscript', () => {
       { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
     ]);
     expect(result[0]?.text).toBe('Hello');
+  });
+
+  it('turns Pi compaction context into a loadable divider', () => {
+    const result = hydrateTranscript([
+      {
+        role: 'compactionSummary',
+        summary: 'Earlier work',
+        tokensBefore: 5000,
+      },
+      { role: 'user', content: 'Continue' },
+    ]);
+
+    expect(result[0]).toMatchObject({
+      kind: 'compaction',
+      historyAvailable: true,
+      historyLoading: false,
+    });
+    expect(result[1]?.kind).toBe('user');
   });
 
   it('keeps a skill invocation and its prompt in one entry', () => {
@@ -314,6 +334,112 @@ Full instructions
     );
 
     expect(settled[1]?.id).toBe('stream-error-0');
+  });
+});
+
+describe('historyLayersFromEntries', () => {
+  const message = (
+    id: string,
+    parentId: string | null,
+    role: 'user' | 'assistant',
+    text: string,
+  ): Record<string, unknown> => ({
+    type: 'message',
+    id,
+    parentId,
+    message:
+      role === 'user'
+        ? { role, content: text }
+        : { role, content: [{ type: 'text', text }] },
+  });
+
+  it('reveals one active-branch compaction layer at a time', () => {
+    const entries = [
+      message('a', null, 'user', 'root question'),
+      message('b', 'a', 'assistant', 'root reply'),
+      message('c', 'b', 'user', 'middle question'),
+      message('d', 'c', 'assistant', 'middle reply'),
+      {
+        type: 'compaction',
+        id: 'e',
+        parentId: 'd',
+        firstKeptEntryId: 'c',
+        summary: 'first summary',
+      },
+      message('f', 'e', 'user', 'later question'),
+      message('g', 'f', 'assistant', 'later reply'),
+      message('h', 'g', 'user', 'current question'),
+      message('i', 'h', 'assistant', 'current reply'),
+      {
+        type: 'compaction',
+        id: 'j',
+        parentId: 'i',
+        firstKeptEntryId: 'h',
+        summary: 'latest summary',
+      },
+      message('k', 'j', 'assistant', 'after compaction'),
+    ];
+
+    const layers = historyLayersFromEntries(entries, 'k');
+    expect(layers).toHaveLength(2);
+    expect(layers[0]?.rows.map((row) => row.text)).toEqual([
+      'root question',
+      'root reply',
+    ]);
+    expect(layers[1]?.rows.map((row) => row.text)).toEqual([
+      'middle question',
+      'middle reply',
+      'later question',
+      'later reply',
+    ]);
+
+    const firstReveal = historyPrefix(layers, 1);
+    expect(firstReveal[0]).toMatchObject({
+      kind: 'compaction',
+      historyAvailable: true,
+    });
+    expect(firstReveal.slice(1).map((row) => row.text)).toEqual([
+      'middle question',
+      'middle reply',
+      'later question',
+      'later reply',
+    ]);
+
+    const complete = historyPrefix(layers, 0);
+    expect(complete.map((row) => row.kind)).toEqual([
+      'user',
+      'assistant',
+      'compaction',
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+    ]);
+    expect(complete[2]).toMatchObject({
+      historyAvailable: false,
+      id: layers[1]?.markerId,
+    });
+  });
+
+  it('ignores entries from an abandoned branch', () => {
+    const entries = [
+      message('a', null, 'user', 'root'),
+      message('abandoned', 'a', 'assistant', 'not active'),
+      message('b', 'a', 'assistant', 'active reply'),
+      message('c', 'b', 'user', 'kept'),
+      {
+        type: 'compaction',
+        id: 'd',
+        parentId: 'c',
+        firstKeptEntryId: 'c',
+        summary: 'summary',
+      },
+    ];
+
+    const layers = historyLayersFromEntries(entries, 'd');
+    expect(
+      layers.flatMap((layer) => layer.rows).map((row) => row.text),
+    ).toEqual(['root', 'active reply']);
   });
 });
 
