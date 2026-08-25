@@ -185,7 +185,7 @@
                   label="Open Project"
                   :disabled="projectActionsDisabled"
                 >
-                  <UiIcon name="folder" />
+                  <UiIcon name="folder-plus" />
                 </UiIconButton>
               </template>
             </UiMenu>
