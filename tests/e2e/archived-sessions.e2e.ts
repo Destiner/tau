@@ -14,16 +14,17 @@ test('reviews, opens, and unarchives an archived session', async ({ page }) => {
 
   await page.getByRole('button', { name: 'Show Archived Sessions' }).click();
 
-  // The view replaces the project list and groups by time; the fixture
-  // session's fixed past date always lands it in "Older".
+  // The fixture's agent-only activity has no user-message timestamp, but its
+  // current sort timestamp still places it in Today and drives its display.
   const archivedList = page.locator('.archived-list');
   await expect(archivedList).toBeVisible();
   await expect(page.locator('.project-group')).toHaveCount(0);
-  await expect(archivedList.getByText('Older', { exact: true })).toBeVisible();
+  await expect(archivedList.getByText('Today', { exact: true })).toBeVisible();
   const row = archivedList.locator('.row', {
     hasText: 'Older archived work',
   });
   await expect(row).toContainText('Tau fixture');
+  await expect(row).not.toContainText('56y');
   await expect(row).toContainText('alpha');
 
   // Opening browses the transcript without resurrecting the session: the

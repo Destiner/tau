@@ -1301,6 +1301,7 @@ export {
   archivedSessionEntries,
   sessionLastActive,
   sessionLastUserMessageAt,
+  sessionSortAt,
   isSessionSelected,
   sessionIndicator,
   isSessionUnread,

@@ -90,7 +90,7 @@ const {
   archivedSessionEntries,
   projectActionsDisabled,
   selectSession,
-  sessionLastUserMessageAt,
+  sessionSortAt,
   relativeTimestamp,
   state,
   unarchiveSession,
@@ -99,7 +99,7 @@ const {
 const closedGroups = ref(new Set<string>());
 const groups = computed<ArchivedGroup<ArchivedSessionEntry>[]>(() =>
   groupArchivedByTime(archivedSessionEntries.value, (entry) =>
-    sessionLastUserMessageAt(entry.projectPath, entry.session),
+    sessionSortAt(entry.projectPath, entry.session),
   ),
 );
 
@@ -111,9 +111,10 @@ function toggleGroup(label: string): void {
 }
 
 function relativeTime(entry: ArchivedSessionEntry): string {
-  return relativeTimestamp(
-    sessionLastUserMessageAt(entry.projectPath, entry.session),
-  );
+  const timestamp = sessionSortAt(entry.projectPath, entry.session);
+  return timestamp > 0
+    ? relativeTimestamp(timestamp)
+    : entry.session.lastActive;
 }
 
 function archivedProject(

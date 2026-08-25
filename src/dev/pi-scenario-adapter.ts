@@ -229,9 +229,9 @@ function scenarioWorkspace(scenarioName: string): WorkspaceSnapshot {
       model: 'alpha',
       lastActive: '2026-01-02T03:04:03.000Z',
       lastUserMessageAt: 0,
-      // A fixed past date keeps the row in the "Older" group regardless of
-      // when the scenario runs.
-      sortAt: Date.parse('2026-01-02T03:04:03.000Z'),
+      // Agent-only activity has no user-message timestamp, but must still
+      // appear with its current effective activity time.
+      sortAt: Date.now(),
       archived: true,
       selected: false,
     });
