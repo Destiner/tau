@@ -1,6 +1,6 @@
 ---
 name: triage
-description: Triages Tau user issue reports from the local feedback inbox (issues.jsonl) — lists and groups them, checks whether any are already fixed, and moves confirmed resolutions to done.jsonl. Use when the user asks to go through reported issues, triage feedback, list open reports, or mark a report as resolved.
+description: Triages Tau user issue reports from the local feedback inbox (issues.jsonl) — lists and groups them, checks whether any are already fixed, investigates and fixes selected reports, and moves confirmed resolutions to done.jsonl. Use when the user asks to go through reported issues, triage feedback, list open reports, investigate or fix a reported issue, or mark a report as resolved.
 ---
 
 # Issue report triage
@@ -54,6 +54,16 @@ failed spans, error-level logs, or unusual timings. For deterministic UI
 reproduction afterwards, use the scenario tooling (`bun run repro -- --list`,
 `docs/reproduction-scenarios.md`).
 
+## Investigating and fixing a report
+
+When the user picks reports to investigate or fix, prefer delegating each one
+to a subagent rather than working through it in the main conversation: hand it
+the report's description, its session ID, any telemetry findings, and relevant
+code pointers, and have it come back with a root cause or a verified fix.
+Independent reports can be delegated in parallel. Keep the inbox overview,
+cross-report grouping, and resolution bookkeeping in the main conversation so
+the triage picture stays in one place.
+
 ## Resolving a report
 
 Only with the user's explicit confirmation of the outcome:
@@ -69,8 +79,8 @@ Only with the user's explicit confirmation of the outcome:
 
 ## Non-goals
 
-- Do not fix issues as part of triage; triage ends at the grouped list, and
-  fixing is a separate task the user starts.
+- Do not start investigating or fixing during the inbox pass; the pass ends at
+  the grouped list, and the user picks which reports to work on.
 - Never move or edit inbox entries without the user naming the report and its
   resolution.
 - Do not modify telemetry files; they are read-only evidence.
