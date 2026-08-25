@@ -464,6 +464,7 @@ function isTitlebarControl(target: EventTarget | null): boolean {
 }
 
 .composer-area {
+  min-width: 0;
   padding: 6px 8px 8px 6px;
   border-top: 1px solid var(--border);
   background: var(--canvas);

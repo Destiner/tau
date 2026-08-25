@@ -10,6 +10,36 @@ interface VisibleConversationState {
   working: boolean;
 }
 
+test('wraps an unbroken link without widening the composer', async ({
+  page,
+}) => {
+  await page.goto(scenarioUrl);
+
+  const composer = page.getByRole('textbox', { name: 'Message Pi' });
+  await composer.fill(`https://example.com/${'a'.repeat(10_000)}`);
+
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const input = document.querySelector<HTMLTextAreaElement>(
+          'textarea[aria-label="Message Pi"]',
+        );
+        if (!input) return false;
+        return (
+          document.body.scrollWidth === window.innerWidth &&
+          input.scrollWidth === input.clientWidth &&
+          input.scrollHeight > input.clientHeight
+        );
+      }),
+    )
+    .toBe(true);
+
+  // Complete the deterministic scenario after checking the unsent draft.
+  await composer.fill(prompt);
+  await composer.press('Enter');
+  await expect(page.getByText(completeReply, { exact: true })).toBeVisible();
+});
+
 test('keeps the composer editable but blocks repeat sends during delivery', async ({
   page,
 }) => {
