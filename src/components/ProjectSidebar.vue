@@ -238,7 +238,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue';
 
 import type { ProjectSummary, SessionSummary } from '../composables/state';
 import useTau from '../composables/useTau';
-import { applyHeldOrder, heldSessionIds } from '../lib/session-order';
+import { applyHeldOrder, heldSessions } from '../lib/session-order';
 import {
   MAX_SIDEBAR_WIDTH,
   MIN_SIDEBAR_WIDTH,
@@ -301,8 +301,8 @@ function toggleArchivedView(): void {
   showingArchived.value = !showingArchived.value;
 }
 
-/** Held session ids by project path, empty whenever the list is not hovered. */
-const heldOrder = ref(new Map<string, string[]>());
+/** Session snapshots by project path, empty whenever the list is not hovered. */
+const heldOrder = ref(new Map<string, SessionSummary[]>());
 let projectSortable: Sortable | undefined;
 
 onMounted(() => {
@@ -322,7 +322,7 @@ function holdSessionOrder(event: PointerEvent): void {
   heldOrder.value = new Map(
     (state.workspace?.projects ?? []).map((project) => [
       project.path,
-      heldSessionIds(projectSessions(project)),
+      heldSessions(projectSessions(project)),
     ]),
   );
 }
@@ -334,7 +334,7 @@ function releaseSessionOrder(): void {
 function orderedSessions(project: ProjectSummary): SessionSummary[] {
   return applyHeldOrder(
     projectSessions(project),
-    heldOrder.value.get(project.path) ?? [],
+    heldOrder.value.get(project.path),
   );
 }
 

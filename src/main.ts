@@ -43,6 +43,14 @@ async function mountApp(): Promise<void> {
     app.mount('#app');
     return;
   }
+  if (import.meta.env.DEV && fixture === 'session-order') {
+    const { default: SessionOrderFixture } =
+      await import('./dev/SessionOrderFixture.vue');
+    const app = createApp(SessionOrderFixture);
+    app.config.errorHandler = vueErrorHandler;
+    app.mount('#app');
+    return;
+  }
   if (import.meta.env.DEV && fixture === 'extension-dialog') {
     const { default: ExtensionDialogFixture } =
       await import('./dev/ExtensionDialogFixture.vue');
