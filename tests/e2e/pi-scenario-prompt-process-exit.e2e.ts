@@ -77,6 +77,7 @@ test('keeps a partial failed prompt local to its owning session', async ({
   ).toHaveCount(0);
   await expect(transcript).toContainText(prompt);
   await expect(transcript).toContainText(partial);
+  await expect(composer).toHaveValue('');
   await expectNoRawFailure(page);
   await releaseGate(page, afterExit);
 

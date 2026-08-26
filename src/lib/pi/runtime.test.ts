@@ -134,13 +134,135 @@ beforeEach(async () => {
 });
 
 describe('prompt delivery', () => {
+  it('restores an unconfirmed saved-session prompt when its bridge fails', async () => {
+    const { handleBridgeEvent } = await import('./runtime');
+    const controller = makeController({
+      promptSubmitting: true,
+      working: true,
+      draft: 'A newer draft',
+      submittedPrompt: {
+        requestId: 'prompt-1',
+        generation: 1,
+        message: 'Keep this draft',
+        draft: '  Keep this draft  ',
+        accepted: false,
+        optimisticId: 'optimistic-1',
+      },
+      messages: [{ id: 'optimistic-1', kind: 'user', text: 'Keep this draft' }],
+    });
+    state.controllers.push(controller);
+
+    await handleBridgeEvent({
+      runtimeId: controller.runtimeId,
+      generation: controller.generation,
+      kind: 'error',
+    });
+
+    expect(controller.promptSubmitting).toBe(false);
+    expect(controller.working).toBe(false);
+    expect(controller.submittedPrompt).toBeUndefined();
+    expect(controller.draft).toBe('  Keep this draft  \n\nA newer draft');
+    expect(controller.messages).toEqual([]);
+  });
+
+  it('restores an unconfirmed prompt interrupted by a new generation', async () => {
+    const { handleBridgeEvent } = await import('./runtime');
+    const controller = makeController({
+      promptSubmitting: true,
+      working: true,
+      draft: 'A newer draft',
+      submittedPrompt: {
+        requestId: 'prompt-1',
+        generation: 1,
+        message: 'Keep this draft',
+        draft: 'Keep this draft',
+        accepted: false,
+        optimisticId: 'optimistic-1',
+      },
+      messages: [{ id: 'optimistic-1', kind: 'user', text: 'Keep this draft' }],
+    });
+    state.controllers.push(controller);
+
+    await handleBridgeEvent({
+      runtimeId: controller.runtimeId,
+      generation: controller.generation + 1,
+      kind: 'started',
+    });
+
+    expect(controller.generation).toBe(2);
+    expect(controller.promptSubmitting).toBe(false);
+    expect(controller.working).toBe(false);
+    expect(controller.submittedPrompt).toBeUndefined();
+    expect(controller.draft).toBe('Keep this draft\n\nA newer draft');
+    expect(controller.messages).toEqual([]);
+  });
+
+  it('does not restore a prompt Pi accepted before its bridge failed', async () => {
+    const { handleBridgeEvent } = await import('./runtime');
+    const controller = makeController({
+      draft: 'A newer draft',
+      submittedPrompt: {
+        requestId: 'prompt-1',
+        generation: 1,
+        message: 'Keep this draft',
+        draft: 'Keep this draft',
+        accepted: true,
+        optimisticId: 'optimistic-1',
+      },
+      messages: [{ id: 'optimistic-1', kind: 'user', text: 'Keep this draft' }],
+    });
+    state.controllers.push(controller);
+
+    await handleBridgeEvent({
+      runtimeId: controller.runtimeId,
+      generation: controller.generation,
+      kind: 'error',
+    });
+
+    expect(controller.submittedPrompt).toBeUndefined();
+    expect(controller.draft).toBe('A newer draft');
+    expect(controller.messages).toHaveLength(1);
+  });
+
+  it('does not restore an accepted prompt when its response reports failure', async () => {
+    const { handleResponse } = await import('./runtime');
+    const controller = makeController({
+      promptSubmitting: true,
+      streaming: true,
+      working: true,
+      draft: 'A newer draft',
+      submittedPrompt: {
+        requestId: 'prompt-1',
+        generation: 1,
+        message: 'Keep this draft',
+        draft: 'Keep this draft',
+        accepted: true,
+        optimisticId: 'optimistic-1',
+      },
+      messages: [{ id: 'optimistic-1', kind: 'user', text: 'Keep this draft' }],
+    });
+
+    await handleResponse(controller, {
+      id: 'prompt-1',
+      command: 'prompt',
+      success: false,
+    });
+
+    expect(controller.promptSubmitting).toBe(false);
+    expect(controller.submittedPrompt).toBeUndefined();
+    expect(controller.draft).toBe('A newer draft');
+    expect(controller.messages).toHaveLength(1);
+    expect(controller.streaming).toBe(true);
+    expect(controller.working).toBe(true);
+  });
+
   it('restores a resumed phantom draft when its first request cannot be sent', async () => {
     const { sendPhantomMessage } = await import('./runtime');
     const controller = makeController({
       phantom: true,
       ready: true,
       generation: 1,
-      draft: 'Keep this draft',
+      draft: '',
     });
     state.workspace = {
       activeProjectPath: '/tmp/project',
@@ -164,14 +286,19 @@ describe('prompt delivery', () => {
         }),
     );
 
-    const delivery = sendPhantomMessage(controller, 'Keep this draft', false);
+    const delivery = sendPhantomMessage(
+      controller,
+      'Keep this draft',
+      '  Keep this draft  ',
+      false,
+    );
     controller.draft = 'A newer draft';
     rejectSend?.(new Error('Pi is unavailable'));
     await delivery;
 
     expect(controller.promptSubmitting).toBe(false);
     expect(controller.pendingPrompt).toBeUndefined();
-    expect(controller.draft).toBe('Keep this draft\n\nA newer draft');
+    expect(controller.draft).toBe('  Keep this draft  \n\nA newer draft');
     expect(controller.messages).toEqual([]);
     expect(controller.status).toBe(
       'The message could not be sent. Reopen the session and try again.',

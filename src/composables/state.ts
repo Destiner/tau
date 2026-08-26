@@ -122,12 +122,16 @@ interface PendingSessionRename {
 
 interface SubmittedPrompt {
   requestId: string;
+  generation: number;
   message: string;
+  draft: string;
+  accepted: boolean;
   optimisticId?: string;
 }
 
 interface PendingPrompt {
   message: string;
+  draft: string;
   optimisticId: string;
   command: boolean;
   stateRequestId: string;

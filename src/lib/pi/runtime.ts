@@ -75,17 +75,24 @@ import {
 async function sendPhantomMessage(
   controller: SessionController,
   message: string,
+  draft: string,
   command: boolean,
   parentContext?: TraceContext,
 ): Promise<void> {
   const project = state.workspace?.projects.find(
     (item) => item.path === controller.projectPath,
   );
-  if (!project || !controller.phantom) return;
+  if (!project || !controller.phantom) {
+    controller.promptSubmitting = false;
+    restoreSubmittedDraft(controller, draft);
+    setControllerError(controller, errorCopy.messageSend);
+    return;
+  }
 
   const optimisticId = `optimistic-user-${Date.now()}`;
   controller.pendingPrompt = {
     message,
+    draft,
     optimisticId,
     command,
     stateRequestId: '',
@@ -145,6 +152,7 @@ async function startController(
       ready: false,
       starting: true,
       stopping: false,
+      working: Boolean(controller.pendingPrompt),
       connectingRemote: Boolean(project.connectionString),
     },
     'controller_start',
@@ -160,7 +168,7 @@ async function startController(
   controller.commandSyncRequestId = '';
   controller.replacementProbeRequestId = '';
   controller.pendingSessionRename = undefined;
-  controller.submittedPrompt = undefined;
+  settleInterruptedSubmittedPrompt(controller);
   controller.pendingEffort = '';
   controller.pendingSettingRequestId = '';
   controller.abortProbeRequestId = '';
@@ -804,6 +812,17 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
   touchController(controller);
   if (event.kind === 'started') {
     if (event.generation > controller.generation) {
+      if (controller.submittedPrompt?.generation === controller.generation) {
+        const accepted = controller.submittedPrompt.accepted;
+        settleInterruptedSubmittedPrompt(controller);
+        if (!accepted) {
+          setControllerLifecycle(
+            controller,
+            { working: false },
+            'message_send_failed',
+          );
+        }
+      }
       abandonPendingRpcSpans(
         controller.runtimeId,
         controller.generation,
@@ -840,8 +859,22 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     controller.pendingEffort = '';
     controller.pendingSettingRequestId = '';
     clearSettingRequestWatch(controller);
-    if (controller.pendingPrompt) cancelPendingPrompt(controller, message);
-    else setControllerError(controller, message);
+    if (controller.pendingPrompt) {
+      cancelPendingPrompt(controller, message);
+    } else if (controller.submittedPrompt) {
+      const accepted = controller.submittedPrompt.accepted;
+      settleInterruptedSubmittedPrompt(controller);
+      if (!accepted) {
+        setControllerLifecycle(
+          controller,
+          { working: false },
+          'message_send_failed',
+        );
+      }
+      setControllerError(controller, message);
+    } else {
+      setControllerError(controller, message);
+    }
     return;
   }
   if (event.kind === 'exited') {
@@ -871,6 +904,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     if (controller.pendingPrompt) {
       cancelPendingPrompt(controller, message || 'The Pi process stopped.');
     }
+    settleInterruptedSubmittedPrompt(controller);
     setControllerLifecycle(
       controller,
       {
@@ -910,6 +944,9 @@ async function handleRpc(
     return;
   }
   if (type === 'agent_start') {
+    if (controller.submittedPrompt) {
+      controller.submittedPrompt.accepted = true;
+    }
     clearSessionReplacementWatch(controller);
     clearAbortWatch(controller);
     resetStreamAggregate(controller.runtimeId, controller.generation);
@@ -1224,12 +1261,23 @@ async function handleResponse(
     controller.submittedPrompt?.requestId === responseId;
   if (
     command === 'prompt' &&
+    !resolvesSubmittedPrompt &&
+    !pendingResult.matched
+  ) {
+    return;
+  }
+  if (
+    command === 'prompt' &&
     Boolean(controller.commandPromptRequestId) &&
     responseId === controller.commandPromptRequestId
   ) {
     controller.commandPromptRequestId = '';
     if (response.success === true) {
-      if (resolvesSubmittedPrompt) controller.submittedPrompt = undefined;
+      if (resolvesSubmittedPrompt && controller.submittedPrompt) {
+        controller.submittedPrompt.accepted = true;
+        controller.submittedPrompt = undefined;
+        controller.promptSubmitting = false;
+      }
       setControllerLifecycle(
         controller,
         { working: controller.streaming },
@@ -1296,10 +1344,17 @@ async function handleResponse(
       );
     }
     if (command === 'prompt') {
-      if (resolvesSubmittedPrompt) recoverSubmittedPrompt(controller);
+      const accepted =
+        resolvesSubmittedPrompt &&
+        controller.submittedPrompt?.accepted === true;
+      if (resolvesSubmittedPrompt) {
+        controller.promptSubmitting = false;
+        if (accepted) controller.submittedPrompt = undefined;
+        else recoverSubmittedPrompt(controller);
+      }
       setControllerLifecycle(
         controller,
-        { working: false },
+        { working: accepted ? controller.streaming : false },
         'prompt_failed',
         responseContext,
       );
@@ -1590,7 +1645,11 @@ async function handleResponse(
   }
 
   if (command === 'prompt') {
-    if (resolvesSubmittedPrompt) controller.submittedPrompt = undefined;
+    if (resolvesSubmittedPrompt && controller.submittedPrompt) {
+      controller.submittedPrompt.accepted = true;
+      controller.submittedPrompt = undefined;
+      controller.promptSubmitting = false;
+    }
     setControllerLifecycle(
       controller,
       { working: controller.streaming },
@@ -1747,23 +1806,37 @@ async function dispatchPendingPrompt(
   ) {
     appendOptimisticPrompt(controller, prompt.message, prompt.optimisticId);
   }
+  const requestId = nextRequestId('prompt');
+  if (prompt.command) controller.commandPromptRequestId = requestId;
+  const submission = {
+    requestId,
+    generation: controller.generation,
+    message: prompt.message,
+    draft: prompt.draft,
+    accepted: false,
+    ...(prompt.command ? {} : { optimisticId: prompt.optimisticId }),
+  };
+  controller.submittedPrompt = submission;
   try {
-    const requestId = nextRequestId('prompt');
-    if (prompt.command) controller.commandPromptRequestId = requestId;
-    controller.submittedPrompt = {
-      requestId,
-      message: prompt.message,
-      ...(prompt.command ? {} : { optimisticId: prompt.optimisticId }),
-    };
     await rpc(
       controller,
       { id: requestId, type: 'prompt', message: prompt.message },
       prompt.telemetryContext,
     );
+    if (
+      controller.submittedPrompt?.requestId !== submission.requestId &&
+      !submission.accepted
+    ) {
+      return;
+    }
     controller.promptSubmitting = false;
-    if (controller.draft.trim() === prompt.message) controller.draft = '';
   } catch {
+    if (controller.submittedPrompt?.requestId !== submission.requestId) return;
     controller.promptSubmitting = false;
+    if (submission.accepted) {
+      controller.submittedPrompt = undefined;
+      return;
+    }
     recoverSubmittedPrompt(controller);
     setControllerLifecycle(
       controller,
@@ -2119,15 +2192,32 @@ function materializePendingSession(
   }
 }
 
+function restoreSubmittedDraft(
+  controller: SessionController,
+  submittedDraft: string,
+): void {
+  if (controller.draft.trim() === submittedDraft.trim()) return;
+  controller.draft = controller.draft
+    ? `${submittedDraft}\n\n${controller.draft}`
+    : submittedDraft;
+}
+
+function settleInterruptedSubmittedPrompt(controller: SessionController): void {
+  const submitted = controller.submittedPrompt;
+  if (!submitted) return;
+  controller.promptSubmitting = false;
+  if (submitted.accepted) {
+    controller.submittedPrompt = undefined;
+  } else {
+    recoverSubmittedPrompt(controller);
+  }
+}
+
 function recoverSubmittedPrompt(controller: SessionController): void {
   const submitted = controller.submittedPrompt;
   if (!submitted) return;
   controller.submittedPrompt = undefined;
-  if (controller.draft.trim() !== submitted.message) {
-    controller.draft = controller.draft
-      ? `${submitted.message}\n\n${controller.draft}`
-      : submitted.message;
-  }
+  restoreSubmittedDraft(controller, submitted.draft);
   if (submitted.optimisticId) {
     controller.messages = controller.messages.filter(
       (message) => message.id !== submitted.optimisticId,
@@ -2155,11 +2245,7 @@ function cancelPendingPrompt(
   controller.messages = controller.messages.filter(
     (message) => message.id !== prompt.optimisticId,
   );
-  if (controller.draft.trim() !== prompt.message) {
-    controller.draft = controller.draft
-      ? `${prompt.message}\n\n${controller.draft}`
-      : prompt.message;
-  }
+  restoreSubmittedDraft(controller, prompt.draft);
   setControllerError(controller, message);
 }
 

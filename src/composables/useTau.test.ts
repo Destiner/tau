@@ -383,7 +383,7 @@ describe('session drafts and selection', () => {
     draft.value = 'Start background work';
     await sendMessage();
     expect(controller.promptSubmitting).toBe(true);
-    expect(draft.value).toBe('Start background work');
+    expect(draft.value).toBe('');
     emitRpc(controller, {
       id: controller.pendingPrompt?.stateRequestId,
       type: 'response',
@@ -2406,7 +2406,7 @@ describe('turn failures', () => {
 });
 
 describe('prompt submission', () => {
-  it('keeps the draft through delivery and blocks repeat prompts while working', async () => {
+  it('clears immediately, preserves new edits, and blocks repeat prompts while working', async () => {
     const { tau, controller } = await setupNamedSession();
     const defaultInvoke = vi.mocked(invoke).getMockImplementation();
     let acceptSend: (() => void) | undefined;
@@ -2429,7 +2429,11 @@ describe('prompt submission', () => {
       });
       expect(tau.promptSubmitting.value).toBe(true);
       expect(tau.canCompose.value).toBe(false);
-      expect(tau.draft.value).toBe('  Keep this until delivery  ');
+      expect(tau.draft.value).toBe('');
+
+      tau.draft.value = 'Write the next prompt';
+      await tau.sendMessage();
+      expect(sentRequests(controller, 'prompt')).toHaveLength(1);
 
       acceptSend?.();
       await submission;
@@ -2437,19 +2441,62 @@ describe('prompt submission', () => {
       expect(controller.promptSubmitting).toBe(false);
       expect(tau.promptSubmitting.value).toBe(false);
       expect(tau.canCompose.value).toBe(false);
-      expect(tau.draft.value).toBe('');
+      expect(tau.draft.value).toBe('Write the next prompt');
 
-      tau.draft.value = 'Wait for the current prompt';
       await tau.sendMessage();
       expect(sentRequests(controller, 'prompt')).toHaveLength(1);
-      expect(tau.draft.value).toBe('Wait for the current prompt');
+      expect(tau.draft.value).toBe('Write the next prompt');
     } finally {
       if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
     }
   });
 
-  it('keeps saved-session drafts when delivery fails', async () => {
+  it('does not restore a send Pi accepted before delivery reports failure', async () => {
     const { tau, controller } = await setupNamedSession();
+    const defaultInvoke = vi.mocked(invoke).getMockImplementation();
+    let rejectSend: ((error: Error) => void) | undefined;
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      const request = (args as { request?: { type?: string } })?.request;
+      if (command === 'send_pi' && request?.type === 'prompt') {
+        await new Promise<never>((_resolve, reject) => {
+          rejectSend = reject;
+        });
+      }
+      return defaultInvoke?.(command, args);
+    });
+
+    try {
+      tau.draft.value = 'Already accepted';
+      const submission = tau.sendMessage();
+      await vi.waitFor(() => {
+        expect(controller.submittedPrompt).toBeDefined();
+      });
+      tau.draft.value = 'A newer draft';
+
+      emitRpc(controller, { type: 'agent_start' });
+      await vi.waitFor(() => {
+        expect(controller.submittedPrompt?.accepted).toBe(true);
+      });
+      rejectSend?.(new Error('Late delivery failure'));
+      await submission;
+
+      expect(controller.submittedPrompt).toBeUndefined();
+      expect(controller.promptSubmitting).toBe(false);
+      expect(controller.streaming).toBe(true);
+      expect(controller.working).toBe(true);
+      expect(tau.draft.value).toBe('A newer draft');
+      expect(
+        controller.messages.some(
+          (entry) => entry.kind === 'user' && entry.text === 'Already accepted',
+        ),
+      ).toBe(true);
+    } finally {
+      if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
+    }
+  });
+
+  it('restores a failed send to its session without disturbing later edits', async () => {
+    const { tau, controller, project, session } = await setupNamedSession();
     const defaultInvoke = vi.mocked(invoke).getMockImplementation();
     let rejectSend: ((error: Error) => void) | undefined;
     vi.mocked(invoke).mockImplementation(async (command, args) => {
@@ -2468,15 +2515,36 @@ describe('prompt submission', () => {
       await vi.waitFor(() => {
         expect(controller.promptSubmitting).toBe(true);
       });
+      expect(tau.draft.value).toBe('');
+      const failedRequestId = controller.submittedPrompt?.requestId;
+      if (!failedRequestId) throw new Error('Expected a submitted prompt');
       tau.draft.value = 'Keep this newer draft';
+      await tau.newSession(project);
+      tau.draft.value = 'Other session draft';
+
       rejectSend?.(new Error('Pi is unavailable'));
       await submission;
 
       expect(controller.promptSubmitting).toBe(false);
+      expect(tau.draft.value).toBe('Other session draft');
+      await tau.selectSession(project, session);
       expect(tau.canCompose.value).toBe(true);
       expect(tau.draft.value).toBe(
-        'Keep this after failure\n\nKeep this newer draft',
+        '  Keep this after failure  \n\nKeep this newer draft',
       );
+
+      tau.draft.value = 'Edited after recovery';
+      const failureStatus = controller.status;
+      emitRpc(controller, {
+        id: failedRequestId,
+        type: 'response',
+        command: 'prompt',
+        success: false,
+      });
+      await vi.waitFor(() => {
+        expect(tau.draft.value).toBe('Edited after recovery');
+      });
+      expect(controller.status).toBe(failureStatus);
       expect(
         controller.messages.some(
           (entry) =>

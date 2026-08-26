@@ -638,7 +638,8 @@ function useTau() {
 
   async function sendMessage(): Promise<void> {
     const controller = activeController.value;
-    const message = controller?.draft.trim() ?? '';
+    const submittedDraft = controller?.draft ?? '';
+    const message = submittedDraft.trim();
     if (
       !controller ||
       !message ||
@@ -660,31 +661,32 @@ function useTau() {
       const command = invokesExtensionCommand(controller, message);
       if (!command) markUserMessageSubmitted(controller);
 
+      controller.promptSubmitting = true;
+      controller.draft = '';
+
       if (controller.phantom) {
         await sendPhantomMessage(
           controller,
           message,
+          submittedDraft,
           command,
           actionSpan.context,
         );
         return;
       }
 
-      controller.promptSubmitting = true;
-
-      // Sending to a session whose record is still archived is an implicit
-      // unarchive: activity proves the session is wanted again.
-      const project = state.workspace?.projects.find(
-        (candidate) => candidate.path === controller.projectPath,
-      );
-      const sessionRecord = project?.sessions.find(
-        (candidate) => candidate.id === controller.sessionId,
-      );
-      if (project && sessionRecord?.archived) {
-        await unarchiveSession(project, sessionRecord);
-      }
-
       const optimisticId = `optimistic-user-${Date.now()}`;
+      const requestId = nextRequestId('prompt');
+      if (command) controller.commandPromptRequestId = requestId;
+      const submission = {
+        requestId,
+        generation: controller.generation,
+        message,
+        draft: submittedDraft,
+        accepted: false,
+        ...(command ? {} : { optimisticId }),
+      };
+      controller.submittedPrompt = submission;
       setControllerLifecycle(
         controller,
         { working: true },
@@ -696,25 +698,30 @@ function useTau() {
       }
       controller.status = '';
       try {
-        const requestId = nextRequestId('prompt');
-        if (command) controller.commandPromptRequestId = requestId;
-        controller.submittedPrompt = {
-          requestId,
-          message,
-          ...(command ? {} : { optimisticId }),
-        };
+        // Sending to a session whose record is still archived is an implicit
+        // unarchive: activity proves the session is wanted again.
+        const project = state.workspace?.projects.find(
+          (candidate) => candidate.path === controller.projectPath,
+        );
+        const sessionRecord = project?.sessions.find(
+          (candidate) => candidate.id === controller.sessionId,
+        );
+        if (project && sessionRecord?.archived) {
+          await unarchiveSession(project, sessionRecord);
+        }
         await rpc(
           controller,
           { id: requestId, type: 'prompt', message },
           actionSpan.context,
         );
-        controller.promptSubmitting = false;
-        if (controller.draft.trim() === message) controller.draft = '';
-        if (!command) {
-          await registerConnectedSession(controller, actionSpan.context);
-        }
       } catch {
+        if (controller.submittedPrompt?.requestId !== submission.requestId)
+          return;
         controller.promptSubmitting = false;
+        if (submission.accepted) {
+          controller.submittedPrompt = undefined;
+          return;
+        }
         recoverSubmittedPrompt(controller);
         setControllerLifecycle(
           controller,
@@ -724,6 +731,17 @@ function useTau() {
         );
         controller.commandPromptRequestId = '';
         setControllerError(controller, errorCopy.messageSend);
+        return;
+      }
+      if (
+        controller.submittedPrompt?.requestId !== submission.requestId &&
+        !submission.accepted
+      ) {
+        return;
+      }
+      controller.promptSubmitting = false;
+      if (!command) {
+        await registerConnectedSession(controller, actionSpan.context);
       }
     } finally {
       actionSpan.end();

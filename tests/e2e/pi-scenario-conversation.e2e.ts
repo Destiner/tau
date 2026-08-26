@@ -90,6 +90,7 @@ test('keeps the composer editable but blocks repeat sends during delivery', asyn
 
   await expect(composer).toBeEnabled();
   await expect(composer).toBeFocused();
+  await expect(composer).toHaveValue('');
   await expect(send).toBeDisabled();
 
   const nextDraft = 'Ask a follow-up';
@@ -117,6 +118,74 @@ test('keeps the composer editable but blocks repeat sends during delivery', asyn
   await expect(page.getByText(completeReply, { exact: true })).toBeVisible();
   await expect(composer).toHaveValue(nextDraft);
   await expect(send).toBeEnabled();
+});
+
+test('restores an immediately cleared composer when delivery fails', async ({
+  page,
+}) => {
+  await page.goto(scenarioUrl);
+
+  const composer = page.getByRole('textbox', { name: 'Message Pi' });
+  const send = page.getByRole('button', { name: 'Send Message' });
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __TAU_FAILED_PROMPT_DELIVERY__?: {
+        attempts: number;
+        reject: () => void;
+      };
+    };
+    const internals = window.__TAURI_INTERNALS__;
+    if (!internals) throw new Error('Expected mocked Tauri internals.');
+    const invoke = internals.invoke;
+    let rejectDelivery: (() => void) | undefined;
+    const delivery = {
+      attempts: 0,
+      reject: (): void => rejectDelivery?.(),
+    };
+    testWindow.__TAU_FAILED_PROMPT_DELIVERY__ = delivery;
+    internals.invoke = async (command, args): Promise<unknown> => {
+      const request = (args as Record<string, unknown> | undefined)?.request as
+        { type?: string } | undefined;
+      if (command === 'send_pi' && request?.type === 'prompt') {
+        delivery.attempts += 1;
+        if (delivery.attempts === 1) {
+          await new Promise<void>((resolve) => {
+            rejectDelivery = resolve;
+          });
+          throw new Error('Simulated prompt delivery failure');
+        }
+      }
+      return await invoke(command, args);
+    };
+  });
+
+  await composer.fill(`  ${prompt}  `);
+  await send.click();
+  await page.waitForFunction(
+    () =>
+      (
+        window as Window & {
+          __TAU_FAILED_PROMPT_DELIVERY__?: { attempts: number };
+        }
+      ).__TAU_FAILED_PROMPT_DELIVERY__?.attempts === 1,
+  );
+  await expect(composer).toHaveValue('');
+  await expect(send).toBeDisabled();
+
+  await page.evaluate(() =>
+    (
+      window as Window & {
+        __TAU_FAILED_PROMPT_DELIVERY__?: { reject: () => void };
+      }
+    ).__TAU_FAILED_PROMPT_DELIVERY__?.reject(),
+  );
+  await expect(composer).toHaveValue(`  ${prompt}  `);
+  await expect(send).toBeEnabled();
+  await expect(page.getByText(prompt, { exact: true })).toHaveCount(0);
+
+  await send.click();
+  await expect(page.getByText(completeReply, { exact: true })).toBeVisible();
+  await expect(composer).toHaveValue('');
 });
 
 test('submits and settles a deterministic streamed conversation', async ({
