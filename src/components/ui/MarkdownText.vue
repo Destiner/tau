@@ -18,6 +18,8 @@
     <DiagramViewer
       v-if="viewer"
       :svg="viewer.svg"
+      :x="viewer.x"
+      :y="viewer.y"
       :width="viewer.width"
       :height="viewer.height"
       :return-focus="viewerReturnFocus"
@@ -124,6 +126,8 @@ function copyButtonAt(target: EventTarget | null): HTMLElement | null {
 
 interface DiagramView {
   svg: string;
+  x: number;
+  y: number;
   width: number;
   height: number;
 }
@@ -137,22 +141,30 @@ function expandButtonAt(target: EventTarget | null): HTMLElement | null {
   return button instanceof HTMLElement ? button : null;
 }
 
-/** The size the diagram was drawn at, which the viewer lays its canvas out for. */
-function diagramSize(svg: SVGSVGElement): { width: number; height: number } {
+/** The natural coordinate bounds the renderer named on the drawing. */
+function diagramBounds(svg: SVGSVGElement): {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+} {
+  const box = svg.viewBox.baseVal;
+  if (box.width > 0 && box.height > 0) {
+    return { x: box.x, y: box.y, width: box.width, height: box.height };
+  }
+
   const width = Number.parseFloat(svg.getAttribute('width') ?? '');
   const height = Number.parseFloat(svg.getAttribute('height') ?? '');
-  if (width > 0 && height > 0) return { width, height };
-  const box = svg.viewBox.baseVal;
-  return { width: box.width, height: box.height };
+  return { x: 0, y: 0, width, height };
 }
 
 function openDiagram(button: HTMLElement): void {
   const svg = button.parentElement?.querySelector('svg');
   if (!svg) return;
-  const { width, height } = diagramSize(svg);
-  if (!(width > 0 && height > 0)) return;
+  const bounds = diagramBounds(svg);
+  if (!(bounds.width > 0 && bounds.height > 0)) return;
   viewerTrigger = button;
-  viewer.value = { svg: svg.outerHTML, width, height };
+  viewer.value = { svg: svg.outerHTML, ...bounds };
 }
 
 /** The viewer hands focus back to the button that opened it, if it is still here. */

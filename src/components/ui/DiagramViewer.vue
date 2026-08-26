@@ -15,7 +15,7 @@
           ref="canvas"
           class="viewer-canvas"
           :class="{ panning }"
-          :style="{ backgroundPosition: `${tx}px ${ty}px` }"
+          :style="{ backgroundPosition }"
           @wheel.prevent="handleWheel"
           @pointerdown="handlePointerDown"
           @pointermove="handlePointerMove"
@@ -24,8 +24,8 @@
         >
           <!-- eslint-disable vue/no-v-html -- the svg is renderDiagram's own sanitized output -->
           <div
-            class="viewer-plane"
-            :style="planeStyle"
+            ref="drawing"
+            class="viewer-drawing"
             v-html="svg"
           ></div>
           <!-- eslint-enable vue/no-v-html -->
@@ -43,11 +43,26 @@ import {
   DialogTitle,
   VisuallyHidden,
 } from 'reka-ui';
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+
+import {
+  MIN_SCALE,
+  cameraViewBox,
+  fitDiagram,
+  panDiagram,
+  resizeDiagram,
+  zoomDiagram,
+  type DiagramBounds,
+  type DiagramCamera,
+  type Point,
+  type Size,
+} from '../../lib/diagram-viewport';
 
 const props = defineProps<{
   /** The drawn diagram, at the natural size its width and height name. */
   svg: string;
+  x: number;
+  y: number;
   width: number;
   height: number;
   /** Persistent control that receives focus after the viewer closes. */
@@ -57,29 +72,44 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [] }>();
 
 const canvas = ref<HTMLElement | null>(null);
-
-const scale = ref(1);
-const tx = ref(0);
-const ty = ref(0);
+const drawing = ref<HTMLElement | null>(null);
 const panning = ref(false);
+const backgroundPosition = ref('0px 0px');
 
-const MIN_SCALE = 0.1;
-const MAX_SCALE = 8;
-/** Fitting may enlarge a small diagram — it is vector — but not comically. */
-const MAX_FIT_SCALE = 1.5;
-/** Breathing room between the figure and the screen edge when fitting. */
-const FIT_MARGIN = 96;
 /** Under this much travel a press is a click, which is how the viewer closes. */
 const CLICK_SLOP = 5;
 
-const planeStyle = computed(() => ({
-  width: `${props.width}px`,
-  height: `${props.height}px`,
-  transform: `translate(${tx.value}px, ${ty.value}px) scale(${scale.value})`,
-}));
+let camera: DiagramCamera = { scale: 1, tx: 0, ty: 0 };
+let viewport: Size = { width: 1, height: 1 };
+let minimumScale = MIN_SCALE;
+let vector: SVGSVGElement | null = null;
+let renderFrame = 0;
+let resizeObserver: ResizeObserver | undefined;
+let mounted = false;
+
+function bounds(): DiagramBounds {
+  return {
+    x: props.x,
+    y: props.y,
+    width: props.width,
+    height: props.height,
+  };
+}
 
 function handleOpenChange(open: boolean): void {
   if (!open) emit('close');
+}
+
+/**
+ * Reka observes Escape on window, after document's bubble phase. The app also
+ * owns document keyboard handling, so close here in document's capture phase:
+ * this viewer owns Escape before it can reach any whole-app handler.
+ */
+function handleKeydownCapture(event: KeyboardEvent): void {
+  if (event.key !== 'Escape') return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  emit('close');
 }
 
 function handleCloseAutoFocus(event: Event): void {
@@ -89,31 +119,41 @@ function handleCloseAutoFocus(event: Event): void {
   target.focus({ preventScroll: true });
 }
 
-function fitScale(): number {
-  const availableWidth = window.innerWidth - FIT_MARGIN;
-  const availableHeight = window.innerHeight - FIT_MARGIN;
-  return Math.min(
-    availableWidth / props.width,
-    availableHeight / props.height,
-    MAX_FIT_SCALE,
-  );
+function canvasSize(): Size {
+  return {
+    width: Math.max(1, canvas.value?.clientWidth ?? window.innerWidth),
+    height: Math.max(1, canvas.value?.clientHeight ?? window.innerHeight),
+  };
 }
 
-/** Opens on the whole figure, centered: the overview the transcript could not give. */
-function fit(): void {
-  const at = fitScale();
-  scale.value = at;
-  tx.value = (window.innerWidth - props.width * at) / 2;
-  ty.value = (window.innerHeight - props.height * at) / 2;
+/** Writes at most once per frame even when a trackpad sends events faster. */
+function renderCamera(): void {
+  renderFrame = 0;
+  if (!vector) return;
+  const box = cameraViewBox(camera, viewport);
+  vector.setAttribute(
+    'viewBox',
+    `${box.x} ${box.y} ${box.width} ${box.height}`,
+  );
+  backgroundPosition.value = `${camera.tx}px ${camera.ty}px`;
+}
+
+function scheduleRender(): void {
+  if (!renderFrame) renderFrame = requestAnimationFrame(renderCamera);
 }
 
 /** Rescales around a fixed point, which is what keeps it under the pointer. */
-function zoomTo(pointX: number, pointY: number, next: number): void {
-  const clamped = Math.min(MAX_SCALE, Math.max(MIN_SCALE, next));
-  const ratio = clamped / scale.value;
-  tx.value = pointX - (pointX - tx.value) * ratio;
-  ty.value = pointY - (pointY - ty.value) * ratio;
-  scale.value = clamped;
+function zoomTo(point: Point, next: number): void {
+  camera = zoomDiagram(camera, point, next, minimumScale);
+  scheduleRender();
+}
+
+function localPoint(clientX: number, clientY: number): Point {
+  const box = canvas.value?.getBoundingClientRect();
+  return {
+    x: clientX - (box?.left ?? 0),
+    y: clientY - (box?.top ?? 0),
+  };
 }
 
 /**
@@ -122,15 +162,15 @@ function zoomTo(pointX: number, pointY: number, next: number): void {
  * zooms around the pointer, the drag pans.
  */
 function handleWheel(event: WheelEvent): void {
+  syncViewport();
   if (event.ctrlKey || event.metaKey) {
     zoomTo(
-      event.clientX,
-      event.clientY,
-      scale.value * Math.exp(-event.deltaY * 0.01),
+      localPoint(event.clientX, event.clientY),
+      camera.scale * Math.exp(-event.deltaY * 0.01),
     );
   } else {
-    tx.value -= event.deltaX;
-    ty.value -= event.deltaY;
+    camera = panDiagram(camera, -event.deltaX, -event.deltaY);
+    scheduleRender();
   }
 }
 
@@ -145,13 +185,17 @@ let gestureBase = 1;
 
 function handleGestureStart(event: Event): void {
   event.preventDefault();
-  gestureBase = scale.value;
+  syncViewport();
+  gestureBase = camera.scale;
 }
 
 function handleGestureChange(event: Event): void {
   event.preventDefault();
   const gesture = event as WebKitGestureEvent;
-  zoomTo(gesture.clientX, gesture.clientY, gestureBase * gesture.scale);
+  zoomTo(
+    localPoint(gesture.clientX, gesture.clientY),
+    gestureBase * gesture.scale,
+  );
 }
 
 let lastX = 0;
@@ -161,6 +205,7 @@ let downY = 0;
 
 function handlePointerDown(event: PointerEvent): void {
   if (event.button !== 0) return;
+  syncViewport();
   panning.value = true;
   lastX = event.clientX;
   lastY = event.clientY;
@@ -171,10 +216,10 @@ function handlePointerDown(event: PointerEvent): void {
 
 function handlePointerMove(event: PointerEvent): void {
   if (!panning.value) return;
-  tx.value += event.clientX - lastX;
-  ty.value += event.clientY - lastY;
+  camera = panDiagram(camera, event.clientX - lastX, event.clientY - lastY);
   lastX = event.clientX;
   lastY = event.clientY;
+  scheduleRender();
 }
 
 function handlePointerUp(event: PointerEvent): void {
@@ -191,15 +236,47 @@ function handlePointerCancel(): void {
   panning.value = false;
 }
 
-onMounted(() => {
-  fit();
+/** Keeps the same diagram point centred if the fullscreen viewport changes. */
+function syncViewport(): void {
+  const next = canvasSize();
+  if (next.width === viewport.width && next.height === viewport.height) return;
+  camera = resizeDiagram(camera, viewport, next);
+  viewport = next;
+  scheduleRender();
+}
+
+onMounted(async () => {
+  mounted = true;
+  document.addEventListener('keydown', handleKeydownCapture, true);
+  await nextTick();
+  if (!mounted) return;
+  vector = drawing.value?.querySelector('svg') ?? null;
+  if (!vector) return;
+
+  // The outer SVG is the viewport. viewBox changes make both engines lay out
+  // and paint its vectors afresh instead of scaling a composited bitmap layer.
+  vector.setAttribute('width', '100%');
+  vector.setAttribute('height', '100%');
+  vector.setAttribute('preserveAspectRatio', 'none');
+
+  viewport = canvasSize();
+  camera = fitDiagram(bounds(), viewport);
+  minimumScale = Math.min(MIN_SCALE, camera.scale);
+  renderCamera();
+
   canvas.value?.addEventListener('gesturestart', handleGestureStart);
   canvas.value?.addEventListener('gesturechange', handleGestureChange);
+  resizeObserver = new ResizeObserver(syncViewport);
+  if (canvas.value) resizeObserver.observe(canvas.value);
 });
 
 onBeforeUnmount(() => {
+  mounted = false;
+  document.removeEventListener('keydown', handleKeydownCapture, true);
   canvas.value?.removeEventListener('gesturestart', handleGestureStart);
   canvas.value?.removeEventListener('gesturechange', handleGestureChange);
+  resizeObserver?.disconnect();
+  cancelAnimationFrame(renderFrame);
 });
 </script>
 
@@ -229,15 +306,8 @@ onBeforeUnmount(() => {
   cursor: grabbing;
 }
 
-:global(.diagram-viewer .viewer-plane) {
-  position: absolute;
-  top: 0;
-  left: 0;
-  transform-origin: 0 0;
-  will-change: transform;
-}
-
-:global(.diagram-viewer .viewer-plane svg) {
+:global(.diagram-viewer .viewer-drawing),
+:global(.diagram-viewer .viewer-drawing > svg) {
   display: block;
   width: 100%;
   height: 100%;

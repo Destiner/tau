@@ -7,6 +7,7 @@ const fixtureUrl = '/?fixture=long-transcript';
 declare global {
   interface Window {
     __TAU_CLIPBOARD_WRITES__?: string[];
+    __TAU_VIEWER_ESCAPE_HANDLER_CALLS__?: number;
     __TAURI_INTERNALS__?: {
       transformCallback: (callback: unknown) => unknown;
       invoke: (
@@ -456,44 +457,93 @@ test('expands a drawn diagram into a fullscreen pan-and-zoom viewer', async ({
   await button.click();
   const viewer = page.locator('.diagram-viewer');
   await expect(viewer).toBeVisible();
+  await expect(viewer).toHaveRole('dialog');
+  await expect(viewer).toHaveAccessibleName('Diagram');
 
-  // The same drawing, laid out at the size it was drawn at rather than the
-  // squeezed one the column showed.
-  const plane = viewer.locator('.viewer-plane');
-  await expect(plane.locator('text', { hasText: 'Session live?' })).toHaveCount(
-    1,
-  );
-  const naturalWidth = await figure.evaluate((element) =>
-    Number.parseFloat(
-      element.querySelector('svg')?.getAttribute('width') ?? '',
-    ),
+  // The same drawing opens fitted from its natural dimensions. The SVG itself
+  // owns the fullscreen viewport: no transformed ancestor can turn it into a
+  // bitmap layer for the compositor to enlarge.
+  const drawing = viewer.locator('.viewer-drawing');
+  const vector = drawing.locator(':scope > svg');
+  await expect(
+    vector.locator('text', { hasText: 'Session live?' }),
+  ).toHaveCount(1);
+  await expect(vector).toHaveAttribute('width', '100%');
+  await expect(vector).toHaveAttribute('height', '100%');
+  await expect(vector).toHaveAttribute('preserveAspectRatio', 'none');
+  const compositingStyles = await vector.evaluate((element) => {
+    const styles: Array<{ transform: string; willChange: string }> = [];
+    for (
+      let current: Element | null = element;
+      current;
+      current = current.parentElement
+    ) {
+      const style = getComputedStyle(current);
+      styles.push({ transform: style.transform, willChange: style.willChange });
+    }
+    return styles;
+  });
+  expect(compositingStyles.every(({ transform }) => transform === 'none')).toBe(
+    true,
   );
   expect(
-    await plane.evaluate((element) => Number.parseFloat(element.style.width)),
-  ).toBeCloseTo(naturalWidth, 3);
+    compositingStyles.every(({ willChange }) => willChange === 'auto'),
+  ).toBe(true);
 
-  // A pinch arrives as a ctrl-wheel, and zooms; a plain wheel pans in place.
+  const naturalSize = await figure.evaluate((element) => {
+    const svg = element.querySelector('svg');
+    return {
+      width: Number.parseFloat(svg?.getAttribute('width') ?? ''),
+      height: Number.parseFloat(svg?.getAttribute('height') ?? ''),
+    };
+  });
   const canvas = viewer.locator('.viewer-canvas');
-  const scaleOf = (): Promise<number> =>
-    plane.evaluate((element) =>
-      Number.parseFloat(
-        /scale\(([\d.]+)\)/.exec(element.style.transform)?.[1] ?? '',
-      ),
-    );
+  const canvasBox = (await canvas.boundingBox())!;
+  const viewBox = (): Promise<[number, number, number, number]> =>
+    vector.evaluate((element) => {
+      const box = (element as SVGSVGElement).viewBox.baseVal;
+      return [box.x, box.y, box.width, box.height];
+    });
+  const scaleOf = async (): Promise<number> => {
+    const box = await viewBox();
+    return canvasBox.width / box[2];
+  };
   const fitted = await scaleOf();
+  expect(fitted).toBeCloseTo(
+    Math.min(
+      (canvasBox.width - 96) / naturalSize.width,
+      (canvasBox.height - 96) / naturalSize.height,
+      1.5,
+    ),
+    3,
+  );
+
+  // A pinch arrives as a ctrl-wheel, zooms around its pointer, and causes a
+  // new SVG viewBox layout rather than a CSS scale. A plain wheel pans it.
+  const zoomPoint = { x: 400, y: 300 };
+  const beforeZoom = await viewBox();
+  const worldAtPointer = {
+    x: beforeZoom[0] + (zoomPoint.x / canvasBox.width) * beforeZoom[2],
+    y: beforeZoom[1] + (zoomPoint.y / canvasBox.height) * beforeZoom[3],
+  };
   await canvas.dispatchEvent('wheel', {
     deltaY: -200,
     ctrlKey: true,
-    clientX: 400,
-    clientY: 300,
+    clientX: zoomPoint.x,
+    clientY: zoomPoint.y,
   });
-  expect(await scaleOf()).toBeGreaterThan(fitted);
+  await expect.poll(scaleOf).toBeGreaterThan(fitted);
+  const afterZoom = await viewBox();
+  expect(
+    afterZoom[0] + (zoomPoint.x / canvasBox.width) * afterZoom[2],
+  ).toBeCloseTo(worldAtPointer.x, 3);
+  expect(
+    afterZoom[1] + (zoomPoint.y / canvasBox.height) * afterZoom[3],
+  ).toBeCloseTo(worldAtPointer.y, 3);
 
-  const panned = await plane.evaluate((element) => element.style.transform);
+  const beforePan = await viewBox();
   await canvas.dispatchEvent('wheel', { deltaX: 40, deltaY: 60 });
-  expect(await plane.evaluate((element) => element.style.transform)).not.toBe(
-    panned,
-  );
+  await expect.poll(viewBox).not.toEqual(beforePan);
   expect(await scaleOf()).toBeGreaterThan(fitted);
 
   // Dragging pans without closing: the viewer only leaves on a clean click.
@@ -513,9 +563,23 @@ test('expands a drawn diagram into a fullscreen pan-and-zoom viewer', async ({
   // The whole loop works from the keyboard: Enter reopens, Escape closes.
   await page.keyboard.press('Enter');
   await expect(viewer).toBeVisible();
+
+  // The viewer owns Escape before document's bubble phase, so an app-level
+  // handler must not see the key that closes it.
+  await page.evaluate(() => {
+    window.__TAU_VIEWER_ESCAPE_HANDLER_CALLS__ = 0;
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        window.__TAU_VIEWER_ESCAPE_HANDLER_CALLS__! += 1;
+      }
+    });
+  });
   await page.keyboard.press('Escape');
   await expect(viewer).toHaveCount(0);
   await expect(button).toBeFocused();
+  expect(
+    await page.evaluate(() => window.__TAU_VIEWER_ESCAPE_HANDLER_CALLS__),
+  ).toBe(0);
 });
 
 test('copies a code block from a button the block reveals on hover', async ({
