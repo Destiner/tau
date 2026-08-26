@@ -574,7 +574,7 @@ defineExpose({ scrollToEnd });
 }
 
 .message.user :deep(.user-bubble) {
-  width: 90%;
+  width: fit-content;
   max-width: 90%;
   padding: 9px 13px;
   border-radius: 7px;

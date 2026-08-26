@@ -203,19 +203,32 @@ test('keeps a table header visible against the user bubble', async ({
   expect(header).not.toBe(bubbleBackground);
 });
 
-test('keeps user messages on their own surface at the intended width', async ({
+test('sizes user message surfaces to their content up to 90%', async ({
   page,
 }) => {
-  const message = page.locator('[data-message-id="fixture-short-user"]');
-  const bubble = message.locator('.user-bubble');
+  const shortMessage = page.locator('[data-message-id="fixture-short-user"]');
+  const shortBubble = shortMessage.locator('.user-bubble');
+  const longMessage = page.locator(
+    '[data-message-id="fixture-markdown-showcase-user"]',
+  );
+  const longBubble = longMessage.locator('.user-bubble');
 
-  await expect(bubble).toHaveCSS('background-color', 'rgb(235, 238, 240)');
+  await expect(shortBubble).toHaveCSS('background-color', 'rgb(235, 238, 240)');
 
-  const [messageBox, bubbleBox] = await Promise.all([
-    message.boundingBox(),
-    bubble.boundingBox(),
-  ]);
-  expect(bubbleBox?.width ?? 0).toBeCloseTo((messageBox?.width ?? 0) * 0.9, 0);
+  const [shortMessageBox, shortBubbleBox, longMessageBox, longBubbleBox] =
+    await Promise.all([
+      shortMessage.boundingBox(),
+      shortBubble.boundingBox(),
+      longMessage.boundingBox(),
+      longBubble.boundingBox(),
+    ]);
+  expect(shortBubbleBox?.width ?? 0).toBeLessThan(
+    (shortMessageBox?.width ?? 0) * 0.9,
+  );
+  expect(longBubbleBox?.width ?? 0).toBeCloseTo(
+    (longMessageBox?.width ?? 0) * 0.9,
+    0,
+  );
 });
 
 test('keeps notices compact while preserving the restored type scale', async ({
