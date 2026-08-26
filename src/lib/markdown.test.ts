@@ -65,8 +65,13 @@ describe('file references', () => {
     });
   });
 
-  it('accepts a directory written with a trailing separator', () => {
+  it('accepts an unrooted directory only when it has a meaningful shape', () => {
     expect(parseFileReference('src/components/')?.path).toBe('src/components/');
+    expect(parseFileReference('reports/148/')?.path).toBe('reports/148/');
+    expect(parseFileReference('148/report.txt')?.path).toBe('148/report.txt');
+
+    expect(parseFileReference('148/')).toBeNull();
+    expect(parseFileReference('build/')).toBeNull();
   });
 
   it('keeps spaces and shell punctuation in a rooted path', () => {
@@ -97,6 +102,21 @@ describe('file references', () => {
     expect(parseFileReference('/README.md')?.path).toBe('/README.md');
     expect(parseFileReference('/tmp/')?.path).toBe('/tmp/');
     expect(parseFileReference('/etc/hosts')?.path).toBe('/etc/hosts');
+  });
+
+  it('rejects API route templates', () => {
+    for (const candidate of [
+      '/users/internal/orgs/:orgId/billing',
+      '/billing/{events,suspend,resume}',
+      '/users/[userId]/settings',
+      '/files/*path',
+    ]) {
+      expect(parseFileReference(candidate)).toBeNull();
+    }
+
+    expect(parseFileReference('/Users/tim/orgs/billing')?.path).toBe(
+      '/Users/tim/orgs/billing',
+    );
   });
 
   it('rejects URLs and paths with nothing in them', () => {
@@ -207,6 +227,17 @@ describe('linking file paths in markup', () => {
       '<p><code>/ expanded </code></p>',
       '<p><code>&lt;/pre&gt;</code></p>',
       '<p><code>&lt;/nested/tag&gt;</code></p>',
+    ]) {
+      expect(linkFilePaths(html)).toBe(html);
+    }
+  });
+
+  it('does not link API route templates or ambiguous directory labels', () => {
+    for (const html of [
+      '<p><code>/users/internal/orgs/:orgId/billing</code></p>',
+      '<p>Call <code>/billing/{events,suspend,resume}</code>.</p>',
+      '<p>Next page: <code>148/</code>.</p>',
+      '<p>Relative route: <code>:orgId/billing.json</code>.</p>',
     ]) {
       expect(linkFilePaths(html)).toBe(html);
     }

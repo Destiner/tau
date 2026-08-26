@@ -100,6 +100,10 @@ const HTML_ENTITY_SUFFIX = /&(?:amp|quot|apos|lt|gt|#\d+|#x[\da-f]+);$/i;
 
 const EDGE_WHITESPACE = /^\s|\s$/;
 
+const ROUTE_TEMPLATE_PUNCTUATION = /[{}*[\]:]/;
+
+const PARAMETER_SEGMENT = /^[:*]/;
+
 /** A fence's closing run, which the source of an unfinished block has not reached. */
 const CLOSING_FENCE = /(?:^|\n)[ \t]*(?:`{3,}|~{3,})$/;
 
@@ -258,8 +262,17 @@ function parseFileReference(candidate: string): FileReference | null {
   const directory = path.endsWith('/');
   const namedFile = NAMED_FILE.test(path);
   if (!rooted && !directory && !namedFile) return null;
+  // An implicit one-word directory is more often a count, label, or prose.
+  if (!rooted && directory && segments.length < 2) return null;
   // A lone rooted word is also how slash commands and markup tags are written.
   if (rooted && segments.length === 1 && !directory && !namedFile) return null;
+  // Route parameters and brace alternatives describe URL shapes, not one file.
+  if (
+    ROUTE_TEMPLATE_PUNCTUATION.test(path) ||
+    segments.some((segment) => PARAMETER_SEGMENT.test(segment))
+  ) {
+    return null;
+  }
 
   return { text, path };
 }
@@ -308,7 +321,12 @@ function linkTextLine(text: string, copyPaths: boolean): string {
 
   PATH_CANDIDATE.lastIndex = 0;
   return text.replace(PATH_CANDIDATE, (candidate, offset: number) => {
-    if (touchesHtmlEntity(text, offset, candidate.length)) return candidate;
+    if (
+      touchesHtmlEntity(text, offset, candidate.length) ||
+      touchesRouteTemplate(text, offset, candidate.length)
+    ) {
+      return candidate;
+    }
 
     const reference = parseFileReference(candidate);
     if (!reference) return candidate;
@@ -323,6 +341,18 @@ function hasControlCharacter(value: string): boolean {
     const codePoint = character.codePointAt(0) ?? 0;
     return codePoint <= 0x1f || codePoint === 0x7f;
   });
+}
+
+/** A template marker outside the candidate still belongs to the route shape. */
+function touchesRouteTemplate(
+  text: string,
+  offset: number,
+  length: number,
+): boolean {
+  return (
+    ROUTE_TEMPLATE_PUNCTUATION.test(text[offset - 1] ?? '') ||
+    ROUTE_TEMPLATE_PUNCTUATION.test(text[offset + length] ?? '')
+  );
 }
 
 /** Encoded markup punctuation does not turn the text beside it into a path. */
