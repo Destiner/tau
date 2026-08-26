@@ -74,16 +74,16 @@ const label = computed(
 .notice-label {
   overflow: hidden;
   color: var(--notice-tone);
-  font-size: var(--text-xs);
+  font-size: var(--text-notice-label);
   font-weight: 500;
-  line-height: var(--leading-tight);
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.transcript-notice .notice-message {
+.transcript-notice :deep(.notice-message) {
   min-width: 0;
-  font-size: var(--text-sm);
-  line-height: var(--leading-ui);
+  font-size: var(--text-md);
+  line-height: 1.5;
 }
 </style>

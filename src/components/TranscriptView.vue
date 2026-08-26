@@ -541,7 +541,8 @@ defineExpose({ scrollToEnd });
   margin-left: -5px;
 }
 
-.user-bubble {
+.message.user :deep(.user-bubble) {
+  width: 90%;
   max-width: 90%;
   padding: 9px 13px;
   border-radius: 7px;
@@ -554,9 +555,9 @@ defineExpose({ scrollToEnd });
  * own. The selectors are deep because both live in MarkdownText's rendered
  * HTML.
  */
-.user-bubble :deep(code),
-.user-bubble :deep(pre),
-.user-bubble :deep(th) {
+.message.user :deep(.user-bubble code),
+.message.user :deep(.user-bubble pre),
+.message.user :deep(.user-bubble th) {
   background: var(--panel-raised);
 }
 

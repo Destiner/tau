@@ -31,15 +31,18 @@ the surface's density is undecided, not that the scale needs a fifth value.
 
 ### Type
 
-Four rungs. `9px` and `10px` labels are retired; the smallest text in the app
-is `--text-xs`.
+Four rungs. The compact UI scale runs from `--text-xs` through `--text-lg`.
+A transcript notice's type label alone uses `--text-notice-label`: it is
+metadata within an already labelled message, so it must stay quieter than any
+other label.
 
-| Token       | Value | Used for                                                                         |
-| ----------- | ----- | -------------------------------------------------------------------------------- |
-| `--text-xs` | 11px  | Labels and meta: button text, a select's value, a group head, a row's timestamp. |
-| `--text-sm` | 12px  | Default UI text: menu items, field values, tool details.                         |
-| `--text-md` | 13px  | Titles: a session name, an inline-edited name.                                   |
-| `--text-lg` | 14px  | Body and prose: the root size, transcript content.                               |
+| Token                 | Value | Used for                                                                         |
+| --------------------- | ----- | -------------------------------------------------------------------------------- |
+| `--text-xs`           | 10px  | Labels and meta: button text, a select's value, a group head, a row's timestamp. |
+| `--text-sm`           | 11px  | Default UI text: menu items, field values, tool details.                         |
+| `--text-md`           | 12px  | Titles and notice copy: a session name, an inline-edited name.                   |
+| `--text-lg`           | 13px  | Body and prose: the root size, transcript content.                               |
+| `--text-notice-label` | 9px   | The type label in a transcript notice only.                                      |
 
 Line height is `--leading-tight` (1.25) for a single line that may wrap tightly,
 `--leading-ui` (1.45) for anything read as a sentence.

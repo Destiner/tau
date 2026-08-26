@@ -205,6 +205,13 @@ function createCompactToolTranscript(): TranscriptEntry[] {
 }
 
 function createMessage(index: number): TranscriptEntry {
+  if (index === 4_999) {
+    return {
+      id: 'fixture-short-user',
+      kind: 'user',
+      text: 'A short user message.',
+    };
+  }
   if (index === 4_998) {
     return {
       id: 'fixture-skill-4998',
@@ -277,7 +284,15 @@ Inspect selection, scrolling, keyboard behavior, window behavior, and perceived 
       text: 'The adoption walk stops at the first local error row, which would strand every row below it.',
     };
   }
-
+  if (index === 4_990 || index === 4_989 || index === 4_988) {
+    return {
+      id: `fixture-notice-${index}`,
+      kind: 'notice',
+      noticeType:
+        index === 4_990 ? 'info' : index === 4_989 ? 'warning' : 'error',
+      text: 'A compact transcript notice.',
+    };
+  }
   if (index === 4_995) {
     return {
       id: 'fixture-markdown-showcase-thinking',

@@ -38,10 +38,11 @@
   --control-sm: 22px;
   --control-md: 24px;
   --control-lg: 28px;
-  --text-xs: 11px;
-  --text-sm: 12px;
-  --text-md: 13px;
-  --text-lg: 14px;
+  --text-xs: 10px;
+  --text-sm: 11px;
+  --text-md: 12px;
+  --text-lg: 13px;
+  --text-notice-label: 9px;
   --leading-tight: 1.25;
   --leading-ui: 1.45;
   --radius-xs: 3px;

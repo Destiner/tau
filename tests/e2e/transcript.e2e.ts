@@ -202,6 +202,40 @@ test('keeps a table header visible against the user bubble', async ({
   expect(header).not.toBe(bubbleBackground);
 });
 
+test('keeps user messages on their own surface at the intended width', async ({
+  page,
+}) => {
+  const message = page.locator('[data-message-id="fixture-short-user"]');
+  const bubble = message.locator('.user-bubble');
+
+  await expect(bubble).toHaveCSS('background-color', 'rgb(235, 238, 240)');
+
+  const [messageBox, bubbleBox] = await Promise.all([
+    message.boundingBox(),
+    bubble.boundingBox(),
+  ]);
+  expect(bubbleBox?.width ?? 0).toBeCloseTo((messageBox?.width ?? 0) * 0.9, 0);
+});
+
+test('keeps notices compact while preserving the restored type scale', async ({
+  page,
+}) => {
+  await expect(page.locator('html')).toHaveCSS('font-size', '13px');
+
+  for (const index of [4990]) {
+    const notice = page.locator(`[data-message-id="fixture-notice-${index}"]`);
+    await expect(notice.locator('.notice-label')).toHaveCSS('font-size', '9px');
+    await expect(notice.locator('.notice-message')).toHaveCSS(
+      'font-size',
+      '12px',
+    );
+    await expect(notice.locator('.notice-message')).toHaveCSS(
+      'line-height',
+      '18px',
+    );
+  }
+});
+
 test('holds a wide image inside the message column', async ({ page }) => {
   const showcase = page.locator(
     '[data-message-id="fixture-markdown-showcase"]',
@@ -350,7 +384,7 @@ test('names a block the language it was fenced with', async ({ page }) => {
     await block.evaluate(
       (element) => getComputedStyle(element, '::before').fontSize,
     ),
-  ).toBe('11px');
+  ).toBe('10px');
 });
 
 test('draws a fenced diagram in the scheme around it', async ({ page }) => {
@@ -510,8 +544,8 @@ test('copies a code block from a button the block reveals on hover', async ({
   });
   await page.goto(fixtureUrl);
 
-  const message = page.locator('[data-message-id="fixture-assistant-4999"]');
-  const block = message.locator('.code-block');
+  const message = page.locator('[data-message-id="fixture-markdown-showcase"]');
+  const block = message.locator('.code-block').first();
   const copy = block.getByRole('button', { name: 'Copy Code' });
   const box = (await block.boundingBox()) ?? {
     x: 0,
@@ -520,7 +554,9 @@ test('copies a code block from a button the block reveals on hover', async ({
     height: 0,
   };
 
-  await expect(block.locator('pre')).toContainText('const messageIndex = 4999');
+  await expect(block.locator('pre')).toContainText(
+    'export async function load',
+  );
   await expect(copy).toHaveCSS('opacity', '0');
 
   await block.hover();
@@ -533,7 +569,9 @@ test('copies a code block from a button the block reveals on hover', async ({
   await copy.click();
   await expect
     .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
-    .toEqual(['const messageIndex = 4999;\nconsole.log({ messageIndex });\n']);
+    .toEqual([
+      "export async function load(id: string): Promise<Session | null> {\n  // A comment, italic in both schemes\n  const session = await invoke<Session>('load_session', { id });\n  return session ?? null;\n}\n",
+    ]);
   await expect(copy).toHaveAttribute('data-copied', 'true');
 
   // The acknowledgement belongs to the hovered block: leaving hides the button
