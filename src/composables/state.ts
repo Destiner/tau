@@ -165,6 +165,8 @@ interface SessionController {
   promptSubmitting: boolean;
   unread: boolean;
   lastUserMessageAt: number;
+  /** Pi has reported a real user or assistant message for this identity. */
+  hasPiTranscript: boolean;
   messages: TranscriptEntry[];
   /** Whether `get_messages` has answered once, so an empty transcript can be
    * read as a session without history rather than one that has yet to load. */
@@ -585,7 +587,7 @@ function canArchiveSession(
 ): boolean {
   return (
     !projectActionsDisabled.value &&
-    ephemeralSession(project.path, session.id)?.phantom !== true
+    ephemeralSession(project.path, session.id) === undefined
   );
 }
 
@@ -838,6 +840,7 @@ function createController(
     promptSubmitting: false,
     unread: false,
     lastUserMessageAt: session.lastUserMessageAt,
+    hasPiTranscript: false,
     messages: [],
     messagesLoaded: false,
     historyLayers: [],

@@ -42,6 +42,7 @@ function testController(
     promptSubmitting: false,
     unread: false,
     lastUserMessageAt: 0,
+    hasPiTranscript: false,
     messages: [],
     messagesLoaded: false,
     historyLayers: [],

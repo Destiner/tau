@@ -166,6 +166,17 @@ const savedSessionCommandReplacement = definePiScenario({
       command: 'get_messages',
       data: { messages: [] },
     },
+    {
+      kind: 'event',
+      runtime,
+      event: {
+        type: 'message_update',
+        assistantMessageEvent: {
+          type: 'text_delta',
+          delta: 'Replacement session started.',
+        },
+      },
+    },
   ],
 });
 

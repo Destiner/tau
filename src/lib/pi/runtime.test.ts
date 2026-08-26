@@ -80,6 +80,7 @@ function makeController(
     promptSubmitting: false,
     unread: false,
     lastUserMessageAt: 0,
+    hasPiTranscript: false,
     messages: [],
     messagesLoaded: false,
     historyLayers: [],
@@ -124,6 +125,11 @@ beforeEach(async () => {
   mockInvoke.mockClear();
   rpcSpans.clear();
   state.controllers.splice(0);
+  state.ephemeralSessions.splice(0);
+  state.activeProjectPath = '';
+  state.activeSessionId = '';
+  state.activeSessionPath = '';
+  state.activeControllerKey = '';
   state.workspace = null;
   const telemetry = await import('../telemetry');
   vi.mocked(telemetry.recordControllerTransition).mockClear();
@@ -131,6 +137,165 @@ beforeEach(async () => {
   vi.mocked(telemetry.recordStreamAggregate).mockClear();
   vi.mocked(telemetry.invokeTraced).mockClear();
   vi.mocked(telemetry.startRpcSpan).mockClear();
+});
+
+describe('command-created session durability', () => {
+  function addEphemeral(controller: SessionController): void {
+    state.controllers.push(controller);
+    state.ephemeralSessions.push({
+      id: controller.sessionId,
+      path: controller.sessionPath,
+      title: controller.sessionName || 'Command session',
+      lastActive: 'now',
+      lastUserMessageAt: 0,
+      sortAt: 1,
+      archived: false,
+      selected: true,
+      projectPath: controller.projectPath,
+      controllerKey: controller.key,
+      createdAt: 1,
+      phantom: false,
+    });
+    state.workspace = {
+      activeProjectPath: controller.projectPath,
+      piPath: '/usr/bin/pi',
+      projects: [
+        {
+          path: controller.projectPath,
+          name: 'Project',
+          workingDirectory: controller.projectPath,
+          collapsed: false,
+          selected: true,
+          sessions: [],
+        },
+      ],
+    };
+  }
+
+  it('does not register an identity reported by command sync alone', async () => {
+    const telemetry = await import('../telemetry');
+    const { handleResponse } = await import('./runtime');
+    const controller = makeController({
+      commandSyncRequestId: 'command-sync',
+      sessionId: 'command-session',
+      sessionPath: '/tmp/project/command-session.jsonl',
+      sessionName: 'Usage',
+      streaming: true,
+      working: true,
+    });
+    addEphemeral(controller);
+
+    await handleResponse(controller, {
+      id: 'command-sync',
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: controller.sessionId,
+        sessionFile: controller.sessionPath,
+        sessionName: controller.sessionName,
+        isStreaming: true,
+      },
+    });
+
+    expect(telemetry.invokeTraced).not.toHaveBeenCalled();
+    expect(state.ephemeralSessions).toHaveLength(1);
+  });
+
+  it('promotes an ephemeral command session once Pi reports transcript content', async () => {
+    const telemetry = await import('../telemetry');
+    const { handleResponse } = await import('./runtime');
+    const controller = makeController({
+      sessionId: 'command-session',
+      sessionPath: '/tmp/project/command-session.jsonl',
+      sessionName: 'Agent work',
+    });
+    addEphemeral(controller);
+    const workspace = {
+      activeProjectPath: controller.projectPath,
+      piPath: '/usr/bin/pi',
+      projects: [
+        {
+          path: controller.projectPath,
+          name: 'Project',
+          workingDirectory: controller.projectPath,
+          collapsed: false,
+          selected: true,
+          sessions: [
+            {
+              id: controller.sessionId,
+              path: controller.sessionPath,
+              title: controller.sessionName,
+              lastActive: 'now',
+              lastUserMessageAt: 0,
+              sortAt: 1,
+              archived: false,
+              selected: false,
+            },
+          ],
+        },
+      ],
+    };
+    vi.mocked(telemetry.invokeTraced).mockResolvedValueOnce(workspace);
+
+    await handleResponse(controller, {
+      id: 'messages',
+      command: 'get_messages',
+      success: true,
+      data: {
+        messages: [
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Started real work.' }],
+          },
+        ],
+      },
+    });
+
+    expect(telemetry.invokeTraced).toHaveBeenCalledWith(
+      'register_session',
+      expect.objectContaining({ sessionId: controller.sessionId }),
+      undefined,
+    );
+    expect(controller.hasPiTranscript).toBe(true);
+    expect(state.ephemeralSessions).toEqual([]);
+  });
+
+  it('removes a command-only session when its runtime is released', async () => {
+    const { stopControllerProcess } = await import('./runtime');
+    const controller = makeController({
+      generation: 1,
+      sessionId: 'command-session',
+      sessionPath: '/tmp/project/command-session.jsonl',
+      sessionName: 'Usage',
+    });
+    addEphemeral(controller);
+
+    await stopControllerProcess(controller, undefined, false);
+
+    expect(state.ephemeralSessions).toEqual([]);
+    expect(state.controllers).toEqual([]);
+  });
+
+  it('removes a command-only notification session when the user leaves', async () => {
+    const { removeEmptyActivePhantom } = await import('./runtime');
+    const controller = makeController({
+      sessionId: 'command-session',
+      sessionPath: '/tmp/project/command-session.jsonl',
+      sessionName: 'Usage',
+      messages: [{ id: 'notice', kind: 'notice', text: 'Usage: 10%' }],
+    });
+    addEphemeral(controller);
+    state.activeProjectPath = controller.projectPath;
+    state.activeSessionId = controller.sessionId;
+    state.activeSessionPath = controller.sessionPath;
+    state.activeControllerKey = controller.key;
+
+    removeEmptyActivePhantom();
+
+    expect(state.ephemeralSessions).toEqual([]);
+    expect(state.controllers).toEqual([]);
+    expect(state.activeSessionId).toBe('');
+  });
 });
 
 describe('prompt delivery', () => {

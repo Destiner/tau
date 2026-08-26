@@ -67,7 +67,9 @@ test('registers and selects a session replaced by an extension command', async (
   await expect(oldRow).toHaveCount(1);
   await expect(oldRow).not.toHaveAttribute('aria-current', 'page');
   await expect(page.getByText(command, { exact: true })).toHaveCount(0);
-  await expect(page.getByLabel('Transcript')).toHaveCount(0);
+  await expect(page.getByLabel('Transcript')).toContainText(
+    'Replacement session started.',
+  );
   await expect(composer).toBeEnabled();
 
   const verification = await page.evaluate(() =>

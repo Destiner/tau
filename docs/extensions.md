@@ -47,7 +47,7 @@ Adoption is limited to the identities Pi hands over — a replacement, the sessi
 
 ## Sessions Pi never saved
 
-Pi buffers a session in memory and writes its file only once the session holds an assistant message, so a phase session cancelled before it answers is reported over RPC and exists nowhere else. Tau registers phase sessions as Pi reports them, because that is what puts a running phase in the sidebar, so such a session can outlive the runtime that held it as a row for a session that was never written. A local project lists the session directory and shows the row only once Pi writes it; a remote project lists what Tau registered, which is where the row survives.
+Pi buffers a session in memory and writes its file only once the session holds an assistant message, so a phase session cancelled before it answers is reported over RPC and exists nowhere else. Tau keeps command-created and replacement identities as ephemeral sidebar rows until Pi reports real user or assistant transcript content. Custom entries and notifications do not count. Once transcript content appears, Tau registers the session normally; without it, leaving the row or releasing its runtime removes it like any other empty session.
 
 Opening one does not fail. Pi answers `--session` for a file it cannot find by starting a fresh session under the path it was given, reporting that path with a new session id, so the row reads back as an empty session wearing a different identity. Registering that identity would file a second session at the same path, and the row would mint one more on every visit.
 

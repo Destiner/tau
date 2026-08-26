@@ -144,7 +144,7 @@ describe('PiScenarioEngine', () => {
     expect(() => engine.verifyComplete()).not.toThrow();
   });
 
-  it('registers a phantom command session when its identity sync remains streaming', () => {
+  it('reports real transcript work after a phantom command identity sync', () => {
     const engine = new PiScenarioEngine(phantomCommandRegistration);
     engine.bindRuntime('main', 'runtime-dynamic-47');
     takeRequiredOutput(engine);
@@ -192,6 +192,12 @@ describe('PiScenarioEngine', () => {
           sessionName: 'MCP workflow',
           isStreaming: true,
         },
+      },
+    });
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: {
+        type: 'message_update',
+        assistantMessageEvent: { delta: 'Real agent work started.' },
       },
     });
     expect(() => engine.verifyComplete()).not.toThrow();
@@ -249,6 +255,12 @@ describe('PiScenarioEngine', () => {
       consumeRequest(engine, id, type);
       takeRequiredOutput(engine);
     }
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: {
+        type: 'message_update',
+        assistantMessageEvent: { delta: 'Replacement session started.' },
+      },
+    });
 
     expect(() => engine.verifyComplete()).not.toThrow();
   });

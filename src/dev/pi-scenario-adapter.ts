@@ -154,6 +154,13 @@ const REQUIRED_NATIVE_COUNTS = {
     set_active_project: 1,
     set_active_session: 2,
   },
+  'phantom-command-only': {
+    load_workspace: 1,
+    read_model_scope: 2,
+    register_session: 1,
+    set_active_project: 1,
+    set_active_session: 2,
+  },
   'archived-sessions-review': {
     load_workspace: 1,
     read_model_scope: 2,
@@ -613,7 +620,10 @@ function scenarioRuntimeKey(
     if (count > 1) throw new Error('A process-failure session started twice.');
     return sessionPath === BACKUP_SESSION.path ? 'backup' : 'main';
   }
-  if (scenarioName === 'phantom-command-registration') {
+  if (
+    scenarioName === 'phantom-command-registration' ||
+    scenarioName === 'phantom-command-only'
+  ) {
     if (count > 1) throw new Error('A command session started twice.');
     return sessionPath === null ? 'phantom' : 'main';
   }

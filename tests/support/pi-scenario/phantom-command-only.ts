@@ -8,27 +8,26 @@ import {
 import { definePiScenario } from './index';
 
 const command = {
-  name: 'mcp',
-  description: 'Open the fixture command session',
+  name: 'usage',
+  description: 'Show fixture usage',
   source: 'extension',
 } as const;
 const commandSessionState = {
   ...mainSessionState,
-  sessionId: 'session-mcp',
-  sessionFile: '/fixture/tau-project/session-mcp.jsonl',
-  sessionName: 'MCP workflow',
+  sessionId: 'session-usage',
+  sessionFile: '/fixture/tau-project/session-usage.jsonl',
+  sessionName: 'Usage only',
 };
 
-const phantomCommandRegistration = definePiScenario({
+const phantomCommandOnly = definePiScenario({
   metadata: {
-    name: 'phantom-command-registration',
+    name: 'phantom-command-only',
     purpose:
-      'Keep a command-created session ephemeral until real assistant transcript content begins.',
+      'Keep a command-only session out of the durable registry and remove it when the user leaves.',
     qualityRule:
-      'docs/quality.md §5 State correctness: unsaved command sessions become durable only with real transcript content.',
+      'docs/quality.md §5 State correctness: empty command sessions remain disposable.',
     schemaVersion: 1,
-    origin:
-      'Command-created sessions need transcript evidence before registration',
+    origin: 'Successful /usage commands could leave durable ghost rows',
   },
   runtimes: [
     { key: 'main', generation: 2 },
@@ -103,39 +102,57 @@ const phantomCommandRegistration = definePiScenario({
       kind: 'request',
       runtime: 'phantom',
       capture: 'command-prompt',
-      match: { type: 'prompt', message: '/mcp' },
-    },
-    { kind: 'response', request: 'command-prompt', command: 'prompt' },
-    {
-      kind: 'request',
-      runtime: 'phantom',
-      capture: 'streaming-command-sync',
-      match: { type: 'get_state' },
-    },
-    {
-      kind: 'gate',
-      name: 'before-streaming-command-sync',
-      required: true,
-    },
-    {
-      kind: 'response',
-      request: 'streaming-command-sync',
-      command: 'get_state',
-      data: { ...commandSessionState, isStreaming: true },
+      match: { type: 'prompt', message: '/usage' },
     },
     {
       kind: 'event',
       runtime: 'phantom',
       event: {
-        type: 'message_update',
-        assistantMessageEvent: {
-          type: 'text_delta',
-          delta: 'Real agent work started.',
-        },
+        type: 'extension_ui_request',
+        id: 'usage-notice',
+        method: 'notify',
+        message: 'Fixture usage is 10%.',
+        notifyType: 'info',
       },
+    },
+    { kind: 'response', request: 'command-prompt', command: 'prompt' },
+    {
+      kind: 'request',
+      runtime: 'phantom',
+      capture: 'command-sync',
+      match: { type: 'get_state' },
+    },
+    {
+      kind: 'response',
+      request: 'command-sync',
+      command: 'get_state',
+      data: { ...commandSessionState, isStreaming: false },
+    },
+    {
+      kind: 'request',
+      runtime: 'phantom',
+      capture: 'command-efforts',
+      match: { type: 'get_available_thinking_levels' },
+    },
+    {
+      kind: 'response',
+      request: 'command-efforts',
+      command: 'get_available_thinking_levels',
+      data: { levels: fixtureThinkingLevels },
+    },
+    {
+      kind: 'request',
+      runtime: 'phantom',
+      capture: 'command-messages',
+      match: { type: 'get_messages' },
+    },
+    {
+      kind: 'response',
+      request: 'command-messages',
+      command: 'get_messages',
+      data: { messages: [] },
     },
   ],
 });
 
-export { commandSessionState };
-export default phantomCommandRegistration;
+export default phantomCommandOnly;

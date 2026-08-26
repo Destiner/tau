@@ -925,6 +925,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     clearSettingRequestWatch(controller);
     controller.generation = 0;
     controller.status = message;
+    discardReleasedEmptySession(controller);
   }
 }
 
@@ -964,7 +965,13 @@ async function handleRpc(
   }
   if (type === 'message_start') {
     const message = asRecord(event.message);
-    if (stringValue(message?.role) !== 'user') return;
+    const role = stringValue(message?.role);
+    if (role === 'user' || role === 'assistant') {
+      if (markPiTranscript(controller)) {
+        void promoteTranscriptSession(controller);
+      }
+    }
+    if (role !== 'user') return;
     const skill = parseSkillBlock(contentText(message?.content));
     if (!skill) return;
 
@@ -1014,6 +1021,9 @@ async function handleRpc(
     return;
   }
   if (type === 'message_update') {
+    if (markPiTranscript(controller)) {
+      void promoteTranscriptSession(controller);
+    }
     const delta = asRecord(event.assistantMessageEvent);
     const deltaType = stringValue(delta?.type);
     const deltaText = stringValue(delta?.delta);
@@ -1461,6 +1471,8 @@ async function handleResponse(
       );
       clearSessionReplacementWatch(controller);
       clearAbortWatch(controller);
+      controller.hasPiTranscript = false;
+      controller.lastUserMessageAt = 0;
       rebindEphemeralSession(controller);
       controller.messages = [];
       resetHistory(controller);
@@ -1551,14 +1563,17 @@ async function handleResponse(
   }
 
   if (command === 'get_messages' && data) {
+    const piMessages = Array.isArray(data.messages) ? data.messages : [];
+    const gainedTranscript = piMessages.some((value) => {
+      const role = stringValue(asRecord(value)?.role);
+      return role === 'user' || role === 'assistant';
+    });
+    if (gainedTranscript) controller.hasPiTranscript = true;
     const previous = controller.messages;
     const previousTail = previous.slice(controller.historyPrefixLength);
     controller.messagesLoaded = true;
     const tail = mergeLocalEntries(
-      hydrateTranscript(
-        Array.isArray(data.messages) ? data.messages : [],
-        previousTail,
-      ),
+      hydrateTranscript(piMessages, previousTail),
       controller.localErrors,
       previousTail,
     );
@@ -1579,6 +1594,7 @@ async function handleResponse(
     if (resolvesPending) {
       await dispatchPendingPrompt(controller);
     }
+    if (gainedTranscript) await promoteTranscriptSession(controller);
     // A hidden session that finishes hydrating has nothing left to wait for,
     // so this is where a runtime the user has moved on from is accounted for.
     releaseIdleRuntimes();
@@ -2054,6 +2070,7 @@ async function registerConnectedSession(
   // reachable, even when Tau had archived it before Pi handed it back.
   adopted = false,
 ): Promise<void> {
+  if (!canRegisterConnectedSession(controller)) return;
   try {
     const workspace = await registerSession(controller, adopted, parentContext);
     if (controller.disposed) return;
@@ -2165,10 +2182,48 @@ async function persistProjectSelection(
 // not, so a replacement has to move it onto the identity Pi handed over
 // instead of leaving it pointing at the session that was swapped out.
 function rebindEphemeralSession(controller: SessionController): void {
-  const session = ephemeralSessionByController(controller.key);
+  let session = ephemeralSessionByController(controller.key);
+  if (!session && !workspaceContainsSession(controller)) {
+    session = createPhantomSession(controller.projectPath, controller.key);
+    session.phantom = false;
+    state.ephemeralSessions.push(session);
+  }
   if (!session) return;
   session.id = controller.sessionId;
   session.path = controller.sessionPath;
+  session.phantom = false;
+  session.title = controller.sessionName || 'New Session';
+}
+
+function markPiTranscript(controller: SessionController): boolean {
+  if (controller.hasPiTranscript) return false;
+  controller.hasPiTranscript = true;
+  return true;
+}
+
+function canRegisterConnectedSession(controller: SessionController): boolean {
+  if (controller.phantom) return false;
+  const session = ephemeralSessionByController(controller.key);
+  return (
+    !session ||
+    workspaceContainsSession(controller) ||
+    controller.lastUserMessageAt > 0 ||
+    controller.hasPiTranscript
+  );
+}
+
+async function promoteTranscriptSession(
+  controller: SessionController,
+): Promise<void> {
+  const session = ephemeralSessionByController(controller.key);
+  if (
+    !session ||
+    workspaceContainsSession(controller) ||
+    !controller.hasPiTranscript
+  ) {
+    return;
+  }
+  await registerConnectedSession(controller, undefined, true);
 }
 
 function materializePendingSession(
@@ -2345,26 +2400,21 @@ function removeEmptyActivePhantom(): void {
   const session = controller
     ? ephemeralSessionByController(controller.key)
     : undefined;
-  // Pi gives a phantom its real in-memory identity before executing an
-  // extension command. A command that never answers can therefore leave an
-  // empty, unregistered row that is no longer marked phantom. It is just as
-  // disposable as the unsent row it came from when the user leaves it.
+  // Command-only custom entries and notifications are not Pi transcript
+  // content. Until Pi reports a user or assistant message, this row remains
+  // as disposable as the unsent session it came from.
   const unansweredUnsavedCommand = Boolean(
-    controller &&
-    session &&
-    !session.phantom &&
-    controller.commandPromptRequestId &&
-    !controller.streaming &&
-    !workspaceContainsSession(controller),
+    controller?.commandPromptRequestId && !controller.streaming,
   );
   if (
     !controller ||
     !session ||
-    (!session.phantom && !unansweredUnsavedCommand) ||
+    workspaceContainsSession(controller) ||
+    controller.lastUserMessageAt > 0 ||
+    controller.hasPiTranscript ||
     controller.draft.trim() ||
     (controller.working && !unansweredUnsavedCommand) ||
-    controllerHasPendingDialog(controller) ||
-    controller.messages.length > 0
+    controllerHasPendingDialog(controller)
   ) {
     return;
   }
@@ -2435,6 +2485,22 @@ function canReleaseRuntime(controller: SessionController): boolean {
   );
 }
 
+function discardReleasedEmptySession(controller: SessionController): boolean {
+  const ephemeral = ephemeralSessionByController(controller.key);
+  if (
+    !ephemeral ||
+    workspaceContainsSession(controller) ||
+    controller.lastUserMessageAt > 0 ||
+    controller.hasPiTranscript ||
+    controller.draft.trim() ||
+    controllerHasPendingDialog(controller)
+  ) {
+    return false;
+  }
+  removeEphemeralSession(ephemeral, true);
+  return true;
+}
+
 function releaseRuntime(controller: SessionController | undefined): void {
   if (!controller || !canReleaseRuntime(controller)) return;
   void stopControllerProcess(controller);
@@ -2498,6 +2564,8 @@ async function stopControllerProcess(
   controller.pendingSettingRequestId = '';
   controller.remoteConnectionTimedOut = false;
   clearSettingRequestWatch(controller);
+
+  if (discardReleasedEmptySession(controller)) return;
 
   if (
     restartSelected &&

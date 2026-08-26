@@ -137,6 +137,13 @@ type PiRpcEvent =
       prefill?: string;
       /** How long the request stands before Pi stops waiting for an answer. */
       timeout?: number;
+    }
+  | {
+      type: 'extension_ui_request';
+      id: string;
+      method: 'notify';
+      message: string;
+      notifyType?: 'info' | 'warning' | 'error';
     };
 
 interface ScriptedPiEvent {

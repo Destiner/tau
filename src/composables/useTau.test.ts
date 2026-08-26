@@ -861,6 +861,10 @@ describe('session replacement hardening', () => {
         isStreaming: true,
       },
     });
+    emitRpc(firstController, {
+      type: 'message_start',
+      message: { role: 'user', content: 'Review the plan' },
+    });
 
     await vi.waitFor(() => {
       expect(firstController.sessionId).toBe(replacementSession.id);
@@ -1018,6 +1022,10 @@ describe('session replacement hardening', () => {
         isStreaming: false,
       },
     });
+    emitRpc(secondController, {
+      type: 'message_start',
+      message: { role: 'assistant', content: [] },
+    });
 
     await vi.waitFor(() => {
       expect(secondController.sessionId).toBe(phaseSession.id);
@@ -1120,6 +1128,10 @@ describe('session replacement hardening', () => {
         isStreaming: false,
       },
     });
+    emitRpc(controller, {
+      type: 'message_start',
+      message: { role: 'assistant', content: [] },
+    });
 
     await vi.waitFor(() => {
       expect(
@@ -1174,7 +1186,7 @@ describe('session replacement hardening', () => {
     tau.dispose();
   });
 
-  it('discards an unregistered command session when it is archived', async () => {
+  it('does not archive an unregistered command session', async () => {
     const { controller, project, tau } = await setupUnansweredPhantomCommand();
     const session = tau.state.ephemeralSessions.find(
       (candidate) => candidate.controllerKey === controller.key,
@@ -1187,21 +1199,18 @@ describe('session replacement hardening', () => {
       tau.state.ephemeralSessions.some(
         (candidate) => candidate.controllerKey === controller.key,
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       tau.state.controllers.some(
         (candidate) => candidate.key === controller.key,
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       vi
         .mocked(invoke)
         .mock.calls.some(([command]) => command === 'archive_session'),
     ).toBe(false);
-    expect(tau.state.activeSessionId).not.toBe(session.id);
-    await vi.waitFor(() => {
-      expect(stoppedRuntimes()).toContain(controller.runtimeId);
-    });
+    expect(tau.state.activeSessionId).toBe(session.id);
     tau.dispose();
   });
 
@@ -1274,6 +1283,10 @@ describe('session replacement hardening', () => {
           sessionName: phaseSession.title,
           isStreaming: false,
         },
+      });
+      emitRpc(firstController, {
+        type: 'message_start',
+        message: { role: 'user', content: 'Execute the plan' },
       });
       await vi.waitFor(() => {
         expect(firstController.sessionId).toBe(phaseSession.id);
@@ -1429,6 +1442,10 @@ describe('session replacement hardening', () => {
     });
     await vi.waitFor(() => {
       expect(controller.sessionId).toBe('opened-phase');
+    });
+    emitRpc(controller, {
+      type: 'message_start',
+      message: { role: 'assistant', content: [] },
     });
 
     // A replacement brings its own path, so it is a session Pi holds rather
