@@ -315,6 +315,7 @@ interface PendingRpcSpan {
  * runtimes and generations cannot collide or leak into each other.
  */
 const pendingRpcSpans = new Map<string, PendingRpcSpan>();
+const confirmedAdmissionRequestIds = new Set<string>();
 
 function rpcSpanKey(
   runtimeId: string,
@@ -762,6 +763,9 @@ const remoteConnectionTimeoutMessage =
   'The remote connection timed out. Check the connection and try again.';
 const remoteConnectionTimeoutMs = 10_000;
 const settingRequestTimeoutMs = 10_000;
+/** Pi normally emits `agent_start` immediately after prompt preflight succeeds.
+ * Wait for that direct confirmation before falling back to state hydration. */
+const promptAdmissionReconcileDelay = 150;
 const remoteConnectionTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const settingRequestTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -947,9 +951,7 @@ async function handleRpc(
     return;
   }
   if (type === 'agent_start') {
-    if (controller.submittedPrompt) {
-      controller.submittedPrompt.accepted = true;
-    }
+    confirmSubmittedPrompt(controller);
     clearSessionReplacementWatch(controller);
     clearAbortWatch(controller);
     resetStreamAggregate(controller.runtimeId, controller.generation);
@@ -970,6 +972,7 @@ async function handleRpc(
     const message = asRecord(event.message);
     const role = stringValue(message?.role);
     if (role === 'user' || role === 'assistant') {
+      confirmSubmittedPrompt(controller);
       if (markPiTranscript(controller)) {
         void promoteTranscriptSession(controller);
       }
@@ -988,7 +991,8 @@ async function handleRpc(
       );
     if (optimistic) {
       optimistic.text = skill.content;
-      optimistic.skillPrompt = skill.userMessage;
+      delete optimistic.pending;
+      if (skill.userMessage) optimistic.skillPrompt = skill.userMessage;
       return;
     }
 
@@ -1127,8 +1131,12 @@ async function handleRpc(
     controller.status = '';
     if (!isControllerSelected(controller)) controller.unread = true;
     watchSessionReplacement(controller);
+    const stateRequestId = nextRequestId('settled-state');
+    if (controller.submittedPrompt?.accepted) {
+      controller.submittedPrompt.admissionStateRequestId = stateRequestId;
+    }
     await rpc(controller, {
-      id: nextRequestId('settled-state'),
+      id: stateRequestId,
       type: 'get_state',
     });
     return;
@@ -1247,6 +1255,7 @@ async function handleResponse(
     });
   }
   const responseContext = pendingResult.context;
+  if (responseId && confirmedAdmissionRequestIds.delete(responseId)) return;
   if (controller.remoteConnectionTimedOut) return;
   const resolvesRunState =
     command === 'get_state' &&
@@ -1278,6 +1287,14 @@ async function handleResponse(
   const resolvesSubmittedPrompt =
     command === 'prompt' &&
     controller.submittedPrompt?.requestId === responseId;
+  const resolvesAdmissionState =
+    command === 'get_state' &&
+    Boolean(controller.submittedPrompt?.admissionStateRequestId) &&
+    controller.submittedPrompt?.admissionStateRequestId === responseId;
+  const resolvesAdmissionMessages =
+    command === 'get_messages' &&
+    Boolean(controller.submittedPrompt?.admissionMessagesRequestId) &&
+    controller.submittedPrompt?.admissionMessagesRequestId === responseId;
   if (
     command === 'prompt' &&
     !resolvesSubmittedPrompt &&
@@ -1319,6 +1336,16 @@ async function handleResponse(
       controller.pendingSettingRequestId = '';
       controller.pendingEffort = '';
       clearSettingRequestWatch(controller);
+    }
+    if (resolvesAdmissionState || resolvesAdmissionMessages) {
+      releaseSubmittedPrompt(controller);
+      setControllerLifecycle(
+        controller,
+        { working: controller.streaming },
+        'prompt_failed',
+        responseContext,
+      );
+      return;
     }
     const pending = controller.pendingPrompt;
     const failedPendingSetting =
@@ -1456,6 +1483,9 @@ async function handleResponse(
         controller.sessionPath !== piSessionPath);
     applySessionName(controller, stringValue(data.sessionName));
     const nowStreaming = data.isStreaming === true;
+    if (resolvesAdmissionState && controller.submittedPrompt) {
+      controller.submittedPrompt.admissionStateRequestId = '';
+    }
     if (data.isCompacting === true) controller.compacting = true;
     else if (data.isCompacting === false || !nowStreaming) {
       controller.compacting = false;
@@ -1505,7 +1535,10 @@ async function handleResponse(
         ready: true,
         streaming: nowStreaming,
         stopping: false,
-        working: nowStreaming || Boolean(pending),
+        working:
+          nowStreaming ||
+          Boolean(pending) ||
+          Boolean(controller.submittedPrompt?.optimisticId),
         connectingRemote: false,
         ...(syncingAfterSessionChange ? { syncing: true } : {}),
       },
@@ -1543,6 +1576,7 @@ async function handleResponse(
       return;
     }
     if (resolvesRunState && !sessionChanged) return;
+    if (resolvesAdmissionState && nowStreaming && !sessionChanged) return;
     if (resolvesReplacementProbe && !sessionChanged) {
       releaseIdleRuntimes();
       return;
@@ -1564,6 +1598,9 @@ async function handleResponse(
     }
 
     const messagesRequestId = nextRequestId('messages');
+    if (resolvesAdmissionState && controller.submittedPrompt) {
+      controller.submittedPrompt.admissionMessagesRequestId = messagesRequestId;
+    }
     if (resolvesBootstrap) {
       controller.startMessagesRequestId = messagesRequestId;
       controller.bootstrapStateRequestId = '';
@@ -1598,6 +1635,9 @@ async function handleResponse(
       responseId === pending?.messagesRequestId;
     const resolvesStart =
       !resolvesPending && responseId === controller.startMessagesRequestId;
+    const resolvesAdmission =
+      Boolean(controller.submittedPrompt?.admissionMessagesRequestId) &&
+      responseId === controller.submittedPrompt?.admissionMessagesRequestId;
     if (resolvesStart) controller.startMessagesRequestId = '';
     setControllerLifecycle(
       controller,
@@ -1607,6 +1647,22 @@ async function handleResponse(
     );
     if (resolvesPending) {
       await dispatchPendingPrompt(controller);
+    }
+    if (resolvesAdmission && controller.submittedPrompt) {
+      const submitted = controller.submittedPrompt;
+      const confirmed = controller.messages.some(
+        (entry) => entry.id === submitted.optimisticId && !entry.pending,
+      );
+      if (confirmed) confirmSubmittedPrompt(controller);
+      else if (!controller.streaming) {
+        releaseSubmittedPrompt(controller);
+        setControllerLifecycle(
+          controller,
+          { working: false },
+          'prompt_response',
+          responseContext,
+        );
+      } else submitted.admissionMessagesRequestId = '';
     }
     if (gainedTranscript) await promoteTranscriptSession(controller);
     // A hidden session that finishes hydrating has nothing left to wait for,
@@ -1676,9 +1732,22 @@ async function handleResponse(
 
   if (command === 'prompt') {
     if (resolvesSubmittedPrompt && controller.submittedPrompt) {
-      controller.submittedPrompt.accepted = true;
-      controller.submittedPrompt = undefined;
+      const submitted = controller.submittedPrompt;
+      submitted.accepted = true;
       controller.promptSubmitting = false;
+      if (submitted.optimisticId) {
+        setControllerLifecycle(
+          controller,
+          { working: true },
+          'prompt_response',
+          responseContext,
+        );
+        setTimeout(() => {
+          void reconcileSubmittedPrompt(controller, submitted, responseContext);
+        }, promptAdmissionReconcileDelay);
+        return;
+      }
+      controller.submittedPrompt = undefined;
     }
     setControllerLifecycle(
       controller,
@@ -1847,6 +1916,7 @@ async function dispatchPendingPrompt(
     ...(prompt.command ? {} : { optimisticId: prompt.optimisticId }),
   };
   controller.submittedPrompt = submission;
+  clearSessionReplacementWatch(controller);
   try {
     await rpc(
       controller,
@@ -1995,7 +2065,12 @@ function appendOptimisticPrompt(
 ): void {
   const invocation = skillInvocation(controller, message);
   if (!invocation) {
-    controller.messages.push({ id, kind: 'user', text: message });
+    controller.messages.push({
+      id,
+      kind: 'user',
+      text: message,
+      pending: true,
+    });
     return;
   }
 
@@ -2003,6 +2078,7 @@ function appendOptimisticPrompt(
     id,
     kind: 'skill',
     text: '',
+    pending: true,
     skillName: invocation.name,
     ...(invocation.userMessage ? { skillPrompt: invocation.userMessage } : {}),
   });
@@ -2271,12 +2347,69 @@ function restoreSubmittedDraft(
     : submittedDraft;
 }
 
+async function reconcileSubmittedPrompt(
+  controller: SessionController,
+  submitted: NonNullable<SessionController['submittedPrompt']>,
+  responseContext?: TraceContext,
+): Promise<void> {
+  if (
+    controller.disposed ||
+    !controller.generation ||
+    controller.submittedPrompt !== submitted
+  ) {
+    return;
+  }
+  const stateRequestId = nextRequestId('prompt-admission-state');
+  submitted.admissionStateRequestId = stateRequestId;
+  try {
+    await rpc(
+      controller,
+      { id: stateRequestId, type: 'get_state' },
+      responseContext,
+    );
+  } catch {
+    if (controller.submittedPrompt !== submitted) return;
+    releaseSubmittedPrompt(controller);
+    setControllerLifecycle(
+      controller,
+      { working: controller.streaming },
+      'prompt_failed',
+      responseContext,
+    );
+  }
+}
+
+function confirmSubmittedPrompt(controller: SessionController): void {
+  const submitted = controller.submittedPrompt;
+  if (!submitted) return;
+  if (submitted.admissionStateRequestId) {
+    confirmedAdmissionRequestIds.add(submitted.admissionStateRequestId);
+  }
+  if (submitted.admissionMessagesRequestId) {
+    confirmedAdmissionRequestIds.add(submitted.admissionMessagesRequestId);
+  }
+  submitted.accepted = true;
+  controller.promptSubmitting = false;
+  if (submitted.optimisticId) {
+    const optimistic = controller.messages.find(
+      (message) => message.id === submitted.optimisticId,
+    );
+    if (optimistic) delete optimistic.pending;
+  }
+  controller.submittedPrompt = undefined;
+}
+
+function releaseSubmittedPrompt(controller: SessionController): void {
+  controller.promptSubmitting = false;
+  controller.submittedPrompt = undefined;
+}
+
 function settleInterruptedSubmittedPrompt(controller: SessionController): void {
   const submitted = controller.submittedPrompt;
   if (!submitted) return;
   controller.promptSubmitting = false;
   if (submitted.accepted) {
-    controller.submittedPrompt = undefined;
+    releaseSubmittedPrompt(controller);
   } else {
     recoverSubmittedPrompt(controller);
   }

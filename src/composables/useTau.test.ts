@@ -2468,6 +2468,219 @@ describe('prompt submission', () => {
     }
   });
 
+  it('keeps ordinary prompt admission locked across a stale idle state response', async () => {
+    const { tau, controller } = await setupNamedSession();
+
+    tau.draft.value = 'First prompt';
+    await tau.sendMessage();
+    const firstRequest = sentRequests(controller, 'prompt')[0];
+    const optimistic = controller.messages.find(
+      (entry) => entry.text === 'First prompt',
+    );
+    expect(optimistic?.pending).toBe(true);
+    expect(controller.submittedPrompt?.requestId).toBe(firstRequest?.id);
+
+    tau.draft.value = 'Second prompt';
+    emitRpc(controller, {
+      id: 'older-idle-state',
+      type: 'response',
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: controller.sessionId,
+        sessionFile: controller.sessionPath,
+        sessionName: 'Main',
+        model: { provider: 'fixture', id: 'model', name: 'Model' },
+        thinkingLevel: 'off',
+        isStreaming: false,
+      },
+    });
+    await vi.waitFor(() => expect(controller.working).toBe(true));
+
+    await tau.sendMessage();
+    expect(sentRequests(controller, 'prompt')).toHaveLength(1);
+    expect(tau.draft.value).toBe('Second prompt');
+
+    emitRpc(controller, { type: 'agent_start' });
+    await vi.waitFor(() => {
+      expect(controller.submittedPrompt).toBeUndefined();
+      expect(optimistic?.pending).toBeUndefined();
+    });
+  });
+
+  it('keeps admission locked when its fallback state finds Pi streaming', async () => {
+    const { tau, controller } = await setupNamedSession();
+
+    tau.draft.value = 'Wait for the run';
+    await tau.sendMessage();
+    const promptRequest = sentRequests(controller, 'prompt')[0];
+    emitRpc(controller, {
+      id: promptRequest?.id,
+      type: 'response',
+      command: 'prompt',
+      success: true,
+    });
+
+    await vi.waitFor(() => {
+      expect(controller.submittedPrompt?.admissionStateRequestId).toBeTruthy();
+    });
+    const stateRequest = sentRequests(controller, 'get_state').at(-1);
+    const messageRequestCount = sentRequests(controller, 'get_messages').length;
+    emitRpc(controller, {
+      id: stateRequest?.id,
+      type: 'response',
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: controller.sessionId,
+        sessionFile: controller.sessionPath,
+        sessionName: 'Main',
+        model: { provider: 'fixture', id: 'model', name: 'Model' },
+        thinkingLevel: 'off',
+        isStreaming: true,
+      },
+    });
+
+    await vi.waitFor(() => expect(controller.streaming).toBe(true));
+    expect(controller.submittedPrompt).toBeDefined();
+    expect(sentRequests(controller, 'get_messages')).toHaveLength(
+      messageRequestCount,
+    );
+
+    emitRpc(controller, { type: 'agent_start' });
+    await vi.waitFor(() => {
+      expect(controller.submittedPrompt).toBeUndefined();
+    });
+  });
+
+  it('ignores an admission probe confirmed by agent start', async () => {
+    const { tau, controller } = await setupNamedSession();
+
+    tau.draft.value = 'Start before the probe answers';
+    await tau.sendMessage();
+    const promptRequest = sentRequests(controller, 'prompt')[0];
+    emitRpc(controller, {
+      id: promptRequest?.id,
+      type: 'response',
+      command: 'prompt',
+      success: true,
+    });
+
+    await vi.waitFor(() => {
+      expect(controller.submittedPrompt?.admissionStateRequestId).toBeTruthy();
+    });
+    const admissionStateRequest = sentRequests(controller, 'get_state').at(-1);
+    emitRpc(controller, { type: 'agent_start' });
+    await vi.waitFor(() => {
+      expect(controller.submittedPrompt).toBeUndefined();
+    });
+    const messageRequestCount = sentRequests(controller, 'get_messages').length;
+
+    emitRpc(controller, {
+      id: admissionStateRequest?.id,
+      type: 'response',
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: controller.sessionId,
+        sessionFile: controller.sessionPath,
+        sessionName: 'Main',
+        model: { provider: 'fixture', id: 'model', name: 'Model' },
+        thinkingLevel: 'off',
+        isStreaming: true,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sentRequests(controller, 'get_messages')).toHaveLength(
+      messageRequestCount,
+    );
+  });
+
+  it('releases admission when its reconciliation request fails', async () => {
+    const { tau, controller } = await setupNamedSession();
+
+    tau.draft.value = 'Probe failure';
+    await tau.sendMessage();
+    const promptRequest = sentRequests(controller, 'prompt')[0];
+    emitRpc(controller, {
+      id: promptRequest?.id,
+      type: 'response',
+      command: 'prompt',
+      success: true,
+    });
+
+    await vi.waitFor(() => {
+      expect(controller.submittedPrompt?.admissionStateRequestId).toBeTruthy();
+    });
+    const stateRequest = sentRequests(controller, 'get_state').at(-1);
+    emitRpc(controller, {
+      id: stateRequest?.id,
+      type: 'response',
+      command: 'get_state',
+      success: false,
+    });
+
+    await vi.waitFor(() => {
+      expect(controller.submittedPrompt).toBeUndefined();
+      expect(tau.canCompose.value).toBe(true);
+    });
+    expect(controller.messages[0]?.pending).toBe(true);
+  });
+
+  it('drops an absent optimistic row after post-preflight ground-truth hydration', async () => {
+    const { tau, controller } = await setupNamedSession();
+
+    tau.draft.value = 'Prompt Pi did not record';
+    await tau.sendMessage();
+    const promptRequest = sentRequests(controller, 'prompt')[0];
+    emitRpc(controller, {
+      id: promptRequest?.id,
+      type: 'response',
+      command: 'prompt',
+      success: true,
+    });
+
+    await vi.waitFor(() => {
+      expect(controller.submittedPrompt?.admissionStateRequestId).toBeTruthy();
+    });
+    const stateRequest = sentRequests(controller, 'get_state').at(-1);
+    emitRpc(controller, {
+      id: stateRequest?.id,
+      type: 'response',
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: controller.sessionId,
+        sessionFile: controller.sessionPath,
+        sessionName: 'Main',
+        model: { provider: 'fixture', id: 'model', name: 'Model' },
+        thinkingLevel: 'off',
+        isStreaming: false,
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(
+        controller.submittedPrompt?.admissionMessagesRequestId,
+      ).toBeTruthy();
+    });
+    const messagesRequest = sentRequests(controller, 'get_messages').at(-1);
+    emitRpc(controller, {
+      id: messagesRequest?.id,
+      type: 'response',
+      command: 'get_messages',
+      success: true,
+      data: { messages: [] },
+    });
+
+    await vi.waitFor(() => {
+      expect(controller.submittedPrompt).toBeUndefined();
+      expect(controller.messages).toEqual([]);
+    });
+    expect(tau.canCompose.value).toBe(true);
+  });
+
   it('does not restore a send Pi accepted before delivery reports failure', async () => {
     const { tau, controller } = await setupNamedSession();
     const defaultInvoke = vi.mocked(invoke).getMockImplementation();
@@ -2492,7 +2705,7 @@ describe('prompt submission', () => {
 
       emitRpc(controller, { type: 'agent_start' });
       await vi.waitFor(() => {
-        expect(controller.submittedPrompt?.accepted).toBe(true);
+        expect(controller.submittedPrompt).toBeUndefined();
       });
       rejectSend?.(new Error('Late delivery failure'));
       await submission;

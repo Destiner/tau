@@ -26,10 +26,16 @@
               :ref="measureRow"
               :data-index="virtualRow.index"
               :data-message-id="messageAt(virtualRow.index)?.id"
+              :data-pending="
+                messageAt(virtualRow.index)?.pending ? 'true' : undefined
+              "
               class="message"
               :class="[
                 messageAt(virtualRow.index)?.kind,
-                { compact: isCompact(virtualRow.index) },
+                {
+                  compact: isCompact(virtualRow.index),
+                  pending: messageAt(virtualRow.index)?.pending,
+                },
               ]"
             >
               <MarkdownText
@@ -561,6 +567,10 @@ defineExpose({ scrollToEnd });
   justify-content: flex-start;
   margin-right: 20px;
   margin-left: -5px;
+}
+
+.message.user.pending {
+  opacity: 0.88;
 }
 
 .message.user :deep(.user-bubble) {

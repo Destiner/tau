@@ -15,6 +15,7 @@ import {
   savedSessionBootstrapProcessExit,
   savedSessionPromptProcessExit,
 } from './saved-session-process-failures';
+import savedSessionPromptAdmission from './saved-session-prompt-admission';
 import {
   savedSessionBootstrap,
   savedSessionConversation,
@@ -28,6 +29,7 @@ const scenarios = [
   savedSessionBootstrap,
   savedSessionConversation,
   savedSessionCompaction,
+  savedSessionPromptAdmission,
   savedSessionStaleGeneration,
   savedSessionCommandReplacement,
   phantomCommandRegistration,

@@ -496,6 +496,7 @@ describe('skill transcript events', () => {
         id: 'optimistic-1',
         kind: 'skill',
         text: '',
+        pending: true,
         skillName: 'pr-review',
         skillPrompt: 'Focus on correctness',
       },

@@ -688,6 +688,7 @@ function useTau() {
         ...(command ? {} : { optimisticId }),
       };
       controller.submittedPrompt = submission;
+      clearSessionReplacementWatch(controller);
       setControllerLifecycle(
         controller,
         { working: true },

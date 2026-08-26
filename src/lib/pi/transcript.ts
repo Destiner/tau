@@ -15,6 +15,8 @@ interface TranscriptEntry {
     | 'notice'
     | 'compaction';
   text: string;
+  /** Tau rendered this row before Pi confirmed it as session content. */
+  pending?: boolean;
   /** Whether activating this compaction boundary can reveal an older layer. */
   historyAvailable?: boolean;
   /** The older layer behind this boundary is currently being requested. */

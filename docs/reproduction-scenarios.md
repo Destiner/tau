@@ -30,6 +30,8 @@ The `saved-session-unacknowledged-abort` scenario accepts `Stop this fixture`, s
 
 The `saved-session-compaction` scenario first pauses at `compaction-started` after Pi's start event, then settles into one permanent compacted-history boundary. Submit the draft `Miss the compaction start` that was preserved while compacting to pause again at `missed-start-reconciled`; this time Tau learns compaction only from `get_state.isCompacting`. In both pauses the transcript shows `Compacting…`, the composer remains editable, and Stop is disabled.
 
+The `saved-session-prompt-admission` scenario pauses while `Confirm this fixture prompt` is optimistic, then after `agent_start` confirms it. Its second prompt, `Reconcile this fixture prompt`, receives a successful preflight and an idle state before hydration proves Pi did not record it. While paused, the composer accepts the next draft but Send remains disabled; releasing the gate removes the absent optimistic row.
+
 The history scenarios open a saved session whose transcript arrives already complete, as one created elsewhere does — by a workflow extension, or on another machine. `saved-session-short-history` holds one turn and cannot scroll, `saved-session-history` fills the viewport, and `saved-session-long-history` is read back through rows that were only ever estimated. Nothing is submitted in any of them: the whole point is the first render.
 
 The `saved-session-extension-prompt` scenario opens a saved session and has its extension ask a question. The prompt renders at the end of the transcript and the composer is gone while it stands; it carries its own short Pi timeout, so the composer comes back a second and a half later without an answer being sent. Nothing is submitted.

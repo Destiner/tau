@@ -125,7 +125,11 @@ interface SubmittedPrompt {
   generation: number;
   message: string;
   draft: string;
+  /** Pi accepted prompt preflight, but may not have started or recorded a run. */
   accepted: boolean;
+  /** Correlated post-preflight probes that bound ordinary prompt admission. */
+  admissionStateRequestId?: string;
+  admissionMessagesRequestId?: string;
   optimisticId?: string;
 }
 
@@ -519,10 +523,14 @@ const sessionLoading = computed(() => {
 const canCompose = computed(() => {
   const controller = activeController.value;
   if (!activeProject.value || !activeSession.value || !controller) return false;
+  const admittingOrdinaryPrompt = Boolean(
+    controller.submittedPrompt?.optimisticId,
+  );
   if (
     controller.starting ||
     controller.working ||
     controller.promptSubmitting ||
+    admittingOrdinaryPrompt ||
     projectActionsDisabled.value
   )
     return false;
