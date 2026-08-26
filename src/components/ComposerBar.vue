@@ -71,7 +71,7 @@
           size="sm"
           variant="fill"
           tone="danger"
-          :disabled="stopping || !canDraft"
+          :disabled="compacting || stopping || !canDraft"
           label="Stop Pi"
           @click="stop"
         >
@@ -137,6 +137,7 @@ const {
   canCompose,
   canDraft,
   commands,
+  compacting,
   currentEffort,
   currentEffortLabel,
   currentModelId,

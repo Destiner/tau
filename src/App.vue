@@ -42,6 +42,7 @@
         :key="state.activeControllerKey"
         ref="transcriptView"
         :messages="messages"
+        :compacting="compacting"
         :show-working-indicator="showWorkingIndicator"
         :working-label="stopping ? 'Stopping' : 'Working'"
         :base-path="transcriptBasePath"
@@ -132,6 +133,7 @@ const {
   messages,
   canDraft,
   streaming,
+  compacting,
   stopping,
   promptSubmitting,
   activeExtensionDialog,
@@ -159,6 +161,7 @@ const sessionIsEmpty = computed(
     canDraft.value &&
     !sessionLoading.value &&
     messages.value.length === 0 &&
+    !compacting.value &&
     !activeExtensionDialog.value,
 );
 const transcriptBasePath = computed(() =>
@@ -168,7 +171,7 @@ const transcriptBasePath = computed(() =>
 );
 const showWorkingIndicator = computed(() => {
   if (stopping.value) return true;
-  if (!streaming.value) return false;
+  if (!streaming.value || compacting.value) return false;
   return messages.value[messages.value.length - 1]?.kind !== 'assistant';
 });
 const remoteDirectoryOptions = computed(() => {

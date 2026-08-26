@@ -10,6 +10,7 @@
       ref="transcriptView"
       class="fixture-transcript"
       :messages="messages"
+      :compacting="false"
       :show-working-indicator="showWorkingIndicator"
       working-label="Working"
       :copy-paths="remote"

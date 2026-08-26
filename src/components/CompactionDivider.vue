@@ -10,7 +10,7 @@
     @click="load"
   >
     <span class="rule"></span>
-    <span class="label">compacted</span>
+    <span class="label">{{ label }}</span>
     <span class="rule"></span>
   </component>
 </template>
@@ -20,7 +20,10 @@ import { onBeforeUnmount, ref, watch } from 'vue';
 
 import type { TranscriptEntry } from '../lib/pi/transcript';
 
-const props = defineProps<{ entry: TranscriptEntry }>();
+const props = withDefaults(
+  defineProps<{ entry: TranscriptEntry; label?: string }>(),
+  { label: 'compacted' },
+);
 const emit = defineEmits<{ load: [element: HTMLElement] }>();
 const showLoading = ref(false);
 let loadingTimer: ReturnType<typeof setTimeout> | undefined;

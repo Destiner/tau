@@ -159,6 +159,7 @@ interface SessionController {
   generation: number;
   ready: boolean;
   streaming: boolean;
+  compacting: boolean;
   stopping: boolean;
   starting: boolean;
   working: boolean;
@@ -463,6 +464,7 @@ const status = computed(
     state.workspaceStatus,
 );
 const streaming = computed(() => activeController.value?.streaming === true);
+const compacting = computed(() => activeController.value?.compacting === true);
 const stopping = computed(() => activeController.value?.stopping === true);
 const promptSubmitting = computed(
   () => activeController.value?.promptSubmitting === true,
@@ -834,6 +836,7 @@ function createController(
     generation: 0,
     ready: false,
     streaming: false,
+    compacting: false,
     stopping: false,
     starting: false,
     working: false,
@@ -1285,6 +1288,7 @@ export {
   draft,
   status,
   streaming,
+  compacting,
   stopping,
   promptSubmitting,
   models,

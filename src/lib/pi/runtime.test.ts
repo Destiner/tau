@@ -74,6 +74,7 @@ function makeController(
     generation: 1,
     ready: true,
     streaming: false,
+    compacting: false,
     stopping: false,
     starting: false,
     working: false,
@@ -558,6 +559,71 @@ Full review instructions
         skillName: 'pr-review',
       },
     ]);
+  });
+});
+
+describe('active compaction', () => {
+  it('tracks start and end events per session', async () => {
+    const { handleRpc } = await import('./runtime');
+    const controller = makeController({ streaming: true, working: true });
+    const other = makeController({
+      key: 'controller-2',
+      runtimeId: 'runtime-2',
+      sessionId: 'session-2',
+    });
+
+    await handleRpc(controller, { type: 'compaction_start' });
+    expect(controller.compacting).toBe(true);
+    expect(other.compacting).toBe(false);
+
+    await handleRpc(controller, { type: 'compaction_end', result: {} });
+    expect(controller.compacting).toBe(false);
+    expect(other.compacting).toBe(false);
+  });
+
+  it('restores a missed start from get_state and clears it on process exit', async () => {
+    const { handleBridgeEvent, handleResponse } = await import('./runtime');
+    const controller = makeController({
+      streaming: true,
+      working: true,
+      commandSyncRequestId: 'compacting-state',
+    });
+    state.controllers.push(controller);
+
+    await handleResponse(controller, {
+      id: 'compacting-state',
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: controller.sessionId,
+        sessionFile: controller.sessionPath,
+        isStreaming: true,
+        isCompacting: true,
+      },
+    });
+    expect(controller.compacting).toBe(true);
+
+    await handleResponse(controller, {
+      id: 'compacting-finished-state',
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: controller.sessionId,
+        sessionFile: controller.sessionPath,
+        isStreaming: true,
+        isCompacting: false,
+      },
+    });
+    expect(controller.compacting).toBe(false);
+
+    controller.compacting = true;
+    await handleBridgeEvent({
+      runtimeId: controller.runtimeId,
+      generation: controller.generation,
+      kind: 'exited',
+      code: 0,
+    } satisfies PiBridgeEvent);
+    expect(controller.compacting).toBe(false);
   });
 });
 

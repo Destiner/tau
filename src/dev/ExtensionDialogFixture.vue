@@ -3,6 +3,7 @@
     <TranscriptView
       class="fixture-transcript"
       :messages="messages"
+      :compacting="false"
       :show-working-indicator="false"
       working-label="Working"
       session-key="extension-dialog-fixture"

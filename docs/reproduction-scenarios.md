@@ -28,6 +28,8 @@ The `phantom-command-only` scenario submits `/usage` from a new session and emit
 
 The `saved-session-unacknowledged-abort` scenario accepts `Stop this fixture`, streams `Partial reply.`, and pauses at `abort-request-consumed` after Stop sends one abort. Release that gate to await Tau's bounded state probe, then release `before-abort-timeout-probe-response` to report Pi idle and hydrate the preserved partial turn. The abort and prompt themselves are never acknowledged.
 
+The `saved-session-compaction` scenario first pauses at `compaction-started` after Pi's start event, then settles into one permanent compacted-history boundary. Submit the draft `Miss the compaction start` that was preserved while compacting to pause again at `missed-start-reconciled`; this time Tau learns compaction only from `get_state.isCompacting`. In both pauses the transcript shows `Compacting…`, the composer remains editable, and Stop is disabled.
+
 The history scenarios open a saved session whose transcript arrives already complete, as one created elsewhere does — by a workflow extension, or on another machine. `saved-session-short-history` holds one turn and cannot scroll, `saved-session-history` fills the viewport, and `saved-session-long-history` is read back through rows that were only ever estimated. Nothing is submitted in any of them: the whole point is the first render.
 
 The `saved-session-extension-prompt` scenario opens a saved session and has its extension ask a question. The prompt renders at the end of the transcript and the composer is gone while it stands; it carries its own short Pi timeout, so the composer comes back a second and a half later without an answer being sent. Nothing is submitted.

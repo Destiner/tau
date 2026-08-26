@@ -57,6 +57,7 @@ import {
   clearRemoteRetry,
   clearWorkspaceError,
   commands,
+  compacting,
   controllerByKey,
   controllerByRuntimeId,
   controllerForSession,
@@ -752,6 +753,7 @@ function useTau() {
     const controller = activeController.value;
     if (
       !controller?.streaming ||
+      controller.compacting ||
       controller.stopping ||
       projectActionsDisabled.value
     )
@@ -968,6 +970,7 @@ function useTau() {
     draft,
     status,
     streaming,
+    compacting,
     stopping,
     promptSubmitting,
     models,

@@ -36,6 +36,7 @@ function testController(
     generation: 0,
     ready: false,
     streaming: false,
+    compacting: false,
     stopping: false,
     starting: false,
     working: false,

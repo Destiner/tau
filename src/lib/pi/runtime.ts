@@ -158,6 +158,7 @@ async function startController(
     'controller_start',
     parentContext,
   );
+  controller.compacting = false;
   controller.bootstrapStateRequestId = '';
   controller.bootstrapSessionPath = sessionPath ?? '';
   controller.runStateRequestId = '';
@@ -905,6 +906,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
       cancelPendingPrompt(controller, message || 'The Pi process stopped.');
     }
     settleInterruptedSubmittedPrompt(controller);
+    controller.compacting = false;
     setControllerLifecycle(
       controller,
       {
@@ -952,6 +954,7 @@ async function handleRpc(
     clearAbortWatch(controller);
     resetStreamAggregate(controller.runtimeId, controller.generation);
     controller.localErrors = [];
+    controller.compacting = false;
     setControllerLifecycle(
       controller,
       { streaming: true, stopping: false, working: true },
@@ -1046,12 +1049,17 @@ async function handleRpc(
     if (failure) pushError(controller, failure.message, failure.label);
     return;
   }
+  if (type === 'compaction_start') {
+    controller.compacting = true;
+    return;
+  }
   /**
    * A failed compaction is reported once and kept nowhere: Pi's message list
    * has no entry for it, so the row is held on the controller and re-appended
    * to every list hydrated until the next run begins.
    */
   if (type === 'compaction_end') {
+    controller.compacting = false;
     if (stringValue(event.errorMessage)) {
       const error = {
         key: controller.streamSequence++,
@@ -1110,6 +1118,7 @@ async function handleRpc(
   if (type === 'agent_settled') {
     flushStreamAggregate(controller.runtimeId, controller.generation);
     clearAbortWatch(controller);
+    controller.compacting = false;
     setControllerLifecycle(
       controller,
       { syncing: true, working: false, streaming: false, stopping: false },
@@ -1447,6 +1456,10 @@ async function handleResponse(
         controller.sessionPath !== piSessionPath);
     applySessionName(controller, stringValue(data.sessionName));
     const nowStreaming = data.isStreaming === true;
+    if (data.isCompacting === true) controller.compacting = true;
+    else if (data.isCompacting === false || !nowStreaming) {
+      controller.compacting = false;
+    }
     controller.status =
       resolvesAbortProbe && nowStreaming ? unstoppedStatus(controller) : '';
     clearRemoteConnectionWatch(controller);
@@ -1473,6 +1486,7 @@ async function handleResponse(
       clearAbortWatch(controller);
       controller.hasPiTranscript = false;
       controller.lastUserMessageAt = 0;
+      controller.compacting = data.isCompacting === true;
       rebindEphemeralSession(controller);
       controller.messages = [];
       resetHistory(controller);
@@ -2542,6 +2556,7 @@ async function stopControllerProcess(
   abandonPendingRpcSpans(controller.runtimeId, generation, 'abandoned_stop');
   flushStreamAggregate(controller.runtimeId, generation);
   controller.generation = 0;
+  controller.compacting = false;
   setControllerLifecycle(
     controller,
     {

@@ -73,10 +73,12 @@ interface PiState {
   };
   thinkingLevel: string;
   isStreaming: boolean;
+  isCompacting?: boolean;
 }
 
 type PiMessage =
   | { role: 'user'; content: string }
+  | { role: 'compactionSummary'; summary: string }
   | {
       role: 'assistant';
       content: readonly { type: 'text'; text: string }[];
@@ -121,6 +123,12 @@ type ScriptedPiResponse =
 
 type PiRpcEvent =
   | { type: 'agent_start' }
+  | { type: 'compaction_start' }
+  | {
+      type: 'compaction_end';
+      result?: { summary: string };
+      errorMessage?: string;
+    }
   | {
       type: 'message_update';
       assistantMessageEvent: { type: 'text_delta'; delta: string };

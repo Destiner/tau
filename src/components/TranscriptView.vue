@@ -6,7 +6,7 @@
     @scroll="handleScroll"
   >
     <div
-      v-if="virtualRows.length || prompt"
+      v-if="virtualRows.length || compacting || prompt"
       class="message-list-shell"
     >
       <div
@@ -86,6 +86,18 @@
         </div>
       </div>
 
+      <div
+        v-if="compacting"
+        ref="compactionRow"
+        class="message compaction transient-compaction"
+        role="status"
+      >
+        <CompactionDivider
+          :entry="compactingEntry"
+          label="Compacting…"
+        />
+      </div>
+
       <!--
         An interactive prompt is the last thing in the transcript rather than a
         row of it: the virtualizer unmounts rows the reader scrolls away from,
@@ -143,6 +155,7 @@ import UiSpinner from './ui/UiSpinner.vue';
 
 const props = defineProps<{
   messages: TranscriptEntry[];
+  compacting: boolean;
   showWorkingIndicator: boolean;
   workingLabel: string;
   basePath?: string;
@@ -164,7 +177,13 @@ const emit = defineEmits<{
 
 const transcript = ref<HTMLElement>();
 const promptRow = ref<HTMLElement>();
+const compactionRow = ref<HTMLElement>();
 const workingRowKey = 'tau-working-indicator';
+const compactingEntry: TranscriptEntry = {
+  id: 'tau-compacting',
+  kind: 'compaction',
+  text: '',
+};
 
 /**
  * Which activity rows are open, held by message id rather than in the row
@@ -238,6 +257,7 @@ const contentSignature = computed(() =>
     props.messages.length,
     props.messages[props.messages.length - 1]?.id ?? '',
     props.showWorkingIndicator,
+    props.compacting,
     totalSize.value,
     props.prompt?.key ?? '',
   ].join('|'),
@@ -283,10 +303,12 @@ onMounted(() => {
  * part of the end without being part of the total it knows about. The same
  * clamped offset the viewport uses takes that end up as the prompt grows.
  */
-watch(promptRow, (row, previous) => {
-  if (previous) viewportObserver?.unobserve(previous);
-  if (row) viewportObserver?.observe(row);
-});
+for (const bottomRow of [compactionRow, promptRow]) {
+  watch(bottomRow, (row, previous) => {
+    if (previous) viewportObserver?.unobserve(previous);
+    if (row) viewportObserver?.observe(row);
+  });
+}
 
 /**
  * A prompt is a question the session cannot go on without, so it is brought to
@@ -585,6 +607,10 @@ defineExpose({ scrollToEnd });
   margin-right: 20px;
   margin-left: 8px;
   padding-bottom: 0;
+}
+
+.transient-compaction {
+  padding-bottom: 30px;
 }
 
 /* A run of activity is one thing; only its last row is followed by a gap. */

@@ -2,6 +2,7 @@ import archivedSessionsReview from './archived-sessions-review';
 import phantomCommandOnly from './phantom-command-only';
 import phantomCommandRegistration from './phantom-command-registration';
 import savedSessionCommandReplacement from './saved-session-command-replacement';
+import savedSessionCompaction from './saved-session-compaction';
 import savedSessionExtensionPrompt, {
   emptySessionExtensionPrompt,
 } from './saved-session-extension-prompt';
@@ -26,6 +27,7 @@ import type { PiScenario, PiScenarioMetadata } from './index';
 const scenarios = [
   savedSessionBootstrap,
   savedSessionConversation,
+  savedSessionCompaction,
   savedSessionStaleGeneration,
   savedSessionCommandReplacement,
   phantomCommandRegistration,
