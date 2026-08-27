@@ -100,7 +100,7 @@
       >
         <CompactionDivider
           :entry="compactingEntry"
-          label="Compacting…"
+          label="compacting"
         />
       </div>
 

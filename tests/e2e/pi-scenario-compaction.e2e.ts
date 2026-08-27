@@ -26,7 +26,7 @@ async function expectActiveCompaction(page: Page): Promise<void> {
   const composer = page.getByRole('textbox', { name: 'Message Pi' });
   const stop = page.getByRole('button', { name: 'Stop Pi' });
 
-  await expect(page.locator('.transient-compaction')).toHaveText('Compacting…');
+  await expect(page.locator('.transient-compaction')).toHaveText('compacting');
   await expect(stop).toBeVisible();
   await expect(stop).toBeDisabled();
   await expect(composer).toBeEnabled();
