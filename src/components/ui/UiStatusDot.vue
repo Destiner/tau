@@ -26,8 +26,8 @@ withDefaults(
 
 <style scoped>
 /*
- * 7px, and it sits on the text baseline rather than in the middle of the row:
- * a flex item with no content takes its bottom edge as its baseline, so in a
+ * It sits on the text baseline rather than in the middle of the row: a flex
+ * item with no content takes its bottom edge as its baseline, so in a
  * baseline-aligned row the dot rests on the label's baseline, and the -1px
  * sinks it the hair that makes it read as centred against lowercase letters.
  */
@@ -47,8 +47,11 @@ withDefaults(
 }
 
 .ui-status-dot.tone-draft {
-  border: 1.5px solid var(--status-draft);
+  width: 5px;
+  height: 5px;
+  margin-bottom: 0;
   opacity: 1;
+  background: var(--status-draft);
 }
 
 .ui-status-dot.tone-working {

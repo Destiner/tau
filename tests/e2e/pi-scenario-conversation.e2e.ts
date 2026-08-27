@@ -18,6 +18,18 @@ test('wraps an unbroken link without widening the composer', async ({
   const composer = page.getByRole('textbox', { name: 'Message Pi' });
   await composer.fill(`https://example.com/${'a'.repeat(10_000)}`);
 
+  const draftIndicator = page.locator(
+    '.session-row .ui-status-dot[aria-label="Unsent draft"]',
+  );
+  await expect(draftIndicator).toHaveCSS('width', '5px');
+  await expect(draftIndicator).toHaveCSS('height', '5px');
+  await expect(draftIndicator).toHaveCSS(
+    'background-color',
+    'rgb(161, 168, 178)',
+  );
+  await expect(draftIndicator).toHaveCSS('margin-bottom', '0px');
+  await expect(draftIndicator).toHaveCSS('border-top-width', '0px');
+
   await expect
     .poll(() =>
       page.evaluate(() => {
