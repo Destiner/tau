@@ -708,7 +708,10 @@ test('copies remote paths from fenced transcript markdown', async ({
   await expect
     .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
     .toEqual(['/home/agent/rhinestone/orchestrator']);
-  await expect(repo).toHaveAttribute('data-copied', 'true');
+  await expect(repo).not.toHaveAttribute('data-copied');
+  await expect(
+    repo.evaluate((element) => getComputedStyle(element, '::after').content),
+  ).resolves.toBe('none');
   await expect(message.getByRole('status')).toHaveText('Path copied');
 
   await plan.focus();

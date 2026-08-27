@@ -176,12 +176,18 @@ function closeViewer(): void {
   viewer.value = null;
 }
 
-/** Marks the button that was just used, so the icon reports the copy landed. */
-function showCopied(element: HTMLElement, path?: string): void {
+/** Marks the copied code button, so its icon reports that the copy landed. */
+function showCopied(element: HTMLElement): void {
   clearCopied();
   copiedElement = element;
   copiedElement.dataset.copied = 'true';
-  copiedPath.value = path ?? '';
+  copiedTimer = setTimeout(clearCopied, COPIED_FEEDBACK_MS);
+}
+
+/** Announces a copied remote path without adding visual transcript noise. */
+function announceCopiedPath(): void {
+  clearCopied();
+  copiedPath.value = 'copied';
   copiedTimer = setTimeout(clearCopied, COPIED_FEEDBACK_MS);
 }
 
@@ -205,14 +211,14 @@ async function copyCodeBlock(button: HTMLElement): Promise<void> {
   showCopied(button);
 }
 
-async function copyRemotePath(link: HTMLElement, path: string): Promise<void> {
+async function copyRemotePath(path: string): Promise<void> {
   try {
     await writeText(path);
   } catch (error) {
     console.error('Could not copy the remote path', error);
     return;
   }
-  showCopied(link, path);
+  announceCopiedPath();
 }
 
 async function activate(event: Event): Promise<void> {
@@ -247,7 +253,7 @@ async function activate(event: Event): Promise<void> {
   // links copy their actual remote path; local ones keep the desktop gesture.
   event.preventDefault();
   if (props.copyPaths) {
-    await copyRemotePath(link, path);
+    await copyRemotePath(path);
     return;
   }
   if (props.basePath && isPathOpenGesture(event, window.navigator.platform)) {
@@ -764,14 +770,6 @@ onBeforeUnmount(clearCopied);
 .markdown :deep(.file-link:focus-visible) {
   outline: 0;
   text-decoration: underline;
-}
-
-.markdown :deep(.file-link[data-copied]::after) {
-  content: 'Copied';
-  margin-left: 0.4em;
-  color: var(--muted);
-  font-size: var(--text-xs);
-  text-decoration: none;
 }
 
 .copy-feedback {
