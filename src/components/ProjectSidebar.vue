@@ -298,18 +298,29 @@ const projectMenuOpen = ref(false);
 const showingArchived = ref(false);
 
 function toggleArchivedView(): void {
+  releaseSessionOrder();
   showingArchived.value = !showingArchived.value;
 }
 
 /** Session snapshots by project path, empty whenever the list is not hovered. */
 const heldOrder = ref(new Map<string, SessionSummary[]>());
+let heldOrderElement: HTMLElement | undefined;
 let projectSortable: Sortable | undefined;
 
 onMounted(() => {
   setupProjectReordering();
+  window.addEventListener('pointermove', releaseSessionOrderOutsideList);
+  window.addEventListener('blur', releaseSessionOrder);
+  document.addEventListener('visibilitychange', releaseSessionOrderWhenHidden);
 });
 onBeforeUnmount(() => {
   projectSortable?.destroy();
+  window.removeEventListener('pointermove', releaseSessionOrderOutsideList);
+  window.removeEventListener('blur', releaseSessionOrder);
+  document.removeEventListener(
+    'visibilitychange',
+    releaseSessionOrderWhenHidden,
+  );
 });
 
 /**
@@ -319,6 +330,7 @@ onBeforeUnmount(() => {
  */
 function holdSessionOrder(event: PointerEvent): void {
   if (event.pointerType !== 'mouse') return;
+  heldOrderElement = event.currentTarget as HTMLElement;
   heldOrder.value = new Map(
     (state.workspace?.projects ?? []).map((project) => [
       project.path,
@@ -328,7 +340,23 @@ function holdSessionOrder(event: PointerEvent): void {
 }
 
 function releaseSessionOrder(): void {
+  heldOrderElement = undefined;
   if (heldOrder.value.size > 0) heldOrder.value = new Map();
+}
+
+/** Pointer leave is not guaranteed when the webview loses its pointer. */
+function releaseSessionOrderOutsideList(event: PointerEvent): void {
+  if (
+    event.pointerType === 'mouse' &&
+    heldOrderElement &&
+    !event.composedPath().includes(heldOrderElement)
+  ) {
+    releaseSessionOrder();
+  }
+}
+
+function releaseSessionOrderWhenHidden(): void {
+  if (document.visibilityState === 'hidden') releaseSessionOrder();
 }
 
 function orderedSessions(project: ProjectSummary): SessionSummary[] {

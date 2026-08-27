@@ -43,6 +43,29 @@ async function mutateWhileHeld(page: Page): Promise<void> {
   });
 }
 
+test('releases a hold when a later pointer move is outside the list', async ({
+  page,
+}) => {
+  await page.goto(fixtureUrl);
+
+  await page.evaluate(() => {
+    document
+      .querySelector('.projects-body')
+      ?.dispatchEvent(
+        new PointerEvent('pointerenter', { pointerType: 'mouse' }),
+      );
+  });
+  await mutateWhileHeld(page);
+  await expect(page.locator('.session-row')).toHaveCount(4);
+
+  // This models a native webview dropping pointerleave as the pointer exits.
+  // The next pointer event, now outside the list, must still release the hold.
+  await page.mouse.move(500, 100);
+  await expect(page.locator('.session-row')).toHaveCount(6);
+  await expect(page.getByText('Alpha newest', { exact: true })).toBeVisible();
+  await expect(page.getByText('Empty newest', { exact: true })).toBeVisible();
+});
+
 test('holds every existing row while new sessions and activity arrive', async ({
   page,
 }) => {
