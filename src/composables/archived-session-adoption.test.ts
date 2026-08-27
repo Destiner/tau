@@ -294,6 +294,12 @@ describe('a workflow phase Pi hands back', () => {
     });
     await vi.waitFor(() => {
       expect(controller.pendingPrompt?.messagesRequestId).not.toBe('');
+      expect(
+        sentRequests(controller, 'get_messages').some(
+          (request) =>
+            request.id === controller.pendingPrompt?.messagesRequestId,
+        ),
+      ).toBe(true);
     });
     emitRpc(controller, {
       id: controller.pendingPrompt?.messagesRequestId,

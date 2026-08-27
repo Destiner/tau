@@ -170,6 +170,14 @@ const savedSessionCommandReplacement = definePiScenario({
       kind: 'event',
       runtime,
       event: {
+        type: 'message_start',
+        message: { role: 'assistant', content: [] },
+      },
+    },
+    {
+      kind: 'event',
+      runtime,
+      event: {
         type: 'message_update',
         assistantMessageEvent: {
           type: 'text_delta',
@@ -177,6 +185,63 @@ const savedSessionCommandReplacement = definePiScenario({
         },
       },
     },
+    {
+      kind: 'event',
+      runtime,
+      event: {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Replacement session started.' }],
+        },
+      },
+    },
+    { kind: 'event', runtime, event: { type: 'agent_settled' } },
+    {
+      kind: 'request',
+      runtime,
+      capture: 'settled-state',
+      match: { type: 'get_state' },
+    },
+    {
+      kind: 'response',
+      request: 'settled-state',
+      command: 'get_state',
+      data: { ...replacementState, isStreaming: false },
+    },
+    {
+      kind: 'request',
+      runtime,
+      capture: 'settled-efforts',
+      match: { type: 'get_available_thinking_levels' },
+    },
+    {
+      kind: 'response',
+      request: 'settled-efforts',
+      command: 'get_available_thinking_levels',
+      data: { levels: fixtureThinkingLevels },
+    },
+    {
+      kind: 'request',
+      runtime,
+      capture: 'settled-messages',
+      match: { type: 'get_messages' },
+    },
+    {
+      kind: 'response',
+      request: 'settled-messages',
+      command: 'get_messages',
+      data: {
+        messages: [
+          { role: 'user', content: 'Run phase 42' },
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Replacement session started.' }],
+          },
+        ],
+      },
+    },
+    { kind: 'runtime-event', runtime, event: 'exited', code: 0 },
   ],
 });
 

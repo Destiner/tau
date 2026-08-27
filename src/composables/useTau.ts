@@ -138,7 +138,9 @@ function useTau() {
       unlisten = await listen<PiBridgeEvent>('pi-event', ({ payload }) => {
         void handleBridgeEvent(payload).catch(() => {
           const controller = controllerByRuntimeId(payload.runtimeId);
-          if (!controller) return;
+          if (!controller || controller.generation !== payload.generation) {
+            return;
+          }
           setControllerLifecycle(
             controller,
             { syncing: false },

@@ -72,6 +72,21 @@ import {
   type TranscriptNoticeType,
 } from './transcript';
 
+const materializationVerificationRetryDelays = [250, 750, 1_500];
+
+interface MaterializationVerificationRetry {
+  generation: number;
+  sessionId: string;
+  sessionPath: string;
+  nextAttempt: number;
+  timer?: ReturnType<typeof setTimeout>;
+}
+
+const materializationVerificationRetries = new Map<
+  string,
+  MaterializationVerificationRetry
+>();
+
 async function sendPhantomMessage(
   controller: SessionController,
   message: string,
@@ -168,6 +183,9 @@ async function startController(
   controller.commandPromptRequestId = '';
   controller.commandSyncRequestId = '';
   controller.replacementProbeRequestId = '';
+  controller.postSettlementHydration = false;
+  controller.materializationStateRequestId = '';
+  controller.materializationMessagesRequestId = '';
   controller.pendingSessionRename = undefined;
   settleInterruptedSubmittedPrompt(controller);
   controller.pendingEffort = '';
@@ -177,6 +195,7 @@ async function startController(
   clearSettingRequestWatch(controller);
   touchController(controller);
   clearSessionReplacementWatch(controller);
+  clearMaterializationVerificationWatch(controller);
   clearAbortWatch(controller);
   clearRemoteConnectionWatch(controller);
   if (project.connectionString) watchRemoteConnection(controller);
@@ -300,6 +319,8 @@ const RPC_SPAN_TIMEOUT_MS = 10 * 60 * 1000;
 interface PendingRpcSpan {
   end: (outcome: PiRpcOutcome) => void;
   context?: TraceContext;
+  dispatchSnapshot: RpcDispatchSnapshot;
+  method: string;
   timeoutHandle: ReturnType<typeof setTimeout>;
   /** When this request was registered, in epoch milliseconds. Used only to
    * derive `oldestPendingRpcAgeMs` for the periodic state summary — never
@@ -328,6 +349,8 @@ function rpcSpanKey(
 function registerPendingRpcSpan(
   key: string,
   end: (outcome: PiRpcOutcome) => void,
+  dispatchSnapshot: RpcDispatchSnapshot,
+  method: string,
   context?: TraceContext,
 ): void {
   const previous = pendingRpcSpans.get(key);
@@ -343,6 +366,8 @@ function registerPendingRpcSpan(
   pendingRpcSpans.set(key, {
     end,
     context,
+    dispatchSnapshot,
+    method,
     timeoutHandle,
     startedAt: Date.now(),
   });
@@ -375,6 +400,8 @@ function oldestPendingRpcAgeMs(): number {
 interface EndPendingRpcResult {
   matched: boolean;
   context?: TraceContext;
+  dispatchSnapshot?: RpcDispatchSnapshot;
+  method?: string;
 }
 
 function endPendingRpcSpan(
@@ -386,7 +413,12 @@ function endPendingRpcSpan(
   pendingRpcSpans.delete(key);
   clearTimeout(pending.timeoutHandle);
   pending.end(outcome);
-  return { matched: true, context: pending.context };
+  return {
+    matched: true,
+    context: pending.context,
+    dispatchSnapshot: pending.dispatchSnapshot,
+    method: pending.method,
+  };
 }
 
 /** Abandons every span pending for `runtimeId`/`generation` with `outcome`:
@@ -472,6 +504,149 @@ function flushStreamAggregate(runtimeId: string, generation: number): void {
  * explicit abandonment. `parentContext` nests the span under an enclosing
  * `ui.action` span when this call is part of a traced user action.
  */
+interface RpcDispatchSnapshot {
+  generation: number;
+  sessionId: string;
+  sessionPath: string;
+  materializationStateRequestId: string;
+  materializationMessagesRequestId: string;
+  pendingPrompt: SessionController['pendingPrompt'];
+  submittedPrompt: SessionController['submittedPrompt'];
+}
+
+function captureRpcDispatchSnapshot(
+  controller: SessionController,
+): RpcDispatchSnapshot {
+  return {
+    generation: controller.generation,
+    sessionId: controller.sessionId,
+    sessionPath: controller.sessionPath,
+    materializationStateRequestId: controller.materializationStateRequestId,
+    materializationMessagesRequestId:
+      controller.materializationMessagesRequestId,
+    pendingPrompt: controller.pendingPrompt,
+    submittedPrompt: controller.submittedPrompt,
+  };
+}
+
+function rpcDispatchStillCurrent(
+  controller: SessionController,
+  snapshot: RpcDispatchSnapshot,
+): boolean {
+  return (
+    !controller.disposed &&
+    controller.generation === snapshot.generation &&
+    controller.sessionId === snapshot.sessionId &&
+    controller.sessionPath === snapshot.sessionPath
+  );
+}
+
+function cleanupRejectedRpcDispatch(
+  controller: SessionController,
+  requestId: string,
+  method: string,
+  snapshot: RpcDispatchSnapshot,
+): void {
+  if (!rpcDispatchStillCurrent(controller, snapshot)) return;
+
+  if (controller.bootstrapStateRequestId === requestId) {
+    controller.bootstrapStateRequestId = '';
+    setControllerLifecycle(
+      controller,
+      { starting: false, syncing: false },
+      'bridge_event_failed',
+    );
+  }
+  if (controller.runStateRequestId === requestId) {
+    controller.runStateRequestId = '';
+  }
+  if (controller.startMessagesRequestId === requestId) {
+    controller.startMessagesRequestId = '';
+    setControllerLifecycle(
+      controller,
+      { starting: false, syncing: false },
+      'bridge_event_failed',
+    );
+  }
+  if (controller.commandPromptRequestId === requestId) {
+    controller.commandPromptRequestId = '';
+  }
+  if (controller.commandSyncRequestId === requestId) {
+    controller.commandSyncRequestId = '';
+  }
+  if (controller.replacementProbeRequestId === requestId) {
+    controller.replacementProbeRequestId = '';
+  }
+  if (controller.abortProbeRequestId === requestId) {
+    controller.abortProbeRequestId = '';
+  }
+  if (controller.historyRequestId === requestId) {
+    controller.historyRequestId = '';
+    setHistoryLoading(controller, false);
+  }
+  if (controller.pendingSettingRequestId === requestId) {
+    controller.pendingSettingRequestId = '';
+    controller.pendingEffort = '';
+    clearSettingRequestWatch(controller);
+  }
+
+  const pending = snapshot.pendingPrompt;
+  const rejectsPendingPrompt = Boolean(
+    pending &&
+    controller.pendingPrompt === pending &&
+    (pending.stateRequestId === requestId ||
+      pending.messagesRequestId === requestId ||
+      pending.settingsRequestId === requestId ||
+      (method === 'get_available_thinking_levels' &&
+        pending.messagesRequestId)),
+  );
+  if (rejectsPendingPrompt) {
+    cancelPendingPrompt(controller, rpcFailureCopy(method));
+  }
+
+  const submitted = snapshot.submittedPrompt;
+  if (controller.submittedPrompt === submitted && submitted) {
+    if (submitted.admissionStateRequestId === requestId) {
+      submitted.admissionStateRequestId = '';
+    }
+    if (submitted.admissionMessagesRequestId === requestId) {
+      submitted.admissionMessagesRequestId = '';
+    }
+  }
+
+  const rejectsMaterializationState =
+    method === 'get_state' &&
+    snapshot.materializationStateRequestId === requestId &&
+    controller.materializationStateRequestId === requestId;
+  const rejectsMaterializationMessages =
+    method === 'get_messages' &&
+    snapshot.materializationMessagesRequestId === requestId &&
+    controller.materializationMessagesRequestId === requestId;
+  const rejectsMaterializationPrerequisite =
+    method === 'get_available_thinking_levels' &&
+    Boolean(snapshot.materializationMessagesRequestId) &&
+    controller.materializationMessagesRequestId ===
+      snapshot.materializationMessagesRequestId;
+  if (rejectsMaterializationState) {
+    controller.materializationStateRequestId = '';
+  }
+  if (rejectsMaterializationMessages || rejectsMaterializationPrerequisite) {
+    controller.materializationMessagesRequestId = '';
+  }
+  if (
+    rejectsMaterializationState ||
+    rejectsMaterializationMessages ||
+    rejectsMaterializationPrerequisite
+  ) {
+    setControllerLifecycle(
+      controller,
+      { syncing: false },
+      'bridge_event_failed',
+    );
+    scheduleMaterializationVerificationRetry(controller);
+  }
+}
+
 async function rpc(
   controller: SessionController,
   request: Record<string, unknown>,
@@ -479,6 +654,7 @@ async function rpc(
 ): Promise<void> {
   const requestId = stringValue(request.id);
   const method = stringValue(request.type);
+  const snapshot = captureRpcDispatchSnapshot(controller);
   const key = requestId
     ? rpcSpanKey(controller.runtimeId, controller.generation, requestId)
     : undefined;
@@ -494,12 +670,15 @@ async function rpc(
         controllerId: controller.key,
       },
     );
-    registerPendingRpcSpan(key, span.end, span.context);
+    registerPendingRpcSpan(key, span.end, snapshot, method, span.context);
   }
   try {
     await invoke('send_pi', { runtimeId: controller.runtimeId, request });
   } catch (error) {
     if (key) endPendingRpcSpan(key, 'error');
+    if (requestId) {
+      cleanupRejectedRpcDispatch(controller, requestId, method, snapshot);
+    }
     throw error;
   }
 }
@@ -890,6 +1069,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     );
     flushStreamAggregate(controller.runtimeId, event.generation);
     clearSessionReplacementWatch(controller);
+    clearMaterializationVerificationWatch(controller);
     clearAbortWatch(controller);
     clearRemoteConnectionWatch(controller);
     discardControllerDialogs(controller, event.generation);
@@ -952,7 +1132,11 @@ async function handleRpc(
   }
   if (type === 'agent_start') {
     confirmSubmittedPrompt(controller);
+    controller.postSettlementHydration = false;
+    controller.materializationStateRequestId = '';
+    controller.materializationMessagesRequestId = '';
     clearSessionReplacementWatch(controller);
+    clearMaterializationVerificationWatch(controller);
     clearAbortWatch(controller);
     resetStreamAggregate(controller.runtimeId, controller.generation);
     controller.localErrors = [];
@@ -973,9 +1157,7 @@ async function handleRpc(
     const role = stringValue(message?.role);
     if (role === 'user' || role === 'assistant') {
       confirmSubmittedPrompt(controller);
-      if (markPiTranscript(controller)) {
-        void promoteTranscriptSession(controller);
-      }
+      markPiTranscript(controller);
     }
     if (role !== 'user') return;
     const skill = parseSkillBlock(contentText(message?.content));
@@ -1028,9 +1210,7 @@ async function handleRpc(
     return;
   }
   if (type === 'message_update') {
-    if (markPiTranscript(controller)) {
-      void promoteTranscriptSession(controller);
-    }
+    markPiTranscript(controller);
     const delta = asRecord(event.assistantMessageEvent);
     const deltaType = stringValue(delta?.type);
     const deltaText = stringValue(delta?.delta);
@@ -1121,6 +1301,8 @@ async function handleRpc(
   }
   if (type === 'agent_settled') {
     flushStreamAggregate(controller.runtimeId, controller.generation);
+    clearMaterializationVerificationWatch(controller);
+    controller.postSettlementHydration = true;
     clearAbortWatch(controller);
     controller.compacting = false;
     setControllerLifecycle(
@@ -1132,6 +1314,7 @@ async function handleRpc(
     if (!isControllerSelected(controller)) controller.unread = true;
     watchSessionReplacement(controller);
     const stateRequestId = nextRequestId('settled-state');
+    controller.materializationStateRequestId = stateRequestId;
     if (controller.submittedPrompt?.accepted) {
       controller.submittedPrompt.admissionStateRequestId = stateRequestId;
     }
@@ -1255,8 +1438,23 @@ async function handleResponse(
     });
   }
   const responseContext = pendingResult.context;
+  const responseDispatchStillCurrent = Boolean(
+    pendingResult.dispatchSnapshot &&
+    pendingResult.method === command &&
+    rpcDispatchStillCurrent(controller, pendingResult.dispatchSnapshot),
+  );
   if (responseId && confirmedAdmissionRequestIds.delete(responseId)) return;
   if (controller.remoteConnectionTimedOut) return;
+  const identityScopedResponse =
+    command === 'get_state' ||
+    command === 'get_messages' ||
+    command === 'get_available_thinking_levels';
+  // These reads describe whichever Pi identity owned the runtime when they
+  // were dispatched. A replacement keeps the generation but abandons that
+  // identity's requests, so only an exact, still-current dispatch may mutate
+  // the controller. The response's identity is intentionally not compared:
+  // the current identity's own get_state is how replacements are discovered.
+  if (identityScopedResponse && !responseDispatchStillCurrent) return;
   const resolvesRunState =
     command === 'get_state' &&
     Boolean(controller.runStateRequestId) &&
@@ -1295,6 +1493,40 @@ async function handleResponse(
     command === 'get_messages' &&
     Boolean(controller.submittedPrompt?.admissionMessagesRequestId) &&
     controller.submittedPrompt?.admissionMessagesRequestId === responseId;
+  const resolvesMaterializationState =
+    command === 'get_state' &&
+    Boolean(controller.materializationStateRequestId) &&
+    controller.materializationStateRequestId === responseId;
+  const resolvesMaterializationMessages =
+    command === 'get_messages' &&
+    Boolean(controller.materializationMessagesRequestId) &&
+    controller.materializationMessagesRequestId === responseId;
+  const resolvesBootstrap =
+    command === 'get_state' &&
+    Boolean(controller.bootstrapStateRequestId) &&
+    controller.bootstrapStateRequestId === responseId;
+  const resolvesPendingState =
+    command === 'get_state' &&
+    Boolean(controller.pendingPrompt?.stateRequestId) &&
+    controller.pendingPrompt?.stateRequestId === responseId;
+  const resolvesPendingMessages =
+    command === 'get_messages' &&
+    Boolean(controller.pendingPrompt?.messagesRequestId) &&
+    controller.pendingPrompt?.messagesRequestId === responseId;
+  const resolvesMaterializationPrerequisite = Boolean(
+    command === 'get_available_thinking_levels' &&
+    responseDispatchStillCurrent &&
+    pendingResult.dispatchSnapshot?.materializationMessagesRequestId &&
+    pendingResult.dispatchSnapshot.materializationMessagesRequestId ===
+      controller.materializationMessagesRequestId,
+  );
+  const resolvesPendingPrerequisite = Boolean(
+    command === 'get_available_thinking_levels' &&
+    responseDispatchStillCurrent &&
+    pendingResult.dispatchSnapshot?.pendingPrompt &&
+    pendingResult.dispatchSnapshot.pendingPrompt === controller.pendingPrompt &&
+    controller.pendingPrompt?.messagesRequestId,
+  );
   if (
     command === 'prompt' &&
     !resolvesSubmittedPrompt &&
@@ -1325,9 +1557,52 @@ async function handleResponse(
     }
   }
   if (response.success !== true) {
+    const resolvesCurrentStateRequest =
+      command !== 'get_state' ||
+      responseDispatchStillCurrent ||
+      resolvesBootstrap ||
+      resolvesRunState ||
+      resolvesReplacementProbe ||
+      resolvesCommandSync ||
+      resolvesAbortProbe ||
+      resolvesAdmissionState ||
+      resolvesMaterializationState ||
+      resolvesPendingState ||
+      (command === 'get_state' && resolvesPendingSetting);
+    const resolvesCurrentMessagesRequest =
+      command !== 'get_messages' ||
+      responseDispatchStillCurrent ||
+      (Boolean(controller.startMessagesRequestId) &&
+        responseId === controller.startMessagesRequestId) ||
+      resolvesAdmissionMessages ||
+      resolvesMaterializationMessages ||
+      resolvesPendingMessages;
+    const resolvesCurrentEffortRequest =
+      command !== 'get_available_thinking_levels' ||
+      responseDispatchStillCurrent;
+    if (
+      !resolvesCurrentStateRequest ||
+      !resolvesCurrentMessagesRequest ||
+      !resolvesCurrentEffortRequest
+    ) {
+      return;
+    }
+
     controller.status = resolvesHistory
       ? errorCopy.historyLoad
       : rpcFailureCopy(command);
+    if (resolvesMaterializationState) {
+      controller.materializationStateRequestId = '';
+      controller.materializationMessagesRequestId = '';
+      scheduleMaterializationVerificationRetry(controller);
+    }
+    if (
+      resolvesMaterializationMessages ||
+      resolvesMaterializationPrerequisite
+    ) {
+      controller.materializationMessagesRequestId = '';
+      scheduleMaterializationVerificationRetry(controller);
+    }
     if (resolvesHistory) {
       controller.historyRequestId = '';
       setHistoryLoading(controller, false);
@@ -1348,6 +1623,18 @@ async function handleResponse(
       return;
     }
     const pending = controller.pendingPrompt;
+    if (resolvesMaterializationPrerequisite) {
+      setControllerLifecycle(
+        controller,
+        { syncing: false },
+        'bridge_event_failed',
+        responseContext,
+      );
+    }
+    if (resolvesPendingPrerequisite) {
+      cancelPendingPrompt(controller, controller.status);
+      return;
+    }
     const failedPendingSetting =
       Boolean(pending?.settingsRequestId) &&
       responseId === pending?.settingsRequestId;
@@ -1364,8 +1651,6 @@ async function handleResponse(
       cancelPendingPrompt(controller, controller.status);
     }
     if (command === 'get_state') {
-      const resolvesBootstrap =
-        responseId === controller.bootstrapStateRequestId;
       if (resolvesBootstrap) controller.bootstrapStateRequestId = '';
       setControllerLifecycle(
         controller,
@@ -1379,12 +1664,16 @@ async function handleResponse(
     }
     if (
       command === 'get_messages' &&
-      responseId === controller.startMessagesRequestId
+      (responseId === controller.startMessagesRequestId ||
+        resolvesMaterializationMessages)
     ) {
-      controller.startMessagesRequestId = '';
+      const resolvesStart = responseId === controller.startMessagesRequestId;
+      if (resolvesStart) controller.startMessagesRequestId = '';
       setControllerLifecycle(
         controller,
-        { starting: false, syncing: false },
+        resolvesStart
+          ? { starting: false, syncing: false }
+          : { syncing: false },
         'get_messages_failed',
         responseContext,
       );
@@ -1445,6 +1734,9 @@ async function handleResponse(
   const data = asRecord(response.data);
 
   if (command === 'get_state' && data) {
+    if (resolvesMaterializationState) {
+      controller.materializationStateRequestId = '';
+    }
     const model = asRecord(data.model);
     controller.currentModelProvider = stringValue(model?.provider);
     controller.currentModelId = stringValue(model?.id);
@@ -1460,9 +1752,6 @@ async function handleResponse(
     const resolvesPending =
       Boolean(pending?.stateRequestId) &&
       responseId === pending?.stateRequestId;
-    const resolvesBootstrap =
-      Boolean(controller.bootstrapStateRequestId) &&
-      responseId === controller.bootstrapStateRequestId;
     // Pi opens a session it cannot find as a fresh one under the very path it
     // was handed, so a bootstrap that answers with the requested path under
     // another id is Pi reporting that the session was never saved. Every other
@@ -1513,8 +1802,12 @@ async function handleResponse(
         'abandoned_replacement',
       );
       clearSessionReplacementWatch(controller);
+      clearMaterializationVerificationWatch(controller);
       clearAbortWatch(controller);
       controller.hasPiTranscript = false;
+      controller.materializationVerified = false;
+      controller.materializationStateRequestId = '';
+      controller.materializationMessagesRequestId = '';
       controller.lastUserMessageAt = 0;
       controller.compacting = data.isCompacting === true;
       rebindEphemeralSession(controller);
@@ -1549,6 +1842,7 @@ async function handleResponse(
     if (unsavedSession) await retireUnsavedSession(controller);
     if (controller.disposed) return;
 
+    const synchronizedIdentity = captureConnectedSessionIdentity(controller);
     if (
       controller.sessionId &&
       controller.sessionPath &&
@@ -1568,7 +1862,7 @@ async function handleResponse(
         sessionChanged || Boolean(resolvesPending) || resolvesCommandSync,
       );
     }
-    if (controller.disposed) return;
+    if (!controllerIdentityMatches(controller, synchronizedIdentity)) return;
 
     if (resolvesPending && pending) {
       controller.bootstrapStateRequestId = '';
@@ -1577,7 +1871,11 @@ async function handleResponse(
     }
     if (resolvesRunState && !sessionChanged) return;
     if (resolvesAdmissionState && nowStreaming && !sessionChanged) return;
-    if (resolvesReplacementProbe && !sessionChanged) {
+    if (
+      resolvesReplacementProbe &&
+      !sessionChanged &&
+      !controller.postSettlementHydration
+    ) {
       releaseIdleRuntimes();
       return;
     }
@@ -1591,13 +1889,18 @@ async function handleResponse(
         id: nextRequestId('replacement-models'),
         type: 'get_available_models',
       });
+      if (!controllerIdentityMatches(controller, synchronizedIdentity)) return;
       await rpc(controller, {
         id: nextRequestId('replacement-commands'),
         type: 'get_commands',
       });
+      if (!controllerIdentityMatches(controller, synchronizedIdentity)) return;
     }
 
     const messagesRequestId = nextRequestId('messages');
+    if (controller.postSettlementHydration && !nowStreaming) {
+      controller.materializationMessagesRequestId = messagesRequestId;
+    }
     if (resolvesAdmissionState && controller.submittedPrompt) {
       controller.submittedPrompt.admissionMessagesRequestId = messagesRequestId;
     }
@@ -1609,6 +1912,7 @@ async function handleResponse(
       id: nextRequestId('efforts'),
       type: 'get_available_thinking_levels',
     });
+    if (!controllerIdentityMatches(controller, synchronizedIdentity)) return;
     await rpc(controller, { id: messagesRequestId, type: 'get_messages' });
     return;
   }
@@ -1619,7 +1923,21 @@ async function handleResponse(
       const role = stringValue(asRecord(value)?.role);
       return role === 'user' || role === 'assistant';
     });
+    const completedAssistant = piMessages.some(
+      (value) => stringValue(asRecord(value)?.role) === 'assistant',
+    );
     if (gainedTranscript) controller.hasPiTranscript = true;
+    const verifiesMaterialization = resolvesMaterializationMessages;
+    if (verifiesMaterialization) {
+      controller.materializationMessagesRequestId = '';
+      if (completedAssistant) {
+        clearMaterializationVerificationWatch(controller);
+        controller.postSettlementHydration = false;
+        controller.materializationVerified = true;
+      } else {
+        scheduleMaterializationVerificationRetry(controller);
+      }
+    }
     const previous = controller.messages;
     const previousTail = previous.slice(controller.historyPrefixLength);
     controller.messagesLoaded = true;
@@ -1664,7 +1982,9 @@ async function handleResponse(
         );
       } else submitted.admissionMessagesRequestId = '';
     }
-    if (gainedTranscript) await promoteTranscriptSession(controller);
+    if (verifiesMaterialization && completedAssistant) {
+      await promoteMaterializedSession(controller);
+    }
     // A hidden session that finishes hydrating has nothing left to wait for,
     // so this is where a runtime the user has moved on from is accounted for.
     releaseIdleRuntimes();
@@ -1893,6 +2213,10 @@ async function dispatchPendingPrompt(
   const prompt = controller.pendingPrompt;
   if (!prompt) return;
   controller.pendingPrompt = undefined;
+  controller.postSettlementHydration = false;
+  controller.materializationStateRequestId = '';
+  controller.materializationMessagesRequestId = '';
+  clearMaterializationVerificationWatch(controller);
   setControllerLifecycle(
     controller,
     { starting: false, working: true },
@@ -1917,6 +2241,7 @@ async function dispatchPendingPrompt(
   };
   controller.submittedPrompt = submission;
   clearSessionReplacementWatch(controller);
+  clearMaterializationVerificationWatch(controller);
   try {
     await rpc(
       controller,
@@ -2009,6 +2334,115 @@ function clearSessionReplacementWatch(controller: SessionController): void {
 
 function watchingSessionReplacement(controller: SessionController): boolean {
   return replacementProbeTimers.has(controller.key);
+}
+
+function materializationRetryMatches(
+  controller: SessionController,
+  retry: MaterializationVerificationRetry,
+): boolean {
+  return (
+    !controller.disposed &&
+    controller.generation === retry.generation &&
+    controller.sessionId === retry.sessionId &&
+    controller.sessionPath === retry.sessionPath
+  );
+}
+
+function scheduleMaterializationVerificationRetry(
+  controller: SessionController,
+): void {
+  if (
+    controller.disposed ||
+    !controller.generation ||
+    !controller.postSettlementHydration ||
+    controller.materializationVerified
+  ) {
+    clearMaterializationVerificationWatch(controller);
+    return;
+  }
+
+  let retry = materializationVerificationRetries.get(controller.key);
+  if (retry && !materializationRetryMatches(controller, retry)) {
+    clearMaterializationVerificationWatch(controller);
+    retry = undefined;
+  }
+  retry ??= {
+    generation: controller.generation,
+    sessionId: controller.sessionId,
+    sessionPath: controller.sessionPath,
+    nextAttempt: 0,
+  };
+  if (retry.timer) return;
+  if (retry.nextAttempt >= materializationVerificationRetryDelays.length) {
+    materializationVerificationRetries.delete(controller.key);
+    controller.postSettlementHydration = false;
+    setControllerLifecycle(
+      controller,
+      { syncing: false },
+      'bridge_event_failed',
+    );
+    releaseRuntime(controller);
+    releaseIdleRuntimes();
+    return;
+  }
+
+  const delay = materializationVerificationRetryDelays[retry.nextAttempt];
+  retry.timer = setTimeout(() => {
+    retry.timer = undefined;
+    retry.nextAttempt += 1;
+    if (!materializationRetryMatches(controller, retry)) {
+      if (materializationVerificationRetries.get(controller.key) === retry) {
+        materializationVerificationRetries.delete(controller.key);
+      }
+      return;
+    }
+    void verifySessionMaterialization(controller, retry);
+  }, delay);
+  materializationVerificationRetries.set(controller.key, retry);
+}
+
+async function verifySessionMaterialization(
+  controller: SessionController,
+  retry: MaterializationVerificationRetry,
+): Promise<void> {
+  if (
+    !materializationRetryMatches(controller, retry) ||
+    !controller.postSettlementHydration ||
+    controller.materializationVerified ||
+    controller.starting ||
+    controller.streaming ||
+    controller.working
+  ) {
+    clearMaterializationVerificationWatch(controller);
+    return;
+  }
+  setControllerLifecycle(
+    controller,
+    { syncing: true },
+    'materialization_retry',
+  );
+  const requestId = nextRequestId('materialization-retry');
+  controller.materializationStateRequestId = requestId;
+  try {
+    await rpc(controller, { id: requestId, type: 'get_state' });
+  } catch {
+    // Transport cleanup schedules the next bounded attempt for this identity.
+  }
+}
+
+function clearMaterializationVerificationWatch(
+  controller: SessionController,
+): void {
+  const retry = materializationVerificationRetries.get(controller.key);
+  if (!retry) return;
+  materializationVerificationRetries.delete(controller.key);
+  if (retry.timer) clearTimeout(retry.timer);
+}
+
+function watchingMaterializationVerification(
+  controller: SessionController,
+): boolean {
+  return materializationVerificationRetries.has(controller.key);
 }
 
 function watchAbort(controller: SessionController): void {
@@ -2152,6 +2586,60 @@ async function persistSessionName(
   await registerConnectedSession(controller);
 }
 
+interface ConnectedSessionIdentity {
+  generation: number;
+  projectPath: string;
+  sessionId: string;
+  sessionPath: string;
+  sessionName: string | null;
+  lastUserMessageAt: number | null;
+  requiresMaterialization: boolean;
+}
+
+const staleRegistration = Symbol('stale-registration');
+
+function captureConnectedSessionIdentity(
+  controller: SessionController,
+): ConnectedSessionIdentity {
+  const ephemeral = ephemeralSessionByController(controller.key);
+  return {
+    generation: controller.generation,
+    projectPath: controller.projectPath,
+    sessionId: controller.sessionId,
+    sessionPath: controller.sessionPath,
+    sessionName: controller.sessionName || firstUserMessage(controller) || null,
+    lastUserMessageAt:
+      controller.lastUserMessageAt > 0 ? controller.lastUserMessageAt : null,
+    requiresMaterialization: Boolean(
+      ephemeral && !workspaceContainsSession(controller),
+    ),
+  };
+}
+
+function controllerIdentityMatches(
+  controller: SessionController,
+  identity: ConnectedSessionIdentity,
+): boolean {
+  return (
+    !controller.disposed &&
+    controller.generation === identity.generation &&
+    controller.projectPath === identity.projectPath &&
+    controller.sessionId === identity.sessionId &&
+    controller.sessionPath === identity.sessionPath
+  );
+}
+
+function connectedSessionIdentityMatches(
+  controller: SessionController,
+  identity: ConnectedSessionIdentity,
+): boolean {
+  return (
+    !controller.phantom &&
+    controllerIdentityMatches(controller, identity) &&
+    (!identity.requiresMaterialization || controller.materializationVerified)
+  );
+}
+
 async function registerConnectedSession(
   controller: SessionController,
   parentContext?: TraceContext,
@@ -2161,37 +2649,44 @@ async function registerConnectedSession(
   adopted = false,
 ): Promise<void> {
   if (!canRegisterConnectedSession(controller)) return;
+  const identity = captureConnectedSessionIdentity(controller);
+  if (!connectedSessionIdentityMatches(controller, identity)) return;
   try {
-    const workspace = await registerSession(controller, adopted, parentContext);
-    if (controller.disposed) return;
+    const workspace = await registerSession(identity, adopted, parentContext);
+    if (!connectedSessionIdentityMatches(controller, identity)) return;
     state.workspace = workspace;
     if (workspaceContainsSession(controller)) {
       removeRegisteredEphemeralSession(controller);
     }
     if (!isControllerSelected(controller)) return;
-    state.activeSessionId = controller.sessionId;
-    state.activeSessionPath = controller.sessionPath;
-    state.workspace = await selectRegisteredSession(controller, parentContext);
-  } catch {
+    state.activeSessionId = identity.sessionId;
+    state.activeSessionPath = identity.sessionPath;
+    const selectedWorkspace = await selectRegisteredSession(
+      controller,
+      identity,
+      parentContext,
+    );
+    if (!connectedSessionIdentityMatches(controller, identity)) return;
+    state.workspace = selectedWorkspace;
+  } catch (error) {
+    if (error === staleRegistration) return;
     setControllerError(controller, errorCopy.sessionRegistration);
   }
 }
 
 function registerSession(
-  controller: SessionController,
+  identity: ConnectedSessionIdentity,
   adopted: boolean,
   parentContext?: TraceContext,
 ): Promise<WorkspaceSnapshot> {
   return invokeTraced<WorkspaceSnapshot>(
     'register_session',
     {
-      projectPath: controller.projectPath,
-      sessionId: controller.sessionId,
-      sessionPath: controller.sessionPath,
-      sessionName:
-        controller.sessionName || firstUserMessage(controller) || null,
-      lastUserMessageAt:
-        controller.lastUserMessageAt > 0 ? controller.lastUserMessageAt : null,
+      projectPath: identity.projectPath,
+      sessionId: identity.sessionId,
+      sessionPath: identity.sessionPath,
+      sessionName: identity.sessionName,
+      lastUserMessageAt: identity.lastUserMessageAt,
       adopted,
     },
     parentContext,
@@ -2203,29 +2698,45 @@ function registerSession(
 // holding and select it once more rather than leaving it unreachable.
 async function selectRegisteredSession(
   controller: SessionController,
+  identity: ConnectedSessionIdentity,
   parentContext?: TraceContext,
 ): Promise<WorkspaceSnapshot> {
-  const select = (): Promise<WorkspaceSnapshot> =>
-    invokeTraced<WorkspaceSnapshot>(
+  const select = (): Promise<WorkspaceSnapshot> => {
+    if (!connectedSessionIdentityMatches(controller, identity)) {
+      throw staleRegistration;
+    }
+    return invokeTraced<WorkspaceSnapshot>(
       'set_active_session',
       {
-        projectPath: controller.projectPath,
-        sessionId: controller.sessionId,
+        projectPath: identity.projectPath,
+        sessionId: identity.sessionId,
       },
       parentContext,
     );
+  };
   try {
-    return await select();
+    const workspace = await select();
+    if (!connectedSessionIdentityMatches(controller, identity)) {
+      throw staleRegistration;
+    }
+    return workspace;
   } catch (error) {
     if (
-      controller.phantom ||
-      !controller.sessionId ||
-      !controller.sessionPath
+      error === staleRegistration ||
+      !connectedSessionIdentityMatches(controller, identity)
     ) {
-      throw error;
+      throw staleRegistration;
     }
-    state.workspace = await registerSession(controller, true, parentContext);
-    return await select();
+    const workspace = await registerSession(identity, true, parentContext);
+    if (!connectedSessionIdentityMatches(controller, identity)) {
+      throw staleRegistration;
+    }
+    state.workspace = workspace;
+    const selectedWorkspace = await select();
+    if (!connectedSessionIdentityMatches(controller, identity)) {
+      throw staleRegistration;
+    }
+    return selectedWorkspace;
   }
 }
 
@@ -2285,10 +2796,8 @@ function rebindEphemeralSession(controller: SessionController): void {
   session.title = controller.sessionName || 'New Session';
 }
 
-function markPiTranscript(controller: SessionController): boolean {
-  if (controller.hasPiTranscript) return false;
+function markPiTranscript(controller: SessionController): void {
   controller.hasPiTranscript = true;
-  return true;
 }
 
 function canRegisterConnectedSession(controller: SessionController): boolean {
@@ -2297,19 +2806,18 @@ function canRegisterConnectedSession(controller: SessionController): boolean {
   return (
     !session ||
     workspaceContainsSession(controller) ||
-    controller.lastUserMessageAt > 0 ||
-    controller.hasPiTranscript
+    controller.materializationVerified
   );
 }
 
-async function promoteTranscriptSession(
+async function promoteMaterializedSession(
   controller: SessionController,
 ): Promise<void> {
   const session = ephemeralSessionByController(controller.key);
   if (
     !session ||
     workspaceContainsSession(controller) ||
-    !controller.hasPiTranscript
+    !controller.materializationVerified
   ) {
     return;
   }
@@ -2534,6 +3042,11 @@ async function retireUnsavedSession(
   controller.sessionPath = '';
   controller.sessionName = '';
   controller.lastUserMessageAt = 0;
+  controller.hasPiTranscript = false;
+  controller.materializationVerified = false;
+  controller.postSettlementHydration = false;
+  controller.materializationStateRequestId = '';
+  controller.materializationMessagesRequestId = '';
   controller.messages = [];
   if (isControllerSelected(controller)) {
     state.activeSessionId = session.id;
@@ -2593,6 +3106,7 @@ function removeEphemeralSession(
     if (controller) {
       controller.disposed = true;
       clearSessionReplacementWatch(controller);
+      clearMaterializationVerificationWatch(controller);
       clearAbortWatch(controller);
       void stopControllerProcess(controller);
       const controllerIndex = state.controllers.indexOf(controller);
@@ -2610,6 +3124,7 @@ function removeProjectUiState(projectPath: string): void {
     if (controller.projectPath !== projectPath) continue;
     controller.disposed = true;
     clearSessionReplacementWatch(controller);
+    clearMaterializationVerificationWatch(controller);
     clearAbortWatch(controller);
   }
   state.controllers = state.controllers.filter(
@@ -2628,7 +3143,8 @@ function canReleaseRuntime(controller: SessionController): boolean {
     !controller.pendingSettingRequestId &&
     !controller.pendingSessionRename &&
     !controllerHasPendingDialog(controller) &&
-    !watchingSessionReplacement(controller)
+    !watchingSessionReplacement(controller) &&
+    !watchingMaterializationVerification(controller)
   );
 }
 
@@ -2637,8 +3153,7 @@ function discardReleasedEmptySession(controller: SessionController): boolean {
   if (
     !ephemeral ||
     workspaceContainsSession(controller) ||
-    controller.lastUserMessageAt > 0 ||
-    controller.hasPiTranscript ||
+    controller.materializationVerified ||
     controller.draft.trim() ||
     controllerHasPendingDialog(controller)
   ) {
@@ -2683,6 +3198,7 @@ async function stopControllerProcess(
   }
   if (controller.generation !== generation) return;
   clearSessionReplacementWatch(controller);
+  clearMaterializationVerificationWatch(controller);
   clearAbortWatch(controller);
   clearRemoteConnectionWatch(controller);
   discardControllerDialogs(controller, generation);
@@ -2759,6 +3275,8 @@ export {
   syncAfterCommand,
   watchSessionReplacement,
   probeSessionReplacement,
+  scheduleMaterializationVerificationRetry,
+  watchingMaterializationVerification,
   clearSessionReplacementWatch,
   watchingSessionReplacement,
   watchAbort,

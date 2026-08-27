@@ -195,10 +195,38 @@ describe('PiScenarioEngine', () => {
       },
     });
     expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { type: 'message_start' },
+    });
+    expect(takeRequiredOutput(engine)).toMatchObject({
       value: {
         type: 'message_update',
         assistantMessageEvent: { delta: 'Real agent work started.' },
       },
+    });
+    expect(engine.takeOutput()).toBeUndefined();
+    expect(engine.gates()[1]).toMatchObject({
+      name: 'before-assistant-settlement',
+      reached: true,
+      released: false,
+    });
+    engine.releaseGate('before-assistant-settlement');
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { type: 'message_end' },
+    });
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { type: 'agent_settled' },
+    });
+    for (const [id, type] of [
+      ['settled-state', 'get_state'],
+      ['settled-efforts', 'get_available_thinking_levels'],
+      ['settled-messages', 'get_messages'],
+    ] as const) {
+      engine.consumeRequest('runtime-dynamic-82', { id, type });
+      takeRequiredOutput(engine);
+    }
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      kind: 'runtime-event',
+      value: { kind: 'exited' },
     });
     expect(() => engine.verifyComplete()).not.toThrow();
   });
@@ -256,10 +284,31 @@ describe('PiScenarioEngine', () => {
       takeRequiredOutput(engine);
     }
     expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { type: 'message_start' },
+    });
+    expect(takeRequiredOutput(engine)).toMatchObject({
       value: {
         type: 'message_update',
         assistantMessageEvent: { delta: 'Replacement session started.' },
       },
+    });
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { type: 'message_end' },
+    });
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { type: 'agent_settled' },
+    });
+    for (const [id, type] of [
+      ['settled-state', 'get_state'],
+      ['settled-efforts', 'get_available_thinking_levels'],
+      ['settled-messages', 'get_messages'],
+    ] as const) {
+      consumeRequest(engine, id, type);
+      takeRequiredOutput(engine);
+    }
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      kind: 'runtime-event',
+      value: { kind: 'exited' },
     });
 
     expect(() => engine.verifyComplete()).not.toThrow();

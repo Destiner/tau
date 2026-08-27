@@ -236,6 +236,7 @@ const CONTROLLER_LIFECYCLE_CAUSES = [
   'process_exited',
   'agent_start',
   'agent_settled',
+  'materialization_retry',
   'prompt_response',
   'get_state_failed',
   'get_messages_failed',

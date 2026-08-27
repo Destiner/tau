@@ -23,9 +23,9 @@ const phantomCommandRegistration = definePiScenario({
   metadata: {
     name: 'phantom-command-registration',
     purpose:
-      'Keep a command-created session ephemeral until real assistant transcript content begins.',
+      'Keep a command-created session ephemeral until a completed assistant reply settles and hydrates.',
     qualityRule:
-      'docs/quality.md §5 State correctness: unsaved command sessions become durable only with real transcript content.',
+      'docs/quality.md §5 State correctness: unsaved command sessions become durable only after verified settlement.',
     schemaVersion: 1,
     origin:
       'Command-created sessions need transcript evidence before registration',
@@ -127,12 +127,91 @@ const phantomCommandRegistration = definePiScenario({
       kind: 'event',
       runtime: 'phantom',
       event: {
+        type: 'message_start',
+        message: { role: 'assistant', content: [] },
+      },
+    },
+    {
+      kind: 'event',
+      runtime: 'phantom',
+      event: {
         type: 'message_update',
         assistantMessageEvent: {
           type: 'text_delta',
           delta: 'Real agent work started.',
         },
       },
+    },
+    {
+      kind: 'gate',
+      name: 'before-assistant-settlement',
+      required: true,
+    },
+    {
+      kind: 'event',
+      runtime: 'phantom',
+      event: {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Real agent work started.' }],
+        },
+      },
+    },
+    {
+      kind: 'event',
+      runtime: 'phantom',
+      event: { type: 'agent_settled' },
+    },
+    {
+      kind: 'request',
+      runtime: 'phantom',
+      capture: 'settled-state',
+      match: { type: 'get_state' },
+    },
+    {
+      kind: 'response',
+      request: 'settled-state',
+      command: 'get_state',
+      data: { ...commandSessionState, isStreaming: false },
+    },
+    {
+      kind: 'request',
+      runtime: 'phantom',
+      capture: 'settled-efforts',
+      match: { type: 'get_available_thinking_levels' },
+    },
+    {
+      kind: 'response',
+      request: 'settled-efforts',
+      command: 'get_available_thinking_levels',
+      data: { levels: fixtureThinkingLevels },
+    },
+    {
+      kind: 'request',
+      runtime: 'phantom',
+      capture: 'settled-messages',
+      match: { type: 'get_messages' },
+    },
+    {
+      kind: 'response',
+      request: 'settled-messages',
+      command: 'get_messages',
+      data: {
+        messages: [
+          { role: 'user', content: 'Run the workflow' },
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Real agent work started.' }],
+          },
+        ],
+      },
+    },
+    {
+      kind: 'runtime-event',
+      runtime: 'phantom',
+      event: 'exited',
+      code: 0,
     },
   ],
 });

@@ -4,8 +4,9 @@ const scenarioUrl = '/?test-scenario=phantom-command-registration';
 const command = '/mcp';
 const sessionName = 'MCP workflow';
 const syncGate = 'before-streaming-command-sync';
+const settlementGate = 'before-assistant-settlement';
 
-test('registers a command-created session only when real agent work begins', async ({
+test('registers a command-created session only after completed work hydrates', async ({
   page,
 }) => {
   await page.goto(scenarioUrl);
@@ -34,7 +35,25 @@ test('registers a command-created session only when real agent work begins', asy
     await scenario.releaseGate(gate);
   }, syncGate);
 
+  await page.evaluate(async (gate) => {
+    const scenario = window.__TAU_PI_SCENARIO__;
+    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
+    await scenario.waitForGate(gate);
+  }, settlementGate);
   await expect(page.getByRole('heading', { name: sessionName })).toBeVisible();
+  await expect(page.getByLabel('Transcript')).toContainText(
+    'Real agent work started.',
+  );
+  await expect(
+    page.getByRole('button', { name: `Archive ${sessionName}` }),
+  ).toHaveCount(0);
+
+  await page.evaluate(async (gate) => {
+    const scenario = window.__TAU_PI_SCENARIO__;
+    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
+    await scenario.releaseGate(gate);
+  }, settlementGate);
+
   const sessionRow = page
     .getByRole('complementary', { name: 'Projects and Sessions' })
     .locator('button[aria-current="page"]');
@@ -43,12 +62,7 @@ test('registers a command-created session only when real agent work begins', asy
   await expect(
     page.getByRole('button', { name: `Archive ${sessionName}` }),
   ).toHaveCount(1);
-  await expect(page.getByRole('button', { name: 'Stop Pi' })).toBeEnabled();
-  await expect(page.getByRole('img', { name: 'Working' })).toHaveCount(1);
   await expect(page.getByText(command, { exact: true })).toHaveCount(0);
-  await expect(page.getByLabel('Transcript')).toContainText(
-    'Real agent work started.',
-  );
 
   const diagnostics = await page.evaluate(() => ({
     verification: window.__TAU_PI_SCENARIO__?.verify(),
@@ -58,7 +72,7 @@ test('registers a command-created session only when real agent work begins', asy
   expect(diagnostics.timeline?.slice(-1)).toEqual([
     expect.objectContaining({
       kind: 'output',
-      output: 'event phantom@current message_update',
+      output: 'runtime-event phantom@current exited',
     }),
   ]);
 });

@@ -9,7 +9,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { state, type SessionController } from '../../composables/state';
+import {
+  nextRequestId,
+  state,
+  type SessionController,
+} from '../../composables/state';
 import { FORBIDDEN_CONTENT_CANARIES } from '../telemetry/privacy';
 
 import type { PiBridgeEvent } from './bridge';
@@ -60,6 +64,17 @@ function endSpyFor(
   return span.end;
 }
 
+async function dispatchRequest(
+  controller: SessionController,
+  type: string,
+  prefix: string,
+): Promise<string> {
+  const { rpc } = await import('./runtime');
+  const id = nextRequestId(prefix);
+  await rpc(controller, { id, type });
+  return id;
+}
+
 function makeController(
   overrides: Partial<SessionController> = {},
 ): SessionController {
@@ -82,6 +97,10 @@ function makeController(
     unread: false,
     lastUserMessageAt: 0,
     hasPiTranscript: false,
+    materializationVerified: false,
+    postSettlementHydration: false,
+    materializationStateRequestId: '',
+    materializationMessagesRequestId: '',
     messages: [],
     messagesLoaded: false,
     historyLayers: [],
@@ -141,7 +160,10 @@ beforeEach(async () => {
 });
 
 describe('command-created session durability', () => {
-  function addEphemeral(controller: SessionController): void {
+  function addEphemeral(
+    controller: SessionController,
+    connectionString?: string,
+  ): void {
     state.controllers.push(controller);
     state.ephemeralSessions.push({
       id: controller.sessionId,
@@ -165,6 +187,7 @@ describe('command-created session durability', () => {
           path: controller.projectPath,
           name: 'Project',
           workingDirectory: controller.projectPath,
+          ...(connectionString ? { connectionString } : {}),
           collapsed: false,
           selected: true,
           sessions: [],
@@ -175,9 +198,8 @@ describe('command-created session durability', () => {
 
   it('does not register an identity reported by command sync alone', async () => {
     const telemetry = await import('../telemetry');
-    const { handleResponse } = await import('./runtime');
+    const { handleResponse, rpc } = await import('./runtime');
     const controller = makeController({
-      commandSyncRequestId: 'command-sync',
       sessionId: 'command-session',
       sessionPath: '/tmp/project/command-session.jsonl',
       sessionName: 'Usage',
@@ -185,9 +207,12 @@ describe('command-created session durability', () => {
       working: true,
     });
     addEphemeral(controller);
+    const commandSyncRequestId = nextRequestId('command-sync');
+    controller.commandSyncRequestId = commandSyncRequestId;
+    await rpc(controller, { id: commandSyncRequestId, type: 'get_state' });
 
     await handleResponse(controller, {
-      id: 'command-sync',
+      id: commandSyncRequestId,
       command: 'get_state',
       success: true,
       data: {
@@ -202,16 +227,262 @@ describe('command-created session durability', () => {
     expect(state.ephemeralSessions).toHaveLength(1);
   });
 
-  it('promotes an ephemeral command session once Pi reports transcript content', async () => {
+  it.each([
+    ['local', undefined],
+    ['remote', 'ssh://fixture'],
+  ])(
+    'keeps a user-only %s replacement ephemeral and discards it on release',
+    async (_kind, connectionString) => {
+      const telemetry = await import('../telemetry');
+      const { handleResponse, rpc, stopControllerProcess } =
+        await import('./runtime');
+      const controller = makeController({
+        sessionId: 'user-only-session',
+        sessionPath: '/tmp/project/user-only.jsonl',
+        sessionName: 'User only',
+        lastUserMessageAt: 42,
+      });
+      addEphemeral(controller, connectionString);
+      const messagesRequestId = nextRequestId('messages');
+      controller.materializationMessagesRequestId = messagesRequestId;
+      await rpc(controller, {
+        id: messagesRequestId,
+        type: 'get_messages',
+      });
+
+      await handleResponse(controller, {
+        id: messagesRequestId,
+        command: 'get_messages',
+        success: true,
+        data: { messages: [{ role: 'user', content: 'Unanswered prompt' }] },
+      });
+
+      expect(controller.hasPiTranscript).toBe(true);
+      expect(controller.materializationVerified).toBe(false);
+      expect(telemetry.invokeTraced).not.toHaveBeenCalledWith(
+        'register_session',
+        expect.anything(),
+        expect.anything(),
+      );
+      expect(state.ephemeralSessions).toHaveLength(1);
+
+      await stopControllerProcess(controller, undefined, false);
+
+      expect(state.ephemeralSessions).toEqual([]);
+      expect(state.controllers).toEqual([]);
+    },
+  );
+
+  it.each([
+    ['local', undefined],
+    ['remote', 'ssh://fixture'],
+  ])(
+    'does not register a partial assistant stream after %s process loss',
+    async (_kind, connectionString) => {
+      const telemetry = await import('../telemetry');
+      const { handleBridgeEvent, handleRpc } = await import('./runtime');
+      const controller = makeController({
+        sessionId: 'partial-session',
+        sessionPath: '/tmp/project/partial.jsonl',
+        sessionName: 'Partial stream',
+        streaming: true,
+        working: true,
+      });
+      addEphemeral(controller, connectionString);
+
+      await handleRpc(controller, {
+        type: 'message_start',
+        message: { role: 'assistant', content: [] },
+      });
+      await handleRpc(controller, {
+        type: 'message_update',
+        assistantMessageEvent: { type: 'text_delta', delta: 'Partial' },
+      });
+      await handleBridgeEvent({
+        runtimeId: controller.runtimeId,
+        generation: controller.generation,
+        kind: 'exited',
+        code: 1,
+      } satisfies PiBridgeEvent);
+
+      expect(telemetry.invokeTraced).not.toHaveBeenCalledWith(
+        'register_session',
+        expect.anything(),
+        expect.anything(),
+      );
+      expect(state.ephemeralSessions).toEqual([]);
+      expect(state.controllers).toEqual([]);
+    },
+  );
+
+  it.each([
+    ['local', undefined],
+    ['remote', 'ssh://fixture'],
+  ])(
+    'promotes a completed %s assistant only after settled hydration',
+    async (_kind, connectionString) => {
+      const telemetry = await import('../telemetry');
+      const { handleResponse, handleRpc } = await import('./runtime');
+      const controller = makeController({
+        sessionId: 'completed-session',
+        sessionPath: '/tmp/project/completed.jsonl',
+        sessionName: 'Completed work',
+        streaming: true,
+        working: true,
+      });
+      addEphemeral(controller, connectionString);
+      const workspace = {
+        activeProjectPath: controller.projectPath,
+        piPath: '/usr/bin/pi',
+        projects: [
+          {
+            path: controller.projectPath,
+            name: 'Project',
+            workingDirectory: controller.projectPath,
+            ...(connectionString ? { connectionString } : {}),
+            collapsed: false,
+            selected: true,
+            sessions: [
+              {
+                id: controller.sessionId,
+                path: controller.sessionPath,
+                title: controller.sessionName,
+                lastActive: 'now',
+                lastUserMessageAt: 0,
+                sortAt: 1,
+                archived: false,
+                selected: false,
+              },
+            ],
+          },
+        ],
+      };
+      vi.mocked(telemetry.invokeTraced).mockResolvedValueOnce(workspace);
+
+      await handleRpc(controller, {
+        type: 'message_update',
+        assistantMessageEvent: { type: 'text_delta', delta: 'Complete reply' },
+      });
+      expect(telemetry.invokeTraced).not.toHaveBeenCalled();
+
+      await handleRpc(controller, { type: 'agent_settled' });
+      const settledState = mockInvoke.mock.calls
+        .map(
+          ([, args]) =>
+            (args as { request?: Record<string, unknown> })?.request,
+        )
+        .find((request) => request?.type === 'get_state');
+      await handleResponse(controller, {
+        id: settledState?.id,
+        command: 'get_state',
+        success: true,
+        data: {
+          sessionId: controller.sessionId,
+          sessionFile: controller.sessionPath,
+          sessionName: controller.sessionName,
+          isStreaming: false,
+        },
+      });
+      const messagesRequestId = controller.materializationMessagesRequestId;
+      expect(messagesRequestId).not.toBe('');
+
+      await handleResponse(controller, {
+        id: messagesRequestId,
+        command: 'get_messages',
+        success: true,
+        data: {
+          messages: [
+            { role: 'user', content: 'Prompt' },
+            {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'Complete reply' }],
+            },
+          ],
+        },
+      });
+
+      expect(telemetry.invokeTraced).toHaveBeenCalledWith(
+        'register_session',
+        expect.objectContaining({ sessionId: controller.sessionId }),
+        undefined,
+      );
+      expect(controller.materializationVerified).toBe(true);
+      expect(state.ephemeralSessions).toEqual([]);
+    },
+  );
+
+  it('does not register a replacement that arrives while promotion is in flight', async () => {
     const telemetry = await import('../telemetry');
-    const { handleResponse } = await import('./runtime');
+    const { handleResponse, rpc } = await import('./runtime');
     const controller = makeController({
-      sessionId: 'command-session',
-      sessionPath: '/tmp/project/command-session.jsonl',
-      sessionName: 'Agent work',
+      sessionId: 'verified-a',
+      sessionPath: '/tmp/project/verified-a.jsonl',
+      sessionName: 'Verified A',
     });
     addEphemeral(controller);
-    const workspace = {
+    state.activeProjectPath = controller.projectPath;
+    state.activeSessionId = controller.sessionId;
+    state.activeSessionPath = controller.sessionPath;
+    state.activeControllerKey = controller.key;
+
+    let resolveRegistration!: (
+      workspace: NonNullable<typeof state.workspace>,
+    ) => void;
+    const registration = new Promise<NonNullable<typeof state.workspace>>(
+      (resolve) => {
+        resolveRegistration = resolve;
+      },
+    );
+    vi.mocked(telemetry.invokeTraced).mockImplementation(async (command) =>
+      command === 'register_session' ? await registration : state.workspace,
+    );
+    const verificationRequestId = nextRequestId('messages');
+    controller.materializationMessagesRequestId = verificationRequestId;
+    await rpc(controller, {
+      id: verificationRequestId,
+      type: 'get_messages',
+    });
+
+    const promotion = handleResponse(controller, {
+      id: verificationRequestId,
+      command: 'get_messages',
+      success: true,
+      data: {
+        messages: [
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'A is durable' }],
+          },
+        ],
+      },
+    });
+    await vi.waitFor(() => {
+      expect(telemetry.invokeTraced).toHaveBeenCalledWith(
+        'register_session',
+        expect.objectContaining({ sessionId: 'verified-a' }),
+        undefined,
+      );
+    });
+
+    const replacementRequestId = await dispatchRequest(
+      controller,
+      'get_state',
+      'replacement-probe',
+    );
+    await handleResponse(controller, {
+      id: replacementRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'unverified-b',
+        sessionFile: '/tmp/project/unverified-b.jsonl',
+        sessionName: 'Unverified B',
+        isStreaming: true,
+      },
+    });
+    expect(controller.materializationVerified).toBe(false);
+
+    resolveRegistration({
       activeProjectPath: controller.projectPath,
       piPath: '/usr/bin/pi',
       projects: [
@@ -221,11 +492,44 @@ describe('command-created session durability', () => {
           workingDirectory: controller.projectPath,
           collapsed: false,
           selected: true,
+          sessions: [],
+        },
+      ],
+    });
+    await promotion;
+
+    expect(
+      vi
+        .mocked(telemetry.invokeTraced)
+        .mock.calls.filter(([command]) => command === 'register_session')
+        .map(([, args]) => (args as { sessionId: string }).sessionId),
+    ).toEqual(['verified-a']);
+    expect(state.activeSessionId).toBe('verified-a');
+    expect(state.ephemeralSessions[0]?.id).toBe('unverified-b');
+  });
+
+  it('does not register a replacement that races session selection', async () => {
+    const telemetry = await import('../telemetry');
+    const { handleResponse, rpc } = await import('./runtime');
+    const controller = makeController({
+      sessionId: 'verified-a',
+      sessionPath: '/tmp/project/verified-a.jsonl',
+    });
+    addEphemeral(controller);
+    state.activeProjectPath = controller.projectPath;
+    state.activeSessionId = controller.sessionId;
+    state.activeSessionPath = controller.sessionPath;
+    state.activeControllerKey = controller.key;
+    const registeredWorkspace = {
+      ...state.workspace!,
+      projects: [
+        {
+          ...state.workspace!.projects[0]!,
           sessions: [
             {
-              id: controller.sessionId,
-              path: controller.sessionPath,
-              title: controller.sessionName,
+              id: 'verified-a',
+              path: '/tmp/project/verified-a.jsonl',
+              title: 'Verified A',
               lastActive: 'now',
               lastUserMessageAt: 0,
               sortAt: 1,
@@ -236,29 +540,744 @@ describe('command-created session durability', () => {
         },
       ],
     };
-    vi.mocked(telemetry.invokeTraced).mockResolvedValueOnce(workspace);
+    let resolveSelection!: (workspace: typeof registeredWorkspace) => void;
+    const selection = new Promise<typeof registeredWorkspace>((resolve) => {
+      resolveSelection = resolve;
+    });
+    vi.mocked(telemetry.invokeTraced).mockImplementation(async (command) =>
+      command === 'set_active_session' ? await selection : registeredWorkspace,
+    );
+    const verificationRequestId = nextRequestId('messages');
+    controller.materializationMessagesRequestId = verificationRequestId;
+    await rpc(controller, {
+      id: verificationRequestId,
+      type: 'get_messages',
+    });
+
+    const promotion = handleResponse(controller, {
+      id: verificationRequestId,
+      command: 'get_messages',
+      success: true,
+      data: { messages: [{ role: 'assistant', content: 'Durable A' }] },
+    });
+    await vi.waitFor(() => {
+      expect(telemetry.invokeTraced).toHaveBeenCalledWith(
+        'set_active_session',
+        expect.objectContaining({ sessionId: 'verified-a' }),
+        undefined,
+      );
+    });
+
+    const replacementRequestId = await dispatchRequest(
+      controller,
+      'get_state',
+      'replacement-probe',
+    );
+    await handleResponse(controller, {
+      id: replacementRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'unverified-b',
+        sessionFile: '/tmp/project/unverified-b.jsonl',
+        isStreaming: true,
+      },
+    });
+    resolveSelection(registeredWorkspace);
+    await promotion;
+
+    expect(
+      vi
+        .mocked(telemetry.invokeTraced)
+        .mock.calls.filter(([command]) => command === 'register_session')
+        .map(([, args]) => (args as { sessionId: string }).sessionId),
+    ).toEqual(['verified-a']);
+    expect(state.ephemeralSessions[0]?.id).toBe('unverified-b');
+  });
+
+  it('does not adopt a replacement that races selection fallback', async () => {
+    const telemetry = await import('../telemetry');
+    const { handleResponse, rpc } = await import('./runtime');
+    const controller = makeController({
+      sessionId: 'verified-a',
+      sessionPath: '/tmp/project/verified-a.jsonl',
+    });
+    addEphemeral(controller);
+    state.activeProjectPath = controller.projectPath;
+    state.activeSessionId = controller.sessionId;
+    state.activeSessionPath = controller.sessionPath;
+    state.activeControllerKey = controller.key;
+    const registeredWorkspace = {
+      ...state.workspace!,
+      projects: [
+        {
+          ...state.workspace!.projects[0]!,
+          sessions: [
+            {
+              id: 'verified-a',
+              path: '/tmp/project/verified-a.jsonl',
+              title: 'Verified A',
+              lastActive: 'now',
+              lastUserMessageAt: 0,
+              sortAt: 1,
+              archived: false,
+              selected: false,
+            },
+          ],
+        },
+      ],
+    };
+    let resolveAdoption!: (workspace: typeof registeredWorkspace) => void;
+    const adoption = new Promise<typeof registeredWorkspace>((resolve) => {
+      resolveAdoption = resolve;
+    });
+    let registrationCount = 0;
+    vi.mocked(telemetry.invokeTraced).mockImplementation(async (command) => {
+      if (command === 'set_active_session') {
+        throw new Error('Missing registry row');
+      }
+      if (command === 'register_session') {
+        registrationCount += 1;
+        if (registrationCount === 2) return await adoption;
+      }
+      return registeredWorkspace;
+    });
+    const verificationRequestId = nextRequestId('messages');
+    controller.materializationMessagesRequestId = verificationRequestId;
+    await rpc(controller, {
+      id: verificationRequestId,
+      type: 'get_messages',
+    });
+
+    const promotion = handleResponse(controller, {
+      id: verificationRequestId,
+      command: 'get_messages',
+      success: true,
+      data: { messages: [{ role: 'assistant', content: 'Durable A' }] },
+    });
+    await vi.waitFor(() => {
+      expect(registrationCount).toBe(2);
+    });
+
+    const replacementRequestId = await dispatchRequest(
+      controller,
+      'get_state',
+      'replacement-probe',
+    );
+    await handleResponse(controller, {
+      id: replacementRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'unverified-b',
+        sessionFile: '/tmp/project/unverified-b.jsonl',
+        isStreaming: true,
+      },
+    });
+    resolveAdoption(registeredWorkspace);
+    await promotion;
+
+    expect(
+      vi
+        .mocked(telemetry.invokeTraced)
+        .mock.calls.filter(([command]) => command === 'register_session')
+        .map(([, args]) => ({
+          sessionId: (args as { sessionId: string }).sessionId,
+          adopted: (args as { adopted?: boolean }).adopted,
+        })),
+    ).toEqual([
+      { sessionId: 'verified-a', adopted: true },
+      { sessionId: 'verified-a', adopted: true },
+    ]);
+    expect(state.ephemeralSessions[0]?.id).toBe('unverified-b');
+  });
+
+  it('retries verification after a failed settled message hydration', async () => {
+    const telemetry = await import('../telemetry');
+    const { handleResponse, probeSessionReplacement, rpc } =
+      await import('./runtime');
+    const controller = makeController({
+      sessionId: 'retry-session',
+      sessionPath: '/tmp/project/retry.jsonl',
+      postSettlementHydration: true,
+      syncing: true,
+    });
+    addEphemeral(controller);
+    const failedMessagesRequestId = nextRequestId('messages');
+    controller.materializationMessagesRequestId = failedMessagesRequestId;
+    await rpc(controller, {
+      id: failedMessagesRequestId,
+      type: 'get_messages',
+    });
 
     await handleResponse(controller, {
-      id: 'messages',
+      id: failedMessagesRequestId,
+      command: 'get_messages',
+      success: false,
+    });
+
+    expect(controller.materializationMessagesRequestId).toBe('');
+    expect(controller.postSettlementHydration).toBe(true);
+    expect(controller.syncing).toBe(false);
+
+    await probeSessionReplacement(controller, false);
+    await handleResponse(controller, {
+      id: controller.replacementProbeRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: controller.sessionId,
+        sessionFile: controller.sessionPath,
+        isStreaming: false,
+      },
+    });
+    const retryRequestId = controller.materializationMessagesRequestId;
+    expect(retryRequestId).not.toBe('');
+
+    vi.mocked(telemetry.invokeTraced).mockResolvedValueOnce({
+      ...state.workspace,
+      projects: [
+        {
+          ...state.workspace!.projects[0],
+          sessions: [
+            {
+              id: controller.sessionId,
+              path: controller.sessionPath,
+              title: 'Retry session',
+              lastActive: 'now',
+              lastUserMessageAt: 0,
+              sortAt: 1,
+              archived: false,
+              selected: false,
+            },
+          ],
+        },
+      ],
+    });
+    await handleResponse(controller, {
+      id: retryRequestId,
       command: 'get_messages',
       success: true,
       data: {
         messages: [
           {
             role: 'assistant',
-            content: [{ type: 'text', text: 'Started real work.' }],
+            content: [{ type: 'text', text: 'Retry succeeded' }],
           },
         ],
       },
     });
 
-    expect(telemetry.invokeTraced).toHaveBeenCalledWith(
-      'register_session',
-      expect.objectContaining({ sessionId: controller.sessionId }),
-      undefined,
-    );
-    expect(controller.hasPiTranscript).toBe(true);
+    expect(controller.materializationVerified).toBe(true);
+    expect(controller.postSettlementHydration).toBe(false);
     expect(state.ephemeralSessions).toEqual([]);
+  });
+
+  it.each([
+    ['effort response', 'get_available_thinking_levels', 'response'],
+    ['message response', 'get_messages', 'response'],
+    ['effort transport', 'get_available_thinking_levels', 'transport'],
+    ['message transport', 'get_messages', 'transport'],
+  ] as const)(
+    'registers replacement B after a failed %s via the bounded verification timer',
+    async (_label, failedMethod, failure) => {
+      vi.useFakeTimers();
+      try {
+        const telemetry = await import('../telemetry');
+        const {
+          handleResponse,
+          handleRpc,
+          watchingMaterializationVerification,
+          watchingSessionReplacement,
+        } = await import('./runtime');
+        const controller = makeController({
+          sessionId: 'identity-a',
+          sessionPath: '/tmp/project/identity-a.jsonl',
+        });
+        addEphemeral(controller);
+
+        let failedTransport = false;
+        if (failure === 'transport') {
+          mockInvoke.mockImplementation(async (command, args) => {
+            const request = (args as { request?: Record<string, unknown> })
+              ?.request;
+            if (
+              command === 'send_pi' &&
+              request?.type === failedMethod &&
+              controller.sessionId === 'identity-b' &&
+              !failedTransport
+            ) {
+              failedTransport = true;
+              throw new Error('transport unavailable');
+            }
+            return undefined;
+          });
+        }
+
+        await handleRpc(controller, { type: 'agent_settled' });
+        const discoveringStateRequestId =
+          controller.materializationStateRequestId;
+        const discovery = handleResponse(controller, {
+          id: discoveringStateRequestId,
+          command: 'get_state',
+          success: true,
+          data: {
+            sessionId: 'identity-b',
+            sessionFile: '/tmp/project/identity-b.jsonl',
+            isStreaming: false,
+          },
+        });
+        if (failure === 'transport') await expect(discovery).rejects.toThrow();
+        else await discovery;
+
+        expect(watchingSessionReplacement(controller)).toBe(false);
+        if (failure === 'response') {
+          const failedRequest = mockInvoke.mock.calls
+            .filter(([command]) => command === 'send_pi')
+            .map(
+              ([, args]) =>
+                (args as { request: Record<string, unknown> }).request,
+            )
+            .reverse()
+            .find((request) => request.type === failedMethod);
+          await handleResponse(controller, {
+            id: failedRequest?.id,
+            command: failedMethod,
+            success: false,
+          });
+        }
+        expect(watchingMaterializationVerification(controller)).toBe(true);
+
+        await vi.advanceTimersByTimeAsync(250);
+        const retryStateRequestId = controller.materializationStateRequestId;
+        expect(retryStateRequestId).toMatch(/^tau-materialization-retry-/);
+        await handleResponse(controller, {
+          id: retryStateRequestId,
+          command: 'get_state',
+          success: true,
+          data: {
+            sessionId: 'identity-b',
+            sessionFile: '/tmp/project/identity-b.jsonl',
+            sessionName: 'Replacement B',
+            isStreaming: false,
+          },
+        });
+        const retryMessagesRequestId =
+          controller.materializationMessagesRequestId;
+
+        vi.mocked(telemetry.invokeTraced).mockResolvedValueOnce({
+          ...state.workspace!,
+          projects: [
+            {
+              ...state.workspace!.projects[0],
+              sessions: [
+                {
+                  id: 'identity-b',
+                  path: '/tmp/project/identity-b.jsonl',
+                  title: 'Replacement B',
+                  lastActive: 'now',
+                  lastUserMessageAt: 0,
+                  sortAt: 1,
+                  archived: false,
+                  selected: false,
+                },
+              ],
+            },
+          ],
+        });
+        await handleResponse(controller, {
+          id: retryMessagesRequestId,
+          command: 'get_messages',
+          success: true,
+          data: {
+            messages: [
+              {
+                role: 'assistant',
+                content: [{ type: 'text', text: 'B completed' }],
+              },
+            ],
+          },
+        });
+
+        expect(controller.materializationVerified).toBe(true);
+        expect(watchingMaterializationVerification(controller)).toBe(false);
+        expect(state.ephemeralSessions).toEqual([]);
+        expect(
+          vi
+            .mocked(telemetry.invokeTraced)
+            .mock.calls.some(
+              ([command, args]) =>
+                command === 'register_session' &&
+                (args as { sessionId: string }).sessionId === 'identity-b',
+            ),
+        ).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it('stops retrying and releases an unverified identity after the bounded policy', async () => {
+    vi.useFakeTimers();
+    try {
+      const { handleResponse, rpc, watchingMaterializationVerification } =
+        await import('./runtime');
+      const controller = makeController({
+        postSettlementHydration: true,
+        syncing: true,
+      });
+      addEphemeral(controller);
+      const failedStateRequestId = nextRequestId('settled-state');
+      controller.materializationStateRequestId = failedStateRequestId;
+      await rpc(controller, { id: failedStateRequestId, type: 'get_state' });
+
+      mockInvoke.mockImplementation(async (command, args) => {
+        const request = (args as { request?: Record<string, unknown> })
+          ?.request;
+        if (
+          command === 'send_pi' &&
+          request?.type === 'get_state' &&
+          String(request.id).startsWith('tau-materialization-retry-')
+        ) {
+          throw new Error('transport unavailable');
+        }
+        return undefined;
+      });
+      await handleResponse(controller, {
+        id: failedStateRequestId,
+        command: 'get_state',
+        success: false,
+      });
+
+      expect(watchingMaterializationVerification(controller)).toBe(true);
+      await vi.advanceTimersByTimeAsync(250);
+      await vi.advanceTimersByTimeAsync(750);
+      await vi.advanceTimersByTimeAsync(1_500);
+      await vi.runAllTimersAsync();
+
+      expect(watchingMaterializationVerification(controller)).toBe(false);
+      expect(controller.postSettlementHydration).toBe(false);
+      expect(controller.generation).toBe(0);
+      expect(state.ephemeralSessions).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels a pending materialization retry when the controller is released', async () => {
+    vi.useFakeTimers();
+    try {
+      const {
+        handleResponse,
+        rpc,
+        stopControllerProcess,
+        watchingMaterializationVerification,
+      } = await import('./runtime');
+      const controller = makeController({
+        postSettlementHydration: true,
+        syncing: true,
+      });
+      addEphemeral(controller);
+      const failedRequestId = nextRequestId('settled-state');
+      controller.materializationStateRequestId = failedRequestId;
+      await rpc(controller, { id: failedRequestId, type: 'get_state' });
+      await handleResponse(controller, {
+        id: failedRequestId,
+        command: 'get_state',
+        success: false,
+      });
+      expect(watchingMaterializationVerification(controller)).toBe(true);
+
+      const sendsBeforeRelease = mockInvoke.mock.calls.filter(
+        ([command]) => command === 'send_pi',
+      ).length;
+      await stopControllerProcess(controller, undefined, false);
+      await vi.runAllTimersAsync();
+
+      expect(watchingMaterializationVerification(controller)).toBe(false);
+      expect(
+        mockInvoke.mock.calls.filter(([command]) => command === 'send_pi'),
+      ).toHaveLength(sendsBeforeRelease);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores a predecessor state failure while verifying its replacement', async () => {
+    const { handleResponse, handleRpc, probeSessionReplacement } =
+      await import('./runtime');
+    const controller = makeController({
+      sessionId: 'identity-a',
+      sessionPath: '/tmp/project/identity-a.jsonl',
+    });
+    addEphemeral(controller);
+
+    await handleRpc(controller, { type: 'agent_settled' });
+    const predecessorRequestId = controller.materializationStateRequestId;
+    expect(predecessorRequestId).toMatch(/^tau-settled-state-/);
+
+    await probeSessionReplacement(controller, false);
+    const replacementRequestId = controller.replacementProbeRequestId;
+    expect(replacementRequestId).toMatch(/^tau-replacement-probe-/);
+
+    await handleResponse(controller, {
+      id: replacementRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'identity-b',
+        sessionFile: '/tmp/project/identity-b.jsonl',
+        isStreaming: false,
+      },
+    });
+    const verificationRequestId = controller.materializationMessagesRequestId;
+    expect(verificationRequestId).toMatch(/^tau-messages-/);
+    expect(controller.generation).toBe(1);
+    expect(controller.syncing).toBe(true);
+
+    await handleResponse(controller, {
+      id: predecessorRequestId,
+      command: 'get_state',
+      success: false,
+    });
+
+    expect(controller.disposed).toBe(false);
+    expect(controller.generation).toBe(1);
+    expect(controller.sessionId).toBe('identity-b');
+    expect(controller.sessionPath).toBe('/tmp/project/identity-b.jsonl');
+    expect(controller.syncing).toBe(true);
+    expect(controller.materializationStateRequestId).toBe('');
+    expect(controller.materializationMessagesRequestId).toBe(
+      verificationRequestId,
+    );
+    expect(state.ephemeralSessions).toEqual([
+      expect.objectContaining({
+        id: 'identity-b',
+        path: '/tmp/project/identity-b.jsonl',
+      }),
+    ]);
+  });
+
+  it('ignores a predecessor state success while hydrating its replacement', async () => {
+    const { handleResponse, handleRpc, probeSessionReplacement } =
+      await import('./runtime');
+    const controller = makeController({
+      sessionId: 'identity-a',
+      sessionPath: '/tmp/project/identity-a.jsonl',
+    });
+    addEphemeral(controller);
+
+    await handleRpc(controller, { type: 'agent_settled' });
+    const predecessorRequestId = controller.materializationStateRequestId;
+    await probeSessionReplacement(controller, false);
+    await handleResponse(controller, {
+      id: controller.replacementProbeRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'identity-b',
+        sessionFile: '/tmp/project/identity-b.jsonl',
+        isStreaming: false,
+      },
+    });
+    const verificationRequestId = controller.materializationMessagesRequestId;
+    controller.messages = [
+      { id: 'identity-b-message', kind: 'assistant', text: 'B transcript' },
+    ];
+
+    await handleResponse(controller, {
+      id: predecessorRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'identity-a',
+        sessionFile: '/tmp/project/identity-a.jsonl',
+        sessionName: 'Identity A',
+        isStreaming: false,
+        thinkingLevel: 'off',
+      },
+    });
+
+    expect(controller.sessionId).toBe('identity-b');
+    expect(controller.sessionPath).toBe('/tmp/project/identity-b.jsonl');
+    expect(controller.messages).toEqual([
+      expect.objectContaining({ id: 'identity-b-message' }),
+    ]);
+    expect(controller.syncing).toBe(true);
+    expect(controller.materializationMessagesRequestId).toBe(
+      verificationRequestId,
+    );
+  });
+
+  it('ignores predecessor message and effort successes after replacement', async () => {
+    const { handleResponse, handleRpc, probeSessionReplacement } =
+      await import('./runtime');
+    const controller = makeController({
+      sessionId: 'identity-a',
+      sessionPath: '/tmp/project/identity-a.jsonl',
+    });
+    addEphemeral(controller);
+
+    await handleRpc(controller, { type: 'agent_settled' });
+    await handleResponse(controller, {
+      id: controller.materializationStateRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'identity-a',
+        sessionFile: '/tmp/project/identity-a.jsonl',
+        isStreaming: false,
+      },
+    });
+    const predecessorMessagesRequestId =
+      controller.materializationMessagesRequestId;
+    const outboundRequests = mockInvoke.mock.calls
+      .filter(([command]) => command === 'send_pi')
+      .map(
+        ([, input]) => (input as { request: Record<string, unknown> }).request,
+      );
+    const predecessorEffortRequestId = String(
+      [...outboundRequests]
+        .reverse()
+        .find((request) => request.type === 'get_available_thinking_levels')
+        ?.id,
+    );
+
+    await probeSessionReplacement(controller, false);
+    await handleResponse(controller, {
+      id: controller.replacementProbeRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'identity-b',
+        sessionFile: '/tmp/project/identity-b.jsonl',
+        isStreaming: false,
+      },
+    });
+    const verificationRequestId = controller.materializationMessagesRequestId;
+    const replacementEffortRequest = mockInvoke.mock.calls
+      .filter(([command]) => command === 'send_pi')
+      .map(
+        ([, input]) => (input as { request: Record<string, unknown> }).request,
+      )
+      .reverse()
+      .find((request) => request.type === 'get_available_thinking_levels');
+    await handleResponse(controller, {
+      id: replacementEffortRequest?.id,
+      command: 'get_available_thinking_levels',
+      success: true,
+      data: { levels: ['high', 'max'] },
+    });
+    controller.messages = [
+      { id: 'identity-b-message', kind: 'assistant', text: 'B transcript' },
+    ];
+
+    await handleResponse(controller, {
+      id: predecessorMessagesRequestId,
+      command: 'get_messages',
+      success: true,
+      data: {
+        messages: [{ role: 'assistant', content: 'Stale A transcript' }],
+      },
+    });
+
+    expect(controller.messages).toEqual([
+      expect.objectContaining({ id: 'identity-b-message' }),
+    ]);
+    expect(controller.syncing).toBe(true);
+    expect(controller.materializationMessagesRequestId).toBe(
+      verificationRequestId,
+    );
+
+    await handleResponse(controller, {
+      id: predecessorEffortRequestId,
+      command: 'get_available_thinking_levels',
+      success: true,
+      data: { levels: ['off'] },
+    });
+
+    expect(controller.sessionId).toBe('identity-b');
+    expect(controller.sessionPath).toBe('/tmp/project/identity-b.jsonl');
+    expect(controller.messages).toEqual([
+      expect.objectContaining({ id: 'identity-b-message' }),
+    ]);
+    expect(controller.efforts).toEqual(['high', 'max']);
+    expect(controller.syncing).toBe(true);
+    expect(controller.materializationMessagesRequestId).toBe(
+      verificationRequestId,
+    );
+  });
+
+  it('ignores predecessor message and effort failures after replacement', async () => {
+    const { handleResponse, handleRpc, probeSessionReplacement } =
+      await import('./runtime');
+    const controller = makeController({
+      sessionId: 'identity-a',
+      sessionPath: '/tmp/project/identity-a.jsonl',
+    });
+    addEphemeral(controller);
+
+    await handleRpc(controller, { type: 'agent_settled' });
+    await handleResponse(controller, {
+      id: controller.materializationStateRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'identity-a',
+        sessionFile: '/tmp/project/identity-a.jsonl',
+        isStreaming: false,
+      },
+    });
+    const predecessorMessagesRequestId =
+      controller.materializationMessagesRequestId;
+    const sentRequests = mockInvoke.mock.calls
+      .filter(([command]) => command === 'send_pi')
+      .map(
+        ([, input]) => (input as { request: Record<string, unknown> }).request,
+      );
+    const predecessorEffortRequestId = String(
+      [...sentRequests]
+        .reverse()
+        .find((request) => request.type === 'get_available_thinking_levels')
+        ?.id,
+    );
+    expect(predecessorMessagesRequestId).toMatch(/^tau-messages-/);
+    expect(predecessorEffortRequestId).toMatch(/^tau-efforts-/);
+
+    await probeSessionReplacement(controller, false);
+    await handleResponse(controller, {
+      id: controller.replacementProbeRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'identity-b',
+        sessionFile: '/tmp/project/identity-b.jsonl',
+        isStreaming: false,
+      },
+    });
+    const verificationRequestId = controller.materializationMessagesRequestId;
+    expect(verificationRequestId).toMatch(/^tau-messages-/);
+    expect(verificationRequestId).not.toBe(predecessorMessagesRequestId);
+
+    await handleResponse(controller, {
+      id: predecessorMessagesRequestId,
+      command: 'get_messages',
+      success: false,
+    });
+    await handleResponse(controller, {
+      id: predecessorEffortRequestId,
+      command: 'get_available_thinking_levels',
+      success: false,
+    });
+
+    expect(controller.disposed).toBe(false);
+    expect(controller.generation).toBe(1);
+    expect(controller.sessionId).toBe('identity-b');
+    expect(controller.syncing).toBe(true);
+    expect(controller.status).toBe('');
+    expect(controller.materializationMessagesRequestId).toBe(
+      verificationRequestId,
+    );
   });
 
   it('removes a command-only session when its runtime is released', async () => {
@@ -583,16 +1602,16 @@ describe('active compaction', () => {
   });
 
   it('restores a missed start from get_state and clears it on process exit', async () => {
-    const { handleBridgeEvent, handleResponse } = await import('./runtime');
-    const controller = makeController({
-      streaming: true,
-      working: true,
-      commandSyncRequestId: 'compacting-state',
-    });
+    const { handleBridgeEvent, handleResponse, rpc } =
+      await import('./runtime');
+    const controller = makeController({ streaming: true, working: true });
     state.controllers.push(controller);
+    const compactingRequestId = nextRequestId('command-sync');
+    controller.commandSyncRequestId = compactingRequestId;
+    await rpc(controller, { id: compactingRequestId, type: 'get_state' });
 
     await handleResponse(controller, {
-      id: 'compacting-state',
+      id: compactingRequestId,
       command: 'get_state',
       success: true,
       data: {
@@ -604,8 +1623,13 @@ describe('active compaction', () => {
     });
     expect(controller.compacting).toBe(true);
 
+    const finishedRequestId = await dispatchRequest(
+      controller,
+      'get_state',
+      'command-sync',
+    );
     await handleResponse(controller, {
-      id: 'compacting-finished-state',
+      id: finishedRequestId,
       command: 'get_state',
       success: true,
       data: {
@@ -703,8 +1727,13 @@ describe('compacted history', () => {
       historyLoading: false,
     });
 
+    const messagesRequestId = await dispatchRequest(
+      controller,
+      'get_messages',
+      'messages',
+    );
     await handleResponse(controller, {
-      id: 'messages-after-history',
+      id: messagesRequestId,
       command: 'get_messages',
       success: true,
       data: {
@@ -844,6 +1873,36 @@ describe('Pi RPC span lifecycle', () => {
         sampled: true,
       },
     );
+  });
+
+  it('does not clear newer bookkeeping when an old transport send rejects', async () => {
+    const { rpc } = await import('./runtime');
+    const controller = makeController({
+      postSettlementHydration: true,
+      materializationMessagesRequestId: 'old-messages',
+      syncing: true,
+    });
+    let rejectSend!: (error: Error) => void;
+    mockInvoke.mockImplementationOnce(
+      () =>
+        new Promise<never>((_resolve, reject) => {
+          rejectSend = reject;
+        }),
+    );
+
+    const send = rpc(controller, {
+      id: 'old-messages',
+      type: 'get_messages',
+    });
+    controller.generation = 2;
+    controller.sessionId = 'replacement';
+    controller.sessionPath = '/tmp/project/replacement.jsonl';
+    controller.materializationMessagesRequestId = 'new-messages';
+    rejectSend(new Error('transport rejected'));
+
+    await expect(send).rejects.toThrow('transport rejected');
+    expect(controller.materializationMessagesRequestId).toBe('new-messages');
+    expect(controller.syncing).toBe(true);
   });
 
   it('ends with an error outcome for a failed response', async () => {
@@ -1115,6 +2174,7 @@ describe('Pi RPC span lifecycle', () => {
 
     await rpc(controller, { id: 'req-10', type: 'get_commands' });
     const end = endSpyFor('runtime-1', 1, 'req-10');
+    await rpc(controller, { id: 'req-11', type: 'get_state' });
 
     await handleResponse(controller, {
       id: 'req-11',

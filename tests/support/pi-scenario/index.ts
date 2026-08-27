@@ -123,6 +123,14 @@ type ScriptedPiResponse =
 
 type PiRpcEvent =
   | { type: 'agent_start' }
+  | {
+      type: 'message_start';
+      message: Exclude<PiMessage, { role: 'compactionSummary' }>;
+    }
+  | {
+      type: 'message_end';
+      message: Extract<PiMessage, { role: 'assistant' }>;
+    }
   | { type: 'compaction_start' }
   | {
       type: 'compaction_end';

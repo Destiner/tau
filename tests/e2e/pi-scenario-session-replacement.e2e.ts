@@ -70,7 +70,6 @@ test('registers and selects a session replaced by an extension command', async (
   await expect(page.getByLabel('Transcript')).toContainText(
     'Replacement session started.',
   );
-  await expect(composer).toBeEnabled();
 
   const verification = await page.evaluate(() =>
     window.__TAU_PI_SCENARIO__?.verify(),

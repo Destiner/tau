@@ -170,8 +170,16 @@ interface SessionController {
   promptSubmitting: boolean;
   unread: boolean;
   lastUserMessageAt: number;
-  /** Pi has reported a real user or assistant message for this identity. */
+  /** Pi has reported visible user or assistant transcript activity. */
   hasPiTranscript: boolean;
+  /** A post-settlement hydration confirmed a completed assistant message. */
+  materializationVerified: boolean;
+  /** The current run settled, so its following hydrations may verify storage. */
+  postSettlementHydration: boolean;
+  /** Correlates the settled state read whose hydration may verify storage. */
+  materializationStateRequestId: string;
+  /** Correlates the hydration currently allowed to verify materialization. */
+  materializationMessagesRequestId: string;
   messages: TranscriptEntry[];
   /** Whether `get_messages` has answered once, so an empty transcript can be
    * read as a session without history rather than one that has yet to load. */
@@ -852,6 +860,10 @@ function createController(
     unread: false,
     lastUserMessageAt: session.lastUserMessageAt,
     hasPiTranscript: false,
+    materializationVerified: false,
+    postSettlementHydration: false,
+    materializationStateRequestId: '',
+    materializationMessagesRequestId: '',
     messages: [],
     messagesLoaded: false,
     historyLayers: [],

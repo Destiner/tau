@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { PiBridgeEvent } from '../lib/pi/bridge';
 
+import { nextRequestId } from './state';
 import type {
   ProjectSummary,
   SessionController,
@@ -343,6 +344,11 @@ describe('session drafts and selection', () => {
       expect(
         sentRequests(controller, 'get_available_thinking_levels'),
       ).toHaveLength(1);
+      expect(
+        sentRequests(controller, 'get_messages').some(
+          (request) => request.id === controller.startMessagesRequestId,
+        ),
+      ).toBe(true);
     });
     const effortsRequest = sentRequests(
       controller,
@@ -401,6 +407,12 @@ describe('session drafts and selection', () => {
     await vi.waitFor(() => {
       expect(controller.sessionId).toBe('materialized');
       expect(controller.pendingPrompt?.messagesRequestId).not.toBe('');
+      expect(
+        sentRequests(controller, 'get_messages').some(
+          (request) =>
+            request.id === controller.pendingPrompt?.messagesRequestId,
+        ),
+      ).toBe(true);
     });
     emitRpc(controller, {
       id: controller.pendingPrompt?.messagesRequestId,
@@ -784,6 +796,11 @@ describe('session drafts and selection', () => {
     });
     await vi.waitFor(() => {
       expect(controller.startMessagesRequestId).not.toBe('');
+      expect(
+        sentRequests(controller, 'get_messages').some(
+          (request) => request.id === controller.startMessagesRequestId,
+        ),
+      ).toBe(true);
     });
     expect(sessionLoading.value).toBe(true);
 
@@ -885,7 +902,7 @@ describe('session replacement hardening', () => {
     expect(tau.state.activeSessionId).toBe(secondSession.id);
     expect(
       tau.state.workspace?.projects[0]?.sessions.map((session) => session.id),
-    ).toEqual([firstSession.id, secondSession.id, replacementSession.id]);
+    ).toEqual([firstSession.id, secondSession.id]);
     expect(
       vi
         .mocked(invoke)
@@ -895,7 +912,7 @@ describe('session replacement hardening', () => {
             (args as { sessionId?: string })?.sessionId ===
               replacementSession.id,
         ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       vi
         .mocked(invoke)
@@ -939,6 +956,12 @@ describe('session replacement hardening', () => {
       expect(firstController.messages).toEqual([
         { id: 'user-0', kind: 'user', text: 'Review the plan' },
       ]);
+    });
+    await settleAndHydrateCompleted(firstController, 'Plan ready');
+    await vi.waitFor(() => {
+      expect(
+        tau.state.workspace?.projects[0]?.sessions.map((session) => session.id),
+      ).toEqual([firstSession.id, secondSession.id, replacementSession.id]);
     });
 
     emitRpc(firstController, {
@@ -1029,8 +1052,8 @@ describe('session replacement hardening', () => {
 
     await vi.waitFor(() => {
       expect(secondController.sessionId).toBe(phaseSession.id);
-      expect(tau.state.activeSessionId).toBe(phaseSession.id);
     });
+    expect(tau.state.activeSessionId).toBe(secondSession.id);
     expect(
       vi
         .mocked(invoke)
@@ -1039,8 +1062,16 @@ describe('session replacement hardening', () => {
             command === 'register_session' &&
             (args as { sessionId?: string })?.sessionId === phaseSession.id,
         ),
-    ).toBe(true);
-    expect(secondController.messages).toEqual([]);
+    ).toBe(false);
+
+    await settleAndHydrateCompleted(secondController, 'Phase ready');
+    await vi.waitFor(() => {
+      expect(tau.state.activeSessionId).toBe(phaseSession.id);
+    });
+    expect(secondController.messages.map((message) => message.text)).toEqual([
+      'Prompt',
+      'Phase ready',
+    ]);
     tau.dispose();
   });
 
@@ -1078,6 +1109,12 @@ describe('session replacement hardening', () => {
     });
     await vi.waitFor(() => {
       expect(controller.pendingPrompt?.messagesRequestId).not.toBe('');
+      expect(
+        sentRequests(controller, 'get_messages').some(
+          (request) =>
+            request.id === controller.pendingPrompt?.messagesRequestId,
+        ),
+      ).toBe(true);
     });
 
     // Pi never writes a session that holds no assistant message, so the
@@ -1132,7 +1169,13 @@ describe('session replacement hardening', () => {
       type: 'message_start',
       message: { role: 'assistant', content: [] },
     });
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.filter(([command]) => command === 'register_session'),
+    ).toHaveLength(0);
 
+    await settleAndHydrateCompleted(controller, 'Phase ready');
     await vi.waitFor(() => {
       expect(
         vi
@@ -1214,6 +1257,115 @@ describe('session replacement hardening', () => {
     tau.dispose();
   });
 
+  it.each([
+    ['settled state', 'get_state'],
+    ['effort refresh', 'get_available_thinking_levels'],
+    ['settled messages', 'get_messages'],
+  ])(
+    'retries materialization after %s transport rejection',
+    async (_label, rejectedMethod) => {
+      const { firstController, firstSession, tau } =
+        await setupExtensionControllers();
+      let rejected = false;
+
+      await vi.mocked(invoke).withImplementation(
+        async (command, args) => {
+          const request = (
+            args as { request?: Record<string, unknown> } | undefined
+          )?.request;
+          if (
+            command === 'send_pi' &&
+            request?.type === rejectedMethod &&
+            !rejected
+          ) {
+            rejected = true;
+            throw new Error('transport rejected');
+          }
+          if (command.startsWith('start_pi')) {
+            mocks.generation += 1;
+            return mocks.generation;
+          }
+          if (command.endsWith('model_scope')) return mocks.modelScope;
+          return mocks.workspace;
+        },
+        async () => {
+          emitRpc(firstController, { type: 'agent_settled' });
+          if (rejectedMethod !== 'get_state') {
+            await vi.waitFor(() => {
+              expect(firstController.materializationStateRequestId).not.toBe(
+                '',
+              );
+            });
+            emitRpc(firstController, {
+              id: firstController.materializationStateRequestId,
+              type: 'response',
+              command: 'get_state',
+              success: true,
+              data: {
+                model: { provider: 'provider', id: 'alpha', name: 'Alpha' },
+                thinkingLevel: 'high',
+                sessionId: firstSession.id,
+                sessionFile: firstSession.path,
+                sessionName: firstSession.title,
+                isStreaming: false,
+              },
+            });
+          }
+          await vi.waitFor(() => {
+            expect(rejected).toBe(true);
+            expect(firstController.materializationStateRequestId).toBe('');
+            expect(firstController.materializationMessagesRequestId).toBe('');
+            expect(firstController.syncing).toBe(false);
+          });
+          expect(firstController.postSettlementHydration).toBe(true);
+
+          const { probeSessionReplacement } = await import('../lib/pi/runtime');
+          await probeSessionReplacement(firstController, false);
+          const probeRequestId = firstController.replacementProbeRequestId;
+          expect(probeRequestId).not.toBe('');
+          emitRpc(firstController, {
+            id: probeRequestId,
+            type: 'response',
+            command: 'get_state',
+            success: true,
+            data: {
+              model: { provider: 'provider', id: 'alpha', name: 'Alpha' },
+              thinkingLevel: 'high',
+              sessionId: firstSession.id,
+              sessionFile: firstSession.path,
+              sessionName: firstSession.title,
+              isStreaming: false,
+            },
+          });
+          await vi.waitFor(() => {
+            expect(firstController.materializationMessagesRequestId).not.toBe(
+              '',
+            );
+          });
+          emitRpc(firstController, {
+            id: firstController.materializationMessagesRequestId,
+            type: 'response',
+            command: 'get_messages',
+            success: true,
+            data: {
+              messages: [
+                {
+                  role: 'assistant',
+                  content: [{ type: 'text', text: 'Durable after retry' }],
+                },
+              ],
+            },
+          });
+          await vi.waitFor(() => {
+            expect(firstController.materializationVerified).toBe(true);
+            expect(firstController.postSettlementHydration).toBe(false);
+          });
+        },
+      );
+      tau.dispose();
+    },
+  );
+
   it('detects a phase session opened after the run settles', async () => {
     vi.useFakeTimers();
     try {
@@ -1290,6 +1442,22 @@ describe('session replacement hardening', () => {
       });
       await vi.waitFor(() => {
         expect(firstController.sessionId).toBe(phaseSession.id);
+        expect(sentRequests(firstController, 'get_messages')).toHaveLength(2);
+      });
+      emitRpc(firstController, {
+        id: sentRequests(firstController, 'get_messages')[1]?.id,
+        type: 'response',
+        command: 'get_messages',
+        success: true,
+        data: {
+          messages: [
+            { role: 'user', content: 'Execute the plan' },
+            {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'Execution complete' }],
+            },
+          ],
+        },
       });
       expect(
         vi
@@ -1357,7 +1525,7 @@ describe('session replacement hardening', () => {
     tau.dispose();
   });
 
-  it('retires a session Pi never saved instead of opening a copy of it', async () => {
+  it('still retires a legacy stale row instead of opening a copy of it', async () => {
     const { controller, ghost, other, project, tau } =
       await setupUnsavedSession();
 
@@ -1448,9 +1616,15 @@ describe('session replacement hardening', () => {
       message: { role: 'assistant', content: [] },
     });
 
-    // A replacement brings its own path, so it is a session Pi holds rather
-    // than one it could not find.
+    // A replacement brings its own live identity, but it is not reopenable
+    // until a settled hydration confirms Pi appended the assistant message.
     expect(controller.phantom).toBe(false);
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.some(([command]) => command === 'register_session'),
+    ).toBe(false);
+    await settleAndHydrateCompleted(controller, 'Phase ready');
     expect(
       vi
         .mocked(invoke)
@@ -1713,9 +1887,15 @@ describe('extension UI protocol', () => {
       }),
     ]);
 
+    const { rpc } = await import('../lib/pi/runtime');
+    const hydrationRequestId = nextRequestId('messages');
+    await rpc(firstController, {
+      id: hydrationRequestId,
+      type: 'get_messages',
+    });
     emitRpc(firstController, {
       type: 'response',
-      id: 'hydrate-after-command',
+      id: hydrationRequestId,
       command: 'get_messages',
       success: true,
       data: { messages: [{ role: 'user', content: 'Previous prompt' }] },
@@ -2021,6 +2201,11 @@ describe('transcript continuity', () => {
     });
     await vi.waitFor(() => {
       expect(controller.startMessagesRequestId).not.toBe('');
+      expect(
+        sentRequests(controller, 'get_messages').some(
+          (request) => request.id === controller.startMessagesRequestId,
+        ),
+      ).toBe(true);
     });
     emitRpc(controller, {
       id: controller.startMessagesRequestId,
@@ -3566,6 +3751,11 @@ async function setupUnansweredPhantomCommand(): Promise<{
   });
   await vi.waitFor(() => {
     expect(controller.pendingPrompt?.messagesRequestId).not.toBe('');
+    expect(
+      sentRequests(controller, 'get_messages').some(
+        (request) => request.id === controller.pendingPrompt?.messagesRequestId,
+      ),
+    ).toBe(true);
   });
   emitRpc(controller, {
     id: controller.pendingPrompt?.messagesRequestId,
@@ -3631,6 +3821,59 @@ async function setupNamedSession(): Promise<{
   controller.ready = true;
   vi.mocked(invoke).mockClear();
   return { tau, project, session, controller };
+}
+
+async function settleAndHydrateCompleted(
+  controller: SessionController,
+  assistantText: string,
+): Promise<void> {
+  const stateCount = sentRequests(controller, 'get_state').length;
+  emitRpc(controller, {
+    type: 'message_end',
+    message: {
+      role: 'assistant',
+      content: [{ type: 'text', text: assistantText }],
+    },
+  });
+  emitRpc(controller, { type: 'agent_settled' });
+  await vi.waitFor(() => {
+    expect(sentRequests(controller, 'get_state')).toHaveLength(stateCount + 1);
+  });
+  emitRpc(controller, {
+    id: sentRequests(controller, 'get_state')[stateCount]?.id,
+    type: 'response',
+    command: 'get_state',
+    success: true,
+    data: {
+      model: { provider: 'provider', id: 'alpha', name: 'Alpha' },
+      thinkingLevel: 'high',
+      sessionId: controller.sessionId,
+      sessionFile: controller.sessionPath,
+      sessionName: controller.sessionName,
+      isStreaming: false,
+    },
+  });
+  await vi.waitFor(() => {
+    expect(controller.materializationMessagesRequestId).not.toBe('');
+  });
+  emitRpc(controller, {
+    id: controller.materializationMessagesRequestId,
+    type: 'response',
+    command: 'get_messages',
+    success: true,
+    data: {
+      messages: [
+        { role: 'user', content: 'Prompt' },
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: assistantText }],
+        },
+      ],
+    },
+  });
+  await vi.waitFor(() => {
+    expect(controller.materializationVerified).toBe(true);
+  });
 }
 
 function emitRpc(
@@ -3763,6 +4006,7 @@ async function settleWith(
   messages: unknown[],
 ): Promise<void> {
   const before = sentRequests(controller, 'get_state').length;
+  const messagesBefore = sentRequests(controller, 'get_messages').length;
   emitRpc(controller, { type: 'agent_settled' });
   await vi.waitFor(() => {
     expect(sentRequests(controller, 'get_state')).toHaveLength(before + 1);
@@ -3783,10 +4027,12 @@ async function settleWith(
   });
 
   await vi.waitFor(() => {
-    expect(sentRequests(controller, 'get_messages')).toHaveLength(1);
+    expect(sentRequests(controller, 'get_messages')).toHaveLength(
+      messagesBefore + 1,
+    );
   });
   emitRpc(controller, {
-    id: sentRequests(controller, 'get_messages')[0]?.id,
+    id: sentRequests(controller, 'get_messages')[messagesBefore]?.id,
     type: 'response',
     command: 'get_messages',
     success: true,
