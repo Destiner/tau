@@ -1,7 +1,9 @@
 import {
+  backupSessionState,
   fixtureModels,
   fixtureThinkingLevels,
   mainSessionState,
+  successfulBootstrapSteps,
 } from './fixtures';
 
 import { definePiScenario } from './index';
@@ -31,7 +33,10 @@ const savedSessionCommandReplacement = definePiScenario({
       'docs/quality.md §5 State correctness and the Locality principle',
     schemaVersion: 1,
   },
-  runtimes: [{ key: runtime, generation: 2 }],
+  runtimes: [
+    { key: runtime, generation: 2 },
+    { key: 'backup', generation: 1 },
+  ],
   steps: [
     { kind: 'runtime-event', runtime, event: 'started' },
     {
@@ -94,6 +99,7 @@ const savedSessionCommandReplacement = definePiScenario({
       command: 'get_messages',
       data: { messages: [] },
     },
+    ...successfulBootstrapSteps('backup', 'backup', backupSessionState),
     {
       kind: 'request',
       runtime,
@@ -160,18 +166,71 @@ const savedSessionCommandReplacement = definePiScenario({
       capture: 'replacement-messages',
       match: { type: 'get_messages' },
     },
+    { kind: 'event', runtime, event: { type: 'agent_start' } },
+    {
+      kind: 'request',
+      runtime,
+      capture: 'replacement-run-state',
+      match: { type: 'get_state' },
+    },
+    {
+      kind: 'response',
+      request: 'replacement-run-state',
+      command: 'get_state',
+      data: { ...replacementState, isStreaming: true },
+    },
+    { kind: 'event', runtime, event: { type: 'turn_start' } },
+    {
+      kind: 'event',
+      runtime,
+      event: {
+        type: 'message_start',
+        message: { role: 'user', content: 'Run phase 42' },
+      },
+    },
+    {
+      kind: 'event',
+      runtime,
+      event: {
+        type: 'message_end',
+        message: { role: 'user', content: 'Run phase 42' },
+      },
+    },
+    { kind: 'gate', name: 'before-live-user-hydration', required: true },
     {
       kind: 'response',
       request: 'replacement-messages',
       command: 'get_messages',
-      data: { messages: [] },
+      data: { messages: [{ role: 'user', content: 'Run phase 42' }] },
     },
+    { kind: 'gate', name: 'before-replacement-assistant', required: true },
     {
       kind: 'event',
       runtime,
       event: {
         type: 'message_start',
         message: { role: 'assistant', content: [] },
+      },
+    },
+    {
+      kind: 'event',
+      runtime,
+      event: {
+        type: 'tool_execution_start',
+        toolCallId: 'phase-tool',
+        toolName: 'workflow',
+        args: { phase: 42 },
+      },
+    },
+    {
+      kind: 'event',
+      runtime,
+      event: {
+        type: 'tool_execution_end',
+        toolCallId: 'phase-tool',
+        toolName: 'workflow',
+        result: { content: [{ type: 'text', text: 'Phase ready' }] },
+        isError: false,
       },
     },
     {
@@ -241,6 +300,7 @@ const savedSessionCommandReplacement = definePiScenario({
         ],
       },
     },
+    { kind: 'gate', name: 'after-settled-hydration', required: true },
     { kind: 'runtime-event', runtime, event: 'exited', code: 0 },
   ],
 });

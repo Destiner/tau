@@ -1491,6 +1491,130 @@ describe('prompt delivery', () => {
   });
 });
 
+describe('ordinary user transcript events', () => {
+  it('reconciles transformed Pi input into the composer optimistic row', async () => {
+    const { handleRpc } = await import('./runtime');
+    const controller = makeController({
+      submittedPrompt: {
+        requestId: 'prompt-1',
+        generation: 1,
+        message: 'Original input',
+        draft: 'Original input',
+        accepted: true,
+        optimisticId: 'optimistic-user-1',
+      },
+      messages: [
+        {
+          id: 'optimistic-user-1',
+          kind: 'user',
+          text: 'Original input',
+          pending: true,
+        },
+        {
+          id: 'extension-notify:1',
+          kind: 'notice',
+          text: 'Transforming input',
+          anchor: 1,
+        },
+        {
+          id: 'local-error-1',
+          kind: 'error',
+          text: 'A local warning',
+          anchor: 1,
+        },
+      ],
+    });
+
+    await handleRpc(controller, { type: 'agent_start' });
+    await handleRpc(controller, {
+      type: 'message_start',
+      message: { role: 'user', content: 'Transformed input' },
+    });
+
+    expect(controller.messages).toEqual([
+      {
+        id: 'optimistic-user-1',
+        kind: 'user',
+        text: 'Transformed input',
+      },
+      {
+        id: 'extension-notify:1',
+        kind: 'notice',
+        text: 'Transforming input',
+        anchor: 1,
+      },
+      {
+        id: 'local-error-1',
+        kind: 'error',
+        text: 'A local warning',
+        anchor: 1,
+      },
+    ]);
+  });
+
+  it('appends every repeated extension or steering event and ignores empty content', async () => {
+    const { handleRpc } = await import('./runtime');
+    const controller = makeController();
+    const repeated = {
+      type: 'message_start',
+      message: { role: 'user', content: 'Injected by extension' },
+    };
+
+    await handleRpc(controller, repeated);
+    await handleRpc(controller, repeated);
+    await handleRpc(controller, {
+      type: 'message_start',
+      message: { role: 'user', content: [{ type: 'image', data: 'hidden' }] },
+    });
+
+    expect(controller.messages).toEqual([
+      {
+        id: 'stream-user-0',
+        kind: 'user',
+        text: 'Injected by extension',
+      },
+      {
+        id: 'stream-user-1',
+        kind: 'user',
+        text: 'Injected by extension',
+      },
+    ]);
+  });
+
+  it('isolates user events by runtime and generation', async () => {
+    const { handleBridgeEvent } = await import('./runtime');
+    const selected = makeController();
+    const other = makeController({
+      key: 'controller-2',
+      runtimeId: 'runtime-2',
+      sessionId: 'session-2',
+    });
+    state.controllers.push(selected, other);
+    const line = JSON.stringify({
+      type: 'message_start',
+      message: { role: 'user', content: 'Only the matching runtime' },
+    });
+
+    await handleBridgeEvent({
+      runtimeId: other.runtimeId,
+      generation: other.generation,
+      kind: 'rpc',
+      line,
+    });
+    await handleBridgeEvent({
+      runtimeId: selected.runtimeId,
+      generation: selected.generation - 1,
+      kind: 'rpc',
+      line,
+    });
+
+    expect(selected.messages).toEqual([]);
+    expect(other.messages).toMatchObject([
+      { kind: 'user', text: 'Only the matching runtime' },
+    ]);
+  });
+});
+
 describe('skill transcript events', () => {
   it('optimistically keeps a known skill and its prompt together', async () => {
     const { appendOptimisticPrompt } = await import('./runtime');

@@ -17,6 +17,8 @@ interface TranscriptEntry {
   text: string;
   /** Tau rendered this row before Pi confirmed it as session content. */
   pending?: boolean;
+  /** Why this row is waiting for its matching live user start event. */
+  pendingUserEvent?: 'optimistic' | 'hydration';
   /** Whether activating this compaction boundary can reveal an older layer. */
   historyAvailable?: boolean;
   /** The older layer behind this boundary is currently being requested. */
@@ -87,6 +89,7 @@ const detailLimit = 4_000;
 function hydrateTranscript(
   messages: unknown[],
   previous: TranscriptEntry[] = [],
+  pendingLiveUserEvents = false,
 ): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
 
@@ -204,7 +207,50 @@ function hydrateTranscript(
       });
     }
   }
-  return assignIds(entries, previous);
+  return assignIds(entries, previous, pendingLiveUserEvents);
+}
+
+/**
+ * Projects one ordinary user start event. Only an explicitly pending composer
+ * row or a hydration row waiting for this same live event may be reconciled;
+ * equal text on an already completed turn is not provenance for deduplication.
+ */
+function projectOrdinaryUserMessage(
+  entries: TranscriptEntry[],
+  text: string,
+  id: string,
+): void {
+  if (!text) return;
+
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const candidate = entries[index];
+    if (!candidate) continue;
+    if (isLocalEntry(candidate)) continue;
+    if (
+      candidate.kind === 'user' &&
+      (candidate.pending === true ||
+        candidate.pendingUserEvent === 'optimistic')
+    ) {
+      candidate.text = text;
+      delete candidate.pending;
+      delete candidate.pendingUserEvent;
+      return;
+    }
+    break;
+  }
+
+  const hydrated = entries.find(
+    (entry) =>
+      entry.kind === 'user' &&
+      entry.pendingUserEvent === 'hydration' &&
+      entry.text === text,
+  );
+  if (hydrated) {
+    delete hydrated.pendingUserEvent;
+    return;
+  }
+
+  entries.push({ id, kind: 'user', text });
 }
 
 /**
@@ -314,6 +360,7 @@ function historyPrefix(
 function assignIds(
   entries: TranscriptEntry[],
   previous: TranscriptEntry[],
+  pendingLiveUserEvents: boolean,
 ): TranscriptEntry[] {
   // Only Pi-owned rows take part: the local entries sitting between them are
   // merged back afterwards, and counting them here would stall the walk at the
@@ -329,16 +376,35 @@ function assignIds(
   });
 
   const taken = new Set(adopted.values());
+  const candidatesById = new Map(
+    candidates.map((candidate) => [candidate.id, candidate]),
+  );
+  let liveUserSuffixStart = entries.length;
+  if (pendingLiveUserEvents) {
+    while (
+      liveUserSuffixStart > 0 &&
+      entries[liveUserSuffixStart - 1]?.kind === 'user'
+    ) {
+      liveUserSuffixStart -= 1;
+    }
+  }
   let sequence = 0;
   entries.forEach((entry, index) => {
     const carried = adopted.get(index);
     if (carried) {
       entry.id = carried;
+      const candidate = candidatesById.get(carried);
+      if (pendingLiveUserEvents && candidate?.pendingUserEvent) {
+        entry.pendingUserEvent = candidate.pendingUserEvent;
+      }
       return;
     }
     let id = `${entry.kind}-${sequence++}`;
     while (taken.has(id)) id = `${entry.kind}-${sequence++}`;
     entry.id = id;
+    if (entry.kind === 'user' && index >= liveUserSuffixStart) {
+      entry.pendingUserEvent = 'hydration';
+    }
   });
   return entries;
 }
@@ -532,6 +598,7 @@ export {
   historyPrefix,
   localErrorId,
   parseSkillBlock,
+  projectOrdinaryUserMessage,
   messageFailure,
   mergeLocalEntries,
   toolSummary,

@@ -896,7 +896,9 @@ describe('session replacement hardening', () => {
     });
 
     expect(firstController.key).not.toBe(secondController.key);
-    expect(firstController.messages).toEqual([]);
+    expect(firstController.messages).toMatchObject([
+      { kind: 'user', text: 'Review the plan' },
+    ]);
     expect(firstController.commandsLoaded).toBe(false);
     expect(tau.state.activeControllerKey).toBe(secondController.key);
     expect(tau.state.activeSessionId).toBe(secondSession.id);
@@ -954,7 +956,7 @@ describe('session replacement hardening', () => {
         },
       ]);
       expect(firstController.messages).toEqual([
-        { id: 'user-0', kind: 'user', text: 'Review the plan' },
+        { id: 'stream-user-0', kind: 'user', text: 'Review the plan' },
       ]);
     });
     await settleAndHydrateCompleted(firstController, 'Plan ready');

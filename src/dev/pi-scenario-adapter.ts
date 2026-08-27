@@ -155,9 +155,9 @@ const REQUIRED_NATIVE_COUNTS = {
   },
   'saved-session-command-replacement': {
     load_workspace: 1,
-    read_model_scope: 1,
-    register_session: 2,
-    set_active_session: 2,
+    read_model_scope: 2,
+    register_session: 3,
+    set_active_session: 7,
   },
   'phantom-command-registration': {
     load_workspace: 1,
@@ -228,7 +228,10 @@ const initialWorkspace: WorkspaceSnapshot = {
 
 function scenarioWorkspace(scenarioName: string): WorkspaceSnapshot {
   const workspace = structuredClone(initialWorkspace);
-  if (scenarioName === 'saved-session-prompt-process-exit') {
+  if (
+    scenarioName === 'saved-session-prompt-process-exit' ||
+    scenarioName === 'saved-session-command-replacement'
+  ) {
     workspace.projects[0]?.sessions.push({
       id: BACKUP_SESSION.id,
       path: BACKUP_SESSION.path,
@@ -382,15 +385,27 @@ function installPiScenarioAdapter(scenarioName: string): void {
       }
       if (command === 'set_active_session') {
         const invocation = count(command);
-        const expected = expectedNativeSession(
-          scenarioName,
-          command,
-          invocation,
-        );
-        setActiveSessionArgs(args, expected);
-        if (expected.id === REPLACEMENT_SESSION.id) {
-          workspace = replacementWorkspace();
+        let expected: NativeSessionIdentity;
+        if (scenarioName === 'saved-session-command-replacement') {
+          const requested = [
+            MAIN_SESSION,
+            BACKUP_SESSION,
+            REPLACEMENT_SESSION,
+          ].find((session) => session.id === args.sessionId);
+          if (!requested) {
+            throw new Error('set_active_session used an unknown session.');
+          }
+          expected = requested;
         } else {
+          expected = expectedNativeSession(scenarioName, command, invocation);
+        }
+        setActiveSessionArgs(args, expected);
+        if (
+          expected.id === REPLACEMENT_SESSION.id &&
+          scenarioName !== 'saved-session-command-replacement'
+        ) {
+          workspace = replacementWorkspace();
+        } else if (expected.id !== REPLACEMENT_SESSION.id) {
           selectWorkspaceSession(workspace, expected.id);
         }
         return structuredClone(workspace);
@@ -582,11 +597,20 @@ function expectedNativeSession(
   command: 'register_session' | 'set_active_session',
   invocation: number,
 ): NativeSessionIdentity {
-  if (
-    scenarioName === 'saved-session-command-replacement' &&
-    invocation === 2
-  ) {
-    return REPLACEMENT_SESSION;
+  if (scenarioName === 'saved-session-command-replacement') {
+    const sequence =
+      command === 'register_session'
+        ? [MAIN_SESSION, BACKUP_SESSION, REPLACEMENT_SESSION]
+        : [
+            MAIN_SESSION,
+            BACKUP_SESSION,
+            MAIN_SESSION,
+            BACKUP_SESSION,
+            REPLACEMENT_SESSION,
+          ];
+    const expected = sequence[invocation - 1];
+    if (!expected) throw new Error(`${command} ran too many times.`);
+    return expected;
   }
   if (scenarioName === 'phantom-command-registration' && invocation === 2) {
     return COMMAND_SESSION;
@@ -628,8 +652,11 @@ function scenarioRuntimeKey(
     }
     return count === 1 ? 'failed-bootstrap' : 'recovered-main';
   }
-  if (scenarioName === 'saved-session-prompt-process-exit') {
-    if (count > 1) throw new Error('A process-failure session started twice.');
+  if (
+    scenarioName === 'saved-session-prompt-process-exit' ||
+    scenarioName === 'saved-session-command-replacement'
+  ) {
+    if (count > 1) throw new Error('A scenario session started twice.');
     return sessionPath === BACKUP_SESSION.path ? 'backup' : 'main';
   }
   if (

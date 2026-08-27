@@ -8,8 +8,134 @@ import {
   mergeLocalEntries,
   messageFailure,
   parseSkillBlock,
+  projectOrdinaryUserMessage,
   toolSummary,
 } from './transcript';
+
+describe('ordinary user event projection', () => {
+  it('keeps repeated identical extension or steering events distinct', () => {
+    const entries: TranscriptEntry[] = [];
+
+    projectOrdinaryUserMessage(entries, 'Repeat this', 'stream-user-1');
+    projectOrdinaryUserMessage(entries, 'Repeat this', 'stream-user-2');
+
+    expect(entries).toEqual([
+      { id: 'stream-user-1', kind: 'user', text: 'Repeat this' },
+      { id: 'stream-user-2', kind: 'user', text: 'Repeat this' },
+    ]);
+  });
+
+  it('reconciles a pending optimistic row across only local entries', () => {
+    const entries: TranscriptEntry[] = [
+      {
+        id: 'optimistic-user-1',
+        kind: 'user',
+        text: 'Original input',
+        pending: true,
+      },
+      {
+        id: 'extension-notify:1',
+        kind: 'notice',
+        text: 'Transforming input',
+        anchor: 1,
+      },
+      {
+        id: 'local-error-1',
+        kind: 'error',
+        text: 'A local warning',
+        anchor: 1,
+      },
+    ];
+
+    projectOrdinaryUserMessage(entries, 'Transformed input', 'stream-user-1');
+
+    expect(entries).toEqual([
+      {
+        id: 'optimistic-user-1',
+        kind: 'user',
+        text: 'Transformed input',
+      },
+      expect.objectContaining({ id: 'extension-notify:1' }),
+      expect.objectContaining({ id: 'local-error-1' }),
+    ]);
+  });
+
+  it('does not reconcile an earlier completed optimistic or user row', () => {
+    const entries: TranscriptEntry[] = [
+      {
+        id: 'optimistic-user-old',
+        kind: 'user',
+        text: 'Repeat this',
+      },
+      {
+        id: 'extension-notify:1',
+        kind: 'notice',
+        text: 'Queued another turn',
+        anchor: 1,
+      },
+    ];
+
+    projectOrdinaryUserMessage(entries, 'Repeat this', 'stream-user-2');
+
+    expect(entries.map((entry) => entry.id)).toEqual([
+      'optimistic-user-old',
+      'extension-notify:1',
+      'stream-user-2',
+    ]);
+  });
+
+  it('suppresses only the matching event for a live hydration row', () => {
+    const entries = hydrateTranscript(
+      [{ role: 'user', content: 'Injected by extension' }],
+      [],
+      true,
+    );
+    const id = entries[0]?.id;
+
+    projectOrdinaryUserMessage(
+      entries,
+      'Injected by extension',
+      'stream-user-1',
+    );
+    projectOrdinaryUserMessage(
+      entries,
+      'Injected by extension',
+      'stream-user-2',
+    );
+
+    expect(entries).toEqual([
+      { id, kind: 'user', text: 'Injected by extension' },
+      {
+        id: 'stream-user-2',
+        kind: 'user',
+        text: 'Injected by extension',
+      },
+    ]);
+  });
+
+  it('lets settled hydration adopt repeated event rows without duplication', () => {
+    const projected: TranscriptEntry[] = [];
+    projectOrdinaryUserMessage(projected, 'Repeat this', 'stream-user-7');
+    projectOrdinaryUserMessage(projected, 'Repeat this', 'stream-user-8');
+
+    const settled = hydrateTranscript(
+      [
+        { role: 'user', content: 'Repeat this' },
+        { role: 'user', content: 'Repeat this' },
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Done.' }],
+        },
+      ],
+      projected,
+    );
+
+    expect(settled.filter((entry) => entry.kind === 'user')).toEqual([
+      { id: 'stream-user-7', kind: 'user', text: 'Repeat this' },
+      { id: 'stream-user-8', kind: 'user', text: 'Repeat this' },
+    ]);
+  });
+});
 
 describe('hydrateTranscript', () => {
   it('keeps assistant content order and resolves tool outcomes', () => {

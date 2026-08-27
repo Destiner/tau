@@ -123,13 +123,27 @@ type ScriptedPiResponse =
 
 type PiRpcEvent =
   | { type: 'agent_start' }
+  | { type: 'turn_start' }
   | {
       type: 'message_start';
       message: Exclude<PiMessage, { role: 'compactionSummary' }>;
     }
   | {
       type: 'message_end';
-      message: Extract<PiMessage, { role: 'assistant' }>;
+      message: Exclude<PiMessage, { role: 'compactionSummary' }>;
+    }
+  | {
+      type: 'tool_execution_start';
+      toolCallId: string;
+      toolName: string;
+      args: Record<string, unknown>;
+    }
+  | {
+      type: 'tool_execution_end';
+      toolCallId: string;
+      toolName: string;
+      result: { content: readonly { type: 'text'; text: string }[] };
+      isError: boolean;
     }
   | { type: 'compaction_start' }
   | {

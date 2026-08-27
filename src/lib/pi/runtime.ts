@@ -65,6 +65,7 @@ import {
   mergeLocalEntries,
   messageFailure,
   parseSkillBlock,
+  projectOrdinaryUserMessage,
   stringValue,
   toolArgumentsText,
   toolResultText,
@@ -1160,8 +1161,17 @@ async function handleRpc(
       markPiTranscript(controller);
     }
     if (role !== 'user') return;
-    const skill = parseSkillBlock(contentText(message?.content));
-    if (!skill) return;
+    const text = contentText(message?.content);
+    const skill = parseSkillBlock(text);
+    if (!skill) {
+      if (!text) return;
+      projectOrdinaryUserMessage(
+        controller.messages,
+        text,
+        `stream-user-${controller.streamSequence++}`,
+      );
+      return;
+    }
 
     const optimistic = [...controller.messages]
       .reverse()
@@ -1942,7 +1952,7 @@ async function handleResponse(
     const previousTail = previous.slice(controller.historyPrefixLength);
     controller.messagesLoaded = true;
     const tail = mergeLocalEntries(
-      hydrateTranscript(piMessages, previousTail),
+      hydrateTranscript(piMessages, previousTail, controller.streaming),
       controller.localErrors,
       previousTail,
     );
@@ -2902,7 +2912,12 @@ function confirmSubmittedPrompt(controller: SessionController): void {
     const optimistic = controller.messages.find(
       (message) => message.id === submitted.optimisticId,
     );
-    if (optimistic) delete optimistic.pending;
+    if (optimistic) {
+      delete optimistic.pending;
+      if (optimistic.kind === 'user') {
+        optimistic.pendingUserEvent = 'optimistic';
+      }
+    }
   }
   controller.submittedPrompt = undefined;
 }

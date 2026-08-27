@@ -247,6 +247,19 @@ describe('PiScenarioEngine', () => {
       takeRequiredOutput(engine);
     }
 
+    engine.bindRuntime('backup', 'runtime-dynamic-backup');
+    takeRequiredOutput(engine);
+    for (const [id, type] of [
+      ['backup-models', 'get_available_models'],
+      ['backup-commands', 'get_commands'],
+      ['backup-state', 'get_state'],
+      ['backup-efforts', 'get_available_thinking_levels'],
+      ['backup-messages', 'get_messages'],
+    ] as const) {
+      engine.consumeRequest('runtime-dynamic-backup', { id, type });
+      takeRequiredOutput(engine);
+    }
+
     consumeRequest(engine, 'command', 'prompt', { message: '/mock 42' });
     expect(takeRequiredOutput(engine)).toMatchObject({
       value: { id: 'command', command: 'prompt' },
@@ -258,6 +271,24 @@ describe('PiScenarioEngine', () => {
         name: 'before-command-replacement-identity',
         required: true,
         reached: true,
+        released: false,
+      },
+      {
+        name: 'before-live-user-hydration',
+        required: true,
+        reached: false,
+        released: false,
+      },
+      {
+        name: 'before-replacement-assistant',
+        required: true,
+        reached: false,
+        released: false,
+      },
+      {
+        name: 'after-settled-hydration',
+        required: true,
+        reached: false,
         released: false,
       },
     ]);
@@ -278,13 +309,46 @@ describe('PiScenarioEngine', () => {
       ['replacement-models', 'get_available_models'],
       ['replacement-commands', 'get_commands'],
       ['replacement-efforts', 'get_available_thinking_levels'],
-      ['replacement-messages', 'get_messages'],
     ] as const) {
       consumeRequest(engine, id, type);
       takeRequiredOutput(engine);
     }
+    consumeRequest(engine, 'replacement-messages', 'get_messages');
     expect(takeRequiredOutput(engine)).toMatchObject({
-      value: { type: 'message_start' },
+      value: { type: 'agent_start' },
+    });
+    consumeRequest(engine, 'replacement-run-state', 'get_state');
+    takeRequiredOutput(engine);
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { type: 'turn_start' },
+    });
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: {
+        type: 'message_start',
+        message: { role: 'user', content: 'Run phase 42' },
+      },
+    });
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { type: 'message_end', message: { role: 'user' } },
+    });
+    expect(engine.takeOutput()).toBeUndefined();
+    engine.releaseGate('before-live-user-hydration');
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: {
+        command: 'get_messages',
+        data: { messages: [{ role: 'user', content: 'Run phase 42' }] },
+      },
+    });
+    expect(engine.takeOutput()).toBeUndefined();
+    engine.releaseGate('before-replacement-assistant');
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { type: 'message_start', message: { role: 'assistant' } },
+    });
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { type: 'tool_execution_start' },
+    });
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { type: 'tool_execution_end' },
     });
     expect(takeRequiredOutput(engine)).toMatchObject({
       value: {
@@ -306,6 +370,8 @@ describe('PiScenarioEngine', () => {
       consumeRequest(engine, id, type);
       takeRequiredOutput(engine);
     }
+    expect(engine.takeOutput()).toBeUndefined();
+    engine.releaseGate('after-settled-hydration');
     expect(takeRequiredOutput(engine)).toMatchObject({
       kind: 'runtime-event',
       value: { kind: 'exited' },
