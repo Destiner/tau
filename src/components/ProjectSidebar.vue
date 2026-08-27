@@ -18,151 +18,156 @@
     >
       <ArchivedSessionsList />
     </div>
-    <div
+    <UiContextMenu
       v-else
-      ref="projectList"
-      class="sidebar-body projects-body"
-      @pointerenter="holdSessionOrder"
-      @pointerleave="releaseSessionOrder"
+      :items="sidebarContextMenuItems"
+      :min-width="176"
     >
       <div
-        v-for="project in state.workspace?.projects"
-        :key="project.path"
-        class="project-group"
-        :class="{ removing: projectActionsDisabled }"
-        :data-id="project.path"
+        ref="projectList"
+        class="sidebar-body projects-body"
+        @pointerenter="holdSessionOrder"
+        @pointerleave="releaseSessionOrder"
       >
         <div
-          class="project-row"
-          :class="{ selected: project.path === state.activeProjectPath }"
+          v-for="project in state.workspace?.projects"
+          :key="project.path"
+          class="project-group"
+          :class="{ removing: projectActionsDisabled }"
+          :data-id="project.path"
         >
-          <UiTooltip text="Drag to Reorder">
-            <span
-              class="project-drag-handle"
-              aria-hidden="true"
-            >
-              <UiIcon name="grip" />
-            </span>
-          </UiTooltip>
-          <button
-            class="project-toggle"
-            type="button"
-            :title="
-              project.connectionString
-                ? `${project.connectionString} · ${project.workingDirectory}`
-                : project.workingDirectory
-            "
-            :disabled="projectActionsDisabled"
-            @click="() => toggleProject(project)"
-          >
-            <UiStatusDot
-              v-if="projectIndicator(project)"
-              class="project-status"
-              :tone="projectIndicator(project) || undefined"
-              :label="indicatorLabel(projectIndicator(project))"
-            />
-            <span>{{ project.name }}</span>
-            <UiIcon
-              :name="project.collapsed ? 'chevron-right' : 'chevron-down'"
-            />
-          </button>
-          <UiTooltip text="New Session">
-            <UiIconButton
-              class="row-action"
-              size="md"
-              variant="reveal"
-              :label="`New Session in ${project.name}`"
-              :disabled="projectActionsDisabled"
-              @click="() => newSession(project)"
-            >
-              <UiIcon name="plus" />
-            </UiIconButton>
-          </UiTooltip>
-          <UiTooltip text="Remove Project">
-            <UiIconButton
-              class="row-action"
-              size="md"
-              variant="reveal"
-              tone="danger"
-              :label="`Remove ${project.name}`"
-              :disabled="projectActionsDisabled"
-              @click="() => removeProject(project)"
-            >
-              <UiIcon name="trash" />
-            </UiIconButton>
-          </UiTooltip>
-        </div>
-
-        <div
-          v-if="!project.collapsed"
-          class="session-list"
-        >
-          <UiContextMenu
-            v-for="session in orderedSessions(project)"
-            :key="session.id"
-            :items="() => sessionMenuItems(project, session)"
-          >
-            <div
-              class="session-row"
-              :class="{
-                selected: isSessionSelected(project, session),
-                archivable: canArchiveSession(project, session),
-              }"
-            >
-              <button
-                class="session-select"
-                type="button"
-                :aria-current="
-                  isSessionSelected(project, session) ? 'page' : undefined
-                "
-                :disabled="projectActionsDisabled"
-                @click="() => selectSession(project, session)"
-              >
-                <UiStatusDot
-                  :tone="sessionIndicator(project, session) || undefined"
-                  :label="indicatorLabel(sessionIndicator(project, session))"
-                />
-                <span class="session-copy">
-                  <span class="session-title">{{ session.title }}</span>
-                  <span class="session-time">{{
-                    sessionLastActive(project, session)
-                  }}</span>
-                </span>
-              </button>
-              <UiTooltip
-                v-if="canArchiveSession(project, session)"
-                text="Archive Session"
-              >
-                <UiIconButton
-                  class="session-archive"
-                  size="md"
-                  variant="reveal"
-                  :label="`Archive ${session.title}`"
-                  :disabled="projectActionsDisabled"
-                  @click="() => archiveSession(project, session)"
-                >
-                  <UiIcon name="archive" />
-                </UiIconButton>
-              </UiTooltip>
-            </div>
-          </UiContextMenu>
           <div
-            v-if="orderedSessions(project).length === 0"
-            class="empty-sessions"
+            class="project-row"
+            :class="{ selected: project.path === state.activeProjectPath }"
           >
-            No active sessions
+            <UiTooltip text="Drag to Reorder">
+              <span
+                class="project-drag-handle"
+                aria-hidden="true"
+              >
+                <UiIcon name="grip" />
+              </span>
+            </UiTooltip>
+            <button
+              class="project-toggle"
+              type="button"
+              :title="
+                project.connectionString
+                  ? `${project.connectionString} · ${project.workingDirectory}`
+                  : project.workingDirectory
+              "
+              :disabled="projectActionsDisabled"
+              @click="() => toggleProject(project)"
+            >
+              <UiStatusDot
+                v-if="projectIndicator(project)"
+                class="project-status"
+                :tone="projectIndicator(project) || undefined"
+                :label="indicatorLabel(projectIndicator(project))"
+              />
+              <span>{{ project.name }}</span>
+              <UiIcon
+                :name="project.collapsed ? 'chevron-right' : 'chevron-down'"
+              />
+            </button>
+            <UiTooltip text="New Session">
+              <UiIconButton
+                class="row-action"
+                size="md"
+                variant="reveal"
+                :label="`New Session in ${project.name}`"
+                :disabled="projectActionsDisabled"
+                @click="() => newSession(project)"
+              >
+                <UiIcon name="plus" />
+              </UiIconButton>
+            </UiTooltip>
+            <UiTooltip text="Remove Project">
+              <UiIconButton
+                class="row-action"
+                size="md"
+                variant="reveal"
+                tone="danger"
+                :label="`Remove ${project.name}`"
+                :disabled="projectActionsDisabled"
+                @click="() => removeProject(project)"
+              >
+                <UiIcon name="trash" />
+              </UiIconButton>
+            </UiTooltip>
+          </div>
+
+          <div
+            v-if="!project.collapsed"
+            class="session-list"
+          >
+            <UiContextMenu
+              v-for="session in orderedSessions(project)"
+              :key="session.id"
+              :items="() => sessionMenuItems(project, session)"
+            >
+              <div
+                class="session-row"
+                :class="{
+                  selected: isSessionSelected(project, session),
+                  archivable: canArchiveSession(project, session),
+                }"
+              >
+                <button
+                  class="session-select"
+                  type="button"
+                  :aria-current="
+                    isSessionSelected(project, session) ? 'page' : undefined
+                  "
+                  :disabled="projectActionsDisabled"
+                  @click="() => selectSession(project, session)"
+                >
+                  <UiStatusDot
+                    :tone="sessionIndicator(project, session) || undefined"
+                    :label="indicatorLabel(sessionIndicator(project, session))"
+                  />
+                  <span class="session-copy">
+                    <span class="session-title">{{ session.title }}</span>
+                    <span class="session-time">{{
+                      sessionLastActive(project, session)
+                    }}</span>
+                  </span>
+                </button>
+                <UiTooltip
+                  v-if="canArchiveSession(project, session)"
+                  text="Archive Session"
+                >
+                  <UiIconButton
+                    class="session-archive"
+                    size="md"
+                    variant="reveal"
+                    :label="`Archive ${session.title}`"
+                    :disabled="projectActionsDisabled"
+                    @click="() => archiveSession(project, session)"
+                  >
+                    <UiIcon name="archive" />
+                  </UiIconButton>
+                </UiTooltip>
+              </div>
+            </UiContextMenu>
+            <div
+              v-if="orderedSessions(project).length === 0"
+              class="empty-sessions"
+            >
+              No active sessions
+            </div>
           </div>
         </div>
-      </div>
 
-      <div
-        v-if="state.workspace && state.workspace.projects.length === 0"
-        class="empty-projects"
-      >
-        <UiIcon name="folder" />
-        <span>No projects yet</span>
+        <div
+          v-if="state.workspace && state.workspace.projects.length === 0"
+          class="empty-projects"
+        >
+          <UiIcon name="folder" />
+          <span>No projects yet</span>
+        </div>
       </div>
-    </div>
+    </UiContextMenu>
 
     <footer class="sidebar-footer">
       <div class="project-menu-wrap">
@@ -297,9 +302,19 @@ const projectMenuOpen = ref(false);
 /** Whether the sidebar body shows the workspace-wide archived list. */
 const showingArchived = ref(false);
 
-function toggleArchivedView(): void {
+function showArchivedSessions(): void {
+  if (showingArchived.value) return;
   releaseSessionOrder();
-  showingArchived.value = !showingArchived.value;
+  showingArchived.value = true;
+}
+
+function toggleArchivedView(): void {
+  if (showingArchived.value) {
+    releaseSessionOrder();
+    showingArchived.value = false;
+    return;
+  }
+  showArchivedSessions();
 }
 
 /** Session snapshots by project path, empty whenever the list is not hovered. */
@@ -378,6 +393,17 @@ function projectMenuItems(): UiMenuItem[] {
       label: 'Open Remote Project',
       disabled: projectActionsDisabled.value,
       run: () => void openRemoteProjectDialog(),
+    },
+  ];
+}
+
+function sidebarContextMenuItems(): UiMenuItem[] {
+  return [
+    ...projectMenuItems(),
+    {
+      label: 'Show Archived Sessions',
+      disabled: showingArchived.value,
+      run: showArchivedSessions,
     },
   ];
 }

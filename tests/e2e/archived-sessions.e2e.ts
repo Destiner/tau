@@ -8,6 +8,56 @@ import { expect, test } from './fixtures';
  */
 const scenarioUrl = '/?test-scenario=archived-sessions-review';
 
+test('opens the sidebar actions from empty project-list space', async ({
+  page,
+}) => {
+  await page.goto(scenarioUrl);
+
+  const projectList = page.locator('.projects-body');
+
+  // A session keeps its own menu rather than inheriting the empty-space menu.
+  await page.locator('.session-row').click({ button: 'right' });
+  const sessionActions = page.getByRole('menuitem');
+  await expect(sessionActions).toHaveText([
+    'Mark as Unread',
+    'Archive Session',
+  ]);
+  await page.keyboard.press('Escape');
+
+  const box = await projectList.boundingBox();
+  expect(box).not.toBeNull();
+  if (!box) return;
+
+  // This is below the fixture's project row and clear of the resize handle.
+  await projectList.click({
+    button: 'right',
+    position: { x: Math.min(100, box.width / 2), y: box.height - 4 },
+  });
+
+  const actions = page.getByRole('menuitem');
+  await expect(actions).toHaveText([
+    'Open Local Project',
+    'Open Remote Project',
+    'Show Archived Sessions',
+  ]);
+
+  await actions.filter({ hasText: 'Show Archived Sessions' }).click();
+  const archivedList = page.locator('.archived-list');
+  await expect(archivedList).toBeVisible();
+
+  // Opening the archived row consumes this scenario's second Pi runtime.
+  const archivedRow = archivedList.locator('.row', {
+    hasText: 'Older archived work',
+  });
+  await archivedRow.locator('.copy').click();
+  await expect(archivedRow).toHaveClass(/selected/);
+  await archivedRow.hover();
+  await archivedRow
+    .getByRole('button', { name: 'Unarchive Older archived work' })
+    .click();
+  await expect(archivedList.getByText('No archived sessions')).toBeVisible();
+});
+
 test('reviews, opens, and unarchives an archived session', async ({ page }) => {
   await page.goto(scenarioUrl);
   await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
