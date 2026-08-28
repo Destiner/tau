@@ -21,14 +21,14 @@ test('wraps an unbroken link without widening the composer', async ({
   const draftIndicator = page.locator(
     '.session-row .ui-status-dot[aria-label="Unsent draft"]',
   );
-  await expect(draftIndicator).toHaveCSS('width', '5px');
-  await expect(draftIndicator).toHaveCSS('height', '5px');
+  await expect(draftIndicator).toHaveCSS('width', '7px');
+  await expect(draftIndicator).toHaveCSS('height', '7px');
   await expect(draftIndicator).toHaveCSS(
     'background-color',
-    'rgb(161, 168, 178)',
+    'rgb(110, 117, 127)',
   );
-  await expect(draftIndicator).toHaveCSS('margin-bottom', '0px');
-  await expect(draftIndicator).toHaveCSS('border-top-width', '0px');
+  await expect(draftIndicator).toHaveCSS('opacity', '0.3');
+  await expect(draftIndicator).toHaveCSS('margin-bottom', '-1px');
 
   await expect
     .poll(() =>

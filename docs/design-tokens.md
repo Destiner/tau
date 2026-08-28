@@ -112,9 +112,10 @@ These four carry meaning and are never decoration.
 | `--danger` | Destructive, or failed.                                                     |
 | `--border` | A boundary between two things. Not a highlight.                             |
 
-`--status-new`, `--status-draft`, and `--status-working` are the session
-indicator's three states, aliased so the indicator's meaning is named where it
-is read rather than inferred from a palette color.
+`--status-new` and `--status-working` name the session indicator's colors where
+it is read rather than inferred from a palette color. A draft reuses
+`--status-working` at 30% opacity, retaining its state relationship without a
+separate color token.
 
 ## Shared surfaces
 

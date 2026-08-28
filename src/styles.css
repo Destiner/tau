@@ -64,7 +64,6 @@
   --link: #22a4e6;
   --danger: #e65050;
   --status-new: var(--accent);
-  --status-draft: var(--faint);
   --status-working: var(--muted);
   --user: #ebeef0;
   --selection: rgb(3 91 214 / 15%);

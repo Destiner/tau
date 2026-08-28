@@ -47,11 +47,8 @@ withDefaults(
 }
 
 .ui-status-dot.tone-draft {
-  width: 5px;
-  height: 5px;
-  margin-bottom: 0;
-  opacity: 1;
-  background: var(--status-draft);
+  opacity: 0.3;
+  background: var(--status-working);
 }
 
 .ui-status-dot.tone-working {
