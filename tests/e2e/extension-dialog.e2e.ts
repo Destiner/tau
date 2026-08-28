@@ -72,10 +72,67 @@ test('preserves block markdown carried in the dialog title', async ({
 }) => {
   const title = page.locator('.extension-prompt-title');
 
-  await expect(title.locator('p')).toHaveCount(2);
+  await expect(title.locator('p')).toHaveCount(3);
   await expect(title.locator('.code-block pre code')).toHaveText(
     "const label = 'release';",
   );
+  await expect(
+    title.getByRole('link', {
+      name: '/home/agent/.pi/workflows/implement/RHI-6283/implementation-plan.md',
+    }),
+  ).toBeVisible();
+});
+
+test('copies an absolute path from a remote dialog title', async ({ page }) => {
+  await page.addInitScript(() => {
+    const writes: string[] = [];
+    (
+      window as typeof window & {
+        __TAU_CLIPBOARD_WRITES__?: string[];
+        __TAURI_INTERNALS__?: unknown;
+      }
+    ).__TAU_CLIPBOARD_WRITES__ = writes;
+    (
+      window as typeof window & {
+        __TAURI_INTERNALS__?: unknown;
+      }
+    ).__TAURI_INTERNALS__ = {
+      transformCallback: (callback: unknown): unknown => callback,
+      invoke: (
+        command: string,
+        payload?: { text?: string },
+      ): Promise<unknown> => {
+        if (
+          command === 'plugin:clipboard-manager|write_text' &&
+          payload?.text
+        ) {
+          writes.push(payload.text);
+        }
+        return Promise.resolve(null);
+      },
+    };
+  });
+  await page.goto(`${fixtureUrl}&remote=true`);
+
+  const plan = page.getByRole('button', {
+    name: 'Copy path /home/agent/.pi/workflows/implement/RHI-6283/implementation-plan.md',
+  });
+  await expect(plan).toBeVisible();
+  await plan.click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as typeof window & {
+              __TAU_CLIPBOARD_WRITES__?: string[];
+            }
+          ).__TAU_CLIPBOARD_WRITES__,
+      ),
+    )
+    .toEqual([
+      '/home/agent/.pi/workflows/implement/RHI-6283/implementation-plan.md',
+    ]);
 });
 
 test('renders a table in the question as a table', async ({ page }) => {

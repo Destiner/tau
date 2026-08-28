@@ -7,6 +7,7 @@
       :show-working-indicator="false"
       working-label="Working"
       session-key="extension-dialog-fixture"
+      :copy-paths="remote"
       :prompt="answered ? undefined : prompt"
       @prompt-submit="handleSubmit"
       @prompt-cancel="handleCancel"
@@ -23,7 +24,12 @@ import TranscriptView from '../components/TranscriptView.vue';
 import type { ExtensionDialog } from '../composables/state';
 import type { TranscriptEntry } from '../lib/pi/transcript';
 
+const remote =
+  new URLSearchParams(window.location.search).get('remote') === 'true';
+
 const title = [
+  'Plan /home/agent/.pi/workflows/implement/RHI-6283/implementation-plan.md',
+  '',
   'Which label should the pull request carry?',
   '',
   'Preview:',
@@ -71,6 +77,7 @@ const prompt = reactive<ExtensionDialog>({
   generation: 1,
   projectName: 'tau',
   sessionName: 'Long question',
+  ...(remote ? {} : { workingDirectory: '/home/agent/rhinestone' }),
 });
 
 const answered = ref(false);

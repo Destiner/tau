@@ -11,6 +11,7 @@
       class="extension-prompt-title"
       :source="title"
       :base-path="workingDirectory"
+      :copy-paths="copyPaths"
     />
 
     <MarkdownText
@@ -18,6 +19,7 @@
       class="extension-prompt-message"
       :source="message"
       :base-path="workingDirectory"
+      :copy-paths="copyPaths"
     />
 
     <div
@@ -149,8 +151,9 @@ const props = defineProps<{
   submitting: boolean;
   disabled?: boolean;
   error: string;
-  /** Base for the file paths in the text; absent when the project is remote. */
+  /** Base for local paths; remote paths copy instead of opening locally. */
   workingDirectory?: string;
+  copyPaths?: boolean;
 }>();
 
 const emit = defineEmits<{

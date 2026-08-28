@@ -126,6 +126,7 @@
           :disabled="promptDisabled"
           :error="prompt.error"
           :working-directory="prompt.workingDirectory"
+          :copy-paths="copyPaths"
           @update:draft="forwardPromptDraft"
           @submit="forwardPromptSubmit"
           @cancel="forwardPromptCancel"
