@@ -60,6 +60,7 @@ interface NativeSessionIdentity {
   id: string;
   path: string;
   name: string;
+  adopted?: boolean;
 }
 
 declare global {
@@ -81,6 +82,16 @@ const REPLACEMENT_SESSION = {
   id: 'session-plan-42',
   path: `${PROJECT_PATH}/session-plan-42.jsonl`,
   name: '42 • plan',
+};
+const PLAN_SESSION = {
+  id: 'session-plan',
+  path: `${PROJECT_PATH}/session-plan.jsonl`,
+  name: 'docs · RHI-6267 · Plan',
+};
+const IMPLEMENT_SESSION = {
+  id: 'session-implement',
+  path: `${PROJECT_PATH}/session-implement.jsonl`,
+  name: 'docs · RHI-6267 · Implement',
 };
 const COMMAND_SESSION = {
   id: 'session-mcp',
@@ -160,6 +171,13 @@ const REQUIRED_NATIVE_COUNTS = {
     set_active_project: 1,
     set_active_session: 6,
   },
+  'plan-implement-replacement': {
+    load_workspace: 1,
+    read_model_scope: 3,
+    register_session: 4,
+    set_active_project: 1,
+    set_active_session: 7,
+  },
   'phantom-command-registration': {
     load_workspace: 1,
     read_model_scope: 2,
@@ -231,7 +249,8 @@ function scenarioWorkspace(scenarioName: string): WorkspaceSnapshot {
   const workspace = structuredClone(initialWorkspace);
   if (
     scenarioName === 'saved-session-prompt-process-exit' ||
-    scenarioName === 'saved-session-command-replacement'
+    scenarioName === 'saved-session-command-replacement' ||
+    scenarioName === 'plan-implement-replacement'
   ) {
     workspace.projects[0]?.sessions.push({
       id: BACKUP_SESSION.id,
@@ -369,6 +388,8 @@ function installPiScenarioAdapter(scenarioName: string): void {
         registerSessionArgs(args, expected);
         if (expected.id === REPLACEMENT_SESSION.id) {
           workspace = replacementWorkspace();
+        } else if (expected.id === PLAN_SESSION.id) {
+          workspace = upsertSessionWorkspace(workspace, PLAN_SESSION);
         } else if (expected.id === COMMAND_SESSION.id) {
           workspace = commandSessionWorkspace();
         }
@@ -387,11 +408,16 @@ function installPiScenarioAdapter(scenarioName: string): void {
       if (command === 'set_active_session') {
         const invocation = count(command);
         let expected: NativeSessionIdentity;
-        if (scenarioName === 'saved-session-command-replacement') {
+        if (
+          scenarioName === 'saved-session-command-replacement' ||
+          scenarioName === 'plan-implement-replacement'
+        ) {
           const requested = [
             MAIN_SESSION,
             BACKUP_SESSION,
             REPLACEMENT_SESSION,
+            PLAN_SESSION,
+            IMPLEMENT_SESSION,
           ].find((session) => session.id === args.sessionId);
           if (!requested) {
             throw new Error('set_active_session used an unknown session.');
@@ -519,7 +545,8 @@ function startPiArgs(args: Record<string, unknown>): StartPiArgs {
     value.sessionPath !== null &&
     value.sessionPath !== SESSION_PATH &&
     value.sessionPath !== BACKUP_SESSION.path &&
-    value.sessionPath !== ARCHIVED_SESSION.path
+    value.sessionPath !== ARCHIVED_SESSION.path &&
+    value.sessionPath !== PLAN_SESSION.path
   ) {
     throw new Error('start_pi.sessionPath must identify a fixture session.');
   }
@@ -566,9 +593,10 @@ function registerSessionArgs(
   requireEqual(
     String(value.adopted),
     String(
-      expected.id !== SESSION_ID &&
-        expected.id !== BACKUP_SESSION.id &&
-        expected.id !== ARCHIVED_SESSION.id,
+      expected.adopted ??
+        (expected.id !== SESSION_ID &&
+          expected.id !== BACKUP_SESSION.id &&
+          expected.id !== ARCHIVED_SESSION.id),
     ),
     'register_session.adopted',
   );
@@ -607,6 +635,28 @@ function expectedNativeSession(
             MAIN_SESSION,
             BACKUP_SESSION,
             REPLACEMENT_SESSION,
+          ];
+    const expected = sequence[invocation - 1];
+    if (!expected) throw new Error(`${command} ran too many times.`);
+    return expected;
+  }
+  if (scenarioName === 'plan-implement-replacement') {
+    const sequence =
+      command === 'register_session'
+        ? [
+            MAIN_SESSION,
+            BACKUP_SESSION,
+            PLAN_SESSION,
+            { ...PLAN_SESSION, adopted: false },
+          ]
+        : [
+            MAIN_SESSION,
+            BACKUP_SESSION,
+            BACKUP_SESSION,
+            MAIN_SESSION,
+            BACKUP_SESSION,
+            PLAN_SESSION,
+            PLAN_SESSION,
           ];
     const expected = sequence[invocation - 1];
     if (!expected) throw new Error(`${command} ran too many times.`);
@@ -654,10 +704,18 @@ function scenarioRuntimeKey(
   }
   if (
     scenarioName === 'saved-session-prompt-process-exit' ||
-    scenarioName === 'saved-session-command-replacement'
+    scenarioName === 'saved-session-command-replacement' ||
+    scenarioName === 'plan-implement-replacement'
   ) {
     if (count > 1) throw new Error('A scenario session started twice.');
-    return sessionPath === BACKUP_SESSION.path ? 'backup' : 'main';
+    if (sessionPath === BACKUP_SESSION.path) return 'backup';
+    if (
+      scenarioName === 'plan-implement-replacement' &&
+      sessionPath === PLAN_SESSION.path
+    ) {
+      return 'reopened-plan';
+    }
+    return scenarioName === 'plan-implement-replacement' ? 'workflow' : 'main';
   }
   if (
     scenarioName === 'phantom-command-registration' ||
@@ -701,6 +759,35 @@ function commandSessionWorkspace(): WorkspaceSnapshot {
     id: COMMAND_SESSION.id,
     path: COMMAND_SESSION.path,
     title: COMMAND_SESSION.name,
+    lastActive: '2026-01-02T03:04:06.000Z',
+    lastUserMessageAt: 0,
+    sortAt: 2,
+    archived: false,
+    selected: true,
+  });
+  return workspace;
+}
+
+function upsertSessionWorkspace(
+  source: WorkspaceSnapshot,
+  identity: NativeSessionIdentity,
+): WorkspaceSnapshot {
+  const workspace = structuredClone(source);
+  const project = workspace.projects[0];
+  if (!project) throw new Error('Session fixture requires a project.');
+  const existing = project.sessions.find(
+    (session) => session.id === identity.id,
+  );
+  if (existing) {
+    existing.path = identity.path;
+    existing.title = identity.name;
+    return workspace;
+  }
+  for (const session of project.sessions) session.selected = false;
+  project.sessions.push({
+    id: identity.id,
+    path: identity.path,
+    title: identity.name,
     lastActive: '2026-01-02T03:04:06.000Z',
     lastUserMessageAt: 0,
     sortAt: 2,

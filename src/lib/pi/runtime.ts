@@ -1780,6 +1780,19 @@ async function handleResponse(
       Boolean(piSessionId && piSessionPath) &&
       (controller.sessionId !== piSessionId ||
         controller.sessionPath !== piSessionPath);
+    // Settlement verification can be A's first durable read after Pi already
+    // moved to B, so preserve A before the incoming identity can rebind its row.
+    const outgoingIdentity = sessionChanged
+      ? captureConnectedSessionIdentity(controller)
+      : undefined;
+    if (
+      outgoingIdentity &&
+      resolvesMaterializationState &&
+      shouldRegisterMaterializedPredecessor(controller)
+    ) {
+      await registerMaterializedPredecessor(controller, outgoingIdentity);
+      if (!controllerIdentityMatches(controller, outgoingIdentity)) return;
+    }
     applySessionName(controller, stringValue(data.sessionName));
     const nowStreaming = data.isStreaming === true;
     if (resolvesAdmissionState && controller.submittedPrompt) {
@@ -2648,6 +2661,36 @@ function connectedSessionIdentityMatches(
     controllerIdentityMatches(controller, identity) &&
     (!identity.requiresMaterialization || controller.materializationVerified)
   );
+}
+
+function shouldRegisterMaterializedPredecessor(
+  controller: SessionController,
+): boolean {
+  return (
+    !controller.phantom &&
+    !workspaceContainsSession(controller) &&
+    controller.postSettlementHydration &&
+    controller.messages.some(
+      (message) =>
+        (message.kind === 'assistant' ||
+          message.kind === 'thinking' ||
+          message.kind === 'tool') &&
+        Boolean(message.text.trim()),
+    )
+  );
+}
+
+async function registerMaterializedPredecessor(
+  controller: SessionController,
+  identity: ConnectedSessionIdentity,
+): Promise<void> {
+  try {
+    const workspace = await registerSession(identity, true);
+    if (!controllerIdentityMatches(controller, identity)) return;
+    state.workspace = workspace;
+  } catch {
+    setControllerError(controller, errorCopy.sessionRegistration);
+  }
 }
 
 async function registerConnectedSession(

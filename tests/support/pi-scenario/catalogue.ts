@@ -1,6 +1,7 @@
 import archivedSessionsReview from './archived-sessions-review';
 import phantomCommandOnly from './phantom-command-only';
 import phantomCommandRegistration from './phantom-command-registration';
+import planImplementReplacement from './plan-implement-replacement';
 import savedSessionCommandReplacement from './saved-session-command-replacement';
 import savedSessionCompaction from './saved-session-compaction';
 import savedSessionExtensionPrompt, {
@@ -32,6 +33,7 @@ const scenarios = [
   savedSessionPromptAdmission,
   savedSessionStaleGeneration,
   savedSessionCommandReplacement,
+  planImplementReplacement,
   phantomCommandRegistration,
   phantomCommandOnly,
   savedSessionUnacknowledgedAbort,

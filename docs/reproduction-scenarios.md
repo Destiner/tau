@@ -24,6 +24,8 @@ The `saved-session-command-replacement` scenario makes `/mock 42` available in t
 
 The `phantom-command-registration` scenario starts from the visible `New Session` action. Submit `/mcp`, then release `before-streaming-command-sync`. The command-created `MCP workflow` session stays ephemeral through the identity response and pauses at `before-assistant-settlement` with visible partial output but no archive action. Release that gate to settle and hydrate the completed assistant message, which makes the session durable. The command itself never appears as a transcript message.
 
+The `plan-implement-replacement` scenario submits `/mock-workflow`, completes `docs · RHI-6267 · Plan`, then has Plan's settlement state response report `docs · RHI-6267 · Implement`. At `implement-active`, Implement is current while Plan is already listed under its captured identity. Release the gate, switch through `Backup`, and reopen Plan to verify its durable transcript before returning to the still-live Implement phase.
+
 The `phantom-command-only` scenario submits `/usage` from a new session and emits only an extension notification. `Usage only` remains an unarchivable ephemeral row while its runtime is alive, then disappears when `Main` is selected; Tau never registers it.
 
 The `saved-session-unacknowledged-abort` scenario accepts `Stop this fixture`, streams `Partial reply.`, and pauses at `abort-request-consumed` after Stop sends one abort. Release that gate to await Tau's bounded state probe, then release `before-abort-timeout-probe-response` to report Pi idle and hydrate the preserved partial turn. The abort and prompt themselves are never acknowledged.

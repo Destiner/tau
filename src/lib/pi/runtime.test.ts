@@ -514,6 +514,168 @@ describe('command-created session durability', () => {
     },
   );
 
+  it('registers a completed predecessor before settlement verification applies its replacement', async () => {
+    const telemetry = await import('../telemetry');
+    const { handleResponse, rpc } = await import('./runtime');
+    const controller = makeController({
+      sessionId: 'plan-a',
+      sessionPath: '/tmp/project/plan-a.jsonl',
+      sessionName: 'Plan',
+      postSettlementHydration: true,
+      syncing: true,
+      messages: [
+        { id: 'plan-reply', kind: 'assistant', text: 'Completed plan' },
+      ],
+    });
+    addEphemeral(controller);
+    state.activeProjectPath = controller.projectPath;
+    state.activeSessionId = controller.sessionId;
+    state.activeSessionPath = controller.sessionPath;
+    state.activeControllerKey = controller.key;
+    const registeredWorkspace = {
+      ...state.workspace!,
+      projects: [
+        {
+          ...state.workspace!.projects[0]!,
+          sessions: [
+            {
+              id: 'plan-a',
+              path: '/tmp/project/plan-a.jsonl',
+              title: 'Plan',
+              lastActive: 'now',
+              lastUserMessageAt: 0,
+              sortAt: 1,
+              archived: false,
+              selected: true,
+            },
+          ],
+        },
+      ],
+    };
+    vi.mocked(telemetry.invokeTraced).mockImplementation(
+      async (command, args) => {
+        if (command === 'register_session') {
+          expect(controller.sessionId).toBe('plan-a');
+          expect(state.ephemeralSessions[0]).toMatchObject({
+            id: 'plan-a',
+            path: '/tmp/project/plan-a.jsonl',
+            title: 'Plan',
+          });
+          expect(args).toMatchObject({
+            sessionId: 'plan-a',
+            sessionPath: '/tmp/project/plan-a.jsonl',
+            sessionName: 'Plan',
+            adopted: true,
+          });
+        }
+        return registeredWorkspace;
+      },
+    );
+    const verificationRequestId = nextRequestId('settled-state');
+    controller.materializationStateRequestId = verificationRequestId;
+    await rpc(controller, { id: verificationRequestId, type: 'get_state' });
+
+    await handleResponse(controller, {
+      id: verificationRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'implement-b',
+        sessionFile: '/tmp/project/implement-b.jsonl',
+        sessionName: 'Implement',
+        isStreaming: false,
+      },
+    });
+
+    expect(
+      vi
+        .mocked(telemetry.invokeTraced)
+        .mock.calls.filter(([command]) => command === 'register_session')
+        .map(([, args]) => (args as { sessionId: string }).sessionId),
+    ).toEqual(['plan-a']);
+    expect(state.workspace?.projects[0]?.sessions).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'plan-a' })]),
+    );
+    expect(state.ephemeralSessions[0]).toMatchObject({
+      id: 'implement-b',
+      path: '/tmp/project/implement-b.jsonl',
+      title: 'Implement',
+    });
+    expect(controller).toMatchObject({
+      sessionId: 'implement-b',
+      sessionPath: '/tmp/project/implement-b.jsonl',
+      sessionName: 'Implement',
+      materializationVerified: false,
+    });
+  });
+
+  it('does not register an empty predecessor discovered by settlement verification', async () => {
+    const telemetry = await import('../telemetry');
+    const { handleResponse, rpc } = await import('./runtime');
+    const controller = makeController({
+      sessionId: 'empty-a',
+      sessionPath: '/tmp/project/empty-a.jsonl',
+      sessionName: 'Empty',
+      postSettlementHydration: true,
+    });
+    addEphemeral(controller);
+    const requestId = nextRequestId('settled-state');
+    controller.materializationStateRequestId = requestId;
+    await rpc(controller, { id: requestId, type: 'get_state' });
+
+    await handleResponse(controller, {
+      id: requestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'replacement-b',
+        sessionFile: '/tmp/project/replacement-b.jsonl',
+        isStreaming: false,
+      },
+    });
+
+    expect(telemetry.invokeTraced).not.toHaveBeenCalledWith(
+      'register_session',
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it('does not register a partial predecessor outside settlement verification', async () => {
+    const telemetry = await import('../telemetry');
+    const { handleResponse } = await import('./runtime');
+    const controller = makeController({
+      sessionId: 'partial-a',
+      sessionPath: '/tmp/project/partial-a.jsonl',
+      sessionName: 'Partial',
+      messages: [{ id: 'partial', kind: 'assistant', text: 'Partial reply' }],
+    });
+    addEphemeral(controller);
+    const requestId = await dispatchRequest(
+      controller,
+      'get_state',
+      'replacement-probe',
+    );
+    controller.replacementProbeRequestId = requestId;
+
+    await handleResponse(controller, {
+      id: requestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'replacement-b',
+        sessionFile: '/tmp/project/replacement-b.jsonl',
+        isStreaming: false,
+      },
+    });
+
+    expect(telemetry.invokeTraced).not.toHaveBeenCalledWith(
+      'register_session',
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
   it('does not register a replacement that arrives while promotion is in flight', async () => {
     const telemetry = await import('../telemetry');
     const { handleResponse, rpc } = await import('./runtime');
