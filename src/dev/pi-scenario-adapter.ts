@@ -157,7 +157,8 @@ const REQUIRED_NATIVE_COUNTS = {
     load_workspace: 1,
     read_model_scope: 2,
     register_session: 3,
-    set_active_session: 7,
+    set_active_project: 1,
+    set_active_session: 6,
   },
   'phantom-command-registration': {
     load_workspace: 1,
@@ -399,15 +400,14 @@ function installPiScenarioAdapter(scenarioName: string): void {
         } else {
           expected = expectedNativeSession(scenarioName, command, invocation);
         }
-        setActiveSessionArgs(args, expected);
-        if (
-          expected.id === REPLACEMENT_SESSION.id &&
-          scenarioName !== 'saved-session-command-replacement'
-        ) {
-          workspace = replacementWorkspace();
-        } else if (expected.id !== REPLACEMENT_SESSION.id) {
-          selectWorkspaceSession(workspace, expected.id);
+        const value = setActiveSessionArgs(args, expected);
+        const registered = workspace.projects
+          .find((project) => project.path === value.projectPath)
+          ?.sessions.some((session) => session.id === value.sessionId);
+        if (!registered) {
+          throw new Error('set_active_session used an unknown session.');
         }
+        selectWorkspaceSession(workspace, expected.id);
         return structuredClone(workspace);
       }
       if (command === 'unarchive_session') {

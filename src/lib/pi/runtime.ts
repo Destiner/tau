@@ -2771,7 +2771,7 @@ async function persistProjectSelection(
   parentContext?: TraceContext,
 ): Promise<void> {
   try {
-    if (controller.phantom) {
+    if (!workspaceContainsSession(controller)) {
       state.workspace = await invokeTraced<WorkspaceSnapshot>(
         'set_active_project',
         { path: projectPath },

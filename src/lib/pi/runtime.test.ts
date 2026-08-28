@@ -159,6 +159,109 @@ beforeEach(async () => {
   vi.mocked(telemetry.startRpcSpan).mockClear();
 });
 
+describe('project selection persistence', () => {
+  function setWorkspaceSessions(
+    controller: SessionController,
+    registered: boolean,
+  ): void {
+    state.workspace = {
+      activeProjectPath: controller.projectPath,
+      piPath: '/usr/bin/pi',
+      projects: [
+        {
+          path: controller.projectPath,
+          name: 'Project',
+          workingDirectory: controller.projectPath,
+          collapsed: false,
+          selected: true,
+          sessions: registered
+            ? [
+                {
+                  id: controller.sessionId,
+                  path: controller.sessionPath,
+                  title: 'Session',
+                  lastActive: 'now',
+                  lastUserMessageAt: 0,
+                  sortAt: 1,
+                  archived: false,
+                  selected: true,
+                },
+              ]
+            : [],
+        },
+      ],
+    };
+  }
+
+  it('keeps an unregistered real-ID selection frontend-owned', async () => {
+    const telemetry = await import('../telemetry');
+    const { persistProjectSelection } = await import('./runtime');
+    const controller = makeController({
+      sessionId: 'extension-session',
+      sessionPath: '/tmp/project/extension-session.jsonl',
+      phantom: false,
+    });
+    setWorkspaceSessions(controller, false);
+    vi.mocked(telemetry.invokeTraced).mockResolvedValue(state.workspace!);
+
+    await persistProjectSelection(controller.projectPath, controller);
+
+    expect(telemetry.invokeTraced).toHaveBeenCalledWith(
+      'set_active_project',
+      { path: controller.projectPath },
+      undefined,
+    );
+    expect(telemetry.invokeTraced).not.toHaveBeenCalledWith(
+      'set_active_session',
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(controller.status).toBe('');
+    expect(controller.actionError).toBe('');
+    expect(controller.localErrors).toEqual([]);
+  });
+
+  it('persists a registered session selection', async () => {
+    const telemetry = await import('../telemetry');
+    const { persistProjectSelection } = await import('./runtime');
+    const controller = makeController();
+    setWorkspaceSessions(controller, true);
+    vi.mocked(telemetry.invokeTraced).mockResolvedValue(state.workspace!);
+
+    await persistProjectSelection(controller.projectPath, controller);
+
+    expect(telemetry.invokeTraced).toHaveBeenCalledWith(
+      'set_active_session',
+      {
+        projectPath: controller.projectPath,
+        sessionId: controller.sessionId,
+      },
+      undefined,
+    );
+    expect(telemetry.invokeTraced).not.toHaveBeenCalledWith(
+      'set_active_project',
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it('warns when a registered session selection cannot be persisted', async () => {
+    const telemetry = await import('../telemetry');
+    const { persistProjectSelection } = await import('./runtime');
+    const controller = makeController();
+    setWorkspaceSessions(controller, true);
+    vi.mocked(telemetry.invokeTraced).mockRejectedValueOnce(
+      new Error('Native persistence failed'),
+    );
+
+    await persistProjectSelection(controller.projectPath, controller);
+
+    expect(controller.status).toBe(
+      'This selection could not be saved. Select it again.',
+    );
+  });
+});
+
 describe('command-created session durability', () => {
   function addEphemeral(
     controller: SessionController,

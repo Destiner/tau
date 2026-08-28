@@ -103,6 +103,9 @@ test('registers and selects a session replaced by an extension command', async (
   await expect(
     page.getByRole('heading', { name: replacementName }),
   ).toBeVisible();
+  await expect(
+    page.getByText('This selection could not be saved. Select it again.'),
+  ).toHaveCount(0);
   await expect(userRow).toHaveAttribute('data-message-id', projectedId ?? '');
 
   await page.evaluate(
