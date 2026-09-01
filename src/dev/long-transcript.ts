@@ -293,11 +293,18 @@ Inspect selection, scrolling, keyboard behavior, window behavior, and perceived 
       text: 'A compact transcript notice.',
     };
   }
-  if (index === 4_995) {
+  if (index === 4_987) {
     return {
       id: 'fixture-markdown-showcase-thinking',
       kind: 'thinking',
       text: `The same markdown at the thinking block's smaller size:\n\n${listShowcase}\n\n${tableShowcase}\n\n${longTailShowcase}\n\n${codeShowcase}\n\n${diagramShowcase}`,
+    };
+  }
+  if (index === 4_995) {
+    return {
+      id: 'fixture-thinking-sections',
+      kind: 'thinking',
+      text: '**Acknowledging test output handling**\n\n**Providing whitespace-preservation edge case**',
     };
   }
 

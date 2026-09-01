@@ -83,9 +83,29 @@ test('keeps a thought behind its label until it is opened', async ({
   await header.click();
 
   await expect(header).toHaveAttribute('aria-expanded', 'true');
+  const prose = thought.locator('.activity-thinking-prose');
   await expect(thought.locator('.activity-details')).toContainText(
     'The adoption walk stops at the first local error row',
   );
+  await expect(prose).toHaveCSS('color', 'rgb(110, 117, 127)');
+  await expect(prose).toHaveCSS('font-size', '11px');
+});
+
+test('normalizes provider-formatted thinking sections', async ({ page }) => {
+  const thought = page.locator('[data-message-id="fixture-thinking-sections"]');
+  await thought.locator('.activity-header').click();
+
+  const paragraphs = thought.locator('.activity-thinking-prose p');
+  const emphasis = paragraphs.locator('strong');
+  await expect(paragraphs).toHaveCount(2);
+  await expect(emphasis).toHaveCount(2);
+  await expect(paragraphs.first()).toHaveCSS('margin-top', '0px');
+  await expect(paragraphs.first()).toHaveCSS('margin-bottom', '0px');
+  await expect(paragraphs.last()).toHaveCSS('margin-top', '0px');
+  await expect(paragraphs.last()).toHaveCSS('margin-bottom', '0px');
+  await expect(emphasis.first()).toHaveCSS('font-weight', '400');
+  await expect(emphasis.first()).toHaveCSS('color', 'rgb(110, 117, 127)');
+  await expect(emphasis.first()).toHaveCSS('font-size', '11px');
 });
 
 test('marks only the calls that are running or failed', async ({ page }) => {

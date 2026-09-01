@@ -51,7 +51,7 @@
           -->
           <template v-if="entry.kind === 'thinking'">
             <MarkdownText
-              class="activity-prose"
+              class="activity-prose activity-thinking-prose"
               :source="entry.text"
               :base-path="basePath"
               :copy-paths="copyPaths"
@@ -300,11 +300,25 @@ const expandable = computed(() => {
   color: var(--danger);
 }
 
-.activity-prose {
+/* MarkdownText owns the rendered element, so the scoped rule must cross the
+ * component boundary rather than styling the fallthrough class locally. */
+.activity-row :deep(.markdown.activity-prose) {
   max-height: min(520px, 65vh);
   overflow: auto;
   color: var(--muted);
   font-size: var(--text-sm);
   overscroll-behavior: contain;
+}
+
+/* OpenAI reasoning summaries arrive wrapped in Markdown bold. Inside thinking,
+ * that wrapper is structure rather than emphasis, and separate paragraphs are
+ * one compact train of thought rather than prose blocks. */
+.activity-row :deep(.markdown.activity-thinking-prose strong) {
+  color: inherit;
+  font-weight: inherit;
+}
+
+.activity-row :deep(.markdown.activity-thinking-prose p) {
+  margin: 0;
 }
 </style>
