@@ -26,7 +26,20 @@ async function expectActiveCompaction(page: Page): Promise<void> {
   const composer = page.getByRole('textbox', { name: 'Message Pi' });
   const stop = page.getByRole('button', { name: 'Stop Pi' });
 
-  await expect(page.locator('.transient-compaction')).toHaveText('compacting');
+  const compaction = page.locator('.transient-compaction');
+  await expect(compaction).toHaveText('compacting');
+  await expect
+    .poll(async () => {
+      const content = await page
+        .locator('.message-window .message:last-child .markdown')
+        .boundingBox();
+      const divider = await compaction
+        .locator('.compaction-divider')
+        .boundingBox();
+      if (!content || !divider) return -1;
+      return Math.round(divider.y - (content.y + content.height));
+    })
+    .toBe(38);
   await expect(stop).toBeVisible();
   await expect(stop).toBeDisabled();
   await expect(composer).toBeEnabled();

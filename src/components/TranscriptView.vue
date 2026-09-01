@@ -614,14 +614,19 @@ defineExpose({ scrollToEnd });
   margin-left: 8px;
 }
 
+/* Contain the divider's vertical margins so its measured row includes the full
+ * 54px rhythm instead of reporting only the 22px control. */
 .message.compaction {
+  display: flow-root;
   margin-right: 20px;
   margin-left: 8px;
   padding-bottom: 0;
 }
 
+/* The divider sits after the virtualizer's 30px end pad, so pull it through
+ * that reserved tail rather than stacking both spaces. */
 .transient-compaction {
-  padding-bottom: 30px;
+  margin-top: -30px;
 }
 
 /* A run of activity is one thing; only its last row is followed by a gap. */
