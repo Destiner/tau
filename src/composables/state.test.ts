@@ -46,6 +46,7 @@ function testController(
     hasPiTranscript: false,
     materializationVerified: false,
     postSettlementHydration: false,
+    settledAssistantActivity: false,
     materializationStateRequestId: '',
     materializationMessagesRequestId: '',
     messages: [],

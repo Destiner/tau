@@ -33,7 +33,7 @@ const planImplementReplacement = definePiScenario({
   metadata: {
     name: 'plan-implement-replacement',
     purpose:
-      'Preserve a completed Plan when its settlement verification discovers Implement.',
+      'Preserve a completed Plan when a delayed settlement probe discovers Implement.',
     qualityRule:
       'docs/quality.md §5 State correctness and the Never lose the user’s work principle',
     schemaVersion: 1,
@@ -245,6 +245,47 @@ const planImplementReplacement = definePiScenario({
     {
       kind: 'response',
       request: 'plan-settled-state',
+      command: 'get_state',
+      data: { ...planState, isStreaming: false },
+    },
+    {
+      kind: 'request',
+      runtime,
+      capture: 'plan-settled-efforts',
+      match: { type: 'get_available_thinking_levels' },
+    },
+    {
+      kind: 'response',
+      request: 'plan-settled-efforts',
+      command: 'get_available_thinking_levels',
+      data: { levels: fixtureThinkingLevels },
+    },
+    {
+      kind: 'request',
+      runtime,
+      capture: 'plan-settled-messages',
+      match: { type: 'get_messages' },
+    },
+    {
+      kind: 'request',
+      runtime,
+      capture: 'implement-probe',
+      match: { type: 'get_state' },
+    },
+    {
+      kind: 'response',
+      request: 'plan-settled-messages',
+      command: 'get_messages',
+      // Production streamed the final assistant event before persistence made
+      // it visible to the overlapping settlement hydration.
+      data: {
+        messages: [{ role: 'user', content: 'Write the approved plan' }],
+      },
+    },
+    { kind: 'gate', name: 'plan-hydration-lagged', required: true },
+    {
+      kind: 'response',
+      request: 'implement-probe',
       command: 'get_state',
       data: { ...implementState, isStreaming: false },
     },

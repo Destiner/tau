@@ -47,6 +47,7 @@ test('releases a hold when a later pointer move is outside the list', async ({
   page,
 }) => {
   await page.goto(fixtureUrl);
+  await expect(page.locator('.session-row')).toHaveCount(4);
 
   await page.evaluate(() => {
     document

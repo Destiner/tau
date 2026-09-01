@@ -99,6 +99,7 @@ function makeController(
     hasPiTranscript: false,
     materializationVerified: false,
     postSettlementHydration: false,
+    settledAssistantActivity: false,
     materializationStateRequestId: '',
     materializationMessagesRequestId: '',
     messages: [],
@@ -294,6 +295,38 @@ describe('command-created session durability', () => {
           collapsed: false,
           selected: true,
           sessions: [],
+        },
+      ],
+    };
+  }
+
+  function registeredWorkspace(
+    controller: SessionController,
+    title: string,
+    archived = false,
+  ): NonNullable<typeof state.workspace> {
+    return {
+      activeProjectPath: controller.projectPath,
+      piPath: '/usr/bin/pi',
+      projects: [
+        {
+          path: controller.projectPath,
+          name: 'Project',
+          workingDirectory: controller.projectPath,
+          collapsed: false,
+          selected: true,
+          sessions: [
+            {
+              id: controller.sessionId,
+              path: controller.sessionPath,
+              title,
+              lastActive: 'now',
+              lastUserMessageAt: 0,
+              sortAt: 1,
+              archived,
+              selected: false,
+            },
+          ],
         },
       ],
     };
@@ -609,6 +642,218 @@ describe('command-created session durability', () => {
     });
   });
 
+  it('preserves a settled predecessor when successor start reveals its replacement', async () => {
+    const telemetry = await import('../telemetry');
+    const { handleResponse, handleRpc } = await import('./runtime');
+    const controller = makeController({
+      sessionId: 'plan-a',
+      sessionPath: '/tmp/project/plan-a.jsonl',
+      sessionName: 'Plan',
+      postSettlementHydration: true,
+      settledAssistantActivity: true,
+      messages: [{ id: 'plan-user', kind: 'user', text: 'Write the plan' }],
+    });
+    addEphemeral(controller);
+    const registeredWorkspace = {
+      ...state.workspace!,
+      projects: [
+        {
+          ...state.workspace!.projects[0]!,
+          sessions: [
+            {
+              id: 'plan-a',
+              path: '/tmp/project/plan-a.jsonl',
+              title: 'Plan',
+              lastActive: 'now',
+              lastUserMessageAt: 0,
+              sortAt: 2,
+              archived: false,
+              selected: false,
+            },
+          ],
+        },
+      ],
+    };
+    vi.mocked(telemetry.invokeTraced).mockResolvedValue(registeredWorkspace);
+
+    await handleRpc(controller, { type: 'agent_start' });
+    const runStateRequestId = controller.runStateRequestId;
+    await handleResponse(controller, {
+      id: runStateRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'implement-b',
+        sessionFile: '/tmp/project/implement-b.jsonl',
+        sessionName: 'Implement',
+        isStreaming: true,
+      },
+    });
+
+    expect(telemetry.invokeTraced).toHaveBeenCalledWith(
+      'register_session',
+      expect.objectContaining({ sessionId: 'plan-a', adopted: true }),
+      undefined,
+    );
+    expect(state.workspace?.projects[0]?.sessions).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'plan-a' })]),
+    );
+    expect(state.ephemeralSessions[0]?.id).toBe('implement-b');
+  });
+
+  it('clears settled predecessor evidence when successor start keeps the identity', async () => {
+    const { handleResponse, handleRpc } = await import('./runtime');
+    const controller = makeController({
+      sessionId: 'plan-a',
+      sessionPath: '/tmp/project/plan-a.jsonl',
+      postSettlementHydration: true,
+      settledAssistantActivity: true,
+    });
+    addEphemeral(controller);
+
+    await handleRpc(controller, { type: 'agent_start' });
+    expect(controller.postSettlementHydration).toBe(true);
+    expect(controller.settledAssistantActivity).toBe(true);
+    await handleResponse(controller, {
+      id: controller.runStateRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'plan-a',
+        sessionFile: '/tmp/project/plan-a.jsonl',
+        isStreaming: true,
+      },
+    });
+
+    expect(controller.postSettlementHydration).toBe(false);
+    expect(controller.settledAssistantActivity).toBe(false);
+  });
+
+  it('preserves a settled predecessor when a later probe discovers its replacement', async () => {
+    const telemetry = await import('../telemetry');
+    const { handleResponse } = await import('./runtime');
+    const controller = makeController({
+      sessionId: 'plan-a',
+      sessionPath: '/tmp/project/plan-a.jsonl',
+      sessionName: 'Plan',
+      postSettlementHydration: true,
+      settledAssistantActivity: true,
+      messages: [{ id: 'plan-user', kind: 'user', text: 'Write the plan' }],
+    });
+    addEphemeral(controller);
+    state.activeProjectPath = controller.projectPath;
+    state.activeSessionId = controller.sessionId;
+    state.activeSessionPath = controller.sessionPath;
+    state.activeControllerKey = controller.key;
+    const registeredWorkspace = {
+      ...state.workspace!,
+      projects: [
+        {
+          ...state.workspace!.projects[0]!,
+          sessions: [
+            {
+              id: 'plan-a',
+              path: '/tmp/project/plan-a.jsonl',
+              title: 'Plan',
+              lastActive: 'now',
+              lastUserMessageAt: 0,
+              sortAt: 2,
+              archived: false,
+              selected: true,
+            },
+          ],
+        },
+      ],
+    };
+    vi.mocked(telemetry.invokeTraced).mockResolvedValue(registeredWorkspace);
+    const probeRequestId = await dispatchRequest(
+      controller,
+      'get_state',
+      'replacement-probe',
+    );
+    controller.replacementProbeRequestId = probeRequestId;
+
+    await handleResponse(controller, {
+      id: probeRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'implement-b',
+        sessionFile: '/tmp/project/implement-b.jsonl',
+        sessionName: 'Implement',
+        isStreaming: false,
+      },
+    });
+
+    expect(telemetry.invokeTraced).toHaveBeenCalledWith(
+      'register_session',
+      expect.objectContaining({
+        sessionId: 'plan-a',
+        sessionPath: '/tmp/project/plan-a.jsonl',
+        adopted: true,
+      }),
+      undefined,
+    );
+    expect(state.workspace?.projects[0]?.sessions).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'plan-a' })]),
+    );
+    expect(state.ephemeralSessions[0]).toMatchObject({
+      id: 'implement-b',
+      path: '/tmp/project/implement-b.jsonl',
+      title: 'Implement',
+      lastActive: 'now',
+    });
+    expect(state.ephemeralSessions[0]!.sortAt).toBeGreaterThan(2);
+    expect(state.activeSessionId).toBe('implement-b');
+    expect(state.activeSessionPath).toBe('/tmp/project/implement-b.jsonl');
+  });
+
+  it('keeps the predecessor reachable when registration fails', async () => {
+    const telemetry = await import('../telemetry');
+    const { handleResponse } = await import('./runtime');
+    const controller = makeController({
+      sessionId: 'plan-a',
+      sessionPath: '/tmp/project/plan-a.jsonl',
+      sessionName: 'Plan',
+      postSettlementHydration: true,
+      settledAssistantActivity: true,
+      syncing: true,
+    });
+    addEphemeral(controller);
+    vi.mocked(telemetry.invokeTraced).mockRejectedValue(
+      new Error('registration failed'),
+    );
+    const requestId = await dispatchRequest(
+      controller,
+      'get_state',
+      'replacement-probe',
+    );
+    controller.replacementProbeRequestId = requestId;
+
+    await handleResponse(controller, {
+      id: requestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'implement-b',
+        sessionFile: '/tmp/project/implement-b.jsonl',
+        sessionName: 'Implement',
+        isStreaming: false,
+      },
+    });
+
+    expect(controller.sessionId).toBe('plan-a');
+    expect(state.ephemeralSessions[0]).toMatchObject({
+      id: 'plan-a',
+      path: '/tmp/project/plan-a.jsonl',
+      title: 'Plan',
+    });
+    expect(controller.status).toBe(
+      'This session could not be saved. Continue here, then try reopening it.',
+    );
+    expect(controller.syncing).toBe(false);
+  });
+
   it('does not register an empty predecessor discovered by settlement verification', async () => {
     const telemetry = await import('../telemetry');
     const { handleResponse, rpc } = await import('./runtime');
@@ -676,13 +921,14 @@ describe('command-created session durability', () => {
     );
   });
 
-  it('does not register a replacement that arrives while promotion is in flight', async () => {
+  it('commits a predecessor registration already in flight when its replacement arrives', async () => {
     const telemetry = await import('../telemetry');
     const { handleResponse, rpc } = await import('./runtime');
     const controller = makeController({
       sessionId: 'verified-a',
       sessionPath: '/tmp/project/verified-a.jsonl',
       sessionName: 'Verified A',
+      postSettlementHydration: true,
     });
     addEphemeral(controller);
     state.activeProjectPath = controller.projectPath;
@@ -734,7 +980,8 @@ describe('command-created session durability', () => {
       'get_state',
       'replacement-probe',
     );
-    await handleResponse(controller, {
+    controller.replacementProbeRequestId = replacementRequestId;
+    const replacement = handleResponse(controller, {
       id: replacementRequestId,
       command: 'get_state',
       success: true,
@@ -745,7 +992,8 @@ describe('command-created session durability', () => {
         isStreaming: true,
       },
     });
-    expect(controller.materializationVerified).toBe(false);
+    await Promise.resolve();
+    expect(controller.sessionId).toBe('verified-a');
 
     resolveRegistration({
       activeProjectPath: controller.projectPath,
@@ -757,11 +1005,22 @@ describe('command-created session durability', () => {
           workingDirectory: controller.projectPath,
           collapsed: false,
           selected: true,
-          sessions: [],
+          sessions: [
+            {
+              id: 'verified-a',
+              path: '/tmp/project/verified-a.jsonl',
+              title: 'Verified A',
+              lastActive: 'now',
+              lastUserMessageAt: 0,
+              sortAt: 2,
+              archived: false,
+              selected: true,
+            },
+          ],
         },
       ],
     });
-    await promotion;
+    await Promise.all([promotion, replacement]);
 
     expect(
       vi
@@ -769,8 +1028,123 @@ describe('command-created session durability', () => {
         .mock.calls.filter(([command]) => command === 'register_session')
         .map(([, args]) => (args as { sessionId: string }).sessionId),
     ).toEqual(['verified-a']);
-    expect(state.activeSessionId).toBe('verified-a');
+    expect(state.workspace?.projects[0]?.sessions).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'verified-a' })]),
+    );
+    expect(state.activeSessionId).toBe('unverified-b');
+    expect(state.activeSessionPath).toBe('/tmp/project/unverified-b.jsonl');
     expect(state.ephemeralSessions[0]?.id).toBe('unverified-b');
+  });
+
+  it('projects only the latest title from overlapping registrations', async () => {
+    const telemetry = await import('../telemetry');
+    const { persistSessionName } = await import('./runtime');
+    const controller = makeController({
+      sessionId: 'title-session',
+      sessionPath: '/tmp/project/title-session.jsonl',
+      sessionName: 'First title',
+    });
+    state.controllers.push(controller);
+    state.workspace = registeredWorkspace(controller, 'Original title');
+
+    let resolveFirst!: (workspace: NonNullable<typeof state.workspace>) => void;
+    let resolveSecond!: (
+      workspace: NonNullable<typeof state.workspace>,
+    ) => void;
+    const firstRegistration = new Promise<NonNullable<typeof state.workspace>>(
+      (resolve) => {
+        resolveFirst = resolve;
+      },
+    );
+    const secondRegistration = new Promise<NonNullable<typeof state.workspace>>(
+      (resolve) => {
+        resolveSecond = resolve;
+      },
+    );
+    vi.mocked(telemetry.invokeTraced)
+      .mockReturnValueOnce(firstRegistration)
+      .mockReturnValueOnce(secondRegistration);
+
+    const first = persistSessionName(controller);
+    await vi.waitFor(() => {
+      expect(telemetry.invokeTraced).toHaveBeenCalledTimes(1);
+    });
+    controller.sessionName = 'Second title';
+    const second = persistSessionName(controller);
+    await vi.waitFor(() => {
+      expect(telemetry.invokeTraced).toHaveBeenCalledTimes(2);
+    });
+
+    resolveSecond(registeredWorkspace(controller, 'Second title'));
+    await second;
+    expect(state.workspace?.projects[0]?.sessions[0]?.title).toBe(
+      'Second title',
+    );
+    resolveFirst(registeredWorkspace(controller, 'First title'));
+    await first;
+    expect(state.workspace?.projects[0]?.sessions[0]?.title).toBe(
+      'Second title',
+    );
+    expect(
+      vi
+        .mocked(telemetry.invokeTraced)
+        .mock.calls.map(
+          ([, args]) => (args as { sessionName?: string }).sessionName,
+        ),
+    ).toEqual(['First title', 'Second title']);
+  });
+
+  it('does not let a weaker registration overwrite overlapping adoption', async () => {
+    const telemetry = await import('../telemetry');
+    const { registerConnectedSession } = await import('./runtime');
+    const controller = makeController({
+      sessionId: 'adoption-session',
+      sessionPath: '/tmp/project/adoption-session.jsonl',
+      sessionName: 'Session',
+    });
+    state.controllers.push(controller);
+    state.workspace = registeredWorkspace(controller, 'Session', true);
+
+    let resolveOrdinary!: (
+      workspace: NonNullable<typeof state.workspace>,
+    ) => void;
+    let resolveAdoption!: (
+      workspace: NonNullable<typeof state.workspace>,
+    ) => void;
+    const ordinaryRegistration = new Promise<
+      NonNullable<typeof state.workspace>
+    >((resolve) => {
+      resolveOrdinary = resolve;
+    });
+    const adoptionRegistration = new Promise<
+      NonNullable<typeof state.workspace>
+    >((resolve) => {
+      resolveAdoption = resolve;
+    });
+    vi.mocked(telemetry.invokeTraced)
+      .mockReturnValueOnce(ordinaryRegistration)
+      .mockReturnValueOnce(adoptionRegistration);
+
+    const ordinary = registerConnectedSession(controller);
+    await vi.waitFor(() => {
+      expect(telemetry.invokeTraced).toHaveBeenCalledTimes(1);
+    });
+    const adoption = registerConnectedSession(controller, undefined, true);
+    await vi.waitFor(() => {
+      expect(telemetry.invokeTraced).toHaveBeenCalledTimes(2);
+    });
+
+    resolveAdoption(registeredWorkspace(controller, 'Session'));
+    await adoption;
+    resolveOrdinary(registeredWorkspace(controller, 'Session', true));
+    await ordinary;
+
+    expect(state.workspace?.projects[0]?.sessions[0]?.archived).toBe(false);
+    expect(
+      vi
+        .mocked(telemetry.invokeTraced)
+        .mock.calls.map(([, args]) => (args as { adopted?: boolean }).adopted),
+    ).toEqual([false, true]);
   });
 
   it('does not register a replacement that races session selection', async () => {

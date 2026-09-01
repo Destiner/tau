@@ -6,29 +6,46 @@
  * as soon as the pointer leaves.
  */
 
+interface HeldSession<T> {
+  /** Identity shown when the pointer entered the list. */
+  id: string;
+  /** Follows an ephemeral row through its first Pi materialization. */
+  source: T;
+}
+
 /** Sessions a project listed when the pointer entered the list. */
-function heldSessions<T extends { id: string }>(sessions: readonly T[]): T[] {
-  return [...sessions];
+function heldSessions<T extends { id: string }>(
+  sessions: readonly T[],
+): HeldSession<T>[] {
+  return sessions.map((session) => ({ id: session.id, source: session }));
 }
 
 /**
  * Projects every still-present session from the held snapshot into its entry
  * order. New sessions stay hidden until release: inserting even at the end of
  * an earlier project would move every project below it, defeating a
- * workspace-wide hold. Snapshot objects are retained because a phantom's id
- * changes when it materializes. `undefined` means there is no hold, while an
- * empty array deliberately holds an empty project empty.
+ * workspace-wide hold. The captured id wins when a replacement registers the
+ * outgoing phase before rebinding its ephemeral object to the next phase. If
+ * no row has that id, the source object follows an ordinary phantom-to-saved
+ * materialization instead. `undefined` means there is no hold, while an empty
+ * array deliberately holds an empty project empty.
  */
 function applyHeldOrder<T extends { id: string }>(
   sessions: readonly T[],
-  held: readonly { id: string }[] | undefined,
+  held: readonly HeldSession<T>[] | undefined,
 ): T[] {
   if (held === undefined) return [...sessions];
 
   const current = new Map(sessions.map((session) => [session.id, session]));
+  const currentObjects = new Set(sessions);
   return held
-    .map((session) => current.get(session.id))
+    .map(
+      (session) =>
+        current.get(session.id) ??
+        (currentObjects.has(session.source) ? session.source : undefined),
+    )
     .filter((session): session is T => session !== undefined);
 }
 
 export { applyHeldOrder, heldSessions };
+export type { HeldSession };

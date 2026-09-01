@@ -176,6 +176,8 @@ interface SessionController {
   materializationVerified: boolean;
   /** The current run settled, so its following hydrations may verify storage. */
   postSettlementHydration: boolean;
+  /** The settled UI transcript had meaningful assistant-side activity. */
+  settledAssistantActivity: boolean;
   /** Correlates the settled state read whose hydration may verify storage. */
   materializationStateRequestId: string;
   /** Correlates the hydration currently allowed to verify materialization. */
@@ -862,6 +864,7 @@ function createController(
     hasPiTranscript: false,
     materializationVerified: false,
     postSettlementHydration: false,
+    settledAssistantActivity: false,
     materializationStateRequestId: '',
     materializationMessagesRequestId: '',
     messages: [],

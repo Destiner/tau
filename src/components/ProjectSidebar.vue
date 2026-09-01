@@ -243,7 +243,11 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import type { ProjectSummary, SessionSummary } from '../composables/state';
 import useTau from '../composables/useTau';
-import { applyHeldOrder, heldSessions } from '../lib/session-order';
+import {
+  applyHeldOrder,
+  heldSessions,
+  type HeldSession,
+} from '../lib/session-order';
 import {
   MAX_SIDEBAR_WIDTH,
   MIN_SIDEBAR_WIDTH,
@@ -318,7 +322,7 @@ function toggleArchivedView(): void {
 }
 
 /** Session snapshots by project path, empty whenever the list is not hovered. */
-const heldOrder = ref(new Map<string, SessionSummary[]>());
+const heldOrder = ref(new Map<string, HeldSession<SessionSummary>[]>());
 let heldOrderElement: HTMLElement | undefined;
 let projectSortable: Sortable | undefined;
 

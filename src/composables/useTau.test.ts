@@ -1055,7 +1055,7 @@ describe('session replacement hardening', () => {
     await vi.waitFor(() => {
       expect(secondController.sessionId).toBe(phaseSession.id);
     });
-    expect(tau.state.activeSessionId).toBe(secondSession.id);
+    expect(tau.state.activeSessionId).toBe(phaseSession.id);
     expect(
       vi
         .mocked(invoke)

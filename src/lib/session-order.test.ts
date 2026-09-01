@@ -51,13 +51,26 @@ describe('applyHeldOrder', () => {
     const visible = sessions('phantom', 'other');
     const held = heldSessions(visible);
     visible[0]!.id = 'materialized';
-    const current = [
+    const current = [{ id: 'other', status: 'idle' }, visible[0]!];
+
+    expect(applyHeldOrder(current, held)).toEqual([
+      { id: 'materialized' },
       { id: 'other', status: 'idle' },
-      { id: 'materialized', status: 'working' },
+    ]);
+  });
+
+  it('keeps the outgoing phase when its ephemeral row becomes a replacement', () => {
+    const visible = sessions('plan', 'other');
+    const held = heldSessions(visible);
+    visible[0]!.id = 'implement';
+    const current = [
+      visible[0]!,
+      { id: 'plan', status: 'idle' },
+      { id: 'other', status: 'idle' },
     ];
 
     expect(applyHeldOrder(current, held)).toEqual([
-      { id: 'materialized', status: 'working' },
+      { id: 'plan', status: 'idle' },
       { id: 'other', status: 'idle' },
     ]);
   });

@@ -185,6 +185,7 @@ async function startController(
   controller.commandSyncRequestId = '';
   controller.replacementProbeRequestId = '';
   controller.postSettlementHydration = false;
+  controller.settledAssistantActivity = false;
   controller.materializationStateRequestId = '';
   controller.materializationMessagesRequestId = '';
   controller.pendingSessionRename = undefined;
@@ -1142,7 +1143,8 @@ async function handleRpc(
   }
   if (type === 'agent_start') {
     confirmSubmittedPrompt(controller);
-    controller.postSettlementHydration = false;
+    // Pi can announce B's run before its state response reveals that A was
+    // replaced. Keep A's settled evidence until that identity read resolves.
     controller.materializationStateRequestId = '';
     controller.materializationMessagesRequestId = '';
     clearSessionReplacementWatch(controller);
@@ -1322,6 +1324,8 @@ async function handleRpc(
     flushStreamAggregate(controller.runtimeId, controller.generation);
     clearMaterializationVerificationWatch(controller);
     controller.postSettlementHydration = true;
+    controller.settledAssistantActivity =
+      hasMeaningfulAssistantActivity(controller);
     clearAbortWatch(controller);
     controller.compacting = false;
     setControllerLifecycle(
@@ -1789,17 +1793,17 @@ async function handleResponse(
       Boolean(piSessionId && piSessionPath) &&
       (controller.sessionId !== piSessionId ||
         controller.sessionPath !== piSessionPath);
-    // Settlement verification can be A's first durable read after Pi already
-    // moved to B, so preserve A before the incoming identity can rebind its row.
+    // Any state read related to a settled run can first observe B after Pi
+    // moved on, so preserve completed A before B can rebind its row.
     const outgoingIdentity = sessionChanged
       ? captureConnectedSessionIdentity(controller)
       : undefined;
-    if (
-      outgoingIdentity &&
-      resolvesMaterializationState &&
-      shouldRegisterMaterializedPredecessor(controller)
-    ) {
-      await registerMaterializedPredecessor(controller, outgoingIdentity);
+    if (outgoingIdentity && shouldRegisterMaterializedPredecessor(controller)) {
+      const registered = await registerMaterializedPredecessor(
+        controller,
+        outgoingIdentity,
+      );
+      if (!registered) return;
       if (!controllerIdentityMatches(controller, outgoingIdentity)) return;
     }
     applySessionName(controller, stringValue(data.sessionName));
@@ -1838,6 +1842,7 @@ async function handleResponse(
       clearAbortWatch(controller);
       controller.hasPiTranscript = false;
       controller.materializationVerified = false;
+      controller.settledAssistantActivity = false;
       controller.materializationStateRequestId = '';
       controller.materializationMessagesRequestId = '';
       controller.lastUserMessageAt = 0;
@@ -1901,7 +1906,11 @@ async function handleResponse(
       await applyPendingSessionSettings(controller);
       return;
     }
-    if (resolvesRunState && !sessionChanged) return;
+    if (resolvesRunState && !sessionChanged) {
+      controller.postSettlementHydration = false;
+      controller.settledAssistantActivity = false;
+      return;
+    }
     if (resolvesAdmissionState && nowStreaming && !sessionChanged) return;
     if (
       resolvesReplacementProbe &&
@@ -1964,7 +1973,6 @@ async function handleResponse(
       controller.materializationMessagesRequestId = '';
       if (completedAssistant) {
         clearMaterializationVerificationWatch(controller);
-        controller.postSettlementHydration = false;
         controller.materializationVerified = true;
       } else {
         scheduleMaterializationVerificationRetry(controller);
@@ -2015,7 +2023,12 @@ async function handleResponse(
       } else submitted.admissionMessagesRequestId = '';
     }
     if (verifiesMaterialization && completedAssistant) {
+      const materializedIdentity = captureConnectedSessionIdentity(controller);
       await promoteMaterializedSession(controller);
+      if (controllerIdentityMatches(controller, materializedIdentity)) {
+        controller.postSettlementHydration = false;
+        controller.settledAssistantActivity = false;
+      }
     }
     // A hidden session that finishes hydrating has nothing left to wait for,
     // so this is where a runtime the user has moved on from is accounted for.
@@ -2246,6 +2259,7 @@ async function dispatchPendingPrompt(
   if (!prompt) return;
   controller.pendingPrompt = undefined;
   controller.postSettlementHydration = false;
+  controller.settledAssistantActivity = false;
   controller.materializationStateRequestId = '';
   controller.materializationMessagesRequestId = '';
   clearMaterializationVerificationWatch(controller);
@@ -2408,6 +2422,7 @@ function scheduleMaterializationVerificationRetry(
   if (retry.nextAttempt >= materializationVerificationRetryDelays.length) {
     materializationVerificationRetries.delete(controller.key);
     controller.postSettlementHydration = false;
+    controller.settledAssistantActivity = false;
     setControllerLifecycle(
       controller,
       { syncing: false },
@@ -2672,6 +2687,18 @@ function connectedSessionIdentityMatches(
   );
 }
 
+function hasMeaningfulAssistantActivity(
+  controller: SessionController,
+): boolean {
+  return controller.messages.some(
+    (message) =>
+      (message.kind === 'assistant' ||
+        message.kind === 'thinking' ||
+        message.kind === 'tool') &&
+      Boolean(message.text.trim()),
+  );
+}
+
 function shouldRegisterMaterializedPredecessor(
   controller: SessionController,
 ): boolean {
@@ -2679,26 +2706,95 @@ function shouldRegisterMaterializedPredecessor(
     !controller.phantom &&
     !workspaceContainsSession(controller) &&
     controller.postSettlementHydration &&
-    controller.messages.some(
-      (message) =>
-        (message.kind === 'assistant' ||
-          message.kind === 'thinking' ||
-          message.kind === 'tool') &&
-        Boolean(message.text.trim()),
-    )
+    (controller.settledAssistantActivity ||
+      hasMeaningfulAssistantActivity(controller))
   );
+}
+
+interface RegistrationMutation {
+  identityKey: string;
+  token: symbol;
+}
+
+const latestSessionRegistrationMutations = new Map<string, symbol>();
+const sessionRegistrationFlights = new Map<
+  string,
+  Promise<WorkspaceSnapshot>
+>();
+
+function registrationIdentityKey(identity: ConnectedSessionIdentity): string {
+  return [
+    identity.generation,
+    identity.projectPath,
+    identity.sessionId,
+    identity.sessionPath,
+  ].join('\0');
+}
+
+function registrationFlightKey(
+  identity: ConnectedSessionIdentity,
+  adopted: boolean,
+): string {
+  return JSON.stringify([
+    registrationIdentityKey(identity),
+    identity.sessionName,
+    identity.lastUserMessageAt,
+    adopted,
+  ]);
+}
+
+function beginRegistrationMutation(
+  identity: ConnectedSessionIdentity,
+): RegistrationMutation {
+  const mutation = {
+    identityKey: registrationIdentityKey(identity),
+    token: Symbol('registration-mutation'),
+  };
+  latestSessionRegistrationMutations.set(mutation.identityKey, mutation.token);
+  return mutation;
+}
+
+function registrationMutationIsCurrent(
+  mutation: RegistrationMutation,
+): boolean {
+  return (
+    latestSessionRegistrationMutations.get(mutation.identityKey) ===
+    mutation.token
+  );
+}
+
+function finishRegistrationMutation(mutation: RegistrationMutation): void {
+  if (registrationMutationIsCurrent(mutation)) {
+    latestSessionRegistrationMutations.delete(mutation.identityKey);
+  }
+}
+
+function failPredecessorRegistration(controller: SessionController): false {
+  setControllerLifecycle(controller, { syncing: false }, 'bridge_event_failed');
+  setControllerError(controller, errorCopy.sessionRegistration);
+  return false;
 }
 
 async function registerMaterializedPredecessor(
   controller: SessionController,
   identity: ConnectedSessionIdentity,
-): Promise<void> {
+): Promise<boolean> {
+  const mutation = beginRegistrationMutation(identity);
   try {
     const workspace = await registerSession(identity, true);
-    if (!controllerIdentityMatches(controller, identity)) return;
+    if (
+      !controllerIdentityMatches(controller, identity) ||
+      !registrationMutationIsCurrent(mutation)
+    ) {
+      return false;
+    }
     state.workspace = workspace;
+    if (workspaceContainsSession(controller)) return true;
+    return failPredecessorRegistration(controller);
   } catch {
-    setControllerError(controller, errorCopy.sessionRegistration);
+    return failPredecessorRegistration(controller);
+  } finally {
+    finishRegistrationMutation(mutation);
   }
 }
 
@@ -2713,9 +2809,15 @@ async function registerConnectedSession(
   if (!canRegisterConnectedSession(controller)) return;
   const identity = captureConnectedSessionIdentity(controller);
   if (!connectedSessionIdentityMatches(controller, identity)) return;
+  const mutation = beginRegistrationMutation(identity);
   try {
     const workspace = await registerSession(identity, adopted, parentContext);
-    if (!connectedSessionIdentityMatches(controller, identity)) return;
+    if (
+      !connectedSessionIdentityMatches(controller, identity) ||
+      !registrationMutationIsCurrent(mutation)
+    ) {
+      return;
+    }
     state.workspace = workspace;
     if (workspaceContainsSession(controller)) {
       removeRegisteredEphemeralSession(controller);
@@ -2726,13 +2828,21 @@ async function registerConnectedSession(
     const selectedWorkspace = await selectRegisteredSession(
       controller,
       identity,
+      mutation,
       parentContext,
     );
-    if (!connectedSessionIdentityMatches(controller, identity)) return;
+    if (
+      !connectedSessionIdentityMatches(controller, identity) ||
+      !registrationMutationIsCurrent(mutation)
+    ) {
+      return;
+    }
     state.workspace = selectedWorkspace;
   } catch (error) {
     if (error === staleRegistration) return;
     setControllerError(controller, errorCopy.sessionRegistration);
+  } finally {
+    finishRegistrationMutation(mutation);
   }
 }
 
@@ -2741,7 +2851,11 @@ function registerSession(
   adopted: boolean,
   parentContext?: TraceContext,
 ): Promise<WorkspaceSnapshot> {
-  return invokeTraced<WorkspaceSnapshot>(
+  const key = registrationFlightKey(identity, adopted);
+  const existing = sessionRegistrationFlights.get(key);
+  if (existing) return existing;
+
+  const registration = invokeTraced<WorkspaceSnapshot>(
     'register_session',
     {
       projectPath: identity.projectPath,
@@ -2753,6 +2867,15 @@ function registerSession(
     },
     parentContext,
   );
+  sessionRegistrationFlights.set(key, registration);
+  void registration
+    .finally(() => {
+      if (sessionRegistrationFlights.get(key) === registration) {
+        sessionRegistrationFlights.delete(key);
+      }
+    })
+    .catch(() => undefined);
+  return registration;
 }
 
 // A session Tau is showing has to be selectable. Tau's registry rejecting it
@@ -2761,10 +2884,14 @@ function registerSession(
 async function selectRegisteredSession(
   controller: SessionController,
   identity: ConnectedSessionIdentity,
+  mutation: RegistrationMutation,
   parentContext?: TraceContext,
 ): Promise<WorkspaceSnapshot> {
+  const selectionIsCurrent = (): boolean =>
+    connectedSessionIdentityMatches(controller, identity) &&
+    registrationMutationIsCurrent(mutation);
   const select = (): Promise<WorkspaceSnapshot> => {
-    if (!connectedSessionIdentityMatches(controller, identity)) {
+    if (!selectionIsCurrent()) {
       throw staleRegistration;
     }
     return invokeTraced<WorkspaceSnapshot>(
@@ -2778,26 +2905,17 @@ async function selectRegisteredSession(
   };
   try {
     const workspace = await select();
-    if (!connectedSessionIdentityMatches(controller, identity)) {
-      throw staleRegistration;
-    }
+    if (!selectionIsCurrent()) throw staleRegistration;
     return workspace;
   } catch (error) {
-    if (
-      error === staleRegistration ||
-      !connectedSessionIdentityMatches(controller, identity)
-    ) {
+    if (error === staleRegistration || !selectionIsCurrent()) {
       throw staleRegistration;
     }
     const workspace = await registerSession(identity, true, parentContext);
-    if (!connectedSessionIdentityMatches(controller, identity)) {
-      throw staleRegistration;
-    }
+    if (!selectionIsCurrent()) throw staleRegistration;
     state.workspace = workspace;
     const selectedWorkspace = await select();
-    if (!connectedSessionIdentityMatches(controller, identity)) {
-      throw staleRegistration;
-    }
+    if (!selectionIsCurrent()) throw staleRegistration;
     return selectedWorkspace;
   }
 }
@@ -2856,6 +2974,15 @@ function rebindEphemeralSession(controller: SessionController): void {
   session.path = controller.sessionPath;
   session.phantom = false;
   session.title = controller.sessionName || 'New Session';
+  // Every workflow phase is a new session even though it reuses this object.
+  // Give it fresh activity and selection instead of inheriting the first
+  // phase's ordering or leaving the predecessor highlighted.
+  session.lastActive = 'now';
+  session.sortAt = Date.now();
+  if (isControllerSelected(controller)) {
+    state.activeSessionId = controller.sessionId;
+    state.activeSessionPath = controller.sessionPath;
+  }
 }
 
 function markPiTranscript(controller: SessionController): void {
@@ -3112,6 +3239,7 @@ async function retireUnsavedSession(
   controller.hasPiTranscript = false;
   controller.materializationVerified = false;
   controller.postSettlementHydration = false;
+  controller.settledAssistantActivity = false;
   controller.materializationStateRequestId = '';
   controller.materializationMessagesRequestId = '';
   controller.messages = [];
