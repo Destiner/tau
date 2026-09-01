@@ -203,8 +203,10 @@ const expandable = computed(() => {
 }
 
 .activity-mark.failed {
+  width: 10px;
+  height: 10px;
   color: var(--danger);
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .activity-name {

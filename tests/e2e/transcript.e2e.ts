@@ -113,17 +113,25 @@ test('marks only the calls that are running or failed', async ({ page }) => {
   const failed = page.locator('[data-message-id="fixture-tool-failed"]');
   const done = page.locator('[data-message-id="fixture-tool-done"]');
 
-  await expect(running.locator('.activity-mark.running')).toHaveCount(1);
-  await expect(failed.locator('svg.activity-mark.failed')).toHaveCount(1);
+  const runningMark = running.locator('.activity-mark.running');
+  const failedMark = failed.locator('svg.activity-mark.failed');
+  await expect(runningMark).toHaveCount(1);
+  await expect(failedMark).toHaveCount(1);
   await expect(done.locator('.activity-mark')).toHaveCount(0);
+  await expect(runningMark).toHaveCSS('width', '11px');
+  await expect(failedMark).toHaveCSS('width', '10px');
+  await expect(failedMark).toHaveCSS('height', '10px');
+  await expect(failedMark).toHaveCSS('font-size', '10px');
 
-  // A row with nothing to report reserves nothing, and the rows that do report
+  // A row with nothing to report reserves nothing, and differently sized marks
   // still end in one column.
-  const runningBox = await running.locator('.activity-mark').boundingBox();
-  const failedBox = await failed.locator('.activity-mark').boundingBox();
+  const runningBox = await runningMark.boundingBox();
+  const failedBox = await failedMark.boundingBox();
   expect(runningBox).not.toBeNull();
   expect(failedBox).not.toBeNull();
-  expect(Math.abs((runningBox?.x ?? 0) - (failedBox?.x ?? 0))).toBeLessThan(1);
+  const runningEnd = (runningBox?.x ?? 0) + (runningBox?.width ?? 0);
+  const failedEnd = (failedBox?.x ?? 0) + (failedBox?.width ?? 0);
+  expect(Math.abs(runningEnd - failedEnd)).toBeLessThan(1);
 });
 
 test('names the failed result as an error when the row is opened', async ({
