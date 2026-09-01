@@ -239,7 +239,7 @@
 <script setup lang="ts">
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import Sortable, { type SortableEvent } from 'sortablejs';
-import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import type { ProjectSummary, SessionSummary } from '../composables/state';
 import useTau from '../composables/useTau';
@@ -323,7 +323,6 @@ let heldOrderElement: HTMLElement | undefined;
 let projectSortable: Sortable | undefined;
 
 onMounted(() => {
-  setupProjectReordering();
   window.addEventListener('pointermove', releaseSessionOrderOutsideList);
   window.addEventListener('blur', releaseSessionOrder);
   document.addEventListener('visibilitychange', releaseSessionOrderWhenHidden);
@@ -434,22 +433,28 @@ function sessionMenuItems(
   return items;
 }
 
-function setupProjectReordering(): void {
-  if (!projectList.value) return;
-  projectSortable = Sortable.create(projectList.value, {
-    animation: 180,
-    handle: '.project-drag-handle',
-    draggable: '.project-group',
-    ghostClass: 'project-sortable-ghost',
-    chosenClass: 'project-sortable-chosen',
-    dragClass: 'project-sortable-drag',
-    forceFallback: true,
-    fallbackOnBody: true,
-    filter: '.project-group.removing',
-    fallbackTolerance: 3,
-    onEnd: finishProjectReordering,
-  });
-}
+watch(
+  projectList,
+  (element) => {
+    projectSortable?.destroy();
+    projectSortable = element
+      ? Sortable.create(element, {
+          animation: 180,
+          handle: '.project-drag-handle',
+          draggable: '.project-group',
+          ghostClass: 'project-sortable-ghost',
+          chosenClass: 'project-sortable-chosen',
+          dragClass: 'project-sortable-drag',
+          forceFallback: true,
+          fallbackOnBody: true,
+          filter: '.project-group.removing',
+          fallbackTolerance: 3,
+          onEnd: finishProjectReordering,
+        })
+      : undefined;
+  },
+  { flush: 'post' },
+);
 
 function finishProjectReordering(event: SortableEvent): void {
   if (event.oldIndex === undefined || event.newIndex === undefined) return;
