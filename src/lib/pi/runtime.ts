@@ -1748,6 +1748,10 @@ async function handleResponse(
     }
     return;
   }
+  if (command === 'abort' && responseDispatchStillCurrent) {
+    await reconcileAcknowledgedAbort(controller);
+    return;
+  }
   if (
     command === 'set_session_name' &&
     controller.pendingSessionRename?.requestId === responseId
@@ -1815,8 +1819,7 @@ async function handleResponse(
     else if (data.isCompacting === false || !nowStreaming) {
       controller.compacting = false;
     }
-    controller.status =
-      resolvesAbortProbe && nowStreaming ? unstoppedStatus(controller) : '';
+    controller.status = '';
     clearRemoteConnectionWatch(controller);
     finishRemoteConnection(controller);
 
@@ -2530,13 +2533,29 @@ function clearAbortWatch(controller: SessionController): void {
   clearTimeout(timer);
 }
 
-function unstoppedStatus(controller: SessionController): string {
-  const tool = [...controller.messages]
-    .reverse()
-    .find((entry) => entry.kind === 'tool' && entry.toolRunning);
-  return tool?.toolName
-    ? `Running ${tool.toolName}; stopping when it finishes.`
-    : 'Stopping after current work finishes.';
+/** Pi only answers abort after its agent is idle. Re-probe in case its settle
+ * event was lost, but leave the visible lifecycle to that authoritative read. */
+async function reconcileAcknowledgedAbort(
+  controller: SessionController,
+): Promise<void> {
+  if (
+    controller.disposed ||
+    !controller.generation ||
+    (!controller.streaming && !controller.stopping)
+  ) {
+    return;
+  }
+  clearAbortWatch(controller);
+  controller.postSettlementHydration = true;
+  controller.settledAssistantActivity =
+    hasMeaningfulAssistantActivity(controller);
+  setControllerLifecycle(controller, { syncing: true }, 'abort_acknowledged');
+  const stateRequestId = nextRequestId('abort-settled-state');
+  controller.materializationStateRequestId = stateRequestId;
+  if (controller.submittedPrompt?.accepted) {
+    controller.submittedPrompt.admissionStateRequestId = stateRequestId;
+  }
+  await rpc(controller, { id: stateRequestId, type: 'get_state' });
 }
 
 function appendOptimisticPrompt(
@@ -3481,7 +3500,6 @@ export {
   clearRemoteConnectionWatch,
   watchSettingRequest,
   clearSettingRequestWatch,
-  unstoppedStatus,
   appendOptimisticPrompt,
   skillInvocation,
   invokesExtensionCommand,

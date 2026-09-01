@@ -2318,11 +2318,11 @@ describe('interrupting a run', () => {
         expect(tau.stopping.value).toBe(false);
       });
       expect(tau.streaming.value).toBe(true);
-      expect(tau.status.value).toBe('Running bash; stopping when it finishes.');
+      expect(tau.status.value).toBe('');
       // Rehydrating mid-run would drop the deltas the run is still streaming.
       expect(sentRequests(controller, 'get_messages')).toEqual([]);
 
-      // The stop the user asked for still arrives, and clears the notice.
+      // The stop the user asked for still arrives normally.
       emitRpc(controller, { type: 'agent_settled' });
       await vi.waitFor(() => {
         expect(tau.streaming.value).toBe(false);
@@ -2371,6 +2371,179 @@ describe('interrupting a run', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('reconciles a delayed abort acknowledgement when settle was missed', async () => {
+    vi.useFakeTimers();
+    try {
+      const { tau, controller, session } = await setupNamedSession();
+      controller.streaming = true;
+      controller.working = true;
+
+      await tau.stop();
+      const abort = sentRequests(controller, 'abort')[0];
+      await vi.advanceTimersByTimeAsync(2_000);
+      const probe = sentRequests(controller, 'get_state')[0];
+      emitRpc(controller, {
+        id: probe?.id,
+        type: 'response',
+        command: 'get_state',
+        success: true,
+        data: {
+          model: { provider: 'provider', id: 'alpha', name: 'Alpha' },
+          thinkingLevel: 'high',
+          sessionId: session.id,
+          sessionFile: session.path,
+          sessionName: session.title,
+          isStreaming: true,
+        },
+      });
+      await vi.waitFor(() => expect(tau.stopping.value).toBe(false));
+
+      const stateCount = sentRequests(controller, 'get_state').length;
+      emitRpc(controller, {
+        id: abort?.id,
+        type: 'response',
+        command: 'abort',
+        success: true,
+      });
+      await vi.waitFor(() => {
+        expect(sentRequests(controller, 'get_state')).toHaveLength(
+          stateCount + 1,
+        );
+      });
+      const settledState = sentRequests(controller, 'get_state').at(-1);
+      emitRpc(controller, {
+        id: settledState?.id,
+        type: 'response',
+        command: 'get_state',
+        success: true,
+        data: {
+          model: { provider: 'provider', id: 'alpha', name: 'Alpha' },
+          thinkingLevel: 'high',
+          sessionId: session.id,
+          sessionFile: session.path,
+          sessionName: session.title,
+          isStreaming: false,
+        },
+      });
+      await vi.waitFor(() => {
+        expect(controller.materializationMessagesRequestId).not.toBe('');
+      });
+      emitRpc(controller, {
+        id: controller.materializationMessagesRequestId,
+        type: 'response',
+        command: 'get_messages',
+        success: true,
+        data: {
+          messages: [
+            { role: 'user', content: 'Stop this' },
+            {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'Stopped reply.' }],
+            },
+          ],
+        },
+      });
+
+      await vi.waitFor(() => {
+        expect(tau.streaming.value).toBe(false);
+        expect(controller.messages.map((message) => message.text)).toEqual([
+          'Stop this',
+          'Stopped reply.',
+        ]);
+      });
+      tau.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not resync an abort acknowledgement after agent_settled', async () => {
+    vi.useFakeTimers();
+    try {
+      const { tau, controller } = await setupNamedSession();
+      controller.streaming = true;
+      controller.working = true;
+
+      await tau.stop();
+      const abort = sentRequests(controller, 'abort')[0];
+      emitRpc(controller, { type: 'agent_settled' });
+      await vi.waitFor(() => {
+        expect(sentRequests(controller, 'get_state')).toHaveLength(1);
+      });
+
+      emitRpc(controller, {
+        id: abort?.id,
+        type: 'response',
+        command: 'abort',
+        success: true,
+      });
+      await Promise.resolve();
+      expect(sentRequests(controller, 'get_state')).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(
+        sentRequests(controller, 'get_state').filter((request) =>
+          String(request.id).includes('abort-probe'),
+        ),
+      ).toEqual([]);
+      tau.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('drops an abort acknowledgement from a replaced session', async () => {
+    const { tau, controller } = await setupNamedSession();
+    controller.streaming = true;
+    controller.working = true;
+
+    await tau.stop();
+    const abort = sentRequests(controller, 'abort')[0];
+    controller.sessionId = 'replacement-session';
+    controller.sessionPath = '/tmp/replacement-session.jsonl';
+
+    emitRpc(controller, {
+      id: abort?.id,
+      type: 'response',
+      command: 'abort',
+      success: true,
+    });
+    await Promise.resolve();
+
+    expect(sentRequests(controller, 'get_state')).toEqual([]);
+    expect(controller.streaming).toBe(true);
+    tau.dispose();
+  });
+
+  it('drops an abort acknowledgement from a replaced generation', async () => {
+    const { tau, controller } = await setupNamedSession();
+    controller.streaming = true;
+    controller.working = true;
+
+    await tau.stop();
+    const abort = sentRequests(controller, 'abort')[0];
+    const previousGeneration = controller.generation;
+    controller.generation += 1;
+
+    mocks.listener?.({
+      payload: {
+        runtimeId: controller.runtimeId,
+        generation: previousGeneration,
+        kind: 'rpc',
+        line: JSON.stringify({
+          id: abort?.id,
+          type: 'response',
+          command: 'abort',
+          success: true,
+        }),
+      },
+    });
+    await Promise.resolve();
+
+    expect(sentRequests(controller, 'get_state')).toEqual([]);
+    expect(controller.streaming).toBe(true);
+    tau.dispose();
   });
 
   it('leaves an acknowledged stop alone', async () => {

@@ -242,6 +242,7 @@ const CONTROLLER_LIFECYCLE_CAUSES = [
   'get_messages_failed',
   'prompt_failed',
   'abort_failed',
+  'abort_acknowledged',
   'get_state_response',
   'get_messages_response',
   'pending_prompt_dispatch',
