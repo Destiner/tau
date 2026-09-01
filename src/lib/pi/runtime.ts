@@ -659,6 +659,8 @@ async function rpc(
   const key = requestId
     ? rpcSpanKey(controller.runtimeId, controller.generation, requestId)
     : undefined;
+  const expectsResponse = method !== 'extension_ui_response';
+  let fireAndForgetSpanEnd: ((outcome: PiRpcOutcome) => void) | undefined;
   if (key) {
     const span = startRpcSpan(
       method as PiRpcMethod,
@@ -671,12 +673,19 @@ async function rpc(
         controllerId: controller.key,
       },
     );
-    registerPendingRpcSpan(key, span.end, snapshot, method, span.context);
+    if (expectsResponse) {
+      registerPendingRpcSpan(key, span.end, snapshot, method, span.context);
+    } else {
+      // Pi consumes extension UI responses without emitting a response envelope.
+      fireAndForgetSpanEnd = span.end;
+    }
   }
   try {
     await invoke('send_pi', { runtimeId: controller.runtimeId, request });
+    fireAndForgetSpanEnd?.('success');
   } catch (error) {
-    if (key) endPendingRpcSpan(key, 'error');
+    if (fireAndForgetSpanEnd) fireAndForgetSpanEnd('error');
+    else if (key) endPendingRpcSpan(key, 'error');
     if (requestId) {
       cleanupRejectedRpcDispatch(controller, requestId, method, snapshot);
     }

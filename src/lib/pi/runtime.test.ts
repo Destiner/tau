@@ -2236,6 +2236,48 @@ describe('Pi RPC span lifecycle', () => {
     expect(end).toHaveBeenCalledWith('success');
   });
 
+  it('ends extension UI response spans after the write without tracking a Pi response', async () => {
+    const { pendingRpcCount, rpc, stopControllerProcess } =
+      await import('./runtime');
+    const controller = makeController();
+    const pendingBefore = pendingRpcCount();
+
+    await rpc(controller, {
+      id: 'extension-response-1',
+      type: 'extension_ui_response',
+      value: 'Approved',
+    });
+
+    const end = endSpyFor('runtime-1', 1, 'extension-response-1');
+    expect(end).toHaveBeenCalledTimes(1);
+    expect(end).toHaveBeenCalledWith('success');
+    expect(pendingRpcCount()).toBe(pendingBefore);
+
+    await stopControllerProcess(controller);
+
+    expect(end).toHaveBeenCalledTimes(1);
+  });
+
+  it('records a failed extension UI response write without leaving it pending', async () => {
+    const { pendingRpcCount, rpc } = await import('./runtime');
+    const controller = makeController();
+    const pendingBefore = pendingRpcCount();
+    mockInvoke.mockRejectedValueOnce(new Error('transport rejected'));
+
+    await expect(
+      rpc(controller, {
+        id: 'extension-response-2',
+        type: 'extension_ui_response',
+        cancelled: true,
+      }),
+    ).rejects.toThrow('transport rejected');
+
+    const end = endSpyFor('runtime-1', 1, 'extension-response-2');
+    expect(end).toHaveBeenCalledTimes(1);
+    expect(end).toHaveBeenCalledWith('error');
+    expect(pendingRpcCount()).toBe(pendingBefore);
+  });
+
   it('links response-driven state transitions to the matching RPC span', async () => {
     const telemetry = await import('../telemetry');
     const { rpc, handleResponse } = await import('./runtime');
