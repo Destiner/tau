@@ -27,16 +27,15 @@ withDefaults(
 <style scoped>
 /*
  * It sits on the text baseline rather than in the middle of the row: a flex
- * item with no content takes its bottom edge as its baseline, so in a
- * baseline-aligned row the dot rests on the label's baseline, and the -1px
- * sinks it the hair that makes it read as centred against lowercase letters.
+ * item with no content takes its bottom edge as its baseline. At 6px, ending
+ * on that baseline optically centres the mark against the lowercase title.
  */
 .ui-status-dot {
   flex: none;
   align-self: baseline;
-  width: 7px;
-  height: 7px;
-  margin-bottom: -1px;
+  width: 6px;
+  height: 6px;
+  margin-bottom: 0;
   border-radius: 50%;
   opacity: 0;
 }
