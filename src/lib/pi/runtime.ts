@@ -3400,6 +3400,7 @@ async function stopControllerProcess(
 ): Promise<void> {
   if (!controller.generation && !controller.starting) return;
   const generation = controller.generation;
+  const stoppedSessionId = controller.sessionId;
   try {
     await invokeTraced(
       'stop_pi',
@@ -3411,6 +3412,11 @@ async function stopControllerProcess(
     return;
   }
   if (controller.generation !== generation) return;
+  // Pi replaces a session on a live runtime without starting a new process, so
+  // the generation check above cannot see it. A stop authorised while the
+  // predecessor sat idle must not be read as permission to drop the successor
+  // that landed while it was in flight.
+  const replacedDuringStop = controller.sessionId !== stoppedSessionId;
   clearSessionReplacementWatch(controller);
   clearMaterializationVerificationWatch(controller);
   clearAbortWatch(controller);
@@ -3443,11 +3449,11 @@ async function stopControllerProcess(
   controller.remoteConnectionTimedOut = false;
   clearSettingRequestWatch(controller);
 
-  if (discardReleasedEmptySession(controller)) return;
+  if (!replacedDuringStop && discardReleasedEmptySession(controller)) return;
 
   if (
-    restartSelected &&
-    isControllerSelected(controller) &&
+    (replacedDuringStop ||
+      (restartSelected && isControllerSelected(controller))) &&
     !controller.disposed &&
     !controller.phantom
   ) {

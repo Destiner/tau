@@ -409,6 +409,34 @@ describe('command-created session durability', () => {
     },
   );
 
+  it('keeps a session Pi swapped in while the stop was in flight', async () => {
+    const telemetry = await import('../telemetry');
+    const { stopControllerProcess } = await import('./runtime');
+    const controller = makeController({
+      sessionId: 'predecessor-session',
+      sessionPath: '/tmp/project/predecessor.jsonl',
+      sessionName: 'Predecessor',
+    });
+    addEphemeral(controller);
+
+    vi.mocked(telemetry.invokeTraced).mockImplementation(async (command) => {
+      // Pi replaces the session on the live runtime, keeping the generation,
+      // while the stop this controller authorised is still awaited.
+      if (command === 'stop_pi') {
+        controller.sessionId = 'successor-session';
+        controller.sessionPath = '/tmp/project/successor.jsonl';
+      }
+      return undefined as never;
+    });
+
+    await stopControllerProcess(controller);
+
+    expect(state.ephemeralSessions).toHaveLength(1);
+    expect(state.controllers).toHaveLength(1);
+    expect(state.controllers[0]?.sessionId).toBe('successor-session');
+    expect(state.controllers[0]?.starting).toBe(true);
+  });
+
   it.each([
     ['local', undefined],
     ['remote', 'ssh://fixture'],
