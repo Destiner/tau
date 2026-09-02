@@ -27,15 +27,22 @@ withDefaults(
 <style scoped>
 /*
  * It sits on the text baseline rather than in the middle of the row: a flex
- * item with no content takes its bottom edge as its baseline. At 6px, ending
- * on that baseline optically centres the mark against the lowercase title.
+ * item with no content takes its border box's bottom edge as its baseline. A
+ * mark resting exactly there reads a hair low against lowercase titles, so it
+ * lifts three quarters of a pixel off the baseline onto their optical centre.
+ *
+ * The lift has to be a transform. Margin cannot move the mark at all, because
+ * the synthesized baseline comes from the border box and ignores it, and a
+ * relative offset rounds the sub-pixel away: up to a whole pixel in Chromium,
+ * down to nothing in WebKit at 1x. Rows that center the mark instead of
+ * aligning it to a baseline override --status-dot-nudge; positive moves down.
  */
 .ui-status-dot {
   flex: none;
   align-self: baseline;
   width: 6px;
   height: 6px;
-  margin-bottom: 0;
+  transform: translateY(var(--status-dot-nudge, -0.75px));
   border-radius: 50%;
   opacity: 0;
 }

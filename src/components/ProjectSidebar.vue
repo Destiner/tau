@@ -715,11 +715,13 @@ defineExpose({
 }
 
 /* Nudged down with the chevron so both sit on the label's optical center. The
- * indicator otherwise sits on a text baseline, which this row does not use. */
+ * indicator otherwise sits on a text baseline, which this row does not use, so
+ * it overrides the baseline lift rather than adding a transform of its own. */
 .project-status {
   align-self: center;
   margin-right: 4px;
-  transform: translateY(1px);
+
+  --status-dot-nudge: 1px;
 }
 
 .project-toggle span {

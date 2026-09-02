@@ -28,7 +28,13 @@ test('wraps an unbroken link without widening the composer', async ({
     'rgb(110, 117, 127)',
   );
   await expect(draftIndicator).toHaveCSS('opacity', '0.3');
-  await expect(draftIndicator).toHaveCSS('margin-bottom', '0px');
+  // Lifted three quarters of a pixel off the title's baseline, and by a
+  // transform: margin cannot move a baseline-aligned empty flex item, and a
+  // relative offset rounds the sub-pixel away differently per engine.
+  await expect(draftIndicator).toHaveCSS(
+    'transform',
+    'matrix(1, 0, 0, 1, 0, -0.75)',
+  );
 
   await expect
     .poll(() =>
