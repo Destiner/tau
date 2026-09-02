@@ -1122,7 +1122,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     clearSettingRequestWatch(controller);
     controller.generation = 0;
     controller.status = message;
-    discardReleasedEmptySession(controller);
+    await discardReleasedEmptySession(controller);
   }
 }
 
@@ -2824,17 +2824,22 @@ async function registerConnectedSession(
   // already listed: adopting a session means its row must exist and be
   // reachable, even when Tau had archived it before Pi handed it back.
   adopted = false,
+  // Set when the caller holds no materialization proof and is using the
+  // registration itself as the probe. Pi's snapshot lists the session only
+  // when a session file backs it, so the answer comes back either way.
+  probeMaterialization = false,
 ): Promise<void> {
-  if (!canRegisterConnectedSession(controller)) return;
+  if (!probeMaterialization && !canRegisterConnectedSession(controller)) return;
   const identity = captureConnectedSessionIdentity(controller);
-  if (!connectedSessionIdentityMatches(controller, identity)) return;
+  const identityHolds = (): boolean =>
+    probeMaterialization
+      ? !controller.phantom && controllerIdentityMatches(controller, identity)
+      : connectedSessionIdentityMatches(controller, identity);
+  if (!identityHolds()) return;
   const mutation = beginRegistrationMutation(identity);
   try {
     const workspace = await registerSession(identity, adopted, parentContext);
-    if (
-      !connectedSessionIdentityMatches(controller, identity) ||
-      !registrationMutationIsCurrent(mutation)
-    ) {
+    if (!identityHolds() || !registrationMutationIsCurrent(mutation)) {
       return;
     }
     state.workspace = workspace;
@@ -2850,10 +2855,7 @@ async function registerConnectedSession(
       mutation,
       parentContext,
     );
-    if (
-      !connectedSessionIdentityMatches(controller, identity) ||
-      !registrationMutationIsCurrent(mutation)
-    ) {
+    if (!identityHolds() || !registrationMutationIsCurrent(mutation)) {
       return;
     }
     state.workspace = selectedWorkspace;
@@ -3362,7 +3364,17 @@ function canReleaseRuntime(controller: SessionController): boolean {
   );
 }
 
-function discardReleasedEmptySession(controller: SessionController): boolean {
+function sessionHasPiActivity(controller: SessionController): boolean {
+  return (
+    controller.hasPiTranscript ||
+    controller.lastUserMessageAt > 0 ||
+    hasMeaningfulAssistantActivity(controller)
+  );
+}
+
+async function discardReleasedEmptySession(
+  controller: SessionController,
+): Promise<boolean> {
   const ephemeral = ephemeralSessionByController(controller.key);
   if (
     !ephemeral ||
@@ -3373,7 +3385,24 @@ function discardReleasedEmptySession(controller: SessionController): boolean {
   ) {
     return false;
   }
-  removeEphemeralSession(ephemeral, true);
+  // Tau losing its runtime before it could verify materialization is not
+  // evidence that Pi has no file for this session: a run that streamed for an
+  // hour without settling never verifies. Register to find out, because the
+  // snapshot that comes back lists the session only when a file backs it, so a
+  // real session is adopted here and an unwritten one still falls through.
+  if (
+    controller.sessionId &&
+    controller.sessionPath &&
+    sessionHasPiActivity(controller)
+  ) {
+    await registerConnectedSession(controller, undefined, true, true);
+    if (controller.disposed || workspaceContainsSession(controller)) {
+      return false;
+    }
+  }
+  const released = ephemeralSessionByController(controller.key);
+  if (!released) return false;
+  removeEphemeralSession(released, true);
   return true;
 }
 
@@ -3449,7 +3478,9 @@ async function stopControllerProcess(
   controller.remoteConnectionTimedOut = false;
   clearSettingRequestWatch(controller);
 
-  if (!replacedDuringStop && discardReleasedEmptySession(controller)) return;
+  if (!replacedDuringStop && (await discardReleasedEmptySession(controller))) {
+    return;
+  }
 
   if (
     (replacedDuringStop ||

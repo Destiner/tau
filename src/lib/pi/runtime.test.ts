@@ -409,6 +409,59 @@ describe('command-created session durability', () => {
     },
   );
 
+  it.each([
+    ['local', undefined],
+    ['remote', 'ssh://fixture'],
+  ])(
+    'adopts an unverified %s session Pi did write when the process is lost',
+    async (_kind, connectionString) => {
+      const telemetry = await import('../telemetry');
+      const { handleBridgeEvent, handleRpc } = await import('./runtime');
+      const controller = makeController({
+        sessionId: 'materialized-session',
+        sessionPath: '/tmp/project/materialized.jsonl',
+        sessionName: 'Materialized',
+        streaming: true,
+        working: true,
+      });
+      addEphemeral(controller, connectionString);
+      // A run this long never settles, so Tau holds no materialization proof.
+      // Pi's file exists, so the probe's snapshot lists the session.
+      const adopted = registeredWorkspace(controller, 'Materialized');
+      vi.mocked(telemetry.invokeTraced).mockImplementation(async (command) =>
+        command === 'register_session' ? adopted : state.workspace,
+      );
+
+      await handleRpc(controller, {
+        type: 'message_start',
+        message: { role: 'assistant', content: [] },
+      });
+      await handleRpc(controller, {
+        type: 'message_update',
+        assistantMessageEvent: { type: 'text_delta', delta: 'Partial' },
+      });
+      await handleBridgeEvent({
+        runtimeId: controller.runtimeId,
+        generation: controller.generation,
+        kind: 'exited',
+        code: 1,
+      } satisfies PiBridgeEvent);
+
+      expect(telemetry.invokeTraced).toHaveBeenCalledWith(
+        'register_session',
+        expect.objectContaining({
+          sessionId: 'materialized-session',
+          adopted: true,
+        }),
+        undefined,
+      );
+      expect(state.workspace).toEqual(adopted);
+      expect(state.ephemeralSessions).toEqual([]);
+      expect(state.controllers).toHaveLength(1);
+      expect(state.controllers[0]?.sessionId).toBe('materialized-session');
+    },
+  );
+
   it('keeps a session Pi swapped in while the stop was in flight', async () => {
     const telemetry = await import('../telemetry');
     const { stopControllerProcess } = await import('./runtime');
@@ -441,7 +494,7 @@ describe('command-created session durability', () => {
     ['local', undefined],
     ['remote', 'ssh://fixture'],
   ])(
-    'does not register a partial assistant stream after %s process loss',
+    'discards a partial assistant stream Pi never wrote after %s process loss',
     async (_kind, connectionString) => {
       const telemetry = await import('../telemetry');
       const { handleBridgeEvent, handleRpc } = await import('./runtime');
@@ -453,6 +506,9 @@ describe('command-created session durability', () => {
         working: true,
       });
       addEphemeral(controller, connectionString);
+      // Pi wrote no session file, so the snapshot the probe gets back lists
+      // nothing and the row stays disposable.
+      vi.mocked(telemetry.invokeTraced).mockResolvedValue(state.workspace!);
 
       await handleRpc(controller, {
         type: 'message_start',
@@ -469,11 +525,6 @@ describe('command-created session durability', () => {
         code: 1,
       } satisfies PiBridgeEvent);
 
-      expect(telemetry.invokeTraced).not.toHaveBeenCalledWith(
-        'register_session',
-        expect.anything(),
-        expect.anything(),
-      );
       expect(state.ephemeralSessions).toEqual([]);
       expect(state.controllers).toEqual([]);
     },
