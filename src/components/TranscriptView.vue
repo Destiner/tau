@@ -436,9 +436,16 @@ function handleScroll(): void {
 function requestEarlierHistory(index: number, element: HTMLElement): void {
   const messageId = messageAt(index)?.id;
   if (!messageId) return;
+  /*
+   * Measured from the row rather than the divider inside it, because that is
+   * the box the anchor is restored against. The row contains the divider's
+   * vertical margins, so the two do not share a top edge, and mixing them
+   * moves the divider by one margin on every load.
+   */
+  const row = element.closest<HTMLElement>('[data-message-id]') ?? element;
   pendingHistoryAnchor = {
     messageId,
-    viewportTop: element.getBoundingClientRect().top,
+    viewportTop: row.getBoundingClientRect().top,
   };
   following = false;
   emit('load-history');
