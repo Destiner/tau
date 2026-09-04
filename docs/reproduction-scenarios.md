@@ -22,7 +22,7 @@ The stale-generation scenario starts in the saved `Main` session. Submit exactly
 
 The `saved-session-command-replacement` scenario makes `/mock 42` available in the real composer. Submitting it pauses after Tau sends its immediate command identity probe. Release `before-command-replacement-identity` to return the replacement identity and an empty initial hydration. Pi then emits its real turn sequence and pauses at `before-replacement-assistant`: the extension-injected `Run phase 42` user row must already be visible and remain stable across session switching. Release that gate to stream assistant/tool activity and settle into exactly one hydrated user row plus the assistant reply. `42 • plan` becomes registered and selected after settlement; the command itself does not enter the transcript.
 
-The `phantom-command-registration` scenario starts from the visible `New Session` action. Submit `/mcp`, then release `before-streaming-command-sync`. The command-created `MCP workflow` session stays ephemeral through the identity response and pauses at `before-assistant-settlement` with visible partial output but no archive action. Release that gate to settle and hydrate the completed assistant message, which makes the session durable. The command itself never appears as a transcript message.
+The `phantom-command-registration` scenario starts from the visible `New Session` action. Submit `/mcp`, then release `before-streaming-command-sync`. The command-created `MCP workflow` session stays ephemeral through the identity response and pauses at `before-assistant-settlement` with visible partial output. Release that gate to emit assistant `message_end`; Tau waits for the following Pi RPC barrier, registers the session, starts a long tool, and pauses at `after-message-end-registration`. The session is durable there but still has no archive action because the agent is working. Release the final gate to settle, after which archive becomes available. The command itself never appears as a transcript message.
 
 The `plan-implement-replacement` scenario submits `/mock-workflow`, completes `docs · RHI-6267 · Plan`, then holds Plan's settlement hydration until the delayed replacement probe is also outstanding. The hydration still lacks Plan's streamed assistant while the probe reports `docs · RHI-6267 · Implement`. At `implement-active`, Implement is current and selected while Plan is already listed above the older sessions. Release the gate, switch through `Backup`, and reopen Plan to verify its durable transcript before returning to the still-live Implement phase.
 
@@ -49,6 +49,8 @@ const repro = window.__TAU_PI_SCENARIO__;
 repro.scenario(); // stable metadata for the selected scenario
 repro.gates(); // gate names and reached/released state
 repro.timeline(); // ordered requests, outputs, and gate transitions
+repro.nativeInvocationCount('register_session'); // current mocked native count
+repro.hasRegisteredSession('session-id'); // whether registry adoption occurred
 await repro.waitForGate('before-stale-generation-output');
 await repro.releaseGate('before-stale-generation-output');
 repro.verify(); // completion result plus the current timeline

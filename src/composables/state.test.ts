@@ -9,7 +9,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { SessionController } from './state';
+import type {
+  ProjectSummary,
+  SessionController,
+  SessionSummary,
+} from './state';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async () => ({ accepted: 1, rejected: 0 })),
@@ -45,6 +49,7 @@ function testController(
     lastUserMessageAt: 0,
     hasPiTranscript: false,
     materializationVerified: false,
+    materializationBarrierRequestId: '',
     postSettlementHydration: false,
     settledAssistantActivity: false,
     materializationStateRequestId: '',
@@ -163,6 +168,76 @@ describe('classifyControllerLifecycle', () => {
         }),
       ),
     ).toBe('connecting');
+  });
+});
+
+describe('canArchiveSession', () => {
+  const session: SessionSummary = {
+    id: 'session-1',
+    path: '/tmp/project/session.jsonl',
+    title: 'Session',
+    lastActive: 'now',
+    lastUserMessageAt: 0,
+    sortAt: 1,
+    archived: false,
+    selected: true,
+  };
+  const project: ProjectSummary = {
+    path: '/tmp/project',
+    name: 'Project',
+    workingDirectory: '/tmp/project',
+    collapsed: false,
+    selected: true,
+    sessions: [session],
+  };
+
+  it('allows registered sessions only when their controller is idle or ready', async () => {
+    const { canArchiveSession, state } = await import('./state');
+    state.ephemeralSessions.splice(0);
+    state.removingProjectPaths.splice(0);
+    state.controllers.splice(0, state.controllers.length, testController());
+    expect(canArchiveSession(project, session)).toBe(true);
+
+    state.controllers[0]!.ready = true;
+    expect(canArchiveSession(project, session)).toBe(true);
+  });
+
+  it.each([
+    ['connecting', { connectingRemote: true }],
+    ['starting', { starting: true }],
+    ['stopping', { stopping: true }],
+    ['syncing', { syncing: true }],
+    ['working', { working: true }],
+    ['streaming', { streaming: true }],
+  ] as const)('rejects a registered %s controller', async (_name, flags) => {
+    const { canArchiveSession, state } = await import('./state');
+    state.ephemeralSessions.splice(0);
+    state.removingProjectPaths.splice(0);
+    state.controllers.splice(
+      0,
+      state.controllers.length,
+      testController({ ready: true, ...flags }),
+    );
+
+    expect(canArchiveSession(project, session)).toBe(false);
+  });
+
+  it('continues rejecting ephemeral sessions and project-action lockout', async () => {
+    const { canArchiveSession, state } = await import('./state');
+    state.controllers.splice(0);
+    state.removingProjectPaths.splice(0);
+    state.ephemeralSessions.splice(0, state.ephemeralSessions.length, {
+      ...session,
+      projectPath: project.path,
+      controllerKey: 'controller-1',
+      createdAt: 1,
+      phantom: false,
+    });
+    expect(canArchiveSession(project, session)).toBe(false);
+
+    state.ephemeralSessions.splice(0);
+    state.removingProjectPaths.push('/tmp/removing');
+    expect(canArchiveSession(project, session)).toBe(false);
   });
 });
 

@@ -584,7 +584,7 @@ describe('session drafts and selection', () => {
     });
   });
 
-  it('archives a session without stopping its running controller', async () => {
+  it('does not archive a session while its controller is streaming', async () => {
     const firstSession = savedSession('first', 2_000);
     const secondSession = savedSession('second', 1_000);
     const project: ProjectSummary = {
@@ -623,15 +623,6 @@ describe('session drafts and selection', () => {
     firstController.streaming = true;
     firstController.working = true;
 
-    const archivedProject: ProjectSummary = {
-      ...project,
-      sessions: [
-        { ...firstSession, archived: true, selected: false },
-        secondSession,
-      ],
-    };
-    mocks.workspace = { ...workspace, projects: [archivedProject] };
-
     await archiveSession(project, firstSession);
 
     expect(
@@ -645,12 +636,9 @@ describe('session drafts and selection', () => {
             (args as { projectPath?: string; sessionId?: string })
               ?.sessionId === firstSession.id,
         ),
-    ).toBe(true);
-    expect(projectSessions(archivedProject)).toEqual([secondSession]);
-    expect(
-      archivedProject.sessions.filter((session) => session.archived),
-    ).toEqual([{ ...firstSession, archived: true, selected: false }]);
-    expect(state.activeSessionId).toBe(secondSession.id);
+    ).toBe(false);
+    expect(projectSessions(project)).toEqual([firstSession, secondSession]);
+    expect(state.activeSessionId).toBe(firstSession.id);
     expect(firstController.streaming).toBe(true);
     expect(
       vi
@@ -3576,6 +3564,13 @@ describe('archive failure locality', () => {
     });
 
     try {
+      firstController.starting = false;
+      firstController.stopping = false;
+      firstController.syncing = false;
+      firstController.streaming = false;
+      firstController.working = false;
+      firstController.connectingRemote = false;
+      firstController.ready = true;
       const archive = tau.archiveSession(project, firstSession);
       await vi.waitFor(() => expect(rejectArchive).toBeDefined());
       await tau.selectSession(project, secondSession);
@@ -4012,10 +4007,13 @@ async function settleAndHydrateCompleted(
   });
   emitRpc(controller, { type: 'agent_settled' });
   await vi.waitFor(() => {
-    expect(sentRequests(controller, 'get_state')).toHaveLength(stateCount + 1);
+    expect(controller.materializationStateRequestId).not.toBe('');
+    expect(sentRequests(controller, 'get_state').length).toBeGreaterThanOrEqual(
+      stateCount + 2,
+    );
   });
   emitRpc(controller, {
-    id: sentRequests(controller, 'get_state')[stateCount]?.id,
+    id: controller.materializationStateRequestId,
     type: 'response',
     command: 'get_state',
     success: true,

@@ -14,7 +14,7 @@ import {
   findPiScenario,
   piScenarioCatalogue,
 } from '../../tests/support/pi-scenario/catalogue';
-import type { WorkspaceSnapshot } from '../composables/state';
+import { state, type WorkspaceSnapshot } from '../composables/state';
 import type { PiBridgeEvent } from '../lib/pi/bridge';
 
 interface ScenarioVerification {
@@ -27,6 +27,8 @@ interface BrowserPiScenarioApi {
   scenario(): PiScenarioMetadata;
   verify(): ScenarioVerification;
   timeline(): readonly PiScenarioTimelineEntry[];
+  nativeInvocationCount(command: string): number;
+  hasRegisteredSession(sessionId: string): boolean;
   gates(): readonly PiScenarioGateState[];
   waitForGate(name: string): Promise<void>;
   releaseGate(name: string): Promise<void>;
@@ -181,9 +183,9 @@ const REQUIRED_NATIVE_COUNTS = {
   'phantom-command-registration': {
     load_workspace: 1,
     read_model_scope: 2,
-    register_session: 2,
+    register_session: 3,
     set_active_project: 1,
-    set_active_session: 2,
+    set_active_session: 3,
   },
   'phantom-command-only': {
     load_workspace: 1,
@@ -293,6 +295,7 @@ function installPiScenarioAdapter(scenarioName: string): void {
 
   const engine = new PiScenarioEngine(scenario);
   const nativeCounts = new Map<string, number>();
+  const registeredSessionIds = new Set<string>();
   let workspace = scenarioWorkspace(scenarioName);
   const boundRuntimeIds = new Set<string>();
   const startCounts = new Map<string, number>();
@@ -380,12 +383,23 @@ function installPiScenarioAdapter(scenarioName: string): void {
       }
       if (command === 'register_session') {
         const invocation = count(command);
-        const expected = expectedNativeSession(
-          scenarioName,
-          command,
-          invocation,
-        );
-        registerSessionArgs(args, expected);
+        const expected =
+          scenarioName === 'phantom-command-registration'
+            ? ((): NativeSessionIdentity => {
+                const session =
+                  [MAIN_SESSION, COMMAND_SESSION].find(
+                    (candidate) => candidate.id === args.sessionId,
+                  ) ?? MAIN_SESSION;
+                return {
+                  ...session,
+                  adopted:
+                    session.id === COMMAND_SESSION.id &&
+                    !registeredSessionIds.has(session.id),
+                };
+              })()
+            : expectedNativeSession(scenarioName, command, invocation);
+        const value = registerSessionArgs(args, expected);
+        registeredSessionIds.add(value.sessionId);
         if (expected.id === REPLACEMENT_SESSION.id) {
           workspace = replacementWorkspace();
         } else if (expected.id === PLAN_SESSION.id) {
@@ -408,7 +422,12 @@ function installPiScenarioAdapter(scenarioName: string): void {
       if (command === 'set_active_session') {
         const invocation = count(command);
         let expected: NativeSessionIdentity;
-        if (
+        if (scenarioName === 'phantom-command-registration') {
+          expected =
+            [MAIN_SESSION, COMMAND_SESSION].find(
+              (session) => session.id === args.sessionId,
+            ) ?? MAIN_SESSION;
+        } else if (
           scenarioName === 'saved-session-command-replacement' ||
           scenarioName === 'plan-implement-replacement'
         ) {
@@ -500,6 +519,14 @@ function installPiScenarioAdapter(scenarioName: string): void {
     scenario: (): PiScenarioMetadata => structuredClone(scenario.metadata),
     verify: verification,
     timeline: (): readonly PiScenarioTimelineEntry[] => engine.timeline(),
+    nativeInvocationCount: (command: string): number =>
+      nativeCounts.get(command) ?? 0,
+    hasRegisteredSession: (sessionId: string): boolean =>
+      Boolean(
+        state.workspace?.projects.some((project) =>
+          project.sessions.some((session) => session.id === sessionId),
+        ),
+      ) && !state.ephemeralSessions.some((session) => session.id === sessionId),
     gates: (): readonly PiScenarioGateState[] => engine.gates(),
     waitForGate: async (name: string): Promise<void> => {
       try {
@@ -661,9 +688,6 @@ function expectedNativeSession(
     const expected = sequence[invocation - 1];
     if (!expected) throw new Error(`${command} ran too many times.`);
     return expected;
-  }
-  if (scenarioName === 'phantom-command-registration' && invocation === 2) {
-    return COMMAND_SESSION;
   }
   if (scenarioName === 'saved-session-prompt-process-exit') {
     const sequence =

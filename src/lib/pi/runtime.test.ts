@@ -98,6 +98,7 @@ function makeController(
     lastUserMessageAt: 0,
     hasPiTranscript: false,
     materializationVerified: false,
+    materializationBarrierRequestId: '',
     postSettlementHydration: false,
     settledAssistantActivity: false,
     materializationStateRequestId: '',
@@ -534,7 +535,245 @@ describe('command-created session durability', () => {
     ['local', undefined],
     ['remote', 'ssh://fixture'],
   ])(
-    'promotes a completed %s assistant only after settled hydration',
+    'promotes a completed %s assistant after its message_end barrier while the run continues',
+    async (_kind, connectionString) => {
+      const telemetry = await import('../telemetry');
+      const { handleResponse, handleRpc } = await import('./runtime');
+      const controller = makeController({
+        sessionId: 'completed-session',
+        sessionPath: '/tmp/project/completed.jsonl',
+        sessionName: 'Completed work',
+        streaming: true,
+        working: true,
+      });
+      addEphemeral(controller, connectionString);
+      const workspace = registeredWorkspace(controller, 'Completed work');
+      let releaseRegistration: (() => void) | undefined;
+      const registrationHeld = new Promise<void>((resolve) => {
+        releaseRegistration = resolve;
+      });
+      vi.mocked(telemetry.invokeTraced).mockImplementation(async () => {
+        await registrationHeld;
+        return workspace;
+      });
+
+      await handleRpc(controller, {
+        type: 'message_start',
+        message: { role: 'assistant', content: [] },
+      });
+      await handleRpc(controller, {
+        type: 'message_update',
+        assistantMessageEvent: {
+          type: 'text_delta',
+          delta: 'First finalized reply',
+        },
+      });
+      expect(controller.materializationBarrierRequestId).toBe('');
+      expect(telemetry.invokeTraced).not.toHaveBeenCalled();
+
+      await handleRpc(controller, {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'First finalized reply' }],
+        },
+      });
+      const barrierRequestId = controller.materializationBarrierRequestId;
+      expect(barrierRequestId).toMatch(/^tau-materialization-barrier-/);
+
+      const promotion = handleResponse(controller, {
+        id: barrierRequestId,
+        command: 'get_state',
+        success: true,
+        data: {
+          sessionId: controller.sessionId,
+          sessionFile: controller.sessionPath,
+          sessionName: controller.sessionName,
+          isStreaming: true,
+        },
+      });
+      await vi.waitFor(() => {
+        expect(telemetry.invokeTraced).toHaveBeenCalled();
+      });
+      expect(controller.materializationBarrierRequestId).toBe(barrierRequestId);
+      releaseRegistration?.();
+      await promotion;
+
+      expect(telemetry.invokeTraced).toHaveBeenCalledWith(
+        'register_session',
+        expect.objectContaining({
+          sessionId: controller.sessionId,
+          adopted: true,
+        }),
+        undefined,
+      );
+      expect(controller.materializationVerified).toBe(true);
+      expect(controller.streaming).toBe(true);
+      expect(controller.working).toBe(true);
+      expect(state.ephemeralSessions).toEqual([]);
+      expect(
+        mockInvoke.mock.calls.some(
+          ([, args]) =>
+            (args as { request?: { type?: string } })?.request?.type ===
+            'get_messages',
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it('does not promote when the message_end barrier no longer owns the exact identity', async () => {
+    const telemetry = await import('../telemetry');
+    const { handleResponse, handleRpc } = await import('./runtime');
+    const controller = makeController({
+      sessionId: 'completed-session',
+      sessionPath: '/tmp/project/completed.jsonl',
+      streaming: true,
+      working: true,
+    });
+    addEphemeral(controller);
+
+    await handleRpc(controller, {
+      type: 'message_end',
+      message: { role: 'assistant', content: [] },
+    });
+    const barrierRequestId = controller.materializationBarrierRequestId;
+    controller.sessionId = 'replacement-session';
+    controller.sessionPath = '/tmp/project/replacement.jsonl';
+
+    await handleResponse(controller, {
+      id: barrierRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'completed-session',
+        sessionFile: '/tmp/project/completed.jsonl',
+        isStreaming: true,
+      },
+    });
+
+    expect(telemetry.invokeTraced).not.toHaveBeenCalled();
+    expect(controller.materializationVerified).toBe(false);
+    expect(state.ephemeralSessions).toHaveLength(1);
+  });
+
+  it('registers the completed predecessor when its message_end barrier discovers a replacement', async () => {
+    const telemetry = await import('../telemetry');
+    const { handleResponse, handleRpc } = await import('./runtime');
+    const controller = makeController({
+      sessionId: 'completed-session',
+      sessionPath: '/tmp/project/completed.jsonl',
+      sessionName: 'Completed work',
+      streaming: true,
+      working: true,
+    });
+    addEphemeral(controller);
+    vi.mocked(telemetry.invokeTraced).mockResolvedValue(
+      registeredWorkspace(controller, 'Completed work'),
+    );
+
+    await handleRpc(controller, {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'First finalized reply' }],
+      },
+    });
+    const barrierRequestId = controller.materializationBarrierRequestId;
+
+    await handleResponse(controller, {
+      id: barrierRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'replacement-session',
+        sessionFile: '/tmp/project/replacement.jsonl',
+        sessionName: 'Replacement',
+        isStreaming: true,
+      },
+    });
+
+    expect(telemetry.invokeTraced).toHaveBeenCalledWith(
+      'register_session',
+      expect.objectContaining({
+        sessionId: 'completed-session',
+        sessionPath: '/tmp/project/completed.jsonl',
+        adopted: true,
+      }),
+      undefined,
+    );
+    expect(
+      state.workspace?.projects[0]?.sessions.some(
+        (session) => session.id === 'completed-session',
+      ),
+    ).toBe(true);
+    expect(controller.sessionId).toBe('replacement-session');
+    expect(controller.materializationVerified).toBe(false);
+    expect(state.ephemeralSessions).toEqual([
+      expect.objectContaining({ id: 'replacement-session' }),
+    ]);
+  });
+
+  it('keeps a completed predecessor proof when its successor starts before the barrier responds', async () => {
+    const telemetry = await import('../telemetry');
+    const { handleResponse, handleRpc } = await import('./runtime');
+    const controller = makeController({
+      sessionId: 'completed-session',
+      sessionPath: '/tmp/project/completed.jsonl',
+      sessionName: 'Completed work',
+      streaming: true,
+      working: true,
+    });
+    addEphemeral(controller);
+    vi.mocked(telemetry.invokeTraced).mockResolvedValue(
+      registeredWorkspace(controller, 'Completed work'),
+    );
+
+    await handleRpc(controller, {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'First finalized reply' }],
+      },
+    });
+    const barrierRequestId = controller.materializationBarrierRequestId;
+
+    await handleRpc(controller, { type: 'agent_start' });
+    expect(controller.materializationBarrierRequestId).toBe(barrierRequestId);
+    const successorStateRequestId = controller.runStateRequestId;
+
+    await handleResponse(controller, {
+      id: successorStateRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'replacement-session',
+        sessionFile: '/tmp/project/replacement.jsonl',
+        sessionName: 'Replacement',
+        isStreaming: true,
+      },
+    });
+
+    expect(telemetry.invokeTraced).toHaveBeenCalledWith(
+      'register_session',
+      expect.objectContaining({
+        sessionId: 'completed-session',
+        sessionPath: '/tmp/project/completed.jsonl',
+        adopted: true,
+      }),
+      undefined,
+    );
+    expect(controller.sessionId).toBe('replacement-session');
+    expect(controller.materializationBarrierRequestId).toBe('');
+    expect(state.ephemeralSessions).toEqual([
+      expect.objectContaining({ id: 'replacement-session' }),
+    ]);
+  });
+
+  it.each([
+    ['local', undefined],
+    ['remote', 'ssh://fixture'],
+  ])(
+    'still promotes a completed %s assistant from settled hydration when its barrier was missed',
     async (_kind, connectionString) => {
       const telemetry = await import('../telemetry');
       const { handleResponse, handleRpc } = await import('./runtime');

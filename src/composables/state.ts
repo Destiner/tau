@@ -172,8 +172,10 @@ interface SessionController {
   lastUserMessageAt: number;
   /** Pi has reported visible user or assistant transcript activity. */
   hasPiTranscript: boolean;
-  /** A post-settlement hydration confirmed a completed assistant message. */
+  /** A post-message_end RPC barrier or settled hydration proved persistence. */
   materializationVerified: boolean;
+  /** Correlates the ordering barrier sent after the first assistant message_end. */
+  materializationBarrierRequestId: string;
   /** The current run settled, so its following hydrations may verify storage. */
   postSettlementHydration: boolean;
   /** The settled UI transcript had meaningful assistant-side activity. */
@@ -605,10 +607,16 @@ function canArchiveSession(
   project: ProjectSummary,
   session: SessionSummary,
 ): boolean {
-  return (
-    !projectActionsDisabled.value &&
-    ephemeralSession(project.path, session.id) === undefined
-  );
+  if (
+    projectActionsDisabled.value ||
+    ephemeralSession(project.path, session.id) !== undefined
+  ) {
+    return false;
+  }
+  const controller = controllerForSession(project.path, session.id);
+  if (!controller) return true;
+  const lifecycle = classifyControllerLifecycle(controller);
+  return lifecycle === 'idle' || lifecycle === 'ready';
 }
 
 function projectSessions(project: ProjectSummary): SessionSummary[] {
@@ -863,6 +871,7 @@ function createController(
     lastUserMessageAt: session.lastUserMessageAt,
     hasPiTranscript: false,
     materializationVerified: false,
+    materializationBarrierRequestId: '',
     postSettlementHydration: false,
     settledAssistantActivity: false,
     materializationStateRequestId: '',

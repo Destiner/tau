@@ -5,8 +5,9 @@ const command = '/mcp';
 const sessionName = 'MCP workflow';
 const syncGate = 'before-streaming-command-sync';
 const settlementGate = 'before-assistant-settlement';
+const registeredWhileWorkingGate = 'after-message-end-registration';
 
-test('registers a command-created session only after completed work hydrates', async ({
+test('registers a command-created session after assistant message_end while work continues', async ({
   page,
 }) => {
   await page.goto(scenarioUrl);
@@ -53,6 +54,31 @@ test('registers a command-created session only after completed work hydrates', a
     if (!scenario) throw new Error('Expected the browser Pi scenario API.');
     await scenario.releaseGate(gate);
   }, settlementGate);
+  await page.evaluate(async (gate) => {
+    const scenario = window.__TAU_PI_SCENARIO__;
+    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
+    await scenario.waitForGate(gate);
+  }, registeredWhileWorkingGate);
+
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.__TAU_PI_SCENARIO__?.hasRegisteredSession('session-mcp') ??
+          false,
+      ),
+    )
+    .toBe(true);
+  await expect(page.getByRole('button', { name: 'Stop Pi' })).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: `Archive ${sessionName}` }),
+  ).toHaveCount(0);
+
+  await page.evaluate(async (gate) => {
+    const scenario = window.__TAU_PI_SCENARIO__;
+    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
+    await scenario.releaseGate(gate);
+  }, registeredWhileWorkingGate);
 
   const sessionRow = page
     .getByRole('complementary', { name: 'Projects and Sessions' })

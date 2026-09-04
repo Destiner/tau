@@ -23,9 +23,9 @@ const phantomCommandRegistration = definePiScenario({
   metadata: {
     name: 'phantom-command-registration',
     purpose:
-      'Keep a command-created session ephemeral until a completed assistant reply settles and hydrates.',
+      'Register a command-created session after its first assistant message_end barrier while the agent keeps working.',
     qualityRule:
-      'docs/quality.md §5 State correctness: unsaved command sessions become durable only after verified settlement.',
+      'docs/quality.md §5 State correctness: persisted command sessions become durable without ending an in-progress run.',
     schemaVersion: 1,
     origin:
       'Command-created sessions need transcript evidence before registration',
@@ -156,6 +156,44 @@ const phantomCommandRegistration = definePiScenario({
           role: 'assistant',
           content: [{ type: 'text', text: 'Real agent work started.' }],
         },
+      },
+    },
+    {
+      kind: 'request',
+      runtime: 'phantom',
+      capture: 'message-end-barrier',
+      match: { type: 'get_state' },
+    },
+    {
+      kind: 'response',
+      request: 'message-end-barrier',
+      command: 'get_state',
+      data: { ...commandSessionState, isStreaming: true },
+    },
+    {
+      kind: 'event',
+      runtime: 'phantom',
+      event: {
+        type: 'tool_execution_start',
+        toolCallId: 'long-tool',
+        toolName: 'fixture_wait',
+        args: { reason: 'Keep the first run active' },
+      },
+    },
+    {
+      kind: 'gate',
+      name: 'after-message-end-registration',
+      required: true,
+    },
+    {
+      kind: 'event',
+      runtime: 'phantom',
+      event: {
+        type: 'tool_execution_end',
+        toolCallId: 'long-tool',
+        toolName: 'fixture_wait',
+        result: { content: [{ type: 'text', text: 'Finished waiting.' }] },
+        isError: false,
       },
     },
     {

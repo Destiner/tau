@@ -186,6 +186,7 @@ async function startController(
   controller.replacementProbeRequestId = '';
   controller.postSettlementHydration = false;
   controller.settledAssistantActivity = false;
+  controller.materializationBarrierRequestId = '';
   controller.materializationStateRequestId = '';
   controller.materializationMessagesRequestId = '';
   controller.pendingSessionRename = undefined;
@@ -510,6 +511,7 @@ interface RpcDispatchSnapshot {
   generation: number;
   sessionId: string;
   sessionPath: string;
+  materializationBarrierRequestId: string;
   materializationStateRequestId: string;
   materializationMessagesRequestId: string;
   pendingPrompt: SessionController['pendingPrompt'];
@@ -523,6 +525,7 @@ function captureRpcDispatchSnapshot(
     generation: controller.generation,
     sessionId: controller.sessionId,
     sessionPath: controller.sessionPath,
+    materializationBarrierRequestId: controller.materializationBarrierRequestId,
     materializationStateRequestId: controller.materializationStateRequestId,
     materializationMessagesRequestId:
       controller.materializationMessagesRequestId,
@@ -578,6 +581,9 @@ function cleanupRejectedRpcDispatch(
   }
   if (controller.replacementProbeRequestId === requestId) {
     controller.replacementProbeRequestId = '';
+  }
+  if (controller.materializationBarrierRequestId === requestId) {
+    controller.materializationBarrierRequestId = '';
   }
   if (controller.abortProbeRequestId === requestId) {
     controller.abortProbeRequestId = '';
@@ -1144,7 +1150,8 @@ async function handleRpc(
   if (type === 'agent_start') {
     confirmSubmittedPrompt(controller);
     // Pi can announce B's run before its state response reveals that A was
-    // replaced. Keep A's settled evidence until that identity read resolves.
+    // replaced. Keep A's completed-message barrier and settled evidence until
+    // that identity read resolves.
     controller.materializationStateRequestId = '';
     controller.materializationMessagesRequestId = '';
     clearSessionReplacementWatch(controller);
@@ -1247,11 +1254,27 @@ async function handleRpc(
     }
     return;
   }
-  // A turn that failed is settled from Pi's messages soon after, but only once
-  // the run ends, and a retry can hold that off for the length of its backoff.
+  // Pi emits assistant message_end immediately before synchronously appending
+  // that finalized message, which flushes a new persistent session. The next
+  // identity-scoped RPC response is therefore an ordering barrier behind the
+  // append; partial output and command-only runs never cross this boundary.
   if (type === 'message_end') {
     const failure = messageFailure(event.message);
     if (failure) pushError(controller, failure.message, failure.label);
+    const message = asRecord(event.message);
+    const ephemeral = ephemeralSessionByController(controller.key);
+    if (
+      stringValue(message?.role) === 'assistant' &&
+      ephemeral &&
+      !ephemeral.phantom &&
+      !workspaceContainsSession(controller) &&
+      !controller.materializationVerified &&
+      !controller.materializationBarrierRequestId
+    ) {
+      const requestId = nextRequestId('materialization-barrier');
+      controller.materializationBarrierRequestId = requestId;
+      await rpc(controller, { id: requestId, type: 'get_state' });
+    }
     return;
   }
   if (type === 'compaction_start') {
@@ -1516,6 +1539,10 @@ async function handleResponse(
     command === 'get_messages' &&
     Boolean(controller.submittedPrompt?.admissionMessagesRequestId) &&
     controller.submittedPrompt?.admissionMessagesRequestId === responseId;
+  const resolvesMaterializationBarrier =
+    command === 'get_state' &&
+    Boolean(controller.materializationBarrierRequestId) &&
+    controller.materializationBarrierRequestId === responseId;
   const resolvesMaterializationState =
     command === 'get_state' &&
     Boolean(controller.materializationStateRequestId) &&
@@ -1589,6 +1616,7 @@ async function handleResponse(
       resolvesCommandSync ||
       resolvesAbortProbe ||
       resolvesAdmissionState ||
+      resolvesMaterializationBarrier ||
       resolvesMaterializationState ||
       resolvesPendingState ||
       (command === 'get_state' && resolvesPendingSetting);
@@ -1614,6 +1642,9 @@ async function handleResponse(
     controller.status = resolvesHistory
       ? errorCopy.historyLoad
       : rpcFailureCopy(command);
+    if (resolvesMaterializationBarrier) {
+      controller.materializationBarrierRequestId = '';
+    }
     if (resolvesMaterializationState) {
       controller.materializationStateRequestId = '';
       controller.materializationMessagesRequestId = '';
@@ -1797,12 +1828,17 @@ async function handleResponse(
       Boolean(piSessionId && piSessionPath) &&
       (controller.sessionId !== piSessionId ||
         controller.sessionPath !== piSessionPath);
-    // Any state read related to a settled run can first observe B after Pi
+    // A persistence barrier or settled-run read can first observe B after Pi
     // moved on, so preserve completed A before B can rebind its row.
     const outgoingIdentity = sessionChanged
       ? captureConnectedSessionIdentity(controller)
       : undefined;
-    if (outgoingIdentity && shouldRegisterMaterializedPredecessor(controller)) {
+    if (
+      outgoingIdentity &&
+      (resolvesMaterializationBarrier ||
+        Boolean(controller.materializationBarrierRequestId) ||
+        shouldRegisterMaterializedPredecessor(controller))
+    ) {
       const registered = await registerMaterializedPredecessor(
         controller,
         outgoingIdentity,
@@ -1846,6 +1882,7 @@ async function handleResponse(
       controller.hasPiTranscript = false;
       controller.materializationVerified = false;
       controller.settledAssistantActivity = false;
+      controller.materializationBarrierRequestId = '';
       controller.materializationStateRequestId = '';
       controller.materializationMessagesRequestId = '';
       controller.lastUserMessageAt = 0;
@@ -1862,16 +1899,25 @@ async function handleResponse(
       clearSettingRequestWatch(controller);
       syncingAfterSessionChange = true;
     }
+    const materializationBarrierForCurrentSession =
+      resolvesMaterializationBarrier && !sessionChanged && !unsavedSession;
+    if (materializationBarrierForCurrentSession) {
+      clearMaterializationVerificationWatch(controller);
+      controller.materializationVerified = true;
+    }
     setControllerLifecycle(
       controller,
       {
         ready: true,
-        streaming: nowStreaming,
+        streaming: materializationBarrierForCurrentSession
+          ? controller.streaming || nowStreaming
+          : nowStreaming,
         stopping: false,
-        working:
-          nowStreaming ||
-          Boolean(pending) ||
-          Boolean(controller.submittedPrompt?.optimisticId),
+        working: materializationBarrierForCurrentSession
+          ? controller.working || controller.streaming || nowStreaming
+          : nowStreaming ||
+            Boolean(pending) ||
+            Boolean(controller.submittedPrompt?.optimisticId),
         connectingRemote: false,
         ...(syncingAfterSessionChange ? { syncing: true } : {}),
       },
@@ -1899,10 +1945,17 @@ async function handleResponse(
       await registerConnectedSession(
         controller,
         undefined,
-        sessionChanged || Boolean(resolvesPending) || resolvesCommandSync,
+        sessionChanged ||
+          Boolean(resolvesPending) ||
+          resolvesCommandSync ||
+          resolvesMaterializationBarrier,
       );
     }
     if (!controllerIdentityMatches(controller, synchronizedIdentity)) return;
+    if (materializationBarrierForCurrentSession) {
+      controller.materializationBarrierRequestId = '';
+      return;
+    }
 
     if (resolvesPending && pending) {
       controller.bootstrapStateRequestId = '';
@@ -2263,6 +2316,7 @@ async function dispatchPendingPrompt(
   controller.pendingPrompt = undefined;
   controller.postSettlementHydration = false;
   controller.settledAssistantActivity = false;
+  controller.materializationBarrierRequestId = '';
   controller.materializationStateRequestId = '';
   controller.materializationMessagesRequestId = '';
   clearMaterializationVerificationWatch(controller);
@@ -3261,6 +3315,7 @@ async function retireUnsavedSession(
   controller.materializationVerified = false;
   controller.postSettlementHydration = false;
   controller.settledAssistantActivity = false;
+  controller.materializationBarrierRequestId = '';
   controller.materializationStateRequestId = '';
   controller.materializationMessagesRequestId = '';
   controller.messages = [];

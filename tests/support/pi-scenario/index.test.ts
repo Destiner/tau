@@ -213,6 +213,29 @@ describe('PiScenarioEngine', () => {
     expect(takeRequiredOutput(engine)).toMatchObject({
       value: { type: 'message_end' },
     });
+    engine.consumeRequest('runtime-dynamic-82', {
+      id: 'message-end-barrier',
+      type: 'get_state',
+    });
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: {
+        id: 'message-end-barrier',
+        data: { isStreaming: true },
+      },
+    });
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { type: 'tool_execution_start', toolCallId: 'long-tool' },
+    });
+    expect(engine.takeOutput()).toBeUndefined();
+    expect(engine.gates()[2]).toMatchObject({
+      name: 'after-message-end-registration',
+      reached: true,
+      released: false,
+    });
+    engine.releaseGate('after-message-end-registration');
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { type: 'tool_execution_end', toolCallId: 'long-tool' },
+    });
     expect(takeRequiredOutput(engine)).toMatchObject({
       value: { type: 'agent_settled' },
     });
