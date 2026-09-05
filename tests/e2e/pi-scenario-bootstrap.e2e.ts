@@ -34,7 +34,26 @@ test('boots the real app into a deterministic saved session', async ({
   await expect(
     page.getByRole('searchbox', { name: 'Search Models' }),
   ).toHaveCount(0);
-  await expect(page.getByRole('option', { name: 'Off' })).toBeVisible();
+  const currentThinking = page.getByRole('option', { name: 'High' });
+  await expect(currentThinking).toHaveAttribute('data-state', 'checked');
+  expect(
+    await currentThinking.evaluate((element) =>
+      getComputedStyle(element, '::before').getPropertyValue('content'),
+    ),
+  ).toBe('""');
+
+  await page.keyboard.press('ArrowUp');
+  const traversedThinking = page.getByRole('option', { name: 'Off' });
+  await expect(traversedThinking).toHaveAttribute('data-highlighted', '');
+  await expect(traversedThinking).not.toHaveCSS(
+    'background-color',
+    'rgba(0, 0, 0, 0)',
+  );
+  expect(
+    await traversedThinking.evaluate((element) =>
+      getComputedStyle(element, '::before').getPropertyValue('content'),
+    ),
+  ).toBe('none');
   await page.keyboard.press('Escape');
 
   await expect(page.getByLabel('Transcript')).toHaveCount(0);

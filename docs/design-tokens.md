@@ -119,11 +119,16 @@ separate color token.
 
 ## Shared surfaces
 
-Two things the app repeats are in `src/components/ui/surface.css`, global because
-reka portals menus to the body where a scoped attribute never reaches them:
+Shared interaction styling lives in `src/components/ui/surface.css`, global
+because reka portals menus to the body where a scoped attribute never reaches
+them:
 
 - `.ui-surface` / `.ui-menu` / `.ui-menu-item` — the floating surface and its
   row. A menu has one cursor, so hover and keyboard highlight are one rule.
+- `.ui-selector-trigger` / `.ui-selector-value` / `.ui-selector-option` — the
+  common selector language. The value in force has the accent stripe; pointer
+  or keyboard traversal has only the hover wash. Filtering and grouping remain
+  component-specific.
 - `.ui-pick-row` — a row in a list the reader is choosing from. `:hover` says
   the pointer is here; `[data-cursor]` says the keyboard is, and adds a 2px
   accent rail. The two must never look alike, or the keyboard cursor disappears
