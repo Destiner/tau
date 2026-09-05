@@ -2448,6 +2448,32 @@ describe('prompt delivery', () => {
   });
 });
 
+describe('extension failures', () => {
+  it('uses reviewed status copy for extension_error without retaining or recording raw details', async () => {
+    const telemetry = await import('../telemetry');
+    const { handleRpc } = await import('./runtime');
+    const controller = makeController();
+    const rawDetails = Array.from(FORBIDDEN_CONTENT_CANARIES).join(' ');
+
+    await handleRpc(controller, {
+      type: 'extension_error',
+      extensionPath: rawDetails,
+      event: rawDetails,
+      error: rawDetails,
+    });
+
+    expect(controller.status).toBe(
+      'A Pi extension failed. Review the extension setup and try again.',
+    );
+    expect(controller.messages).toEqual([]);
+    expect(JSON.stringify(controller)).not.toContain(rawDetails);
+    expect(telemetry.invokeTraced).not.toHaveBeenCalled();
+    expect(telemetry.startRpcSpan).not.toHaveBeenCalled();
+    expect(telemetry.recordRpcResponseAnomaly).not.toHaveBeenCalled();
+    expect(telemetry.recordStreamAggregate).not.toHaveBeenCalled();
+  });
+});
+
 describe('ordinary user transcript events', () => {
   it('reconciles transformed Pi input into the composer optimistic row', async () => {
     const { handleRpc } = await import('./runtime');

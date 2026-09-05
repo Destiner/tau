@@ -1872,7 +1872,7 @@ describe('extension UI protocol', () => {
       }),
       expect.objectContaining({
         kind: 'notice',
-        text: 'A Pi extension failed. Review the extension setup and try again.',
+        text: 'MCP server failed',
         noticeType: 'error',
       }),
     ]);

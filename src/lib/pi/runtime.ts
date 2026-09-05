@@ -841,8 +841,7 @@ function handleExtensionUIRequest(
     controller.messages.push({
       id,
       kind: 'notice',
-      text:
-        noticeType === 'error' ? errorCopy.extensionFailure : request.message,
+      text: request.message,
       ...anchorFields(controller),
       noticeType,
       ...(origin.workingDirectory ? { basePath: origin.workingDirectory } : {}),
