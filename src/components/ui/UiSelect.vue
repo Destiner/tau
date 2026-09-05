@@ -1,6 +1,7 @@
 <template>
   <SelectRoot
     v-model="modelValue"
+    v-model:open="open"
     :disabled="disabled || undefined"
   >
     <SelectTrigger
@@ -55,6 +56,7 @@ interface UiSelectOption {
 }
 
 const modelValue = defineModel<string>({ default: '' });
+const open = defineModel<boolean>('open', { default: false });
 
 const props = withDefaults(
   defineProps<{

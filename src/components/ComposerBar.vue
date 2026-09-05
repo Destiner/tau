@@ -45,6 +45,7 @@
     </UiContextMenu>
     <div class="composer-toolbar">
       <ModelSelector
+        v-model:open="modelSelectorOpen"
         :model-value="`${currentModelProvider}/${currentModelId}`"
         :models="models"
         :fallback-label="currentModelLabel"
@@ -53,6 +54,7 @@
         @update:model-value="handleModelChange"
       />
       <UiSelect
+        v-model:open="effortSelectorOpen"
         :model-value="currentEffort"
         :options="effortOptions"
         :fallback-label="currentEffortLabel"
@@ -164,6 +166,8 @@ const commandSelectedIndex = ref(0);
 const commandMenuPlacement = ref<CommandMenuPlacement>('above');
 const commandMenuMaxHeight = ref<number>();
 const commandMenuOffset = ref(0);
+const modelSelectorOpen = ref(false);
+const effortSelectorOpen = ref(false);
 
 const commandQuery = computed(() => slashCommandQuery(draft.value));
 const filteredCommands = computed(() =>
@@ -199,6 +203,14 @@ watch([commandQuery, commands], ([query]) => {
   // A dismissed menu stays closed until the composer leaves the command it was
   // opened for, so Escape is not undone by the next keystroke.
   if (query === null) commandMenuDismissed.value = false;
+});
+
+watch(modelSelectorOpen, (open) => {
+  if (open) effortSelectorOpen.value = false;
+});
+
+watch(effortSelectorOpen, (open) => {
+  if (open) modelSelectorOpen.value = false;
 });
 
 watch([commandMenuActive, filteredCommands, status], () => {

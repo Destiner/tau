@@ -20,9 +20,23 @@ test('boots the real app into a deterministic saved session', async ({
   await expect(page.getByRole('combobox', { name: 'Model' })).toHaveText(
     'Alpha',
   );
+  const modelSelector = page.getByRole('combobox', { name: 'Model' });
+  const thinkingSelector = page.getByRole('combobox', {
+    name: 'Thinking Effort',
+  });
+  await expect(thinkingSelector).toHaveText('High');
+
+  await modelSelector.click();
   await expect(
-    page.getByRole('combobox', { name: 'Thinking Effort' }),
-  ).toHaveText('High');
+    page.getByRole('searchbox', { name: 'Search Models' }),
+  ).toBeVisible();
+  await thinkingSelector.click();
+  await expect(
+    page.getByRole('searchbox', { name: 'Search Models' }),
+  ).toHaveCount(0);
+  await expect(page.getByRole('option', { name: 'Off' })).toBeVisible();
+  await page.keyboard.press('Escape');
+
   await expect(page.getByLabel('Transcript')).toHaveCount(0);
   await expect(page.getByText('Loading', { exact: true })).toHaveCount(0);
 
