@@ -18,6 +18,8 @@ bun run repro -- saved-session-stale-generation
 
 The command validates the name before starting Vite and opens the selected `test-scenario` URL. Stop the server with Ctrl-C. Ordinary `bun run dev` does not select or install a scenario.
 
+The `empty-workspace` scenario opens the real app shell with no projects or sessions, so the first-run experience can be reviewed without changing the workspace used by either the production or development app.
+
 The stale-generation scenario starts in the saved `Main` session. Submit exactly `Explain the fixture` in the composer. It streams `Deterministic reply.` and pauses before delivering the stale output. Inspect the working state, then release its one gate and confirm the visible working state is unchanged.
 
 The `saved-session-command-replacement` scenario makes `/mock 42` available in the real composer. Submitting it pauses after Tau sends its immediate command identity probe. Release `before-command-replacement-identity` to return the replacement identity and an empty initial hydration. Pi then emits its real turn sequence and pauses at `before-replacement-assistant`: the extension-injected `Run phase 42` user row must already be visible and remain stable across session switching. Release that gate to stream assistant/tool activity and settle into exactly one hydrated user row plus the assistant reply. `42 • plan` becomes registered and selected after settlement; the command itself does not enter the transcript.

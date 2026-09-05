@@ -106,6 +106,10 @@ const ARCHIVED_SESSION = {
   name: 'Older archived work',
 };
 const REQUIRED_NATIVE_COUNTS = {
+  'empty-workspace': {
+    load_workspace: 1,
+    'plugin:dialog|open': 1,
+  },
   'saved-session-bootstrap': {
     load_workspace: 1,
     read_model_scope: 1,
@@ -249,6 +253,11 @@ const initialWorkspace: WorkspaceSnapshot = {
 
 function scenarioWorkspace(scenarioName: string): WorkspaceSnapshot {
   const workspace = structuredClone(initialWorkspace);
+  if (scenarioName === 'empty-workspace') {
+    workspace.activeProjectPath = '';
+    workspace.projects = [];
+    return workspace;
+  }
   if (
     scenarioName === 'saved-session-prompt-process-exit' ||
     scenarioName === 'saved-session-command-replacement' ||
@@ -353,6 +362,13 @@ function installPiScenarioAdapter(scenarioName: string): void {
       if (command === 'read_model_scope') {
         count(command);
         return [];
+      }
+      if (
+        command === 'plugin:dialog|open' &&
+        scenarioName === 'empty-workspace'
+      ) {
+        count(command);
+        return null;
       }
       if (command === 'start_pi') {
         const value = startPiArgs(args);

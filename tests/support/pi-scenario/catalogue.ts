@@ -1,4 +1,5 @@
 import archivedSessionsReview from './archived-sessions-review';
+import emptyWorkspace from './empty-workspace';
 import phantomCommandOnly from './phantom-command-only';
 import phantomCommandRegistration from './phantom-command-registration';
 import planImplementReplacement from './plan-implement-replacement';
@@ -27,6 +28,7 @@ import savedSessionUnacknowledgedAbort from './saved-session-unacknowledged-abor
 import type { PiScenario, PiScenarioMetadata } from './index';
 
 const scenarios = [
+  emptyWorkspace,
   savedSessionBootstrap,
   savedSessionConversation,
   savedSessionCompaction,

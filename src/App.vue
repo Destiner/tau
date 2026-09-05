@@ -2,75 +2,125 @@
   <div
     class="app-shell"
     :class="{
+      'empty-workspace': workspaceShellVisible,
       'resizing-sidebar': resizingSidebar,
       'window-inactive': !windowFocused,
     }"
     :style="{ '--sidebar-width': `${sidebarWidth}px` }"
   >
-    <ProjectSidebar
-      ref="projectSidebar"
-      v-model:sidebar-width="sidebarWidth"
-      v-model:resizing="resizingSidebar"
-    />
-
     <main
-      class="session-pane"
-      :class="{
-        'empty-session': sessionIsEmpty,
-        'loading-session': sessionLoading,
-      }"
+      v-if="workspaceShellVisible"
+      class="first-run"
     >
-      <SessionHeader
-        ref="sessionHeader"
+      <header
+        class="first-run-titlebar"
         @mousedown="handleTitlebarMouseDown"
         @dblclick="handleTitlebarDoubleClick"
-        @composer-focus="focusComposer"
-      />
-
-      <div
-        v-if="sessionLoading"
-        class="session-loading"
-      >
-        <template v-if="loadingIndicatorVisible">
-          <UiSpinner label="Loading session" />
-          <span>Loading</span>
+      ></header>
+      <section class="first-run-content">
+        <template v-if="workspaceIsEmpty">
+          <p
+            class="first-run-version"
+            :aria-label="`Tau version ${appVersion}`"
+          >
+            <span class="first-run-name">tau</span>
+            <span class="first-run-version-number">{{ appVersion }}</span>
+          </p>
+          <div class="first-run-actions">
+            <UiButton
+              ref="firstRunLocalProjectButton"
+              variant="ghost"
+              size="md"
+              @click="addLocalProject"
+            >
+              Open Local Project
+            </UiButton>
+            <UiButton
+              ref="firstRunRemoteProjectButton"
+              variant="ghost"
+              size="md"
+              @click="openRemoteProjectDialog"
+            >
+              Open Remote Project
+            </UiButton>
+          </div>
         </template>
-      </div>
+        <p
+          v-if="state.workspaceStatus"
+          class="first-run-error"
+          role="alert"
+        >
+          {{ state.workspaceStatus }}
+        </p>
+      </section>
+    </main>
 
-      <TranscriptView
-        v-else-if="!sessionIsEmpty"
-        :key="state.activeControllerKey"
-        ref="transcriptView"
-        :messages="messages"
-        :compacting="compacting"
-        :show-working-indicator="showWorkingIndicator"
-        :working-label="stopping ? 'Stopping' : 'Working'"
-        :base-path="transcriptBasePath"
-        :copy-paths="Boolean(activeProject?.connectionString)"
-        :session-key="state.activeControllerKey"
-        :prompt="activeExtensionDialog"
-        :prompt-disabled="projectActionsDisabled"
-        @prompt-submit="handleExtensionSubmit"
-        @prompt-cancel="cancelExtensionDialog"
-        @prompt-draft="updateExtensionDraft"
-        @load-history="loadEarlierHistory"
+    <template v-else>
+      <ProjectSidebar
+        ref="projectSidebar"
+        v-model:sidebar-width="sidebarWidth"
+        v-model:resizing="resizingSidebar"
       />
 
-      <!--
+      <main
+        class="session-pane"
+        :class="{
+          'empty-session': sessionIsEmpty,
+          'loading-session': sessionLoading,
+        }"
+      >
+        <SessionHeader
+          ref="sessionHeader"
+          @mousedown="handleTitlebarMouseDown"
+          @dblclick="handleTitlebarDoubleClick"
+          @composer-focus="focusComposer"
+        />
+
+        <div
+          v-if="sessionLoading"
+          class="session-loading"
+        >
+          <template v-if="loadingIndicatorVisible">
+            <UiSpinner label="Loading session" />
+            <span>Loading</span>
+          </template>
+        </div>
+
+        <TranscriptView
+          v-else-if="!sessionIsEmpty"
+          :key="state.activeControllerKey"
+          ref="transcriptView"
+          :messages="messages"
+          :compacting="compacting"
+          :show-working-indicator="showWorkingIndicator"
+          :working-label="stopping ? 'Stopping' : 'Working'"
+          :base-path="transcriptBasePath"
+          :copy-paths="Boolean(activeProject?.connectionString)"
+          :session-key="state.activeControllerKey"
+          :prompt="activeExtensionDialog"
+          :prompt-disabled="projectActionsDisabled"
+          @prompt-submit="handleExtensionSubmit"
+          @prompt-cancel="cancelExtensionDialog"
+          @prompt-draft="updateExtensionDraft"
+          @load-history="loadEarlierHistory"
+        />
+
+        <!--
         A prompt takes the composer's place rather than sitting above it: the
         session is waiting on an answer, so there is nothing to send.
       -->
-      <footer
-        v-if="!sessionLoading && !activeExtensionDialog"
-        class="composer-area"
-      >
-        <ComposerBar
-          ref="composerBar"
-          :header-element="() => sessionHeader?.header"
-          @send="handleComposerSend"
-        />
-      </footer>
-    </main>
+        <footer
+          v-if="!sessionLoading && !activeExtensionDialog"
+          class="composer-area"
+        >
+          <ComposerBar
+            ref="composerBar"
+            :header-element="() => sessionHeader?.header"
+            @send="handleComposerSend"
+          />
+        </footer>
+      </main>
+    </template>
 
     <RemoteDialog
       v-model:open="state.remoteDialogOpen"
@@ -106,8 +156,10 @@ import ProjectSidebar from './components/ProjectSidebar.vue';
 import RemoteDialog from './components/RemoteDialog.vue';
 import SessionHeader from './components/SessionHeader.vue';
 import TranscriptView from './components/TranscriptView.vue';
+import UiButton from './components/ui/UiButton.vue';
 import UiSpinner from './components/ui/UiSpinner.vue';
 import useTau from './composables/useTau';
+import appVersion from './lib/app-version';
 import { loadSidebarWidth } from './lib/sidebar-width';
 
 const NEW_SESSION_EVENT = 'tau://new-session';
@@ -119,6 +171,8 @@ const transcriptView = ref<InstanceType<typeof TranscriptView>>();
 const projectSidebar = ref<InstanceType<typeof ProjectSidebar>>();
 const sessionHeader = ref<InstanceType<typeof SessionHeader>>();
 const composerBar = ref<InstanceType<typeof ComposerBar>>();
+const firstRunLocalProjectButton = ref<InstanceType<typeof UiButton>>();
+const firstRunRemoteProjectButton = ref<InstanceType<typeof UiButton>>();
 const windowFocused = ref(true);
 const loadingIndicatorVisible = ref(false);
 const sidebarWidth = ref(loadSidebarWidth());
@@ -139,6 +193,8 @@ const {
   activeExtensionDialog,
   sessionLoading,
   initialize,
+  addLocalProject,
+  openRemoteProjectDialog,
   dispose,
   closeRemoteProjectDialog,
   submitRemoteConnection,
@@ -156,6 +212,12 @@ const {
  * renders that itself from the label.
  */
 
+const workspaceIsEmpty = computed(
+  () => state.workspace !== null && state.workspace.projects.length === 0,
+);
+const workspaceShellVisible = computed(
+  () => state.workspace === null || workspaceIsEmpty.value,
+);
 const sessionIsEmpty = computed(
   () =>
     canDraft.value &&
@@ -228,6 +290,11 @@ onBeforeUnmount(() => {
   unlistenNewSessionMenu?.();
   document.removeEventListener('contextmenu', handleDocumentContextMenu);
   document.removeEventListener('keydown', handleDocumentKeydown);
+});
+
+watch(workspaceIsEmpty, (empty) => {
+  if (!empty) return;
+  void nextTick(() => firstRunLocalProjectButton.value?.button?.focus());
 });
 
 watch(activeExtensionDialog, (dialog) => {
@@ -304,7 +371,10 @@ function remoteDialogReturnFocus(): HTMLElement | undefined {
   if (state.remoteDialogMode === 'retry' && composerBar.value?.input) {
     return composerBar.value.input;
   }
-  return projectSidebar.value?.openProjectButton;
+  return (
+    firstRunRemoteProjectButton.value?.button ??
+    projectSidebar.value?.openProjectButton
+  );
 }
 
 /** A send starts with the transcript pinned to its end. */
@@ -433,6 +503,10 @@ function isTitlebarControl(target: EventTarget | null): boolean {
   --selected: var(--selected-inactive);
 }
 
+.app-shell.empty-workspace {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .app-shell.resizing-sidebar,
 .app-shell.resizing-sidebar * {
   cursor: col-resize;
@@ -443,6 +517,57 @@ function isTitlebarControl(target: EventTarget | null): boolean {
 
 .app-shell.resizing-sidebar :deep(.sidebar-resize-handle)::after {
   background: var(--muted);
+}
+
+.first-run {
+  display: grid;
+  grid-template-rows: 30px minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+.first-run-titlebar {
+  min-height: 30px;
+}
+
+.first-run-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 24px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.first-run-version {
+  display: flex;
+  margin: 0 0 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: var(--text-xs);
+  line-height: var(--leading-ui);
+  gap: 8px;
+}
+
+.first-run-name {
+  color: var(--text);
+}
+
+.first-run-version-number {
+  color: var(--faint);
+}
+
+.first-run-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.first-run-content .first-run-error {
+  max-width: 44ch;
+  margin: 12px 0 0;
+  color: var(--danger);
+  font-size: var(--text-sm);
 }
 
 .session-pane {

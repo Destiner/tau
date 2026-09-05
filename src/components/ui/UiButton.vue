@@ -14,7 +14,7 @@ import { ref } from 'vue';
 
 withDefaults(
   defineProps<{
-    variant?: 'primary' | 'secondary';
+    variant?: 'primary' | 'secondary' | 'ghost';
     size?: 'sm' | 'md';
   }>(),
   {
@@ -60,9 +60,14 @@ defineExpose({
   padding: 0 11px;
 }
 
-.ui-button.secondary {
+.ui-button.secondary,
+.ui-button.ghost {
   background: transparent;
   color: var(--muted);
+}
+
+.ui-button.ghost {
+  border-color: transparent;
 }
 
 .ui-button.primary {
@@ -73,6 +78,11 @@ defineExpose({
 
 .ui-button.secondary:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--muted) 45%, var(--border));
+  background: var(--hover);
+  color: var(--text);
+}
+
+.ui-button.ghost:hover:not(:disabled) {
   background: var(--hover);
   color: var(--text);
 }
