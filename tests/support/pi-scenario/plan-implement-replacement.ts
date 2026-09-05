@@ -235,6 +235,18 @@ const planImplementReplacement = definePiScenario({
         },
       },
     },
+    {
+      kind: 'request',
+      runtime,
+      capture: 'plan-materialization-barrier',
+      match: { type: 'get_state' },
+    },
+    {
+      kind: 'response',
+      request: 'plan-materialization-barrier',
+      command: 'get_state',
+      data: { ...planState, isStreaming: true },
+    },
     { kind: 'event', runtime, event: { type: 'agent_settled' } },
     {
       kind: 'request',

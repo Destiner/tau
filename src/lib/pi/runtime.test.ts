@@ -1126,6 +1126,47 @@ describe('command-created session durability', () => {
     expect(state.activeSessionPath).toBe('/tmp/project/implement-b.jsonl');
   });
 
+  it('keeps a registered predecessor title when a probe discovers its successor', async () => {
+    const { handleResponse } = await import('./runtime');
+    const controller = makeController({
+      sessionId: 'plan-a',
+      sessionPath: '/tmp/project/plan-a.jsonl',
+      sessionName: 'Plan',
+      materializationVerified: true,
+    });
+    state.controllers.push(controller);
+    state.workspace = registeredWorkspace(controller, 'Plan');
+    state.activeProjectPath = controller.projectPath;
+    state.activeSessionId = controller.sessionId;
+    state.activeSessionPath = controller.sessionPath;
+    state.activeControllerKey = controller.key;
+    const probeRequestId = await dispatchRequest(
+      controller,
+      'get_state',
+      'replacement-probe',
+    );
+    controller.replacementProbeRequestId = probeRequestId;
+
+    await handleResponse(controller, {
+      id: probeRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'implement-b',
+        sessionFile: '/tmp/project/implement-b.jsonl',
+        sessionName: 'Implement',
+        isStreaming: false,
+      },
+    });
+
+    expect(state.workspace?.projects[0]?.sessions).toEqual([
+      expect.objectContaining({ id: 'plan-a', title: 'Plan' }),
+    ]);
+    expect(state.ephemeralSessions).toEqual([
+      expect.objectContaining({ id: 'implement-b', title: 'Implement' }),
+    ]);
+  });
+
   it('keeps the predecessor reachable when registration fails', async () => {
     const telemetry = await import('../telemetry');
     const { handleResponse } = await import('./runtime');

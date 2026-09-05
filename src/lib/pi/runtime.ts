@@ -1845,7 +1845,8 @@ async function handleResponse(
       if (!registered) return;
       if (!controllerIdentityMatches(controller, outgoingIdentity)) return;
     }
-    applySessionName(controller, stringValue(data.sessionName));
+    const reportedSessionName = stringValue(data.sessionName);
+    if (!sessionChanged) applySessionName(controller, reportedSessionName);
     const nowStreaming = data.isStreaming === true;
     if (resolvesAdmissionState && controller.submittedPrompt) {
       controller.submittedPrompt.admissionStateRequestId = '';
@@ -1864,6 +1865,7 @@ async function handleResponse(
       controller.sessionId = piSessionId;
       controller.sessionPath = piSessionPath;
     }
+    if (sessionChanged) applySessionName(controller, reportedSessionName);
 
     let syncingAfterSessionChange = false;
     if (sessionChanged) {

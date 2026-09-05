@@ -255,6 +255,18 @@ const savedSessionCommandReplacement = definePiScenario({
         },
       },
     },
+    {
+      kind: 'request',
+      runtime,
+      capture: 'replacement-materialization-barrier',
+      match: { type: 'get_state' },
+    },
+    {
+      kind: 'response',
+      request: 'replacement-materialization-barrier',
+      command: 'get_state',
+      data: { ...replacementState, isStreaming: true },
+    },
     { kind: 'event', runtime, event: { type: 'agent_settled' } },
     {
       kind: 'request',

@@ -173,16 +173,16 @@ const REQUIRED_NATIVE_COUNTS = {
   'saved-session-command-replacement': {
     load_workspace: 1,
     read_model_scope: 2,
-    register_session: 3,
+    register_session: 4,
     set_active_project: 1,
-    set_active_session: 6,
+    set_active_session: 7,
   },
   'plan-implement-replacement': {
     load_workspace: 1,
     read_model_scope: 3,
-    register_session: 4,
+    register_session: 5,
     set_active_project: 1,
-    set_active_session: 7,
+    set_active_session: 9,
   },
   'phantom-command-registration': {
     load_workspace: 1,
@@ -671,7 +671,12 @@ function expectedNativeSession(
   if (scenarioName === 'saved-session-command-replacement') {
     const sequence =
       command === 'register_session'
-        ? [MAIN_SESSION, BACKUP_SESSION, REPLACEMENT_SESSION]
+        ? [
+            MAIN_SESSION,
+            BACKUP_SESSION,
+            REPLACEMENT_SESSION,
+            { ...REPLACEMENT_SESSION, adopted: false },
+          ]
         : [
             MAIN_SESSION,
             BACKUP_SESSION,
@@ -690,6 +695,7 @@ function expectedNativeSession(
             MAIN_SESSION,
             BACKUP_SESSION,
             PLAN_SESSION,
+            { ...PLAN_SESSION, adopted: false },
             { ...PLAN_SESSION, adopted: false },
           ]
         : [

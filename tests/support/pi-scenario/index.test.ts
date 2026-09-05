@@ -382,6 +382,14 @@ describe('PiScenarioEngine', () => {
     expect(takeRequiredOutput(engine)).toMatchObject({
       value: { type: 'message_end' },
     });
+    consumeRequest(engine, 'materialization-barrier', 'get_state');
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: {
+        id: 'materialization-barrier',
+        command: 'get_state',
+        data: { sessionId: 'session-plan-42', isStreaming: true },
+      },
+    });
     expect(takeRequiredOutput(engine)).toMatchObject({
       value: { type: 'agent_settled' },
     });
