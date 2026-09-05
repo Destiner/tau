@@ -1,6 +1,6 @@
 # macOS releases
 
-Tau's initial public DMG supports Apple Silicon Macs running macOS 26 or later. A public download must be signed with a Developer ID Application certificate, notarized by Apple, and stapled before upload. An ordinary `bun tauri build` is only suitable for local testing.
+Tau's public DMG supports Apple Silicon Macs running macOS 15 or later. A public download must be signed with a Developer ID Application certificate, notarized by Apple, and stapled before upload. An ordinary `bun tauri build` is only suitable for local testing.
 
 ## Apple setup
 

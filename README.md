@@ -6,7 +6,7 @@ Tau keeps the original app's project and session layout while replacing Pi's own
 
 ## Requirements
 
-The packaged app supports Apple Silicon Macs running macOS 26 or later. Pi and the runtime used by its executable must already be installed and work in the user's terminal. Bun and Rust are development dependencies only.
+The packaged app supports Apple Silicon Macs running macOS 15 or later. Pi and the runtime used by its executable must already be installed and work in the user's terminal. Bun and Rust are development dependencies only.
 
 ## Development
 
