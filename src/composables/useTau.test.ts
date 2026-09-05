@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   generation: 0,
   listener: undefined as
     ((event: { payload: PiBridgeEvent }) => void) | undefined,
+  projectSelection: null as string | null,
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -47,7 +48,61 @@ vi.mock('@tauri-apps/api/event', () => ({
   ),
 }));
 
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+  open: vi.fn(async () => mocks.projectSelection),
+}));
+
 describe('session drafts and selection', () => {
+  it('opens a usable new session when the first local project is imported', async () => {
+    const project: ProjectSummary = {
+      path: '/tmp/tau-first-project',
+      name: 'tau-first-project',
+      workingDirectory: '/tmp/tau-first-project',
+      collapsed: false,
+      selected: true,
+      sessions: [],
+    };
+    const importedWorkspace: WorkspaceSnapshot = {
+      activeProjectPath: project.path,
+      piPath: '/opt/homebrew/bin/pi',
+      projects: [project],
+    };
+    mocks.workspace = importedWorkspace;
+    mocks.projectSelection = project.path;
+    mocks.generation = 0;
+    vi.mocked(invoke).mockClear();
+
+    const { state, addLocalProject, canDraft } = useTau();
+    state.activeProjectPath = '';
+    state.activeSessionId = '';
+    state.activeSessionPath = '';
+    state.activeControllerKey = '';
+    state.controllers.splice(0);
+    state.ephemeralSessions.splice(0);
+    state.workspace = { activeProjectPath: '', piPath: null, projects: [] };
+
+    await addLocalProject();
+
+    expect(canDraft.value).toBe(true);
+    expect(state.activeProjectPath).toBe(project.path);
+    expect(state.activeSessionId).toMatch(/^phantom-/);
+    expect(state.controllers).toHaveLength(1);
+    expect(
+      vi.mocked(invoke).mock.calls.some(([command]) => command === 'start_pi'),
+    ).toBe(true);
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.some(
+          ([command, args]) =>
+            command === 'send_pi' &&
+            (args as { request: { type: string } }).request.type ===
+              'get_available_models',
+        ),
+    ).toBe(true);
+    mocks.projectSelection = null;
+  });
+
   it('switches away from a working session while preserving its state', async () => {
     const project: ProjectSummary = {
       path: '/tmp/tau-draft-test',

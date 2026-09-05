@@ -164,7 +164,13 @@ function useTau() {
       const selectedSession = selectedProject?.sessions.find(
         (session) => session.selected,
       );
-      if (selectedProject && selectedSession) {
+      if (
+        selectedProject &&
+        !selectedSession &&
+        projectSessions(selectedProject).length === 0
+      ) {
+        await newSession(selectedProject);
+      } else if (selectedProject && selectedSession) {
         const controller = ensureController(selectedProject, selectedSession);
         setActiveSessionView(selectedProject, selectedSession, controller);
         const needsLocalRuntime = !selectedProject.connectionString;
@@ -237,6 +243,21 @@ function useTau() {
       );
       if (!state.activeProjectPath) {
         state.activeProjectPath = state.workspace.activeProjectPath;
+      }
+      if (!state.activeSessionId) {
+        const selectedProject = state.workspace.projects.find(
+          (project) => project.selected,
+        );
+        if (selectedProject) {
+          const selectedSession = selectedProject.sessions.find(
+            (session) => session.selected,
+          );
+          if (selectedSession) {
+            await selectSession(selectedProject, selectedSession);
+          } else if (projectSessions(selectedProject).length === 0) {
+            await newSession(selectedProject);
+          }
+        }
       }
     } catch {
       setWorkspaceError(errorCopy.importProject);
