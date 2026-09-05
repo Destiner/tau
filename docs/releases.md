@@ -44,7 +44,7 @@ bun run release:macos
 
 Or replace the API variables with `APPLE_ID`, `APPLE_PASSWORD`, and `APPLE_TEAM_ID`. A CI build can instead provide `APPLE_CERTIFICATE` and `APPLE_CERTIFICATE_PASSWORD` for certificate import.
 
-The release command builds an Apple Silicon DMG, notarizes and staples the final DMG, and then checks:
+The release command builds an Apple Silicon app, notarizes and staples it before packaging, then signs, notarizes, and staples the DMG. It checks:
 
 - exact `arm64`-only architecture coverage;
 - the declared and compiled macOS deployment targets;
@@ -66,3 +66,13 @@ Pass a specific DMG after `--` when needed:
 ```sh
 bun run verify:macos-release -- /path/to/Tau.dmg
 ```
+
+## Distribution smoke test
+
+Test the exact verified DMG through a normal browser download before publishing it. Upload it unchanged to an HTTPS host, download it in Safari on a clean test Mac, confirm its printed SHA-256 checksum, drag Tau into Applications, and open it without using `xattr`, `chmod`, or Gatekeeper overrides. Confirm the installed app independently:
+
+```sh
+spctl --assess --type execute --verbose=4 /Applications/Tau.app
+```
+
+The assessment must report `accepted` and `source=Notarized Developer ID`. Do not use Telegram to test distribution: it can attach App Sandbox quarantine metadata that makes an otherwise valid app fail with `File created by an AppSandbox, exec/open not allowed`.
