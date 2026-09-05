@@ -117,6 +117,9 @@ function hydrateTranscript(
 
     if (role === 'assistant') {
       const content = Array.isArray(message.content) ? message.content : [];
+      const stopReason = stringValue(message.stopReason);
+      const terminalToolCall =
+        stopReason === 'aborted' || stopReason === 'error';
       const failure = messageFailure(message);
       for (const partValue of content) {
         const part = asRecord(partValue);
@@ -137,8 +140,9 @@ function hydrateTranscript(
             text: toolSummary(part.arguments),
             toolCallId,
             toolName,
-            toolRunning: true,
-            toolErrored: false,
+            // A terminal turn cannot still be running without a recorded result.
+            toolRunning: !terminalToolCall,
+            toolErrored: terminalToolCall,
             toolArguments: toolArgumentsText(part.arguments),
           });
         }

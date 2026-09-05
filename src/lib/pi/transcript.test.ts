@@ -179,6 +179,100 @@ describe('hydrateTranscript', () => {
     });
   });
 
+  it('marks an unmatched tool call in an aborted turn as errored', () => {
+    const result = hydrateTranscript([
+      {
+        role: 'assistant',
+        stopReason: 'aborted',
+        content: [
+          {
+            type: 'toolCall',
+            id: 'call-aborted',
+            name: 'bash',
+            arguments: { command: 'sleep 10' },
+          },
+        ],
+      },
+    ]);
+
+    expect(result[0]).toMatchObject({
+      toolRunning: false,
+      toolErrored: true,
+    });
+  });
+
+  it('marks an unmatched tool call in an errored turn as errored', () => {
+    const result = hydrateTranscript([
+      {
+        role: 'assistant',
+        stopReason: 'error',
+        content: [
+          {
+            type: 'toolCall',
+            id: 'call-errored',
+            name: 'bash',
+            arguments: { command: 'sleep 10' },
+          },
+        ],
+      },
+    ]);
+
+    expect(result[0]).toMatchObject({
+      toolRunning: false,
+      toolErrored: true,
+    });
+  });
+
+  it('lets a later successful tool result override a terminal turn failure', () => {
+    const result = hydrateTranscript([
+      {
+        role: 'assistant',
+        stopReason: 'error',
+        content: [
+          {
+            type: 'toolCall',
+            id: 'call-recovered',
+            name: 'bash',
+            arguments: { command: 'echo done' },
+          },
+        ],
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'call-recovered',
+        isError: false,
+        content: [{ type: 'text', text: 'done' }],
+      },
+    ]);
+
+    expect(result[0]).toMatchObject({
+      toolRunning: false,
+      toolErrored: false,
+      toolResult: 'done',
+    });
+  });
+
+  it('keeps an unmatched tool call running in a nonterminal turn', () => {
+    const result = hydrateTranscript([
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'toolCall',
+            id: 'call-running',
+            name: 'bash',
+            arguments: { command: 'sleep 10' },
+          },
+        ],
+      },
+    ]);
+
+    expect(result[0]).toMatchObject({
+      toolRunning: true,
+      toolErrored: false,
+    });
+  });
+
   it("carries a bash execution's own output", () => {
     const result = hydrateTranscript([
       {
