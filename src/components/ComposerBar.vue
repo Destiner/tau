@@ -44,12 +44,11 @@
       ></textarea>
     </UiContextMenu>
     <div class="composer-toolbar">
-      <UiSelect
+      <ModelSelector
         :model-value="`${currentModelProvider}/${currentModelId}`"
-        :options="modelOptions"
-        placeholder="Model"
+        :models="models"
         :fallback-label="currentModelLabel"
-        :disabled="settingsDisabled || models.length === 0"
+        :disabled="settingsDisabled"
         aria-label="Model"
         @update:model-value="handleModelChange"
       />
@@ -120,6 +119,7 @@ import type { ThinkingLevel } from '../lib/pi/model-scope';
 import textFieldItems from '../lib/text-menu';
 
 import CommandMenu from './CommandMenu.vue';
+import ModelSelector from './ModelSelector.vue';
 import UiContextMenu from './ui/UiContextMenu.vue';
 import UiIcon from './ui/UiIcon.vue';
 import UiIconButton from './ui/UiIconButton.vue';
@@ -179,12 +179,6 @@ const commandMenuActive = computed(
 );
 const selectedCommand = computed(
   () => filteredCommands.value[commandSelectedIndex.value],
-);
-const modelOptions = computed(() =>
-  models.value.map((model) => ({
-    value: `${model.provider}/${model.id}`,
-    label: `${model.name} · ${model.provider}`,
-  })),
 );
 const effortOptions = computed(() =>
   efforts.value.map((effort) => ({

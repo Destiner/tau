@@ -60,6 +60,15 @@ async function mountApp(): Promise<void> {
     return;
   }
 
+  if (import.meta.env.DEV && fixture === 'model-selector') {
+    const { default: ModelSelectorFixture } =
+      await import('./dev/ModelSelectorFixture.vue');
+    const app = createApp(ModelSelectorFixture);
+    app.config.errorHandler = vueErrorHandler;
+    app.mount('#app');
+    return;
+  }
+
   if (import.meta.env.DEV && fixture === 'remote-dialog') {
     const { default: RemoteDialogFixture } =
       await import('./dev/RemoteDialogFixture.vue');

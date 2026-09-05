@@ -1,6 +1,6 @@
 /*
- * The things the app repeats everywhere: a surface that floats over it, the
- * tooltip, and a row the reader picks from.
+ * The things the app repeats everywhere: a surface that floats over it,
+ * selector controls, the tooltip, and a row the reader picks from.
  *
  * Global rather than scoped for two reasons. The menus and the tooltip are
  * portalled to the body by reka, where a scoped attribute never reaches them —
@@ -55,6 +55,91 @@
 .ui-menu-item[data-disabled] {
   color: var(--faint);
 }
+
+/* ── Selector ───────────────────────────────────────────────────────────── */
+
+/* stylelint-disable no-descending-specificity -- focus/open outranks hover. */
+.ui-selector-trigger {
+  display: inline-flex;
+  position: relative;
+  align-items: center;
+  min-width: 0;
+  max-width: 210px;
+  height: var(--control-sm);
+  padding: 0 24px 0 5px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  outline: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.ui-selector-trigger::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  width: 5px;
+  height: 5px;
+  transform: translateY(-4px) rotate(45deg);
+  border-right: 1px solid currentcolor;
+  border-bottom: 1px solid currentcolor;
+  pointer-events: none;
+}
+
+.ui-selector-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-selector-trigger:disabled::after {
+  opacity: 0.45;
+}
+
+.ui-selector-trigger:hover:not(:disabled) {
+  border-color: var(--border);
+  background: var(--hover);
+}
+
+.ui-selector-trigger:focus-visible,
+.ui-selector-trigger[data-state='open'] {
+  border-color: var(--accent);
+  outline: 0;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text);
+}
+
+.ui-selector-option {
+  position: relative;
+}
+
+.ui-selector-option:not([data-disabled]):hover,
+.ui-selector-option:not([data-disabled])[data-highlighted],
+.ui-selector-option[data-cursor] {
+  background: var(--hover);
+}
+
+/* Traversal is a wash; the stripe belongs only to the value in force. */
+.ui-selector-option[data-highlighted]::before,
+.ui-selector-option[data-cursor]::before {
+  content: none;
+}
+
+.ui-selector-option[data-state='checked']::before,
+.ui-selector-option[data-current]::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 0;
+  width: 2px;
+  border-radius: 0 1px 1px 0;
+  background: var(--accent);
+}
+/* stylelint-enable no-descending-specificity */
 
 /* ── Tooltip ────────────────────────────────────────────────────────────── */
 
