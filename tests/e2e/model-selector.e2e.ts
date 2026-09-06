@@ -10,6 +10,10 @@ test('groups, filters, and traverses models in rendered order', async ({
   const trigger = page.getByRole('combobox', { name: 'Model', exact: true });
   await expect(trigger).toHaveText('GPT-5.6 Sol');
   await trigger.click();
+  await expect(page.locator('.ui-select-filterable-list')).toHaveCSS(
+    'border-left-width',
+    '0px',
+  );
 
   const search = page.getByRole('searchbox', { name: 'Search Models' });
   await expect(search).toBeFocused();
@@ -26,7 +30,7 @@ test('groups, filters, and traverses models in rendered order', async ({
 
   await search.press('ArrowDown');
   await search.press('ArrowDown');
-  await expect(page.locator('.model-selector-option[data-cursor]')).toHaveText(
+  await expect(page.locator('.ui-select-option[data-cursor]')).toHaveText(
     'GPT-6 Astra',
   );
 
@@ -54,8 +58,8 @@ test('keeps current and traversal states distinct and resets on dismissal', asyn
   await search.press('ArrowDown');
   await search.press('ArrowDown');
 
-  const current = page.locator('.model-selector-option[data-current]');
-  const cursor = page.locator('.model-selector-option[data-cursor]');
+  const current = page.locator('.ui-select-option[data-current]');
+  const cursor = page.locator('.ui-select-option[data-cursor]');
   await expect(current).toHaveText('GPT-5.6 Sol');
   await expect(cursor).toHaveText('GPT-6 Astra');
   await expect(current).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0.1)');
@@ -77,7 +81,7 @@ test('keeps current and traversal states distinct and resets on dismissal', asyn
   await trigger.click();
   await expect(search).toHaveValue('');
 
-  const popover = page.locator('.model-selector-popover');
+  const popover = page.locator('.ui-select-filterable-list');
   await expect(popover).toHaveCSS('width', '300px');
 });
 

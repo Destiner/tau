@@ -20,9 +20,13 @@ test('boots the real app into a deterministic saved session', async ({
   await expect(page.getByRole('combobox', { name: 'Model' })).toHaveText(
     'Alpha',
   );
-  const modelSelector = page.getByRole('combobox', { name: 'Model' });
+  const modelSelector = page.getByRole('combobox', {
+    name: 'Model',
+    includeHidden: true,
+  });
   const thinkingSelector = page.getByRole('combobox', {
     name: 'Thinking Effort',
+    includeHidden: true,
   });
   await expect(thinkingSelector).toHaveText('High');
 
@@ -31,9 +35,10 @@ test('boots the real app into a deterministic saved session', async ({
     page.getByRole('searchbox', { name: 'Search Models' }),
   ).toBeVisible();
   await thinkingSelector.click();
+  await expect(page.getByRole('searchbox')).toHaveCount(0);
   await expect(
-    page.getByRole('searchbox', { name: 'Search Models' }),
-  ).toHaveCount(0);
+    page.locator('.ui-select-list:not(.ui-select-filterable-list)'),
+  ).toHaveCSS('border-left-width', '1px');
   const currentThinking = page.getByRole('option', { name: 'High' });
   await expect(currentThinking).toHaveAttribute('data-state', 'checked');
   expect(
@@ -41,6 +46,15 @@ test('boots the real app into a deterministic saved session', async ({
       getComputedStyle(element, '::before').getPropertyValue('content'),
     ),
   ).toBe('""');
+
+  await modelSelector.click();
+  await expect(
+    page.getByRole('searchbox', { name: 'Search Models' }),
+  ).toBeVisible();
+  await expect(currentThinking).toHaveCount(0);
+  await thinkingSelector.click();
+  await expect(page.getByRole('searchbox')).toHaveCount(0);
+  await expect(currentThinking).toHaveAttribute('data-state', 'checked');
 
   await page.keyboard.press('ArrowUp');
   const traversedThinking = page.getByRole('option', { name: 'Off' });
