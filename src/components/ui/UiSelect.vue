@@ -76,6 +76,7 @@
               :data-current="option.value === modelValue || undefined"
               :data-cursor="option.value === cursorValue || undefined"
               :aria-selected="option.value === modelValue"
+              @mouseenter="() => setCursor(option)"
               @mousedown.prevent
               @click="() => selectOption(option)"
             >
@@ -246,25 +247,42 @@ const valueLabel = computed(() => {
 });
 
 watch(open, (isOpen) => {
-  if (isOpen) return;
-  query.value = '';
-  cursorValue.value = '';
-});
-
-watch(query, (value) => {
-  cursorValue.value = value.trim()
-    ? (displayedOptions.value[0]?.value ?? '')
+  if (!isOpen) {
+    query.value = '';
+    cursorValue.value = '';
+    return;
+  }
+  cursorValue.value = displayedOptions.value.some(
+    (option) => option.value === modelValue.value,
+  )
+    ? modelValue.value
     : '';
+  void nextTick(() => {
+    const option = cursorOption.value;
+    if (!option) return;
+    document
+      .getElementById(optionId(option))
+      ?.scrollIntoView({ block: 'nearest' });
+  });
 });
 
 watch(displayedOptions, (options) => {
-  if (!options.some((option) => option.value === cursorValue.value)) {
-    cursorValue.value = '';
+  if (
+    !open.value ||
+    options.length === 0 ||
+    options.some((option) => option.value === cursorValue.value)
+  ) {
+    return;
   }
+  cursorValue.value = options[0]?.value ?? '';
 });
 
 function optionId(option: UiSelectOption): string {
   return `${selectId}-${option.value.replaceAll(/[^a-zA-Z0-9_-]/g, '-')}`;
+}
+
+function setCursor(option: UiSelectOption): void {
+  cursorValue.value = option.value;
 }
 
 function selectOption(option: UiSelectOption): void {

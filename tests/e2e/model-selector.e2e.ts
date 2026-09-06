@@ -28,7 +28,9 @@ test('groups, filters, and traverses models in rendered order', async ({
     'Claude Opus 5',
   ]);
 
-  await search.press('ArrowDown');
+  await expect(page.locator('.ui-select-option[data-cursor]')).toHaveText(
+    'GPT-5.6 Sol',
+  );
   await search.press('ArrowDown');
   await expect(page.locator('.ui-select-option[data-cursor]')).toHaveText(
     'GPT-6 Astra',
@@ -55,13 +57,19 @@ test('keeps current and traversal states distinct and resets on dismissal', asyn
   const trigger = page.getByRole('combobox', { name: 'Model', exact: true });
   await trigger.click();
   const search = page.getByRole('searchbox', { name: 'Search Models' });
-  await search.press('ArrowDown');
-  await search.press('ArrowDown');
-
   const current = page.locator('.ui-select-option[data-current]');
   const cursor = page.locator('.ui-select-option[data-cursor]');
   await expect(current).toHaveText('GPT-5.6 Sol');
+  await expect(cursor).toHaveText('GPT-5.6 Sol');
+
+  await search.press('ArrowDown');
   await expect(cursor).toHaveText('GPT-6 Astra');
+  await page.getByRole('option', { name: 'Claude Opus 5' }).hover();
+  await expect(cursor).toHaveText('Claude Opus 5');
+  await search.fill('missing');
+  await expect(page.getByText('No matching models')).toBeVisible();
+  await search.fill('');
+  await expect(cursor).toHaveText('Claude Opus 5');
   await expect(current).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0.1)');
   await expect(cursor).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
   expect(
