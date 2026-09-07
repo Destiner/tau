@@ -23,10 +23,13 @@
       <TooltipPortal>
         <!-- Styled in ui/surface.css: reka portals this to the body, where a
              scoped attribute never reaches it. -->
+        <!-- Kept off the window edge by the same gap it keeps from its
+             trigger, for a long one that has to shift to stay on screen. -->
         <TooltipContent
           class="ui-tooltip"
           :side="side"
           :side-offset="6"
+          :collision-padding="6"
         >
           {{ text }}
         </TooltipContent>
@@ -47,8 +50,9 @@ import {
 withDefaults(
   defineProps<{
     /**
-     * The name of the thing the trigger does. Never a shortcut hint, and never
-     * a sentence — an icon button's label, said out loud.
+     * The name of the thing the trigger does — an icon button's label, said
+     * out loud — or the value a row shows too little of, such as a project's
+     * path. Never a shortcut hint, and never a sentence.
      */
     text: string;
     side?: 'top' | 'right' | 'bottom' | 'left';

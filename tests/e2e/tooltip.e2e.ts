@@ -94,6 +94,49 @@ test('names icon-only controls on hover without native titles', async ({
   await expect(page.locator('.ui-tooltip')).toHaveCount(0);
 });
 
+/**
+ * A project row shows a name that is not where the project is, and the row is
+ * too narrow to show both. The path it reveals on hover is app-drawn like every
+ * other tooltip, and it sits below the row rather than over the row's own
+ * actions, which carry tooltips of their own.
+ */
+test('reveals a project path below the row, not in a native title', async ({
+  page,
+}) => {
+  await page.goto(scenarioUrl);
+  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
+
+  const projectToggle = page.getByRole('button', {
+    name: 'Tau fixture',
+    exact: true,
+  });
+  await expect(projectToggle).not.toHaveAttribute('title', /./);
+  await expect(page.locator('.ui-status-dot[title]')).toHaveCount(0);
+
+  const rowBox = await page.locator('.project-row').first().boundingBox();
+  await projectToggle.hover();
+  const tooltip = page.locator('.ui-tooltip', {
+    hasText: '/fixture/tau-project',
+  });
+  await expect(tooltip).toBeVisible();
+
+  const tooltipBox = await tooltip.boundingBox();
+  expect(rowBox).not.toBeNull();
+  expect(tooltipBox).not.toBeNull();
+  if (rowBox && tooltipBox) {
+    expect(tooltipBox.y).toBeGreaterThanOrEqual(rowBox.y + rowBox.height);
+  }
+
+  // The row's own actions take the path with them and name themselves instead.
+  await page
+    .getByRole('button', { name: 'New Session in Tau fixture' })
+    .hover();
+  await expect(
+    page.locator('.ui-tooltip', { hasText: 'New Session' }),
+  ).toBeVisible();
+  await expect(tooltip).toHaveCount(0);
+});
+
 test('shows the tooltip to a keyboard, not only to a pointer', async ({
   page,
 }) => {

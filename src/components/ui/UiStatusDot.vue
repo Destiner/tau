@@ -1,11 +1,15 @@
 <template>
+  <!--
+    No native `title`: the dot is a 6px mark inside a row that carries its own
+    tooltip, and a title here would race that one with a second, differently
+    styled surface. Its meaning stays available to assistive tech.
+  -->
   <span
     class="ui-status-dot"
     :class="tone ? `tone-${tone}` : undefined"
     :role="label ? 'img' : undefined"
     :aria-label="label || undefined"
     :aria-hidden="label ? undefined : true"
-    :title="label || undefined"
   ></span>
 </template>
 
@@ -17,7 +21,7 @@ withDefaults(
      * reserves its slot.
      */
     tone?: 'new' | 'draft' | 'working';
-    /** Meaning announced to assistive tech, and the title a pointer sees. */
+    /** Meaning announced to assistive tech. */
     label?: string;
   }>(),
   { label: undefined, tone: undefined },

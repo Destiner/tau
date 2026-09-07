@@ -48,28 +48,36 @@
                 <UiIcon name="grip" />
               </span>
             </UiTooltip>
-            <button
-              class="project-toggle"
-              type="button"
-              :title="
-                project.connectionString
-                  ? `${project.connectionString} · ${project.workingDirectory}`
-                  : project.workingDirectory
-              "
-              :disabled="projectActionsDisabled"
-              @click="() => toggleProject(project)"
+            <!--
+              Sided below, clear of the row's own actions, which sit to the
+              right of this button and carry tooltips of their own. Slower than
+              a control's name, too: this one answers a question the reader
+              stopped to ask, rather than naming what is under the pointer on
+              the way to a session.
+            -->
+            <UiTooltip
+              :text="projectLocation(project)"
+              side="bottom"
+              :delay="700"
             >
-              <UiStatusDot
-                v-if="projectIndicator(project)"
-                class="project-status"
-                :tone="projectIndicator(project) || undefined"
-                :label="indicatorLabel(projectIndicator(project))"
-              />
-              <span>{{ project.name }}</span>
-              <UiIcon
-                :name="project.collapsed ? 'chevron-right' : 'chevron-down'"
-              />
-            </button>
+              <button
+                class="project-toggle"
+                type="button"
+                :disabled="projectActionsDisabled"
+                @click="() => toggleProject(project)"
+              >
+                <UiStatusDot
+                  v-if="projectIndicator(project)"
+                  class="project-status"
+                  :tone="projectIndicator(project) || undefined"
+                  :label="indicatorLabel(projectIndicator(project))"
+                />
+                <span>{{ project.name }}</span>
+                <UiIcon
+                  :name="project.collapsed ? 'chevron-right' : 'chevron-down'"
+                />
+              </button>
+            </UiTooltip>
             <UiTooltip text="New Session">
               <UiIconButton
                 class="row-action"
@@ -375,6 +383,13 @@ function releaseSessionOrderOutsideList(event: PointerEvent): void {
 
 function releaseSessionOrderWhenHidden(): void {
   if (document.visibilityState === 'hidden') releaseSessionOrder();
+}
+
+/** Where a project lives: its directory, prefixed by the host when remote. */
+function projectLocation(project: ProjectSummary): string {
+  return project.connectionString
+    ? `${project.connectionString} · ${project.workingDirectory}`
+    : project.workingDirectory;
 }
 
 function orderedSessions(project: ProjectSummary): SessionSummary[] {

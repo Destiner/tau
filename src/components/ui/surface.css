@@ -149,7 +149,10 @@
  * floating panel's: at this size an 8px radius reads as a bubble.
  */
 .ui-tooltip {
+  /* A path has no spaces to wrap at, so it would otherwise run past the cap
+     rather than onto a second line. Short labels never reach it. */
   max-width: 260px;
+  overflow-wrap: anywhere;
   padding: 3px 7px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
