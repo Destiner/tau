@@ -1,12 +1,13 @@
 # Tau
 
-An minimal, focused interface for [Pi](https://pi.dev).
+A minimal, focused interface for [Pi](https://pi.dev).
 
 ## Features
 
 - Project pane with chat persistance
 - Remote projects via SSH
 - Support for [Pi Extensions](https://pi.dev/docs/latest/extensions)
+- Archived sessions
 
 ## Roadmap
 
