@@ -1990,6 +1990,7 @@ describe('extension UI protocol', () => {
 
     await tau.selectSession(project, firstSession);
     expect(firstController.unread).toBe(false);
+    expect(tau.sessionIndicator(project, firstSession)).toBe('new');
     await tau.submitExtensionDialog('Claude');
     expect(tau.sessionIndicator(project, firstSession)).toBe('working');
     tau.dispose();

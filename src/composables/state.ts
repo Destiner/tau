@@ -695,8 +695,7 @@ function sessionIndicator(
 ): SessionIndicator {
   const controller = controllerForSession(project.path, session.id);
   if (!controller) return '';
-  const selected = isSessionSelected(project, session);
-  if (!selected && controllerHasPendingDialog(controller)) return 'new';
+  if (controllerHasPendingDialog(controller)) return 'new';
   if (controller.working) return 'working';
   if (controller.draft.trim()) return 'draft';
   return controller.unread ? 'new' : '';
