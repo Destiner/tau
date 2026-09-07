@@ -65,7 +65,14 @@ test('names icon-only controls on hover without native titles', async ({
   await page.keyboard.press('Escape');
   await expect(menu).toHaveCount(0);
 
+  // The reporter is admin mode's, so the code has to unlock it before its
+  // own tooltip and popover can be checked. The sidebar is clicked first
+  // because the code is ignored while the composer holds focus.
+  await page.getByLabel('Projects and Sessions').click();
+  await page.keyboard.type('iddqd');
+
   const reportIssue = page.getByRole('button', { name: 'Report an Issue' });
+  await expect(reportIssue).toBeVisible();
   await expect(reportIssue).not.toHaveAttribute('title', /./);
   await reportIssue.hover();
   await expect(

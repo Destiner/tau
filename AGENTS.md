@@ -36,6 +36,7 @@ Install Playwright once with `bun x playwright install chromium webkit`.
 - Pi owns extension execution and session files. Preserve Pi compatibility rather than creating a parallel runtime or data model.
 - Each live session owns an isolated Pi runtime. Session switching, stale responses, failures, and idle eviction must not leak state or lose drafts/workflow context.
 - Telemetry is bounded, content-free, and best-effort. Never record prompts, transcripts, drafts, payloads, paths, credentials, stderr, or raw errors.
+- Telemetry and the issue reporter are admin mode's, off by default, and unlocked together by the `iddqd` code. Keep new diagnostics behind the same switch.
 - Prefer deterministic fake-based tests; the real-Pi contract check is an explicit canary, not a default test dependency.
 
 ## Documentation

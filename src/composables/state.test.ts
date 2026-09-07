@@ -244,7 +244,9 @@ describe('canArchiveSession', () => {
 describe('setControllerLifecycle', () => {
   it('applies the patch and records a transition when the derived state changes', async () => {
     const { setControllerLifecycle } = await import('./state');
-    const { flushTelemetry } = await import('../lib/telemetry');
+    const { flushTelemetry, setTelemetryEnabled } =
+      await import('../lib/telemetry');
+    setTelemetryEnabled(true);
     const controller = testController();
 
     setControllerLifecycle(
@@ -279,6 +281,8 @@ describe('setControllerLifecycle', () => {
 
   it('does not record anything when the derived state does not change', async () => {
     const { setControllerLifecycle } = await import('./state');
+    const { setTelemetryEnabled } = await import('../lib/telemetry');
+    setTelemetryEnabled(true);
     const controller = testController({ working: true, streaming: true });
 
     // Still derives to 'working' (streaming stays true), so no transition
@@ -294,8 +298,9 @@ describe('setControllerLifecycle', () => {
 
   it('carries the given trace context onto the recorded transition', async () => {
     const { setControllerLifecycle } = await import('./state');
-    const { flushTelemetry, startActionSpan } =
+    const { flushTelemetry, setTelemetryEnabled, startActionSpan } =
       await import('../lib/telemetry');
+    setTelemetryEnabled(true);
     const action = startActionSpan('message.send');
     const controller = testController();
 
@@ -331,7 +336,9 @@ describe('setControllerLifecycle', () => {
 
   it('never records anything about messages, draft, or status', async () => {
     const { setControllerLifecycle } = await import('./state');
-    const { flushTelemetry } = await import('../lib/telemetry');
+    const { flushTelemetry, setTelemetryEnabled } =
+      await import('../lib/telemetry');
+    setTelemetryEnabled(true);
     const controller = testController({
       draft: 'tau-canary-draft-text',
       status: 'tau-canary-status-text',

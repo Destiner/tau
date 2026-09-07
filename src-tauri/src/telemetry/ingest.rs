@@ -993,6 +993,7 @@ mod tests {
         let telemetry = Telemetry::new(
             directory.path().to_path_buf(),
             Arc::new(crate::telemetry::store::SystemClock),
+            true,
         );
         (telemetry, directory)
     }

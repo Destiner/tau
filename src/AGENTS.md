@@ -9,6 +9,7 @@ Vue 3 and TypeScript UI for Tau. Root guidance and the quality rubric still appl
 - `composables/useTau.ts` - User actions and orchestration exposed to the component tree.
 - `lib/pi/` - Pi RPC lifecycle, model scope, transcript hydration, and error presentation.
 - `lib/telemetry/` - Content-free tracing, metrics, logging, privacy, and bounded ingestion.
+- `lib/admin-mode.ts` / `lib/admin-code.ts` - The switch that gates telemetry and the issue reporter, and the cheat code that flips it.
 - `dev/` - Development-only fixtures and the browser Pi scenario adapter.
 
 ## Patterns
@@ -19,7 +20,8 @@ Vue 3 and TypeScript UI for Tau. Root guidance and the quality rubric still appl
 - Transcript entries need stable identity across hydration and streaming so virtualization, measured heights, expansion state, and reader position survive rerenders.
 - Sanitize rendered content and open links outside the webview. Remote paths remain text; local path handling is session-directory aware.
 - Keep fixtures behind `import.meta.env.DEV` and dynamic imports so production bundles do not include them.
-- Use existing traced Tauri invocation and privacy helpers for product operations; raw RPC transport is the narrow exception in `lib/pi/runtime.ts`.
+- Use existing traced Tauri invocation and privacy helpers for product operations; raw RPC transport is the narrow exception in `lib/pi/runtime.ts`, and `read_admin_mode` is the one untraced command.
+- Telemetry records nothing outside admin mode. A test that expects records to reach the native command must enable it first.
 
 ## Testing
 

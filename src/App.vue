@@ -159,6 +159,8 @@ import TranscriptView from './components/TranscriptView.vue';
 import UiButton from './components/ui/UiButton.vue';
 import UiSpinner from './components/ui/UiSpinner.vue';
 import useTau from './composables/useTau';
+import { createAdminCodeMatcher } from './lib/admin-code';
+import { toggleAdminMode } from './lib/admin-mode';
 import appVersion from './lib/app-version';
 import { loadSidebarWidth } from './lib/sidebar-width';
 
@@ -177,6 +179,7 @@ const windowFocused = ref(true);
 const loadingIndicatorVisible = ref(false);
 const sidebarWidth = ref(loadSidebarWidth());
 const resizingSidebar = ref(false);
+const adminCode = createAdminCodeMatcher(isEditableTarget);
 let unlistenWindowFocus: UnlistenFn | undefined;
 let unlistenNewSessionMenu: UnlistenFn | undefined;
 let loadingIndicatorTimer: ReturnType<typeof setTimeout> | undefined;
@@ -433,6 +436,7 @@ function handleDocumentContextMenu(event: MouseEvent): void {
 
 function handleDocumentKeydown(event: KeyboardEvent): void {
   if (event.defaultPrevented) return;
+  if (adminCode.press(event, Date.now())) void toggleAdminMode();
   suppressSystemBeep(event);
 }
 

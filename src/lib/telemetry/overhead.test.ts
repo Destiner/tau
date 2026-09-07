@@ -21,9 +21,17 @@ beforeEach(() => {
   vi.resetModules();
 });
 
+/** These measure the cost of telemetry that is actually recording, so each
+ * one enables it the way admin mode does. */
+async function loadTelemetry(): Promise<typeof import('./index')> {
+  const telemetry = await import('./index');
+  telemetry.setTelemetryEnabled(true);
+  return telemetry;
+}
+
 describe('frontend instrumentation overhead', () => {
   it('starting and ending 2000 command spans (typing-rate volume) stays well under budget', async () => {
-    const { startCommandSpan } = await import('./index');
+    const { startCommandSpan } = await loadTelemetry();
 
     const start = performance.now();
     for (let index = 0; index < 2000; index += 1) {
@@ -38,7 +46,7 @@ describe('frontend instrumentation overhead', () => {
   });
 
   it('recording 500 heartbeats/state-summaries (one every 30s for over 4 hours) stays well under budget', async () => {
-    const { recordHeartbeat, recordStateSummary } = await import('./index');
+    const { recordHeartbeat, recordStateSummary } = await loadTelemetry();
 
     const start = performance.now();
     for (let index = 0; index < 500; index += 1) {
@@ -74,7 +82,7 @@ describe('frontend instrumentation overhead', () => {
   });
 
   it('accumulating 10000 streaming deltas (recordStreamDelta never itself calls into telemetry) stays well under budget', async () => {
-    const { recordStreamAggregate } = await import('./index');
+    const { recordStreamAggregate } = await loadTelemetry();
 
     // Streaming deltas are aggregated in `runtime.ts` (not exported from
     // `index.ts`) and only ever produce one `recordStreamAggregate` call per
@@ -93,7 +101,7 @@ describe('frontend instrumentation overhead', () => {
 describe('IPC batch frequency and queue size under a burst', () => {
   it('bounds both the number of native calls and the queue length for a 500-span burst', async () => {
     const { startCommandSpan, flushTelemetry, telemetryQueueLength } =
-      await import('./index');
+      await loadTelemetry();
 
     for (let index = 0; index < 500; index += 1) {
       startCommandSpan('load_workspace').end();

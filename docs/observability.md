@@ -1,6 +1,12 @@
 # Local observability
 
-Tau continuously writes content-free OpenTelemetry JSONL under its profile data directory:
+## Admin mode
+
+Telemetry and the issue reporter are off in an ordinary run: nothing is recorded, no telemetry directory is created, and the sidebar shows no report button. Both are unlocked together by admin mode, which is turned on and off by typing `iddqd` anywhere outside a text field.
+
+The setting is persisted natively in `preferences.json` beside the telemetry and feedback directories (`tau-dev/` in development, `tau/` in production) and is read before the app records anything, so a run outside admin mode observes nothing at all rather than recording and discarding. Toggling it takes effect immediately: enabling starts the run's telemetry where a launch in admin mode would have begun it, and disabling flushes what was recorded, drops what the frontend still had queued, and stops.
+
+When admin mode is on, Tau continuously writes content-free OpenTelemetry JSONL under its profile data directory:
 
 - development: `tau-dev/telemetry/`
 - production: `tau/telemetry/`
@@ -10,7 +16,7 @@ Retention is bounded to seven days and 256 MiB. Telemetry failure does not fail 
 
 ## User issue reports
 
-Reports submitted from the sidebar are stored separately from content-free telemetry:
+The report button in the sidebar footer is part of admin mode and is not shown otherwise. Reports submitted from it are stored separately from content-free telemetry:
 
 - development: `tau-dev/feedback/issues.jsonl`
 - production: `tau/feedback/issues.jsonl`

@@ -1,3 +1,4 @@
+mod admin;
 mod feedback;
 mod models;
 mod pi;
@@ -73,6 +74,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            admin::read_admin_mode,
+            admin::set_admin_mode,
             feedback::submit_issue_report,
             pi::send_pi,
             pi::start_pi,

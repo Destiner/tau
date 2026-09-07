@@ -483,6 +483,20 @@ function installPiScenarioAdapter(scenarioName: string): void {
         session.archived = false;
         return structuredClone(workspace);
       }
+      // Admin mode has no scenario state: a scenario always starts in the
+      // default off, and a test that types the cheat code drives the
+      // frontend switch it is actually exercising.
+      if (command === 'read_admin_mode') {
+        count(command);
+        return false;
+      }
+      if (command === 'set_admin_mode') {
+        if (typeof args.enabled !== 'boolean') {
+          throw new Error('set_admin_mode enabled must be a boolean.');
+        }
+        count(command);
+        return null;
+      }
       if (command === 'ingest_telemetry') {
         if (!Array.isArray(args.records)) {
           throw new Error('ingest_telemetry records must be an array.');

@@ -220,6 +220,7 @@
         </UiTooltip>
       </div>
       <IssueReportPopover
+        v-if="adminMode"
         :session-id="state.activeSessionId || undefined"
         :submit-report="submitIssueReport"
       />
@@ -251,6 +252,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import type { ProjectSummary, SessionSummary } from '../composables/state';
 import useTau from '../composables/useTau';
+import { adminMode } from '../lib/admin-mode';
 import {
   applyHeldOrder,
   heldSessions,

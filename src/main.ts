@@ -2,6 +2,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { createApp } from 'vue';
 
 import App from './App.vue';
+import { loadAdminMode } from './lib/admin-mode';
 import {
   initTelemetry,
   installFrontendErrorCapture,
@@ -24,6 +25,12 @@ initTelemetry();
 installFrontendErrorCapture();
 startHeartbeat();
 installLongTaskObserver();
+
+// Telemetry records nothing until this resolves and says the run is in
+// admin mode. Started here rather than from a mounted component so the
+// answer arrives as early as it can, and never awaited: nothing on screen
+// waits on a setting that only decides whether the app observes itself.
+void loadAdminMode();
 
 async function mountApp(): Promise<void> {
   const fixture = new URLSearchParams(window.location.search).get('fixture');

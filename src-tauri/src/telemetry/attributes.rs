@@ -158,10 +158,13 @@ pub const UI_ACTION: RecordFamily = RecordFamily {
 };
 
 /// Every ordinary Tauri command routed through the shared invoke wrapper.
-/// `send_pi` (covered by `pi.rpc` spans) and `ingest_telemetry` (which must
-/// never trace itself) are deliberately absent.
+/// `send_pi` (covered by `pi.rpc` spans), `ingest_telemetry` (which must
+/// never trace itself), and `read_admin_mode` (which decides whether
+/// telemetry may record at all, so its own span could only be dropped) are
+/// deliberately absent.
 pub const TAURI_INVOKE_COMMANDS: &[&str] = &[
     "load_workspace",
+    "set_admin_mode",
     "submit_issue_report",
     "import_project",
     "import_remote_project",

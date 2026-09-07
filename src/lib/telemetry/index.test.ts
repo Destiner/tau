@@ -14,9 +14,17 @@ beforeEach(() => {
   vi.resetModules();
 });
 
+/** Telemetry records nothing until admin mode turns it on, so every test
+ * that expects records to reach the native command enables it first. */
+async function loadTelemetry(): Promise<typeof import('./index')> {
+  const telemetry = await import('./index');
+  telemetry.setTelemetryEnabled(true);
+  return telemetry;
+}
+
 describe('startCommandSpan', () => {
   it('returns a context that round-trips as a valid W3C traceparent', async () => {
-    const { startCommandSpan } = await import('./index');
+    const { startCommandSpan } = await loadTelemetry();
     const span = startCommandSpan('load_workspace');
 
     expect(span.context).toBeDefined();
@@ -27,7 +35,7 @@ describe('startCommandSpan', () => {
   });
 
   it('gives concurrent spans independent trace context', async () => {
-    const { startCommandSpan } = await import('./index');
+    const { startCommandSpan } = await loadTelemetry();
     const first = startCommandSpan('load_workspace');
     const second = startCommandSpan('load_workspace');
 
@@ -38,7 +46,7 @@ describe('startCommandSpan', () => {
   });
 
   it('flushes the ended span to the native ingest command', async () => {
-    const { startCommandSpan, flushTelemetry } = await import('./index');
+    const { startCommandSpan, flushTelemetry } = await loadTelemetry();
     const span = startCommandSpan('load_workspace');
     span.end();
 
@@ -60,7 +68,7 @@ describe('startCommandSpan', () => {
   });
 
   it('never asks the ingest command to trace itself', async () => {
-    const { startCommandSpan, flushTelemetry } = await import('./index');
+    const { startCommandSpan, flushTelemetry } = await loadTelemetry();
     startCommandSpan('load_workspace').end();
     await flushTelemetry();
     mockInvoke.mockClear();
@@ -71,7 +79,7 @@ describe('startCommandSpan', () => {
   });
 
   it('nests under an explicit parent action context without ambient state', async () => {
-    const { startActionSpan, startCommandSpan } = await import('./index');
+    const { startActionSpan, startCommandSpan } = await loadTelemetry();
     const action = startActionSpan('session.select');
     const invokeSpan = startCommandSpan('set_active_session', action.context);
 
@@ -81,7 +89,7 @@ describe('startCommandSpan', () => {
 
   it('persists an action with invoke and RPC children in one trace', async () => {
     const { flushTelemetry, startActionSpan, startCommandSpan, startRpcSpan } =
-      await import('./index');
+      await loadTelemetry();
     const scope = {
       sessionId: 'session-1',
       controllerId: 'controller-1',
@@ -133,7 +141,7 @@ describe('startCommandSpan', () => {
 
 describe('startActionSpan', () => {
   it('gives concurrent actions independent trace context', async () => {
-    const { startActionSpan } = await import('./index');
+    const { startActionSpan } = await loadTelemetry();
     const first = startActionSpan('session.select');
     const second = startActionSpan('message.send');
 
@@ -141,7 +149,7 @@ describe('startActionSpan', () => {
   });
 
   it('flushes with the reviewed action name attribute', async () => {
-    const { startActionSpan, flushTelemetry } = await import('./index');
+    const { startActionSpan, flushTelemetry } = await loadTelemetry();
     startActionSpan('message.send', {
       sessionId: 'session-1',
       controllerId: 'controller-1',
@@ -169,7 +177,7 @@ describe('startActionSpan', () => {
 
 describe('invokeTraced', () => {
   it('never serializes the command arguments into the span attributes', async () => {
-    const { invokeTraced, flushTelemetry } = await import('./index');
+    const { invokeTraced, flushTelemetry } = await loadTelemetry();
     await invokeTraced('import_project', { path: '/tmp/tau-canary-project' });
 
     await flushTelemetry();
@@ -194,7 +202,7 @@ describe('invokeTraced', () => {
   });
 
   it('passes the invoke call its own span context alongside the real arguments', async () => {
-    const { invokeTraced } = await import('./index');
+    const { invokeTraced } = await loadTelemetry();
     await invokeTraced('import_project', { path: '/tmp/tau-canary-project' });
 
     expect(mockInvoke).toHaveBeenCalledWith(
@@ -210,7 +218,7 @@ describe('invokeTraced', () => {
 
   it('ends the span even when the underlying invoke rejects', async () => {
     mockInvoke.mockRejectedValueOnce(new Error('tau-canary-invoke-error'));
-    const { invokeTraced, flushTelemetry } = await import('./index');
+    const { invokeTraced, flushTelemetry } = await loadTelemetry();
 
     await expect(
       invokeTraced('remove_project', { path: '/tmp/tau-canary-project' }),
@@ -237,7 +245,7 @@ describe('invokeTraced', () => {
 
 describe('startRpcSpan', () => {
   it('flushes with method, request id, runtime, and generation, but no outcome until ended', async () => {
-    const { startRpcSpan, flushTelemetry } = await import('./index');
+    const { startRpcSpan, flushTelemetry } = await loadTelemetry();
     const span = startRpcSpan(
       'prompt',
       'tau-prompt-1',
@@ -272,7 +280,7 @@ describe('startRpcSpan', () => {
   });
 
   it('drops an unreviewed outcome without failing to end the span', async () => {
-    const { startRpcSpan, flushTelemetry } = await import('./index');
+    const { startRpcSpan, flushTelemetry } = await loadTelemetry();
     const span = startRpcSpan('prompt', 'tau-prompt-1', 'runtime-1', 3);
     span.end('not-a-real-outcome' as never);
 
@@ -291,7 +299,7 @@ describe('startRpcSpan', () => {
   });
 
   it('nests under an explicit parent action context', async () => {
-    const { startActionSpan, startRpcSpan } = await import('./index');
+    const { startActionSpan, startRpcSpan } = await loadTelemetry();
     const action = startActionSpan('message.send');
     const rpc = startRpcSpan(
       'prompt',
@@ -307,7 +315,7 @@ describe('startRpcSpan', () => {
 
 describe('operation checkpoints', () => {
   it('records a ui.action checkpoint immediately, even if the span never ends', async () => {
-    const { startActionSpan, flushTelemetry } = await import('./index');
+    const { startActionSpan, flushTelemetry } = await loadTelemetry();
     const action = startActionSpan('message.send');
 
     await flushTelemetry();
@@ -341,7 +349,7 @@ describe('operation checkpoints', () => {
   });
 
   it('records a pi.rpc checkpoint immediately, even if the span never ends', async () => {
-    const { startRpcSpan, flushTelemetry } = await import('./index');
+    const { startRpcSpan, flushTelemetry } = await loadTelemetry();
     const rpc = startRpcSpan('prompt', 'tau-prompt-1', 'runtime-1', 1);
 
     await flushTelemetry();
@@ -376,7 +384,7 @@ describe('operation checkpoints', () => {
   });
 
   it('does not checkpoint an ordinary tauri.invoke span', async () => {
-    const { startCommandSpan, flushTelemetry } = await import('./index');
+    const { startCommandSpan, flushTelemetry } = await loadTelemetry();
     startCommandSpan('load_workspace');
 
     await flushTelemetry();
@@ -390,7 +398,7 @@ describe('operation checkpoints', () => {
 
 describe('recordStreamAggregate', () => {
   it('records exactly one bounded aggregate span per call, never one per delta', async () => {
-    const { recordStreamAggregate, flushTelemetry } = await import('./index');
+    const { recordStreamAggregate, flushTelemetry } = await loadTelemetry();
     recordStreamAggregate('runtime-1', 3, 12, 480, 1_000, 1_500, {
       sessionId: 'session-1',
       controllerId: 'controller-1',
@@ -435,8 +443,7 @@ function flushedRecords(): IngestedRecord[] {
 
 describe('recordRpcResponseAnomaly', () => {
   it('records a bounded request id and runtime scope without response content', async () => {
-    const { recordRpcResponseAnomaly, flushTelemetry } =
-      await import('./index');
+    const { recordRpcResponseAnomaly, flushTelemetry } = await loadTelemetry();
     recordRpcResponseAnomaly('unmatched_or_duplicate', 'tau-state-1', {
       sessionId: 'session-1',
       runtimeId: 'runtime-1',
@@ -461,7 +468,7 @@ describe('recordRpcResponseAnomaly', () => {
 describe('recordControllerTransition', () => {
   it('records state before/after, cause, and session/controller/runtime context', async () => {
     const { recordControllerTransition, flushTelemetry } =
-      await import('./index');
+      await loadTelemetry();
     recordControllerTransition('idle', 'starting', 'controller_start', {
       sessionId: 'session-1',
       controllerId: 'controller-1',
@@ -487,7 +494,7 @@ describe('recordControllerTransition', () => {
 
   it('carries the active span context when given one', async () => {
     const { recordControllerTransition, startActionSpan, flushTelemetry } =
-      await import('./index');
+      await loadTelemetry();
     const action = startActionSpan('message.send');
 
     recordControllerTransition(
@@ -510,7 +517,7 @@ describe('recordControllerTransition', () => {
 
 describe('recordEventLoopLag', () => {
   it('records a bounded lag value with visibility/focus dimensions', async () => {
-    const { recordEventLoopLag, flushTelemetry } = await import('./index');
+    const { recordEventLoopLag, flushTelemetry } = await loadTelemetry();
     recordEventLoopLag(42, 'visible', true);
 
     await flushTelemetry();
@@ -533,7 +540,7 @@ describe('recordEventLoopLag', () => {
   });
 
   it('drops a negative, non-finite, or out-of-bounds value rather than sending it', async () => {
-    const { recordEventLoopLag, flushTelemetry } = await import('./index');
+    const { recordEventLoopLag, flushTelemetry } = await loadTelemetry();
     const { MAX_METRIC_VALUE_MS } = await import('./metric');
     recordEventLoopLag(-1, 'visible', true);
     recordEventLoopLag(Number.POSITIVE_INFINITY, 'visible', true);
@@ -552,7 +559,7 @@ describe('recordEventLoopLag', () => {
 
 describe('recordLongTask', () => {
   it('records a bounded duration with no attributes', async () => {
-    const { recordLongTask, flushTelemetry } = await import('./index');
+    const { recordLongTask, flushTelemetry } = await loadTelemetry();
     recordLongTask(75);
 
     await flushTelemetry();
@@ -574,7 +581,7 @@ describe('recordLongTask', () => {
 
 describe('recordHeartbeat', () => {
   it('records visibility, focus, and coarse counts', async () => {
-    const { recordHeartbeat, flushTelemetry } = await import('./index');
+    const { recordHeartbeat, flushTelemetry } = await loadTelemetry();
     recordHeartbeat({
       visibility: 'hidden',
       focused: false,
@@ -611,7 +618,7 @@ describe('recordHeartbeat', () => {
 
 describe('recordStateSummary', () => {
   it('records counts and a draft bucket, never draft or transcript text', async () => {
-    const { recordStateSummary, flushTelemetry } = await import('./index');
+    const { recordStateSummary, flushTelemetry } = await loadTelemetry();
     recordStateSummary({
       controllerCount: 2,
       runtimeCount: 1,
@@ -665,7 +672,7 @@ describe('vueErrorHandler', () => {
     const consoleError = vi
       .spyOn(console, 'error')
       .mockImplementation(() => {});
-    const { vueErrorHandler, flushTelemetry } = await import('./index');
+    const { vueErrorHandler, flushTelemetry } = await loadTelemetry();
     const error = new TypeError('tau-canary-vue-error-message');
     error.stack =
       'TypeError: tau-canary-vue-error-message\n    at run (/tmp/project/src/app.ts:5:2)';
@@ -697,7 +704,7 @@ describe('vueErrorHandler', () => {
     const consoleError = vi
       .spyOn(console, 'error')
       .mockImplementation(() => {});
-    const { vueErrorHandler, flushTelemetry } = await import('./index');
+    const { vueErrorHandler, flushTelemetry } = await loadTelemetry();
 
     vueErrorHandler('a plain string reason');
 
@@ -721,7 +728,7 @@ describe('forbidden-content canary sweep across frontend error capture paths', (
     const consoleError = vi
       .spyOn(console, 'error')
       .mockImplementation(() => {});
-    const { vueErrorHandler, flushTelemetry } = await import('./index');
+    const { vueErrorHandler, flushTelemetry } = await loadTelemetry();
     const { FORBIDDEN_CONTENT_CANARIES } = await import('./privacy');
 
     for (const canary of FORBIDDEN_CONTENT_CANARIES.values()) {
@@ -743,7 +750,7 @@ describe('forbidden-content canary sweep across frontend error capture paths', (
   it('never persists any catalog canary through the wrapped console.error', async () => {
     console.error = vi.fn();
     const { installFrontendErrorCapture, flushTelemetry } =
-      await import('./index');
+      await loadTelemetry();
     const { FORBIDDEN_CONTENT_CANARIES } = await import('./privacy');
     installFrontendErrorCapture();
 
@@ -769,7 +776,7 @@ describe('installFrontendErrorCapture', () => {
 
     console.error = nativeConsoleError;
     const { installFrontendErrorCapture, flushTelemetry } =
-      await import('./index');
+      await loadTelemetry();
     installFrontendErrorCapture();
     installFrontendErrorCapture();
 
@@ -798,7 +805,7 @@ describe('installFrontendErrorCapture', () => {
 
     console.error = nativeConsoleError;
     const { installFrontendErrorCapture, flushTelemetry } =
-      await import('./index');
+      await loadTelemetry();
     installFrontendErrorCapture();
 
     const reentrant = new Error('boom');
@@ -826,7 +833,7 @@ describe('installFrontendErrorCapture', () => {
 
 describe('queue overflow reporting', () => {
   it('reports a telemetry.health log once the bounded queue starts dropping records', async () => {
-    const { startCommandSpan, flushTelemetry } = await import('./index');
+    const { startCommandSpan, flushTelemetry } = await loadTelemetry();
 
     for (let index = 0; index < 205; index += 1) {
       startCommandSpan('load_workspace').end();
@@ -847,7 +854,7 @@ describe('queue overflow reporting', () => {
   });
 
   it('does not report the same drop count twice', async () => {
-    const { startCommandSpan, flushTelemetry } = await import('./index');
+    const { startCommandSpan, flushTelemetry } = await loadTelemetry();
 
     for (let index = 0; index < 201; index += 1) {
       startCommandSpan('load_workspace').end();

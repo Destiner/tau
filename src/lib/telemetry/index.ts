@@ -71,12 +71,43 @@ let state: AdapterState | undefined;
  * a `telemetry.health` log, so overflow is reported once per new drop
  * rather than on every flush. */
 let lastReportedDroppedCount = 0;
+/** Telemetry records nothing until admin mode says it may (see
+ * `src/lib/admin-mode.ts`). Off is the starting state, not a fallback: a
+ * failed or slow read of the setting leaves the app recording nothing. */
+let enabled = false;
+
+/** Turns recording on or off. Every span, log, and metric record already
+ * passes through the queue, so gating the queue's `push` is enough to stop
+ * all three at once; turning it off also discards whatever was still
+ * waiting to be flushed. */
+function setTelemetryEnabled(next: boolean): void {
+  if (enabled === next) return;
+  enabled = next;
+  if (next || !state) return;
+  state.queue.drain(Number.MAX_SAFE_INTEGER);
+}
 
 /** Builds the queue, tracer, and flush scheduler on first use, so a span
  * created before `initTelemetry` runs is still captured rather than lost. */
 function ensureState(): AdapterState {
   if (!state) {
-    const queue = createBoundedQueue<FrontendQueueRecord>(MAX_QUEUE_SIZE);
+    const rawQueue = createBoundedQueue<FrontendQueueRecord>(MAX_QUEUE_SIZE);
+    // Dropping at the queue rather than at the flush keeps a disabled
+    // adapter from holding records it will never send: nothing recorded
+    // while telemetry is off can be flushed by enabling it later.
+    const queue: BoundedQueue<FrontendQueueRecord> = {
+      push(record) {
+        if (!enabled) return;
+        rawQueue.push(record);
+      },
+      drain: (max) => rawQueue.drain(max),
+      get length() {
+        return rawQueue.length;
+      },
+      get dropped() {
+        return rawQueue.dropped;
+      },
+    };
     const tracer = createTracer(queue);
     const { scheduleFlush: rawScheduleFlush, flushNow } =
       createFlushScheduler(queue);
@@ -84,6 +115,7 @@ function ensureState(): AdapterState {
     // log is queued, so piggybacking the overflow check here reports a new
     // drop promptly without threading a callback through `tracer.ts`.
     function scheduleFlush(): void {
+      if (!enabled) return;
       reportQueueOverflowIfChanged(queue);
       rawScheduleFlush();
     }
@@ -906,6 +938,7 @@ export {
   recordRpcResponseAnomaly,
   recordStateSummary,
   recordStreamAggregate,
+  setTelemetryEnabled,
   startActionSpan,
   startCommandSpan,
   startRpcSpan,

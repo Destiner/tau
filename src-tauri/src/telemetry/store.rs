@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -105,6 +106,11 @@ pub struct Store {
     config: StoreConfig,
     clock: Arc<dyn Clock>,
     state: Mutex<StoreState>,
+    /// Whether telemetry may be recorded at all (see `admin.rs`). A
+    /// disabled store touches no file and creates no directory: it is the
+    /// one choke point every signal already passes through, so gating here
+    /// covers spans, logs, metrics, and frontend ingest together.
+    enabled: AtomicBool,
 }
 
 impl std::fmt::Debug for Store {
@@ -116,10 +122,26 @@ impl std::fmt::Debug for Store {
 }
 
 impl Store {
+    /// The recording store every store test wants; the app itself always
+    /// goes through `with_enabled`, since whether it may record at all is
+    /// admin mode's to decide.
+    #[cfg(test)]
     pub fn new(dir: PathBuf, config: StoreConfig, clock: Arc<dyn Clock>) -> Self {
-        let _ = fs::create_dir_all(&dir);
-        set_owner_only_dir_permissions(&dir);
-        let next_sequence = recover_next_sequence(&dir);
+        Store::with_enabled(dir, config, clock, true)
+    }
+
+    pub fn with_enabled(
+        dir: PathBuf,
+        config: StoreConfig,
+        clock: Arc<dyn Clock>,
+        enabled: bool,
+    ) -> Self {
+        let next_sequence = if enabled {
+            prepare_dir(&dir);
+            recover_next_sequence(&dir)
+        } else {
+            0
+        };
         Store {
             dir,
             config,
@@ -129,7 +151,32 @@ impl Store {
                 failed_writes: 0,
                 fallback: VecDeque::new(),
             }),
+            enabled: AtomicBool::new(enabled),
         }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed)
+    }
+
+    /// Turns recording on or off mid-run. Enabling does the directory work
+    /// `with_enabled` skipped and resumes the on-disk sequence, so a store
+    /// that starts disabled and is switched on writes exactly what one
+    /// created enabled would have.
+    pub fn set_enabled(&self, enabled: bool) {
+        if self.enabled.swap(enabled, Ordering::Relaxed) == enabled {
+            return;
+        }
+        if !enabled {
+            return;
+        }
+        prepare_dir(&self.dir);
+        let recovered = recover_next_sequence(&self.dir);
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        state.next_sequence = state.next_sequence.max(recovered);
     }
 
     /// Stamps `record` with a monotonic store sequence and appends it to
@@ -169,6 +216,11 @@ impl Store {
         signal: Signal,
         mut record: serde_json::Value,
     ) -> bool {
+        // Dropped, not counted as a failed write: nothing was meant to
+        // reach disk, so this is not a writer problem to report.
+        if !self.is_enabled() {
+            return true;
+        }
         let sequence = state.next_sequence;
         state.next_sequence += 1;
         if let Some(object) = record.as_object_mut() {
@@ -370,6 +422,11 @@ struct RotatedSegment {
     millis: u64,
     sequence: u64,
     size: u64,
+}
+
+fn prepare_dir(dir: &Path) {
+    let _ = fs::create_dir_all(dir);
+    set_owner_only_dir_permissions(dir);
 }
 
 fn recover_next_sequence(dir: &Path) -> u64 {

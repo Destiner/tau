@@ -170,6 +170,10 @@ impl Metrics {
 /// The native telemetry pipeline for one app launch. Construction never
 /// fails: a directory or writer problem degrades to the store's in-memory
 /// fallback instead of stopping app startup.
+///
+/// A launch outside admin mode (see `admin.rs`) builds the same pipeline
+/// disabled: providers exist so no call site needs an `Option`, but the
+/// store drops every record and touches no file until `set_enabled(true)`.
 pub struct Telemetry {
     logger_provider: SdkLoggerProvider,
     tracer_provider: SdkTracerProvider,
@@ -185,6 +189,10 @@ pub struct Telemetry {
     /// started, i.e. that run never reached a clean exit. Computed once in
     /// `new`, before this run's own marker is written.
     previous_run_unclean: bool,
+    /// Mirrors the store's own gate so the marker and lifecycle events —
+    /// the parts of the pipeline that do not pass through the store — can
+    /// be skipped while telemetry is off.
+    enabled: std::sync::atomic::AtomicBool,
 }
 
 impl Telemetry {
@@ -192,21 +200,28 @@ impl Telemetry {
     /// application-data directory. Call this before constructing the Tauri
     /// builder so setup-time work is covered too.
     pub fn init() -> Self {
-        Telemetry::new(resolve_telemetry_dir(), Arc::new(store::SystemClock))
+        Telemetry::new(
+            resolve_telemetry_dir(),
+            Arc::new(store::SystemClock),
+            crate::admin::admin_mode_enabled(),
+        )
     }
 
     #[cfg(test)]
     pub(crate) fn for_test(dir: PathBuf) -> Self {
-        Telemetry::new(dir, Arc::new(store::SystemClock))
+        Telemetry::new(dir, Arc::new(store::SystemClock), true)
     }
 
-    fn new(dir: PathBuf, clock: Arc<dyn store::Clock>) -> Self {
-        let previous_run_unclean = previous_run_was_unclean(&dir);
-        write_run_marker(&dir);
-        let store = Arc::new(store::Store::new(
+    fn new(dir: PathBuf, clock: Arc<dyn store::Clock>, enabled: bool) -> Self {
+        let previous_run_unclean = enabled && previous_run_was_unclean(&dir);
+        if enabled {
+            write_run_marker(&dir);
+        }
+        let store = Arc::new(store::Store::with_enabled(
             dir.clone(),
             store::StoreConfig::production(),
             clock,
+            enabled,
         ));
         let resource = build_resource();
         let resource_json = exporter::resource_to_json(&resource);
@@ -241,7 +256,40 @@ impl Telemetry {
             resource_json,
             telemetry_dir: dir,
             previous_run_unclean,
+            enabled: std::sync::atomic::AtomicBool::new(enabled),
         }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Starts or stops recording mid-run, which is what admin mode toggles.
+    /// Enabling picks the run up where a launch in admin mode would have
+    /// begun it — marker written, `app.started` recorded — so the run still
+    /// reads as a whole one; disabling flushes what was already recorded
+    /// and clears the marker, since no clean exit will be recorded for a
+    /// run that stops observing itself.
+    pub fn set_enabled(&self, enabled: bool) {
+        if self
+            .enabled
+            .swap(enabled, std::sync::atomic::Ordering::Relaxed)
+            == enabled
+        {
+            return;
+        }
+        if enabled {
+            write_run_marker(&self.telemetry_dir);
+            self.store.set_enabled(true);
+            self.emit_lifecycle_log("app.started");
+            self.force_flush_logs();
+            return;
+        }
+        self.emit_lifecycle_log("app.telemetry_disabled");
+        self.force_flush_logs();
+        self.force_flush_metrics();
+        self.store.set_enabled(false);
+        clear_run_marker(&self.telemetry_dir);
     }
 
     /// Records this run's start marker and, if the *previous* run's own
@@ -263,6 +311,9 @@ impl Telemetry {
     /// calls `std::process::exit` internally once it returns, which skips
     /// `Drop`, so nothing here can rely on destructors running.
     pub fn record_app_exited(&self) {
+        if !self.is_enabled() {
+            return;
+        }
         self.emit_lifecycle_log("app.exited");
         self.record_writer_health();
         let _ = self.logger_provider.force_flush();
@@ -924,7 +975,7 @@ mod tests {
     fn record_app_started_persists_a_valid_log_record() {
         let directory = tempfile::tempdir().expect("temp dir");
         let clock: Arc<dyn store::Clock> = Arc::new(store::SystemClock);
-        let telemetry = Telemetry::new(directory.path().to_path_buf(), clock);
+        let telemetry = Telemetry::new(directory.path().to_path_buf(), clock, true);
 
         telemetry.record_app_started();
 
@@ -951,7 +1002,7 @@ mod tests {
     fn record_app_exited_force_flushes_so_the_marker_is_durable() {
         let directory = tempfile::tempdir().expect("temp dir");
         let clock: Arc<dyn store::Clock> = Arc::new(store::SystemClock);
-        let telemetry = Telemetry::new(directory.path().to_path_buf(), clock);
+        let telemetry = Telemetry::new(directory.path().to_path_buf(), clock, true);
 
         telemetry.record_app_exited();
         telemetry.shutdown();
@@ -964,10 +1015,76 @@ mod tests {
         assert_eq!(log_record["eventName"], "app.exited");
     }
 
+    #[test]
+    fn a_disabled_run_writes_no_telemetry_and_leaves_no_directory() {
+        let parent = tempfile::tempdir().expect("temp dir");
+        let dir = parent.path().join("telemetry");
+        let telemetry = Telemetry::new(dir.clone(), Arc::new(store::SystemClock), false);
+
+        telemetry.record_app_started();
+        telemetry.record_pi_process_start();
+        telemetry.record_app_exited();
+        telemetry.force_flush_metrics();
+
+        assert!(!telemetry.is_enabled());
+        assert!(
+            !dir.exists(),
+            "a disabled run must not create its own directory"
+        );
+    }
+
+    #[test]
+    fn enabling_a_disabled_run_starts_recording_and_disabling_stops_it() {
+        let parent = tempfile::tempdir().expect("temp dir");
+        let dir = parent.path().join("telemetry");
+        let telemetry = Telemetry::new(dir.clone(), Arc::new(store::SystemClock), false);
+        telemetry.record_app_started();
+
+        telemetry.set_enabled(true);
+        assert!(dir.join(RUN_MARKER_FILE).is_file());
+        let after_enabling = read_event_names(&dir);
+        assert_eq!(after_enabling, vec!["app.started".to_string()]);
+
+        telemetry.set_enabled(false);
+        assert!(
+            !dir.join(RUN_MARKER_FILE).exists(),
+            "a run that stops observing itself records no clean exit to detect"
+        );
+        let after_disabling = read_event_names(&dir);
+        assert_eq!(
+            after_disabling,
+            vec![
+                "app.started".to_string(),
+                "app.telemetry_disabled".to_string()
+            ]
+        );
+
+        telemetry.record_app_exited();
+        assert_eq!(read_event_names(&dir), after_disabling);
+    }
+
+    fn read_event_names(dir: &Path) -> Vec<String> {
+        let Ok(contents) = std::fs::read_to_string(dir.join(LOG_SEGMENT_FILE)) else {
+            return Vec::new();
+        };
+        contents
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter_map(|value| {
+                value["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["eventName"]
+                    .as_str()
+                    .map(str::to_string)
+            })
+            .collect()
+    }
+
     fn test_telemetry() -> (Telemetry, tempfile::TempDir) {
         let directory = tempfile::tempdir().expect("temp dir");
-        let telemetry =
-            Telemetry::new(directory.path().to_path_buf(), Arc::new(store::SystemClock));
+        let telemetry = Telemetry::new(
+            directory.path().to_path_buf(),
+            Arc::new(store::SystemClock),
+            true,
+        );
         (telemetry, directory)
     }
 
@@ -1532,12 +1649,12 @@ mod tests {
         let directory = tempfile::tempdir().expect("temp dir");
         let dir = directory.path().to_path_buf();
 
-        let first = Telemetry::new(dir.clone(), Arc::new(store::SystemClock));
+        let first = Telemetry::new(dir.clone(), Arc::new(store::SystemClock), true);
         assert!(!first.previous_run_unclean);
         // Deliberately do not call `first.record_app_exited()`: the marker
         // it would clear is left behind, simulating a crash or force quit.
 
-        let second = Telemetry::new(dir.clone(), Arc::new(store::SystemClock));
+        let second = Telemetry::new(dir.clone(), Arc::new(store::SystemClock), true);
         assert!(second.previous_run_unclean);
         second.record_app_started();
 
@@ -1555,7 +1672,7 @@ mod tests {
 
         let directory = tempfile::tempdir().expect("temp dir");
         let dir = directory.path().join("telemetry");
-        let _telemetry = Telemetry::new(dir.clone(), Arc::new(store::SystemClock));
+        let _telemetry = Telemetry::new(dir.clone(), Arc::new(store::SystemClock), true);
         let dir_mode = fs::metadata(&dir)
             .expect("dir metadata")
             .permissions()
@@ -1575,10 +1692,10 @@ mod tests {
         let directory = tempfile::tempdir().expect("temp dir");
         let dir = directory.path().to_path_buf();
 
-        let first = Telemetry::new(dir.clone(), Arc::new(store::SystemClock));
+        let first = Telemetry::new(dir.clone(), Arc::new(store::SystemClock), true);
         first.record_app_exited();
 
-        let second = Telemetry::new(dir.clone(), Arc::new(store::SystemClock));
+        let second = Telemetry::new(dir.clone(), Arc::new(store::SystemClock), true);
         assert!(!second.previous_run_unclean);
     }
 
@@ -1587,7 +1704,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("temp dir");
         let blocked_path = directory.path().join("telemetry");
         std::fs::write(&blocked_path, b"file").expect("blocking file");
-        let telemetry = Telemetry::new(blocked_path.clone(), Arc::new(store::SystemClock));
+        let telemetry = Telemetry::new(blocked_path.clone(), Arc::new(store::SystemClock), true);
 
         // Fails: `blocked_path` is a file, not a directory, so this lands in
         // the store's bounded in-memory fallback instead of on disk.

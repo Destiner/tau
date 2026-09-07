@@ -60,6 +60,12 @@ impl JsonFileLogExporter {
 
 impl LogExporter for JsonFileLogExporter {
     async fn export(&self, batch: LogBatch<'_>) -> OTelSdkResult {
+        // Checked here as well as in the store: the optional OTLP target is
+        // sent to before the record is persisted, so a disabled store alone
+        // would still let a development build export off the machine.
+        if !self.store.is_enabled() {
+            return Ok(());
+        }
         for (record, scope) in batch.iter() {
             let value = log_record_to_otlp_json(&self.resource_json, scope.name(), record);
             #[cfg(feature = "otlp_export")]
@@ -105,6 +111,9 @@ impl JsonFileSpanExporter {
 
 impl SpanExporter for JsonFileSpanExporter {
     async fn export(&self, batch: Vec<SpanData>) -> OTelSdkResult {
+        if !self.store.is_enabled() {
+            return Ok(());
+        }
         for span in &batch {
             let value = span_data_to_otlp_json(&self.resource_json, span);
             #[cfg(feature = "otlp_export")]
@@ -156,6 +165,9 @@ impl JsonFileMetricExporter {
 
 impl PushMetricExporter for JsonFileMetricExporter {
     async fn export(&self, metrics: &data::ResourceMetrics) -> OTelSdkResult {
+        if !self.store.is_enabled() {
+            return Ok(());
+        }
         for scope_metrics in metrics.scope_metrics() {
             for metric in scope_metrics.metrics() {
                 let value =
