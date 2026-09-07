@@ -1962,6 +1962,30 @@ describe('extension UI protocol', () => {
     tau.dispose();
   });
 
+  it('prioritizes collapsed project indicators by urgency', async () => {
+    const { firstController, secondController, project, tau } =
+      await setupExtensionControllers();
+
+    project.collapsed = true;
+    secondController.draft = 'Keep this draft';
+    expect(tau.projectIndicator(project)).toBe('working');
+
+    secondController.draft = '';
+    secondController.unread = true;
+    expect(tau.projectIndicator(project)).toBe('new');
+
+    secondController.unread = false;
+    expect(tau.projectIndicator(project)).toBe('working');
+
+    firstController.working = false;
+    secondController.draft = 'Keep this draft';
+    expect(tau.projectIndicator(project)).toBe('draft');
+
+    secondController.draft = '';
+    expect(tau.projectIndicator(project)).toBe('');
+    tau.dispose();
+  });
+
   it('marks a background session waiting on a prompt as unread', async () => {
     const { firstController, firstSession, secondSession, project, tau } =
       await setupExtensionControllers();

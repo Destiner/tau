@@ -734,7 +734,7 @@ function projectIndicator(project: ProjectSummary): SessionIndicator {
       sessionIndicator(project, session),
     ),
   );
-  for (const indicator of ['new', 'draft', 'working'] as const) {
+  for (const indicator of ['new', 'working', 'draft'] as const) {
     if (indicators.has(indicator)) return indicator;
   }
   return '';
