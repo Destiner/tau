@@ -8,6 +8,7 @@ A minimal, focused interface for [Pi](https://pi.dev).
 - Remote projects via SSH
 - Support for [Pi Extensions](https://pi.dev/docs/latest/extensions)
 - Archived sessions
+- Mermaid diagram rendering
 
 ## Roadmap
 
