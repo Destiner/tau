@@ -496,6 +496,71 @@ describe('command-created session durability', () => {
     expect(state.controllers[0]?.starting).toBe(true);
   });
 
+  it('keeps an idle runtime until its final replacement probe answers', async () => {
+    vi.useFakeTimers();
+    try {
+      const telemetry = await import('../telemetry');
+      const {
+        canReleaseRuntime,
+        handleResponse,
+        releaseIdleRuntimes,
+        watchingSessionReplacement,
+        watchSessionReplacement,
+      } = await import('./runtime');
+      const controller = makeController({
+        sessionId: 'settled-plan',
+        sessionPath: '/tmp/project/settled-plan.jsonl',
+      });
+      state.controllers.push(
+        controller,
+        ...Array.from({ length: 6 }, (_, index) =>
+          makeController({
+            key: `controller-${index + 2}`,
+            runtimeId: `runtime-${index + 2}`,
+            sessionId: `idle-${index + 1}`,
+            sessionPath: `/tmp/project/idle-${index + 1}.jsonl`,
+            lastActiveSequence: index + 1,
+          }),
+        ),
+      );
+
+      watchSessionReplacement(controller);
+      await vi.advanceTimersByTimeAsync(3_200);
+
+      const requestId = controller.replacementProbeRequestId;
+      expect(requestId).toMatch(/^tau-replacement-probe-/);
+      expect(watchingSessionReplacement(controller)).toBe(true);
+      expect(canReleaseRuntime(controller)).toBe(false);
+
+      releaseIdleRuntimes();
+      expect(
+        vi
+          .mocked(telemetry.invokeTraced)
+          .mock.calls.some(([command]) => command === 'stop_pi'),
+      ).toBe(false);
+
+      await handleResponse(controller, {
+        id: requestId,
+        command: 'get_state',
+        success: true,
+        data: {
+          sessionId: controller.sessionId,
+          sessionFile: controller.sessionPath,
+          isStreaming: false,
+        },
+      });
+
+      expect(watchingSessionReplacement(controller)).toBe(false);
+      expect(telemetry.invokeTraced).toHaveBeenCalledWith(
+        'stop_pi',
+        { runtimeId: controller.runtimeId },
+        undefined,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each([
     ['local', undefined],
     ['remote', 'ssh://fixture'],

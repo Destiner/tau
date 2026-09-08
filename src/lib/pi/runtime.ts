@@ -2442,13 +2442,20 @@ async function probeSessionReplacement(
 
 function clearSessionReplacementWatch(controller: SessionController): void {
   const timers = replacementProbeTimers.get(controller.key);
-  if (!timers) return;
-  replacementProbeTimers.delete(controller.key);
-  for (const timer of timers) clearTimeout(timer);
+  if (timers) {
+    replacementProbeTimers.delete(controller.key);
+    for (const timer of timers) clearTimeout(timer);
+  }
+  controller.replacementProbeRequestId = '';
 }
 
 function watchingSessionReplacement(controller: SessionController): boolean {
-  return replacementProbeTimers.has(controller.key);
+  // The last timer leaves the schedule before its get_state response arrives.
+  // Keep idle eviction away from the runtime until that identity read settles.
+  return (
+    replacementProbeTimers.has(controller.key) ||
+    Boolean(controller.replacementProbeRequestId)
+  );
 }
 
 function materializationRetryMatches(
