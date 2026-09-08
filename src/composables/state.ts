@@ -164,6 +164,12 @@ interface SessionController {
   ready: boolean;
   streaming: boolean;
   compacting: boolean;
+  /** A successful compaction is waiting for an authoritative message rebuild. */
+  compactionReconciliationPending: boolean;
+  /** First stream row id reserved for output emitted after that compaction. */
+  compactionStreamSequence: number;
+  /** Orders message hydrations within one Pi runtime generation and identity. */
+  messagesHydrationSequence: number;
   stopping: boolean;
   starting: boolean;
   working: boolean;
@@ -862,6 +868,9 @@ function createController(
     ready: false,
     streaming: false,
     compacting: false,
+    compactionReconciliationPending: false,
+    compactionStreamSequence: 0,
+    messagesHydrationSequence: 0,
     stopping: false,
     starting: false,
     working: false,

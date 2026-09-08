@@ -70,6 +70,7 @@ import {
   toolArgumentsText,
   toolResultText,
   toolSummary,
+  type TranscriptEntry,
   type TranscriptNoticeType,
 } from './transcript';
 
@@ -175,6 +176,8 @@ async function startController(
     parentContext,
   );
   controller.compacting = false;
+  controller.compactionReconciliationPending = false;
+  controller.compactionStreamSequence = controller.streamSequence;
   controller.bootstrapStateRequestId = '';
   controller.bootstrapSessionPath = sessionPath ?? '';
   controller.runStateRequestId = '';
@@ -511,6 +514,7 @@ interface RpcDispatchSnapshot {
   generation: number;
   sessionId: string;
   sessionPath: string;
+  messagesHydrationSequence: number;
   materializationBarrierRequestId: string;
   materializationStateRequestId: string;
   materializationMessagesRequestId: string;
@@ -525,6 +529,7 @@ function captureRpcDispatchSnapshot(
     generation: controller.generation,
     sessionId: controller.sessionId,
     sessionPath: controller.sessionPath,
+    messagesHydrationSequence: controller.messagesHydrationSequence,
     materializationBarrierRequestId: controller.materializationBarrierRequestId,
     materializationStateRequestId: controller.materializationStateRequestId,
     materializationMessagesRequestId:
@@ -537,12 +542,16 @@ function captureRpcDispatchSnapshot(
 function rpcDispatchStillCurrent(
   controller: SessionController,
   snapshot: RpcDispatchSnapshot,
+  method?: string,
 ): boolean {
   return (
     !controller.disposed &&
     controller.generation === snapshot.generation &&
     controller.sessionId === snapshot.sessionId &&
-    controller.sessionPath === snapshot.sessionPath
+    controller.sessionPath === snapshot.sessionPath &&
+    (method !== 'get_messages' ||
+      controller.messagesHydrationSequence ===
+        snapshot.messagesHydrationSequence)
   );
 }
 
@@ -552,7 +561,7 @@ function cleanupRejectedRpcDispatch(
   method: string,
   snapshot: RpcDispatchSnapshot,
 ): void {
-  if (!rpcDispatchStillCurrent(controller, snapshot)) return;
+  if (!rpcDispatchStillCurrent(controller, snapshot, method)) return;
 
   if (controller.bootstrapStateRequestId === requestId) {
     controller.bootstrapStateRequestId = '';
@@ -662,6 +671,21 @@ async function rpc(
 ): Promise<void> {
   const requestId = stringValue(request.id);
   const method = stringValue(request.type);
+  if (method === 'get_messages') {
+    if (controller.startMessagesRequestId) {
+      controller.startMessagesRequestId = requestId;
+    }
+    if (controller.materializationMessagesRequestId) {
+      controller.materializationMessagesRequestId = requestId;
+    }
+    if (controller.pendingPrompt?.messagesRequestId) {
+      controller.pendingPrompt.messagesRequestId = requestId;
+    }
+    if (controller.submittedPrompt?.admissionMessagesRequestId) {
+      controller.submittedPrompt.admissionMessagesRequestId = requestId;
+    }
+    controller.messagesHydrationSequence += 1;
+  }
   const snapshot = captureRpcDispatchSnapshot(controller);
   const key = requestId
     ? rpcSpanKey(controller.runtimeId, controller.generation, requestId)
@@ -1114,6 +1138,8 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     }
     settleInterruptedSubmittedPrompt(controller);
     controller.compacting = false;
+    controller.compactionReconciliationPending = false;
+    controller.compactionStreamSequence = controller.streamSequence;
     setControllerLifecycle(
       controller,
       {
@@ -1166,6 +1192,8 @@ async function handleRpc(
     resetStreamAggregate(controller.runtimeId, controller.generation);
     controller.localErrors = [];
     controller.compacting = false;
+    controller.compactionReconciliationPending = false;
+    controller.compactionStreamSequence = controller.streamSequence;
     setControllerLifecycle(
       controller,
       { streaming: true, stopping: false, working: true },
@@ -1314,9 +1342,21 @@ async function handleRpc(
       });
       if (!isControllerSelected(controller)) controller.unread = true;
     } else if (asRecord(event.result)) {
-      // A new compaction redraws every history boundary. Keep the visible rows
-      // until the settled hydration arrives, but discard the old projection.
+      // Pi has persisted the compaction and rebuilt its message list before
+      // this event. Reconcile from that source now: the same run may continue
+      // for a long time before settlement.
       resetHistory(controller);
+      controller.compactionReconciliationPending = true;
+      controller.compactionStreamSequence = controller.streamSequence;
+      try {
+        await rpc(controller, {
+          id: nextRequestId('compaction-messages'),
+          type: 'get_messages',
+        });
+      } catch {
+        // Settlement retries the authoritative hydration. Keep post-compaction
+        // stream rows separate from the stale projection until then.
+      }
     }
     return;
   }
@@ -1393,6 +1433,11 @@ async function handleRpc(
 }
 
 function resetHistory(controller: SessionController): void {
+  for (const entry of controller.messages) {
+    if (entry.kind !== 'compaction') continue;
+    entry.historyAvailable = false;
+    entry.historyLoading = false;
+  }
   controller.historyLayers = [];
   controller.firstVisibleHistoryLayer = 0;
   controller.historyPrefixLength = 0;
@@ -1435,6 +1480,64 @@ function applyHistoryTail(
   );
   controller.historyPrefixLength = prefix.length;
   controller.messages = [...prefix, ...tail];
+}
+
+function streamEntrySequence(entry: TranscriptEntry): number | undefined {
+  const match =
+    /^stream-(?:assistant|thinking|tool|skill|user|error)-(\d+)$/.exec(
+      entry.id,
+    );
+  if (!match) return undefined;
+  const sequence = Number(match[1]);
+  return Number.isSafeInteger(sequence) ? sequence : undefined;
+}
+
+function sameLiveRow(
+  hydrated: TranscriptEntry,
+  live: TranscriptEntry,
+): boolean {
+  if (hydrated.kind !== live.kind) return false;
+  if (hydrated.kind === 'tool') {
+    return Boolean(
+      hydrated.toolCallId && hydrated.toolCallId === live.toolCallId,
+    );
+  }
+  if (hydrated.kind === 'skill') {
+    return hydrated.skillName === live.skillName && hydrated.text === live.text;
+  }
+  if (hydrated.kind === 'assistant' || hydrated.kind === 'thinking') {
+    return live.text.startsWith(hydrated.text);
+  }
+  return hydrated.text === live.text;
+}
+
+/** Keeps output emitted after a message request when Pi answered an earlier
+ * snapshot of the still-running turn. The authoritative prefix always wins. */
+function mergeLiveStreamSuffix(
+  hydrated: TranscriptEntry[],
+  previous: TranscriptEntry[],
+  dispatchStreamSequence: number,
+): TranscriptEntry[] {
+  const live = previous.filter((entry) => {
+    const sequence = streamEntrySequence(entry);
+    return sequence !== undefined && sequence >= dispatchStreamSequence;
+  });
+  if (live.length === 0) return hydrated;
+
+  const maximumOverlap = Math.min(hydrated.length, live.length);
+  for (let overlap = maximumOverlap; overlap > 0; overlap -= 1) {
+    const hydratedStart = hydrated.length - overlap;
+    if (
+      live
+        .slice(0, overlap)
+        .every((entry, index) =>
+          sameLiveRow(hydrated[hydratedStart + index]!, entry),
+        )
+    ) {
+      return [...hydrated.slice(0, hydratedStart), ...live];
+    }
+  }
+  return [...hydrated, ...live];
 }
 
 function revealCachedHistory(controller: SessionController): void {
@@ -1493,7 +1596,11 @@ async function handleResponse(
   const responseDispatchStillCurrent = Boolean(
     pendingResult.dispatchSnapshot &&
     pendingResult.method === command &&
-    rpcDispatchStillCurrent(controller, pendingResult.dispatchSnapshot),
+    rpcDispatchStillCurrent(
+      controller,
+      pendingResult.dispatchSnapshot,
+      command,
+    ),
   );
   if (responseId && confirmedAdmissionRequestIds.delete(responseId)) return;
   if (controller.remoteConnectionTimedOut) return;
@@ -1569,6 +1676,10 @@ async function handleResponse(
     command === 'get_messages' &&
     Boolean(controller.pendingPrompt?.messagesRequestId) &&
     controller.pendingPrompt?.messagesRequestId === responseId;
+  const resolvesStartMessages =
+    command === 'get_messages' &&
+    Boolean(controller.startMessagesRequestId) &&
+    controller.startMessagesRequestId === responseId;
   const resolvesMaterializationPrerequisite = Boolean(
     command === 'get_available_thinking_levels' &&
     responseDispatchStillCurrent &&
@@ -1629,8 +1740,7 @@ async function handleResponse(
     const resolvesCurrentMessagesRequest =
       command !== 'get_messages' ||
       responseDispatchStillCurrent ||
-      (Boolean(controller.startMessagesRequestId) &&
-        responseId === controller.startMessagesRequestId) ||
+      resolvesStartMessages ||
       resolvesAdmissionMessages ||
       resolvesMaterializationMessages ||
       resolvesPendingMessages;
@@ -1671,6 +1781,20 @@ async function handleResponse(
       controller.pendingSettingRequestId = '';
       controller.pendingEffort = '';
       clearSettingRequestWatch(controller);
+    }
+    if (
+      command === 'get_messages' &&
+      (resolvesStartMessages || resolvesMaterializationMessages)
+    ) {
+      if (resolvesStartMessages) controller.startMessagesRequestId = '';
+      setControllerLifecycle(
+        controller,
+        resolvesStartMessages
+          ? { starting: false, syncing: false }
+          : { syncing: false },
+        'get_messages_failed',
+        responseContext,
+      );
     }
     if (resolvesAdmissionState || resolvesAdmissionMessages) {
       releaseSubmittedPrompt(controller);
@@ -1721,22 +1845,6 @@ async function handleResponse(
         responseContext,
       );
       releaseRuntime(controller);
-    }
-    if (
-      command === 'get_messages' &&
-      (responseId === controller.startMessagesRequestId ||
-        resolvesMaterializationMessages)
-    ) {
-      const resolvesStart = responseId === controller.startMessagesRequestId;
-      if (resolvesStart) controller.startMessagesRequestId = '';
-      setControllerLifecycle(
-        controller,
-        resolvesStart
-          ? { starting: false, syncing: false }
-          : { syncing: false },
-        'get_messages_failed',
-        responseContext,
-      );
     }
     if (command === 'prompt') {
       const accepted =
@@ -1895,6 +2003,8 @@ async function handleResponse(
       controller.materializationMessagesRequestId = '';
       controller.lastUserMessageAt = 0;
       controller.compacting = data.isCompacting === true;
+      controller.compactionReconciliationPending = false;
+      controller.compactionStreamSequence = controller.streamSequence;
       rebindEphemeralSession(controller);
       controller.messages = [];
       resetHistory(controller);
@@ -2049,18 +2159,27 @@ async function handleResponse(
     const previous = controller.messages;
     const previousTail = previous.slice(controller.historyPrefixLength);
     controller.messagesLoaded = true;
+    const hydrated = hydrateTranscript(
+      piMessages,
+      previousTail,
+      controller.streaming || resolvesPending,
+    );
+    const reconciled = controller.compactionReconciliationPending
+      ? mergeLiveStreamSuffix(
+          hydrated,
+          previousTail,
+          controller.compactionStreamSequence,
+        )
+      : hydrated;
     const tail = mergeLocalEntries(
-      hydrateTranscript(
-        piMessages,
-        previousTail,
-        controller.streaming || resolvesPending,
-      ),
+      reconciled,
       controller.localErrors,
       previousTail,
     );
     applyHistoryTail(controller, tail);
-    const resolvesStart =
-      !resolvesPending && responseId === controller.startMessagesRequestId;
+    controller.compactionReconciliationPending = false;
+    controller.compactionStreamSequence = controller.streamSequence;
+    const resolvesStart = resolvesStartMessages;
     const resolvesAdmission =
       Boolean(controller.submittedPrompt?.admissionMessagesRequestId) &&
       responseId === controller.submittedPrompt?.admissionMessagesRequestId;
@@ -3292,7 +3411,16 @@ function appendStream(
 ): void {
   if (!delta) return;
   const last = controller.messages[controller.messages.length - 1];
-  if (last?.kind === kind && last.id.startsWith('stream-')) {
+  const lastSequence = last ? streamEntrySequence(last) : undefined;
+  const belongsToReconciledRun =
+    !controller.compactionReconciliationPending ||
+    (lastSequence !== undefined &&
+      lastSequence >= controller.compactionStreamSequence);
+  if (
+    last?.kind === kind &&
+    last.id.startsWith('stream-') &&
+    belongsToReconciledRun
+  ) {
     last.text += delta;
     return;
   }
@@ -3337,6 +3465,8 @@ async function retireUnsavedSession(
   controller.materializationBarrierRequestId = '';
   controller.materializationStateRequestId = '';
   controller.materializationMessagesRequestId = '';
+  controller.compactionReconciliationPending = false;
+  controller.compactionStreamSequence = controller.streamSequence;
   controller.messages = [];
   if (isControllerSelected(controller)) {
     state.activeSessionId = session.id;
@@ -3529,6 +3659,8 @@ async function stopControllerProcess(
   flushStreamAggregate(controller.runtimeId, generation);
   controller.generation = 0;
   controller.compacting = false;
+  controller.compactionReconciliationPending = false;
+  controller.compactionStreamSequence = controller.streamSequence;
   setControllerLifecycle(
     controller,
     {

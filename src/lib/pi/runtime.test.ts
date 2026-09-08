@@ -90,6 +90,9 @@ function makeController(
     ready: true,
     streaming: false,
     compacting: false,
+    compactionReconciliationPending: false,
+    compactionStreamSequence: 0,
+    messagesHydrationSequence: 0,
     stopping: false,
     starting: false,
     working: false,
@@ -3012,6 +3015,376 @@ describe('active compaction', () => {
     await handleRpc(controller, { type: 'compaction_end', result: {} });
     expect(controller.compacting).toBe(false);
     expect(other.compacting).toBe(false);
+  });
+
+  it('immediately reconciles the permanent boundary and keeps later output', async () => {
+    const { handleResponse, handleRpc, requestEarlierHistory } =
+      await import('./runtime');
+    const controller = makeController({
+      streaming: true,
+      working: true,
+      streamSequence: 5,
+      messages: [
+        {
+          id: 'old-compaction',
+          kind: 'compaction',
+          text: '',
+          historyAvailable: true,
+          historyLoading: false,
+        },
+        { id: 'old-user', kind: 'user', text: 'discarded question' },
+        {
+          id: 'stream-assistant-4',
+          kind: 'assistant',
+          text: 'discarded reply',
+        },
+      ],
+    });
+
+    await handleRpc(controller, { type: 'compaction_end', result: {} });
+    const request = mockInvoke.mock.calls
+      .filter(([command]) => command === 'send_pi')
+      .map(
+        ([, input]) => (input as { request: Record<string, unknown> }).request,
+      )
+      .find((candidate) => candidate.type === 'get_messages');
+    expect(request?.id).toMatch(/^tau-compaction-messages-/);
+    expect(controller.messages[0]).toMatchObject({
+      kind: 'compaction',
+      historyAvailable: false,
+      historyLoading: false,
+    });
+
+    await handleRpc(controller, {
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: 'continued reply' },
+    });
+    await handleRpc(controller, {
+      type: 'tool_execution_start',
+      toolCallId: 'continued-tool',
+      toolName: 'bash',
+      args: { command: 'true' },
+    });
+    await handleRpc(controller, {
+      type: 'tool_execution_end',
+      toolCallId: 'continued-tool',
+      result: { content: [] },
+    });
+
+    await handleResponse(controller, {
+      id: request?.id,
+      command: 'get_messages',
+      success: true,
+      data: {
+        messages: [
+          { role: 'compactionSummary', summary: 'summary' },
+          { role: 'user', content: 'retained question' },
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'continued reply' }],
+          },
+        ],
+      },
+    });
+
+    expect(controller.streaming).toBe(true);
+    expect(
+      controller.messages.map((entry) => [entry.kind, entry.text]),
+    ).toEqual([
+      ['compaction', ''],
+      ['user', 'retained question'],
+      ['assistant', 'continued reply'],
+      ['tool', 'true'],
+    ]);
+    expect(controller.messages[0]).toMatchObject({
+      historyAvailable: true,
+      historyLoading: false,
+    });
+
+    await requestEarlierHistory(controller);
+    await handleResponse(controller, {
+      id: controller.historyRequestId,
+      command: 'get_entries',
+      success: true,
+      data: {
+        leafId: 'd',
+        entries: [
+          {
+            type: 'message',
+            id: 'a',
+            parentId: null,
+            message: { role: 'user', content: 'earlier question' },
+          },
+          {
+            type: 'message',
+            id: 'b',
+            parentId: 'a',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'earlier reply' }],
+            },
+          },
+          {
+            type: 'message',
+            id: 'c',
+            parentId: 'b',
+            message: { role: 'user', content: 'retained question' },
+          },
+          {
+            type: 'compaction',
+            id: 'd',
+            parentId: 'c',
+            firstKeptEntryId: 'c',
+            summary: 'summary',
+          },
+        ],
+      },
+    });
+
+    expect(
+      controller.messages.filter((entry) => entry.text === 'retained question'),
+    ).toHaveLength(1);
+    expect(controller.messages.map((entry) => entry.text)).toEqual([
+      'earlier question',
+      'earlier reply',
+      '',
+      'retained question',
+      'continued reply',
+      'true',
+    ]);
+  });
+
+  it('drops an older message hydration after a newer one was dispatched', async () => {
+    const { handleResponse, handleRpc } = await import('./runtime');
+    const controller = makeController({ streaming: true, working: true });
+
+    await handleRpc(controller, { type: 'compaction_end', result: {} });
+    const firstRequest = mockInvoke.mock.calls
+      .filter(([command]) => command === 'send_pi')
+      .map(
+        ([, input]) => (input as { request: Record<string, unknown> }).request,
+      )
+      .find((candidate) => candidate.type === 'get_messages');
+    const newerRequestId = await dispatchRequest(
+      controller,
+      'get_messages',
+      'newer-messages',
+    );
+    await handleResponse(controller, {
+      id: newerRequestId,
+      command: 'get_messages',
+      success: true,
+      data: {
+        messages: [
+          { role: 'compactionSummary', summary: 'new' },
+          { role: 'user', content: 'new retained tail' },
+        ],
+      },
+    });
+    await handleResponse(controller, {
+      id: firstRequest?.id,
+      command: 'get_messages',
+      success: true,
+      data: { messages: [{ role: 'user', content: 'stale full transcript' }] },
+    });
+
+    expect(controller.messages.map((entry) => entry.text)).toEqual([
+      '',
+      'new retained tail',
+    ]);
+  });
+
+  it('resolves overlapping bootstrap and pending-prompt hydration on the newest success', async () => {
+    const { handleResponse, rpc } = await import('./runtime');
+    const controller = makeController({
+      starting: true,
+      syncing: true,
+      promptSubmitting: true,
+      pendingPrompt: {
+        message: 'Pending prompt',
+        draft: 'Pending prompt',
+        optimisticId: 'optimistic-pending',
+        command: false,
+        stateRequestId: '',
+        messagesRequestId: 'bootstrap-messages',
+        selectedModelProvider: '',
+        selectedModelId: '',
+        selectedModelName: '',
+        selectedEffort: 'off',
+        settingsRequestId: '',
+        settingsStep: '',
+      },
+    });
+    controller.startMessagesRequestId = 'bootstrap-messages';
+    await rpc(controller, {
+      id: 'bootstrap-messages',
+      type: 'get_messages',
+    });
+
+    const newestRequestId = await dispatchRequest(
+      controller,
+      'get_messages',
+      'newest-messages',
+    );
+    expect(controller.startMessagesRequestId).toBe(newestRequestId);
+
+    await handleResponse(controller, {
+      id: newestRequestId,
+      command: 'get_messages',
+      success: true,
+      data: { messages: [{ role: 'user', content: 'current transcript' }] },
+    });
+    expect(controller.startMessagesRequestId).toBe('');
+    expect(controller.pendingPrompt).toBeUndefined();
+    expect(controller.submittedPrompt?.message).toBe('Pending prompt');
+    expect(controller.starting).toBe(false);
+    expect(controller.syncing).toBe(false);
+
+    await handleResponse(controller, {
+      id: 'bootstrap-messages',
+      command: 'get_messages',
+      success: true,
+      data: { messages: [{ role: 'user', content: 'stale transcript' }] },
+    });
+    expect(controller.messages.map((entry) => entry.text)).toEqual([
+      'current transcript',
+      'Pending prompt',
+    ]);
+  });
+
+  it('transfers every active message hydration purpose before dispatch', async () => {
+    const { rpc } = await import('./runtime');
+    const controller = makeController({
+      startMessagesRequestId: 'old-bootstrap',
+      materializationMessagesRequestId: 'old-materialization',
+      pendingPrompt: {
+        message: 'Pending prompt',
+        draft: 'Pending prompt',
+        optimisticId: 'optimistic-pending',
+        command: false,
+        stateRequestId: '',
+        messagesRequestId: 'old-pending',
+        selectedModelProvider: '',
+        selectedModelId: '',
+        selectedModelName: '',
+        selectedEffort: 'off',
+        settingsRequestId: '',
+        settingsStep: '',
+      },
+      submittedPrompt: {
+        requestId: 'prompt-1',
+        generation: 1,
+        message: 'Submitted prompt',
+        draft: 'Submitted prompt',
+        accepted: true,
+        optimisticId: 'optimistic-submitted',
+        admissionMessagesRequestId: 'old-admission',
+      },
+    });
+
+    await rpc(controller, { id: 'newest-messages', type: 'get_messages' });
+
+    expect(controller.startMessagesRequestId).toBe('newest-messages');
+    expect(controller.materializationMessagesRequestId).toBe('newest-messages');
+    expect(controller.pendingPrompt?.messagesRequestId).toBe('newest-messages');
+    expect(controller.submittedPrompt?.admissionMessagesRequestId).toBe(
+      'newest-messages',
+    );
+  });
+
+  it('cleans up and retries the transferred purpose when the newest hydration fails', async () => {
+    const {
+      handleResponse,
+      rpc,
+      stopControllerProcess,
+      watchingMaterializationVerification,
+    } = await import('./runtime');
+    const controller = makeController({
+      postSettlementHydration: true,
+      starting: true,
+      syncing: true,
+      startMessagesRequestId: 'older-messages',
+      materializationMessagesRequestId: 'older-messages',
+    });
+    await rpc(controller, { id: 'older-messages', type: 'get_messages' });
+    await rpc(controller, { id: 'newest-messages', type: 'get_messages' });
+
+    await handleResponse(controller, {
+      id: 'newest-messages',
+      command: 'get_messages',
+      success: false,
+    });
+
+    expect(controller.startMessagesRequestId).toBe('');
+    expect(controller.materializationMessagesRequestId).toBe('');
+    expect(controller.starting).toBe(false);
+    expect(controller.syncing).toBe(false);
+    expect(watchingMaterializationVerification(controller)).toBe(true);
+    await stopControllerProcess(controller);
+  });
+
+  it('cleans up and retries the transferred purpose when the newest hydration send rejects', async () => {
+    const { rpc, stopControllerProcess, watchingMaterializationVerification } =
+      await import('./runtime');
+    const controller = makeController({
+      postSettlementHydration: true,
+      starting: true,
+      syncing: true,
+      startMessagesRequestId: 'older-messages',
+      materializationMessagesRequestId: 'older-messages',
+    });
+    await rpc(controller, { id: 'older-messages', type: 'get_messages' });
+    mockInvoke.mockRejectedValueOnce(new Error('transport rejected'));
+
+    await expect(
+      rpc(controller, { id: 'newest-messages', type: 'get_messages' }),
+    ).rejects.toThrow('transport rejected');
+
+    expect(controller.startMessagesRequestId).toBe('');
+    expect(controller.materializationMessagesRequestId).toBe('');
+    expect(controller.starting).toBe(false);
+    expect(controller.syncing).toBe(false);
+    expect(watchingMaterializationVerification(controller)).toBe(true);
+    await stopControllerProcess(controller);
+  });
+
+  it('keeps a terminal stream error emitted after compaction hydration starts', async () => {
+    const { handleResponse, handleRpc } = await import('./runtime');
+    const controller = makeController({ streaming: true, working: true });
+
+    await handleRpc(controller, { type: 'compaction_end', result: {} });
+    const request = mockInvoke.mock.calls
+      .filter(([command]) => command === 'send_pi')
+      .map(
+        ([, input]) => (input as { request: Record<string, unknown> }).request,
+      )
+      .find((candidate) => candidate.type === 'get_messages');
+    await handleRpc(controller, {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        stopReason: 'error',
+        errorMessage: '402: out of credits',
+      },
+    });
+
+    await handleResponse(controller, {
+      id: request?.id,
+      command: 'get_messages',
+      success: true,
+      data: {
+        messages: [{ role: 'compactionSummary', summary: 'summary' }],
+      },
+    });
+
+    expect(controller.messages).toEqual([
+      expect.objectContaining({ kind: 'compaction' }),
+      expect.objectContaining({
+        id: 'stream-error-0',
+        kind: 'error',
+        errorLabel: 'Reply Failed',
+      }),
+    ]);
   });
 
   it('restores a missed start from get_state and clears it on process exit', async () => {

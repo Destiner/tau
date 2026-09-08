@@ -67,7 +67,7 @@ const scenario = definePiScenario({
   metadata: {
     name: 'saved-session-compaction',
     purpose:
-      'Show active compaction from both its event and reconciled Pi state, then hydrate one permanent boundary.',
+      'Show active compaction, immediately reconcile its permanent boundary, and keep same-run output below it before settlement.',
     qualityRule: 'State correctness and session locality',
     schemaVersion: 1,
   },
@@ -111,12 +111,46 @@ const scenario = definePiScenario({
       runtime,
       event: { type: 'compaction_end', result: { summary } },
     },
+    {
+      kind: 'request',
+      runtime,
+      capture: 'first-compaction-messages',
+      match: { type: 'get_messages' },
+    },
+    {
+      kind: 'response',
+      request: 'first-compaction-messages',
+      command: 'get_messages',
+      data: {
+        messages: [
+          { role: 'compactionSummary', summary },
+          { role: 'user', content: firstPrompt },
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Ready to compact.' }],
+          },
+        ],
+      },
+    },
+    {
+      kind: 'event',
+      runtime,
+      event: {
+        type: 'message_update',
+        assistantMessageEvent: {
+          type: 'text_delta',
+          delta: ' Still working.',
+        },
+      },
+    },
+    { kind: 'gate', name: 'compaction-ended-continuing', required: true },
     { kind: 'response', request: 'first-prompt', command: 'prompt' },
     ...settlement('first-settled', [
       { role: 'compactionSummary', summary },
+      { role: 'user', content: firstPrompt },
       {
         role: 'assistant',
-        content: [{ type: 'text', text: 'Ready to compact.' }],
+        content: [{ type: 'text', text: 'Ready to compact. Still working.' }],
       },
     ]),
     {
@@ -144,12 +178,37 @@ const scenario = definePiScenario({
       runtime,
       event: { type: 'compaction_end', result: { summary } },
     },
+    {
+      kind: 'request',
+      runtime,
+      capture: 'second-compaction-messages',
+      match: { type: 'get_messages' },
+    },
+    {
+      kind: 'response',
+      request: 'second-compaction-messages',
+      command: 'get_messages',
+      data: {
+        messages: [
+          { role: 'compactionSummary', summary },
+          { role: 'user', content: firstPrompt },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: 'Ready to compact. Still working.' },
+            ],
+          },
+          { role: 'user', content: secondPrompt },
+        ],
+      },
+    },
     { kind: 'response', request: 'second-prompt', command: 'prompt' },
     ...settlement('second-settled', [
       { role: 'compactionSummary', summary },
+      { role: 'user', content: firstPrompt },
       {
         role: 'assistant',
-        content: [{ type: 'text', text: 'Ready to compact.' }],
+        content: [{ type: 'text', text: 'Ready to compact. Still working.' }],
       },
       { role: 'user', content: secondPrompt },
     ]),

@@ -71,10 +71,36 @@ test('shows non-interruptible compaction from events and reconciled state', asyn
   await expect(composer).toHaveValue(secondPrompt);
 
   await releaseGate(page, 'compaction-started');
+  await waitForGate(page, 'compaction-ended-continuing');
   await expect(page.locator('.transient-compaction')).toHaveCount(0);
-  await expect(page.locator('.message.compaction')).toHaveCount(1);
-  await expect(page.locator('.message.compaction')).toHaveText('compacted');
+  const permanent = page.locator('.message.compaction');
+  const retained = page
+    .locator('.message.user')
+    .filter({ hasText: firstPrompt });
+  const continued = page
+    .locator('.message.assistant')
+    .filter({ hasText: 'Still working.' })
+    .last();
+  await expect(permanent).toHaveCount(1);
+  await expect(permanent).toHaveText('compacted');
+  await expect(retained).toHaveCount(1);
+  await expect(continued).toBeVisible();
+  await expect
+    .poll(() =>
+      page
+        .locator('.message-window > .message')
+        .evaluateAll((rows) =>
+          rows.map((row) =>
+            ['compaction', 'user', 'assistant'].find((kind) =>
+              row.classList.contains(kind),
+            ),
+          ),
+        ),
+    )
+    .toEqual(['compaction', 'user', 'assistant']);
   await expect(composer).toHaveValue(secondPrompt);
+
+  await releaseGate(page, 'compaction-ended-continuing');
   await page.getByRole('button', { name: 'Send Message' }).click();
 
   await waitForGate(page, 'missed-start-reconciled');
