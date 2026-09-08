@@ -1,16 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img">
   <title>Tau</title>
+  <defs>
+    <filter id="shadow" x="12" y="12" width="232" height="236" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.35" />
+    </filter>
+  </defs>
   <rect
-    x="8"
-    y="8"
-    width="240"
-    height="240"
-    rx="54"
+    x="27"
+    y="27"
+    width="202"
+    height="202"
+    rx="45"
     fill="#10141c"
     stroke="#1b1f29"
     stroke-width="2"
+    filter="url(#shadow)"
   />
-  <g transform="translate(128 128) scale(0.82) translate(-128 -128)">
+  <g transform="translate(128 128) scale(0.7) translate(-128 -128)">
     <path
       d="M66 76h124M128 78v82c0 20 11 30 30 30"
       fill="none"
