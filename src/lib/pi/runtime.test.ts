@@ -2322,6 +2322,124 @@ describe('command-created session durability', () => {
 });
 
 describe('prompt delivery', () => {
+  it('keeps a phantom first prompt present through identity adoption and empty preflight hydration', async () => {
+    const { handleResponse, rpc } = await import('./runtime');
+    const optimisticId = 'optimistic-user-1';
+    const phantomId = 'phantom-1';
+    const controller = makeController({
+      phantom: true,
+      sessionId: phantomId,
+      sessionPath: '',
+      sessionName: '',
+      starting: true,
+      working: true,
+      promptSubmitting: true,
+      currentModelProvider: 'fixture',
+      currentModelId: 'alpha',
+      currentModelName: 'Alpha',
+      currentEffort: 'high',
+      pendingPrompt: {
+        message: 'Keep this visible',
+        draft: 'Keep this visible',
+        optimisticId,
+        command: false,
+        stateRequestId: 'state-1',
+        messagesRequestId: '',
+        selectedModelProvider: 'fixture',
+        selectedModelId: 'alpha',
+        selectedModelName: 'Alpha',
+        selectedEffort: 'high',
+        settingsRequestId: '',
+        settingsStep: '',
+      },
+      messages: [
+        {
+          id: optimisticId,
+          kind: 'user',
+          text: 'Keep this visible',
+          pending: true,
+        },
+      ],
+    });
+    state.workspace = {
+      activeProjectPath: controller.projectPath,
+      piPath: '/usr/bin/pi',
+      projects: [
+        {
+          path: controller.projectPath,
+          name: 'Project',
+          workingDirectory: controller.projectPath,
+          collapsed: false,
+          selected: true,
+          sessions: [],
+        },
+      ],
+    };
+    state.activeProjectPath = controller.projectPath;
+    state.activeSessionId = phantomId;
+    state.activeControllerKey = controller.key;
+    state.controllers.push(controller);
+    state.ephemeralSessions.push({
+      id: phantomId,
+      path: '',
+      title: 'New Session',
+      lastActive: 'now',
+      lastUserMessageAt: 0,
+      sortAt: 1,
+      archived: false,
+      selected: true,
+      projectPath: controller.projectPath,
+      controllerKey: controller.key,
+      createdAt: 1,
+      phantom: true,
+    });
+
+    const messageTransitions: string[][] = [];
+    let visibleMessages = controller.messages;
+    Object.defineProperty(controller, 'messages', {
+      configurable: true,
+      get: () => visibleMessages,
+      set: (messages: SessionController['messages']) => {
+        visibleMessages = messages;
+        messageTransitions.push(messages.map((message) => message.id));
+      },
+    });
+
+    await rpc(controller, { id: 'state-1', type: 'get_state' });
+    await handleResponse(controller, {
+      id: 'state-1',
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'session-first-prompt',
+        sessionFile: '/tmp/project/session-first-prompt.jsonl',
+        sessionName: 'First prompt',
+        model: { provider: 'fixture', id: 'alpha', name: 'Alpha' },
+        thinkingLevel: 'high',
+        isStreaming: false,
+      },
+    });
+
+    expect(controller.sessionId).toBe('session-first-prompt');
+    expect(state.ephemeralSessions[0]?.id).toBe('session-first-prompt');
+    const messagesRequestId = controller.pendingPrompt?.messagesRequestId;
+    expect(messagesRequestId).toBeTruthy();
+
+    await handleResponse(controller, {
+      id: messagesRequestId,
+      command: 'get_messages',
+      success: true,
+      data: { messages: [] },
+    });
+
+    expect(messageTransitions).toEqual([[optimisticId]]);
+    expect(controller.messages).toMatchObject([
+      { id: optimisticId, kind: 'user', text: 'Keep this visible' },
+    ]);
+    expect(controller.pendingPrompt).toBeUndefined();
+    expect(controller.submittedPrompt?.optimisticId).toBe(optimisticId);
+  });
+
   it('restores an unconfirmed saved-session prompt when its bridge fails', async () => {
     const { handleBridgeEvent } = await import('./runtime');
     const controller = makeController({

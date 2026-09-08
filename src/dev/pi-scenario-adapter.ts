@@ -109,6 +109,11 @@ const COMMAND_SESSION = {
   path: `${PROJECT_PATH}/session-mcp.jsonl`,
   name: 'MCP workflow',
 };
+const FIRST_PROMPT_SESSION = {
+  id: 'session-first-prompt',
+  path: `${PROJECT_PATH}/session-first-prompt.jsonl`,
+  name: 'First prompt',
+};
 const ARCHIVED_SESSION = {
   id: 'session-archived',
   path: `${PROJECT_PATH}/session-archived.jsonl`,
@@ -194,6 +199,13 @@ const REQUIRED_NATIVE_COUNTS = {
     set_active_session: 9,
   },
   'phantom-command-registration': {
+    load_workspace: 1,
+    read_model_scope: 2,
+    register_session: 3,
+    set_active_project: 1,
+    set_active_session: 3,
+  },
+  'phantom-first-prompt-registration': {
     load_workspace: 1,
     read_model_scope: 2,
     register_session: 3,
@@ -429,16 +441,17 @@ function installPiScenarioAdapter(scenarioName: string): void {
       if (command === 'register_session') {
         const invocation = count(command);
         const expected =
-          scenarioName === 'phantom-command-registration'
+          scenarioName === 'phantom-command-registration' ||
+          scenarioName === 'phantom-first-prompt-registration'
             ? ((): NativeSessionIdentity => {
                 const session =
-                  [MAIN_SESSION, COMMAND_SESSION].find(
+                  [MAIN_SESSION, COMMAND_SESSION, FIRST_PROMPT_SESSION].find(
                     (candidate) => candidate.id === args.sessionId,
                   ) ?? MAIN_SESSION;
                 return {
                   ...session,
                   adopted:
-                    session.id === COMMAND_SESSION.id &&
+                    session.id !== MAIN_SESSION.id &&
                     !registeredSessionIds.has(session.id),
                 };
               })()
@@ -451,6 +464,8 @@ function installPiScenarioAdapter(scenarioName: string): void {
           workspace = upsertSessionWorkspace(workspace, PLAN_SESSION);
         } else if (expected.id === COMMAND_SESSION.id) {
           workspace = commandSessionWorkspace();
+        } else if (expected.id === FIRST_PROMPT_SESSION.id) {
+          workspace = upsertSessionWorkspace(workspace, FIRST_PROMPT_SESSION);
         }
         return structuredClone(workspace);
       }
@@ -467,9 +482,12 @@ function installPiScenarioAdapter(scenarioName: string): void {
       if (command === 'set_active_session') {
         const invocation = count(command);
         let expected: NativeSessionIdentity;
-        if (scenarioName === 'phantom-command-registration') {
+        if (
+          scenarioName === 'phantom-command-registration' ||
+          scenarioName === 'phantom-first-prompt-registration'
+        ) {
           expected =
-            [MAIN_SESSION, COMMAND_SESSION].find(
+            [MAIN_SESSION, COMMAND_SESSION, FIRST_PROMPT_SESSION].find(
               (session) => session.id === args.sessionId,
             ) ?? MAIN_SESSION;
         } else if (
@@ -849,6 +867,7 @@ function scenarioRuntimeKey(
   }
   if (
     scenarioName === 'phantom-command-registration' ||
+    scenarioName === 'phantom-first-prompt-registration' ||
     scenarioName === 'phantom-command-only'
   ) {
     if (count > 1) throw new Error('A command session started twice.');
