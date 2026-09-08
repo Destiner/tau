@@ -153,6 +153,11 @@ beforeEach(async () => {
   state.activeSessionPath = '';
   state.activeControllerKey = '';
   state.workspace = null;
+  state.remoteRetry = undefined;
+  state.remoteDialogOpen = false;
+  state.remoteDialogMode = 'add';
+  state.remoteConnectionError = '';
+  state.remoteConnecting = false;
   const telemetry = await import('../telemetry');
   vi.mocked(telemetry.recordControllerTransition).mockClear();
   vi.mocked(telemetry.recordRpcResponseAnomaly).mockClear();
@@ -2346,6 +2351,83 @@ describe('prompt delivery', () => {
     expect(controller.submittedPrompt).toBeUndefined();
     expect(controller.draft).toBe('  Keep this draft  \n\nA newer draft');
     expect(controller.messages).toEqual([]);
+  });
+
+  it('restores a remote phantom prompt once when startup errors then exits', async () => {
+    const { handleBridgeEvent } = await import('./runtime');
+    const controller = makeController({
+      phantom: true,
+      sessionId: '',
+      sessionPath: '',
+      promptSubmitting: true,
+      starting: true,
+      working: true,
+      connectingRemote: true,
+      ready: false,
+      draft: 'A newer draft',
+      pendingPrompt: {
+        message: 'Keep this draft',
+        draft: '  Keep this draft  ',
+        optimisticId: 'optimistic-1',
+        command: false,
+        stateRequestId: 'state-1',
+        messagesRequestId: '',
+        selectedModelProvider: 'fixture',
+        selectedModelId: 'alpha',
+        selectedModelName: 'Alpha',
+        selectedEffort: 'high',
+        settingsRequestId: '',
+        settingsStep: '',
+      },
+      messages: [{ id: 'optimistic-1', kind: 'user', text: 'Keep this draft' }],
+    });
+    state.workspace = {
+      activeProjectPath: controller.projectPath,
+      piPath: null,
+      projects: [
+        {
+          path: controller.projectPath,
+          name: 'Remote project',
+          workingDirectory: '/remote/project',
+          connectionString: 'ssh fixture@example',
+          collapsed: false,
+          selected: true,
+          sessions: [],
+        },
+      ],
+    };
+    state.activeProjectPath = controller.projectPath;
+    state.activeControllerKey = controller.key;
+    state.controllers.push(controller);
+
+    await handleBridgeEvent({
+      runtimeId: controller.runtimeId,
+      generation: controller.generation,
+      kind: 'error',
+    });
+
+    expect(controller.pendingPrompt).toBeUndefined();
+    expect(controller.promptSubmitting).toBe(false);
+    expect(controller.working).toBe(false);
+    expect(controller.draft).toBe('  Keep this draft  \n\nA newer draft');
+    expect(controller.messages).toEqual([]);
+    expect(state.remoteDialogOpen).toBe(true);
+    expect(state.remoteRetry?.controllerKey).toBe(controller.key);
+
+    await handleBridgeEvent({
+      runtimeId: controller.runtimeId,
+      generation: controller.generation,
+      kind: 'exited',
+      code: 255,
+    });
+
+    expect(controller.draft).toBe('  Keep this draft  \n\nA newer draft');
+    expect(controller.messages).toEqual([]);
+    expect(controller.status).toBe(
+      'The remote Pi process stopped unexpectedly. Check the connection and try again.',
+    );
+    expect(state.remoteConnectionError).toBe(controller.status);
+    expect(state.remoteRetry?.controllerKey).toBe(controller.key);
   });
 
   it('restores an unconfirmed prompt interrupted by a new generation', async () => {

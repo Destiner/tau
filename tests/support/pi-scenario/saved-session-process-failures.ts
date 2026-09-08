@@ -74,6 +74,49 @@ const savedSessionBootstrapProcessExit = definePiScenario({
   ],
 });
 
+const remotePhantomPromptProcessExit = definePiScenario({
+  metadata: {
+    name: 'remote-phantom-prompt-process-exit',
+    purpose:
+      'Restore a remote phantom first prompt when startup errors then exits, while keeping retry available.',
+    qualityRule: 'State correctness, failure locality, and input integrity',
+    schemaVersion: 1,
+    origin: 'Feedback report #5',
+  },
+  runtimes: [
+    { key: 'main', generation: 1 },
+    { key: 'failed-phantom', generation: 2 },
+    { key: 'recovered-phantom', generation: 3 },
+  ],
+  steps: [
+    ...successfulBootstrapSteps('main', 'main-bootstrap', mainSessionState),
+    { kind: 'runtime-event', runtime: 'failed-phantom', event: 'started' },
+    ...(['models', 'commands', 'state'] as const).map(
+      (capture) =>
+        ({
+          kind: 'request',
+          runtime: 'failed-phantom',
+          capture: `failed-phantom-${capture}`,
+          match: {
+            type:
+              capture === 'models'
+                ? 'get_available_models'
+                : capture === 'commands'
+                  ? 'get_commands'
+                  : 'get_state',
+          },
+        }) as PiScenarioStep,
+    ),
+    ...processFailure('failed-phantom', 'remote-phantom-prompt'),
+    ...successfulBootstrapSteps('recovered-phantom', 'recovered-phantom', {
+      ...mainSessionState,
+      sessionId: 'session-recovered-phantom',
+      sessionFile: '/remote/tau-project/session-recovered-phantom.jsonl',
+      sessionName: 'Recovered phantom',
+    }),
+  ],
+});
+
 const savedSessionPromptProcessExit = definePiScenario({
   metadata: {
     name: 'saved-session-prompt-process-exit',
@@ -131,6 +174,7 @@ export {
   rawBridgeError,
   rawExitMessage,
   rawStderr,
+  remotePhantomPromptProcessExit,
   savedSessionBootstrapProcessExit,
   savedSessionPromptProcessExit,
 };

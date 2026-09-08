@@ -40,6 +40,13 @@ interface StartPiArgs {
   sessionPath: string | null;
 }
 
+interface StartPiRemoteArgs {
+  runtimeId: string;
+  connectionString: string;
+  workingDirectory: string;
+  sessionPath: string | null;
+}
+
 interface SendPiArgs {
   runtimeId: string;
   request: Record<string, unknown>;
@@ -72,6 +79,8 @@ declare global {
 }
 
 const PROJECT_PATH = '/fixture/tau-project';
+const REMOTE_CONNECTION = 'ssh fixture@example';
+const REMOTE_WORKING_DIRECTORY = '/remote/tau-project';
 const SESSION_ID = 'session-main';
 const SESSION_PATH = `${PROJECT_PATH}/session-main.jsonl`;
 const MAIN_SESSION = { id: SESSION_ID, path: SESSION_PATH, name: 'Main' };
@@ -211,6 +220,14 @@ const REQUIRED_NATIVE_COUNTS = {
     register_session: 3,
     set_active_session: 3,
   },
+  'remote-phantom-prompt-process-exit': {
+    load_workspace: 1,
+    read_remote_model_scope: 3,
+    start_pi_remote: 3,
+    register_session: 1,
+    set_active_project: 1,
+    set_active_session: 1,
+  },
   'saved-session-bootstrap-process-exit': {
     load_workspace: 1,
     read_model_scope: 2,
@@ -273,6 +290,13 @@ function scenarioWorkspace(scenarioName: string): WorkspaceSnapshot {
       archived: false,
       selected: false,
     });
+  }
+  if (scenarioName === 'remote-phantom-prompt-process-exit') {
+    const project = workspace.projects[0];
+    if (!project) throw new Error('Remote scenario requires a project.');
+    project.connectionString = REMOTE_CONNECTION;
+    project.workingDirectory = REMOTE_WORKING_DIRECTORY;
+    workspace.piPath = null;
   }
   if (scenarioName === 'archived-sessions-review') {
     workspace.projects[0]?.sessions.push({
@@ -359,7 +383,11 @@ function installPiScenarioAdapter(scenarioName: string): void {
         count(command);
         return structuredClone(workspace);
       }
-      if (command === 'read_model_scope') {
+      if (
+        command === 'read_model_scope' ||
+        (command === 'read_remote_model_scope' &&
+          scenarioName === 'remote-phantom-prompt-process-exit')
+      ) {
         count(command);
         return [];
       }
@@ -370,8 +398,9 @@ function installPiScenarioAdapter(scenarioName: string): void {
         count(command);
         return null;
       }
-      if (command === 'start_pi') {
-        const value = startPiArgs(args);
+      if (command === 'start_pi' || command === 'start_pi_remote') {
+        const value =
+          command === 'start_pi' ? startPiArgs(args) : startPiRemoteArgs(args);
         count(command);
         const runtimeKey = scenarioRuntimeKey(
           scenarioName,
@@ -610,6 +639,38 @@ function startPiArgs(args: Record<string, unknown>): StartPiArgs {
   return value;
 }
 
+function startPiRemoteArgs(args: Record<string, unknown>): StartPiRemoteArgs {
+  const sessionPath = args.sessionPath;
+  if (sessionPath !== null && typeof sessionPath !== 'string') {
+    throw new Error('start_pi_remote.sessionPath must be a string or null.');
+  }
+  const value = {
+    runtimeId: requiredString(args, 'runtimeId', 'start_pi_remote'),
+    connectionString: requiredString(
+      args,
+      'connectionString',
+      'start_pi_remote',
+    ),
+    workingDirectory: requiredString(
+      args,
+      'workingDirectory',
+      'start_pi_remote',
+    ),
+    sessionPath,
+  };
+  requireEqual(
+    value.connectionString,
+    REMOTE_CONNECTION,
+    'start_pi_remote.connectionString',
+  );
+  requireEqual(
+    value.workingDirectory,
+    REMOTE_WORKING_DIRECTORY,
+    'start_pi_remote.workingDirectory',
+  );
+  return value;
+}
+
 function sendPiArgs(args: Record<string, unknown>): SendPiArgs {
   const runtimeId = requiredString(args, 'runtimeId', 'send_pi');
   const request = args.request;
@@ -756,6 +817,15 @@ function scenarioRuntimeKey(
   const pathKey = sessionPath ?? '<new-session>';
   const count = (startCounts.get(pathKey) ?? 0) + 1;
   startCounts.set(pathKey, count);
+  if (scenarioName === 'remote-phantom-prompt-process-exit') {
+    if (sessionPath === SESSION_PATH) return 'main';
+    if (sessionPath !== null || count > 2) {
+      throw new Error(
+        'Remote phantom recovery used an unexpected runtime start.',
+      );
+    }
+    return count === 1 ? 'failed-phantom' : 'recovered-phantom';
+  }
   if (scenarioName === 'saved-session-bootstrap-process-exit') {
     if (sessionPath !== SESSION_PATH || count > 2) {
       throw new Error('Bootstrap recovery used an unexpected runtime start.');

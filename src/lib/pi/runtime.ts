@@ -255,10 +255,10 @@ async function startController(
     const message = project.connectionString
       ? errorCopy.remoteConnection
       : errorCopy.piStart;
+    if (controller.pendingPrompt) cancelPendingPrompt(controller, message);
     if (project.connectionString)
       presentRemoteConnectionError(controller, message);
     else setControllerError(controller, message);
-    if (controller.pendingPrompt) cancelPendingPrompt(controller, message);
   }
 }
 
@@ -972,6 +972,9 @@ function watchRemoteConnection(controller: SessionController): void {
       remoteConnectionTimers.delete(controller.key);
       if (controller.disposed || !controller.connectingRemote) return;
       controller.remoteConnectionTimedOut = true;
+      if (controller.pendingPrompt) {
+        cancelPendingPrompt(controller, remoteConnectionTimeoutMessage);
+      }
       presentRemoteConnectionError(controller, remoteConnectionTimeoutMessage);
       void stopControllerProcess(controller, undefined, false);
     }, remoteConnectionTimeoutMs),
@@ -1053,6 +1056,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
       : piConnectionFailureMessage;
     if (controller.connectingRemote) {
       clearRemoteConnectionWatch(controller);
+      if (controller.pendingPrompt) cancelPendingPrompt(controller, message);
       presentRemoteConnectionError(controller, message);
       return;
     }
@@ -1089,17 +1093,20 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     clearAbortWatch(controller);
     clearRemoteConnectionWatch(controller);
     discardControllerDialogs(controller, event.generation);
+    const remoteConnectionFailed =
+      controller.connectingRemote ||
+      state.remoteRetry?.controllerKey === controller.key;
     const message =
       event.code === 0
         ? ''
-        : controller.connectingRemote
+        : remoteConnectionFailed
           ? remotePiProcessExitMessage
           : piProcessExitMessage;
-    if (controller.connectingRemote) {
-      presentRemoteConnectionError(
-        controller,
-        message || 'The remote Pi process stopped before it was ready.',
-      );
+    if (remoteConnectionFailed) {
+      const failure =
+        message || 'The remote Pi process stopped before it was ready.';
+      if (controller.pendingPrompt) cancelPendingPrompt(controller, failure);
+      presentRemoteConnectionError(controller, failure);
       return;
     }
     if (controller.pendingPrompt) {
