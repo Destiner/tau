@@ -12,6 +12,7 @@ A minimal, focused interface for [Pi](https://pi.dev).
 
 ## Roadmap
 
+- Search
 - Steering
 - File operations (explorer/editor)
 - Keyboard shortcuts
