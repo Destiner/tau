@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test';
+
 import { expect, test } from './fixtures';
 
 const fixtureUrl = '/?fixture=extension-dialog';
@@ -31,6 +33,73 @@ test('opens the transcript at a question larger than the pane', async ({
   expect(
     scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight,
   ).toBeLessThanOrEqual(2);
+});
+
+test('does not move a reader in history when a prompt appears', async ({
+  page,
+}) => {
+  await page.goto(`${fixtureUrl}&delayed=true`);
+
+  const transcript = page.getByLabel('Transcript');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect
+    .poll(() =>
+      transcript.evaluate(
+        (element) => element.scrollHeight > element.clientHeight,
+      ),
+    )
+    .toBe(true);
+  await transcript.evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event('scroll'));
+  });
+  await expect(
+    page.getByText('History prompt 0', { exact: true }),
+  ).toBeVisible();
+  const before = await transcript.evaluate(transcriptSnapshot);
+  expect(before).not.toBeNull();
+  expect(before?.distanceFromEnd).toBeGreaterThan(100);
+
+  await page.getByRole('button', { name: 'Show prompt' }).click();
+  const prompt = transcript.getByRole('dialog');
+  await expect(prompt).toBeVisible();
+  await expect(prompt.getByRole('option').first()).toBeFocused();
+  await waitForLayout(page);
+
+  const after = await transcript.evaluate(transcriptSnapshot);
+  expect(after).not.toBeNull();
+  expect(after?.scrollHeight).toBeGreaterThan(before?.scrollHeight ?? 0);
+  expect(after?.id).toBe(before?.id);
+  expect(
+    Math.abs((after?.offset ?? 0) - (before?.offset ?? 0)),
+  ).toBeLessThanOrEqual(2);
+  await expect(
+    page.getByText('History prompt 0', { exact: true }),
+  ).toBeVisible();
+  expect(after?.distanceFromEnd).toBeGreaterThan(100);
+});
+
+test('keeps a reader at the end when a prompt appears', async ({ page }) => {
+  await page.goto(`${fixtureUrl}&delayed=true`);
+
+  const transcript = page.getByLabel('Transcript');
+  await expect
+    .poll(() => transcript.evaluate(distanceFromEnd))
+    .toBeLessThanOrEqual(2);
+  const heightBefore = await transcript.evaluate(
+    (element) => element.scrollHeight,
+  );
+
+  await page.getByRole('button', { name: 'Show prompt' }).click();
+  const prompt = transcript.getByRole('dialog');
+  await expect(prompt).toBeVisible();
+  await expect(prompt.getByRole('option').first()).toBeFocused();
+  await waitForLayout(page);
+
+  expect(
+    await transcript.evaluate((element) => element.scrollHeight),
+  ).toBeGreaterThan(heightBefore);
+  expect(await transcript.evaluate(distanceFromEnd)).toBeLessThanOrEqual(2);
 });
 
 test('scrolls the question, its options, and the transcript as one region', async ({
@@ -192,3 +261,37 @@ test('reaches an option below the fold and reports the choice', async ({
   );
   await expect(prompt).toBeHidden();
 });
+
+function distanceFromEnd(element: HTMLElement): number {
+  return element.scrollHeight - element.scrollTop - element.clientHeight;
+}
+
+function transcriptSnapshot(element: HTMLElement): {
+  id: string;
+  offset: number;
+  scrollHeight: number;
+  distanceFromEnd: number;
+} | null {
+  const viewport = element.getBoundingClientRect();
+  const anchor = Array.from(
+    element.querySelectorAll<HTMLElement>('[data-message-id]'),
+  ).find((row) => row.getBoundingClientRect().bottom > viewport.top);
+  if (!anchor) return null;
+
+  return {
+    id: anchor.dataset.messageId ?? '',
+    offset: anchor.getBoundingClientRect().top - viewport.top,
+    scrollHeight: element.scrollHeight,
+    distanceFromEnd:
+      element.scrollHeight - element.scrollTop - element.clientHeight,
+  };
+}
+
+async function waitForLayout(page: Page): Promise<void> {
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
+  );
+}

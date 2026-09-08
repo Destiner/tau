@@ -317,18 +317,6 @@ for (const bottomRow of [compactionRow, promptRow]) {
   });
 }
 
-/**
- * A prompt is a question the session cannot go on without, so it is brought to
- * the reader wherever they were — the composer it replaces was never a place
- * they could scroll away from.
- */
-watch(
-  () => props.prompt?.key,
-  (key) => {
-    if (key) void nextTick(scrollToEnd);
-  },
-);
-
 onBeforeUnmount(() => {
   viewportObserver?.disconnect();
   const element = transcript.value;

@@ -8,11 +8,19 @@
       working-label="Working"
       session-key="extension-dialog-fixture"
       :copy-paths="remote"
-      :prompt="answered ? undefined : prompt"
+      :prompt="promptVisible && !answered ? prompt : undefined"
       @prompt-submit="handleSubmit"
       @prompt-cancel="handleCancel"
       @prompt-draft="updateDraft"
     />
+    <button
+      v-if="delayed && !promptVisible"
+      class="show-prompt"
+      type="button"
+      @click="showPrompt"
+    >
+      Show prompt
+    </button>
     <output data-testid="dialog-outcome">{{ outcome }}</output>
   </main>
 </template>
@@ -24,8 +32,9 @@ import TranscriptView from '../components/TranscriptView.vue';
 import type { ExtensionDialog } from '../composables/state';
 import type { TranscriptEntry } from '../lib/pi/transcript';
 
-const remote =
-  new URLSearchParams(window.location.search).get('remote') === 'true';
+const params = new URLSearchParams(window.location.search);
+const remote = params.get('remote') === 'true';
+const delayed = params.get('delayed') === 'true';
 
 const title = [
   'Plan /home/agent/.pi/workflows/implement/RHI-6283/implementation-plan.md',
@@ -80,8 +89,13 @@ const prompt = reactive<ExtensionDialog>({
   ...(remote ? {} : { workingDirectory: '/home/agent/rhinestone' }),
 });
 
+const promptVisible = ref(!delayed);
 const answered = ref(false);
 const outcome = ref('');
+
+function showPrompt(): void {
+  promptVisible.value = true;
+}
 
 function updateDraft(value: string): void {
   prompt.draft = value;
@@ -111,10 +125,15 @@ function handleCancel(): void {
   min-height: 0;
 }
 
+.show-prompt,
 .fixture-shell output {
   position: absolute;
   top: 8px;
   left: 8px;
   color: var(--text);
+}
+
+.show-prompt {
+  z-index: 1;
 }
 </style>
