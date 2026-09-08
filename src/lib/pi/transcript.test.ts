@@ -113,6 +113,34 @@ describe('ordinary user event projection', () => {
     ]);
   });
 
+  it('keeps a pending optimistic row through startup hydration', () => {
+    const optimistic: TranscriptEntry[] = [
+      {
+        id: 'optimistic-user-1',
+        kind: 'user',
+        text: 'Not dispatched yet',
+        pending: true,
+      },
+    ];
+
+    expect(hydrateTranscript([], optimistic, true)).toEqual(optimistic);
+    expect(hydrateTranscript([], optimistic, false)).toEqual([]);
+  });
+
+  it('keeps a projected user row through early streaming hydration', () => {
+    const projected: TranscriptEntry[] = [
+      {
+        id: 'stream-user-1',
+        kind: 'user',
+        text: 'Not persisted yet',
+        pendingUserEvent: 'optimistic',
+      },
+    ];
+
+    expect(hydrateTranscript([], projected, true)).toEqual(projected);
+    expect(hydrateTranscript([], projected, false)).toEqual([]);
+  });
+
   it('lets settled hydration adopt repeated event rows without duplication', () => {
     const projected: TranscriptEntry[] = [];
     projectOrdinaryUserMessage(projected, 'Repeat this', 'stream-user-7');

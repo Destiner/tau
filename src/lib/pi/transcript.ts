@@ -410,6 +410,22 @@ function assignIds(
       entry.pendingUserEvent = 'hydration';
     }
   });
+
+  // Pi can answer a mid-start hydration before it has recorded the user event
+  // Tau already projected. Keep that row until a later settled hydration is
+  // authoritative, rather than blinking it out and recreating it from the event.
+  if (pendingLiveUserEvents) {
+    const presentIds = new Set(entries.map((entry) => entry.id));
+    for (const candidate of candidates) {
+      if (
+        candidate.kind === 'user' &&
+        (candidate.pending || candidate.pendingUserEvent) &&
+        !presentIds.has(candidate.id)
+      ) {
+        entries.push({ ...candidate });
+      }
+    }
+  }
   return entries;
 }
 

@@ -26,8 +26,9 @@ function heldSessions<T extends { id: string }>(
  * an earlier project would move every project below it, defeating a
  * workspace-wide hold. The captured id wins when a replacement registers the
  * outgoing phase before rebinding its ephemeral object to the next phase. If
- * no row has that id, the source object follows an ordinary phantom-to-saved
- * materialization instead. `undefined` means there is no hold, while an empty
+ * no row has that id, the ephemeral object's current id follows an ordinary
+ * phantom-to-saved materialization even after that object leaves the list.
+ * `undefined` means there is no hold, while an empty
  * array deliberately holds an empty project empty.
  */
 function applyHeldOrder<T extends { id: string }>(
@@ -42,6 +43,7 @@ function applyHeldOrder<T extends { id: string }>(
     .map(
       (session) =>
         current.get(session.id) ??
+        current.get(session.source.id) ??
         (currentObjects.has(session.source) ? session.source : undefined),
     )
     .filter((session): session is T => session !== undefined);

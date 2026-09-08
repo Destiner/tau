@@ -59,6 +59,18 @@ describe('applyHeldOrder', () => {
     ]);
   });
 
+  it('keeps a materialized row after its ephemeral object is removed', () => {
+    const visible = sessions('phantom', 'other');
+    const held = heldSessions(visible);
+    visible[0]!.id = 'materialized';
+    const registered = { id: 'materialized', status: 'working' };
+
+    expect(applyHeldOrder([registered, visible[1]!], held)).toEqual([
+      registered,
+      visible[1],
+    ]);
+  });
+
   it('keeps the outgoing phase when its ephemeral row becomes a replacement', () => {
     const visible = sessions('plan', 'other');
     const held = heldSessions(visible);

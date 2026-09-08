@@ -100,11 +100,14 @@ window.__TAU_SESSION_ORDER_FIXTURE__ = {
     fixtureProject(projectPath).sessions.push(session(id, sortAt));
   },
   materializeSession(projectPath, sessionId, materializedId): void {
-    const match = fixtureProject(projectPath).sessions.find(
-      (item) => item.id === sessionId,
-    );
+    const sessions = fixtureProject(projectPath).sessions;
+    const index = sessions.findIndex((item) => item.id === sessionId);
+    const match = sessions[index];
     if (!match) throw new Error(`Unknown fixture session ${sessionId}`);
     match.id = materializedId;
+    // Registration replaces the mutable ephemeral object with the native
+    // workspace row that now owns the same materialized identity.
+    sessions.splice(index, 1, { ...match });
   },
   updateActivity(projectPath, sessionId, sortAt): void {
     const match = fixtureProject(projectPath).sessions.find(

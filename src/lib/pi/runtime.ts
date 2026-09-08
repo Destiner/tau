@@ -2042,19 +2042,23 @@ async function handleResponse(
         scheduleMaterializationVerificationRetry(controller);
       }
     }
-    const previous = controller.messages;
-    const previousTail = previous.slice(controller.historyPrefixLength);
-    controller.messagesLoaded = true;
-    const tail = mergeLocalEntries(
-      hydrateTranscript(piMessages, previousTail, controller.streaming),
-      controller.localErrors,
-      previousTail,
-    );
-    applyHistoryTail(controller, tail);
     const pending = controller.pendingPrompt;
     const resolvesPending =
       Boolean(pending?.messagesRequestId) &&
       responseId === pending?.messagesRequestId;
+    const previous = controller.messages;
+    const previousTail = previous.slice(controller.historyPrefixLength);
+    controller.messagesLoaded = true;
+    const tail = mergeLocalEntries(
+      hydrateTranscript(
+        piMessages,
+        previousTail,
+        controller.streaming || resolvesPending,
+      ),
+      controller.localErrors,
+      previousTail,
+    );
+    applyHistoryTail(controller, tail);
     const resolvesStart =
       !resolvesPending && responseId === controller.startMessagesRequestId;
     const resolvesAdmission =
