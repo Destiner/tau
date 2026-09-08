@@ -100,9 +100,17 @@ test('keeps a phantom first prompt and held sidebar row visible through registra
     record();
   }, prompt);
 
-  // Focus returns to the composer without moving the pointer off the row, so
-  // the sidebar's held identity remains active throughout the transition.
   await selectedSession.hover();
+  await page.evaluate(() => {
+    const sessionList = document.querySelector<HTMLElement>('.projects-body');
+    if (!sessionList) throw new Error('Expected the project session list.');
+    // The pointer may already be inside after creating the session, so capture
+    // the hold explicitly rather than depending on another pointerenter.
+    sessionList.dispatchEvent(
+      new PointerEvent('pointerenter', { pointerType: 'mouse' }),
+    );
+  });
+  // Focus returns without moving the pointer off the held row.
   await composer.press('Enter');
 
   const userMessage = page
