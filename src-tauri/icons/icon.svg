@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img">
+  <title>Tau</title>
+  <rect
+    x="8"
+    y="8"
+    width="240"
+    height="240"
+    rx="54"
+    fill="#10141c"
+    stroke="#1b1f29"
+    stroke-width="2"
+  />
+  <g transform="translate(128 128) scale(0.82) translate(-128 -128)">
+    <path
+      d="M66 76h124M128 78v82c0 20 11 30 30 30"
+      fill="none"
+      stroke="#e6b450"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      stroke-width="24"
+    />
+  </g>
+</svg>
