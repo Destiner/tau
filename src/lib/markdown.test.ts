@@ -251,20 +251,16 @@ describe('linking file paths in markup', () => {
     expect(linkFilePaths(block)).toBe(block);
   });
 
-  it('links paths in fenced blocks when they are remote copy targets', () => {
+  it('leaves fenced paths unlinked when remote paths copy', () => {
+    const block =
+      '<pre><code>Repo /home/agent/rhinestone/orchestrator\nPlan /home/agent/.pi/workflows/implement/RHI-6092/implementation-plan.md\n</code></pre>';
     const html =
-      '<pre><code>Repo /home/agent/rhinestone/orchestrator\nPlan /home/agent/.pi/workflows/implement/RHI-6092/implementation-plan.md\n/usage\n/ expanded \n&lt;/pre&gt;\n</code></pre>';
-    const linked = linkFilePaths(html, true);
+      `${block}<p>Workspace /home/agent/rhinestone/workspace ` +
+      '<code>src/workspace.ts</code></p>';
 
-    expect(linked).toContain(
-      'data-tau-path="/home/agent/rhinestone/orchestrator"',
+    expect(linkFilePaths(html, true)).toBe(
+      `${block}<p>Workspace <a class="file-link" role="button" tabindex="0" aria-label="Copy path /home/agent/rhinestone/workspace" data-tau-path="/home/agent/rhinestone/workspace">/home/agent/rhinestone/workspace</a> <code><a class="file-link" role="button" tabindex="0" aria-label="Copy path src/workspace.ts" data-tau-path="src/workspace.ts">src/workspace.ts</a></code></p>`,
     );
-    expect(linked).toContain(
-      'data-tau-path="/home/agent/.pi/workflows/implement/RHI-6092/implementation-plan.md"',
-    );
-    expect(linked).not.toContain('data-tau-path="/usage"');
-    expect(linked).not.toContain('data-tau-path="/ expanded"');
-    expect(linked).not.toContain('data-tau-path="/pre"');
   });
 
   it('resumes after the element it skipped', () => {

@@ -201,8 +201,8 @@ function addDiagramExpandButtons(html: string): string {
   );
 }
 
-/** Rewrites the file paths in rendered markup as links, leaving markup alone. */
-function linkFilePaths(html: string, includeCodeBlocks = false): string {
+/** Rewrites file paths in rendered prose and inline code, leaving opaque markup alone. */
+function linkFilePaths(html: string, copyPaths = false): string {
   let output = '';
   let plainFrom = 0;
   let opaque: string | null = null;
@@ -211,7 +211,7 @@ function linkFilePaths(html: string, includeCodeBlocks = false): string {
   TAG.lastIndex = 0;
   for (let tag = TAG.exec(html); tag; tag = TAG.exec(html)) {
     const text = html.slice(plainFrom, tag.index);
-    output += opaque ? text : linkTextRun(text, includeCodeBlocks);
+    output += opaque ? text : linkTextRun(text, copyPaths);
     output += tag[0];
     plainFrom = tag.index + tag[0].length;
 
@@ -220,19 +220,14 @@ function linkFilePaths(html: string, includeCodeBlocks = false): string {
     if (opaque === name) {
       depth += closing ? -1 : 1;
       if (depth === 0) opaque = null;
-    } else if (
-      !opaque &&
-      !closing &&
-      OPAQUE_ELEMENTS.has(name) &&
-      (!includeCodeBlocks || name !== 'pre')
-    ) {
+    } else if (!opaque && !closing && OPAQUE_ELEMENTS.has(name)) {
       opaque = name;
       depth = 1;
     }
   }
 
   const tail = html.slice(plainFrom);
-  return output + (opaque ? tail : linkTextRun(tail, includeCodeBlocks));
+  return output + (opaque ? tail : linkTextRun(tail, copyPaths));
 }
 
 /**

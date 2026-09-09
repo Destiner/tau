@@ -92,7 +92,9 @@ if (remote) {
   messages.value.push({
     id: 'fixture-remote-paths',
     kind: 'assistant',
-    text: `\`\`\`md
+    text: `Workspace \`/home/agent/rhinestone/workspace\`
+
+\`\`\`md
 Repo /home/agent/rhinestone/orchestrator
 Plan /home/agent/.pi/workflows/implement/RHI-6092/implementation-plan.md
 /usage

@@ -688,7 +688,7 @@ test('copies a code block from a button the block reveals on hover', async ({
   });
 });
 
-test('copies remote paths from fenced transcript markdown', async ({
+test('leaves remote paths in fenced transcript markdown as code', async ({
   page,
 }) => {
   await page.addInitScript(() => {
@@ -713,42 +713,33 @@ test('copies remote paths from fenced transcript markdown', async ({
   await page.goto(`${fixtureUrl}&remote=true`);
 
   const message = page.locator('[data-message-id="fixture-remote-paths"]');
-  const repo = message.getByRole('button', {
-    name: 'Copy path /home/agent/rhinestone/orchestrator',
+  const workspace = message.getByRole('button', {
+    name: 'Copy path /home/agent/rhinestone/workspace',
   });
-  const plan = message.getByRole('button', {
-    name: 'Copy path /home/agent/.pi/workflows/implement/RHI-6092/implementation-plan.md',
-  });
+  const block = message.locator('.code-block');
+  const copy = block.getByRole('button', { name: 'Copy Code' });
 
-  await expect(repo).toBeVisible();
-  await expect(plan).toBeVisible();
-  await expect(
-    message.getByText('/usage', { exact: true }),
-  ).not.toHaveAttribute('data-tau-path');
-  await expect(
-    message.getByText('/ expanded ', { exact: true }),
-  ).not.toHaveAttribute('data-tau-path');
-  await expect(
-    message.getByText('</pre>', { exact: true }),
-  ).not.toHaveAttribute('data-tau-path');
+  // Inline paths retain their remote-copy interaction, but full-width code is
+  // literal content and must not become a row of independent path controls.
+  await expect(workspace).toBeVisible();
+  await expect(block.getByRole('button', { name: /Copy path/ })).toHaveCount(0);
+  await expect(block).toContainText('/home/agent/rhinestone/orchestrator');
+  await expect(block).toContainText(
+    '/home/agent/.pi/workflows/implement/RHI-6092/implementation-plan.md',
+  );
 
-  await repo.click();
+  await workspace.click();
   await expect
     .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
-    .toEqual(['/home/agent/rhinestone/orchestrator']);
-  await expect(repo).not.toHaveAttribute('data-copied');
-  await expect(
-    repo.evaluate((element) => getComputedStyle(element, '::after').content),
-  ).resolves.toBe('none');
+    .toEqual(['/home/agent/rhinestone/workspace']);
   await expect(message.getByRole('status')).toHaveText('Path copied');
 
-  await plan.focus();
-  await plan.press('Space');
+  await copy.click();
   await expect
     .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
     .toEqual([
-      '/home/agent/rhinestone/orchestrator',
-      '/home/agent/.pi/workflows/implement/RHI-6092/implementation-plan.md',
+      '/home/agent/rhinestone/workspace',
+      'Repo /home/agent/rhinestone/orchestrator\nPlan /home/agent/.pi/workflows/implement/RHI-6092/implementation-plan.md\n/usage\n/ expanded\n</pre>\n',
     ]);
 });
 
