@@ -9,7 +9,13 @@ import { definePiScenario } from './index';
 
 const prompt = 'Keep the first prompt visible';
 const reply = 'The first prompt stayed visible.';
-const sessionState = {
+const temporarySessionState = {
+  ...mainSessionState,
+  sessionId: 'session-first-prompt-temporary',
+  sessionFile: '/fixture/tau-project/session-first-prompt-temporary.jsonl',
+  sessionName: 'First prompt setup',
+};
+const replacementSessionState = {
   ...mainSessionState,
   sessionId: 'session-first-prompt',
   sessionFile: '/fixture/tau-project/session-first-prompt.jsonl',
@@ -20,7 +26,7 @@ const scenario = definePiScenario({
   metadata: {
     name: 'phantom-first-prompt-registration',
     purpose:
-      'Keep a phantom session row and its optimistic first prompt continuously visible through identity adoption and registration.',
+      'Keep an optimistic first prompt continuously visible through phantom, temporary, and prompt-triggered replacement identities.',
     qualityRule:
       'docs/quality.md §1 Feedback and §5 State correctness: optimistic UI remains present while asynchronous identity state reconciles.',
     schemaVersion: 1,
@@ -68,7 +74,7 @@ const scenario = definePiScenario({
       kind: 'response',
       request: 'phantom-state',
       command: 'get_state',
-      data: { ...sessionState, isStreaming: false },
+      data: { ...temporarySessionState, isStreaming: false },
     },
     {
       kind: 'request',
@@ -106,6 +112,47 @@ const scenario = definePiScenario({
       required: true,
     },
     { kind: 'response', request: 'first-prompt', command: 'prompt' },
+    {
+      kind: 'event',
+      runtime: 'phantom',
+      event: {
+        type: 'extension_ui_request',
+        id: 'setup-choice',
+        method: 'select',
+        title: 'Choose setup mode',
+        options: ['Continue', 'Stop'],
+      },
+    },
+    {
+      kind: 'request',
+      runtime: 'phantom',
+      capture: 'setup-choice-response',
+      match: {
+        type: 'extension_ui_response',
+        variant: 'value',
+        value: 'Continue',
+      },
+    },
+    {
+      kind: 'event',
+      runtime: 'phantom',
+      event: {
+        type: 'extension_ui_request',
+        id: 'setup-confirmation',
+        method: 'confirm',
+        title: 'Create the replacement session?',
+      },
+    },
+    {
+      kind: 'request',
+      runtime: 'phantom',
+      capture: 'setup-confirmation-response',
+      match: {
+        type: 'extension_ui_response',
+        variant: 'confirmed',
+        confirmed: true,
+      },
+    },
     { kind: 'event', runtime: 'phantom', event: { type: 'agent_start' } },
     {
       kind: 'request',
@@ -114,11 +161,66 @@ const scenario = definePiScenario({
       match: { type: 'get_state' },
     },
     {
+      kind: 'gate',
+      name: 'before-prompt-replacement-identity',
+      required: true,
+    },
+    {
       kind: 'response',
       request: 'run-state',
       command: 'get_state',
-      data: { ...sessionState, isStreaming: true },
+      data: { ...replacementSessionState, isStreaming: true },
     },
+    {
+      kind: 'request',
+      runtime: 'phantom',
+      capture: 'replacement-models',
+      match: { type: 'get_available_models' },
+    },
+    {
+      kind: 'response',
+      request: 'replacement-models',
+      command: 'get_available_models',
+      data: { models: fixtureModels },
+    },
+    {
+      kind: 'request',
+      runtime: 'phantom',
+      capture: 'replacement-commands',
+      match: { type: 'get_commands' },
+    },
+    {
+      kind: 'response',
+      request: 'replacement-commands',
+      command: 'get_commands',
+      data: { commands: [] },
+    },
+    {
+      kind: 'request',
+      runtime: 'phantom',
+      capture: 'replacement-efforts',
+      match: { type: 'get_available_thinking_levels' },
+    },
+    {
+      kind: 'response',
+      request: 'replacement-efforts',
+      command: 'get_available_thinking_levels',
+      data: { levels: fixtureThinkingLevels },
+    },
+    {
+      kind: 'request',
+      runtime: 'phantom',
+      capture: 'replacement-messages',
+      match: { type: 'get_messages' },
+    },
+    { kind: 'gate', name: 'before-replacement-hydration', required: true },
+    {
+      kind: 'response',
+      request: 'replacement-messages',
+      command: 'get_messages',
+      data: { messages: [{ role: 'user', content: prompt }] },
+    },
+    { kind: 'gate', name: 'after-replacement-hydration', required: true },
     {
       kind: 'event',
       runtime: 'phantom',
@@ -172,7 +274,7 @@ const scenario = definePiScenario({
       kind: 'response',
       request: 'message-end-barrier',
       command: 'get_state',
-      data: { ...sessionState, isStreaming: true },
+      data: { ...replacementSessionState, isStreaming: true },
     },
     { kind: 'gate', name: 'after-first-prompt-registration', required: true },
     { kind: 'event', runtime: 'phantom', event: { type: 'agent_settled' } },
@@ -186,7 +288,7 @@ const scenario = definePiScenario({
       kind: 'response',
       request: 'settled-state',
       command: 'get_state',
-      data: { ...sessionState, isStreaming: false },
+      data: { ...replacementSessionState, isStreaming: false },
     },
     {
       kind: 'request',
@@ -229,5 +331,5 @@ const scenario = definePiScenario({
   ],
 });
 
-export { prompt, reply, sessionState };
+export { prompt, replacementSessionState, reply, temporarySessionState };
 export default scenario;

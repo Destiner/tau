@@ -130,6 +130,35 @@ test('keeps a phantom first prompt and held sidebar row visible through registra
   await expectContinuousVisibility(page);
 
   await releaseGate(page, 'after-empty-first-prompt-hydration');
+
+  const setupChoice = page.getByRole('dialog', {
+    name: 'Choose setup mode',
+  });
+  await expect(setupChoice).toBeVisible();
+  await setupChoice.getByRole('option', { name: 'Continue' }).click();
+  const setupConfirmation = page.getByRole('dialog', {
+    name: 'Create the replacement session?',
+  });
+  await expect(setupConfirmation).toBeVisible();
+  await setupConfirmation.getByRole('button', { name: 'Confirm' }).click();
+
+  await waitForGate(page, 'before-prompt-replacement-identity');
+  await expect(userMessage).toHaveCount(1);
+  await expectContinuousVisibility(page);
+
+  await releaseGate(page, 'before-prompt-replacement-identity');
+  await waitForGate(page, 'before-replacement-hydration');
+  await expect(userMessage).toHaveCount(1);
+  await expect(userMessage).toContainText(prompt);
+  await expectContinuousVisibility(page);
+
+  await releaseGate(page, 'before-replacement-hydration');
+  await waitForGate(page, 'after-replacement-hydration');
+  await expect(userMessage).toHaveCount(1);
+  await expect(userMessage).toContainText(prompt);
+  await expectContinuousVisibility(page);
+
+  await releaseGate(page, 'after-replacement-hydration');
   await waitForGate(page, 'after-first-prompt-registration');
   await expect(page.getByRole('heading', { name: sessionName })).toBeVisible();
   await expect(userMessage).toHaveCount(1);

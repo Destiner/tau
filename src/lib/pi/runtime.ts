@@ -1963,6 +1963,15 @@ async function handleResponse(
     const reportedSessionName = stringValue(data.sessionName);
     if (!sessionChanged) applySessionName(controller, reportedSessionName);
     const nowStreaming = data.isStreaming === true;
+    const promptTriggeredReplacement =
+      sessionChanged && (resolvesRunState || resolvesAdmissionState);
+    const replacementPromptRows = promptTriggeredReplacement
+      ? controller.messages.filter(
+          (entry) =>
+            entry.kind === 'user' &&
+            (entry.pending === true || Boolean(entry.pendingUserEvent)),
+        )
+      : [];
     if (resolvesAdmissionState && controller.submittedPrompt) {
       controller.submittedPrompt.admissionStateRequestId = '';
     }
@@ -2006,7 +2015,11 @@ async function handleResponse(
       controller.compactionReconciliationPending = false;
       controller.compactionStreamSequence = controller.streamSequence;
       rebindEphemeralSession(controller);
-      controller.messages = [];
+      // A prompt-start state read can reveal the identity Pi created for the
+      // active turn. Carry only rows whose provenance ties them to that live
+      // prompt; the replacement hydration reconciles them without exposing
+      // any completed transcript from the outgoing identity.
+      controller.messages = replacementPromptRows;
       resetHistory(controller);
       controller.models = [];
       controller.efforts = [];

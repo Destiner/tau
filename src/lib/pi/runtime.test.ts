@@ -2508,6 +2508,106 @@ describe('prompt delivery', () => {
     expect(controller.submittedPrompt?.optimisticId).toBe(optimisticId);
   });
 
+  it('keeps only a live optimistic prompt through a streaming identity replacement', async () => {
+    const { handleResponse, handleRpc } = await import('./runtime');
+    const optimisticId = 'optimistic-user-1';
+    const controller = makeController({
+      sessionId: 'temporary-session',
+      sessionPath: '/tmp/project/temporary-session.jsonl',
+      submittedPrompt: {
+        requestId: 'prompt-1',
+        generation: 1,
+        message: 'Keep this visible',
+        draft: 'Keep this visible',
+        accepted: false,
+        optimisticId,
+      },
+      promptSubmitting: true,
+      working: true,
+      messages: [
+        { id: 'old-user', kind: 'user', text: 'Outgoing user row' },
+        { id: 'old-assistant', kind: 'assistant', text: 'Outgoing reply' },
+        {
+          id: optimisticId,
+          kind: 'user',
+          text: 'Keep this visible',
+          pending: true,
+        },
+        { id: 'old-notice', kind: 'notice', text: 'Outgoing notice' },
+      ],
+    });
+
+    const messageTransitions: string[][] = [];
+    let visibleMessages = controller.messages;
+    Object.defineProperty(controller, 'messages', {
+      configurable: true,
+      get: () => visibleMessages,
+      set: (messages: SessionController['messages']) => {
+        visibleMessages = messages;
+        messageTransitions.push(messages.map((message) => message.id));
+      },
+    });
+
+    await handleRpc(controller, { type: 'agent_start' });
+    expect(
+      controller.messages.find((entry) => entry.id === optimisticId),
+    ).toMatchObject({ pendingUserEvent: 'optimistic' });
+
+    await handleResponse(controller, {
+      id: controller.runStateRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'replacement-session',
+        sessionFile: '/tmp/project/replacement-session.jsonl',
+        sessionName: 'Replacement',
+        isStreaming: true,
+      },
+    });
+
+    expect(controller.messages).toEqual([
+      expect.objectContaining({
+        id: optimisticId,
+        kind: 'user',
+        text: 'Keep this visible',
+        pendingUserEvent: 'optimistic',
+      }),
+    ]);
+    expect(messageTransitions.every((ids) => ids.includes(optimisticId))).toBe(
+      true,
+    );
+
+    const replacementMessagesRequest = mockInvoke.mock.calls
+      .filter(([command]) => command === 'send_pi')
+      .map(
+        ([, input]) => (input as { request: Record<string, unknown> }).request,
+      )
+      .reverse()
+      .find((request) => request.type === 'get_messages');
+    await handleResponse(controller, {
+      id: String(replacementMessagesRequest?.id),
+      command: 'get_messages',
+      success: true,
+      data: {
+        messages: [{ role: 'user', content: 'Keep this visible' }],
+      },
+    });
+
+    expect(controller.messages).toEqual([
+      expect.objectContaining({
+        id: optimisticId,
+        kind: 'user',
+        text: 'Keep this visible',
+      }),
+    ]);
+    expect(messageTransitions.every((ids) => ids.includes(optimisticId))).toBe(
+      true,
+    );
+    expect(
+      controller.messages.some((entry) => entry.text.startsWith('Outgoing')),
+    ).toBe(false);
+  });
+
   it('restores an unconfirmed saved-session prompt when its bridge fails', async () => {
     const { handleBridgeEvent } = await import('./runtime');
     const controller = makeController({
