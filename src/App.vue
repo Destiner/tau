@@ -520,7 +520,7 @@ function isTitlebarControl(target: EventTarget | null): boolean {
 }
 
 .app-shell.resizing-sidebar :deep(.sidebar-resize-handle)::after {
-  background: var(--muted);
+  opacity: 0.4;
 }
 
 .first-run {

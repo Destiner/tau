@@ -231,6 +231,10 @@
 
     <div
       class="sidebar-resize-handle"
+      :class="{
+        'pointer-focused': resizeHandlePointerFocused,
+        'highlight-suppressed': resizeHighlightSuppressed,
+      }"
       role="separator"
       aria-label="Resize Sidebar"
       aria-orientation="vertical"
@@ -238,8 +242,10 @@
       :aria-valuemax="MAX_SIDEBAR_WIDTH"
       :aria-valuenow="sidebarWidth"
       tabindex="0"
+      @blur="resetSidebarResizeHighlight"
       @pointerdown="startSidebarResize"
       @pointermove="handleSidebarResize"
+      @pointerleave="clearSidebarResizeHighlightSuppression"
       @pointerup="finishSidebarResize"
       @pointercancel="stopSidebarResize"
       @lostpointercapture="stopSidebarResize"
@@ -316,6 +322,8 @@ const projectList = ref<HTMLElement>();
 const sidebar = ref<HTMLElement>();
 const openProjectButton = ref<InstanceType<typeof UiIconButton>>();
 const projectMenuOpen = ref(false);
+const resizeHandlePointerFocused = ref(false);
+const resizeHighlightSuppressed = ref(false);
 /** Whether the sidebar body shows the workspace-wide archived list. */
 const showingArchived = ref(false);
 
@@ -491,6 +499,8 @@ function startSidebarResize(event: PointerEvent): void {
   if (!(handle instanceof HTMLElement)) return;
 
   event.preventDefault();
+  resizeHandlePointerFocused.value = true;
+  resizeHighlightSuppressed.value = false;
   emit('update:resizing', true);
   handle.setPointerCapture(event.pointerId);
   handle.focus({ preventScroll: true });
@@ -504,7 +514,17 @@ function handleSidebarResize(event: PointerEvent): void {
 function finishSidebarResize(event: PointerEvent): void {
   if (!props.resizing) return;
   updateSidebarWidth(event.clientX);
+  resizeHighlightSuppressed.value = true;
   stopSidebarResize();
+}
+
+function clearSidebarResizeHighlightSuppression(): void {
+  if (!props.resizing) resizeHighlightSuppressed.value = false;
+}
+
+function resetSidebarResizeHighlight(): void {
+  resizeHandlePointerFocused.value = false;
+  resizeHighlightSuppressed.value = false;
 }
 
 function stopSidebarResize(): void {
@@ -514,6 +534,8 @@ function stopSidebarResize(): void {
 }
 
 function handleSidebarResizeKeydown(event: KeyboardEvent): void {
+  resizeHandlePointerFocused.value = false;
+  resizeHighlightSuppressed.value = false;
   const step = event.shiftKey ? 40 : 10;
   let nextWidth: number;
 
@@ -607,12 +629,18 @@ defineExpose({
   bottom: 0;
   left: 4px;
   width: 1px;
-  background: transparent;
+  transition: opacity 120ms ease-out;
+  opacity: 0;
+  background: var(--muted);
 }
 
 .sidebar-resize-handle:hover::after,
-.sidebar-resize-handle:focus-visible::after {
-  background: var(--muted);
+.sidebar-resize-handle:focus-visible:not(.pointer-focused)::after {
+  opacity: 0.4;
+}
+
+.sidebar-resize-handle.highlight-suppressed::after {
+  opacity: 0;
 }
 
 .sidebar-resize-handle:focus-visible {

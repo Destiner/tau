@@ -1,5 +1,8 @@
 <template>
-  <main class="session-order-fixture">
+  <main
+    class="session-order-fixture"
+    :style="{ '--fixture-sidebar-width': `${sidebarWidth}px` }"
+  >
     <ProjectSidebar
       v-model:sidebar-width="sidebarWidth"
       v-model:resizing="resizing"
@@ -126,13 +129,13 @@ onBeforeUnmount(() => {
 <style scoped>
 .session-order-fixture {
   display: grid;
-  grid-template-columns: 300px 1fr;
+  grid-template-columns: var(--fixture-sidebar-width) 1fr;
   width: 100vw;
   height: 100vh;
 }
 
 .session-order-fixture :deep(.sidebar) {
-  width: 300px;
+  width: var(--fixture-sidebar-width);
 }
 
 [data-testid='outside-sidebar'] {
