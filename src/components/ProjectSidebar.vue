@@ -136,9 +136,12 @@
                   />
                   <span class="session-copy">
                     <span class="session-title">{{ session.title }}</span>
-                    <span class="session-time">{{
-                      sessionLastActive(project, session)
-                    }}</span>
+                    <span
+                      v-if="sessionLastActive(project, session)"
+                      class="session-time"
+                    >
+                      {{ sessionLastActive(project, session) }}
+                    </span>
                   </span>
                 </button>
                 <UiTooltip

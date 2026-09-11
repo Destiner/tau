@@ -125,6 +125,7 @@ describe('session drafts and selection', () => {
       selectSession,
       projectSessions,
       sessionIndicator,
+      sessionLastActive,
     } = useTau();
 
     state.activeProjectPath = '';
@@ -138,10 +139,12 @@ describe('session drafts and selection', () => {
     await newSession(project);
     const first = projectSessions(project)[0];
     expect(first?.title).toBe('New Session');
+    expect(first && sessionLastActive(project, first)).toBe('');
 
     draft.value = '  Keep this draft\nwith its session  ';
     expect(first?.title).toBe('Keep this draft with its session');
     expect(first && sessionIndicator(project, first)).toBe('draft');
+    expect(first && sessionLastActive(project, first)).toBe('');
 
     const firstController = state.controllers.find(
       (controller) => controller.sessionId === first?.id,
@@ -149,6 +152,12 @@ describe('session drafts and selection', () => {
     if (!first || !firstController) {
       throw new Error('Expected the first phantom session');
     }
+    firstController.messages.push({
+      id: 'assistant-1',
+      kind: 'assistant',
+      text: 'A persisted reply',
+    });
+    expect(sessionLastActive(project, first)).toBe('now');
     firstController.streaming = true;
     firstController.working = true;
 

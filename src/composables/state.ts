@@ -669,6 +669,15 @@ function sessionLastActive(
   project: ProjectSummary,
   session: SessionSummary,
 ): string {
+  const controller = controllerForSession(project.path, session.id);
+  if (
+    ephemeralSession(project.path, session.id) &&
+    !controller?.messages.some(
+      (message) => message.kind === 'user' || message.kind === 'assistant',
+    )
+  ) {
+    return '';
+  }
   const timestamp = sessionLastUserMessageAt(project.path, session);
   return timestamp > session.lastUserMessageAt
     ? relativeTimestamp(timestamp)
