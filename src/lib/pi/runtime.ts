@@ -3495,7 +3495,8 @@ function removeEmptyActivePhantom(): void {
     : undefined;
   // Command-only custom entries and notifications are not Pi transcript
   // content. Until Pi reports a user or assistant message, this row remains
-  // as disposable as the unsent session it came from.
+  // as disposable as the unsent session it came from. A workflow successor is
+  // the exception while Tau verifies the identity an extension just created.
   const unansweredUnsavedCommand = Boolean(
     controller?.commandPromptRequestId && !controller.streaming,
   );
@@ -3505,6 +3506,7 @@ function removeEmptyActivePhantom(): void {
     workspaceContainsSession(controller) ||
     controller.lastUserMessageAt > 0 ||
     controller.hasPiTranscript ||
+    controller.postSettlementHydration ||
     controller.draft.trim() ||
     (controller.working && !unansweredUnsavedCommand) ||
     controllerHasPendingDialog(controller)

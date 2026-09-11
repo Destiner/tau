@@ -2367,6 +2367,33 @@ describe('command-created session durability', () => {
     expect(state.controllers).toEqual([]);
   });
 
+  it('keeps an empty workflow successor while materialization is pending', async () => {
+    const telemetry = await import('../telemetry');
+    const { removeEmptyActivePhantom } = await import('./runtime');
+    const controller = makeController({
+      sessionId: 'implementation-session',
+      sessionPath: '/tmp/project/implementation-session.jsonl',
+      sessionName: 'Implement',
+      postSettlementHydration: true,
+    });
+    addEphemeral(controller);
+    state.activeProjectPath = controller.projectPath;
+    state.activeSessionId = controller.sessionId;
+    state.activeSessionPath = controller.sessionPath;
+    state.activeControllerKey = controller.key;
+
+    removeEmptyActivePhantom();
+
+    expect(state.ephemeralSessions).toHaveLength(1);
+    expect(state.controllers).toEqual([controller]);
+    expect(controller.disposed).toBe(false);
+    expect(
+      vi
+        .mocked(telemetry.invokeTraced)
+        .mock.calls.some(([command]) => command === 'stop_pi'),
+    ).toBe(false);
+  });
+
   it('removes a command-only notification session when the user leaves', async () => {
     const { removeEmptyActivePhantom } = await import('./runtime');
     const controller = makeController({
