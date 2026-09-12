@@ -6,20 +6,7 @@ if [[ "${GITHUB_REF:-}" != refs/heads/main ]]; then
   exit 1
 fi
 
-version=$(node --input-type=module <<'JS'
-import { readFileSync } from 'node:fs';
-const json = (path) => JSON.parse(readFileSync(path, 'utf8'));
-const version = json('package.json').version;
-if (typeof version !== 'string' || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
-  throw new Error('Release version must be a stable major.minor.patch version.');
-}
-const cargo = readFileSync('src-tauri/Cargo.toml', 'utf8').match(/^version = "([^"]+)"$/m)?.[1];
-if (json('src-tauri/tauri.conf.json').version !== version || cargo !== version) {
-  throw new Error('Release versions disagree.');
-}
-console.log(version);
-JS
-)
+version=$(node "$(dirname "$0")/release-version.mjs")
 tag="v$version"
 
 # Listing includes drafts; API/auth failures must not be treated as absence.

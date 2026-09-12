@@ -83,7 +83,7 @@ esac
     cwd,
     output,
     run: (): SpawnSyncReturns<string> =>
-      spawnSync('bash', [preflight], {
+      spawnSync('/bin/bash', [preflight], {
         cwd,
         encoding: 'utf8',
         env: {
@@ -109,7 +109,7 @@ afterEach(() => {
 describe('release preflight', () => {
   it('only permits releases dispatched from main', () => {
     const fixture = createFixture();
-    const result = spawnSync('bash', [preflight], {
+    const result = spawnSync('/bin/bash', [preflight], {
       cwd: fixture.cwd,
       encoding: 'utf8',
       env: { ...process.env, GITHUB_REF: 'refs/heads/feature' },
@@ -163,7 +163,7 @@ describe('release preflight', () => {
     const fixture = createFixture(options);
     const result = fixture.run();
 
-    expect(result.status).not.toBe(0);
+    expect(result.status).toBe('failReleases' in options ? 42 : 43);
     expect(readFileSync(fixture.output, 'utf8')).toBe('');
   });
 
