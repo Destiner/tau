@@ -24,6 +24,49 @@ Notarization also needs one of:
 
 Keep certificate exports, private keys, and passwords outside the repository.
 
+## GitHub Actions releases
+
+`.github/workflows/release-macos.yml` is manually dispatched and accepts only `main`. It builds the exact commit selected at dispatch, not a later tip of the branch. It reads the stable `major.minor.patch` version from `package.json`, checks the Tauri and Cargo versions agree, and creates tag `v<version>` and a **draft** release titled `Tau v<version>`. The draft contains the verified Apple Silicon DMG and `SHA256SUMS.txt`, with an empty description. Nothing is automatically published.
+
+### One-time GitHub setup
+
+In the repository's **Settings → Environments**, create an environment named **release**:
+
+- Restrict deployment branches to **Selected branches and tags → branch `main`** (do not allow tags).
+- Optionally require reviewer approval if your GitHub plan supports it.
+- Add the following **environment secrets**. Do not paste credentials into issues, chat, or the repository.
+
+| Secret                       | Value and source                                                                                                        |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `APPLE_CERTIFICATE`          | Base64-encoded `.p12` export of your **Developer ID Application** certificate **and private key** from Keychain Access. |
+| `APPLE_CERTIFICATE_PASSWORD` | Password you choose when exporting that `.p12`.                                                                         |
+| `APPLE_API_PRIVATE_KEY`      | Entire contents of the downloaded `AuthKey_<key-id>.p8`, including its BEGIN/END lines.                                 |
+| `APPLE_API_KEY`              | The API key's **Key ID** from App Store Connect.                                                                        |
+| `APPLE_API_ISSUER`           | The **Issuer ID** shown with the team API keys in App Store Connect.                                                    |
+
+To export the signing certificate, open **Keychain Access → My Certificates**, find the Developer ID Application identity described above, and confirm it expands to show a private key. Export the identity as `.p12` and set a strong export password. A `.cer` alone is insufficient. If the private key is missing, export from the Mac that created the certificate or create a new certificate. Copy the base64 export to the clipboard with:
+
+```sh
+base64 -i /path/to/DeveloperID.p12 | pbcopy
+```
+
+Paste into `APPLE_CERTIFICATE`, then clear the clipboard. Store the export securely outside the repository.
+
+For notarization, an Account Holder or Admin can create a **team API key** in [App Store Connect → Users and Access → Integrations → App Store Connect API](https://appstoreconnect.apple.com/access/integrations/api). Request API access first if prompted. Create a key with the Developer role for notarization, record its Key ID and Issuer ID, and download the `.p8` file. Apple allows downloading the private key only once. Use a team key, not an individual key, for this issuer-based setup. See [Apple's API key instructions](https://developer.apple.com/help/app-store-connect/get-started/app-store-connect-api).
+
+No personal GitHub token is needed: the workflow's built-in `GITHUB_TOKEN` has `contents: write` for draft discovery, tag creation, and asset uploads. Repository/organization Actions policies must permit the workflow's actions and this permission. The workflow imports the certificate into a temporary keychain and removes it and the notarization key in an always-run cleanup step; Apple secrets are exposed only to the steps that need them.
+
+### Creating a release
+
+1. Bump `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml` together. Refresh `src-tauri/Cargo.lock` with Cargo after changing its package version, and commit the version changes to `main`.
+2. Open **Actions → Release macOS → Run workflow**, select `main`, and run it. Approve the `release` environment deployment if configured.
+3. The workflow checks availability before building, runs frontend/Rust/browser checks, then signs, notarizes, staples, and verifies using `bun run release:macos`.
+4. Open the resulting draft under **Releases**, write the features/fixes description, complete the distribution smoke test below, and click **Publish release** when ready.
+
+Runs are serialized without cancelling an in-progress release. An existing release (including a draft) or an existing exact version tag stops the workflow; API failures also stop it. The workflow rechecks before signing and before creating the tag, never moves tags, and never replaces existing assets.
+
+If a run fails before tag creation, fix the cause and rerun. If tag creation succeeds but draft creation/upload fails, inspect the tag and any partial draft manually. Finish that draft with the exact verified artifacts, or remove the incomplete draft and unpublished tag deliberately before retrying. Do not delete or retarget a published release to reuse its version: bump the version instead. Notarization service delays can also require a retry.
+
 ## Build and verify
 
 Install the Apple Silicon Rust target in the active rustup toolchain:
