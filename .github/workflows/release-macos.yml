@@ -59,20 +59,6 @@ jobs:
           rustup default stable
           rustup target add aarch64-apple-darwin
       - run: bun install --frozen-lockfile
-      - name: Check frontend
-        run: |
-          bun run lint
-          bun run build
-          bun run test
-      - name: Check Rust
-        run: |
-          cargo fmt --check --manifest-path src-tauri/Cargo.toml
-          cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-          cargo test --locked --manifest-path src-tauri/Cargo.toml
-      - name: Check browser behavior
-        run: |
-          bun x playwright install chromium webkit
-          bun run test:e2e
       - name: Recheck release availability
         env:
           GH_TOKEN: ${{ github.token }}

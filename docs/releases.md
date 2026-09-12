@@ -60,7 +60,7 @@ No personal GitHub token is needed: the workflow's built-in `GITHUB_TOKEN` has `
 
 1. Bump `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml` together. Refresh `src-tauri/Cargo.lock` with Cargo after changing its package version, and commit the version changes to `main`.
 2. Open **Actions → Release macOS → Run workflow**, select `main`, and run it. Approve the `release` environment deployment if configured.
-3. The workflow checks availability before building, runs frontend/Rust/browser checks, then signs, notarizes, staples, and verifies using `bun run release:macos`.
+3. The workflow checks availability before building, then signs, notarizes, staples, and verifies using `bun run release:macos`. Frontend, Rust, and browser tests remain available locally; the release workflow does not run them.
 4. Open the resulting draft under **Releases**, write the features/fixes description, complete the distribution smoke test below, and click **Publish release** when ready.
 
 Runs are serialized without cancelling an in-progress release. An existing release (including a draft) or an existing exact version tag stops the workflow; API failures also stop it. The workflow rechecks before signing and before creating the tag, never moves tags, and never replaces existing assets.
