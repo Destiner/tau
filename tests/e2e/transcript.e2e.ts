@@ -1038,12 +1038,31 @@ test('keeps frame delivery and mounted rows bounded during a full sweep', async 
 
   const transcript = page.getByLabel('Transcript');
   const metrics = await transcript.evaluate(async (element) => {
+    const duration = 2_500;
+    const sampleFrames = async (sampleDuration: number): Promise<number[]> => {
+      const samples: number[] = [];
+      await new Promise<void>((resolve) => {
+        let previousFrame: number | undefined;
+        const startedAt = performance.now();
+        const frame = (now: number): void => {
+          if (previousFrame !== undefined) samples.push(now - previousFrame);
+          previousFrame = now;
+          if (now - startedAt < sampleDuration) requestAnimationFrame(frame);
+          else resolve();
+        };
+        requestAnimationFrame(frame);
+      });
+      return samples;
+    };
+    const baselineIntervals = await sampleFrames(500);
+    baselineIntervals.sort((left, right) => left - right);
+    const baselineFrameInterval =
+      baselineIntervals[Math.floor(baselineIntervals.length / 2)] ?? 16.67;
     const intervals: number[] = [];
     let maximumRows = 0;
     let longTaskDuration = 0;
     let previousFrame = performance.now();
     const startTop = element.scrollTop;
-    const duration = 2_500;
 
     const observer =
       typeof PerformanceObserver !== 'undefined' &&
@@ -1080,7 +1099,9 @@ test('keeps frame delivery and mounted rows bounded during a full sweep', async 
     const slowFrames = intervals.filter((interval) => interval > 50).length;
 
     return {
+      baselineFrameInterval,
       frameCount: intervals.length,
+      frameDeliveryRatio: intervals.length / (duration / baselineFrameInterval),
       longTaskDuration,
       maximumRows,
       percentile95,
@@ -1089,13 +1110,13 @@ test('keeps frame delivery and mounted rows bounded during a full sweep', async 
   });
 
   /*
-   * Measured over a 2.5s sweep of 5000 rows: 110-117 frames, 24-25 mounted
-   * rows, a 50ms 95th percentile, 3-8% slow frames, and 600-780ms of long
-   * tasks. The frame pair is the guard that matches what a reader feels; the
-   * long-task total is the same work seen in aggregate, so it is bounded
-   * loosely enough to survive a busy machine and still catch a doubling.
+   * Measured over a 2.5s sweep of 5000 rows: 110-117 frames at 60Hz, 24-25
+   * mounted rows, a 50ms 95th percentile, 3-8% slow frames, and 600-780ms of
+   * long tasks. Headless Chromium can be scheduled at 30Hz under load, so
+   * delivery is compared with its idle cadence instead of assuming 60Hz. The
+   * ratio and interval guard still catch a doubling in frame cost.
    */
-  expect(metrics.frameCount).toBeGreaterThan(90);
+  expect(metrics.frameDeliveryRatio).toBeGreaterThan(0.6);
   expect(metrics.maximumRows).toBeLessThan(50);
   expect(metrics.percentile95).toBeLessThan(67);
   expect(metrics.slowFrameRatio).toBeLessThan(0.12);

@@ -151,6 +151,7 @@ beforeEach(async () => {
   rpcSpans.clear();
   state.controllers.splice(0);
   state.ephemeralSessions.splice(0);
+  state.extensionDialogs.splice(0);
   state.activeProjectPath = '';
   state.activeSessionId = '';
   state.activeSessionPath = '';
@@ -497,6 +498,30 @@ describe('command-created session durability', () => {
     expect(state.controllers).toHaveLength(1);
     expect(state.controllers[0]?.sessionId).toBe('successor-session');
     expect(state.controllers[0]?.starting).toBe(true);
+  });
+
+  it('does not probe for replacement while a chained extension dialog is pending', async () => {
+    const { handleRpc, probeSessionReplacement } = await import('./runtime');
+    const controller = makeController();
+    state.controllers.push(controller);
+
+    await handleRpc(controller, {
+      type: 'extension_ui_request',
+      id: 'next-step',
+      method: 'confirm',
+      title: 'Continue?',
+    });
+    await probeSessionReplacement(controller, false);
+
+    expect(controller.replacementProbeRequestId).toBe('');
+    expect(
+      mockInvoke.mock.calls.filter(
+        ([command, args]) =>
+          command === 'send_pi' &&
+          (args as { request?: { type?: string } })?.request?.type ===
+            'get_state',
+      ),
+    ).toEqual([]);
   });
 
   it('keeps an idle runtime until its final replacement probe answers', async () => {

@@ -76,7 +76,7 @@
               :data-current="option.value === modelValue || undefined"
               :data-cursor="option.value === cursorValue || undefined"
               :aria-selected="option.value === modelValue"
-              @mouseenter="() => setCursor(option)"
+              @pointermove="() => setCursor(option)"
               @mousedown.prevent
               @click="() => selectOption(option)"
             >

@@ -2559,7 +2559,8 @@ async function probeSessionReplacement(
     !controller.generation ||
     controller.starting ||
     controller.streaming ||
-    controller.working
+    controller.working ||
+    controllerHasPendingDialog(controller)
   ) {
     return;
   }
