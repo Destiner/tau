@@ -20,6 +20,11 @@ A minimal, focused interface for [Pi](https://pi.dev).
 - Keyboard shortcuts
 - Command palette
 
+## Non goals
+
+- Support for other harnesses
+- Integrated terminal and browser
+
 ## Philosophy
 
 Pi is good because it's lean, stable, and extensible. Instead of forcing opinions on you, it provides a solid core for the agent loop and an API surface for everything else. By saying no to a hundred things, it delivers something that everyone finds usable. For everything else, "There's an extension for that". That gives you a sense of ownership and doesn't lock you into bad decisions.
