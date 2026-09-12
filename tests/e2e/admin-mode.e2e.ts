@@ -1,5 +1,7 @@
 import type { Page } from '@playwright/test';
 
+import appVersion from '../../src/lib/app-version';
+
 import { expect, test } from './fixtures';
 
 /**
@@ -23,6 +25,11 @@ test('keeps diagnostics out of an ordinary run until the code unlocks them', asy
   await page.goto(scenarioUrl);
   await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
 
+  const footer = page.getByLabel('Projects and Sessions').locator('footer');
+  const version = footer.getByLabel(`Tau version ${appVersion}`);
+  await expect(version).toHaveText(`v${appVersion}`);
+  await expect(version).toBeVisible();
+
   const reportIssue = page.getByRole('button', { name: 'Report an Issue' });
   await expect(reportIssue).toHaveCount(0);
   expect(await nativeCalls(page, 'ingest_telemetry')).toBe(0);
@@ -33,6 +40,23 @@ test('keeps diagnostics out of an ordinary run until the code unlocks them', asy
   await page.keyboard.type('iddqd');
 
   await expect(reportIssue).toBeVisible();
+  const archiveBounds = await footer
+    .getByRole('button', { name: 'Show Archived Sessions' })
+    .boundingBox();
+  const reportBounds = await reportIssue.boundingBox();
+  const versionBounds = await version.boundingBox();
+  expect(archiveBounds).not.toBeNull();
+  expect(reportBounds).not.toBeNull();
+  expect(versionBounds).not.toBeNull();
+  expect(reportBounds!.x).toBeGreaterThanOrEqual(
+    archiveBounds!.x + archiveBounds!.width,
+  );
+  expect(
+    reportBounds!.x - (archiveBounds!.x + archiveBounds!.width),
+  ).toBeLessThan(8);
+  expect(versionBounds!.x).toBeGreaterThan(
+    reportBounds!.x + reportBounds!.width,
+  );
   expect(await nativeCalls(page, 'set_admin_mode')).toBe(1);
   await expect
     .poll(() => nativeCalls(page, 'ingest_telemetry'), {

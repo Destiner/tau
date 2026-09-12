@@ -221,12 +221,17 @@
             <UiIcon name="archive" />
           </UiIconButton>
         </UiTooltip>
+        <IssueReportPopover
+          v-if="adminMode"
+          :session-id="state.activeSessionId || undefined"
+          :submit-report="submitIssueReport"
+        />
       </div>
-      <IssueReportPopover
-        v-if="adminMode"
-        :session-id="state.activeSessionId || undefined"
-        :submit-report="submitIssueReport"
-      />
+      <span
+        class="sidebar-version"
+        :aria-label="`Tau version ${appVersion}`"
+        >v{{ appVersion }}</span
+      >
     </footer>
 
     <div
@@ -262,6 +267,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { ProjectSummary, SessionSummary } from '../composables/state';
 import useTau from '../composables/useTau';
 import { adminMode } from '../lib/admin-mode';
+import appVersion from '../lib/app-version';
 import {
   applyHeldOrder,
   heldSessions,
@@ -658,8 +664,19 @@ defineExpose({
 .sidebar-footer {
   display: flex;
   flex: none;
+  align-items: center;
   justify-content: space-between;
   padding: 6px;
+}
+
+.sidebar-version {
+  position: relative;
+  top: 1px;
+  padding-inline: 6px;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  white-space: nowrap;
 }
 
 /* Both sidebar bodies fill the space between titlebar and footer. The
