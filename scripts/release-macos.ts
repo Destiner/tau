@@ -16,6 +16,8 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import hasExpectedVolumeEntries from './release-layout';
+
 interface CommandResult {
   status: number;
   stdout: string;
@@ -338,13 +340,7 @@ function verifyDmg(dmg: string): void {
     ]);
     mounted = true;
     const volumeEntries = readdirSync(mount).sort();
-    const expectedVolumeEntries = [
-      '.DS_Store',
-      '.VolumeIcon.icns',
-      'Applications',
-      `${tauriConfig.productName}.app`,
-    ].sort();
-    if (volumeEntries.join(',') !== expectedVolumeEntries.join(',')) {
+    if (!hasExpectedVolumeEntries(volumeEntries, tauriConfig.productName)) {
       fail(`the DMG contains unexpected files: ${volumeEntries}`);
     }
     const applicationsLink = join(mount, 'Applications');
