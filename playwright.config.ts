@@ -15,7 +15,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command: 'bun run dev -- --host 127.0.0.1',
+    command: 'bun run dev -- --host 127.0.0.1 --port 1420 --strictPort',
     url: 'http://127.0.0.1:1420',
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

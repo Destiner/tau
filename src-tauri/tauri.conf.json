@@ -4,8 +4,6 @@
   "version": "0.1.2",
   "identifier": "com.destiner.tau",
   "build": {
-    "beforeDevCommand": "bun run dev",
-    "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "bun run build",
     "frontendDist": "../dist"
   },

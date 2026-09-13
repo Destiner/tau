@@ -12,6 +12,23 @@ A minimal, focused interface for [Pi](https://pi.dev).
 - Archived sessions
 - Mermaid diagram rendering
 
+## Development
+
+```sh
+bun install
+bun tauri dev
+```
+
+Requires Node.js 22.18+ and Pi on `PATH` or `TAU_PI_PATH`. Each checkout/worktree starts its own
+Vite server on an available port and passes that URL to Tauri; HMR uses the
+same port. Use `bun tauri dev` (not `bunx tauri dev`) so the launcher manages
+the server and URL together. Other commands, including `bun tauri build`,
+pass through to the Tauri CLI unchanged.
+
+`bun run dev` and `bun run repro -- <scenario>` also use an available port.
+Concurrent app copies still share Tau's stored data; this only isolates dev
+servers. Playwright continues to use fixed port 1420.
+
 ## Roadmap
 
 - Search

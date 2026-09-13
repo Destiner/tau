@@ -64,6 +64,7 @@ export default [
             'playwright.config.ts',
             '**/*.test.ts',
             'tests/**/*.ts',
+            'scripts/**/*.ts',
             'src/dev/**',
           ],
         },
