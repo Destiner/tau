@@ -2,7 +2,8 @@
 name = "tau"
 version = "0.1.2"
 description = "A desktop UI for the Pi coding agent"
-authors = ["Timur Badretdinov"]
+authors = ["Destiner"]
+license = "MIT"
 edition = "2021"
 
 [lib]

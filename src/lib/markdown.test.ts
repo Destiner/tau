@@ -283,16 +283,16 @@ describe('linking file paths in markup', () => {
 
   it('links standalone rooted paths containing spaces and punctuation', () => {
     expect(
-      linkFilePaths('<p>/Users/destiner/Library/Application Support</p>'),
+      linkFilePaths('<p>/Users/example/Library/Application Support</p>'),
     ).toBe(
-      '<p><a class="file-link" role="link" tabindex="0" data-tau-path="/Users/destiner/Library/Application Support">/Users/destiner/Library/Application Support</a></p>',
+      '<p><a class="file-link" role="link" tabindex="0" data-tau-path="/Users/example/Library/Application Support">/Users/example/Library/Application Support</a></p>',
     );
 
     const paths = [
-      '/Users/destiner/Library/Application Support',
-      '/Users/destiner/Screen Studio Projects',
-      '/Users/destiner/Screen Studio Projects/My Recording 2026-08-17.screenstudio',
-      '/Users/destiner/Library/Caches/com.apple.Safari/Webpage Previews',
+      '/Users/example/Library/Application Support',
+      '/Users/example/Video Projects',
+      '/Users/example/Video Projects/Sample Recording 2026-01-01.project',
+      '/Users/example/Library/Caches/com.example.browser/Webpage Previews',
       '~/Documents/file with spaces & (parens).txt',
     ];
     const encoded = paths.map((path) => path.replace(/&/g, '&amp;'));
