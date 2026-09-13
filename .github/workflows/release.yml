@@ -1,4 +1,4 @@
-name: Release macOS
+name: Release
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-macos
+  group: release
   cancel-in-progress: false
 
 jobs:
@@ -55,7 +55,7 @@ jobs:
       - name: Set up Rust
         run: |
           test "$(uname -m)" = arm64
-          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add aarch64-apple-darwin
       - run: bun install --frozen-lockfile
@@ -131,9 +131,10 @@ jobs:
           shopt -s nullglob
           dmgs=(*.dmg)
           test "${#dmgs[@]}" -eq 1
-          shasum -a 256 "${dmgs[0]}" > SHA256SUMS.txt
+          artifact="tau-$VERSION-apple-silicon.dmg"
+          mv "${dmgs[0]}" "$artifact"
           gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
             -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA"
-          gh release create "$TAG" "${dmgs[0]}" SHA256SUMS.txt \
+          gh release create "$TAG" "$artifact" \
             --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
-            --title "Tau v$VERSION" --notes ''
+            --title "Tau $VERSION" --notes ''

@@ -1,6 +1,6 @@
 # macOS releases
 
-Tau's public DMG supports Apple Silicon Macs running macOS 15 or later. A public download must be signed with a Developer ID Application certificate, notarized by Apple, and stapled before upload. An ordinary `bun tauri build` is only suitable for local testing.
+Tau's distribution DMG supports Apple Silicon Macs running macOS 15 or later. A public download must be signed with a Developer ID Application certificate, notarized by Apple, and stapled before upload. An ordinary `bun tauri build` is only suitable for local testing.
 
 ## Apple setup
 
@@ -26,7 +26,9 @@ Keep certificate exports, private keys, and passwords outside the repository.
 
 ## GitHub Actions releases
 
-`.github/workflows/release-macos.yml` is manually dispatched and accepts only `main`. It builds the exact commit selected at dispatch, not a later tip of the branch. It reads the stable `major.minor.patch` version from `package.json`, checks the Tauri and Cargo versions agree, and creates tag `v<version>` and a **draft** release titled `Tau v<version>`. The draft contains the verified Apple Silicon DMG and `SHA256SUMS.txt`, with an empty description. Nothing is automatically published.
+`.github/workflows/release.yml` is manually dispatched and accepts only `main`. When dispatched with `main` selected, it captures that branch's HEAD SHA and uses the same SHA for checkout and tag creation, even if the branch advances later. It reads the stable `major.minor.patch` version from `package.json`, checks the Tauri and Cargo versions agree, and creates lightweight tag `v<version>` and a **draft** release titled `Tau <version>`. The tag becomes repository-visible immediately; only the GitHub Release and its verified `tau-<version>-apple-silicon.dmg` remain unpublished until the draft is published. The DMG is the only attached asset; its SHA-256 checksum is printed in the verification logs.
+
+GitHub Release visibility follows repository visibility. Because this repository is private, publishing the draft makes it available only to authorized repository users. Public distribution therefore requires either making the repository public or uploading the unchanged verified DMG to a separate public HTTPS host.
 
 ### One-time GitHub setup
 
@@ -59,13 +61,29 @@ No personal GitHub token is needed: the workflow's built-in `GITHUB_TOKEN` has `
 ### Creating a release
 
 1. Bump `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml` together. Refresh `src-tauri/Cargo.lock` with Cargo after changing its package version, and commit the version changes to `main`.
-2. Open **Actions → Release macOS → Run workflow**, select `main`, and run it. Approve the `release` environment deployment if configured.
-3. The workflow checks availability before building, then signs, notarizes, staples, and verifies using `bun run release:macos`. Frontend, Rust, and browser tests remain available locally; the release workflow does not run them.
-4. Open the resulting draft under **Releases**, write the features/fixes description, complete the distribution smoke test below, and click **Publish release** when ready.
+2. Before dispatch, run the repository quality checks on the commit that will be `main`'s HEAD:
 
-Runs are serialized without cancelling an in-progress release. An existing release (including a draft) or an existing exact version tag stops the workflow; API failures also stop it. The workflow rechecks before signing and before creating the tag, never moves tags, and never replaces existing assets.
+   ```sh
+   bun run lint
+   bun run build
+   bun run test
+   bun run test:e2e
+   cargo fmt --check --manifest-path src-tauri/Cargo.toml
+   cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+   cargo test --manifest-path src-tauri/Cargo.toml
+   ```
 
-If a run fails before tag creation, fix the cause and rerun. If tag creation succeeds but draft creation/upload fails, inspect the tag and any partial draft manually. Finish that draft with the exact verified artifacts, or remove the incomplete draft and unpublished tag deliberately before retrying. Do not delete or retarget a published release to reuse its version: bump the version instead. Notarization service delays can also require a retry.
+   The release workflow does not enforce these as separate quality gates. Its required Tauri production build still runs `bun run build`, including frontend typechecking, through `beforeBuildCommand`.
+
+3. Open **Actions → Release → Run workflow**, select `main`, and run it. Approve the `release` environment deployment if configured.
+4. The workflow checks version and release availability, then builds, signs, notarizes, staples, and verifies with `bun run release:macos`.
+5. Open the resulting draft under **Releases**, write the features/fixes description, complete the distribution smoke test below, and click **Publish release** when ready.
+
+The concurrency group prevents an active release from being cancelled, but it is not a FIFO queue: GitHub may replace an older pending run when another is dispatched. An existing release (including a draft) or an existing exact version tag stops the workflow; API failures also stop it. The workflow rechecks before signing and before creating the tag, never moves tags itself, and never replaces existing assets.
+
+The workflow creates a lightweight tag at the captured SHA immediately before creating the draft. Tags pushed with `GITHUB_TOKEN` do not trigger subsequent tag or push workflows. The `--verify-tag` release option checks that the tag exists, not that it still targets the captured SHA; use tag protection or another provenance mechanism if downstream automation requires immutable tags.
+
+If a run fails before tag creation, fix the cause and rerun. If tag creation succeeds but draft creation or asset upload fails, the verified runner artifact is not retained. Inspect the tag and any partial draft, then normally remove the incomplete draft and tag deliberately before rerunning. Only finish the draft manually when the exact verified artifacts were already uploaded or retained independently. Do not delete or retarget a published release to reuse its version: bump the version instead. Notarization service delays can also require a retry.
 
 ## Build and verify
 
