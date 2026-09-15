@@ -7,6 +7,7 @@ const fixtureUrl = '/?fixture=long-transcript';
 declare global {
   interface Window {
     __TAU_CLIPBOARD_WRITES__?: string[];
+    __TAU_OPENER_CALLS__?: string[];
     __TAU_VIEWER_ESCAPE_HANDLER_CALLS__?: number;
     __TAURI_INTERNALS__?: {
       transformCallback: (callback: unknown) => unknown;
@@ -22,6 +23,114 @@ test.beforeEach(async ({ page }) => {
   await page.goto(fixtureUrl);
   await expect(page.getByTestId('fixture-count')).toHaveText('5000 messages');
   await expect(page.locator('[data-index="4999"]')).toBeVisible();
+});
+
+test('copies transcript URLs and local paths from single-item context menus', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const writes: string[] = [];
+    const openerCalls: string[] = [];
+    window.__TAU_CLIPBOARD_WRITES__ = writes;
+    window.__TAU_OPENER_CALLS__ = openerCalls;
+    window.__TAURI_INTERNALS__ = {
+      transformCallback: (callback: unknown): unknown => callback,
+      invoke: (
+        command: string,
+        payload?: { text?: string },
+      ): Promise<unknown> => {
+        if (
+          command === 'plugin:clipboard-manager|write_text' &&
+          payload?.text
+        ) {
+          writes.push(payload.text);
+        }
+        if (command.startsWith('plugin:opener|')) openerCalls.push(command);
+        return Promise.resolve(null);
+      },
+    };
+  });
+  await page.goto(fixtureUrl);
+
+  const message = page.locator('[data-message-id="fixture-markdown-showcase"]');
+  const url = message.getByRole('link', { name: 'Tau docs' });
+  const path = message.locator(
+    '[data-tau-path="/Users/someone/code/tau/src-tauri"]',
+  );
+
+  await url.click({ button: 'right' });
+  await expect(page.getByRole('menuitem')).toHaveText(['Copy URL']);
+  await page.getByRole('menuitem', { name: 'Copy URL' }).click();
+  await expect
+    .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
+    .toEqual(['https://example.com/tau/docs']);
+
+  // The context menu augments rather than replaces the existing activation.
+  await url.click();
+  await expect
+    .poll(() => page.evaluate(() => window.__TAU_OPENER_CALLS__))
+    .toEqual(['plugin:opener|open_url']);
+
+  await path.click({ button: 'right' });
+  await expect(page.getByRole('menuitem')).toHaveText(['Copy Path']);
+  await page.getByRole('menuitem', { name: 'Copy Path' }).click();
+  await expect
+    .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
+    .toEqual([
+      'https://example.com/tau/docs',
+      '/Users/someone/code/tau/src-tauri',
+    ]);
+
+  await path.click();
+  expect(await page.evaluate(() => window.__TAU_OPENER_CALLS__)).toEqual([
+    'plugin:opener|open_url',
+  ]);
+  await path.press('Enter');
+  await expect
+    .poll(() => page.evaluate(() => window.__TAU_OPENER_CALLS__))
+    .toEqual(['plugin:opener|open_url', 'plugin:opener|open_path']);
+});
+
+test('copies a remote path from its context menu without changing left-click copy', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const writes: string[] = [];
+    window.__TAU_CLIPBOARD_WRITES__ = writes;
+    window.__TAURI_INTERNALS__ = {
+      transformCallback: (callback: unknown): unknown => callback,
+      invoke: (
+        command: string,
+        payload?: { text?: string },
+      ): Promise<unknown> => {
+        if (
+          command === 'plugin:clipboard-manager|write_text' &&
+          payload?.text
+        ) {
+          writes.push(payload.text);
+        }
+        return Promise.resolve(null);
+      },
+    };
+  });
+  await page.goto(`${fixtureUrl}&remote=true`);
+
+  const path = page
+    .locator('[data-message-id="fixture-remote-paths"]')
+    .getByRole('button', {
+      name: 'Copy path /home/agent/rhinestone/workspace',
+    });
+
+  await path.click({ button: 'right' });
+  await expect(page.getByRole('menuitem')).toHaveText(['Copy Path']);
+  await page.getByRole('menuitem', { name: 'Copy Path' }).click();
+  await path.click();
+  await expect
+    .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
+    .toEqual([
+      '/home/agent/rhinestone/workspace',
+      '/home/agent/rhinestone/workspace',
+    ]);
 });
 
 test('renders a long transcript without pagination controls or an oversized DOM', async ({

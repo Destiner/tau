@@ -1,13 +1,19 @@
 <template>
   <div class="markdown-shell">
     <!-- eslint-disable vue/no-v-html -- renderMarkdown sanitizes with DOMPurify -->
-    <div
-      v-bind="$attrs"
-      class="markdown"
-      @click="activate"
-      @keydown="handleKeydown"
-      v-html="rendered"
-    ></div>
+    <UiContextMenu
+      :items="contextMenuItems"
+      :min-width="128"
+    >
+      <div
+        v-bind="$attrs"
+        class="markdown"
+        @click="activate"
+        @contextmenu.stop="prepareContextMenu"
+        @keydown="handleKeydown"
+        v-html="rendered"
+      ></div>
+    </UiContextMenu>
     <span
       v-if="copiedPath"
       class="copy-feedback"
@@ -46,6 +52,8 @@ import {
 } from '../../lib/markdown';
 
 import DiagramViewer from './DiagramViewer.vue';
+import UiContextMenu from './UiContextMenu.vue';
+import type { UiMenuItem } from './UiMenu.vue';
 
 const props = defineProps<{
   source: string;
@@ -219,6 +227,52 @@ async function copyRemotePath(path: string): Promise<void> {
     return;
   }
   announceCopiedPath();
+}
+
+interface ContextCopyTarget {
+  label: 'Copy URL' | 'Copy Path';
+  value: string;
+}
+
+let contextCopyTarget: ContextCopyTarget | null = null;
+
+/** Keeps the webview menu suppressed unless the pointer names something copyable. */
+function prepareContextMenu(event: MouseEvent): void {
+  const link = linkAt(event.target);
+  const href = link?.getAttribute('href');
+  if (href && isWebUrl(href)) {
+    contextCopyTarget = { label: 'Copy URL', value: href };
+    return;
+  }
+
+  const path = link ? filePath(link) : null;
+  if (path) {
+    contextCopyTarget = { label: 'Copy Path', value: path };
+    return;
+  }
+
+  contextCopyTarget = null;
+  event.preventDefault();
+}
+
+async function copyContextTarget(target: ContextCopyTarget): Promise<void> {
+  try {
+    await writeText(target.value);
+  } catch (error) {
+    console.error(
+      `Could not copy the ${target.label === 'Copy URL' ? 'URL' : 'path'}`,
+      error,
+    );
+    return;
+  }
+  if (target.label === 'Copy Path') announceCopiedPath();
+}
+
+function contextMenuItems(): UiMenuItem[] {
+  const target = contextCopyTarget;
+  return target
+    ? [{ label: target.label, run: () => void copyContextTarget(target) }]
+    : [];
 }
 
 async function activate(event: Event): Promise<void> {

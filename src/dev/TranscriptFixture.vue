@@ -13,6 +13,7 @@
       :compacting="false"
       :show-working-indicator="showWorkingIndicator"
       working-label="Working"
+      :base-path="remote ? undefined : '/Users/someone/code/tau'"
       :copy-paths="remote"
       :session-key="sessionKey"
       @load-history="loadCompactedHistory"
