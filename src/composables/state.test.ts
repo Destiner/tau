@@ -174,6 +174,104 @@ describe('classifyControllerLifecycle', () => {
   });
 });
 
+describe('sessionWorkInProgress', () => {
+  it.each([
+    ['connecting', { connectingRemote: true }],
+    ['starting', { starting: true }],
+    ['stopping', { stopping: true }],
+    ['syncing', { syncing: true }],
+    ['working', { working: true }],
+    ['streaming', { streaming: true }],
+    ['compacting', { compacting: true }],
+    ['reconciling compaction', { compactionReconciliationPending: true }],
+    ['submitting a prompt', { promptSubmitting: true }],
+  ] as const)('counts a controller that is %s', async (_name, flags) => {
+    const { sessionWorkInProgress, state } = await import('./state');
+    state.extensionDialogs = [];
+
+    expect(sessionWorkInProgress(testController(flags))).toBe(true);
+  });
+
+  it('counts prompt admission and extension input as pending work', async () => {
+    const { sessionWorkInProgress, state } = await import('./state');
+    const pending = testController({
+      pendingPrompt: {
+        message: 'Prompt',
+        draft: 'Prompt',
+        optimisticId: 'optimistic-1',
+        command: false,
+        stateRequestId: 'state-1',
+        messagesRequestId: 'messages-1',
+        selectedModelProvider: 'provider',
+        selectedModelId: 'model',
+        selectedModelName: 'Model',
+        selectedEffort: 'medium',
+        settingsRequestId: 'settings-1',
+        settingsStep: '',
+      },
+    });
+    const submitted = testController({
+      submittedPrompt: {
+        requestId: 'prompt-1',
+        generation: 1,
+        message: 'Prompt',
+        draft: 'Prompt',
+        accepted: false,
+      },
+    });
+    const waitingForInput = testController({ key: 'dialog-controller' });
+    state.extensionDialogs = [
+      {
+        key: 'dialog-1',
+        requestId: 'request-1',
+        method: 'confirm',
+        title: 'Continue?',
+        draft: '',
+        submitting: false,
+        error: '',
+        controllerKey: waitingForInput.key,
+        runtimeId: waitingForInput.runtimeId,
+        generation: 1,
+        projectName: 'Project',
+        sessionName: 'Session',
+      },
+    ];
+
+    expect(sessionWorkInProgress(pending)).toBe(true);
+    expect(sessionWorkInProgress(submitted)).toBe(true);
+    expect(sessionWorkInProgress(waitingForInput)).toBe(true);
+  });
+
+  it('does not count idle, ready, or disposed controllers', async () => {
+    const { sessionWorkInProgress, state } = await import('./state');
+    state.extensionDialogs = [];
+
+    expect(sessionWorkInProgress(testController())).toBe(false);
+    expect(sessionWorkInProgress(testController({ ready: true }))).toBe(false);
+    expect(
+      sessionWorkInProgress(testController({ working: true, disposed: true })),
+    ).toBe(false);
+  });
+
+  it('counts distinct pending sessions across foreground and background controllers', async () => {
+    const { inProgressSessionCount, state } = await import('./state');
+    state.extensionDialogs = [];
+    state.controllers = [
+      testController({ key: 'foreground', working: true }),
+      testController({ key: 'replacement', streaming: true }),
+      testController({
+        key: 'background',
+        sessionId: 'session-2',
+        projectPath: '/tmp/other',
+        stopping: true,
+      }),
+      testController({ key: 'idle', sessionId: 'session-3', ready: true }),
+    ];
+
+    expect(inProgressSessionCount.value).toBe(2);
+  });
+});
+
 describe('canArchiveSession', () => {
   const session: SessionSummary = {
     id: 'session-1',

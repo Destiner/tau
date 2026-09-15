@@ -537,6 +537,10 @@ function installPiScenarioAdapter(scenarioName: string): void {
         count(command);
         return false;
       }
+      if (command === 'pending_quit_request') {
+        count(command);
+        return null;
+      }
       if (command === 'set_admin_mode') {
         if (typeof args.enabled !== 'boolean') {
           throw new Error('set_admin_mode enabled must be a boolean.');

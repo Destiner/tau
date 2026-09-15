@@ -34,6 +34,14 @@ void loadAdminMode();
 
 async function mountApp(): Promise<void> {
   const fixture = new URLSearchParams(window.location.search).get('fixture');
+  if (import.meta.env.DEV && fixture === 'quit-confirmation') {
+    const { default: QuitConfirmationFixture } =
+      await import('./dev/QuitConfirmationFixture.vue');
+    const app = createApp(QuitConfirmationFixture);
+    app.config.errorHandler = vueErrorHandler;
+    app.mount('#app');
+    return;
+  }
   if (import.meta.env.DEV && fixture === 'long-transcript') {
     const { default: TranscriptFixture } =
       await import('./dev/TranscriptFixture.vue');

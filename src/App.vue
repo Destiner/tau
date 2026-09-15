@@ -122,6 +122,15 @@
       </main>
     </template>
 
+    <QuitConfirmation
+      :open="quitRequest !== null"
+      :session-count="quitSessionCount"
+      :busy="quitBusy"
+      :error="quitError"
+      @cancel="cancelQuit"
+      @confirm="confirmQuit"
+    />
+
     <RemoteDialog
       v-model:open="state.remoteDialogOpen"
       v-model:connection-string="state.remoteConnectionString"
@@ -140,6 +149,7 @@
 </template>
 
 <script setup lang="ts">
+import { invoke } from '@tauri-apps/api/core';
 import { type UnlistenFn, listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
@@ -153,6 +163,7 @@ import {
 
 import ComposerBar from './components/ComposerBar.vue';
 import ProjectSidebar from './components/ProjectSidebar.vue';
+import QuitConfirmation from './components/QuitConfirmation.vue';
 import RemoteDialog from './components/RemoteDialog.vue';
 import SessionHeader from './components/SessionHeader.vue';
 import TranscriptView from './components/TranscriptView.vue';
@@ -163,11 +174,17 @@ import { createAdminCodeMatcher } from './lib/admin-code';
 import { toggleAdminMode } from './lib/admin-mode';
 import appVersion from './lib/app-version';
 import { loadSidebarWidth } from './lib/sidebar-width';
+import { invokeTraced } from './lib/telemetry';
 
 const NEW_SESSION_EVENT = 'tau://new-session';
+const QUIT_REQUEST_EVENT = 'tau://quit-requested';
 /** How long a session may hydrate before it is worth reporting as loading. */
 const LOADING_INDICATOR_DELAY_MS = 200;
 const EDITABLE_SELECTOR = 'input, textarea, select';
+
+interface QuitRequest {
+  requestId: number;
+}
 
 const transcriptView = ref<InstanceType<typeof TranscriptView>>();
 const projectSidebar = ref<InstanceType<typeof ProjectSidebar>>();
@@ -179,9 +196,14 @@ const windowFocused = ref(true);
 const loadingIndicatorVisible = ref(false);
 const sidebarWidth = ref(loadSidebarWidth());
 const resizingSidebar = ref(false);
+const quitRequest = ref<QuitRequest | null>(null);
+const quitSessionCount = ref(0);
+const quitBusy = ref(false);
+const quitError = ref('');
 const adminCode = createAdminCodeMatcher(isEditableTarget);
 let unlistenWindowFocus: UnlistenFn | undefined;
 let unlistenNewSessionMenu: UnlistenFn | undefined;
+let unlistenQuitRequest: UnlistenFn | undefined;
 let loadingIndicatorTimer: ReturnType<typeof setTimeout> | undefined;
 const {
   state,
@@ -193,6 +215,7 @@ const {
   compacting,
   stopping,
   promptSubmitting,
+  inProgressSessionCount,
   activeExtensionDialog,
   sessionLoading,
   initialize,
@@ -291,6 +314,7 @@ onBeforeUnmount(() => {
   clearTimeout(loadingIndicatorTimer);
   unlistenWindowFocus?.();
   unlistenNewSessionMenu?.();
+  unlistenQuitRequest?.();
   document.removeEventListener('contextmenu', handleDocumentContextMenu);
   document.removeEventListener('keydown', handleDocumentKeydown);
 });
@@ -422,6 +446,74 @@ async function watchMenuActions(): Promise<void> {
     unlistenNewSessionMenu = await listen(NEW_SESSION_EVENT, handleNewSession);
   } catch {
     // Running in a plain browser, which has no menu bar.
+  }
+
+  try {
+    unlistenQuitRequest = await listen<QuitRequest>(
+      QUIT_REQUEST_EVENT,
+      ({ payload }) => void handleQuitRequest(payload),
+    );
+    const pending = await invoke<QuitRequest | null>('pending_quit_request');
+    if (pending) await handleQuitRequest(pending);
+  } catch {
+    // Running in a plain browser, which has no application menu.
+  }
+}
+
+async function handleQuitRequest(request: QuitRequest): Promise<void> {
+  if (!Number.isSafeInteger(request.requestId) || request.requestId <= 0)
+    return;
+  if (quitRequest.value?.requestId === request.requestId) return;
+
+  const sessionCount = inProgressSessionCount.value;
+  if (sessionCount === 0) {
+    try {
+      await invokeTraced('resolve_quit_request', {
+        requestId: request.requestId,
+        confirmed: true,
+      });
+      return;
+    } catch {
+      quitError.value = 'Tau could not quit. Try again.';
+    }
+  } else {
+    quitError.value = '';
+  }
+
+  quitSessionCount.value = sessionCount;
+  quitRequest.value = request;
+}
+
+function cancelQuit(): void {
+  void resolveQuitRequest(false);
+}
+
+function confirmQuit(): void {
+  void resolveQuitRequest(true);
+}
+
+async function resolveQuitRequest(confirmed: boolean): Promise<void> {
+  const request = quitRequest.value;
+  if (!request || quitBusy.value) return;
+
+  quitBusy.value = true;
+  quitError.value = '';
+  try {
+    const accepted = await invokeTraced<boolean>('resolve_quit_request', {
+      requestId: request.requestId,
+      confirmed,
+    });
+    if (!accepted) {
+      quitError.value = 'This quit request expired. Press ⌘Q to try again.';
+      return;
+    }
+    quitRequest.value = null;
+  } catch {
+    quitError.value = confirmed
+      ? 'Tau could not quit. Try again.'
+      : 'The quit confirmation could not close. Try again.';
+  } finally {
+    quitBusy.value = false;
   }
 }
 

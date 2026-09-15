@@ -145,6 +145,7 @@ test('restores an immediately cleared composer when delivery fails', async ({
 
   const composer = page.getByRole('textbox', { name: 'Message Pi' });
   const send = page.getByRole('button', { name: 'Send Message' });
+  await page.waitForFunction(() => Boolean(window.__TAURI_INTERNALS__));
   await page.evaluate(() => {
     const testWindow = window as typeof window & {
       __TAU_FAILED_PROMPT_DELIVERY__?: {

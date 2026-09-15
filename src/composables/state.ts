@@ -353,6 +353,33 @@ const state = reactive({
   requestSequence: 0,
 });
 
+function sessionWorkInProgress(controller: SessionController): boolean {
+  if (controller.disposed) return false;
+  const lifecycle = classifyControllerLifecycle(controller);
+  return (
+    (lifecycle !== 'idle' && lifecycle !== 'ready') ||
+    controller.compacting ||
+    controller.compactionReconciliationPending ||
+    controller.promptSubmitting ||
+    Boolean(controller.pendingPrompt) ||
+    Boolean(controller.submittedPrompt) ||
+    controllerHasPendingDialog(controller)
+  );
+}
+
+const inProgressSessionCount = computed(
+  () =>
+    new Set(
+      state.controllers
+        .filter(sessionWorkInProgress)
+        .map((controller) =>
+          controller.sessionId
+            ? `${controller.projectPath}\u0000${controller.sessionId}`
+            : controller.key,
+        ),
+    ).size,
+);
+
 /**
  * Pi has no session-replacement event, and a `get_state` sent the moment a run
  * settles still reports the outgoing session because extensions swap sessions
@@ -1340,6 +1367,7 @@ export {
   compacting,
   stopping,
   promptSubmitting,
+  inProgressSessionCount,
   models,
   efforts,
   commands,
@@ -1406,5 +1434,6 @@ export {
   clearWorkspaceError,
   classifyControllerLifecycle,
   setControllerLifecycle,
+  sessionWorkInProgress,
   buildStateSnapshot,
 };

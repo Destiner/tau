@@ -119,6 +119,7 @@ const TAURI_INVOKE_COMMANDS = [
   'list_remote_directories',
   'read_model_scope',
   'read_remote_model_scope',
+  'resolve_quit_request',
   'start_pi',
   'start_pi_remote',
   'stop_pi',

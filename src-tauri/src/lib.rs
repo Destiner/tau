@@ -3,6 +3,7 @@ mod feedback;
 mod models;
 mod pi;
 mod profile;
+mod quit;
 mod settings;
 mod ssh;
 mod storage;
@@ -35,6 +36,7 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .manage(pi::PiState::default())
+        .manage(quit::QuitState::default())
         .manage(telemetry)
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
@@ -56,6 +58,8 @@ pub fn run() {
         .on_menu_event(|app, event| {
             if event.id() == NEW_SESSION_MENU_ID {
                 let _ = app.emit(NEW_SESSION_EVENT, ());
+            } else if event.id() == quit::QUIT_MENU_ID {
+                quit::request_quit(app);
             }
         })
         .on_window_event(|window, event| {
@@ -81,6 +85,8 @@ pub fn run() {
             pi::start_pi,
             pi::start_pi_remote,
             pi::stop_pi,
+            quit::pending_quit_request,
+            quit::resolve_quit_request,
             settings::read_model_scope,
             settings::read_remote_model_scope,
             ssh::list_remote_directories,
@@ -167,7 +173,13 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
                     &PredefinedMenuItem::hide(app, None)?,
                     &PredefinedMenuItem::hide_others(app, None)?,
                     &PredefinedMenuItem::separator(app)?,
-                    &PredefinedMenuItem::quit(app, None)?,
+                    &MenuItem::with_id(
+                        app,
+                        quit::QUIT_MENU_ID,
+                        format!("Quit {}", package_info.name),
+                        true,
+                        Some("CmdOrCtrl+Q"),
+                    )?,
                 ],
             )?,
             &Submenu::with_items(
