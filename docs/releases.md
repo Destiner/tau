@@ -2,6 +2,8 @@
 
 Tau's distribution DMG supports Apple Silicon Macs running macOS 15 or later. A public download must be signed with a Developer ID Application certificate, notarized by Apple, and stapled before upload. An ordinary `bun tauri build` is only suitable for local testing.
 
+Tau enables Tauri's `macos-private-api` feature so WKWebView can suppress its default white background before first paint. This uses a private WebKit API and is not compatible with Mac App Store submission; the app targets direct DMG distribution.
+
 ## Apple setup
 
 Direct distribution outside the Mac App Store requires paid [Apple Developer Program](https://developer.apple.com/programs/enroll/) membership. Only the team's Account Holder can create a Developer ID certificate.

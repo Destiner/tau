@@ -15,7 +15,9 @@ serde_json = "1"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# WKWebView background colors otherwise silently do nothing on macOS.
+# This uses private WebKit API; Tau is distributed outside the Mac App Store.
+tauri = { version = "2", features = ["macos-private-api"] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 dirs = "6"
