@@ -61,6 +61,7 @@
   --muted: #6e757f;
   --faint: #a1a8b2;
   --accent: #f29718;
+  --on-accent: #10141c;
   --link: #22a4e6;
   --danger: #e65050;
   --status-new: var(--accent);

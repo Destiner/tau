@@ -10,7 +10,6 @@
         role="alertdialog"
         :aria-busy="busy || undefined"
         @open-auto-focus="handleOpenAutoFocus"
-        @escape-key-down="handleEscapeKeyDown"
       >
         <div class="quit-confirmation-copy">
           <DialogTitle class="quit-confirmation-title">Quit Tau?</DialogTitle>
@@ -60,7 +59,7 @@ import {
   DialogRoot,
   DialogTitle,
 } from 'reka-ui';
-import { computed, nextTick, ref } from 'vue';
+import { computed, nextTick, ref, watchEffect } from 'vue';
 
 import UiButton from './ui/UiButton.vue';
 
@@ -95,8 +94,20 @@ function handleOpenAutoFocus(event: Event): void {
   void nextTick(() => confirmButton.value?.button?.focus());
 }
 
+// Reka's window listener runs too late to suppress app and native Escape handling.
+watchEffect((onCleanup) => {
+  if (!props.open) return;
+  document.addEventListener('keydown', handleEscapeKeyDown, true);
+  onCleanup(() =>
+    document.removeEventListener('keydown', handleEscapeKeyDown, true),
+  );
+});
+
 function handleEscapeKeyDown(event: KeyboardEvent): void {
-  if (props.busy) event.preventDefault();
+  if (event.key !== 'Escape') return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  cancel();
 }
 
 function cancel(): void {

@@ -3,6 +3,7 @@
     <QuitConfirmation
       :open="open"
       :session-count="sessionCount"
+      :busy="search.has('busy')"
       @cancel="cancel"
       @confirm="confirm"
     />

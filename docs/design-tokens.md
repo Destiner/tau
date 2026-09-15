@@ -26,6 +26,9 @@ how important the control is — importance is carried by tone, not size.
 | `--control-md` | 24px  | The default control: buttons, menu items, and actions revealed on a list row.             |
 | `--control-lg` | 28px  | Dialog-weight controls: fields and actions in a dialog, popover triggers, footer buttons. |
 
+Shared buttons use the same height for every variant. Their focus indication is
+inset so keyboard focus does not visually enlarge one action beside another.
+
 Nothing else is a control height. A control that does not fit a rung is a sign
 the surface's density is undecided, not that the scale needs a fifth value.
 
@@ -103,14 +106,15 @@ Washes are translucent, so they compose over whichever surface they land on.
 
 ### Meaning
 
-These four carry meaning and are never decoration.
+These tokens carry meaning and are never decoration.
 
-| Token      | Meaning                                                                     |
-| ---------- | --------------------------------------------------------------------------- |
-| `--accent` | Attention: the caret, an unread session, a warning tone. Not a button fill. |
-| `--link`   | A destination the user can open.                                            |
-| `--danger` | Destructive, or failed.                                                     |
-| `--border` | A boundary between two things. Not a highlight.                             |
+| Token         | Meaning                                                                             |
+| ------------- | ----------------------------------------------------------------------------------- |
+| `--accent`    | Attention: the caret, an unread session, a warning tone, or a primary button fill.  |
+| `--on-accent` | Text and focus indication on accent fills; dark in both color schemes for contrast. |
+| `--link`      | A destination the user can open.                                                    |
+| `--danger`    | Destructive, or failed.                                                             |
+| `--border`    | A boundary between two things. Not a highlight.                                     |
 
 `--status-new` and `--status-working` name the session indicator's colors where
 it is read rather than inferred from a palette color. A draft reuses

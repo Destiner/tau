@@ -71,9 +71,9 @@ defineExpose({
 }
 
 .ui-button.primary {
-  border-color: var(--text);
-  background: var(--text);
-  color: var(--canvas);
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 .ui-button.secondary:hover:not(:disabled) {
@@ -88,8 +88,8 @@ defineExpose({
 }
 
 .ui-button.primary:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--text) 88%, var(--canvas));
-  background: color-mix(in srgb, var(--text) 88%, var(--canvas));
+  border-color: color-mix(in srgb, var(--accent) 88%, var(--on-accent));
+  background: color-mix(in srgb, var(--accent) 88%, var(--on-accent));
 }
 
 /*
@@ -99,10 +99,11 @@ defineExpose({
 .ui-button:focus-visible {
   border-color: var(--accent);
   outline: 0;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 .ui-button.primary:focus-visible {
-  border-color: var(--text);
+  border-color: var(--on-accent);
+  box-shadow: inset 0 0 0 1px var(--on-accent);
 }
 </style>
