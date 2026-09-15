@@ -81,8 +81,8 @@ const emit = defineEmits<{
 const confirmButton = ref<InstanceType<typeof UiButton>>();
 const sessionDescription = computed(() =>
   props.sessionCount === 1
-    ? 'One session is still in progress. Quitting will stop it.'
-    : `${props.sessionCount} sessions are still in progress. Quitting will stop them.`,
+    ? 'One session is still in progress.'
+    : `${props.sessionCount} sessions are still in progress.`,
 );
 
 function handleOpenChange(next: boolean): void {

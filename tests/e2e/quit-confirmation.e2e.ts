@@ -8,9 +8,7 @@ test('confirms an interrupted quit from the keyboard', async ({ page }) => {
   const dialog = page.getByRole('alertdialog');
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('heading')).toHaveText('Quit Tau?');
-  await expect(dialog).toContainText(
-    '2 sessions are still in progress. Quitting will stop them.',
-  );
+  await expect(dialog).toContainText('2 sessions are still in progress.');
   await expect(dialog).toHaveCSS('top', '112px');
   await expect(dialog.getByRole('button', { name: 'Quit' })).toBeFocused();
 
@@ -24,9 +22,7 @@ test('cancels the interrupted quit with Escape', async ({ page }) => {
   await page.goto(`${fixtureUrl}&sessions=1`);
 
   const dialog = page.getByRole('alertdialog');
-  await expect(dialog).toContainText(
-    'One session is still in progress. Quitting will stop it.',
-  );
+  await expect(dialog).toContainText('One session is still in progress.');
 
   await page.evaluate(() => {
     document.addEventListener('keydown', () => {
