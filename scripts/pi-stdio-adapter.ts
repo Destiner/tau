@@ -22,6 +22,11 @@ function validateStartup(): void {
   }
 
   const remaining = args.slice(2);
+  const sessionDir =
+    remaining[0] === '--session-dir' ? remaining.splice(0, 2)[1] : undefined;
+  if (sessionDir !== process.env.TAU_PI_TEST_SESSION_DIR) {
+    fail('session directory did not match the test configuration.');
+  }
   const sessionPath =
     remaining[0] === '--session' && remaining.length === 2
       ? remaining[1]

@@ -3,10 +3,25 @@ const MIN_SIDEBAR_WIDTH = 200;
 const MAX_SIDEBAR_WIDTH = 480;
 const DEFAULT_SIDEBAR_WIDTH = 260;
 
+interface SidebarWidthStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
+let storageOverride: SidebarWidthStorage | undefined;
+
+function sidebarWidthStorage(): SidebarWidthStorage {
+  return storageOverride ?? localStorage;
+}
+
+function setSidebarWidthStorage(storage?: SidebarWidthStorage): void {
+  storageOverride = storage;
+}
+
 function loadSidebarWidth(): number {
   try {
     const storedWidth = Number.parseFloat(
-      localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY) ?? '',
+      sidebarWidthStorage().getItem(SIDEBAR_WIDTH_STORAGE_KEY) ?? '',
     );
     if (Number.isFinite(storedWidth)) return clampSidebarWidth(storedWidth);
   } catch {
@@ -24,7 +39,7 @@ function clampSidebarWidth(width: number): number {
 
 function persistSidebarWidth(width: number): void {
   try {
-    localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(width));
+    sidebarWidthStorage().setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(width));
   } catch {
     return;
   }
@@ -37,4 +52,6 @@ export {
   loadSidebarWidth,
   clampSidebarWidth,
   persistSidebarWidth,
+  setSidebarWidthStorage,
 };
+export type { SidebarWidthStorage };

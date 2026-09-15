@@ -1,4 +1,6 @@
 mod admin;
+#[cfg(any(dev, test))]
+mod dev_workspace;
 mod feedback;
 mod models;
 mod pi;
@@ -14,6 +16,7 @@ use std::time::Duration;
 use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::window::Color;
 use tauri::{AppHandle, Emitter, Manager, Runtime, Theme, WebviewWindow, WindowEvent};
+#[cfg(not(dev))]
 use tauri_plugin_window_state::StateFlags;
 
 const NEW_SESSION_MENU_ID: &str = "tau-new-session";
@@ -30,30 +33,45 @@ const REVEAL_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if let Err(error) = profile::initialize() {
+        eprintln!("{error}");
+        profile::cleanup();
+        return;
+    }
     let telemetry = telemetry::Telemetry::init();
     telemetry.install_panic_hook();
     telemetry.record_app_started();
 
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .manage(pi::PiState::default())
         .manage(quit::QuitState::default())
         .manage(telemetry)
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
-        .plugin(
-            tauri_plugin_window_state::Builder::default()
-                // The window is created hidden and shown once the frontend has
-                // mounted. Restoring visibility would show it while it is empty,
-                // and restoring decorations would undo the overlay title bar.
-                .with_state_flags(
-                    StateFlags::SIZE
-                        | StateFlags::POSITION
-                        | StateFlags::MAXIMIZED
-                        | StateFlags::FULLSCREEN,
-                )
-                .build(),
-        )
+        .plugin(tauri_plugin_opener::init());
+    // Development windows start fresh; the plugin otherwise writes geometry
+    // to one shared app-config file, independently of Tau's workspace store.
+    #[cfg(not(dev))]
+    let builder = builder.plugin(
+        tauri_plugin_window_state::Builder::default()
+            // The window is created hidden and shown once the frontend has
+            // mounted. Restoring visibility would show it while it is empty,
+            // and restoring decorations would undo the overlay title bar.
+            .with_state_flags(
+                StateFlags::SIZE
+                    | StateFlags::POSITION
+                    | StateFlags::MAXIMIZED
+                    | StateFlags::FULLSCREEN,
+            )
+            .build(),
+    );
+    #[allow(unused_mut)]
+    let mut context = tauri::generate_context!();
+    #[cfg(dev)]
+    for window in &mut context.config_mut().app.windows {
+        window.incognito = true;
+    }
+    let app = builder
         .menu(build_menu)
         .on_menu_event(|app, event| {
             if event.id() == NEW_SESSION_MENU_ID {
@@ -106,7 +124,7 @@ pub fn run() {
             storage::unarchive_session,
             telemetry::ingest::ingest_telemetry,
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {
@@ -115,9 +133,11 @@ pub fn run() {
         // marker must therefore be recorded and flushed here, not relied on
         // to happen implicitly when the managed `Telemetry` goes out of scope.
         if let tauri::RunEvent::Exit = event {
+            app_handle.state::<pi::PiState>().shutdown();
             let telemetry = app_handle.state::<telemetry::Telemetry>();
             telemetry.record_app_exited();
             telemetry.shutdown();
+            profile::cleanup();
         }
     });
 }

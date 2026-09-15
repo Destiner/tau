@@ -1,3 +1,4 @@
+import { isTauri } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { createApp } from 'vue';
 
@@ -101,6 +102,10 @@ async function mountApp(): Promise<void> {
       const { default: installPiScenarioAdapter } =
         await import('./dev/pi-scenario-adapter');
       installPiScenarioAdapter(testScenario);
+    } else if (!isTauri()) {
+      const { default: installBrowserSandbox } =
+        await import('./dev/browser-sandbox');
+      installBrowserSandbox();
     }
   }
 

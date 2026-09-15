@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::profile::APP_DIRECTORY_NAME;
+use crate::profile;
 use crate::telemetry::{trace_context::TraceContext, Telemetry};
 
 const PREFERENCES_FILE: &str = "preferences.json";
@@ -60,12 +60,7 @@ pub fn set_admin_mode(
 }
 
 fn resolve_preferences_dir() -> PathBuf {
-    let data_dir = dirs::data_dir().unwrap_or_else(std::env::temp_dir);
-    preferences_dir(&data_dir, APP_DIRECTORY_NAME)
-}
-
-fn preferences_dir(data_dir: &Path, app_directory_name: &str) -> PathBuf {
-    data_dir.join(app_directory_name)
+    profile::app_data_dir()
 }
 
 fn read_admin_mode_in(dir: &Path) -> bool {
@@ -134,8 +129,8 @@ mod tests {
     #[test]
     fn preferences_live_beside_the_telemetry_and_feedback_directories() {
         assert_eq!(
-            preferences_dir(Path::new("/data"), "tau"),
-            Path::new("/data/tau")
+            resolve_preferences_dir(),
+            profile::current().unwrap().data_dir()
         );
     }
 

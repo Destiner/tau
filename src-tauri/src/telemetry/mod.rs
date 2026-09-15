@@ -43,7 +43,7 @@ use opentelemetry_semantic_conventions::resource::{
     SERVICE_VERSION,
 };
 
-use crate::profile::{APP_DIRECTORY_NAME, ENVIRONMENT_NAME};
+use crate::profile::{self, ENVIRONMENT_NAME};
 use privacy::{sanitize_source_location, truncate_to_limit, DEFAULT_MAX_ATTRIBUTE_LEN};
 use trace_context::TraceContext;
 
@@ -63,7 +63,7 @@ thread_local! {
 }
 
 /// Directory holding telemetry segments, relative to Tau's per-profile
-/// application-data directory (see `profile::APP_DIRECTORY_NAME`).
+/// application-data directory (see `profile::app_data_dir`).
 pub const TELEMETRY_DIR_NAME: &str = "telemetry";
 
 /// One newline-delimited OTLP JSON segment file per signal.
@@ -878,13 +878,8 @@ fn host_arch_value() -> &'static str {
     }
 }
 
-fn telemetry_dir(data_dir: &std::path::Path, app_directory_name: &str) -> PathBuf {
-    data_dir.join(app_directory_name).join(TELEMETRY_DIR_NAME)
-}
-
 fn resolve_telemetry_dir() -> PathBuf {
-    let data_dir = dirs::data_dir().unwrap_or_else(std::env::temp_dir);
-    telemetry_dir(&data_dir, APP_DIRECTORY_NAME)
+    profile::app_data_dir().join(TELEMETRY_DIR_NAME)
 }
 
 #[cfg(test)]
@@ -955,19 +950,10 @@ mod tests {
     }
 
     #[test]
-    fn production_and_development_profiles_use_separate_directories() {
-        let data_dir = std::path::Path::new("/app-data");
+    fn telemetry_uses_the_current_storage_profile() {
         assert_eq!(
-            telemetry_dir(data_dir, "tau"),
-            data_dir.join("tau/telemetry")
-        );
-        assert_eq!(
-            telemetry_dir(data_dir, "tau-dev"),
-            data_dir.join("tau-dev/telemetry")
-        );
-        assert_ne!(
-            telemetry_dir(data_dir, "tau"),
-            telemetry_dir(data_dir, "tau-dev")
+            resolve_telemetry_dir(),
+            profile::app_data_dir().join("telemetry")
         );
     }
 

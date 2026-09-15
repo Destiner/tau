@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 use tauri::State;
 
-use crate::profile::APP_DIRECTORY_NAME;
+use crate::profile;
 use crate::telemetry::{trace_context::TraceContext, Telemetry};
 
 const FEEDBACK_DIRECTORY_NAME: &str = "feedback";
@@ -61,14 +61,7 @@ pub fn submit_issue_report(
 }
 
 fn resolve_feedback_dir() -> PathBuf {
-    let data_dir = dirs::data_dir().unwrap_or_else(std::env::temp_dir);
-    feedback_dir(&data_dir, APP_DIRECTORY_NAME)
-}
-
-fn feedback_dir(data_dir: &Path, app_directory_name: &str) -> PathBuf {
-    data_dir
-        .join(app_directory_name)
-        .join(FEEDBACK_DIRECTORY_NAME)
+    profile::app_data_dir().join(FEEDBACK_DIRECTORY_NAME)
 }
 
 fn append_issue_report(
@@ -186,8 +179,8 @@ mod tests {
     #[test]
     fn feedback_path_is_next_to_the_telemetry_directory() {
         assert_eq!(
-            feedback_dir(Path::new("/data"), "tau"),
-            Path::new("/data/tau/feedback")
+            resolve_feedback_dir(),
+            profile::app_data_dir().join("feedback")
         );
     }
 }

@@ -16,7 +16,7 @@ Open one in the Vite development app:
 bun run repro -- saved-session-stale-generation
 ```
 
-The command validates the name before starting Vite and opens the selected `test-scenario` URL. Stop the server with Ctrl-C. Ordinary `bun run dev` does not select or install a scenario.
+The command validates the name before starting Vite and opens the selected `test-scenario` URL. Stop the server with Ctrl-C. Ordinary `bun run dev` does not select or install a scenario; in a plain browser it installs a generic in-memory sandbox instead. That sandbox starts with the `atlas` and `notes` sample projects and resets on every page load.
 
 The `empty-workspace` scenario opens the real app shell with no projects or sessions, so the first-run experience can be reviewed without changing the workspace used by either the production or development app.
 

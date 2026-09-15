@@ -1,0 +1,42 @@
+[
+  {
+    "name": "atlas",
+    "sessions": [
+      {
+        "id": "atlas-overview",
+        "title": "Workspace overview",
+        "user": "Give me a quick overview of the Atlas workspace.",
+        "assistant": "Atlas is a small product dashboard. The current work focuses on navigation, search, and release readiness."
+      },
+      {
+        "id": "atlas-navigation",
+        "title": "Navigation review",
+        "user": "Review the sidebar navigation states.",
+        "assistant": "The selected, hover, and collapsed states are consistent. I would verify keyboard focus before shipping."
+      },
+      {
+        "id": "atlas-release",
+        "title": "Release checklist",
+        "user": "What remains before the next Atlas release?",
+        "assistant": "Run the focused UI checks, confirm the empty states, and update the release notes."
+      }
+    ]
+  },
+  {
+    "name": "notes",
+    "sessions": [
+      {
+        "id": "notes-inbox",
+        "title": "Triage inbox",
+        "user": "Organize the notes inbox into a short plan.",
+        "assistant": "I grouped the ideas into capture, editing, and export. Markdown export is the clearest next slice."
+      },
+      {
+        "id": "notes-export",
+        "title": "Markdown export",
+        "user": "Sketch the Markdown export behavior.",
+        "assistant": "Export the active note with its title as a heading, preserve lists, and keep the generated file plain UTF-8."
+      }
+    ]
+  }
+]

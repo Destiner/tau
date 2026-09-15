@@ -25,9 +25,19 @@ same port. Use `bun tauri dev` (not `bunx tauri dev`) so the launcher manages
 the server and URL together. Other commands, including `bun tauri build`,
 pass through to the Tauri CLI unchanged.
 
-`bun run dev` and `bun run repro -- <scenario>` also use an available port.
-Concurrent app copies still share Tau's stored data; this only isolates dev
-servers. Playwright continues to use fixed port 1420.
+Every native dev process starts with disposable storage seeded with two sample
+projects (`atlas` and `notes`) and five sessions. Pi still runs normally with your
+existing auth, models, and extensions, but local transcripts and all Tau-owned
+state belong to that process. Closing the app discards them; native restarts
+(including Rust rebuilds) start fresh. Frontend HMR does not reset native storage.
+Production builds always retain the existing persistent store.
+
+`bun run dev` opens the same seed in a browser-only, in-memory playground with
+local mock replies; each tab/reload starts fresh and needs no Pi installation.
+`bun run repro -- <scenario>` keeps its explicit deterministic scenarios. Both
+commands also use an available port. Playwright continues to use fixed port 1420.
+See [development storage](docs/development-storage.md) for lifetime and isolation
+boundaries.
 
 ## Roadmap
 

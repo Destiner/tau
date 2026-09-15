@@ -12,8 +12,10 @@ authoritative description of the files.
 
 ## Files
 
-Default to the production profile; use `tau-dev/` only when asked about
-development builds.
+Default to the production profile. Development builds now use a per-process
+temporary profile, printed at startup; see `docs/development-storage.md`. Ask for
+that run's directory when triaging development feedback, and copy reports before
+the app exits. The old persistent `tau-dev/` directory is legacy data only.
 
 - Inbox: `~/Library/Application Support/tau/feedback/issues.jsonl`
 - Resolved: `~/Library/Application Support/tau/feedback/done.jsonl`

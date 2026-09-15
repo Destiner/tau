@@ -4,7 +4,7 @@ use crate::{
         SessionSummary, TauSessionRecord, TauSessionRegistry, WorkspaceSnapshot,
     },
     pi::{login_shell_pi_agent_dir, resolve_pi_binary},
-    profile::{APP_DIRECTORY_NAME, SESSION_REGISTRY_FILENAME},
+    profile::{self, SESSION_REGISTRY_FILENAME},
     telemetry::{trace_context::TraceContext, Telemetry},
 };
 use serde::de::DeserializeOwned;
@@ -601,9 +601,7 @@ fn snapshot(registry: &ProjectRegistry) -> Result<WorkspaceSnapshot, String> {
 }
 
 fn project_registry_path() -> Result<PathBuf, String> {
-    dirs::data_dir()
-        .map(|path| path.join(APP_DIRECTORY_NAME).join("projects.json"))
-        .ok_or_else(|| "Could not locate the application data folder.".into())
+    Ok(profile::current()?.data_dir().join("projects.json"))
 }
 
 fn load_project_registry() -> Result<ProjectRegistry, String> {
@@ -679,13 +677,8 @@ fn local_registry_path(project_path: &str) -> Result<PathBuf, String> {
     Ok(default_session_dir(project_path)?.join(SESSION_REGISTRY_FILENAME))
 }
 
-fn default_session_dir(project_path: &str) -> Result<PathBuf, String> {
-    let safe_path = project_path
-        .trim_start_matches(['/', '\\'])
-        .replace(['/', '\\', ':'], "-");
-    Ok(pi_agent_dir()?
-        .join("sessions")
-        .join(format!("--{safe_path}--")))
+pub(crate) fn default_session_dir(project_path: &str) -> Result<PathBuf, String> {
+    Ok(profile::current()?.session_dir(project_path, &pi_agent_dir()?))
 }
 
 fn list_remote_sessions(remote: &RemoteProjectRecord) -> Vec<SessionSummary> {
@@ -721,8 +714,12 @@ fn list_remote_sessions(remote: &RemoteProjectRecord) -> Vec<SessionSummary> {
 }
 
 fn list_project_sessions(project_path: &str) -> Result<Vec<SessionSummary>, String> {
-    let session_dir = default_session_dir(project_path)?;
-    let registry: TauSessionRegistry = read_json_or_default(&local_registry_path(project_path)?)?;
+    list_sessions_in(&default_session_dir(project_path)?)
+}
+
+pub(crate) fn list_sessions_in(session_dir: &Path) -> Result<Vec<SessionSummary>, String> {
+    let registry: TauSessionRegistry =
+        read_json_or_default(&session_dir.join(SESSION_REGISTRY_FILENAME))?;
     if registry.sessions.is_empty() || !session_dir.is_dir() {
         return Ok(Vec::new());
     }
@@ -732,7 +729,7 @@ fn list_project_sessions(project_path: &str) -> Result<Vec<SessionSummary>, Stri
         .map(|session| (session.id.as_str(), session))
         .collect();
     let mut sessions = Vec::new();
-    let entries = fs::read_dir(&session_dir)
+    let entries = fs::read_dir(session_dir)
         .map_err(|error| format!("Could not read saved Pi sessions: {error}"))?;
     for entry in entries.flatten() {
         let path = entry.path();
@@ -984,7 +981,7 @@ mod tests {
     #[test]
     fn default_session_path_matches_pi_encoding() {
         let path = default_session_dir("/Users/timur/code/tau").expect("session path");
-        assert!(path.ends_with(".pi/agent/sessions/--Users-timur-code-tau--"));
+        assert!(path.ends_with("sessions/--Users-timur-code-tau--"));
     }
 
     #[test]

@@ -52,8 +52,8 @@ pub struct PiState {
     inner: Arc<Mutex<PiManager>>,
 }
 
-impl Drop for PiState {
-    fn drop(&mut self) {
+impl PiState {
+    pub fn shutdown(&self) {
         let processes = self
             .inner
             .lock()
@@ -66,6 +66,12 @@ impl Drop for PiState {
             })
             .unwrap_or_default();
         stop_all_processes(processes);
+    }
+}
+
+impl Drop for PiState {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }
 
@@ -293,10 +299,29 @@ fn start_pi_with<R: Runtime>(
     let mut command = Command::new(&pi_path);
     configure_child_path(&mut command, &executable_paths)?;
     command.args(["--mode", "rpc"]).current_dir(&project_path);
-    if let Some(path) = session_path {
-        command.args(["--session", &path]);
-    }
+    #[cfg(dev)]
+    let session_dir = Some(crate::storage::default_session_dir(&project_path)?);
+    #[cfg(not(dev))]
+    let session_dir: Option<PathBuf> = None;
+    configure_session_arguments(
+        &mut command,
+        session_dir.as_deref(),
+        session_path.as_deref(),
+    );
     spawn_command(app, state, telemetry, span_context, runtime_id, command)
+}
+
+fn configure_session_arguments(
+    command: &mut Command,
+    session_dir: Option<&Path>,
+    session_path: Option<&str>,
+) {
+    if let Some(directory) = session_dir {
+        command.arg("--session-dir").arg(directory);
+    }
+    if let Some(path) = session_path {
+        command.args(["--session", path]);
+    }
 }
 
 #[tauri::command]
@@ -1114,6 +1139,43 @@ fn pi_exit_message(code: Option<i32>, stderr: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dev_session_arguments_keep_new_and_resumed_sessions_in_the_profile() {
+        let profile = crate::profile::StorageProfile::ephemeral().unwrap();
+        let directory = profile.session_dir("/imported/project", Path::new("/real/pi"));
+        let mut fresh = Command::new("pi");
+        configure_session_arguments(&mut fresh, Some(&directory), None);
+        assert_eq!(
+            fresh.get_args().collect::<Vec<_>>(),
+            vec![OsStr::new("--session-dir"), directory.as_os_str()]
+        );
+        let saved = directory.join("saved.jsonl");
+        let mut resumed = Command::new("pi");
+        configure_session_arguments(&mut resumed, Some(&directory), saved.to_str());
+        assert_eq!(
+            resumed.get_args().collect::<Vec<_>>(),
+            vec![
+                OsStr::new("--session-dir"),
+                directory.as_os_str(),
+                OsStr::new("--session"),
+                saved.as_os_str()
+            ]
+        );
+    }
+
+    #[test]
+    fn production_session_arguments_preserve_pi_default_storage() {
+        let mut fresh = Command::new("pi");
+        configure_session_arguments(&mut fresh, None, None);
+        assert_eq!(fresh.get_args().count(), 0);
+        let mut resumed = Command::new("pi");
+        configure_session_arguments(&mut resumed, None, Some("/real/pi/saved.jsonl"));
+        assert_eq!(
+            resumed.get_args().collect::<Vec<_>>(),
+            vec![OsStr::new("--session"), OsStr::new("/real/pi/saved.jsonl")]
+        );
+    }
     use serde_json::json;
     use std::sync::mpsc::{Receiver, TryRecvError};
     use tauri::{Listener, Manager};
@@ -1341,6 +1403,11 @@ mod tests {
                 .join("../scripts/pi-stdio-adapter.ts")
                 .canonicalize()
                 .expect("fake Pi adapter");
+            #[cfg(dev)]
+            let session_dir =
+                Some(crate::storage::default_session_dir(&project.to_string_lossy()).unwrap());
+            #[cfg(not(dev))]
+            let session_dir: Option<PathBuf> = None;
             let environment = EnvironmentGuard::set(&[
                 ("TAU_PI_PATH", Some(adapter.as_os_str())),
                 (
@@ -1350,6 +1417,10 @@ mod tests {
                 (TEST_FAULT_ENV, fault),
                 (TEST_PROJECT_ENV, Some(project.as_os_str())),
                 (TEST_SESSION_ENV, Some(session.as_os_str())),
+                (
+                    "TAU_PI_TEST_SESSION_DIR",
+                    session_dir.as_deref().map(Path::as_os_str),
+                ),
             ]);
             Self {
                 _root: root,
