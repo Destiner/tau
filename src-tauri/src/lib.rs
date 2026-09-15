@@ -64,12 +64,14 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let WindowEvent::ThemeChanged(theme) = event {
-                let _ = window.set_background_color(Some(canvas_color(*theme)));
+                if let Some(webview) = window.get_webview_window(window.label()) {
+                    let _ = webview.set_background_color(Some(canvas_color(*theme)));
+                }
             }
         })
         .setup(|app| {
-            // The colour in the config is a single value, so the window opens
-            // holding the light one whichever theme it is about to be drawn in.
+            // Match both native surfaces to the system theme before revealing
+            // the window; the config can only provide a single fallback colour.
             if let Some(window) = app.get_webview_window("main") {
                 let theme = window.theme().unwrap_or(Theme::Light);
                 let _ = window.set_background_color(Some(canvas_color(theme)));

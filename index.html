@@ -12,6 +12,19 @@
       content="width=device-width, initial-scale=1.0"
     />
     <title>Tau</title>
+    <!-- Paint the canvas before the frontend bundle and its styles arrive. -->
+    <style>
+      :root {
+        color-scheme: light dark;
+        background: #fcfcfc;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          background: #10141c;
+        }
+      }
+    </style>
   </head>
 
   <body>
