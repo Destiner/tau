@@ -29,6 +29,24 @@ test('keeps diagnostics out of an ordinary run until the code unlocks them', asy
   const version = footer.getByLabel(`Tau version ${appVersion}`);
   await expect(version).toHaveText(`v${appVersion}`);
   await expect(version).toBeVisible();
+  const versionStyles = await version.evaluate((element) => {
+    const mutedProbe = document.createElement('span');
+    mutedProbe.style.color = 'var(--muted)';
+    document.body.append(mutedProbe);
+
+    const styles = getComputedStyle(element);
+    const result = {
+      color: styles.color,
+      fontFamily: styles.fontFamily,
+      mutedColor: getComputedStyle(mutedProbe).color,
+    };
+    mutedProbe.remove();
+    return result;
+  });
+  expect(versionStyles.fontFamily).toBe(
+    'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+  );
+  expect(versionStyles.color).toBe(versionStyles.mutedColor);
 
   const reportIssue = page.getByRole('button', { name: 'Report an Issue' });
   await expect(reportIssue).toHaveCount(0);

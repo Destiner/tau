@@ -674,6 +674,7 @@ defineExpose({
   top: 1px;
   padding-inline: 6px;
   color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: var(--text-xs);
   line-height: var(--leading-tight);
   white-space: nowrap;
