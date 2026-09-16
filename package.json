@@ -17,6 +17,7 @@
     "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.node.json --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:performance": "playwright test --project=chromium-performance --no-deps",
     "test:pi-contract": "bun scripts/pi-contract.ts",
     "release:macos": "bun scripts/release-macos.ts",
     "verify:macos-release": "bun scripts/release-macos.ts --verify-only",

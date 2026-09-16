@@ -12,8 +12,10 @@ Deterministic unit and browser coverage for Tau's visible behavior and Pi protoc
 
 - `bun run test` - Run all Vitest tests, including the scenario engine.
 - `bun x vitest run tests/support/pi-scenario/index.test.ts` - Run scenario-engine tests.
-- `bun run test:e2e` - Run all browser tests in Chromium and WebKit.
-- `bun x playwright test tests/e2e/<file>.e2e.ts` - Run one e2e file.
+- `bun run test:e2e` - Run Chromium and WebKit functional tests, then the dependent isolated performance phase.
+- `bun run test:e2e:performance` - Run only the Chromium performance project without its functional dependencies.
+- `bun x playwright test tests/e2e/<file>.e2e.ts` - Run one e2e file. `--project=chromium` selects functional Chromium coverage only.
+- `bun x playwright test --project=chromium-performance` - Run the performance project after both functional dependencies; add `--no-deps` only for an intentionally isolated performance run.
 - `bun run repro -- <scenario>` - Inspect a scenario interactively.
 
 ## Patterns

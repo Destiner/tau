@@ -23,11 +23,20 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
+      testIgnore: '**/transcript-performance.e2e.ts',
       use: { ...devices['Desktop Chrome'] },
     },
     {
       name: 'webkit',
+      testIgnore: '**/transcript-performance.e2e.ts',
       use: { ...devices['Desktop Safari'] },
+    },
+    {
+      name: 'chromium-performance',
+      testMatch: '**/transcript-performance.e2e.ts',
+      workers: 1,
+      dependencies: ['chromium', 'webkit'],
+      use: { ...devices['Desktop Chrome'], browserName: 'chromium' },
     },
   ],
 });
