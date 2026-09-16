@@ -706,7 +706,9 @@ function useTau() {
     );
     try {
       const command = invokesExtensionCommand(controller, message);
-      if (!command) markUserMessageSubmitted(controller);
+      if (!command && !controller.phantom) {
+        markUserMessageSubmitted(controller);
+      }
 
       controller.promptSubmitting = true;
       controller.draft = '';

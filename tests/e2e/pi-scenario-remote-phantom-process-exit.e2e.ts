@@ -76,6 +76,17 @@ test('restores a remote phantom first prompt and keeps retry actionable', async 
     page.getByRole('button', { name: 'Send Message' }),
   ).toBeEnabled();
 
+  await expect(page.locator('.session-row')).toHaveCount(2);
+  await expect(page.locator('.session-row.selected')).toContainText(prompt);
+  await composer.fill('');
+  await page.getByRole('button', { name: /^Main\b/ }).click();
+
+  await expect(page.locator('.session-row')).toHaveCount(1);
+  await expect(
+    page.locator('.session-row').filter({ hasText: 'Main' }),
+  ).toHaveClass(/selected/);
+  await expect(page.locator('[aria-label="Working"]')).toHaveCount(0);
+
   const verification = await page.evaluate(() =>
     window.__TAU_PI_SCENARIO__?.verify(),
   );

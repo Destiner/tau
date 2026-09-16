@@ -2560,6 +2560,8 @@ describe('prompt delivery', () => {
 
     expect(controller.sessionId).toBe('session-first-prompt');
     expect(state.ephemeralSessions[0]?.id).toBe('session-first-prompt');
+    expect(controller.lastUserMessageAt).toBe(0);
+    expect(state.ephemeralSessions[0]?.lastUserMessageAt).toBe(0);
     const messagesRequestId = controller.pendingPrompt?.messagesRequestId;
     expect(messagesRequestId).toBeTruthy();
 
@@ -2576,6 +2578,50 @@ describe('prompt delivery', () => {
     ]);
     expect(controller.pendingPrompt).toBeUndefined();
     expect(controller.submittedPrompt?.optimisticId).toBe(optimisticId);
+    expect(controller.lastUserMessageAt).toBeGreaterThan(0);
+    expect(state.ephemeralSessions[0]?.lastUserMessageAt).toBe(
+      controller.lastUserMessageAt,
+    );
+  });
+
+  it('does not mark a pending extension command as user activity', async () => {
+    const { dispatchPendingPrompt } = await import('./runtime');
+    const controller = makeController({
+      pendingPrompt: {
+        message: '/mcp',
+        draft: '/mcp',
+        optimisticId: 'optimistic-command',
+        command: true,
+        stateRequestId: '',
+        messagesRequestId: '',
+        selectedModelProvider: '',
+        selectedModelId: '',
+        selectedModelName: '',
+        selectedEffort: 'off',
+        settingsRequestId: '',
+        settingsStep: '',
+      },
+    });
+    state.ephemeralSessions.push({
+      id: controller.sessionId,
+      path: controller.sessionPath,
+      title: 'Command session',
+      lastActive: '',
+      lastUserMessageAt: 0,
+      sortAt: 1,
+      archived: false,
+      selected: true,
+      projectPath: controller.projectPath,
+      controllerKey: controller.key,
+      createdAt: 1,
+      phantom: false,
+    });
+
+    await dispatchPendingPrompt(controller);
+
+    expect(controller.lastUserMessageAt).toBe(0);
+    expect(state.ephemeralSessions[0]?.lastUserMessageAt).toBe(0);
+    expect(controller.commandPromptRequestId).toMatch(/^tau-prompt-/);
   });
 
   it('keeps only a live optimistic prompt through a streaming identity replacement', async () => {
@@ -2767,6 +2813,7 @@ describe('prompt delivery', () => {
     expect(controller.working).toBe(false);
     expect(controller.draft).toBe('  Keep this draft  \n\nA newer draft');
     expect(controller.messages).toEqual([]);
+    expect(controller.lastUserMessageAt).toBe(0);
     expect(state.remoteDialogOpen).toBe(true);
     expect(state.remoteRetry?.controllerKey).toBe(controller.key);
 
@@ -2779,6 +2826,7 @@ describe('prompt delivery', () => {
 
     expect(controller.draft).toBe('  Keep this draft  \n\nA newer draft');
     expect(controller.messages).toEqual([]);
+    expect(controller.lastUserMessageAt).toBe(0);
     expect(controller.status).toBe(
       'The remote Pi process stopped unexpectedly. Check the connection and try again.',
     );

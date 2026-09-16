@@ -238,7 +238,7 @@ const REQUIRED_NATIVE_COUNTS = {
     start_pi_remote: 3,
     register_session: 1,
     set_active_project: 1,
-    set_active_session: 1,
+    set_active_session: 2,
   },
   'remote-saved-session-process-exit': {
     load_workspace: 1,

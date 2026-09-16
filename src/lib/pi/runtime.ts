@@ -23,6 +23,7 @@ import {
   firstUserMessage,
   idleRuntimeLimit,
   isControllerSelected,
+  markUserMessageSubmitted,
   nextRequestId,
   normalizeEffort,
   presentRemoteConnectionError,
@@ -2586,6 +2587,7 @@ async function dispatchPendingPrompt(
   ) {
     appendOptimisticPrompt(controller, prompt.message, prompt.optimisticId);
   }
+  if (!prompt.command) markUserMessageSubmitted(controller);
   const requestId = nextRequestId('prompt');
   if (prompt.command) controller.commandPromptRequestId = requestId;
   const submission = {

@@ -498,6 +498,91 @@ describe('session drafts and selection', () => {
     ).toBe(true);
   });
 
+  it('removes a failed empty phantom after its restored draft is cleared', async () => {
+    const main = savedSession('main');
+    const project: ProjectSummary = {
+      path: 'ssh:failed-phantom',
+      name: 'failed-phantom',
+      workingDirectory: '/remote/project',
+      connectionString: 'fixture@example',
+      collapsed: false,
+      selected: true,
+      sessions: [main],
+    };
+    const workspace: WorkspaceSnapshot = {
+      activeProjectPath: project.path,
+      piPath: null,
+      projects: [project],
+    };
+    mocks.workspace = workspace;
+    mocks.generation = 0;
+
+    const tau = useTau();
+    tau.dispose();
+    tau.state.activeProjectPath = '';
+    tau.state.activeSessionId = '';
+    tau.state.activeSessionPath = '';
+    tau.state.activeControllerKey = '';
+    tau.state.controllers.splice(0);
+    tau.state.ephemeralSessions.splice(0);
+    tau.state.workspace = workspace;
+
+    await tau.newSession(project);
+    const controller = tau.state.controllers[0];
+    const ephemeral = tau.state.ephemeralSessions[0];
+    if (!controller || !ephemeral) {
+      throw new Error('Expected a fresh phantom session');
+    }
+    controller.starting = false;
+    controller.connectingRemote = false;
+    controller.ready = false;
+    vi.mocked(invoke).mockClear();
+
+    const defaultInvoke = vi.mocked(invoke).getMockImplementation();
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === 'start_pi_remote') {
+        throw new Error('Connection failed');
+      }
+      return defaultInvoke?.(command, args);
+    });
+
+    try {
+      const submittedDraft = '  Keep this exact draft  ';
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        tau.draft.value = submittedDraft;
+        await tau.sendMessage();
+
+        expect(tau.draft.value).toBe(submittedDraft);
+        expect(controller.messages).toEqual([]);
+        expect(controller.pendingPrompt).toBeUndefined();
+        expect(controller.submittedPrompt).toBeUndefined();
+        expect(controller.promptSubmitting).toBe(false);
+        expect(controller.starting).toBe(false);
+        expect(controller.working).toBe(false);
+        expect(controller.lastUserMessageAt).toBe(0);
+        expect(ephemeral.lastUserMessageAt).toBe(0);
+        expect(sentRequests(controller, 'prompt')).toEqual([]);
+      }
+
+      await tau.selectSession(project, main);
+      expect(tau.state.ephemeralSessions).toContain(ephemeral);
+      expect(tau.state.controllers).toContain(controller);
+
+      await tau.selectSession(project, ephemeral);
+      tau.draft.value = '';
+      await tau.selectSession(project, main);
+
+      expect(tau.state.activeSessionId).toBe(main.id);
+      expect(tau.state.ephemeralSessions).not.toContain(ephemeral);
+      expect(tau.state.controllers).not.toContain(controller);
+      expect(controller.disposed).toBe(true);
+      expect(tau.state.controllers).toHaveLength(1);
+    } finally {
+      if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
+      tau.dispose();
+    }
+  });
+
   it('keeps a fresh session at the top and applies inherited settings', async () => {
     const saved = savedSession('saved', 10_000);
     const project: ProjectSummary = {
