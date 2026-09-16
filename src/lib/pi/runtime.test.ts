@@ -137,6 +137,8 @@ function makeController(
     replacementProbeRequestId: '',
     abortProbeRequestId: '',
     connectingRemote: false,
+    remoteDisconnected: false,
+    reconnectingRemote: false,
     remoteConnectionTimedOut: false,
     syncing: false,
     lastActiveSequence: 0,
@@ -457,16 +459,26 @@ describe('command-created session durability', () => {
         code: 1,
       } satisfies PiBridgeEvent);
 
-      expect(telemetry.invokeTraced).toHaveBeenCalledWith(
-        'register_session',
-        expect.objectContaining({
-          sessionId: 'materialized-session',
-          adopted: true,
-        }),
-        undefined,
-      );
-      expect(state.workspace).toEqual(adopted);
-      expect(state.ephemeralSessions).toEqual([]);
+      if (connectionString) {
+        expect(telemetry.invokeTraced).not.toHaveBeenCalledWith(
+          'register_session',
+          expect.anything(),
+          expect.anything(),
+        );
+        expect(state.ephemeralSessions).toHaveLength(1);
+        expect(controller.remoteDisconnected).toBe(true);
+      } else {
+        expect(telemetry.invokeTraced).toHaveBeenCalledWith(
+          'register_session',
+          expect.objectContaining({
+            sessionId: 'materialized-session',
+            adopted: true,
+          }),
+          undefined,
+        );
+        expect(state.workspace).toEqual(adopted);
+        expect(state.ephemeralSessions).toEqual([]);
+      }
       expect(state.controllers).toHaveLength(1);
       expect(state.controllers[0]?.sessionId).toBe('materialized-session');
     },
@@ -624,8 +636,14 @@ describe('command-created session durability', () => {
         code: 1,
       } satisfies PiBridgeEvent);
 
-      expect(state.ephemeralSessions).toEqual([]);
-      expect(state.controllers).toEqual([]);
+      if (connectionString) {
+        expect(state.ephemeralSessions).toHaveLength(1);
+        expect(state.controllers).toEqual([controller]);
+        expect(controller.remoteDisconnected).toBe(true);
+      } else {
+        expect(state.ephemeralSessions).toEqual([]);
+        expect(state.controllers).toEqual([]);
+      }
     },
   );
 
@@ -4063,6 +4081,161 @@ describe('Pi RPC span lifecycle', () => {
       'Keep this partial reply',
     ]);
     expect(JSON.stringify(controller)).not.toContain('RAW_');
+  });
+
+  it('turns an established remote exit into session-local recovery state', async () => {
+    const { handleBridgeEvent, remoteDisconnectedMessage } =
+      await import('./runtime');
+    const controller = makeController({
+      ready: true,
+      streaming: true,
+      working: true,
+      syncing: true,
+      draft: 'Keep this newer draft',
+      messages: [
+        { id: 'stream-assistant-1', kind: 'assistant', text: 'Partial reply' },
+        {
+          id: 'stream-tool-2',
+          kind: 'tool',
+          text: 'Inspecting',
+          toolRunning: true,
+        },
+      ],
+    });
+    state.workspace = {
+      activeProjectPath: controller.projectPath,
+      piPath: null,
+      projects: [
+        {
+          path: controller.projectPath,
+          name: 'Remote project',
+          workingDirectory: '/remote/project',
+          connectionString: 'ssh fixture@example',
+          collapsed: false,
+          selected: true,
+          sessions: [],
+        },
+      ],
+    };
+    state.controllers.push(controller);
+
+    await handleBridgeEvent({
+      runtimeId: controller.runtimeId,
+      generation: controller.generation,
+      kind: 'exited',
+      code: 255,
+    });
+
+    expect(controller).toMatchObject({
+      generation: 0,
+      ready: false,
+      streaming: false,
+      working: false,
+      syncing: false,
+      connectingRemote: false,
+      remoteDisconnected: true,
+      reconnectingRemote: false,
+      draft: 'Keep this newer draft',
+      status: remoteDisconnectedMessage,
+    });
+    expect(controller.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'assistant', text: 'Partial reply' }),
+        expect.objectContaining({
+          kind: 'tool',
+          text: 'Inspecting',
+          toolRunning: false,
+        }),
+        expect.objectContaining({
+          id: 'remote-interruption-1',
+          kind: 'notice',
+        }),
+      ]),
+    );
+    expect(state.remoteDialogOpen).toBe(false);
+    expect(state.remoteRetry).toBeUndefined();
+  });
+
+  it('keeps a failed explicit remote reconnect retryable in place', async () => {
+    const { handleBridgeEvent, remoteReconnectFailureMessage } =
+      await import('./runtime');
+    const controller = makeController({
+      ready: false,
+      starting: true,
+      connectingRemote: true,
+      remoteDisconnected: true,
+      reconnectingRemote: true,
+    });
+    state.workspace = {
+      activeProjectPath: controller.projectPath,
+      piPath: null,
+      projects: [
+        {
+          path: controller.projectPath,
+          name: 'Remote project',
+          workingDirectory: '/remote/project',
+          connectionString: 'ssh fixture@example',
+          collapsed: false,
+          selected: true,
+          sessions: [],
+        },
+      ],
+    };
+    state.controllers.push(controller);
+
+    await handleBridgeEvent({
+      runtimeId: controller.runtimeId,
+      generation: controller.generation,
+      kind: 'error',
+    });
+    await handleBridgeEvent({
+      runtimeId: controller.runtimeId,
+      generation: controller.generation,
+      kind: 'exited',
+      code: 255,
+    });
+
+    expect(controller).toMatchObject({
+      generation: 0,
+      starting: false,
+      connectingRemote: false,
+      remoteDisconnected: true,
+      reconnectingRemote: false,
+      status: remoteReconnectFailureMessage,
+    });
+    expect(state.remoteDialogOpen).toBe(false);
+    expect(state.remoteRetry).toBeUndefined();
+  });
+
+  it('makes a failed reconnect bootstrap response retryable', async () => {
+    const { handleResponse, remoteReconnectFailureMessage, rpc } =
+      await import('./runtime');
+    const controller = makeController({
+      ready: false,
+      starting: true,
+      connectingRemote: true,
+      remoteDisconnected: true,
+      reconnectingRemote: true,
+      bootstrapStateRequestId: 'reconnect-state',
+    });
+    state.controllers.push(controller);
+    await rpc(controller, { id: 'reconnect-state', type: 'get_state' });
+
+    await handleResponse(controller, {
+      id: 'reconnect-state',
+      command: 'get_state',
+      success: false,
+    });
+    await vi.waitFor(() => expect(controller.generation).toBe(0));
+
+    expect(controller).toMatchObject({
+      ready: false,
+      starting: false,
+      remoteDisconnected: true,
+      reconnectingRemote: false,
+      status: remoteReconnectFailureMessage,
+    });
+    expect(state.remoteDialogOpen).toBe(false);
   });
 
   it('abandons pending spans for the old generation on a generation change', async () => {

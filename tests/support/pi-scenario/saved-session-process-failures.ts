@@ -117,6 +117,29 @@ const remotePhantomPromptProcessExit = definePiScenario({
   ],
 });
 
+const remoteSavedSessionProcessExit = definePiScenario({
+  metadata: {
+    name: 'remote-saved-session-process-exit',
+    purpose:
+      'Reconnect an established remote saved session after its SSH bridge exits.',
+    qualityRule: 'State correctness, failure locality, and input integrity',
+    schemaVersion: 1,
+  },
+  runtimes: [
+    { key: 'main', generation: 1 },
+    { key: 'reconnected-main', generation: 2 },
+  ],
+  steps: [
+    ...successfulBootstrapSteps('main', 'main-bootstrap', mainSessionState),
+    ...processFailure('main', 'remote-saved-session'),
+    ...successfulBootstrapSteps(
+      'reconnected-main',
+      'reconnected-main',
+      mainSessionState,
+    ),
+  ],
+});
+
 const savedSessionPromptProcessExit = definePiScenario({
   metadata: {
     name: 'saved-session-prompt-process-exit',
@@ -175,6 +198,7 @@ export {
   rawExitMessage,
   rawStderr,
   remotePhantomPromptProcessExit,
+  remoteSavedSessionProcessExit,
   savedSessionBootstrapProcessExit,
   savedSessionPromptProcessExit,
 };

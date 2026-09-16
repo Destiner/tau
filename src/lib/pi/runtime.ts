@@ -259,9 +259,13 @@ async function startController(
       ? errorCopy.remoteConnection
       : errorCopy.piStart;
     if (controller.pendingPrompt) cancelPendingPrompt(controller, message);
-    if (project.connectionString)
+    if (project.connectionString && controller.reconnectingRemote) {
+      controller.reconnectingRemote = false;
+      controller.remoteDisconnected = true;
+      controller.status = remoteReconnectFailureMessage;
+    } else if (project.connectionString) {
       presentRemoteConnectionError(controller, message);
-    else setControllerError(controller, message);
+    } else setControllerError(controller, message);
   }
 }
 
@@ -962,6 +966,23 @@ function discardControllerDialogs(
   }
 }
 
+function recoverControllerDialogDrafts(
+  controller: SessionController,
+  generation: number,
+): void {
+  for (const dialog of state.extensionDialogs) {
+    if (
+      dialog.controllerKey !== controller.key ||
+      dialog.generation !== generation ||
+      (dialog.method !== 'input' && dialog.method !== 'editor') ||
+      !dialog.draft.trim()
+    ) {
+      continue;
+    }
+    restoreSubmittedDraft(controller, dialog.draft);
+  }
+}
+
 function clearExtensionUiState(): void {
   for (const timeout of extensionDialogTimeouts.values()) clearTimeout(timeout);
   extensionDialogTimeouts.clear();
@@ -976,6 +997,10 @@ const remotePiConnectionFailureMessage =
   'The remote Pi connection failed. Check the connection and try again.';
 const remotePiProcessExitMessage =
   'The remote Pi process stopped unexpectedly. Check the connection and try again.';
+const remoteDisconnectedMessage =
+  'The remote connection was lost. Reconnect to continue.';
+const remoteReconnectFailureMessage =
+  'The remote connection failed. Try reconnecting again.';
 const remoteConnectionTimeoutMessage =
   'The remote connection timed out. Check the connection and try again.';
 const remoteConnectionTimeoutMs = 10_000;
@@ -997,7 +1022,21 @@ function watchRemoteConnection(controller: SessionController): void {
       if (controller.pendingPrompt) {
         cancelPendingPrompt(controller, remoteConnectionTimeoutMessage);
       }
-      presentRemoteConnectionError(controller, remoteConnectionTimeoutMessage);
+      if (controller.reconnectingRemote) {
+        controller.reconnectingRemote = false;
+        controller.remoteDisconnected = true;
+        setControllerLifecycle(
+          controller,
+          { starting: false, connectingRemote: false, syncing: false },
+          'bridge_event_failed',
+        );
+        controller.status = remoteReconnectFailureMessage;
+      } else {
+        presentRemoteConnectionError(
+          controller,
+          remoteConnectionTimeoutMessage,
+        );
+      }
       void stopControllerProcess(controller, undefined, false);
     }, remoteConnectionTimeoutMs),
   );
@@ -1073,13 +1112,24 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
   }
   if (event.kind === 'stderr') return;
   if (event.kind === 'error') {
-    const message = controller.connectingRemote
-      ? remotePiConnectionFailureMessage
+    const project = state.workspace?.projects.find(
+      (item) => item.path === controller.projectPath,
+    );
+    const message = project?.connectionString
+      ? controller.reconnectingRemote
+        ? remoteReconnectFailureMessage
+        : controller.connectingRemote
+          ? remotePiConnectionFailureMessage
+          : remoteDisconnectedMessage
       : piConnectionFailureMessage;
     if (controller.connectingRemote) {
       clearRemoteConnectionWatch(controller);
       if (controller.pendingPrompt) cancelPendingPrompt(controller, message);
-      presentRemoteConnectionError(controller, message);
+      if (controller.reconnectingRemote) {
+        controller.status = remoteReconnectFailureMessage;
+      } else {
+        presentRemoteConnectionError(controller, message);
+      }
       return;
     }
     controller.pendingEffort = '';
@@ -1114,27 +1164,51 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     clearMaterializationVerificationWatch(controller);
     clearAbortWatch(controller);
     clearRemoteConnectionWatch(controller);
-    discardControllerDialogs(controller, event.generation);
-    const remoteConnectionFailed =
-      controller.connectingRemote ||
+    const project = state.workspace?.projects.find(
+      (item) => item.path === controller.projectPath,
+    );
+    const remoteProject = Boolean(project?.connectionString);
+    const initialRemoteConnectionFailed =
+      (controller.connectingRemote && !controller.reconnectingRemote) ||
       state.remoteRetry?.controllerKey === controller.key;
-    const message =
-      event.code === 0
-        ? ''
-        : remoteConnectionFailed
-          ? remotePiProcessExitMessage
-          : piProcessExitMessage;
-    if (remoteConnectionFailed) {
+    if (initialRemoteConnectionFailed) {
+      discardControllerDialogs(controller, event.generation);
       const failure =
-        message || 'The remote Pi process stopped before it was ready.';
+        event.code === 0
+          ? 'The remote Pi process stopped before it was ready.'
+          : remotePiProcessExitMessage;
       if (controller.pendingPrompt) cancelPendingPrompt(controller, failure);
       presentRemoteConnectionError(controller, failure);
       return;
     }
+    const recoverableRemoteExit = remoteProject;
+    const message = recoverableRemoteExit
+      ? controller.reconnectingRemote
+        ? remoteReconnectFailureMessage
+        : remoteDisconnectedMessage
+      : event.code === 0
+        ? ''
+        : piProcessExitMessage;
+    if (recoverableRemoteExit) {
+      recoverControllerDialogDrafts(controller, event.generation);
+    }
+    discardControllerDialogs(controller, event.generation);
     if (controller.pendingPrompt) {
       cancelPendingPrompt(controller, message || 'The Pi process stopped.');
     }
     settleInterruptedSubmittedPrompt(controller);
+    for (const entry of controller.messages) {
+      if (entry.kind === 'tool' && entry.toolRunning) entry.toolRunning = false;
+    }
+    if (recoverableRemoteExit && !controller.remoteDisconnected) {
+      controller.messages.push({
+        id: `remote-interruption-${event.generation}`,
+        kind: 'notice',
+        text: 'The remote connection was interrupted.',
+        noticeType: 'warning',
+        anchor: controller.messages.length,
+      });
+    }
     controller.compacting = false;
     controller.compactionReconciliationPending = false;
     controller.compactionStreamSequence = controller.streamSequence;
@@ -1146,18 +1220,33 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
         stopping: false,
         starting: false,
         working: false,
+        syncing: false,
+        connectingRemote: false,
       },
       'process_exited',
     );
+    controller.bootstrapStateRequestId = '';
+    controller.bootstrapSessionPath = '';
     controller.runStateRequestId = '';
+    controller.startMessagesRequestId = '';
+    controller.commandPromptRequestId = '';
+    controller.commandSyncRequestId = '';
+    controller.replacementProbeRequestId = '';
+    controller.abortProbeRequestId = '';
     controller.historyRequestId = '';
     setHistoryLoading(controller, false);
+    controller.pendingSessionRename = undefined;
     controller.pendingEffort = '';
     controller.pendingSettingRequestId = '';
     controller.remoteConnectionTimedOut = false;
     clearSettingRequestWatch(controller);
     controller.generation = 0;
+    controller.remoteDisconnected = recoverableRemoteExit;
+    controller.reconnectingRemote = false;
     controller.status = message;
+    if (recoverableRemoteExit && !isControllerSelected(controller)) {
+      controller.unread = true;
+    }
     await discardReleasedEmptySession(controller);
   }
 }
@@ -1788,11 +1877,18 @@ async function handleResponse(
       setControllerLifecycle(
         controller,
         resolvesStartMessages
-          ? { starting: false, syncing: false }
+          ? { ready: false, starting: false, syncing: false }
           : { syncing: false },
         'get_messages_failed',
         responseContext,
       );
+      if (resolvesStartMessages && controller.reconnectingRemote) {
+        controller.reconnectingRemote = false;
+        controller.remoteDisconnected = true;
+        controller.status = remoteReconnectFailureMessage;
+        void stopControllerProcess(controller, responseContext, false);
+        return;
+      }
     }
     if (resolvesAdmissionState || resolvesAdmissionMessages) {
       releaseSubmittedPrompt(controller);
@@ -1837,11 +1933,18 @@ async function handleResponse(
       setControllerLifecycle(
         controller,
         resolvesBootstrap
-          ? { syncing: false, starting: false }
+          ? { ready: false, syncing: false, starting: false }
           : { syncing: false },
         'get_state_failed',
         responseContext,
       );
+      if (resolvesBootstrap && controller.reconnectingRemote) {
+        controller.reconnectingRemote = false;
+        controller.remoteDisconnected = true;
+        controller.status = remoteReconnectFailureMessage;
+        void stopControllerProcess(controller, responseContext, false);
+        return;
+      }
       releaseRuntime(controller);
     }
     if (command === 'prompt') {
@@ -2169,6 +2272,7 @@ async function handleResponse(
       responseId === pending?.messagesRequestId;
     const previous = controller.messages;
     const previousTail = previous.slice(controller.historyPrefixLength);
+    const resolvesStart = resolvesStartMessages;
     controller.messagesLoaded = true;
     const hydrated = hydrateTranscript(
       piMessages,
@@ -2181,7 +2285,9 @@ async function handleResponse(
           previousTail,
           controller.compactionStreamSequence,
         )
-      : hydrated;
+      : resolvesStart && controller.reconnectingRemote
+        ? mergeLiveStreamSuffix(hydrated, previousTail, 0)
+        : hydrated;
     const tail = mergeLocalEntries(
       reconciled,
       controller.localErrors,
@@ -2190,11 +2296,17 @@ async function handleResponse(
     applyHistoryTail(controller, tail);
     controller.compactionReconciliationPending = false;
     controller.compactionStreamSequence = controller.streamSequence;
-    const resolvesStart = resolvesStartMessages;
     const resolvesAdmission =
       Boolean(controller.submittedPrompt?.admissionMessagesRequestId) &&
       responseId === controller.submittedPrompt?.admissionMessagesRequestId;
-    if (resolvesStart) controller.startMessagesRequestId = '';
+    if (resolvesStart) {
+      controller.startMessagesRequestId = '';
+      if (controller.reconnectingRemote) {
+        controller.remoteDisconnected = false;
+        controller.reconnectingRemote = false;
+        controller.status = '';
+      }
+    }
     setControllerLifecycle(
       controller,
       resolvesStart ? { syncing: false, starting: false } : { syncing: false },
@@ -3598,6 +3710,7 @@ async function discardReleasedEmptySession(
     !ephemeral ||
     workspaceContainsSession(controller) ||
     controller.materializationVerified ||
+    controller.remoteDisconnected ||
     controller.draft.trim() ||
     controllerHasPendingDialog(controller)
   ) {
@@ -3785,6 +3898,9 @@ export {
   oldestPendingRpcAgeMs,
   piConnectionFailureMessage,
   piProcessExitMessage,
+  remotePiProcessExitMessage,
+  remoteDisconnectedMessage,
+  remoteReconnectFailureMessage,
   remoteConnectionTimeoutMessage,
   remoteConnectionTimeoutMs,
   settingRequestTimeoutMs,

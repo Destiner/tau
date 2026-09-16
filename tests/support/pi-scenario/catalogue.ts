@@ -16,6 +16,7 @@ import {
 } from './saved-session-history';
 import {
   remotePhantomPromptProcessExit,
+  remoteSavedSessionProcessExit,
   savedSessionBootstrapProcessExit,
   savedSessionPromptProcessExit,
 } from './saved-session-process-failures';
@@ -43,6 +44,7 @@ const scenarios = [
   phantomCommandOnly,
   savedSessionUnacknowledgedAbort,
   remotePhantomPromptProcessExit,
+  remoteSavedSessionProcessExit,
   savedSessionBootstrapProcessExit,
   savedSessionPromptProcessExit,
   savedSessionHistory,

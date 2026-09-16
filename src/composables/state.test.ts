@@ -88,6 +88,8 @@ function testController(
     replacementProbeRequestId: '',
     abortProbeRequestId: '',
     connectingRemote: false,
+    remoteDisconnected: false,
+    reconnectingRemote: false,
     remoteConnectionTimedOut: false,
     syncing: false,
     lastActiveSequence: 0,

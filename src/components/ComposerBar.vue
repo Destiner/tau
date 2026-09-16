@@ -1,11 +1,24 @@
 <template>
-  <p
-    v-if="status"
-    class="status"
-    role="status"
+  <div
+    v-if="status || canReconnectRemote"
+    class="status-row"
   >
-    {{ status }}
-  </p>
+    <p
+      v-if="status"
+      class="status"
+      role="status"
+    >
+      {{ status }}
+    </p>
+    <UiButton
+      v-if="canReconnectRemote"
+      variant="ghost"
+      size="sm"
+      @click="reconnect"
+    >
+      Reconnect
+    </UiButton>
+  </div>
   <div
     ref="composer"
     class="composer"
@@ -122,6 +135,7 @@ import textFieldItems from '../lib/text-menu';
 
 import CommandMenu from './CommandMenu.vue';
 import ModelSelector from './ModelSelector.vue';
+import UiButton from './ui/UiButton.vue';
 import UiContextMenu from './ui/UiContextMenu.vue';
 import UiIcon from './ui/UiIcon.vue';
 import UiIconButton from './ui/UiIconButton.vue';
@@ -136,8 +150,10 @@ const props = defineProps<{
 const emit = defineEmits<{ send: [] }>();
 
 const {
+  activeController,
   canCompose,
   canDraft,
+  canReconnectRemote,
   commands,
   compacting,
   currentEffort,
@@ -149,6 +165,7 @@ const {
   effortLabels,
   efforts,
   models,
+  reconnectRemoteSession,
   selectEffort,
   selectModel,
   settingsDisabled,
@@ -286,6 +303,19 @@ function send(): void {
   emit('send');
 }
 
+async function reconnect(): Promise<void> {
+  const controllerKey = activeController.value?.key;
+  await reconnectRemoteSession();
+  await nextTick();
+  if (
+    controllerKey &&
+    activeController.value?.key === controllerKey &&
+    canDraft.value
+  ) {
+    composerInput.value?.focus();
+  }
+}
+
 function dismissCommandMenu(): void {
   if (commandMenuActive.value) commandMenuDismissed.value = true;
 }
@@ -311,9 +341,17 @@ defineExpose({
 </script>
 
 <style scoped>
-.status {
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   width: 100%;
   margin: 0 0 6px;
+}
+
+.status {
+  flex: 1;
+  margin: 0;
   color: var(--muted);
   font-size: 11px;
   cursor: text;

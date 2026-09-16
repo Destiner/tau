@@ -349,7 +349,7 @@ pub fn start_pi_remote(
         &telemetry,
         span_context.as_ref(),
         runtime_id,
-        connection.command(&remote_command),
+        connection.pi_command(&remote_command),
     )
 }
 

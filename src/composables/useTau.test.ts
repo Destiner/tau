@@ -3701,6 +3701,94 @@ describe('archive failure locality', () => {
   });
 });
 
+describe('remote session recovery', () => {
+  it('reconnects an established session explicitly with the same identity', async () => {
+    const { tau, project, session, controller } = await setupNamedSession();
+    project.connectionString = 'user@example';
+    project.workingDirectory = '/home/user/project';
+    controller.messages = [
+      { id: 'stream-assistant-1', kind: 'assistant', text: 'Partial reply' },
+    ];
+    controller.draft = 'Keep this draft';
+    const oldGeneration = controller.generation;
+
+    emitBridge(controller.runtimeId, oldGeneration, 'exited', 255);
+    await vi.waitFor(() => expect(controller.remoteDisconnected).toBe(true));
+
+    expect(tau.canReconnectRemote.value).toBe(true);
+    expect(tau.canCompose.value).toBe(false);
+    await tau.selectSession(project, session);
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.filter(([command]) => command.startsWith('start_pi')),
+    ).toHaveLength(0);
+
+    await tau.reconnectRemoteSession();
+
+    expect(tau.canReconnectRemote.value).toBe(false);
+    expect(controller.reconnectingRemote).toBe(true);
+    expect(invoke).toHaveBeenCalledWith(
+      'start_pi_remote',
+      expect.objectContaining({
+        runtimeId: controller.runtimeId,
+        connectionString: 'user@example',
+        workingDirectory: '/home/user/project',
+        sessionPath: session.path,
+      }),
+    );
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.filter(([command]) => command === 'start_pi_remote'),
+    ).toHaveLength(1);
+    expect(controller.draft).toBe('Keep this draft');
+    expect(
+      controller.messages.some((entry) => entry.text === 'Partial reply'),
+    ).toBe(true);
+
+    emitRpc(controller, {
+      id: controller.bootstrapStateRequestId,
+      type: 'response',
+      command: 'get_state',
+      success: true,
+      data: {
+        model: { provider: 'provider', id: 'alpha', name: 'Alpha' },
+        thinkingLevel: 'off',
+        sessionId: session.id,
+        sessionFile: session.path,
+        sessionName: session.title,
+        isStreaming: false,
+      },
+    });
+    await vi.waitFor(() =>
+      expect(controller.startMessagesRequestId).not.toBe(''),
+    );
+    emitRpc(controller, {
+      id: controller.startMessagesRequestId,
+      type: 'response',
+      command: 'get_messages',
+      success: true,
+      data: { messages: [] },
+    });
+    await vi.waitFor(() => expect(controller.reconnectingRemote).toBe(false));
+
+    expect(controller.remoteDisconnected).toBe(false);
+    expect(controller.ready).toBe(true);
+    expect(controller.draft).toBe('Keep this draft');
+    expect(
+      controller.messages.some((entry) => entry.text === 'Partial reply'),
+    ).toBe(true);
+    expect(
+      controller.messages.some(
+        (entry) => entry.text === 'The remote connection was interrupted.',
+      ),
+    ).toBe(true);
+
+    tau.dispose();
+  });
+});
+
 describe('remote connection timeout', () => {
   it('unlocks retry UI and stops a runtime that never becomes ready', async () => {
     vi.useFakeTimers();

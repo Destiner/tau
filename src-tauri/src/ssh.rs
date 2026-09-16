@@ -24,6 +24,12 @@ const SSH_OPTIONS: [&str; 8] = [
     "-o",
     "StrictHostKeyChecking=accept-new",
 ];
+const REMOTE_PI_KEEPALIVE_OPTIONS: [&str; 4] = [
+    "-o",
+    "ServerAliveInterval=15",
+    "-o",
+    "ServerAliveCountMax=3",
+];
 const DIRECTORY_MARKER: &[u8] = b"TAU_REMOTE_DIRECTORY";
 const DIRECTORY_END_MARKER: &[u8] = b"TAU_REMOTE_END_DIRECTORY";
 const SSH_OPTIONS_WITH_ARGUMENTS: [char; 22] = [
@@ -80,12 +86,33 @@ impl SshConnection {
     }
 
     pub fn command(&self, remote_command: &str) -> Command {
+        self.command_with_options(remote_command, &[])
+    }
+
+    pub fn pi_command(&self, remote_command: &str) -> Command {
         let mut command = Command::new(&self.executable);
         let (destination, options) = self
             .arguments
             .split_last()
             .expect("validated SSH connection arguments");
         command
+            .args(REMOTE_PI_KEEPALIVE_OPTIONS)
+            .args(options)
+            .args(["-S", "none"])
+            .args(SSH_OPTIONS)
+            .arg(destination)
+            .arg(remote_command);
+        command
+    }
+
+    fn command_with_options(&self, remote_command: &str, enforced_options: &[&str]) -> Command {
+        let mut command = Command::new(&self.executable);
+        let (destination, options) = self
+            .arguments
+            .split_last()
+            .expect("validated SSH connection arguments");
+        command
+            .args(enforced_options)
             .args(options)
             .args(SSH_OPTIONS)
             .arg(destination)
@@ -423,6 +450,65 @@ mod tests {
 
         let destination = SshConnection::parse("user@example").expect("destination");
         assert_eq!(destination.arguments, ["user@example"]);
+    }
+
+    #[test]
+    fn remote_pi_connections_enforce_keepalives_and_disable_sharing() {
+        let connection = SshConnection::parse(
+            "ssh -o ServerAliveInterval=0 -o ServerAliveCountMax=9 -S /tmp/shared.sock -J jump -p 2222 user@example",
+        )
+        .expect("remote Pi connection");
+        let arguments = connection
+            .pi_command("remote-pi")
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            &arguments[..4],
+            [
+                "-o",
+                "ServerAliveInterval=15",
+                "-o",
+                "ServerAliveCountMax=3",
+            ]
+        );
+        let supplied_socket = arguments
+            .windows(2)
+            .position(|pair| pair == ["-S", "/tmp/shared.sock"])
+            .expect("supplied control socket");
+        let disabled_socket = arguments
+            .windows(2)
+            .position(|pair| pair == ["-S", "none"])
+            .expect("disabled control socket");
+        assert!(disabled_socket > supplied_socket);
+        assert_eq!(arguments.last().map(String::as_str), Some("remote-pi"));
+        assert_eq!(
+            arguments.get(arguments.len() - 2).map(String::as_str),
+            Some("user@example")
+        );
+        assert!(arguments.windows(2).any(|pair| pair == ["-J", "jump"]));
+        assert!(arguments.windows(2).any(|pair| pair == ["-p", "2222"]));
+    }
+
+    #[test]
+    fn short_lived_connections_do_not_use_remote_pi_lifetime_options() {
+        let connection =
+            SshConnection::parse("ssh -p 2222 user@example").expect("short-lived connection");
+        let arguments = connection
+            .command("true")
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert!(!arguments
+            .iter()
+            .any(|argument| argument == "ServerAliveInterval=15"));
+        assert!(!arguments
+            .iter()
+            .any(|argument| argument == "ServerAliveCountMax=3"));
+        assert!(!arguments.windows(2).any(|pair| pair == ["-S", "none"]));
+        assert_eq!(&arguments[..2], ["-p", "2222"]);
     }
 
     #[test]

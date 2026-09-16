@@ -230,6 +230,10 @@ interface SessionController {
   replacementProbeRequestId: string;
   abortProbeRequestId: string;
   connectingRemote: boolean;
+  /** An established remote runtime exited and requires an explicit reconnect. */
+  remoteDisconnected: boolean;
+  /** The explicit reconnect action currently owns this bootstrap attempt. */
+  reconnectingRemote: boolean;
   remoteConnectionTimedOut: boolean;
   syncing: boolean;
   lastActiveSequence: number;
@@ -563,6 +567,18 @@ const sessionLoading = computed(() => {
   if (!controller || controller.phantom) return false;
   if (controller.messages.length > 0 || controller.status) return false;
   return !controller.ready || controller.starting || controller.syncing;
+});
+
+const canReconnectRemote = computed(() => {
+  const controller = activeController.value;
+  return Boolean(
+    activeProject.value?.connectionString &&
+    controller?.remoteDisconnected &&
+    !controller.reconnectingRemote &&
+    !controller.starting &&
+    !controller.disposed &&
+    !projectActionsDisabled.value,
+  );
 });
 
 const canCompose = computed(() => {
@@ -953,6 +969,8 @@ function createController(
     replacementProbeRequestId: '',
     abortProbeRequestId: '',
     connectingRemote: false,
+    remoteDisconnected: false,
+    reconnectingRemote: false,
     remoteConnectionTimedOut: false,
     syncing: false,
     lastActiveSequence: (activitySequence += 1),
@@ -1378,6 +1396,7 @@ export {
   canDraft,
   sessionLoading,
   canCompose,
+  canReconnectRemote,
   sessionTitle,
   currentModelLabel,
   currentEffortLabel,

@@ -50,6 +50,7 @@ import {
   canArchiveSession,
   canCompose,
   canDraft,
+  canReconnectRemote,
   canRenameSession,
   clearActiveSession,
   clearControllerActionError,
@@ -622,7 +623,8 @@ function useTau() {
           if (
             !controller.phantom &&
             !controller.ready &&
-            !controller.starting
+            !controller.starting &&
+            !controller.remoteDisconnected
           ) {
             await startController(
               controller,
@@ -639,7 +641,7 @@ function useTau() {
       removeEmptyActivePhantom();
       const controller = ensureController(project, session);
       setActiveSessionView(project, session, controller);
-      controller.status = '';
+      if (!controller.remoteDisconnected) controller.status = '';
       controller.unread = false;
       await persistProjectSelection(
         project.path,
@@ -648,7 +650,13 @@ function useTau() {
       );
       releaseIdleRuntimes();
 
-      if (controller.phantom || controller.ready || controller.starting) return;
+      if (
+        controller.phantom ||
+        controller.ready ||
+        controller.starting ||
+        controller.remoteDisconnected
+      )
+        return;
       await startController(
         controller,
         project,
@@ -659,6 +667,20 @@ function useTau() {
     } finally {
       actionSpan.end();
     }
+  }
+
+  async function reconnectRemoteSession(): Promise<void> {
+    const controller = activeController.value;
+    const project = activeProject.value;
+    if (!controller || !project || !canReconnectRemote.value) return;
+
+    controller.reconnectingRemote = true;
+    await startController(
+      controller,
+      project,
+      controller.sessionPath || undefined,
+      true,
+    );
   }
 
   async function sendMessage(): Promise<void> {
@@ -1013,6 +1035,7 @@ function useTau() {
     settingsDisabled,
     canDraft,
     canCompose,
+    canReconnectRemote,
     canRenameSession,
     sessionLoading,
     initialize,
@@ -1046,6 +1069,7 @@ function useTau() {
     projectIndicator,
     indicatorLabel,
     sendMessage,
+    reconnectRemoteSession,
     stop,
     loadEarlierHistory,
     submitExtensionDialog,

@@ -240,6 +240,13 @@ const REQUIRED_NATIVE_COUNTS = {
     set_active_project: 1,
     set_active_session: 1,
   },
+  'remote-saved-session-process-exit': {
+    load_workspace: 1,
+    read_remote_model_scope: 2,
+    start_pi_remote: 2,
+    register_session: 2,
+    set_active_session: 2,
+  },
   'saved-session-bootstrap-process-exit': {
     load_workspace: 1,
     read_model_scope: 2,
@@ -303,7 +310,10 @@ function scenarioWorkspace(scenarioName: string): WorkspaceSnapshot {
       selected: false,
     });
   }
-  if (scenarioName === 'remote-phantom-prompt-process-exit') {
+  if (
+    scenarioName === 'remote-phantom-prompt-process-exit' ||
+    scenarioName === 'remote-saved-session-process-exit'
+  ) {
     const project = workspace.projects[0];
     if (!project) throw new Error('Remote scenario requires a project.');
     project.connectionString = REMOTE_CONNECTION;
@@ -398,7 +408,8 @@ function installPiScenarioAdapter(scenarioName: string): void {
       if (
         command === 'read_model_scope' ||
         (command === 'read_remote_model_scope' &&
-          scenarioName === 'remote-phantom-prompt-process-exit')
+          (scenarioName === 'remote-phantom-prompt-process-exit' ||
+            scenarioName === 'remote-saved-session-process-exit'))
       ) {
         count(command);
         return [];
@@ -847,6 +858,14 @@ function scenarioRuntimeKey(
       );
     }
     return count === 1 ? 'failed-phantom' : 'recovered-phantom';
+  }
+  if (scenarioName === 'remote-saved-session-process-exit') {
+    if (sessionPath !== SESSION_PATH || count > 2) {
+      throw new Error(
+        'Remote saved-session recovery used an unexpected runtime start.',
+      );
+    }
+    return count === 1 ? 'main' : 'reconnected-main';
   }
   if (scenarioName === 'saved-session-bootstrap-process-exit') {
     if (sessionPath !== SESSION_PATH || count > 2) {

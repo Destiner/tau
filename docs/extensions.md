@@ -39,6 +39,10 @@ Pi hands out a session-opening context, `ExtensionCommandContext`, only to a com
 
 Stopping a runtime is what makes that state disappear. Reopening the session file restores the transcript, the marker entries, and the name, but not the handoff, so a phase that spans a user turn can complete in a process that has no way to open the session that comes next. Tau therefore keeps idle runtimes warm and releases only the least recently active ones past a limit, which covers the sessions a user moves between while a phase waits on them. A runtime lost with the app, with an SSH connection, or to that limit still leaves the workflow to be resumed by its own command.
 
+Remote Pi runtimes use dedicated SSH connections with 15-second server-alive probes and a count limit of three. Connection sharing is disabled for these runtimes, so an unresponsive peer normally makes OpenSSH exit after approximately 45 seconds without affecting an existing shared SSH master. Short-lived remote inspection commands keep their existing timeout policy.
+
+When an established remote connection exits, Tau keeps the session, draft, and interrupted transcript, clears live activity, and offers a session-local **Reconnect** action. Selecting the session does not reconnect it, and reconnecting never resends a prompt or extension response. A responsive SSH server cannot reveal a Pi process that is itself hung, and reopening restores Pi's persisted history rather than lost in-memory extension continuations.
+
 ## Sessions Tau had archived
 
 A workflow resumed by its own command re-attaches to the phase session that is already on disk, which may be a session the user archived in the meantime. Registering that identity is Tau adopting a session Pi handed it, so the row comes back out of the archive: a session Tau is showing has to be one the user can select and return to.
