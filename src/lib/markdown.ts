@@ -12,7 +12,7 @@ interface MarkdownOptions {
    * lists, or quotes. A prompt's title is a sentence rather than a document.
    */
   inline?: boolean;
-  /** Directory that local file paths are resolved against before opening. */
+  /** Directory that relative file paths are resolved against. */
   basePath?: string;
   /** Remote paths are links that copy instead of opening on this machine. */
   copyPaths?: boolean;

@@ -86,7 +86,7 @@ const prompt = reactive<ExtensionDialog>({
   generation: 1,
   projectName: 'tau',
   sessionName: 'Long question',
-  ...(remote ? {} : { workingDirectory: '/home/agent/rhinestone' }),
+  workingDirectory: '/home/agent/rhinestone',
 });
 
 const promptVisible = ref(!delayed);

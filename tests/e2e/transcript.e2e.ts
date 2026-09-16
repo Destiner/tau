@@ -25,7 +25,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator('[data-index="4999"]')).toBeVisible();
 });
 
-test('copies transcript URLs and local paths from single-item context menus', async ({
+test('copies transcript URLs and local paths from context menus', async ({
   page,
 }) => {
   await page.addInitScript(() => {
@@ -55,7 +55,7 @@ test('copies transcript URLs and local paths from single-item context menus', as
   const message = page.locator('[data-message-id="fixture-markdown-showcase"]');
   const url = message.getByRole('link', { name: 'Tau docs' });
   const path = message.locator(
-    '[data-tau-path="/Users/someone/code/tau/src-tauri"]',
+    '[data-tau-path="src/components/TranscriptView.vue"]',
   );
 
   await url.click({ button: 'right' });
@@ -72,13 +72,19 @@ test('copies transcript URLs and local paths from single-item context menus', as
     .toEqual(['plugin:opener|open_url']);
 
   await path.click({ button: 'right' });
-  await expect(page.getByRole('menuitem')).toHaveText(['Copy Path']);
-  await page.getByRole('menuitem', { name: 'Copy Path' }).click();
+  await expect(page.getByRole('menuitem')).toHaveText([
+    'Copy Path',
+    'Copy Full Path',
+  ]);
+  await page.getByRole('menuitem', { name: 'Copy Path', exact: true }).click();
+  await path.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Copy Full Path' }).click();
   await expect
     .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
     .toEqual([
       'https://example.com/tau/docs',
-      '/Users/someone/code/tau/src-tauri',
+      'src/components/TranscriptView.vue',
+      '/Users/someone/code/tau/src/components/TranscriptView.vue',
     ]);
 
   await path.click();
@@ -91,7 +97,7 @@ test('copies transcript URLs and local paths from single-item context menus', as
     .toEqual(['plugin:opener|open_url', 'plugin:opener|open_path']);
 });
 
-test('copies a remote path from its context menu without changing left-click copy', async ({
+test('copies raw and full remote paths without changing left-click copy', async ({
   page,
 }) => {
   await page.addInitScript(() => {
@@ -117,19 +123,23 @@ test('copies a remote path from its context menu without changing left-click cop
 
   const path = page
     .locator('[data-message-id="fixture-remote-paths"]')
-    .getByRole('button', {
-      name: 'Copy path /home/agent/rhinestone/workspace',
-    });
+    .getByRole('button', { name: 'Copy path src/remote.ts' });
 
   await path.click({ button: 'right' });
-  await expect(page.getByRole('menuitem')).toHaveText(['Copy Path']);
-  await page.getByRole('menuitem', { name: 'Copy Path' }).click();
+  await expect(page.getByRole('menuitem')).toHaveText([
+    'Copy Path',
+    'Copy Full Path',
+  ]);
+  await page.getByRole('menuitem', { name: 'Copy Path', exact: true }).click();
+  await path.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Copy Full Path' }).click();
   await path.click();
   await expect
     .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
     .toEqual([
-      '/home/agent/rhinestone/workspace',
-      '/home/agent/rhinestone/workspace',
+      'src/remote.ts',
+      '/home/agent/rhinestone/src/remote.ts',
+      'src/remote.ts',
     ]);
 });
 

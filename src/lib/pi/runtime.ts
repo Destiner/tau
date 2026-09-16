@@ -925,11 +925,9 @@ function extensionRequestOrigin(controller: SessionController): {
       saved?.title ||
       firstUserMessage(controller) ||
       'New Session',
-    // A remote project's files are on the other host, where nothing local can
-    // open them, so its paths are left as text.
-    ...(project && !project.connectionString
-      ? { workingDirectory: project.workingDirectory }
-      : {}),
+    // The directory also resolves relative paths copied from remote sessions;
+    // copyPaths still prevents Tau from opening those paths on this machine.
+    ...(project ? { workingDirectory: project.workingDirectory } : {}),
   };
 }
 

@@ -252,10 +252,8 @@ const sessionIsEmpty = computed(
     !compacting.value &&
     !activeExtensionDialog.value,
 );
-const transcriptBasePath = computed(() =>
-  activeProject.value && !activeProject.value.connectionString
-    ? activeProject.value.workingDirectory
-    : undefined,
+const transcriptBasePath = computed(
+  () => activeProject.value?.workingDirectory,
 );
 const showWorkingIndicator = computed(() => {
   if (stopping.value) return true;

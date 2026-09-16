@@ -13,7 +13,7 @@
       :compacting="false"
       :show-working-indicator="showWorkingIndicator"
       working-label="Working"
-      :base-path="remote ? undefined : '/Users/someone/code/tau'"
+      :base-path="remote ? '/home/agent/rhinestone' : '/Users/someone/code/tau'"
       :copy-paths="remote"
       :session-key="sessionKey"
       @load-history="loadCompactedHistory"
@@ -94,6 +94,8 @@ if (remote) {
     id: 'fixture-remote-paths',
     kind: 'assistant',
     text: `Workspace \`/home/agent/rhinestone/workspace\`
+
+Source \`src/remote.ts\`
 
 \`\`\`md
 Repo /home/agent/rhinestone/orchestrator

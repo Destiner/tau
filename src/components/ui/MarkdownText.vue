@@ -219,18 +219,37 @@ async function copyCodeBlock(button: HTMLElement): Promise<void> {
   showCopied(button);
 }
 
-async function copyRemotePath(path: string): Promise<void> {
+async function copyPath(path: string): Promise<void> {
   try {
     await writeText(path);
   } catch (error) {
-    console.error('Could not copy the remote path', error);
+    console.error('Could not copy the path', error);
+    return;
+  }
+  announceCopiedPath();
+}
+
+/** A remote home is unknown, so a tilde path cannot truthfully be made full. */
+function canCopyFullPath(path: string): boolean {
+  return (
+    path.startsWith('/') ||
+    (Boolean(props.basePath) && (!props.copyPaths || !path.startsWith('~/')))
+  );
+}
+
+async function copyFullPath(path: string): Promise<void> {
+  try {
+    const home = path.startsWith('~/') ? await homeDirectory() : undefined;
+    await writeText(resolveFilePath(props.basePath ?? '', path, home));
+  } catch (error) {
+    console.error('Could not copy the full path', error);
     return;
   }
   announceCopiedPath();
 }
 
 interface ContextCopyTarget {
-  label: 'Copy URL' | 'Copy Path';
+  kind: 'url' | 'path';
   value: string;
 }
 
@@ -241,13 +260,13 @@ function prepareContextMenu(event: MouseEvent): void {
   const link = linkAt(event.target);
   const href = link?.getAttribute('href');
   if (href && isWebUrl(href)) {
-    contextCopyTarget = { label: 'Copy URL', value: href };
+    contextCopyTarget = { kind: 'url', value: href };
     return;
   }
 
   const path = link ? filePath(link) : null;
   if (path) {
-    contextCopyTarget = { label: 'Copy Path', value: path };
+    contextCopyTarget = { kind: 'path', value: path };
     return;
   }
 
@@ -255,24 +274,31 @@ function prepareContextMenu(event: MouseEvent): void {
   event.preventDefault();
 }
 
-async function copyContextTarget(target: ContextCopyTarget): Promise<void> {
+async function copyUrl(url: string): Promise<void> {
   try {
-    await writeText(target.value);
+    await writeText(url);
   } catch (error) {
-    console.error(
-      `Could not copy the ${target.label === 'Copy URL' ? 'URL' : 'path'}`,
-      error,
-    );
-    return;
+    console.error('Could not copy the URL', error);
   }
-  if (target.label === 'Copy Path') announceCopiedPath();
 }
 
 function contextMenuItems(): UiMenuItem[] {
   const target = contextCopyTarget;
-  return target
-    ? [{ label: target.label, run: () => void copyContextTarget(target) }]
-    : [];
+  if (!target) return [];
+  if (target.kind === 'url') {
+    return [{ label: 'Copy URL', run: () => void copyUrl(target.value) }];
+  }
+
+  const items: UiMenuItem[] = [
+    { label: 'Copy Path', run: () => void copyPath(target.value) },
+  ];
+  if (canCopyFullPath(target.value)) {
+    items.push({
+      label: 'Copy Full Path',
+      run: () => void copyFullPath(target.value),
+    });
+  }
+  return items;
 }
 
 async function activate(event: Event): Promise<void> {
@@ -307,7 +333,7 @@ async function activate(event: Event): Promise<void> {
   // links copy their actual remote path; local ones keep the desktop gesture.
   event.preventDefault();
   if (props.copyPaths) {
-    await copyRemotePath(path);
+    await copyPath(path);
     return;
   }
   if (props.basePath && isPathOpenGesture(event, window.navigator.platform)) {

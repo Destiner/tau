@@ -151,7 +151,7 @@ const props = defineProps<{
   submitting: boolean;
   disabled?: boolean;
   error: string;
-  /** Base for local paths; remote paths copy instead of opening locally. */
+  /** Base for relative paths; remote paths copy instead of opening locally. */
   workingDirectory?: string;
   copyPaths?: boolean;
 }>();

@@ -68,6 +68,8 @@ const longTailShowcase = `# Heading one
 
 A paragraph with [Tau docs](https://example.com/tau/docs), *real emphasis*, ~~a struck run that recedes~~, and a shortcut: press <kbd>Cmd</kbd> + <kbd>K</kbd>.
 
+Local source: \`src/components/TranscriptView.vue\`.
+
 ---
 
 > A quote, ruled rather than boxed.
