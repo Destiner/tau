@@ -1,4 +1,30 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invokeTraced } from '../telemetry';
+
+type OwnershipFailureKind = 'conflict' | 'retryable';
+
+class OwnershipClaimError extends Error {
+  readonly kind: OwnershipFailureKind;
+
+  constructor(kind: OwnershipFailureKind) {
+    super(
+      kind === 'conflict' ? 'Pi ownership conflict' : 'Pi ownership failed',
+    );
+    this.name = 'OwnershipClaimError';
+    this.kind = kind;
+  }
+}
+
+function ownershipFailureKind(error: unknown): OwnershipFailureKind {
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'kind' in error &&
+    error.kind === 'conflict'
+  ) {
+    return 'conflict';
+  }
+  return 'retryable';
+}
 
 interface FrontendOwnership {
   readonly ownerId: string;
@@ -22,12 +48,14 @@ function createFrontendOwnership(ownerId = newOwnerId()): FrontendOwnership {
       if (claimPromise) return claimPromise;
       claimPromise = (async (): Promise<void> => {
         if (expectedRevision === undefined) {
-          expectedRevision = await invoke<number>('read_pi_frontend_revision');
+          expectedRevision = await invokeTraced<number>(
+            'read_pi_frontend_revision',
+          );
         }
-        await invoke('claim_pi_frontend', { ownerId, expectedRevision });
+        await invokeTraced('claim_pi_frontend', { ownerId, expectedRevision });
       })().catch((error: unknown): never => {
         claimPromise = undefined;
-        throw error;
+        throw new OwnershipClaimError(ownershipFailureKind(error));
       });
       return claimPromise;
     },
@@ -40,4 +68,11 @@ function piOwnerArgs(): { ownerId: string } {
   return { ownerId: frontendOwnership.ownerId };
 }
 
-export { createFrontendOwnership, frontendOwnership, piOwnerArgs };
+export type { OwnershipFailureKind };
+
+export {
+  createFrontendOwnership,
+  frontendOwnership,
+  OwnershipClaimError,
+  piOwnerArgs,
+};

@@ -21,6 +21,7 @@ const errorCopy = {
   modelChange:
     'The model could not be changed. Reopen the session and try again.',
   piOwnership: 'Tau could not prepare Pi. Try again.',
+  piOwnershipConflict: 'Another Tau window owns Pi. Reload Tau to continue.',
   piStart: 'Pi could not be started. Restart Tau and try again.',
   projectOrder: 'The project order could not be saved. Try again.',
   remoteConnection:

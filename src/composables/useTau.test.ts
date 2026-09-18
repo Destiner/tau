@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { PiBridgeEvent } from '../lib/pi/bridge';
-import { frontendOwnership } from '../lib/pi/ownership';
+import { frontendOwnership, OwnershipClaimError } from '../lib/pi/ownership';
 
 import { nextRequestId } from './state';
 import type {
@@ -3663,6 +3663,134 @@ describe('session settings', () => {
     });
     expect(controller.currentModelId).toBe('beta');
     tau.dispose();
+  });
+});
+
+describe('workspace ownership gate', () => {
+  it('blocks retained-workspace actions while ownership is pending', async () => {
+    const session = savedSession('retained');
+    const project: ProjectSummary = {
+      path: '/tmp/tau-retained',
+      name: 'tau-retained',
+      workingDirectory: '/tmp/tau-retained',
+      collapsed: false,
+      selected: true,
+      sessions: [session],
+    };
+    let resolveClaim: (() => void) | undefined;
+    const claim = vi.spyOn(frontendOwnership, 'claim').mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveClaim = resolve;
+        }),
+    );
+    const tau = useTau();
+    tau.state.workspace = {
+      activeProjectPath: project.path,
+      piPath: '/usr/local/bin/pi',
+      projects: [project],
+    };
+    tau.state.activeProjectPath = '';
+    tau.state.activeSessionId = '';
+    tau.state.controllers.splice(0);
+    vi.mocked(invoke).mockClear();
+
+    try {
+      const pending = tau.initialize();
+      await vi.waitFor(() => expect(resolveClaim).toBeDefined());
+      expect(tau.projectActionsDisabled.value).toBe(true);
+      await tau.selectSession(project, session);
+      await tau.newSession(project);
+      expect(tau.state.activeSessionId).toBe('');
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.some(([command]) => command.startsWith('start_pi')),
+      ).toBe(false);
+      resolveClaim?.();
+      await pending;
+    } finally {
+      claim.mockRestore();
+      tau.dispose();
+    }
+  });
+
+  it('lets a remount adopt a pending saved-session startup', async () => {
+    const session = { ...savedSession('adopted'), selected: true };
+    const project: ProjectSummary = {
+      path: '/tmp/tau-adopted',
+      name: 'tau-adopted',
+      workingDirectory: '/tmp/tau-adopted',
+      collapsed: false,
+      selected: true,
+      sessions: [session],
+    };
+    mocks.workspace = {
+      activeProjectPath: project.path,
+      piPath: '/usr/local/bin/pi',
+      projects: [project],
+    };
+    const defaultInvoke = vi.mocked(invoke).getMockImplementation();
+    let resolveStart: ((generation: number) => void) | undefined;
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === 'start_pi') {
+        return await new Promise<number>((resolve) => {
+          resolveStart = resolve;
+        });
+      }
+      return defaultInvoke?.(command, args);
+    });
+    const first = useTau();
+    first.state.controllers.splice(0);
+    first.state.ephemeralSessions.splice(0);
+    first.state.workspace = null;
+    vi.mocked(invoke).mockClear();
+
+    try {
+      const pending = first.initialize();
+      await vi.waitFor(() => expect(resolveStart).toBeDefined());
+      first.dispose();
+      const replacement = useTau();
+      const adopted = replacement.initialize();
+      resolveStart?.(17);
+      await Promise.all([pending, adopted]);
+
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.filter(([command]) => command === 'start_pi'),
+      ).toHaveLength(1);
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.filter(([command]) => command === 'stop_pi'),
+      ).toHaveLength(0);
+      expect(replacement.state.controllers[0]?.generation).toBe(17);
+      replacement.dispose();
+    } finally {
+      if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
+    }
+  });
+
+  it('shows reload guidance for an ownership conflict', async () => {
+    const claim = vi
+      .spyOn(frontendOwnership, 'claim')
+      .mockRejectedValueOnce(new OwnershipClaimError('conflict'));
+    const tau = useTau();
+    tau.state.workspace = null;
+    tau.state.workspaceStatus = '';
+
+    try {
+      await tau.initialize();
+      expect(tau.state.ownershipFailure).toBe('conflict');
+      expect(tau.state.workspaceStatus).toBe(
+        'Another Tau window owns Pi. Reload Tau to continue.',
+      );
+      expect(tau.projectActionsDisabled.value).toBe(true);
+    } finally {
+      claim.mockRestore();
+      tau.dispose();
+    }
   });
 });
 

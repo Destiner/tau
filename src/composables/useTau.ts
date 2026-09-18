@@ -4,7 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { errorCopy } from '../lib/error-copy';
 import type { PiBridgeEvent } from '../lib/pi/bridge';
 import type { ThinkingLevel } from '../lib/pi/model-scope';
-import { frontendOwnership } from '../lib/pi/ownership';
+import { frontendOwnership, OwnershipClaimError } from '../lib/pi/ownership';
 import {
   applySessionName,
   appendOptimisticPrompt,
@@ -118,8 +118,13 @@ import {
   type WorkspaceSnapshot,
 } from './state';
 
+interface InitializationOperation {
+  lifecycle: number;
+  promise: Promise<void>;
+}
+
 let unlisten: UnlistenFn | undefined;
-let initialization: Promise<void> | undefined;
+let initialization: InitializationOperation | undefined;
 let lifecycle = 0;
 
 function controllerTelemetryScope(
@@ -139,24 +144,40 @@ function controllerTelemetryScope(
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function useTau() {
   function initialize(): Promise<void> {
-    if (initialization) return initialization;
-    const currentLifecycle = lifecycle;
+    if (initialization) {
+      initialization.lifecycle = lifecycle;
+      state.initializing = true;
+      return initialization.promise;
+    }
     state.initializing = true;
-    const pending = initializeOnce(currentLifecycle)
+    state.ownershipFailure = null;
+    const operation: InitializationOperation = {
+      lifecycle,
+      promise: Promise.resolve(),
+    };
+    operation.promise = initializeOnce(operation)
       .catch(() => {
-        if (currentLifecycle === lifecycle) {
+        if (operation.lifecycle === lifecycle) {
           setWorkspaceError(errorCopy.piOwnership);
+          state.ownershipFailure = 'retryable';
         }
       })
       .finally(() => {
-        if (initialization === pending) initialization = undefined;
-        if (currentLifecycle === lifecycle) state.initializing = false;
+        if (initialization === operation) initialization = undefined;
+        if (operation.lifecycle === lifecycle) {
+          state.initializing = false;
+        } else {
+          unlisten?.();
+          unlisten = undefined;
+        }
       });
-    initialization = pending;
-    return pending;
+    initialization = operation;
+    return operation.promise;
   }
 
-  async function initializeOnce(currentLifecycle: number): Promise<void> {
+  async function initializeOnce(
+    operation: InitializationOperation,
+  ): Promise<void> {
     if (!unlisten) {
       const nextUnlisten = await listen<PiBridgeEvent>(
         'pi-event',
@@ -176,7 +197,7 @@ function useTau() {
           });
         },
       );
-      if (currentLifecycle !== lifecycle) {
+      if (operation.lifecycle !== lifecycle) {
         nextUnlisten();
         return;
       }
@@ -185,20 +206,25 @@ function useTau() {
 
     try {
       await frontendOwnership.claim();
-    } catch {
-      if (currentLifecycle === lifecycle) {
-        setWorkspaceError(errorCopy.piOwnership);
+    } catch (error) {
+      if (operation.lifecycle === lifecycle) {
+        const conflict =
+          error instanceof OwnershipClaimError && error.kind === 'conflict';
+        state.ownershipFailure = conflict ? 'conflict' : 'retryable';
+        setWorkspaceError(
+          conflict ? errorCopy.piOwnershipConflict : errorCopy.piOwnership,
+        );
       }
       return;
     }
-    if (currentLifecycle !== lifecycle) return;
+    if (operation.lifecycle !== lifecycle) return;
 
     try {
       const workspace = await invokeTraced<WorkspaceSnapshot>(
         'load_workspace',
         {},
       );
-      if (currentLifecycle !== lifecycle) return;
+      if (operation.lifecycle !== lifecycle) return;
       state.workspace = workspace;
       state.workspaceStatus = '';
       state.activeProjectPath = state.workspace.activeProjectPath;
@@ -213,20 +239,9 @@ function useTau() {
         !selectedSession &&
         projectSessions(selectedProject).length === 0
       ) {
-        const existingControllerKeys = new Set(
-          state.controllers.map((controller) => controller.key),
-        );
-        await newSession(selectedProject);
-        if (currentLifecycle !== lifecycle) {
-          await Promise.all(
-            state.controllers
-              .filter(
-                (controller) => !existingControllerKeys.has(controller.key),
-              )
-              .map((controller) =>
-                stopControllerProcess(controller, undefined, false),
-              ),
-          );
+        const controller = await newSession(selectedProject, true);
+        if (operation.lifecycle !== lifecycle && controller) {
+          await stopControllerProcess(controller, undefined, false);
         }
       } else if (selectedProject && selectedSession) {
         const controller = ensureController(selectedProject, selectedSession);
@@ -241,7 +256,7 @@ function useTau() {
           selectedProject,
           selectedSession.path,
         );
-        if (currentLifecycle !== lifecycle) {
+        if (operation.lifecycle !== lifecycle) {
           await stopControllerProcess(controller, undefined, false);
         }
       }
@@ -262,10 +277,11 @@ function useTau() {
 
   function dispose(): void {
     lifecycle += 1;
-    initialization = undefined;
-    state.initializing = false;
-    unlisten?.();
-    unlisten = undefined;
+    if (!initialization) state.initializing = false;
+    if (!initialization) {
+      unlisten?.();
+      unlisten = undefined;
+    }
     for (const controller of state.controllers) {
       clearSessionReplacementWatch(controller);
       clearAbortWatch(controller);
@@ -356,7 +372,7 @@ function useTau() {
   }
 
   async function submitRemoteConnection(): Promise<void> {
-    if (state.remoteConnecting) return;
+    if (projectActionsDisabled.value || state.remoteConnecting) return;
     if (state.remoteDialogMode === 'retry') {
       await retryRemoteConnection();
       return;
@@ -388,7 +404,11 @@ function useTau() {
     path: string,
     choice: RemoteDirectoryChoice,
   ): Promise<void> {
-    if (state.remoteConnecting || state.remoteDialogStep !== 'directory') {
+    if (
+      projectActionsDisabled.value ||
+      state.remoteConnecting ||
+      state.remoteDialogStep !== 'directory'
+    ) {
       return;
     }
     state.remoteConnecting = true;
@@ -432,6 +452,7 @@ function useTau() {
   }
 
   async function retryRemoteConnection(): Promise<void> {
+    if (projectActionsDisabled.value) return;
     const retry = state.remoteRetry;
     const controller = retry ? controllerByKey(retry.controllerKey) : undefined;
     const project = state.workspace?.projects.find(
@@ -477,7 +498,7 @@ function useTau() {
     const workspace = state.workspace;
     if (
       !workspace ||
-      state.removingProjectPaths.length > 0 ||
+      projectActionsDisabled.value ||
       fromIndex < 0 ||
       fromIndex >= workspace.projects.length ||
       toIndex < 0 ||
@@ -618,8 +639,11 @@ function useTau() {
     }
   }
 
-  async function newSession(project: ProjectSummary): Promise<void> {
-    if (projectActionsDisabled.value) return;
+  async function newSession(
+    project: ProjectSummary,
+    bootstrap = false,
+  ): Promise<SessionController | undefined> {
+    if (!bootstrap && projectActionsDisabled.value) return;
     clearWorkspaceError();
     const actionSpan = startActionSpan('session.new');
     try {
@@ -657,6 +681,7 @@ function useTau() {
           actionSpan.context,
         );
       }
+      return controller;
     } finally {
       actionSpan.end();
     }
@@ -732,6 +757,7 @@ function useTau() {
   }
 
   async function reconnectRemoteSession(): Promise<void> {
+    if (projectActionsDisabled.value) return;
     const controller = activeController.value;
     const project = activeProject.value;
     if (!controller || !project || !canReconnectRemote.value) return;
@@ -1040,7 +1066,7 @@ function useTau() {
 
   async function loadEarlierHistory(): Promise<void> {
     const controller = activeController.value;
-    if (!controller) return;
+    if (!controller || projectActionsDisabled.value) return;
     await requestEarlierHistory(controller);
   }
 

@@ -4,6 +4,29 @@ import { expect, test } from './fixtures';
 
 const scenarioUrl = '/?test-scenario=empty-workspace';
 
+test('shows preparation feedback while ownership is pending', async ({
+  page,
+}) => {
+  await page.goto(`${scenarioUrl}&ownership-delay=500`);
+
+  await expect(page.locator('.first-run-preparing')).toContainText(
+    'Preparing Pi',
+  );
+  await expect(
+    page.getByRole('button', { name: 'Open Local Project' }),
+  ).toHaveCount(0);
+  const localProject = page.getByRole('button', {
+    name: 'Open Local Project',
+  });
+  await expect(localProject).toBeVisible();
+  await expect(page.locator('.first-run-preparing')).toHaveCount(0);
+  await localProject.click();
+  await page.getByRole('button', { name: 'Open Remote Project' }).click();
+  await expect(
+    page.getByRole('dialog', { name: 'SSH Connection' }),
+  ).toBeVisible();
+});
+
 test('offers project actions across the empty workspace', async ({ page }) => {
   await page.goto(scenarioUrl);
 

@@ -123,6 +123,8 @@ const TAURI_INVOKE_COMMANDS = [
   'start_pi',
   'start_pi_remote',
   'stop_pi',
+  'read_pi_frontend_revision',
+  'claim_pi_frontend',
 ] as const;
 type TauriInvokeCommand = (typeof TAURI_INVOKE_COMMANDS)[number];
 
@@ -270,9 +272,33 @@ const CONTROLLER_LIFECYCLE: RecordFamily = {
   ],
 };
 
-const PI_PROCESS_STOP_REASONS = ['explicit_stop', 'replaced'] as const;
+const PI_PROCESS_STOP_REASONS = [
+  'explicit_stop',
+  'replaced',
+  'ownership_replaced',
+] as const;
 const PI_PROCESS_RESOLUTIONS = ['found', 'not_found'] as const;
 const PI_PROCESS_EXIT_OUTCOMES = ['clean', 'unexpected'] as const;
+
+const PI_OWNERSHIP_KINDS = ['initial', 'replacement'] as const;
+const PI_OWNERSHIP_OUTCOMES = [
+  'success',
+  'cleanup_failed',
+  'rejected',
+] as const;
+const PI_OWNERSHIP: RecordFamily = {
+  name: 'pi.ownership',
+  attributes: [
+    stringAttribute('tau.ownership.kind', true),
+    stringAttribute('tau.ownership.outcome', true),
+    {
+      key: 'tau.ownership.stale_process_count',
+      kind: 'int',
+      maxLen: null,
+      metricSafe: true,
+    },
+  ],
+};
 
 const PI_PROCESS_LIFECYCLE: RecordFamily = {
   name: 'pi.process.lifecycle',
@@ -512,6 +538,7 @@ const FAMILIES: readonly RecordFamily[] = [
   PI_RPC_ANOMALY,
   PI_STREAM,
   CONTROLLER_LIFECYCLE,
+  PI_OWNERSHIP,
   PI_PROCESS_LIFECYCLE,
   APP_LIFECYCLE,
   PI_READER,
@@ -571,6 +598,10 @@ function categoricalValues(key: string): readonly string[] | undefined {
       return PI_RPC_OUTCOMES;
     case 'pi.rpc.anomaly.kind':
       return PI_RPC_ANOMALY_KINDS;
+    case 'tau.ownership.kind':
+      return PI_OWNERSHIP_KINDS;
+    case 'tau.ownership.outcome':
+      return PI_OWNERSHIP_OUTCOMES;
     case 'tau.process.stop_reason':
       return PI_PROCESS_STOP_REASONS;
     case 'tau.process.resolution':
@@ -696,6 +727,9 @@ export {
   OPERATION_CHECKPOINT,
   OPERATION_CHECKPOINT_FAMILIES,
   OPERATION_CHECKPOINT_NAMES,
+  PI_OWNERSHIP,
+  PI_OWNERSHIP_KINDS,
+  PI_OWNERSHIP_OUTCOMES,
   PI_PROCESS_EXIT_OUTCOMES,
   PI_PROCESS_LIFECYCLE,
   PI_PROCESS_RESOLUTIONS,

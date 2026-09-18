@@ -182,6 +182,8 @@ pub const TAURI_INVOKE_COMMANDS: &[&str] = &[
     "start_pi",
     "start_pi_remote",
     "stop_pi",
+    "read_pi_frontend_revision",
+    "claim_pi_frontend",
 ];
 
 pub const TAURI_INVOKE_OUTCOMES: &[&str] = &["success", "error"];
@@ -367,12 +369,39 @@ pub const CONTROLLER_LIFECYCLE: RecordFamily = RecordFamily {
 
 /// Categorical values for `tau.process.stop_reason`: why Tau stopped a
 /// runtime's process (never why it exited on its own; see `exit_code`).
-pub const PI_PROCESS_STOP_REASONS: &[&str] = &["explicit_stop", "replaced"];
+pub const PI_PROCESS_STOP_REASONS: &[&str] = &["explicit_stop", "replaced", "ownership_replaced"];
 
 /// Categorical values for `tau.process.resolution`: whether Tau found a
 /// local `pi` executable to spawn.
 pub const PI_PROCESS_RESOLUTIONS: &[&str] = &["found", "not_found"];
 pub const PI_PROCESS_EXIT_OUTCOMES: &[&str] = &["clean", "unexpected"];
+
+pub const PI_OWNERSHIP_KINDS: &[&str] = &["initial", "replacement"];
+pub const PI_OWNERSHIP_OUTCOMES: &[&str] = &["success", "cleanup_failed", "rejected"];
+
+pub const PI_OWNERSHIP: RecordFamily = RecordFamily {
+    name: "pi.ownership",
+    attributes: &[
+        AttributeSpec {
+            key: "tau.ownership.kind",
+            kind: AttributeKind::Str,
+            max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.ownership.outcome",
+            kind: AttributeKind::Str,
+            max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.ownership.stale_process_count",
+            kind: AttributeKind::I64,
+            max_len: None,
+            metric_safe: true,
+        },
+    ],
+};
 
 pub const PI_PROCESS_LIFECYCLE: RecordFamily = RecordFamily {
     name: "pi.process.lifecycle",
@@ -782,6 +811,7 @@ pub const FAMILIES: &[&RecordFamily] = &[
     &PI_RPC_ANOMALY,
     &PI_STREAM,
     &CONTROLLER_LIFECYCLE,
+    &PI_OWNERSHIP,
     &PI_PROCESS_LIFECYCLE,
     &APP_LIFECYCLE,
     &PI_READER,
@@ -834,6 +864,8 @@ fn categorical_values(key: &str) -> Option<&'static [&'static str]> {
         "pi.rpc.method" => Some(PI_RPC_METHODS),
         "pi.rpc.outcome" => Some(PI_RPC_OUTCOMES),
         "pi.rpc.anomaly.kind" => Some(PI_RPC_ANOMALY_KINDS),
+        "tau.ownership.kind" => Some(PI_OWNERSHIP_KINDS),
+        "tau.ownership.outcome" => Some(PI_OWNERSHIP_OUTCOMES),
         "tau.process.stop_reason" => Some(PI_PROCESS_STOP_REASONS),
         "tau.process.resolution" => Some(PI_PROCESS_RESOLUTIONS),
         "tau.process.exit_outcome" => Some(PI_PROCESS_EXIT_OUTCOMES),
@@ -1146,6 +1178,46 @@ mod tests {
         assert_eq!(
             validate("pi.stream", "pi.stream.character_count", &Value::I64(42)),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn validate_accepts_reviewed_ownership_attributes() {
+        for kind in PI_OWNERSHIP_KINDS {
+            assert_eq!(
+                validate(
+                    "pi.ownership",
+                    "tau.ownership.kind",
+                    &Value::String((*kind).into())
+                ),
+                Ok(())
+            );
+        }
+        for outcome in PI_OWNERSHIP_OUTCOMES {
+            assert_eq!(
+                validate(
+                    "pi.ownership",
+                    "tau.ownership.outcome",
+                    &Value::String((*outcome).into())
+                ),
+                Ok(())
+            );
+        }
+        assert_eq!(
+            validate(
+                "pi.ownership",
+                "tau.ownership.stale_process_count",
+                &Value::I64(2)
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            validate(
+                "pi.ownership",
+                "tau.ownership.kind",
+                &Value::String("owner-secret".into())
+            ),
+            Err(AttributeError::UnknownValue)
         );
     }
 

@@ -265,8 +265,41 @@ fn is_executable_file(path: &Path) -> bool {
     }
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OwnershipCommandError {
+    kind: &'static str,
+    message: String,
+}
+
+#[derive(Debug)]
+struct StoppedRuntime {
+    runtime_id: String,
+    generation: u64,
+}
+
+#[derive(Debug)]
+struct ClaimOutcome {
+    stopped: Vec<StoppedRuntime>,
+    replacement: bool,
+}
+
+#[derive(Debug)]
+struct ClaimFailure {
+    kind: &'static str,
+    message: String,
+    stopped: Vec<StoppedRuntime>,
+}
+
 #[tauri::command]
-pub fn read_pi_frontend_revision(state: State<'_, PiState>) -> Result<u64, String> {
+pub fn read_pi_frontend_revision(
+    state: State<'_, PiState>,
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
+) -> Result<u64, String> {
+    let _command_span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "read_pi_frontend_revision"));
     let manager = state
         .inner
         .lock()
@@ -280,46 +313,141 @@ pub fn read_pi_frontend_revision(state: State<'_, PiState>) -> Result<u64, Strin
 #[tauri::command]
 pub async fn claim_pi_frontend(
     state: State<'_, PiState>,
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
     owner_id: String,
     expected_revision: u64,
-) -> Result<(), String> {
-    validate_owner_id(&owner_id)?;
+) -> Result<(), OwnershipCommandError> {
+    let command_span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "claim_pi_frontend"));
+    validate_owner_id(&owner_id).map_err(|message| OwnershipCommandError {
+        kind: "retryable",
+        message,
+    })?;
     let inner = Arc::clone(&state.inner);
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         claim_pi_frontend_inner(&inner, owner_id, expected_revision)
     })
     .await
-    .map_err(|_| "Tau could not prepare the Pi runtime. Try again.".to_string())?
+    .map_err(|_| OwnershipCommandError {
+        kind: "retryable",
+        message: "Tau could not prepare the Pi runtime. Try again.".into(),
+    })?;
+
+    match result {
+        Ok(outcome) => {
+            record_ownership_cleanup(&telemetry, command_span.as_ref(), &outcome.stopped);
+            telemetry.record_ownership_event(
+                if outcome.replacement {
+                    "replacement"
+                } else {
+                    "initial"
+                },
+                "success",
+                outcome.stopped.len(),
+                command_span.as_ref().map(|span| span.span_context()),
+            );
+            Ok(())
+        }
+        Err(failure) => {
+            record_ownership_cleanup(&telemetry, command_span.as_ref(), &failure.stopped);
+            telemetry.record_ownership_event(
+                "replacement",
+                if failure.kind == "conflict" {
+                    "rejected"
+                } else {
+                    "cleanup_failed"
+                },
+                failure.stopped.len(),
+                command_span.as_ref().map(|span| span.span_context()),
+            );
+            Err(OwnershipCommandError {
+                kind: failure.kind,
+                message: failure.message,
+            })
+        }
+    }
+}
+
+fn record_ownership_cleanup(
+    telemetry: &Telemetry,
+    command_span: Option<&crate::telemetry::CommandSpan>,
+    stopped: &[StoppedRuntime],
+) {
+    let span_context = command_span.map(|span| span.span_context());
+    for runtime in stopped {
+        telemetry.record_process_lifecycle(
+            "pi.process.stopped",
+            &runtime.runtime_id,
+            Some(runtime.generation),
+            span_context.as_ref(),
+            &[(
+                "tau.process.stop_reason",
+                TelemetryValue::String("ownership_replaced".into()),
+            )],
+        );
+        telemetry.record_pi_process_exit(true);
+    }
+    if !stopped.is_empty() {
+        telemetry.force_flush_logs();
+        telemetry.force_flush_metrics();
+    }
 }
 
 fn claim_pi_frontend_inner(
     inner: &Arc<Mutex<PiManager>>,
     owner_id: String,
     expected_revision: u64,
-) -> Result<(), String> {
-    let mut manager = inner
-        .lock()
-        .map_err(|_| "Pi process state is unavailable.".to_string())?;
+) -> Result<ClaimOutcome, ClaimFailure> {
+    let mut manager = inner.lock().map_err(|_| ClaimFailure {
+        kind: "retryable",
+        message: "Pi process state is unavailable.".into(),
+        stopped: Vec::new(),
+    })?;
+    let replacement;
     match &manager.ownership {
         PiOwnership::Active {
             owner_id: active_owner,
-        } if active_owner == &owner_id => return Ok(()),
+        } if active_owner == &owner_id => {
+            return Ok(ClaimOutcome {
+                stopped: Vec::new(),
+                replacement: false,
+            });
+        }
         PiOwnership::Claiming {
             owner_id: claiming_owner,
             expected_revision: claiming_revision,
-        } if claiming_owner == &owner_id && *claiming_revision == expected_revision => {}
-        PiOwnership::ShuttingDown => return Err("Tau is shutting down.".into()),
+        } if claiming_owner == &owner_id && *claiming_revision == expected_revision => {
+            replacement = true;
+        }
+        PiOwnership::ShuttingDown => {
+            return Err(ClaimFailure {
+                kind: "retryable",
+                message: "Tau is shutting down.".into(),
+                stopped: Vec::new(),
+            });
+        }
         _ => {
             if expected_revision != manager.ownership_revision {
-                return Err(
-                    "Another Tau window already owns the Pi runtime. Reload Tau and try again."
-                        .into(),
-                );
+                return Err(ClaimFailure {
+                    kind: "conflict",
+                    message:
+                        "Another Tau window already owns the Pi runtime. Reload Tau and try again."
+                            .into(),
+                    stopped: Vec::new(),
+                });
             }
-            manager.ownership_revision = manager
-                .ownership_revision
-                .checked_add(1)
-                .ok_or_else(|| "Tau could not advance Pi ownership. Restart Tau.".to_string())?;
+            replacement = !matches!(manager.ownership, PiOwnership::Unclaimed);
+            manager.ownership_revision =
+                manager
+                    .ownership_revision
+                    .checked_add(1)
+                    .ok_or_else(|| ClaimFailure {
+                        kind: "retryable",
+                        message: "Tau could not advance Pi ownership. Restart Tau.".into(),
+                        stopped: Vec::new(),
+                    })?;
             manager.ownership = PiOwnership::Claiming {
                 owner_id: owner_id.clone(),
                 expected_revision,
@@ -327,9 +455,17 @@ fn claim_pi_frontend_inner(
         }
     }
 
-    stop_stale_processes(&mut manager)?;
+    let stopped =
+        stop_stale_processes(&mut manager).map_err(|(message, stopped)| ClaimFailure {
+            kind: "retryable",
+            message,
+            stopped,
+        })?;
     manager.ownership = PiOwnership::Active { owner_id };
-    Ok(())
+    Ok(ClaimOutcome {
+        stopped,
+        replacement,
+    })
 }
 
 fn validate_owner_id(owner_id: &str) -> Result<(), String> {
@@ -992,14 +1128,17 @@ fn stop_runtime_process(manager: &mut PiManager, runtime_id: &str) -> Result<(),
     Ok(())
 }
 
-fn stop_stale_processes(manager: &mut PiManager) -> Result<(), String> {
+fn stop_stale_processes(
+    manager: &mut PiManager,
+) -> Result<Vec<StoppedRuntime>, (String, Vec<StoppedRuntime>)> {
     if manager.processes.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     let deadline = Instant::now() + PI_STOP_TIMEOUT;
     let mut kill_sent = HashSet::new();
     let mut first_error = None;
+    let mut stopped = Vec::new();
     for process in manager.processes.values() {
         process.usable.store(false, Ordering::Release);
     }
@@ -1031,15 +1170,24 @@ fn stop_stale_processes(manager: &mut PiManager) -> Result<(), String> {
             }
         }
         for runtime_id in exited {
-            manager.processes.remove(&runtime_id);
+            if let Some(process) = manager.processes.remove(&runtime_id) {
+                stopped.push(StoppedRuntime {
+                    runtime_id,
+                    generation: process.generation,
+                });
+            }
         }
         if manager.processes.is_empty() {
-            return first_error.map_or(Ok(()), Err);
+            return match first_error {
+                Some(error) => Err((error, stopped)),
+                None => Ok(stopped),
+            };
         }
         if Instant::now() >= deadline {
-            return Err(
-                first_error.unwrap_or_else(|| "Pi did not stop in time. Try again.".to_string())
-            );
+            return Err((
+                first_error.unwrap_or_else(|| "Pi did not stop in time. Try again.".to_string()),
+                stopped,
+            ));
         }
         thread::sleep(PROCESS_POLL_INTERVAL);
     }
@@ -1540,7 +1688,10 @@ mod tests {
         let old_child =
             Arc::clone(&state.inner.lock().expect("Pi manager").processes["runtime-a"].child);
 
-        claim_pi_frontend_inner(&state.inner, "owner-b".into(), 1).expect("replace frontend owner");
+        let outcome = claim_pi_frontend_inner(&state.inner, "owner-b".into(), 1)
+            .expect("replace frontend owner");
+        record_ownership_cleanup(&telemetry, None, &outcome.stopped);
+        telemetry.record_ownership_event("replacement", "success", outcome.stopped.len(), None);
         assert!(old_child
             .lock()
             .expect("old child")
@@ -1576,6 +1727,17 @@ mod tests {
             .expect("Pi manager")
             .processes
             .contains_key("runtime-b"));
+        let logs = std::fs::read_to_string(fixture._root.path().join("telemetry/logs.jsonl"))
+            .expect("ownership telemetry logs");
+        assert_eq!(
+            logs.lines()
+                .filter(|line| line.contains("pi.process.stopped"))
+                .count(),
+            1
+        );
+        assert!(logs.contains("ownership_replaced"));
+        assert!(logs.contains("pi.ownership.claimed"));
+        assert!(!logs.contains("owner-a"));
         state.shutdown();
     }
 
@@ -1614,7 +1776,8 @@ mod tests {
 
         let error = claim_pi_frontend_inner(&state.inner, "owner-a".into(), 0)
             .expect_err("old revision must be rejected");
-        assert!(error.contains("already owns"));
+        assert_eq!(error.kind, "conflict");
+        assert!(error.message.contains("already owns"));
         let manager = state.inner.lock().expect("Pi manager");
         assert!(manager.require_owner("owner-b").is_ok());
         assert!(manager.require_owner("owner-a").is_err());

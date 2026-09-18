@@ -18,6 +18,14 @@
         @dblclick="handleTitlebarDoubleClick"
       ></header>
       <section class="first-run-content">
+        <div
+          v-if="preparationIndicatorVisible"
+          class="first-run-preparing"
+          role="status"
+        >
+          <UiSpinner label="Preparing Pi" />
+          <span>Preparing Pi</span>
+        </div>
         <template v-if="workspaceIsEmpty">
           <p
             class="first-run-version"
@@ -52,7 +60,9 @@
         >
           <p>{{ state.workspaceStatus }}</p>
           <UiButton
-            v-if="state.workspace === null"
+            v-if="
+              state.workspace === null && state.ownershipFailure === 'retryable'
+            "
             variant="ghost"
             size="md"
             :disabled="state.initializing"
@@ -189,6 +199,7 @@ const NEW_SESSION_EVENT = 'tau://new-session';
 const QUIT_REQUEST_EVENT = 'tau://quit-requested';
 /** How long a session may hydrate before it is worth reporting as loading. */
 const LOADING_INDICATOR_DELAY_MS = 200;
+const PREPARATION_INDICATOR_DELAY_MS = 200;
 const EDITABLE_SELECTOR = 'input, textarea, select';
 
 interface QuitRequest {
@@ -203,6 +214,7 @@ const firstRunLocalProjectButton = ref<InstanceType<typeof UiButton>>();
 const firstRunRemoteProjectButton = ref<InstanceType<typeof UiButton>>();
 const windowFocused = ref(true);
 const loadingIndicatorVisible = ref(false);
+const preparationIndicatorVisible = ref(false);
 const sidebarWidth = ref(loadSidebarWidth());
 const resizingSidebar = ref(false);
 const quitRequest = ref<QuitRequest | null>(null);
@@ -214,6 +226,7 @@ let unlistenWindowFocus: UnlistenFn | undefined;
 let unlistenNewSessionMenu: UnlistenFn | undefined;
 let unlistenQuitRequest: UnlistenFn | undefined;
 let loadingIndicatorTimer: ReturnType<typeof setTimeout> | undefined;
+let preparationIndicatorTimer: ReturnType<typeof setTimeout> | undefined;
 const {
   state,
   activeProject,
@@ -319,12 +332,26 @@ onMounted(() => {
 onBeforeUnmount(() => {
   dispose();
   clearTimeout(loadingIndicatorTimer);
+  clearTimeout(preparationIndicatorTimer);
   unlistenWindowFocus?.();
   unlistenNewSessionMenu?.();
   unlistenQuitRequest?.();
   document.removeEventListener('contextmenu', handleDocumentContextMenu);
   document.removeEventListener('keydown', handleDocumentKeydown);
 });
+
+watch(
+  () => state.initializing && state.workspace === null,
+  (preparing) => {
+    clearTimeout(preparationIndicatorTimer);
+    preparationIndicatorVisible.value = false;
+    if (!preparing) return;
+    preparationIndicatorTimer = setTimeout(() => {
+      preparationIndicatorVisible.value = true;
+    }, PREPARATION_INDICATOR_DELAY_MS);
+  },
+  { immediate: true },
+);
 
 watch(workspaceIsEmpty, (empty) => {
   if (!empty) return;
@@ -664,6 +691,15 @@ function isTitlebarControl(target: EventTarget | null): boolean {
 .first-run-actions {
   display: flex;
   gap: 2px;
+}
+
+.first-run-preparing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: var(--text-sm);
 }
 
 .first-run-content .first-run-error {

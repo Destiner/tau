@@ -340,6 +340,9 @@ function scenarioWorkspace(scenarioName: string): WorkspaceSnapshot {
 
 function installPiScenarioAdapter(scenarioName: string): void {
   const scenario = findPiScenario(scenarioName);
+  const ownershipDelay = Number(
+    new URLSearchParams(globalThis.location.search).get('ownership-delay') ?? 0,
+  );
   if (!scenario) {
     throw new Error(
       `Unknown browser Pi scenario ${JSON.stringify(scenarioName)}. Available: ${piScenarioCatalogue()
@@ -407,6 +410,9 @@ function installPiScenarioAdapter(scenarioName: string): void {
         return ownershipRevision;
       }
       if (command === 'claim_pi_frontend') {
+        if (ownershipDelay > 0) {
+          await new Promise((resolve) => setTimeout(resolve, ownershipDelay));
+        }
         const ownerId = requiredString(args, 'ownerId', command);
         if (activeOwner === ownerId) return null;
         if (args.expectedRevision !== ownershipRevision) {

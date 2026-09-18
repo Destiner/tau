@@ -8,6 +8,8 @@ import {
   FRONTEND_ERROR_KINDS,
   FRONTEND_ERROR_SOURCES,
   isMetricSafe,
+  PI_OWNERSHIP_KINDS,
+  PI_OWNERSHIP_OUTCOMES,
   PI_PROCESS_EXIT_OUTCOMES,
   PI_PROCESS_RESOLUTIONS,
   PI_PROCESS_STOP_REASONS,
@@ -192,6 +194,25 @@ describe('validateAttribute', () => {
   it('rejects an unreviewed rpc outcome', () => {
     expect(
       validateAttribute('pi.rpc', 'pi.rpc.outcome', 'not-a-real-outcome'),
+    ).toEqual({ valid: false, error: 'unknown-value' });
+  });
+
+  it('accepts only reviewed ownership categories', () => {
+    for (const kind of PI_OWNERSHIP_KINDS) {
+      expect(
+        validateAttribute('pi.ownership', 'tau.ownership.kind', kind),
+      ).toEqual({ valid: true });
+    }
+    for (const outcome of PI_OWNERSHIP_OUTCOMES) {
+      expect(
+        validateAttribute('pi.ownership', 'tau.ownership.outcome', outcome),
+      ).toEqual({ valid: true });
+    }
+    expect(
+      validateAttribute('pi.ownership', 'tau.ownership.stale_process_count', 2),
+    ).toEqual({ valid: true });
+    expect(
+      validateAttribute('pi.ownership', 'tau.ownership.kind', 'owner-secret'),
     ).toEqual({ valid: false, error: 'unknown-value' });
   });
 

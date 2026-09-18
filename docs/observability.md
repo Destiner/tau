@@ -12,7 +12,7 @@ When admin mode is on, Tau continuously writes content-free OpenTelemetry JSONL 
 - production: `tau/telemetry/`
 - signals: `traces.jsonl`, `logs.jsonl`, and `metrics.jsonl`, plus rotated segments
 
-Retention is bounded to seven days and 256 MiB. Telemetry failure does not fail product operations. Records contain operation names, lifecycle state, timings, outcomes, counts, sanitized source basenames, and relevant session/runtime identifiers. They do not contain prompts, transcripts, drafts, tool or extension payloads, file/clipboard contents, paths, SSH commands, connection strings, stderr, credentials, or raw errors.
+Retention is bounded to seven days and 256 MiB. Telemetry failure does not fail product operations. Records contain operation names, lifecycle state, timings, outcomes, counts, sanitized source basenames, and relevant session/runtime identifiers. Pi frontend ownership records distinguish initial claims, replacements, rejected claims, and cleanup failures, including only the stale direct-child count. Children stopped during replacement have a matching `pi.process.stopped` record with the fixed `ownership_replaced` reason. Owner tokens and native failure text are never recorded. Records do not contain prompts, transcripts, drafts, tool or extension payloads, file/clipboard contents, paths, SSH commands, connection strings, stderr, credentials, or raw errors.
 
 ## User issue reports
 

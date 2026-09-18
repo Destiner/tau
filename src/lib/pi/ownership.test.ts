@@ -21,10 +21,16 @@ describe('Pi frontend ownership', () => {
     await Promise.all([ownership.claim(), ownership.claim()]);
     await ownership.claim();
 
-    expect(mockInvoke.mock.calls).toEqual([
-      ['read_pi_frontend_revision'],
-      ['claim_pi_frontend', { ownerId: 'document-a', expectedRevision: 7 }],
-    ]);
+    expect(mockInvoke).toHaveBeenNthCalledWith(
+      1,
+      'read_pi_frontend_revision',
+      expect.objectContaining({ telemetryContext: expect.any(Object) }),
+    );
+    expect(mockInvoke).toHaveBeenNthCalledWith(
+      2,
+      'claim_pi_frontend',
+      expect.objectContaining({ ownerId: 'document-a', expectedRevision: 7 }),
+    );
   });
 
   it('retries a failed cleanup with the same revision and owner', async () => {
@@ -34,14 +40,34 @@ describe('Pi frontend ownership', () => {
       .mockResolvedValueOnce(undefined);
     const ownership = createFrontendOwnership('document-a');
 
-    await expect(ownership.claim()).rejects.toThrow('cleanup failed');
+    await expect(ownership.claim()).rejects.toMatchObject({
+      kind: 'retryable',
+    });
     await ownership.claim();
 
     expect(mockInvoke).toHaveBeenCalledTimes(3);
-    expect(mockInvoke.mock.calls.slice(1)).toEqual([
-      ['claim_pi_frontend', { ownerId: 'document-a', expectedRevision: 3 }],
-      ['claim_pi_frontend', { ownerId: 'document-a', expectedRevision: 3 }],
-    ]);
+    for (const [, args] of mockInvoke.mock.calls.slice(1)) {
+      expect(args).toEqual(
+        expect.objectContaining({ ownerId: 'document-a', expectedRevision: 3 }),
+      );
+    }
+  });
+
+  it('classifies a stale revision without rereading it', async () => {
+    mockInvoke
+      .mockResolvedValueOnce(4)
+      .mockRejectedValue({ kind: 'conflict', message: 'raw native message' })
+      .mockRejectedValue({ kind: 'conflict', message: 'raw native message' });
+    const ownership = createFrontendOwnership('document-a');
+
+    await expect(ownership.claim()).rejects.toMatchObject({ kind: 'conflict' });
+    await expect(ownership.claim()).rejects.toMatchObject({ kind: 'conflict' });
+
+    expect(
+      mockInvoke.mock.calls.filter(
+        ([command]) => command === 'read_pi_frontend_revision',
+      ),
+    ).toHaveLength(1);
   });
 
   it('gives independent documents independent owners', () => {

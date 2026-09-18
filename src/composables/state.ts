@@ -332,6 +332,7 @@ type RemoteDirectoryChoice = 'back' | 'select' | 'forward';
 const state = reactive({
   workspace: null as WorkspaceSnapshot | null,
   initializing: false,
+  ownershipFailure: null as 'conflict' | 'retryable' | null,
   activeProjectPath: '',
   activeSessionId: '',
   activeSessionPath: '',
@@ -443,7 +444,10 @@ const activeProject = computed(() =>
 );
 
 const projectActionsDisabled = computed(
-  () => state.removingProjectPaths.length > 0,
+  () =>
+    state.initializing ||
+    state.ownershipFailure !== null ||
+    state.removingProjectPaths.length > 0,
 );
 
 // An archived session is browsable: look past the per-project list, which

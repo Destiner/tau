@@ -535,6 +535,41 @@ impl Telemetry {
         self.store.append(store::Signal::Log, value)
     }
 
+    /// Records a bounded native ownership transition. Owner ids and raw
+    /// failures are intentionally not accepted by this API.
+    pub fn record_ownership_event(
+        &self,
+        kind: &'static str,
+        outcome: &'static str,
+        stale_process_count: usize,
+        span_context: Option<SpanContext>,
+    ) {
+        self.emit_family_log(
+            attributes::PI_OWNERSHIP.name,
+            "pi.ownership.claimed",
+            None,
+            None,
+            span_context.as_ref(),
+            &[
+                (
+                    "tau.ownership.kind",
+                    opentelemetry::Value::String(kind.into()),
+                ),
+                (
+                    "tau.ownership.outcome",
+                    opentelemetry::Value::String(outcome.into()),
+                ),
+                (
+                    "tau.ownership.stale_process_count",
+                    opentelemetry::Value::I64(
+                        i64::try_from(stale_process_count).unwrap_or(i64::MAX),
+                    ),
+                ),
+            ],
+        );
+        self.force_flush_logs();
+    }
+
     /// Records one `pi.process.lifecycle` log: resolution, start, stop, or
     /// exit. `generation` is included only when known (resolution happens
     /// before a runtime's first process has one). Every attribute is
