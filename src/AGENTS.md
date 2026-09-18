@@ -18,7 +18,7 @@ Vue 3 and TypeScript UI for Tau. Root guidance and the quality rubric still appl
 - Key asynchronous work by controller, runtime generation, and request identity. Drop stale events before they mutate state.
 - Preserve per-session isolation, drafts, optimistic prompts, extension dialogs, and warm-runtime workflow context.
 - Transcript entries need stable identity across hydration and streaming so virtualization, measured heights, expansion state, and reader position survive rerenders.
-- Sanitize rendered content and open links outside the webview. Remote paths remain text; local path handling is session-directory aware.
+- Sanitize rendered content and open links outside the webview. File paths use their captured local or remote project context; remote files preview through native Quick Look and never load in the webview.
 - Keep fixtures behind `import.meta.env.DEV` and dynamic imports so production bundles do not include them.
 - Use existing traced Tauri invocation and privacy helpers for product operations; raw RPC transport is the narrow exception in `lib/pi/runtime.ts`, and `read_admin_mode` is the one untraced command.
 - Telemetry records nothing outside admin mode. A test that expects records to reach the native command must enable it first.

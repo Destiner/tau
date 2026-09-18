@@ -88,21 +88,24 @@ test('copies transcript URLs and local paths from context menus', async ({
     ]);
 
   await path.click();
-  expect(await page.evaluate(() => window.__TAU_OPENER_CALLS__)).toEqual([
-    'plugin:opener|open_url',
-  ]);
   await path.press('Enter');
   await expect
     .poll(() => page.evaluate(() => window.__TAU_OPENER_CALLS__))
-    .toEqual(['plugin:opener|open_url', 'plugin:opener|open_path']);
+    .toEqual([
+      'plugin:opener|open_url',
+      'plugin:opener|open_path',
+      'plugin:opener|open_path',
+    ]);
 });
 
-test('copies raw and full remote paths without changing left-click copy', async ({
+test('previews remote files and keeps explicit copy actions', async ({
   page,
 }) => {
   await page.addInitScript(() => {
     const writes: string[] = [];
+    const previewCalls: Array<{ command: string; payload?: unknown }> = [];
     window.__TAU_CLIPBOARD_WRITES__ = writes;
+    Object.assign(window, { __TAU_PREVIEW_CALLS__: previewCalls });
     window.__TAURI_INTERNALS__ = {
       transformCallback: (callback: unknown): unknown => callback,
       invoke: (
@@ -114,6 +117,17 @@ test('copies raw and full remote paths without changing left-click copy', async 
           payload?.text
         ) {
           writes.push(payload.text);
+          return Promise.resolve(null);
+        }
+        if (command === 'remote_preview_available')
+          return Promise.resolve(true);
+        if (command === 'prepare_remote_path') {
+          previewCalls.push({ command, payload });
+          return Promise.resolve({ kind: 'file', token: 'fixture-token' });
+        }
+        if (command === 'show_remote_preview') {
+          previewCalls.push({ command, payload });
+          return Promise.resolve(null);
         }
         return Promise.resolve(null);
       },
@@ -123,23 +137,38 @@ test('copies raw and full remote paths without changing left-click copy', async 
 
   const path = page
     .locator('[data-message-id="fixture-remote-paths"]')
-    .getByRole('button', { name: 'Copy path src/remote.ts' });
+    .getByRole('button', { name: 'Preview path src/remote.ts' });
 
   await path.click({ button: 'right' });
-  await expect(page.getByRole('menuitem')).toHaveText([
-    'Copy Path',
-    'Copy Full Path',
-  ]);
   await page.getByRole('menuitem', { name: 'Copy Path', exact: true }).click();
+  await expect(page.getByText('Path Copied')).toBeVisible();
   await path.click({ button: 'right' });
   await page.getByRole('menuitem', { name: 'Copy Full Path' }).click();
   await path.click();
+
   await expect
     .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
+    .toEqual(['src/remote.ts', '/home/agent/rhinestone/src/remote.ts']);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as Window & { __TAU_PREVIEW_CALLS__?: unknown[] })
+            .__TAU_PREVIEW_CALLS__,
+      ),
+    )
     .toEqual([
-      'src/remote.ts',
-      '/home/agent/rhinestone/src/remote.ts',
-      'src/remote.ts',
+      {
+        command: 'prepare_remote_path',
+        payload: expect.objectContaining({
+          projectPath: 'ssh:fixture-project',
+          path: 'src/remote.ts',
+        }),
+      },
+      {
+        command: 'show_remote_preview',
+        payload: expect.objectContaining({ token: 'fixture-token' }),
+      },
     ]);
 });
 
@@ -833,7 +862,7 @@ test('leaves remote paths in fenced transcript markdown as code', async ({
 
   const message = page.locator('[data-message-id="fixture-remote-paths"]');
   const workspace = message.getByRole('button', {
-    name: 'Copy path /home/agent/rhinestone/workspace',
+    name: 'Preview path /home/agent/rhinestone/workspace',
   });
   const block = message.locator('.code-block');
   const copy = block.getByRole('button', { name: 'Copy Code' });
@@ -841,7 +870,9 @@ test('leaves remote paths in fenced transcript markdown as code', async ({
   // Inline paths retain their remote-copy interaction, but full-width code is
   // literal content and must not become a row of independent path controls.
   await expect(workspace).toBeVisible();
-  await expect(block.getByRole('button', { name: /Copy path/ })).toHaveCount(0);
+  await expect(block.getByRole('button', { name: /Preview path/ })).toHaveCount(
+    0,
+  );
   await expect(block).toContainText('/home/agent/rhinestone/orchestrator');
   await expect(block).toContainText(
     '/home/agent/.pi/workflows/implement/RHI-6092/implementation-plan.md',
@@ -851,7 +882,7 @@ test('leaves remote paths in fenced transcript markdown as code', async ({
   await expect
     .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
     .toEqual(['/home/agent/rhinestone/workspace']);
-  await expect(message.getByRole('status')).toHaveText('Path copied');
+  await expect(message.getByRole('status')).toHaveText('Path Copied');
 
   await copy.click();
   await expect

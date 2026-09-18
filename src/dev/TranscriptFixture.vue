@@ -15,6 +15,7 @@
       working-label="Working"
       :base-path="remote ? '/home/agent/rhinestone' : '/Users/someone/code/tau'"
       :copy-paths="remote"
+      :remote-project-path="remote ? 'ssh:fixture-project' : undefined"
       :session-key="sessionKey"
       @load-history="loadCompactedHistory"
     />

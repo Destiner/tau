@@ -44,12 +44,14 @@
                 :source="messageAt(virtualRow.index)?.text ?? ''"
                 :base-path="basePath"
                 :copy-paths="copyPaths"
+                :remote-project-path="remoteProjectPath"
               />
               <MarkdownText
                 v-else-if="messageAt(virtualRow.index)?.kind === 'assistant'"
                 :source="messageAt(virtualRow.index)?.text ?? ''"
                 :base-path="basePath"
                 :copy-paths="copyPaths"
+                :remote-project-path="remoteProjectPath"
               />
               <CompactionDivider
                 v-else-if="messageAt(virtualRow.index)?.kind === 'compaction'"
@@ -69,6 +71,7 @@
                 :text="messageAt(virtualRow.index)?.text ?? ''"
                 :base-path="messageAt(virtualRow.index)?.basePath"
                 :copy-paths="copyPaths"
+                :remote-project-path="remoteProjectPath"
               />
               <ActivityRow
                 v-else
@@ -76,6 +79,7 @@
                 :expanded="isEntryExpanded(virtualRow.index)"
                 :base-path="basePath"
                 :copy-paths="copyPaths"
+                :remote-project-path="remoteProjectPath"
                 @toggle="() => toggleEntry(virtualRow.index)"
               />
             </article>
@@ -127,6 +131,7 @@
           :error="prompt.error"
           :working-directory="prompt.workingDirectory"
           :copy-paths="copyPaths"
+          :remote-project-path="remoteProjectPath"
           @update:draft="forwardPromptDraft"
           @submit="forwardPromptSubmit"
           @cancel="forwardPromptCancel"
@@ -168,6 +173,7 @@ const props = defineProps<{
   basePath?: string;
   /** Remote file paths copy rather than opening in the local file manager. */
   copyPaths?: boolean;
+  remoteProjectPath?: string;
   /** Session this transcript belongs to, under which its position is kept. */
   sessionKey?: string;
   /** The interactive prompt this session is waiting on, if there is one. */

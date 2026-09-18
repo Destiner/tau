@@ -184,7 +184,7 @@ test('copies an absolute path from a remote dialog title', async ({ page }) => {
   await page.goto(`${fixtureUrl}&remote=true`);
 
   const plan = page.getByRole('button', {
-    name: 'Copy path /home/agent/.pi/workflows/implement/RHI-6283/implementation-plan.md',
+    name: 'Preview path /home/agent/.pi/workflows/implement/RHI-6283/implementation-plan.md',
   });
   await expect(plan).toBeVisible();
   await plan.click();

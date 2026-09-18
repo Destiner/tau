@@ -115,6 +115,9 @@
           :working-label="stopping ? 'Stopping' : 'Working'"
           :base-path="transcriptBasePath"
           :copy-paths="Boolean(activeProject?.connectionString)"
+          :remote-project-path="
+            activeProject?.connectionString ? activeProject.path : undefined
+          "
           :session-key="state.activeControllerKey"
           :prompt="activeExtensionDialog"
           :prompt-disabled="projectActionsDisabled"

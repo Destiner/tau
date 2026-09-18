@@ -53,6 +53,13 @@ pub struct PiState {
 }
 
 impl PiState {
+    pub(crate) fn require_owner(&self, owner_id: &str) -> Result<(), String> {
+        self.inner
+            .lock()
+            .map_err(|_| "Pi ownership is unavailable.".to_string())?
+            .require_owner(owner_id)
+    }
+
     pub fn shutdown(&self) {
         let processes = self
             .inner

@@ -89,6 +89,22 @@ impl SshConnection {
         self.command_with_options(remote_command, &[])
     }
 
+    pub(crate) fn transfer_command(&self, remote_command: &str) -> Command {
+        let mut command = Command::new(&self.executable);
+        let (destination, options) = self
+            .arguments
+            .split_last()
+            .expect("validated SSH connection arguments");
+        command
+            .args(SSH_OPTIONS)
+            .args(options)
+            .arg("-T")
+            .args(["-S", "none"])
+            .arg(destination)
+            .arg(remote_command);
+        command
+    }
+
     pub fn pi_command(&self, remote_command: &str) -> Command {
         let mut command = Command::new(&self.executable);
         let (destination, options) = self

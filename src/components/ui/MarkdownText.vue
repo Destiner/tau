@@ -15,10 +15,12 @@
       ></div>
     </UiContextMenu>
     <span
-      v-if="copiedPath"
-      class="copy-feedback"
+      v-if="pathFeedback"
+      class="path-feedback"
+      :class="pathFeedback.kind"
+      :style="pathFeedback.style"
       role="status"
-      >Path copied</span
+      >{{ pathFeedback.text }}</span
     >
     <!-- eslint-enable vue/no-v-html -->
     <DiagramViewer
@@ -47,9 +49,12 @@ import {
   isPathOpenGesture,
   isWebUrl,
   parseFileReference,
+  parseMarkdownFileDestination,
   renderMarkdown,
   resolveFilePath,
 } from '../../lib/markdown';
+import { piOwnerArgs } from '../../lib/pi/ownership';
+import { invokeTraced } from '../../lib/telemetry';
 
 import DiagramViewer from './DiagramViewer.vue';
 import UiContextMenu from './UiContextMenu.vue';
@@ -59,8 +64,9 @@ const props = defineProps<{
   source: string;
   inline?: boolean;
   basePath?: string;
-  /** Remote file paths copy rather than opening a local file manager. */
+  /** Remote file paths preview rather than opening on this machine. */
   copyPaths?: boolean;
+  remoteProjectPath?: string;
 }>();
 
 defineOptions({ inheritAttrs: false });
@@ -79,7 +85,13 @@ const COPIED_FEEDBACK_MS = 1_200;
 let homePath: Promise<string> | null = null;
 let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 let copiedElement: HTMLElement | undefined;
-const copiedPath = ref('');
+let feedbackRevision = 0;
+interface PathFeedback {
+  text: string;
+  kind: 'success' | 'error' | 'loading';
+  style: Record<string, string>;
+}
+const pathFeedback = ref<PathFeedback | null>(null);
 
 /** Asked for once, and asked for again if it ever fails. */
 function homeDirectory(): Promise<string> {
@@ -107,14 +119,22 @@ function filePath(link: HTMLElement): string | null {
   if (written) return written;
 
   const href = link.getAttribute('href');
-  return href ? (parseFileReference(href)?.path ?? null) : null;
+  return href
+    ? (parseFileReference(href)?.path ?? parseMarkdownFileDestination(href))
+    : null;
 }
 
-async function openLocalPath(path: string, basePath: string): Promise<void> {
+async function openLocalPath(
+  path: string,
+  basePath: string,
+  anchor: HTMLElement,
+): Promise<void> {
   try {
-    await openPath(resolveFilePath(basePath, path, await homeDirectory()));
+    const home = path.startsWith('~/') ? await homeDirectory() : undefined;
+    await openPath(resolveFilePath(basePath, path, home));
   } catch (error) {
     console.error('Could not open the path', error);
+    showPathFeedback(anchor, 'Could not open path. Try again.', 'error');
   }
 }
 
@@ -192,10 +212,21 @@ function showCopied(element: HTMLElement): void {
   copiedTimer = setTimeout(clearCopied, COPIED_FEEDBACK_MS);
 }
 
-/** Announces a copied remote path without adding visual transcript noise. */
-function announceCopiedPath(): void {
+function showPathFeedback(
+  anchor: HTMLElement,
+  text: string,
+  kind: PathFeedback['kind'],
+): void {
   clearCopied();
-  copiedPath.value = 'copied';
+  const rect = anchor.getBoundingClientRect();
+  pathFeedback.value = {
+    text,
+    kind,
+    style: {
+      left: `${Math.min(Math.max(8, rect.left), window.innerWidth - 180)}px`,
+      top: `${Math.min(window.innerHeight - 36, rect.bottom + 6)}px`,
+    },
+  };
   copiedTimer = setTimeout(clearCopied, COPIED_FEEDBACK_MS);
 }
 
@@ -204,7 +235,7 @@ function clearCopied(): void {
   copiedTimer = undefined;
   delete copiedElement?.dataset.copied;
   copiedElement = undefined;
-  copiedPath.value = '';
+  pathFeedback.value = null;
 }
 
 async function copyCodeBlock(button: HTMLElement): Promise<void> {
@@ -219,14 +250,18 @@ async function copyCodeBlock(button: HTMLElement): Promise<void> {
   showCopied(button);
 }
 
-async function copyPath(path: string): Promise<void> {
+async function copyPath(path: string, anchor: HTMLElement): Promise<void> {
+  const revision = ++feedbackRevision;
   try {
     await writeText(path);
   } catch (error) {
     console.error('Could not copy the path', error);
+    if (revision === feedbackRevision)
+      showPathFeedback(anchor, 'Could not copy path. Try again.', 'error');
     return;
   }
-  announceCopiedPath();
+  if (revision === feedbackRevision)
+    showPathFeedback(anchor, 'Path Copied', 'success');
 }
 
 /** A remote home is unknown, so a tilde path cannot truthfully be made full. */
@@ -237,15 +272,16 @@ function canCopyFullPath(path: string): boolean {
   );
 }
 
-async function copyFullPath(path: string): Promise<void> {
+async function copyFullPath(path: string, anchor: HTMLElement): Promise<void> {
   try {
     const home = path.startsWith('~/') ? await homeDirectory() : undefined;
     await writeText(resolveFilePath(props.basePath ?? '', path, home));
   } catch (error) {
     console.error('Could not copy the full path', error);
+    showPathFeedback(anchor, 'Could not copy path. Try again.', 'error');
     return;
   }
-  announceCopiedPath();
+  showPathFeedback(anchor, 'Path Copied', 'success');
 }
 
 interface ContextCopyTarget {
@@ -254,11 +290,13 @@ interface ContextCopyTarget {
 }
 
 let contextCopyTarget: ContextCopyTarget | null = null;
+let contextCopyAnchor: HTMLElement | null = null;
 
 /** Keeps the webview menu suppressed unless the pointer names something copyable. */
 function prepareContextMenu(event: MouseEvent): void {
   const link = linkAt(event.target);
   const href = link?.getAttribute('href');
+  contextCopyAnchor = link;
   if (href && isWebUrl(href)) {
     contextCopyTarget = { kind: 'url', value: href };
     return;
@@ -271,6 +309,7 @@ function prepareContextMenu(event: MouseEvent): void {
   }
 
   contextCopyTarget = null;
+  contextCopyAnchor = null;
   event.preventDefault();
 }
 
@@ -284,21 +323,70 @@ async function copyUrl(url: string): Promise<void> {
 
 function contextMenuItems(): UiMenuItem[] {
   const target = contextCopyTarget;
-  if (!target) return [];
+  const anchor = contextCopyAnchor;
+  if (!target || !anchor) return [];
   if (target.kind === 'url') {
     return [{ label: 'Copy URL', run: () => void copyUrl(target.value) }];
   }
 
   const items: UiMenuItem[] = [
-    { label: 'Copy Path', run: () => void copyPath(target.value) },
+    { label: 'Copy Path', run: () => void copyPath(target.value, anchor) },
   ];
   if (canCopyFullPath(target.value)) {
     items.push({
       label: 'Copy Full Path',
-      run: () => void copyFullPath(target.value),
+      run: () => void copyFullPath(target.value, anchor),
     });
   }
   return items;
+}
+
+let previewAvailable: Promise<boolean> | undefined;
+
+async function activateRemotePath(
+  path: string,
+  anchor: HTMLElement,
+): Promise<void> {
+  if (!props.remoteProjectPath) {
+    await copyPath(path, anchor);
+    return;
+  }
+  const revision = ++feedbackRevision;
+  previewAvailable ??= invokeTraced<boolean>('remote_preview_available');
+  let loading: ReturnType<typeof setTimeout> | undefined;
+  try {
+    if (!(await previewAvailable)) {
+      if (revision === feedbackRevision) await copyPath(path, anchor);
+      return;
+    }
+    loading = setTimeout(() => {
+      if (revision === feedbackRevision)
+        showPathFeedback(anchor, 'Preparing preview…', 'loading');
+    }, 200);
+    const prepared = await invokeTraced<
+      { kind: 'directory' } | { kind: 'file'; token: string }
+    >('prepare_remote_path', {
+      ...piOwnerArgs(),
+      projectPath: props.remoteProjectPath,
+      path,
+    });
+    clearTimeout(loading);
+    if (revision !== feedbackRevision) return;
+    if (prepared.kind === 'directory') {
+      await copyPath(path, anchor);
+      return;
+    }
+    await invokeTraced('show_remote_preview', {
+      ...piOwnerArgs(),
+      token: prepared.token,
+    });
+    clearCopied();
+  } catch (error) {
+    clearTimeout(loading);
+    console.error('Could not preview the remote path', error);
+    if (revision === feedbackRevision)
+      showPathFeedback(anchor, 'Could not preview file. Try again.', 'error');
+  }
 }
 
 async function activate(event: Event): Promise<void> {
@@ -332,13 +420,12 @@ async function activate(event: Event): Promise<void> {
   // Never let a relative markdown link navigate the webview. Remote file
   // links copy their actual remote path; local ones keep the desktop gesture.
   event.preventDefault();
+  if (!isPathOpenGesture(event, window.navigator.platform)) return;
   if (props.copyPaths) {
-    await copyPath(path);
+    await activateRemotePath(path, link);
     return;
   }
-  if (props.basePath && isPathOpenGesture(event, window.navigator.platform)) {
-    await openLocalPath(path, props.basePath);
-  }
+  if (props.basePath) await openLocalPath(path, props.basePath, link);
 }
 
 function handleKeydown(event: KeyboardEvent): void {
@@ -852,13 +939,24 @@ onBeforeUnmount(clearCopied);
   text-decoration: underline;
 }
 
-.copy-feedback {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
+.path-feedback {
+  position: fixed;
+  z-index: 1000;
+  max-width: 240px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--raised);
+  box-shadow: var(--shadow-sm);
+  color: var(--text);
+  font-size: var(--text-xs);
+  line-height: 1.3;
   white-space: nowrap;
+  pointer-events: none;
+}
+
+.path-feedback.error {
+  color: var(--danger);
 }
 
 /* Dragging content out of the transcript is a browser gesture, not an app one. */

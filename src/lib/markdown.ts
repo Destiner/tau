@@ -294,13 +294,33 @@ function isWebUrl(value: string): boolean {
   }
 }
 
-/** Matches the desktop convention: Command-click on Apple, Control-click elsewhere. */
+/** Reads an explicit Markdown destination as a path, without applying prose heuristics. */
+function parseMarkdownFileDestination(value: string): string | null {
+  if (!value || value.startsWith('#') || hasControlCharacter(value))
+    return null;
+  if (/^[A-Za-z][A-Za-z\d+.-]*:/.test(value)) {
+    if (!value.startsWith('file:')) return null;
+    try {
+      const url = new URL(value);
+      if (url.hostname && url.hostname !== 'localhost') return null;
+      return decodeURIComponent(url.pathname);
+    } catch {
+      return null;
+    }
+  }
+  try {
+    const decoded = decodeURIComponent(value);
+    return decoded && !hasControlCharacter(decoded) ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Ordinary primary click and Enter activate paths; Control-click remains a menu gesture. */
 function isPathOpenGesture(event: PathOpenGesture, platform: string): boolean {
   if (event.type === 'keydown') return event.key === 'Enter';
   if (event.type !== 'click' || event.button !== 0) return false;
-  return APPLE_PLATFORM.test(platform)
-    ? event.metaKey === true
-    : event.ctrlKey === true;
+  return !(APPLE_PLATFORM.test(platform) && event.ctrlKey === true);
 }
 
 function linkTextRun(text: string, copyPaths: boolean): string {
@@ -384,7 +404,7 @@ function linkStandaloneRootedPath(
 function fileLink(path: string, text: string, copyPath = false): string {
   const escapedPath = escapeHtmlAttribute(path);
   const semantics = copyPath
-    ? `role="button" tabindex="0" aria-label="Copy path ${escapedPath}"`
+    ? `role="button" tabindex="0" aria-label="Preview path ${escapedPath}"`
     : 'role="link" tabindex="0"';
   return `<a class="file-link" ${semantics} ${FILE_PATH_ATTRIBUTE}="${escapedPath}">${text}</a>`;
 }
@@ -448,6 +468,7 @@ export {
   linkFilePaths,
   removeEmptyTableHeaders,
   parseFileReference,
+  parseMarkdownFileDestination,
   resolveFilePath,
   isWebUrl,
   isPathOpenGesture,

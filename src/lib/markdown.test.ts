@@ -10,6 +10,7 @@ import {
   linkFilePaths,
   removeEmptyTableHeaders,
   parseFileReference,
+  parseMarkdownFileDestination,
   resolveFilePath,
 } from './markdown';
 
@@ -129,51 +130,52 @@ describe('file references', () => {
 });
 
 describe('path opening gesture', () => {
-  it('uses Command-click on Apple platforms', () => {
+  it('uses ordinary primary click and Enter', () => {
+    for (const platform of ['MacIntel', 'Win32', 'Linux x86_64']) {
+      expect(isPathOpenGesture({ type: 'click', button: 0 }, platform)).toBe(
+        true,
+      );
+    }
     expect(
-      isPathOpenGesture(
-        { type: 'click', button: 0, metaKey: true },
-        'MacIntel',
-      ),
+      isPathOpenGesture({ type: 'keydown', key: 'Enter' }, 'MacIntel'),
     ).toBe(true);
+  });
+
+  it('leaves macOS Control-click for the context menu', () => {
     expect(
       isPathOpenGesture(
         { type: 'click', button: 0, ctrlKey: true },
         'MacIntel',
       ),
     ).toBe(false);
-  });
-
-  it('uses Control-click on Windows and Linux', () => {
-    for (const platform of ['Win32', 'Linux x86_64']) {
-      expect(
-        isPathOpenGesture(
-          { type: 'click', button: 0, ctrlKey: true },
-          platform,
-        ),
-      ).toBe(true);
-      expect(
-        isPathOpenGesture(
-          { type: 'click', button: 0, metaKey: true },
-          platform,
-        ),
-      ).toBe(false);
-    }
-  });
-
-  it('ignores ordinary and non-primary clicks but keeps Enter accessible', () => {
-    expect(isPathOpenGesture({ type: 'click', button: 0 }, 'MacIntel')).toBe(
+    expect(isPathOpenGesture({ type: 'click', button: 1 }, 'MacIntel')).toBe(
       false,
     );
-    expect(
-      isPathOpenGesture(
-        { type: 'click', button: 1, metaKey: true },
-        'MacIntel',
-      ),
-    ).toBe(false);
-    expect(
-      isPathOpenGesture({ type: 'keydown', key: 'Enter' }, 'MacIntel'),
-    ).toBe(true);
+  });
+});
+
+describe('explicit Markdown file destinations', () => {
+  it('accepts bare names and decodes escaped path characters once', () => {
+    expect(parseMarkdownFileDestination('README')).toBe('README');
+    expect(parseMarkdownFileDestination('docs/My%20File.md')).toBe(
+      'docs/My File.md',
+    );
+    expect(parseMarkdownFileDestination('literal%2520name')).toBe(
+      'literal%20name',
+    );
+  });
+
+  it('accepts local file URLs and rejects unsafe destinations', () => {
+    expect(parseMarkdownFileDestination('file:///tmp/My%20File.txt')).toBe(
+      '/tmp/My File.txt',
+    );
+    expect(parseMarkdownFileDestination('file://localhost/tmp/a')).toBe(
+      '/tmp/a',
+    );
+    expect(parseMarkdownFileDestination('file://server/tmp/a')).toBeNull();
+    expect(parseMarkdownFileDestination('mailto:test@example.com')).toBeNull();
+    expect(parseMarkdownFileDestination('%zz')).toBeNull();
+    expect(parseMarkdownFileDestination('#section')).toBeNull();
   });
 });
 
@@ -259,7 +261,7 @@ describe('linking file paths in markup', () => {
       '<code>src/workspace.ts</code></p>';
 
     expect(linkFilePaths(html, true)).toBe(
-      `${block}<p>Workspace <a class="file-link" role="button" tabindex="0" aria-label="Copy path /home/agent/rhinestone/workspace" data-tau-path="/home/agent/rhinestone/workspace">/home/agent/rhinestone/workspace</a> <code><a class="file-link" role="button" tabindex="0" aria-label="Copy path src/workspace.ts" data-tau-path="src/workspace.ts">src/workspace.ts</a></code></p>`,
+      `${block}<p>Workspace <a class="file-link" role="button" tabindex="0" aria-label="Preview path /home/agent/rhinestone/workspace" data-tau-path="/home/agent/rhinestone/workspace">/home/agent/rhinestone/workspace</a> <code><a class="file-link" role="button" tabindex="0" aria-label="Preview path src/workspace.ts" data-tau-path="src/workspace.ts">src/workspace.ts</a></code></p>`,
     );
   });
 

@@ -10,6 +10,7 @@
       :source="text"
       :base-path="basePath"
       :copy-paths="copyPaths"
+      :remote-project-path="remoteProjectPath"
     />
   </div>
 </template>
@@ -28,12 +29,14 @@ const props = withDefaults(
     label?: string;
     basePath?: string;
     copyPaths?: boolean;
+    remoteProjectPath?: string;
     inline?: boolean;
   }>(),
   {
     label: '',
     basePath: undefined,
     copyPaths: false,
+    remoteProjectPath: undefined,
     inline: false,
   },
 );

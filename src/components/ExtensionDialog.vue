@@ -12,6 +12,7 @@
       :source="title"
       :base-path="workingDirectory"
       :copy-paths="copyPaths"
+      :remote-project-path="remoteProjectPath"
     />
 
     <MarkdownText
@@ -20,6 +21,7 @@
       :source="message"
       :base-path="workingDirectory"
       :copy-paths="copyPaths"
+      :remote-project-path="remoteProjectPath"
     />
 
     <div
@@ -154,6 +156,7 @@ const props = defineProps<{
   /** Base for relative paths; remote paths copy instead of opening locally. */
   workingDirectory?: string;
   copyPaths?: boolean;
+  remoteProjectPath?: string;
 }>();
 
 const emit = defineEmits<{

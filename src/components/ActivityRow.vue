@@ -55,6 +55,7 @@
               :source="entry.text"
               :base-path="basePath"
               :copy-paths="copyPaths"
+              :remote-project-path="remoteProjectPath"
             />
           </template>
           <template v-else-if="entry.kind === 'skill'">
@@ -66,6 +67,9 @@
               <MarkdownText
                 class="activity-prose"
                 :source="entry.skillPrompt"
+                :base-path="basePath"
+                :copy-paths="copyPaths"
+                :remote-project-path="remoteProjectPath"
               />
             </div>
             <div class="activity-detail">
@@ -73,6 +77,9 @@
               <MarkdownText
                 class="activity-prose"
                 :source="entry.text"
+                :base-path="basePath"
+                :copy-paths="copyPaths"
+                :remote-project-path="remoteProjectPath"
               />
             </div>
           </template>
@@ -117,6 +124,7 @@ const props = defineProps<{
   expanded: boolean;
   basePath?: string;
   copyPaths?: boolean;
+  remoteProjectPath?: string;
 }>();
 
 const emit = defineEmits<{ toggle: [] }>();
