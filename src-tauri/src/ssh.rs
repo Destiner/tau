@@ -89,20 +89,44 @@ impl SshConnection {
         self.command_with_options(remote_command, &[])
     }
 
-    pub(crate) fn transfer_command(&self, remote_command: &str) -> Command {
+    pub(crate) fn transfer_command(&self, remote_command: &str) -> Result<Command, String> {
         let mut command = Command::new(&self.executable);
         let (destination, options) = self
             .arguments
             .split_last()
             .expect("validated SSH connection arguments");
+        if options.iter().any(|option| {
+            option.strip_prefix('-').is_some_and(|flags| {
+                flags
+                    .chars()
+                    .any(|flag| matches!(flag, 'f' | 'N' | 's' | 't'))
+            })
+        }) {
+            return Err("The SSH connection uses a mode that cannot transfer previews.".into());
+        }
         command
             .args(SSH_OPTIONS)
+            .args([
+                "-o",
+                "ClearAllForwardings=yes",
+                "-o",
+                "ForwardAgent=no",
+                "-o",
+                "ForwardX11=no",
+                "-o",
+                "ForwardX11Trusted=no",
+                "-o",
+                "PermitLocalCommand=no",
+                "-o",
+                "RequestTTY=no",
+                "-T",
+                "-S",
+                "none",
+            ])
             .args(options)
-            .arg("-T")
-            .args(["-S", "none"])
             .arg(destination)
             .arg(remote_command);
-        command
+        Ok(command)
     }
 
     pub fn pi_command(&self, remote_command: &str) -> Command {
@@ -466,6 +490,41 @@ mod tests {
 
         let destination = SshConnection::parse("user@example").expect("destination");
         assert_eq!(destination.arguments, ["user@example"]);
+    }
+
+    #[test]
+    fn preview_transfers_disable_forwarding_and_interactive_modes() {
+        let connection = SshConnection::parse(
+            "ssh -A -X -L 9000:localhost:9000 -J jump -i key -p 2222 user@example",
+        )
+        .expect("preview connection");
+        let arguments = connection
+            .transfer_command("preview")
+            .expect("safe transfer")
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        for setting in [
+            "ClearAllForwardings=yes",
+            "ForwardAgent=no",
+            "ForwardX11=no",
+            "ForwardX11Trusted=no",
+            "RequestTTY=no",
+        ] {
+            assert!(arguments.iter().any(|argument| argument == setting));
+        }
+        assert!(arguments.windows(2).any(|pair| pair == ["-J", "jump"]));
+        assert!(arguments.windows(2).any(|pair| pair == ["-i", "key"]));
+        assert!(arguments.windows(2).any(|pair| pair == ["-p", "2222"]));
+    }
+
+    #[test]
+    fn preview_transfers_reject_forced_tty_and_background_modes() {
+        for mode in ["-t", "-tt", "-N", "-f", "-s"] {
+            let connection = SshConnection::parse(&format!("ssh {mode} user@example"))
+                .expect("parsed connection");
+            assert!(connection.transfer_command("preview").is_err(), "{mode}");
+        }
     }
 
     #[test]

@@ -11,17 +11,22 @@
         @click="activate"
         @contextmenu.stop="prepareContextMenu"
         @keydown="handleKeydown"
+        @pointerdown="beginPointerActivation"
+        @pointermove="trackPointerActivation"
+        @pointercancel="cancelPointerActivation"
         v-html="rendered"
       ></div>
     </UiContextMenu>
-    <span
-      v-if="pathFeedback"
-      class="path-feedback"
-      :class="pathFeedback.kind"
-      :style="pathFeedback.style"
-      role="status"
-      >{{ pathFeedback.text }}</span
-    >
+    <Teleport to="body">
+      <span
+        v-if="pathFeedback"
+        class="path-feedback"
+        :class="pathFeedback.kind"
+        :style="pathFeedback.style"
+        role="status"
+        >{{ pathFeedback.text }}</span
+      >
+    </Teleport>
     <!-- eslint-enable vue/no-v-html -->
     <DiagramViewer
       v-if="viewer"
@@ -40,7 +45,7 @@
 import { homeDir } from '@tauri-apps/api/path';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { openPath, openUrl } from '@tauri-apps/plugin-opener';
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import {
   CODE_COPY_ATTRIBUTE,
@@ -48,7 +53,6 @@ import {
   FILE_PATH_ATTRIBUTE,
   isPathOpenGesture,
   isWebUrl,
-  parseFileReference,
   parseMarkdownFileDestination,
   renderMarkdown,
   resolveFilePath,
@@ -85,7 +89,12 @@ const COPIED_FEEDBACK_MS = 1_200;
 let homePath: Promise<string> | null = null;
 let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 let copiedElement: HTMLElement | undefined;
+let feedbackAnchor: HTMLElement | undefined;
 let feedbackRevision = 0;
+let mounted = true;
+let activeRemoteRequest: string | undefined;
+let pointerActivation:
+  { link: HTMLElement; x: number; y: number; moved: boolean } | undefined;
 interface PathFeedback {
   text: string;
   kind: 'success' | 'error' | 'loading';
@@ -116,12 +125,14 @@ function linkAt(target: EventTarget | null): HTMLElement | null {
  */
 function filePath(link: HTMLElement): string | null {
   const written = link.getAttribute(FILE_PATH_ATTRIBUTE);
-  if (written) return written;
+  if (written !== null) return written || null;
 
   const href = link.getAttribute('href');
-  return href
-    ? (parseFileReference(href)?.path ?? parseMarkdownFileDestination(href))
-    : null;
+  return href ? parseMarkdownFileDestination(href) : null;
+}
+
+function actionIsCurrent(revision: number): boolean {
+  return mounted && revision === feedbackRevision;
 }
 
 async function openLocalPath(
@@ -129,12 +140,15 @@ async function openLocalPath(
   basePath: string,
   anchor: HTMLElement,
 ): Promise<void> {
+  const revision = ++feedbackRevision;
   try {
     const home = path.startsWith('~/') ? await homeDirectory() : undefined;
+    if (!actionIsCurrent(revision)) return;
     await openPath(resolveFilePath(basePath, path, home));
   } catch (error) {
     console.error('Could not open the path', error);
-    showPathFeedback(anchor, 'Could not open path. Try again.', 'error');
+    if (actionIsCurrent(revision))
+      showPathFeedback(anchor, 'Could not open path. Try again.', 'error');
   }
 }
 
@@ -219,15 +233,15 @@ function showPathFeedback(
 ): void {
   clearCopied();
   const rect = anchor.getBoundingClientRect();
+  if (!anchor.isConnected) return;
+  feedbackAnchor = anchor;
   pathFeedback.value = {
     text,
     kind,
-    style: {
-      left: `${Math.min(Math.max(8, rect.left), window.innerWidth - 180)}px`,
-      top: `${Math.min(window.innerHeight - 36, rect.bottom + 6)}px`,
-    },
+    style: feedbackPosition(rect),
   };
-  copiedTimer = setTimeout(clearCopied, COPIED_FEEDBACK_MS);
+  if (kind !== 'loading')
+    copiedTimer = setTimeout(clearCopied, COPIED_FEEDBACK_MS);
 }
 
 function clearCopied(): void {
@@ -235,7 +249,25 @@ function clearCopied(): void {
   copiedTimer = undefined;
   delete copiedElement?.dataset.copied;
   copiedElement = undefined;
+  feedbackAnchor = undefined;
   pathFeedback.value = null;
+}
+
+function feedbackPosition(rect: DOMRect): Record<string, string> {
+  return {
+    left: `${Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - 180))}px`,
+    top: `${Math.min(Math.max(8, rect.bottom + 6), Math.max(8, window.innerHeight - 36))}px`,
+  };
+}
+
+function updateFeedbackPosition(): void {
+  if (!pathFeedback.value || !feedbackAnchor?.isConnected) {
+    clearCopied();
+    return;
+  }
+  pathFeedback.value.style = feedbackPosition(
+    feedbackAnchor.getBoundingClientRect(),
+  );
 }
 
 async function copyCodeBlock(button: HTMLElement): Promise<void> {
@@ -273,15 +305,19 @@ function canCopyFullPath(path: string): boolean {
 }
 
 async function copyFullPath(path: string, anchor: HTMLElement): Promise<void> {
+  const revision = ++feedbackRevision;
   try {
     const home = path.startsWith('~/') ? await homeDirectory() : undefined;
+    if (!actionIsCurrent(revision)) return;
     await writeText(resolveFilePath(props.basePath ?? '', path, home));
   } catch (error) {
     console.error('Could not copy the full path', error);
-    showPathFeedback(anchor, 'Could not copy path. Try again.', 'error');
+    if (actionIsCurrent(revision))
+      showPathFeedback(anchor, 'Could not copy path. Try again.', 'error');
     return;
   }
-  showPathFeedback(anchor, 'Path Copied', 'success');
+  if (actionIsCurrent(revision))
+    showPathFeedback(anchor, 'Path Copied', 'success');
 }
 
 interface ContextCopyTarget {
@@ -351,16 +387,20 @@ async function activateRemotePath(
     await copyPath(path, anchor);
     return;
   }
+  if (activeRemoteRequest) return;
   const revision = ++feedbackRevision;
+  const requestId = crypto.randomUUID();
+  activeRemoteRequest = requestId;
   previewAvailable ??= invokeTraced<boolean>('remote_preview_available');
   let loading: ReturnType<typeof setTimeout> | undefined;
   try {
     if (!(await previewAvailable)) {
-      if (revision === feedbackRevision) await copyPath(path, anchor);
+      if (actionIsCurrent(revision)) await copyPath(path, anchor);
       return;
     }
+    if (!actionIsCurrent(revision)) return;
     loading = setTimeout(() => {
-      if (revision === feedbackRevision)
+      if (actionIsCurrent(revision))
         showPathFeedback(anchor, 'Preparing preview…', 'loading');
     }, 200);
     const prepared = await invokeTraced<
@@ -368,24 +408,28 @@ async function activateRemotePath(
     >('prepare_remote_path', {
       ...piOwnerArgs(),
       projectPath: props.remoteProjectPath,
+      requestId,
       path,
     });
     clearTimeout(loading);
-    if (revision !== feedbackRevision) return;
+    if (!actionIsCurrent(revision)) return;
     if (prepared.kind === 'directory') {
       await copyPath(path, anchor);
       return;
     }
     await invokeTraced('show_remote_preview', {
       ...piOwnerArgs(),
+      requestId,
       token: prepared.token,
     });
-    clearCopied();
+    if (actionIsCurrent(revision)) clearCopied();
   } catch (error) {
     clearTimeout(loading);
     console.error('Could not preview the remote path', error);
-    if (revision === feedbackRevision)
+    if (actionIsCurrent(revision))
       showPathFeedback(anchor, 'Could not preview file. Try again.', 'error');
+  } finally {
+    if (activeRemoteRequest === requestId) activeRemoteRequest = undefined;
   }
 }
 
@@ -414,13 +458,18 @@ async function activate(event: Event): Promise<void> {
     return;
   }
 
-  const path = filePath(link);
-  if (!path) return;
-
-  // Never let a relative markdown link navigate the webview. Remote file
-  // links copy their actual remote path; local ones keep the desktop gesture.
+  // No non-web Markdown destination may navigate Tau's own webview, including
+  // malformed or unsupported destinations.
   event.preventDefault();
-  if (!isPathOpenGesture(event, window.navigator.platform)) return;
+  const path = filePath(link);
+  if (!path || !isPathOpenGesture(event, window.navigator.platform)) return;
+  if (
+    event instanceof MouseEvent &&
+    (pointerActivation?.moved ||
+      (window.getSelection()?.isCollapsed === false &&
+        Boolean(window.getSelection()?.toString())))
+  )
+    return;
   if (props.copyPaths) {
     await activateRemotePath(path, link);
     return;
@@ -439,7 +488,53 @@ function handleKeydown(event: KeyboardEvent): void {
   if (event.key === 'Enter' || remotePathButton) void activate(event);
 }
 
-onBeforeUnmount(clearCopied);
+function beginPointerActivation(event: PointerEvent): void {
+  const link = linkAt(event.target);
+  pointerActivation =
+    event.button === 0 && link
+      ? { link, x: event.clientX, y: event.clientY, moved: false }
+      : undefined;
+}
+
+function trackPointerActivation(event: PointerEvent): void {
+  if (!pointerActivation) return;
+  if (
+    Math.abs(event.clientX - pointerActivation.x) > 4 ||
+    Math.abs(event.clientY - pointerActivation.y) > 4
+  )
+    pointerActivation.moved = true;
+}
+
+function cancelPointerActivation(): void {
+  pointerActivation = undefined;
+}
+
+function cancelPendingAction(): void {
+  feedbackRevision += 1;
+  clearCopied();
+  const requestId = activeRemoteRequest;
+  activeRemoteRequest = undefined;
+  if (requestId)
+    void invokeTraced('cancel_remote_path', {
+      ...piOwnerArgs(),
+      requestId,
+    }).catch(() => undefined);
+}
+
+watch(
+  () => [props.source, props.basePath, props.remoteProjectPath],
+  cancelPendingAction,
+);
+onMounted(() => {
+  window.addEventListener('resize', updateFeedbackPosition);
+  document.addEventListener('scroll', updateFeedbackPosition, true);
+});
+onBeforeUnmount(() => {
+  mounted = false;
+  window.removeEventListener('resize', updateFeedbackPosition);
+  document.removeEventListener('scroll', updateFeedbackPosition, true);
+  cancelPendingAction();
+});
 </script>
 
 <style scoped>

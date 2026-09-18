@@ -98,6 +98,8 @@ if (remote) {
 
 Source \`src/remote.ts\`
 
+[Encoded file](docs/My%20File.md) · [Local file](file:///tmp/My%20File.txt) · [Invalid file](%zz)
+
 \`\`\`md
 Repo /home/agent/rhinestone/orchestrator
 Plan /home/agent/.pi/workflows/implement/RHI-6092/implementation-plan.md

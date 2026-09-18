@@ -139,9 +139,46 @@ test('previews remote files and keeps explicit copy actions', async ({
     .locator('[data-message-id="fixture-remote-paths"]')
     .getByRole('button', { name: 'Preview path src/remote.ts' });
 
+  await expect(path).toBeVisible();
+  const pathBox = await path.boundingBox();
+  if (!pathBox) throw new Error('Remote path has no bounds');
+  await page.mouse.move(pathBox.x + 2, pathBox.y + pathBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    pathBox.x + pathBox.width - 2,
+    pathBox.y + pathBox.height / 2,
+    { steps: 4 },
+  );
+  await page.mouse.up();
+  expect(
+    await page.evaluate(
+      () =>
+        (window as Window & { __TAU_PREVIEW_CALLS__?: unknown[] })
+          .__TAU_PREVIEW_CALLS__,
+    ),
+  ).toEqual([]);
+  await page.evaluate(() => window.getSelection()?.removeAllRanges());
+
   await path.click({ button: 'right' });
   await page.getByRole('menuitem', { name: 'Copy Path', exact: true }).click();
-  await expect(page.getByText('Path Copied')).toBeVisible();
+  const feedback = page.locator('.path-feedback', {
+    hasText: 'Path Copied',
+  });
+  await expect(feedback).toBeVisible();
+  await expect
+    .poll(async () => {
+      const box = await feedback.boundingBox();
+      const viewport = page.viewportSize();
+      return Boolean(
+        box &&
+        viewport &&
+        box.x >= 0 &&
+        box.y >= 0 &&
+        box.x + box.width <= viewport.width &&
+        box.y + box.height <= viewport.height,
+      );
+    })
+    .toBe(true);
   await path.click({ button: 'right' });
   await page.getByRole('menuitem', { name: 'Copy Full Path' }).click();
   await path.click();
@@ -170,6 +207,56 @@ test('previews remote files and keeps explicit copy actions', async ({
         payload: expect.objectContaining({ token: 'fixture-token' }),
       },
     ]);
+});
+
+test('decodes explicit file destinations and keeps invalid ones inert', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const previewCalls: Array<{ command: string; payload?: unknown }> = [];
+    Object.assign(window, { __TAU_PREVIEW_CALLS__: previewCalls });
+    window.__TAURI_INTERNALS__ = {
+      transformCallback: (callback: unknown): unknown => callback,
+      invoke: (command: string, payload?: unknown): Promise<unknown> => {
+        if (command === 'remote_preview_available')
+          return Promise.resolve(true);
+        if (command === 'prepare_remote_path') {
+          previewCalls.push({ command, payload });
+          return Promise.resolve({ kind: 'file', token: crypto.randomUUID() });
+        }
+        if (command === 'show_remote_preview') return Promise.resolve(null);
+        return Promise.resolve(null);
+      },
+    };
+  });
+  await page.goto(`${fixtureUrl}&remote=true`);
+
+  await page.getByRole('link', { name: 'Encoded file' }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as Window & { __TAU_PREVIEW_CALLS__?: unknown[] })
+            .__TAU_PREVIEW_CALLS__,
+      ),
+    )
+    .toEqual([
+      {
+        command: 'prepare_remote_path',
+        payload: expect.objectContaining({ path: 'docs/My File.md' }),
+      },
+    ]);
+
+  const url = page.url();
+  await page.getByRole('link', { name: 'Invalid file' }).click();
+  expect(page.url()).toBe(url);
+  expect(
+    await page.evaluate(
+      () =>
+        (window as Window & { __TAU_PREVIEW_CALLS__?: unknown[] })
+          .__TAU_PREVIEW_CALLS__,
+    ),
+  ).toHaveLength(1);
 });
 
 test('renders a long transcript without pagination controls or an oversized DOM', async ({
@@ -882,7 +969,7 @@ test('leaves remote paths in fenced transcript markdown as code', async ({
   await expect
     .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
     .toEqual(['/home/agent/rhinestone/workspace']);
-  await expect(message.getByRole('status')).toHaveText('Path Copied');
+  await expect(page.locator('.path-feedback')).toHaveText('Path Copied');
 
   await copy.click();
   await expect

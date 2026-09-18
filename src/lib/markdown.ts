@@ -117,7 +117,10 @@ function renderMarkdown(source: string, options: MarkdownOptions = {}): string {
     : marked.parse(source, { async: false });
   // These attributes belong to this module: text that arrives already carrying
   // one cannot pass itself off as something the app wrote about it.
-  const html = purify.sanitize(parsed as string, {
+  // DOMPurify rejects file: URLs by default. Protect only validated local
+  // file links with one-use HTTPS placeholders, then restore them afterward.
+  const protectedLinks = protectLocalFileHrefs(parsed as string);
+  let html = purify.sanitize(protectedLinks.html, {
     FORBID_ATTR: [
       FILE_PATH_ATTRIBUTE,
       CODE_COPY_ATTRIBUTE,
@@ -125,6 +128,9 @@ function renderMarkdown(source: string, options: MarkdownOptions = {}): string {
       DIAGRAM_EXPAND_ATTRIBUTE,
     ],
   });
+  for (const link of protectedLinks.links) {
+    html = html.replace(link.placeholder, escapeHtmlAttribute(link.href));
+  }
   const withoutEmptyTableHeaders = removeEmptyTableHeaders(html);
   const linked =
     options.basePath || options.copyPaths
@@ -133,6 +139,26 @@ function renderMarkdown(source: string, options: MarkdownOptions = {}): string {
   return options.inline
     ? linked
     : addDiagramExpandButtons(addCodeCopyButtons(linked));
+}
+
+function protectLocalFileHrefs(html: string): {
+  html: string;
+  links: Array<{ placeholder: string; href: string }>;
+} {
+  const links: Array<{ placeholder: string; href: string }> = [];
+  const nonce = Math.random().toString(36).slice(2);
+  const protectedHtml = html.replace(
+    /\s+href=(["'])(.*?)\1/gi,
+    (attribute, quote: string, encodedValue: string) => {
+      const value = decodeHtmlText(encodedValue);
+      if (!/^file:/i.test(value)) return attribute;
+      if (!parseMarkdownFileDestination(value)) return '';
+      const placeholder = `https://tau.invalid/__file_${nonce}_${links.length}`;
+      links.push({ placeholder, href: value });
+      return ` href=${quote}${placeholder}${quote}`;
+    },
+  );
+  return { html: protectedHtml, links };
 }
 
 /**
@@ -303,14 +329,17 @@ function parseMarkdownFileDestination(value: string): string | null {
     try {
       const url = new URL(value);
       if (url.hostname && url.hostname !== 'localhost') return null;
-      return decodeURIComponent(url.pathname);
+      const decoded = decodeURIComponent(url.pathname);
+      if (!decoded || hasControlCharacter(decoded)) return null;
+      return LINE_SUFFIX.exec(decoded)?.[1] ?? decoded;
     } catch {
       return null;
     }
   }
   try {
     const decoded = decodeURIComponent(value);
-    return decoded && !hasControlCharacter(decoded) ? decoded : null;
+    if (!decoded || hasControlCharacter(decoded)) return null;
+    return LINE_SUFFIX.exec(decoded)?.[1] ?? decoded;
   } catch {
     return null;
   }
@@ -469,6 +498,7 @@ export {
   removeEmptyTableHeaders,
   parseFileReference,
   parseMarkdownFileDestination,
+  protectLocalFileHrefs,
   resolveFilePath,
   isWebUrl,
   isPathOpenGesture,

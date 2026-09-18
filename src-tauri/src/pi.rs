@@ -19,7 +19,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tauri::{AppHandle, Emitter, Manager, Runtime, State};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State, WebviewWindow};
 
 const MAX_RPC_LINE_BYTES: usize = 64 * 1024 * 1024;
 const STDERR_TAIL_LINES: usize = 8;
@@ -319,7 +319,9 @@ pub fn read_pi_frontend_revision(
 
 #[tauri::command]
 pub async fn claim_pi_frontend(
+    window: WebviewWindow,
     state: State<'_, PiState>,
+    previews: State<'_, crate::remote_preview::RemotePreviewState>,
     telemetry: State<'_, Telemetry>,
     telemetry_context: Option<TraceContext>,
     owner_id: String,
@@ -333,6 +335,7 @@ pub async fn claim_pi_frontend(
         message,
     })?;
     let inner = Arc::clone(&state.inner);
+    let claimed_owner = owner_id.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         claim_pi_frontend_inner(&inner, owner_id, expected_revision)
     })
@@ -344,6 +347,7 @@ pub async fn claim_pi_frontend(
 
     match result {
         Ok(outcome) => {
+            previews.replace_owner(&window, &claimed_owner);
             record_ownership_cleanup(&telemetry, command_span.as_ref(), &outcome.stopped);
             telemetry.record_ownership_event(
                 if outcome.replacement {

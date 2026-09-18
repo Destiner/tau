@@ -11,6 +11,7 @@ import {
   removeEmptyTableHeaders,
   parseFileReference,
   parseMarkdownFileDestination,
+  protectLocalFileHrefs,
   resolveFilePath,
 } from './markdown';
 
@@ -175,7 +176,26 @@ describe('explicit Markdown file destinations', () => {
     expect(parseMarkdownFileDestination('file://server/tmp/a')).toBeNull();
     expect(parseMarkdownFileDestination('mailto:test@example.com')).toBeNull();
     expect(parseMarkdownFileDestination('%zz')).toBeNull();
+    expect(parseMarkdownFileDestination('bad%0Aname')).toBeNull();
     expect(parseMarkdownFileDestination('#section')).toBeNull();
+  });
+
+  it('removes line suffixes after decoding', () => {
+    expect(parseMarkdownFileDestination('src/App.vue:42')).toBe('src/App.vue');
+    expect(parseMarkdownFileDestination('src/My%20App.vue:42:10')).toBe(
+      'src/My App.vue',
+    );
+  });
+
+  it('protects local file destinations and strips unsafe authorities', () => {
+    const protectedLinks = protectLocalFileHrefs(
+      '<a href="file:///tmp/a">local</a><a href="file://server/a">foreign</a>',
+    );
+    expect(protectedLinks.links).toEqual([
+      expect.objectContaining({ href: 'file:///tmp/a' }),
+    ]);
+    expect(protectedLinks.html).toContain('https://tau.invalid/__file_');
+    expect(protectedLinks.html).toContain('<a>foreign</a>');
   });
 });
 
