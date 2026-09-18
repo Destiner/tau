@@ -7,6 +7,18 @@ import {
   createBrowserSandboxWorkspace,
 } from './browser-sandbox';
 
+const ownerArgs = { ownerId: 'test-document' };
+
+async function claimOwner(
+  handle: ReturnType<typeof createBrowserSandboxHandler>,
+): Promise<void> {
+  const expectedRevision = await handle('read_pi_frontend_revision');
+  await handle('claim_pi_frontend', {
+    ...ownerArgs,
+    expectedRevision,
+  });
+}
+
 function rpcLines(events: PiBridgeEvent[]): Record<string, unknown>[] {
   return events
     .filter((event) => event.kind === 'rpc' && event.line)
@@ -44,15 +56,28 @@ describe('browser sandbox seed', () => {
     const runtimeId = 'runtime-1';
     const projectPath = '/browser-dev/projects/atlas';
     const sessionPath = `${projectPath}/atlas-overview.jsonl`;
+    await claimOwner(handle);
 
-    await handle('start_pi', { runtimeId, projectPath, sessionPath });
+    await handle('start_pi', {
+      ...ownerArgs,
+      runtimeId,
+      projectPath,
+      sessionPath,
+    });
     await handle('send_pi', {
+      ...ownerArgs,
       runtimeId,
       request: { type: 'prompt', id: 'prompt-1', message: 'Keep this turn' },
     });
-    await handle('stop_pi', { runtimeId });
-    await handle('start_pi', { runtimeId, projectPath, sessionPath });
+    await handle('stop_pi', { ...ownerArgs, runtimeId });
+    await handle('start_pi', {
+      ...ownerArgs,
+      runtimeId,
+      projectPath,
+      sessionPath,
+    });
     await handle('send_pi', {
+      ...ownerArgs,
       runtimeId,
       request: { type: 'get_messages', id: 'messages-1' },
     });
@@ -91,24 +116,28 @@ describe('browser sandbox seed', () => {
         }
       });
       const runtimeId = 'runtime-1';
+      await claimOwner(handle);
 
       await handle('start_pi', {
+        ...ownerArgs,
         runtimeId,
         projectPath: '/browser-dev/projects/atlas',
         sessionPath: '/browser-dev/projects/atlas/atlas-overview.jsonl',
       });
       const prompt = handle('send_pi', {
+        ...ownerArgs,
         runtimeId,
         request: { type: 'prompt', id: 'prompt-1', message: 'Stop here' },
       });
       await Promise.resolve();
       if (interruption === 'abort') {
         await handle('send_pi', {
+          ...ownerArgs,
           runtimeId,
           request: { type: 'abort', id: 'abort-1' },
         });
       } else {
-        await handle('stop_pi', { runtimeId });
+        await handle('stop_pi', { ...ownerArgs, runtimeId });
       }
       releaseAgentStart?.();
       await prompt;

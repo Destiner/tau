@@ -20,6 +20,7 @@ const errorCopy = {
     'The message could not be sent. Reopen the session and try again.',
   modelChange:
     'The model could not be changed. Reopen the session and try again.',
+  piOwnership: 'Tau could not prepare Pi. Try again.',
   piStart: 'Pi could not be started. Restart Tau and try again.',
   projectOrder: 'The project order could not be saved. Try again.',
   remoteConnection:

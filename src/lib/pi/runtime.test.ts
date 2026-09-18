@@ -593,7 +593,7 @@ describe('command-created session durability', () => {
       expect(watchingSessionReplacement(controller)).toBe(false);
       expect(telemetry.invokeTraced).toHaveBeenCalledWith(
         'stop_pi',
-        { runtimeId: controller.runtimeId },
+        expect.objectContaining({ runtimeId: controller.runtimeId }),
         undefined,
       );
     } finally {

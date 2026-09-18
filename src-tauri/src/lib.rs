@@ -101,6 +101,8 @@ pub fn run() {
             admin::read_admin_mode,
             admin::set_admin_mode,
             feedback::submit_issue_report,
+            pi::claim_pi_frontend,
+            pi::read_pi_frontend_revision,
             pi::send_pi,
             pi::start_pi,
             pi::start_pi_remote,

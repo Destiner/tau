@@ -4,6 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { errorCopy } from '../lib/error-copy';
 import type { PiBridgeEvent } from '../lib/pi/bridge';
 import type { ThinkingLevel } from '../lib/pi/model-scope';
+import { frontendOwnership } from '../lib/pi/ownership';
 import {
   applySessionName,
   appendOptimisticPrompt,
@@ -118,6 +119,8 @@ import {
 } from './state';
 
 let unlisten: UnlistenFn | undefined;
+let initialization: Promise<void> | undefined;
+let lifecycle = 0;
 
 function controllerTelemetryScope(
   controller: SessionController | undefined,
@@ -135,29 +138,68 @@ function controllerTelemetryScope(
 // types are all inferred, so spelling the shape out would only duplicate them.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function useTau() {
-  async function initialize(): Promise<void> {
-    if (!unlisten) {
-      unlisten = await listen<PiBridgeEvent>('pi-event', ({ payload }) => {
-        void handleBridgeEvent(payload).catch(() => {
-          const controller = controllerByRuntimeId(payload.runtimeId);
-          if (!controller || controller.generation !== payload.generation) {
-            return;
-          }
-          setControllerLifecycle(
-            controller,
-            { syncing: false },
-            'bridge_event_failed',
-          );
-          setControllerError(controller, errorCopy.bridgeEvent);
-          releaseRuntime(controller);
-        });
+  function initialize(): Promise<void> {
+    if (initialization) return initialization;
+    const currentLifecycle = lifecycle;
+    state.initializing = true;
+    const pending = initializeOnce(currentLifecycle)
+      .catch(() => {
+        if (currentLifecycle === lifecycle) {
+          setWorkspaceError(errorCopy.piOwnership);
+        }
+      })
+      .finally(() => {
+        if (initialization === pending) initialization = undefined;
+        if (currentLifecycle === lifecycle) state.initializing = false;
       });
+    initialization = pending;
+    return pending;
+  }
+
+  async function initializeOnce(currentLifecycle: number): Promise<void> {
+    if (!unlisten) {
+      const nextUnlisten = await listen<PiBridgeEvent>(
+        'pi-event',
+        ({ payload }) => {
+          void handleBridgeEvent(payload).catch(() => {
+            const controller = controllerByRuntimeId(payload.runtimeId);
+            if (!controller || controller.generation !== payload.generation) {
+              return;
+            }
+            setControllerLifecycle(
+              controller,
+              { syncing: false },
+              'bridge_event_failed',
+            );
+            setControllerError(controller, errorCopy.bridgeEvent);
+            releaseRuntime(controller);
+          });
+        },
+      );
+      if (currentLifecycle !== lifecycle) {
+        nextUnlisten();
+        return;
+      }
+      unlisten = nextUnlisten;
     }
+
     try {
-      state.workspace = await invokeTraced<WorkspaceSnapshot>(
+      await frontendOwnership.claim();
+    } catch {
+      if (currentLifecycle === lifecycle) {
+        setWorkspaceError(errorCopy.piOwnership);
+      }
+      return;
+    }
+    if (currentLifecycle !== lifecycle) return;
+
+    try {
+      const workspace = await invokeTraced<WorkspaceSnapshot>(
         'load_workspace',
         {},
       );
+      if (currentLifecycle !== lifecycle) return;
+      state.workspace = workspace;
       state.workspaceStatus = '';
       state.activeProjectPath = state.workspace.activeProjectPath;
       const selectedProject = state.workspace.projects.find(
@@ -171,7 +213,21 @@ function useTau() {
         !selectedSession &&
         projectSessions(selectedProject).length === 0
       ) {
+        const existingControllerKeys = new Set(
+          state.controllers.map((controller) => controller.key),
+        );
         await newSession(selectedProject);
+        if (currentLifecycle !== lifecycle) {
+          await Promise.all(
+            state.controllers
+              .filter(
+                (controller) => !existingControllerKeys.has(controller.key),
+              )
+              .map((controller) =>
+                stopControllerProcess(controller, undefined, false),
+              ),
+          );
+        }
       } else if (selectedProject && selectedSession) {
         const controller = ensureController(selectedProject, selectedSession);
         setActiveSessionView(selectedProject, selectedSession, controller);
@@ -185,6 +241,9 @@ function useTau() {
           selectedProject,
           selectedSession.path,
         );
+        if (currentLifecycle !== lifecycle) {
+          await stopControllerProcess(controller, undefined, false);
+        }
       }
     } catch {
       const controller = activeController.value;
@@ -202,6 +261,9 @@ function useTau() {
   }
 
   function dispose(): void {
+    lifecycle += 1;
+    initialization = undefined;
+    state.initializing = false;
     unlisten?.();
     unlisten = undefined;
     for (const controller of state.controllers) {

@@ -128,6 +128,15 @@ function requiredString(args: Record<string, unknown>, key: string): string {
   return value;
 }
 
+function requireOwner(
+  args: Record<string, unknown>,
+  activeOwner: string,
+): void {
+  if (!activeOwner || args.ownerId !== activeOwner) {
+    throw new Error('Browser sandbox rejected a stale Pi frontend owner.');
+  }
+}
+
 function createMemorySidebarWidthStorage(): SidebarWidthStorage {
   const values = new Map<string, string>();
   return {
@@ -142,6 +151,8 @@ function createBrowserSandboxHandler(
   const workspace = createBrowserSandboxWorkspace();
   let generation = 1;
   let nextSession = 1;
+  let ownershipRevision = 0;
+  let activeOwner = '';
   const runtimes = new Map<string, RuntimeSession>();
   const sessions = new Map<string, SessionData>(
     workspace.projects.flatMap((project) =>
@@ -335,6 +346,18 @@ function createBrowserSandboxHandler(
     rawArgs?: InvokeArgs,
   ): Promise<unknown> {
     const args = record(rawArgs);
+    if (command === 'read_pi_frontend_revision') return ownershipRevision;
+    if (command === 'claim_pi_frontend') {
+      const ownerId = requiredString(args, 'ownerId');
+      if (activeOwner === ownerId) return null;
+      if (args.expectedRevision !== ownershipRevision) {
+        throw new Error('Stale Pi frontend ownership revision.');
+      }
+      ownershipRevision += 1;
+      activeOwner = ownerId;
+      runtimes.clear();
+      return null;
+    }
     if (command === 'load_workspace') return cloneWorkspace();
     if (command === 'read_model_scope') return [];
     if (command === 'read_admin_mode') return false;
@@ -353,6 +376,7 @@ function createBrowserSandboxHandler(
       return `${ROOT}/playground`;
     }
     if (command === 'start_pi') {
+      requireOwner(args, activeOwner);
       const runtimeId = requiredString(args, 'runtimeId');
       const projectPath = requiredString(args, 'projectPath');
       const sessionPath =
@@ -392,6 +416,7 @@ function createBrowserSandboxHandler(
       return runtime.generation;
     }
     if (command === 'send_pi') {
+      requireOwner(args, activeOwner);
       const runtime = runtimes.get(requiredString(args, 'runtimeId'));
       if (!runtime) throw new Error('Browser sandbox runtime is not running.');
       const request = args.request;
@@ -402,6 +427,7 @@ function createBrowserSandboxHandler(
       return null;
     }
     if (command === 'stop_pi') {
+      requireOwner(args, activeOwner);
       const runtimeId = requiredString(args, 'runtimeId');
       const runtime = runtimes.get(runtimeId);
       if (runtime) {

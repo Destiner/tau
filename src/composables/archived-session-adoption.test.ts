@@ -77,6 +77,8 @@ function snapshot(): WorkspaceSnapshot {
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async (command: string, args?: Record<string, unknown>) => {
+    if (command === 'read_pi_frontend_revision') return 0;
+    if (command === 'claim_pi_frontend') return undefined;
     if (command.startsWith('start_pi')) {
       mocks.generation += 1;
       return mocks.generation;

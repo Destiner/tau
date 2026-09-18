@@ -6,7 +6,7 @@ use serde_json::Value;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     env,
     ffi::{OsStr, OsString},
     io::{BufRead, BufReader, Read, Write},
@@ -58,6 +58,7 @@ impl PiState {
             .inner
             .lock()
             .map(|mut manager| {
+                manager.ownership = PiOwnership::ShuttingDown;
                 manager
                     .processes
                     .drain()
@@ -77,12 +78,43 @@ impl Drop for PiState {
 
 #[derive(Default)]
 struct PiManager {
+    ownership_revision: u64,
+    ownership: PiOwnership,
     generation: u64,
     processes: HashMap<String, PiProcess>,
 }
 
+#[derive(Default)]
+enum PiOwnership {
+    #[default]
+    Unclaimed,
+    Claiming {
+        owner_id: String,
+        expected_revision: u64,
+    },
+    Active {
+        owner_id: String,
+    },
+    ShuttingDown,
+}
+
+impl PiManager {
+    fn require_owner(&self, owner_id: &str) -> Result<(), String> {
+        match &self.ownership {
+            PiOwnership::Active {
+                owner_id: active_owner,
+            } if active_owner == owner_id => Ok(()),
+            PiOwnership::ShuttingDown => Err("Tau is shutting down.".into()),
+            _ => Err(
+                "This Tau window no longer owns the Pi runtime. Reload Tau and try again.".into(),
+            ),
+        }
+    }
+}
+
 #[derive(Clone)]
 struct PiProcess {
+    owner_id: String,
     generation: u64,
     child: Arc<Mutex<Child>>,
     writer: mpsc::SyncSender<PiWriteRequest>,
@@ -234,12 +266,87 @@ fn is_executable_file(path: &Path) -> bool {
 }
 
 #[tauri::command]
+pub fn read_pi_frontend_revision(state: State<'_, PiState>) -> Result<u64, String> {
+    let manager = state
+        .inner
+        .lock()
+        .map_err(|_| "Pi process state is unavailable.".to_string())?;
+    if matches!(manager.ownership, PiOwnership::ShuttingDown) {
+        return Err("Tau is shutting down.".into());
+    }
+    Ok(manager.ownership_revision)
+}
+
+#[tauri::command]
+pub async fn claim_pi_frontend(
+    state: State<'_, PiState>,
+    owner_id: String,
+    expected_revision: u64,
+) -> Result<(), String> {
+    validate_owner_id(&owner_id)?;
+    let inner = Arc::clone(&state.inner);
+    tauri::async_runtime::spawn_blocking(move || {
+        claim_pi_frontend_inner(&inner, owner_id, expected_revision)
+    })
+    .await
+    .map_err(|_| "Tau could not prepare the Pi runtime. Try again.".to_string())?
+}
+
+fn claim_pi_frontend_inner(
+    inner: &Arc<Mutex<PiManager>>,
+    owner_id: String,
+    expected_revision: u64,
+) -> Result<(), String> {
+    let mut manager = inner
+        .lock()
+        .map_err(|_| "Pi process state is unavailable.".to_string())?;
+    match &manager.ownership {
+        PiOwnership::Active {
+            owner_id: active_owner,
+        } if active_owner == &owner_id => return Ok(()),
+        PiOwnership::Claiming {
+            owner_id: claiming_owner,
+            expected_revision: claiming_revision,
+        } if claiming_owner == &owner_id && *claiming_revision == expected_revision => {}
+        PiOwnership::ShuttingDown => return Err("Tau is shutting down.".into()),
+        _ => {
+            if expected_revision != manager.ownership_revision {
+                return Err(
+                    "Another Tau window already owns the Pi runtime. Reload Tau and try again."
+                        .into(),
+                );
+            }
+            manager.ownership_revision = manager
+                .ownership_revision
+                .checked_add(1)
+                .ok_or_else(|| "Tau could not advance Pi ownership. Restart Tau.".to_string())?;
+            manager.ownership = PiOwnership::Claiming {
+                owner_id: owner_id.clone(),
+                expected_revision,
+            };
+        }
+    }
+
+    stop_stale_processes(&mut manager)?;
+    manager.ownership = PiOwnership::Active { owner_id };
+    Ok(())
+}
+
+fn validate_owner_id(owner_id: &str) -> Result<(), String> {
+    if owner_id.is_empty() || owner_id.len() > 128 {
+        return Err("Tau supplied an invalid frontend owner id.".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub fn start_pi(
     app: AppHandle,
     state: State<'_, PiState>,
     telemetry: State<'_, Telemetry>,
     telemetry_context: Option<TraceContext>,
+    owner_id: String,
     runtime_id: String,
     project_path: String,
     session_path: Option<String>,
@@ -254,17 +361,20 @@ pub fn start_pi(
         &state,
         &telemetry,
         span_context.as_ref(),
+        owner_id,
         runtime_id,
         project_path,
         session_path,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn start_pi_with<R: Runtime>(
     app: AppHandle<R>,
     state: &PiState,
     telemetry: &Telemetry,
     span_context: Option<&opentelemetry::trace::SpanContext>,
+    owner_id: String,
     runtime_id: String,
     project_path: String,
     session_path: Option<String>,
@@ -308,7 +418,15 @@ fn start_pi_with<R: Runtime>(
         session_dir.as_deref(),
         session_path.as_deref(),
     );
-    spawn_command(app, state, telemetry, span_context, runtime_id, command)
+    spawn_command(
+        app,
+        state,
+        telemetry,
+        span_context,
+        owner_id,
+        runtime_id,
+        command,
+    )
 }
 
 fn configure_session_arguments(
@@ -331,6 +449,7 @@ pub fn start_pi_remote(
     state: State<'_, PiState>,
     telemetry: State<'_, Telemetry>,
     telemetry_context: Option<TraceContext>,
+    owner_id: String,
     runtime_id: String,
     connection_string: String,
     working_directory: String,
@@ -348,6 +467,7 @@ pub fn start_pi_remote(
         &state,
         &telemetry,
         span_context.as_ref(),
+        owner_id,
         runtime_id,
         connection.pi_command(&remote_command),
     )
@@ -599,6 +719,7 @@ fn spawn_command<R: Runtime>(
     state: &PiState,
     telemetry: &Telemetry,
     span_context: Option<&opentelemetry::trace::SpanContext>,
+    owner_id: String,
     runtime_id: String,
     mut command: Command,
 ) -> Result<u64, String> {
@@ -606,6 +727,7 @@ fn spawn_command<R: Runtime>(
         .inner
         .lock()
         .map_err(|_| "Pi process state is unavailable.".to_string())?;
+    manager.require_owner(&owner_id)?;
     let replaced_generation = manager.processes.get(&runtime_id).map(|p| p.generation);
     stop_runtime_process(&mut manager, &runtime_id)?;
     if let Some(generation) = replaced_generation {
@@ -657,6 +779,7 @@ fn spawn_command<R: Runtime>(
     manager.processes.insert(
         runtime_id.clone(),
         PiProcess {
+            owner_id,
             generation,
             child: Arc::clone(&child),
             writer,
@@ -700,14 +823,17 @@ fn spawn_command<R: Runtime>(
 pub fn send_pi<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, PiState>,
+    owner_id: String,
     runtime_id: String,
     request: Value,
 ) -> Result<(), String> {
-    let result = send_pi_to_state(&state, runtime_id.clone(), request);
+    let result = send_pi_to_state(&state, &owner_id, runtime_id.clone(), request);
     if result.is_err() {
         let failed_generation = state.inner.lock().ok().and_then(|manager| {
+            manager.require_owner(&owner_id).ok()?;
             manager.processes.get(&runtime_id).and_then(|process| {
-                (!process.usable.load(Ordering::Acquire)).then_some(process.generation)
+                (process.owner_id == owner_id && !process.usable.load(Ordering::Acquire))
+                    .then_some(process.generation)
             })
         });
         if let Some(generation) = failed_generation {
@@ -747,7 +873,12 @@ fn spawn_stdin_writer(mut stdin: ChildStdin) -> Result<mpsc::SyncSender<PiWriteR
     Ok(sender)
 }
 
-fn send_pi_to_state(state: &PiState, runtime_id: String, request: Value) -> Result<(), String> {
+fn send_pi_to_state(
+    state: &PiState,
+    owner_id: &str,
+    runtime_id: String,
+    request: Value,
+) -> Result<(), String> {
     let mut line = serde_json::to_vec(&request)
         .map_err(|error| format!("Could not encode the Pi request: {error}"))?;
     if line.len() > MAX_RPC_LINE_BYTES {
@@ -755,18 +886,17 @@ fn send_pi_to_state(state: &PiState, runtime_id: String, request: Value) -> Resu
     }
     line.push(b'\n');
 
-    let process = {
-        let manager = state
-            .inner
-            .lock()
-            .map_err(|_| "Pi process state is unavailable.".to_string())?;
-        manager
-            .processes
-            .get(&runtime_id)
-            .cloned()
-            .ok_or_else(|| "The selected Pi runtime is not running.".to_string())?
-    };
-    send_pi_line(&process, line, PI_WRITE_TIMEOUT)
+    let manager = state
+        .inner
+        .lock()
+        .map_err(|_| "Pi process state is unavailable.".to_string())?;
+    manager.require_owner(owner_id)?;
+    let process = manager
+        .processes
+        .get(&runtime_id)
+        .filter(|process| process.owner_id == owner_id)
+        .ok_or_else(|| "The selected Pi runtime is not running.".to_string())?;
+    send_pi_line(process, line, PI_WRITE_TIMEOUT)
 }
 
 fn send_pi_line(process: &PiProcess, line: Vec<u8>, timeout: Duration) -> Result<(), String> {
@@ -817,6 +947,7 @@ pub fn stop_pi(
     state: State<'_, PiState>,
     telemetry: State<'_, Telemetry>,
     telemetry_context: Option<TraceContext>,
+    owner_id: String,
     runtime_id: String,
 ) -> Result<(), String> {
     let command_span = telemetry_context
@@ -827,7 +958,12 @@ pub fn stop_pi(
         .inner
         .lock()
         .map_err(|_| "Pi process state is unavailable.".to_string())?;
-    let stopped_generation = manager.processes.get(&runtime_id).map(|p| p.generation);
+    manager.require_owner(&owner_id)?;
+    let stopped_generation = manager
+        .processes
+        .get(&runtime_id)
+        .filter(|process| process.owner_id == owner_id)
+        .map(|process| process.generation);
     stop_runtime_process(&mut manager, &runtime_id)?;
     if let Some(generation) = stopped_generation {
         telemetry.record_process_lifecycle(
@@ -854,6 +990,59 @@ fn stop_runtime_process(manager: &mut PiManager, runtime_id: &str) -> Result<(),
         return Err(error);
     }
     Ok(())
+}
+
+fn stop_stale_processes(manager: &mut PiManager) -> Result<(), String> {
+    if manager.processes.is_empty() {
+        return Ok(());
+    }
+
+    let deadline = Instant::now() + PI_STOP_TIMEOUT;
+    let mut kill_sent = HashSet::new();
+    let mut first_error = None;
+    for process in manager.processes.values() {
+        process.usable.store(false, Ordering::Release);
+    }
+
+    loop {
+        let mut exited = Vec::new();
+        for (runtime_id, process) in &manager.processes {
+            match process.child.try_lock() {
+                Ok(mut child) => match child.try_wait() {
+                    Ok(Some(_)) => exited.push(runtime_id.clone()),
+                    Ok(None) if !kill_sent.contains(runtime_id) => {
+                        if child.kill().is_ok() {
+                            kill_sent.insert(runtime_id.clone());
+                        } else if first_error.is_none() {
+                            first_error = Some("Tau could not stop Pi. Try again.".to_string());
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(_) if first_error.is_none() => {
+                        first_error =
+                            Some("Tau could not check whether Pi stopped. Try again.".to_string());
+                    }
+                    Err(_) => {}
+                },
+                Err(std::sync::TryLockError::Poisoned(_)) if first_error.is_none() => {
+                    first_error = Some("Pi process state is unavailable. Try again.".into());
+                }
+                Err(_) => {}
+            }
+        }
+        for runtime_id in exited {
+            manager.processes.remove(&runtime_id);
+        }
+        if manager.processes.is_empty() {
+            return first_error.map_or(Ok(()), Err);
+        }
+        if Instant::now() >= deadline {
+            return Err(
+                first_error.unwrap_or_else(|| "Pi did not stop in time. Try again.".to_string())
+            );
+        }
+        thread::sleep(PROCESS_POLL_INTERVAL);
+    }
 }
 
 fn stop_all_processes(processes: Vec<PiProcess>) {
@@ -1240,12 +1429,14 @@ mod tests {
         let handle = app.handle().clone();
         let state = handle.state::<PiState>();
         let telemetry = handle.state::<Telemetry>();
+        claim_for_test(&state, "owner-a");
 
         let generation = start_pi_with(
             handle.clone(),
             &state,
             &telemetry,
             None,
+            "owner-a".into(),
             "native-main".into(),
             fixture.project_string(),
             Some(fixture.session_string()),
@@ -1264,6 +1455,7 @@ mod tests {
         ] {
             send_pi_to_state(
                 &state,
+                "owner-a",
                 "native-main".into(),
                 json!({
                     "id": id,
@@ -1276,6 +1468,7 @@ mod tests {
 
         send_pi_to_state(
             &state,
+            "owner-a",
             "native-main".into(),
             json!({"id": "prompt", "type": "prompt", "message": "Explain the fixture"}),
         )
@@ -1284,6 +1477,7 @@ mod tests {
 
         send_pi_to_state(
             &state,
+            "owner-a",
             "native-main".into(),
             json!({"id": "run-state", "type": "get_state"}),
         )
@@ -1301,6 +1495,7 @@ mod tests {
         ] {
             send_pi_to_state(
                 &state,
+                "owner-a",
                 "native-main".into(),
                 json!({
                     "id": id,
@@ -1319,6 +1514,113 @@ mod tests {
     }
 
     #[test]
+    fn frontend_takeover_stops_stale_runtime_before_replacement_starts() {
+        let _lock = ENVIRONMENT_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let fixture = NativePiFixture::new(None);
+        let (app, events) = fixture.app_and_events();
+        let handle = app.handle().clone();
+        let state = handle.state::<PiState>();
+        let telemetry = handle.state::<Telemetry>();
+        claim_for_test(&state, "owner-a");
+
+        let first_generation = start_pi_with(
+            handle.clone(),
+            &state,
+            &telemetry,
+            None,
+            "owner-a".into(),
+            "runtime-a".into(),
+            fixture.project_string(),
+            Some(fixture.session_string()),
+        )
+        .expect("start first frontend runtime");
+        expect_outer_event(&events, "started", first_generation);
+        let old_child =
+            Arc::clone(&state.inner.lock().expect("Pi manager").processes["runtime-a"].child);
+
+        claim_pi_frontend_inner(&state.inner, "owner-b".into(), 1).expect("replace frontend owner");
+        assert!(old_child
+            .lock()
+            .expect("old child")
+            .try_wait()
+            .expect("old child status")
+            .is_some());
+        assert!(state.inner.lock().expect("Pi manager").processes.is_empty());
+
+        let second_generation = start_pi_with(
+            handle.clone(),
+            &state,
+            &telemetry,
+            None,
+            "owner-b".into(),
+            "runtime-b".into(),
+            fixture.project_string(),
+            Some(fixture.session_string()),
+        )
+        .expect("start replacement frontend runtime");
+        assert!(second_generation > first_generation);
+        expect_outer_event(&events, "started", second_generation);
+        assert!(send_pi_to_state(
+            &state,
+            "owner-a",
+            "runtime-b".into(),
+            json!({"id": "stale", "type": "get_state"}),
+        )
+        .expect_err("stale owner must be fenced")
+        .contains("no longer owns"));
+        assert!(state
+            .inner
+            .lock()
+            .expect("Pi manager")
+            .processes
+            .contains_key("runtime-b"));
+        state.shutdown();
+    }
+
+    #[test]
+    fn frontend_takeover_retries_kill_after_child_lock_contention() {
+        let state = PiState::default();
+        claim_pi_frontend_inner(&state.inner, "owner-a".into(), 0).expect("first claim");
+        let process = sleeping_process(1);
+        let child = Arc::clone(&process.child);
+        state
+            .inner
+            .lock()
+            .expect("Pi manager")
+            .processes
+            .insert("runtime-a".into(), process);
+        let (locked_sender, locked_receiver) = mpsc::channel();
+        let holder = thread::spawn(move || {
+            let _guard = child.lock().expect("child lock");
+            locked_sender.send(()).expect("report child lock");
+            thread::sleep(Duration::from_millis(50));
+        });
+        locked_receiver.recv().expect("wait for child lock");
+
+        claim_pi_frontend_inner(&state.inner, "owner-b".into(), 1)
+            .expect("takeover after child lock contention");
+
+        holder.join().expect("child lock holder");
+        assert!(state.inner.lock().expect("Pi manager").processes.is_empty());
+    }
+
+    #[test]
+    fn delayed_claim_cannot_roll_back_current_ownership() {
+        let state = PiState::default();
+        claim_pi_frontend_inner(&state.inner, "owner-a".into(), 0).expect("first claim");
+        claim_pi_frontend_inner(&state.inner, "owner-b".into(), 1).expect("second claim");
+
+        let error = claim_pi_frontend_inner(&state.inner, "owner-a".into(), 0)
+            .expect_err("old revision must be rejected");
+        assert!(error.contains("already owns"));
+        let manager = state.inner.lock().expect("Pi manager");
+        assert!(manager.require_owner("owner-b").is_ok());
+        assert!(manager.require_owner("owner-a").is_err());
+    }
+
+    #[test]
     fn fake_pi_malformed_stdout_is_dropped_and_lifecycle_is_cleaned_up() {
         let _lock = ENVIRONMENT_LOCK
             .lock()
@@ -1328,12 +1630,14 @@ mod tests {
         let handle = app.handle().clone();
         let state = handle.state::<PiState>();
         let telemetry = handle.state::<Telemetry>();
+        claim_for_test(&state, "owner-a");
 
         let generation = start_pi_with(
             handle.clone(),
             &state,
             &telemetry,
             None,
+            "owner-a".into(),
             "native-malformed".into(),
             fixture.project_string(),
             Some(fixture.session_string()),
@@ -1358,12 +1662,14 @@ mod tests {
         let handle = app.handle().clone();
         let state = handle.state::<PiState>();
         let telemetry = handle.state::<Telemetry>();
+        claim_for_test(&state, "owner-a");
 
         let generation = start_pi_with(
             handle.clone(),
             &state,
             &telemetry,
             None,
+            "owner-a".into(),
             "native-failure".into(),
             fixture.project_string(),
             Some(fixture.session_string()),
@@ -1457,6 +1763,10 @@ mod tests {
         fn session_string(&self) -> String {
             self.session.to_string_lossy().into_owned()
         }
+    }
+
+    fn claim_for_test(state: &PiState, owner_id: &str) {
+        claim_pi_frontend_inner(&state.inner, owner_id.into(), 0).expect("claim Pi owner");
     }
 
     fn expect_outer_event(
@@ -1682,6 +1992,7 @@ mod tests {
             .expect("sleep process");
         let stdin = child.stdin.take().expect("sleep stdin");
         PiProcess {
+            owner_id: "owner-a".into(),
             generation,
             child: Arc::new(Mutex::new(child)),
             writer: spawn_stdin_writer(stdin).expect("stdin writer"),

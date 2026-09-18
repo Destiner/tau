@@ -45,13 +45,22 @@
             </UiButton>
           </div>
         </template>
-        <p
+        <div
           v-if="state.workspaceStatus"
           class="first-run-error"
           role="alert"
         >
-          {{ state.workspaceStatus }}
-        </p>
+          <p>{{ state.workspaceStatus }}</p>
+          <UiButton
+            v-if="state.workspace === null"
+            variant="ghost"
+            size="md"
+            :disabled="state.initializing"
+            @click="initialize"
+          >
+            Try Again
+          </UiButton>
+        </div>
       </section>
     </main>
 

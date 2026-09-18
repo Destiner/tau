@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { PiBridgeEvent } from '../lib/pi/bridge';
+import { frontendOwnership } from '../lib/pi/ownership';
 
 import { nextRequestId } from './state';
 import type {
@@ -25,6 +26,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async (command: string) => {
+    if (command === 'read_pi_frontend_revision') return 0;
+    if (command === 'claim_pi_frontend') return undefined;
     if (command.startsWith('start_pi')) {
       mocks.generation += 1;
       return mocks.generation;
@@ -197,6 +200,12 @@ describe('session drafts and selection', () => {
 
     const { state, initialize, selectSession, sessionIndicator } = useTau();
     await initialize();
+    const startupCommands = vi
+      .mocked(invoke)
+      .mock.calls.map(([command]) => command);
+    expect(startupCommands.indexOf('claim_pi_frontend')).toBeLessThan(
+      startupCommands.indexOf('load_workspace'),
+    );
     state.activeProjectPath = '';
     state.activeSessionId = '';
     state.activeSessionPath = '';
@@ -220,6 +229,11 @@ describe('session drafts and selection', () => {
     const startCalls = vi
       .mocked(invoke)
       .mock.calls.filter(([command]) => command === 'start_pi');
+    expect(startupCommands.indexOf('claim_pi_frontend')).toBeLessThan(
+      vi
+        .mocked(invoke)
+        .mock.calls.findIndex(([command]) => command === 'start_pi'),
+    );
     expect(startCalls).toHaveLength(2);
     expect(startCalls[0]?.[1]).not.toEqual(startCalls[1]?.[1]);
     expect(
@@ -3653,6 +3667,36 @@ describe('session settings', () => {
 });
 
 describe('workspace failure copy', () => {
+  it('does not load a workspace when native ownership cannot be claimed', async () => {
+    const claim = vi
+      .spyOn(frontendOwnership, 'claim')
+      .mockRejectedValueOnce(new Error('RAW_OWNER_CANARY'));
+    const tau = useTau();
+    tau.state.workspace = null;
+    tau.state.workspaceStatus = '';
+    vi.mocked(invoke).mockClear();
+
+    try {
+      await tau.initialize();
+      expect(tau.state.workspaceStatus).toBe(
+        'Tau could not prepare Pi. Try again.',
+      );
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.some(([command]) => command === 'load_workspace'),
+      ).toBe(false);
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.some(([command]) => command.startsWith('start_pi')),
+      ).toBe(false);
+    } finally {
+      claim.mockRestore();
+      tau.dispose();
+    }
+  });
+
   it('does not expose a raw workspace rejection before a session exists', async () => {
     const defaultInvoke = vi.mocked(invoke).getMockImplementation();
     const canary =

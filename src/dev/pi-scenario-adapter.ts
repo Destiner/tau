@@ -354,6 +354,8 @@ function installPiScenarioAdapter(scenarioName: string): void {
   let workspace = scenarioWorkspace(scenarioName);
   const boundRuntimeIds = new Set<string>();
   const startCounts = new Map<string, number>();
+  let ownershipRevision = 0;
+  let activeOwner = '';
   let adapterFailure: Error | undefined;
 
   function count(command: string): number {
@@ -401,6 +403,21 @@ function installPiScenarioAdapter(scenarioName: string): void {
         throw new Error(`${command} arguments must be an object.`);
       }
       const args = rawArgs ?? {};
+      if (command === 'read_pi_frontend_revision') {
+        return ownershipRevision;
+      }
+      if (command === 'claim_pi_frontend') {
+        const ownerId = requiredString(args, 'ownerId', command);
+        if (activeOwner === ownerId) return null;
+        if (args.expectedRevision !== ownershipRevision) {
+          throw new Error('claim_pi_frontend received a stale revision.');
+        }
+        ownershipRevision += 1;
+        activeOwner = ownerId;
+        boundRuntimeIds.clear();
+        count(command);
+        return null;
+      }
       if (command === 'load_workspace') {
         count(command);
         return structuredClone(workspace);
@@ -422,6 +439,7 @@ function installPiScenarioAdapter(scenarioName: string): void {
         return null;
       }
       if (command === 'start_pi' || command === 'start_pi_remote') {
+        requireOwner(args, activeOwner, command);
         const value =
           command === 'start_pi' ? startPiArgs(args) : startPiRemoteArgs(args);
         count(command);
@@ -436,6 +454,7 @@ function installPiScenarioAdapter(scenarioName: string): void {
         return generation;
       }
       if (command === 'send_pi') {
+        requireOwner(args, activeOwner, command);
         const value = sendPiArgs(args);
         count(command);
         requireBoundRuntime(value.runtimeId, boundRuntimeIds, command);
@@ -444,6 +463,7 @@ function installPiScenarioAdapter(scenarioName: string): void {
         return null;
       }
       if (command === 'stop_pi') {
+        requireOwner(args, activeOwner, command);
         const runtimeId = requiredString(args, 'runtimeId', command);
         count(command);
         requireBoundRuntime(runtimeId, boundRuntimeIds, command);
@@ -1000,6 +1020,16 @@ function requiredString(
     throw new Error(`${command}.${field} must be a non-empty string.`);
   }
   return value;
+}
+
+function requireOwner(
+  args: Record<string, unknown>,
+  activeOwner: string,
+  command: string,
+): void {
+  if (!activeOwner || args.ownerId !== activeOwner) {
+    throw new Error(`${command} rejected a stale Pi frontend owner.`);
+  }
 }
 
 function requireEqual(actual: string, expected: string, label: string): void {

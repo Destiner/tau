@@ -56,6 +56,7 @@ import type { TraceContext } from '../telemetry/trace-context';
 import type { PiBridgeEvent } from './bridge';
 import { describePiError, retryPiErrorMessage } from './error';
 import type { ModelOption } from './model-scope';
+import { piOwnerArgs } from './ownership';
 import {
   asRecord,
   contentText,
@@ -222,6 +223,7 @@ async function startController(
       controller.generation = await invokeTraced<number>(
         'start_pi_remote',
         {
+          ...piOwnerArgs(),
           runtimeId: controller.runtimeId,
           connectionString: project.connectionString,
           workingDirectory: project.workingDirectory,
@@ -233,6 +235,7 @@ async function startController(
       controller.generation = await invokeTraced<number>(
         'start_pi',
         {
+          ...piOwnerArgs(),
           runtimeId: controller.runtimeId,
           projectPath: project.workingDirectory,
           sessionPath: sessionPath ?? null,
@@ -717,7 +720,11 @@ async function rpc(
     }
   }
   try {
-    await invoke('send_pi', { runtimeId: controller.runtimeId, request });
+    await invoke('send_pi', {
+      ...piOwnerArgs(),
+      runtimeId: controller.runtimeId,
+      request,
+    });
     fireAndForgetSpanEnd?.('success');
   } catch (error) {
     if (fireAndForgetSpanEnd) fireAndForgetSpanEnd('error');
@@ -3766,7 +3773,7 @@ async function stopControllerProcess(
   try {
     await invokeTraced(
       'stop_pi',
-      { runtimeId: controller.runtimeId },
+      { ...piOwnerArgs(), runtimeId: controller.runtimeId },
       parentContext,
     );
   } catch {

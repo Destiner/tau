@@ -331,6 +331,7 @@ type RemoteDirectoryChoice = 'back' | 'select' | 'forward';
 
 const state = reactive({
   workspace: null as WorkspaceSnapshot | null,
+  initializing: false,
   activeProjectPath: '',
   activeSessionId: '',
   activeSessionPath: '',
