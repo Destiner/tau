@@ -270,6 +270,64 @@ test('keeps duplicate remote activation attached to the original preview', async
   await expect(page.locator('.path-feedback')).toHaveCount(0);
 });
 
+test('keeps remote preview pending when virtualization unmounts its row', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const calls: string[] = [];
+    let resolvePreparation: ((value: unknown) => void) | undefined;
+    Object.assign(window, {
+      __TAU_PREVIEW_CALLS__: calls,
+      __TAU_RESOLVE_PREVIEW__: (value: unknown) => resolvePreparation?.(value),
+    });
+    window.__TAURI_INTERNALS__ = {
+      transformCallback: (callback: unknown): unknown => callback,
+      invoke: (command: string): Promise<unknown> => {
+        if (command === 'remote_preview_available')
+          return Promise.resolve(true);
+        if (command === 'prepare_remote_path') {
+          calls.push(command);
+          return new Promise((resolve) => {
+            resolvePreparation = resolve;
+          });
+        }
+        if (command === 'show_remote_preview') calls.push(command);
+        if (command === 'cancel_remote_path') calls.push(command);
+        return Promise.resolve(null);
+      },
+    };
+  });
+  await page.goto(`${fixtureUrl}&remote=true`);
+
+  const path = page
+    .locator('[data-message-id="fixture-remote-paths"]')
+    .getByRole('button', { name: 'Preview path src/remote.ts' });
+  await path.click();
+  await expect(page.locator('.path-feedback')).toHaveText('Preparing preview…');
+
+  await page.getByRole('region', { name: 'Transcript' }).evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await expect(path).toHaveCount(0);
+  await page.evaluate(() =>
+    (
+      window as Window & {
+        __TAU_RESOLVE_PREVIEW__?: (value: unknown) => void;
+      }
+    ).__TAU_RESOLVE_PREVIEW__?.({ kind: 'file', token: 'virtualized-token' }),
+  );
+
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as Window & { __TAU_PREVIEW_CALLS__?: string[] })
+            .__TAU_PREVIEW_CALLS__,
+      ),
+    )
+    .toEqual(['prepare_remote_path', 'show_remote_preview']);
+});
+
 test('wraps and clamps reviewed remote preview failure copy', async ({
   page,
 }) => {

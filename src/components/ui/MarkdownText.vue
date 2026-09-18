@@ -430,8 +430,10 @@ async function activateRemotePath(
   let revision: number | undefined;
   const requestId = crypto.randomUUID();
   const projectPath = props.remoteProjectPath;
+  // Preview ownership belongs to the transcript/document coordinator, not to
+  // this virtualized row. The async continuation may outlive its DOM anchor.
   const isCurrent = (): boolean =>
-    revision !== undefined && actionIsCurrent(revision);
+    revision !== undefined && revision === feedbackRevision;
   const cancel = (): void => {
     if (activeRemoteRequest === requestId) activeRemoteRequest = undefined;
     if (isCurrent()) {
@@ -608,7 +610,10 @@ onBeforeUnmount(() => {
   mounted = false;
   window.removeEventListener('resize', updateFeedbackPosition);
   document.removeEventListener('scroll', updateFeedbackPosition, true);
-  cancelPendingAction();
+  // Virtualization only detaches this row's feedback anchor. The transcript-
+  // scoped coordinator keeps an in-flight preview alive until its origin
+  // context changes or another target supersedes it.
+  clearCopied();
 });
 </script>
 

@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
-        atomic::{AtomicBool, AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     time::{Duration, Instant},
@@ -23,11 +23,13 @@ const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_PREAMBLE_BYTES: usize = 64 * 1024;
 const PREPARATION_TIMEOUT: Duration = Duration::from_secs(30);
 const TOKEN_LIFETIME: Duration = Duration::from_secs(60);
+const MAX_RETAINED_SNAPSHOTS: usize = 2;
 
 #[derive(Clone)]
 pub struct RemotePreviewState {
     inner: Arc<Mutex<PreviewManager>>,
     transfer_gate: Arc<Mutex<()>>,
+    snapshot_slots: Arc<SnapshotSlots>,
 }
 
 impl Default for RemotePreviewState {
@@ -35,6 +37,7 @@ impl Default for RemotePreviewState {
         Self {
             inner: Arc::new(Mutex::new(PreviewManager::default())),
             transfer_gate: Arc::new(Mutex::new(())),
+            snapshot_slots: Arc::new(SnapshotSlots::default()),
         }
     }
 }
@@ -75,13 +78,67 @@ struct Snapshot {
     created: Instant,
 }
 
-struct SnapshotDirectory(PathBuf);
+#[derive(Default)]
+struct SnapshotSlots {
+    retained: AtomicUsize,
+}
+
+impl SnapshotSlots {
+    fn acquire(
+        self: &Arc<Self>,
+        cancel: &AtomicBool,
+        started: Instant,
+        timeout: Duration,
+    ) -> Result<SnapshotSlot, String> {
+        loop {
+            if cancel.load(Ordering::Acquire) {
+                return Err("The remote file preview was superseded.".into());
+            }
+            if started.elapsed() >= timeout {
+                return Err("The remote file preview timed out.".into());
+            }
+            let retained = self.retained.load(Ordering::Acquire);
+            if retained < MAX_RETAINED_SNAPSHOTS
+                && self
+                    .retained
+                    .compare_exchange(retained, retained + 1, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+            {
+                return Ok(SnapshotSlot {
+                    slots: self.clone(),
+                });
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+struct SnapshotSlot {
+    slots: Arc<SnapshotSlots>,
+}
+
+impl Drop for SnapshotSlot {
+    fn drop(&mut self) {
+        self.slots.retained.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+struct SnapshotDirectory {
+    path: PathBuf,
+    _slot: SnapshotSlot,
+}
 
 impl SnapshotDirectory {
-    fn create() -> Result<Self, String> {
+    fn create(
+        slots: Arc<SnapshotSlots>,
+        cancel: &AtomicBool,
+        started: Instant,
+        timeout: Duration,
+    ) -> Result<Self, String> {
         #[cfg(unix)]
         use std::os::unix::fs::DirBuilderExt;
 
+        let slot = slots.acquire(cancel, started, timeout)?;
         for _ in 0..8 {
             let path =
                 std::env::temp_dir().join(format!("tau-preview-{}", Uuid::new_v4().simple()));
@@ -89,7 +146,7 @@ impl SnapshotDirectory {
             #[cfg(unix)]
             builder.mode(0o700);
             match builder.create(&path) {
-                Ok(()) => return Ok(Self(path)),
+                Ok(()) => return Ok(Self { path, _slot: slot }),
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
                 Err(_) => return Err(unavailable()),
             }
@@ -98,13 +155,13 @@ impl SnapshotDirectory {
     }
 
     fn path(&self) -> &Path {
-        &self.0
+        &self.path
     }
 }
 
 impl Drop for SnapshotDirectory {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        let _ = fs::remove_dir_all(&self.path);
     }
 }
 
@@ -160,6 +217,7 @@ pub async fn prepare_remote_path(
     })?;
     let transfer_state = previews.inner.clone();
     let transfer_gate = previews.transfer_gate.clone();
+    let snapshot_slots = previews.snapshot_slots.clone();
     let transfer_request = request_id.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let _gate = transfer_gate.lock().map_err(|_| unavailable())?;
@@ -177,6 +235,7 @@ pub async fn prepare_remote_path(
             owner_revision,
             transfer_request,
             cancel,
+            snapshot_slots,
         );
         let mut manager = transfer_state.lock().map_err(|_| unavailable())?;
         let current = manager.active.as_ref().is_some_and(|active| {
@@ -603,6 +662,7 @@ fn transfer_remote_path(
     owner_revision: u64,
     request_id: String,
     cancel: Arc<AtomicBool>,
+    snapshot_slots: Arc<SnapshotSlots>,
 ) -> Result<TransferResult, String> {
     let marker = format!("TAU_PREVIEW_{}", Uuid::new_v4().simple());
     let script = r#"p=$1
@@ -706,7 +766,14 @@ printf '\000%s\000END\000' "$3""#;
     {
         return Err("The remote filename is unsupported.".into());
     }
-    let directory = Arc::new(SnapshotDirectory::create()?);
+    // The slot is held by the snapshot directory itself, including clones
+    // retained by an in-flight main-thread presentation or queued cleanup.
+    let directory = Arc::new(SnapshotDirectory::create(
+        snapshot_slots,
+        &cancel,
+        started,
+        PREPARATION_TIMEOUT,
+    )?);
     let output_path = directory.path().join(basename);
     write_payload(&mut process.stdout, &output_path, size, started, &cancel)?;
     let expected_trailer = format!("\0{marker}\0END\0").into_bytes();
@@ -1041,7 +1108,15 @@ mod tests {
     use super::*;
 
     fn snapshot(token: &str, generation: u64) -> Snapshot {
-        let directory = Arc::new(SnapshotDirectory::create().unwrap());
+        let directory = Arc::new(
+            SnapshotDirectory::create(
+                Arc::new(SnapshotSlots::default()),
+                &AtomicBool::new(false),
+                Instant::now(),
+                PREPARATION_TIMEOUT,
+            )
+            .unwrap(),
+        );
         let path = directory.path().join("preview.txt");
         fs::write(&path, b"preview").unwrap();
         Snapshot {
@@ -1083,6 +1158,52 @@ mod tests {
         let retired = revoke_presentation(&state, "displayed").expect("displayed snapshot");
         assert_eq!(retired.token, "displayed");
         assert!(state.lock().unwrap().displayed.is_none());
+    }
+
+    #[test]
+    fn presentation_clone_holds_capacity_after_queued_state_is_invalidated() {
+        let slots = Arc::new(SnapshotSlots::default());
+        let cancel = Arc::new(AtomicBool::new(false));
+        let displayed = Arc::new(
+            SnapshotDirectory::create(
+                slots.clone(),
+                &cancel,
+                Instant::now(),
+                Duration::from_secs(1),
+            )
+            .unwrap(),
+        );
+        let queued = Arc::new(
+            SnapshotDirectory::create(
+                slots.clone(),
+                &cancel,
+                Instant::now(),
+                Duration::from_secs(1),
+            )
+            .unwrap(),
+        );
+        let presenting = queued.clone();
+        drop(queued); // queued manager state was invalidated
+
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let waiting_slots = slots.clone();
+        let waiting_cancel = cancel.clone();
+        let waiter = std::thread::spawn(move || {
+            let result =
+                waiting_slots.acquire(&waiting_cancel, Instant::now(), Duration::from_secs(1));
+            let _ = sender.send(result);
+        });
+        assert!(receiver.recv_timeout(Duration::from_millis(50)).is_err());
+
+        drop(presenting);
+        let replacement = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("replacement remained blocked")
+            .expect("replacement slot");
+        drop(replacement);
+        drop(displayed);
+        waiter.join().unwrap();
+        assert_eq!(slots.retained.load(Ordering::Acquire), 0);
     }
 
     #[test]
@@ -1195,6 +1316,7 @@ mod tests {
             0,
             format!("request-{generation}"),
             cancel,
+            Arc::new(SnapshotSlots::default()),
         )
     }
 
