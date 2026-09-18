@@ -20,6 +20,7 @@
     <Teleport to="body">
       <span
         v-if="pathFeedback"
+        ref="feedbackElement"
         class="path-feedback"
         :class="pathFeedback.kind"
         :style="pathFeedback.style"
@@ -45,7 +46,15 @@
 import { homeDir } from '@tauri-apps/api/path';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { openPath, openUrl } from '@tauri-apps/plugin-opener';
-import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import {
+  computed,
+  inject,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from 'vue';
 
 import {
   CODE_COPY_ATTRIBUTE,
@@ -114,6 +123,7 @@ interface PathFeedback {
   style: Record<string, string>;
 }
 const pathFeedback = ref<PathFeedback | null>(null);
+const feedbackElement = ref<HTMLElement | null>(null);
 
 /** Asked for once, and asked for again if it ever fails. */
 function homeDirectory(): Promise<string> {
@@ -248,11 +258,21 @@ function showPathFeedback(
   const rect = anchor.getBoundingClientRect();
   if (!anchor.isConnected) return;
   feedbackAnchor = anchor;
-  pathFeedback.value = {
+  const feedback: PathFeedback = {
     text,
     kind,
-    style: feedbackPosition(rect),
+    style: { left: '8px', top: '8px', visibility: 'hidden' },
   };
+  pathFeedback.value = feedback;
+  const renderedFeedback = pathFeedback.value;
+  void nextTick(() => {
+    if (pathFeedback.value !== renderedFeedback || !feedbackAnchor?.isConnected)
+      return;
+    pathFeedback.value.style = feedbackPosition(
+      rect,
+      feedbackElement.value?.getBoundingClientRect(),
+    );
+  });
   if (kind !== 'loading')
     copiedTimer = setTimeout(clearCopied, COPIED_FEEDBACK_MS);
 }
@@ -266,10 +286,16 @@ function clearCopied(): void {
   pathFeedback.value = null;
 }
 
-function feedbackPosition(rect: DOMRect): Record<string, string> {
+function feedbackPosition(
+  anchor: DOMRect,
+  surface?: DOMRect,
+): Record<string, string> {
+  const margin = 8;
+  const width = surface?.width ?? 240;
+  const height = surface?.height ?? 36;
   return {
-    left: `${Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - 180))}px`,
-    top: `${Math.min(Math.max(8, rect.bottom + 6), Math.max(8, window.innerHeight - 36))}px`,
+    left: `${Math.min(Math.max(margin, anchor.left), Math.max(margin, window.innerWidth - width - margin))}px`,
+    top: `${Math.min(Math.max(margin, anchor.bottom + 6), Math.max(margin, window.innerHeight - height - margin))}px`,
   };
 }
 
@@ -280,6 +306,7 @@ function updateFeedbackPosition(): void {
   }
   pathFeedback.value.style = feedbackPosition(
     feedbackAnchor.getBoundingClientRect(),
+    feedbackElement.value?.getBoundingClientRect(),
   );
 }
 
@@ -400,12 +427,14 @@ async function activateRemotePath(
     await copyPath(path, anchor);
     return;
   }
-  const revision = ++feedbackRevision;
+  let revision: number | undefined;
   const requestId = crypto.randomUUID();
   const projectPath = props.remoteProjectPath;
+  const isCurrent = (): boolean =>
+    revision !== undefined && actionIsCurrent(revision);
   const cancel = (): void => {
     if (activeRemoteRequest === requestId) activeRemoteRequest = undefined;
-    if (revision === feedbackRevision) {
+    if (isCurrent()) {
       feedbackRevision += 1;
       clearCopied();
     }
@@ -423,17 +452,18 @@ async function activateRemotePath(
     ) === 'duplicate'
   )
     return;
+  revision = ++feedbackRevision;
   activeRemoteRequest = requestId;
   previewAvailable ??= invokeTraced<boolean>('remote_preview_available');
   let loading: ReturnType<typeof setTimeout> | undefined;
   try {
     if (!(await previewAvailable)) {
-      if (actionIsCurrent(revision)) await copyPath(path, anchor);
+      if (isCurrent()) await copyPath(path, anchor);
       return;
     }
-    if (!actionIsCurrent(revision)) return;
+    if (!isCurrent()) return;
     loading = setTimeout(() => {
-      if (actionIsCurrent(revision))
+      if (isCurrent())
         showPathFeedback(anchor, 'Preparing preview…', 'loading');
     }, 200);
     const prepared = await invokeTraced<
@@ -445,7 +475,7 @@ async function activateRemotePath(
       path,
     });
     clearTimeout(loading);
-    if (!actionIsCurrent(revision)) return;
+    if (!isCurrent()) return;
     if (prepared.kind === 'directory') {
       await copyPath(path, anchor);
       return;
@@ -455,10 +485,10 @@ async function activateRemotePath(
       requestId,
       token: prepared.token,
     });
-    if (actionIsCurrent(revision)) clearCopied();
+    if (isCurrent()) clearCopied();
   } catch (error) {
     clearTimeout(loading);
-    if (actionIsCurrent(revision)) {
+    if (isCurrent()) {
       const kind = remotePreviewErrorKind(error);
       if (kind !== 'superseded')
         showPathFeedback(anchor, remotePreviewErrorCopy(kind), 'error');
@@ -498,7 +528,16 @@ async function activate(event: Event): Promise<void> {
   // malformed or unsupported destinations.
   event.preventDefault();
   const path = filePath(link);
-  if (!path || !isPathOpenGesture(event, window.navigator.platform)) return;
+  const remoteButtonSpace =
+    event instanceof KeyboardEvent &&
+    event.key === ' ' &&
+    props.copyPaths &&
+    link.hasAttribute(FILE_PATH_ATTRIBUTE);
+  if (
+    !path ||
+    (!remoteButtonSpace && !isPathOpenGesture(event, window.navigator.platform))
+  )
+    return;
   if (
     event instanceof MouseEvent &&
     (pointerActivation?.moved ||
@@ -521,6 +560,7 @@ function handleKeydown(event: KeyboardEvent): void {
     props.copyPaths &&
     event.key === ' ' &&
     linkAt(event.target)?.hasAttribute(FILE_PATH_ATTRIBUTE);
+  if (remotePathButton) event.preventDefault();
   if (event.key === 'Enter' || remotePathButton) void activate(event);
 }
 
@@ -1072,7 +1112,8 @@ onBeforeUnmount(() => {
 .path-feedback {
   position: fixed;
   z-index: 1000;
-  max-width: 240px;
+  box-sizing: border-box;
+  max-width: min(240px, calc(100vw - 16px));
   padding: 5px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -1081,7 +1122,8 @@ onBeforeUnmount(() => {
   color: var(--text);
   font-size: var(--text-xs);
   line-height: 1.3;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
   pointer-events: none;
 }
 

@@ -181,7 +181,8 @@ test('previews remote files and keeps explicit copy actions', async ({
     .toBe(true);
   await path.click({ button: 'right' });
   await page.getByRole('menuitem', { name: 'Copy Full Path' }).click();
-  await path.click();
+  await path.focus();
+  await path.press('Space');
 
   await expect
     .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
@@ -209,7 +210,69 @@ test('previews remote files and keeps explicit copy actions', async ({
     ]);
 });
 
-test('shows reviewed remote preview failure copy', async ({ page }) => {
+test('keeps duplicate remote activation attached to the original preview', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const calls: string[] = [];
+    let resolvePreparation: ((value: unknown) => void) | undefined;
+    Object.assign(window, {
+      __TAU_PREVIEW_CALLS__: calls,
+      __TAU_RESOLVE_PREVIEW__: (value: unknown) => resolvePreparation?.(value),
+    });
+    window.__TAURI_INTERNALS__ = {
+      transformCallback: (callback: unknown): unknown => callback,
+      invoke: (command: string): Promise<unknown> => {
+        if (command === 'remote_preview_available')
+          return Promise.resolve(true);
+        if (command === 'prepare_remote_path') {
+          calls.push(command);
+          return new Promise((resolve) => {
+            resolvePreparation = resolve;
+          });
+        }
+        if (command === 'show_remote_preview') calls.push(command);
+        return Promise.resolve(null);
+      },
+    };
+  });
+  await page.goto(`${fixtureUrl}&remote=true`);
+
+  const path = page
+    .locator('[data-message-id="fixture-remote-paths"]')
+    .getByRole('button', { name: 'Preview path src/remote.ts' });
+  await path.click();
+  await expect(page.locator('.path-feedback')).toHaveText('Preparing preview…');
+  await path.click();
+  expect(
+    await page.evaluate(
+      () =>
+        (window as Window & { __TAU_PREVIEW_CALLS__?: string[] })
+          .__TAU_PREVIEW_CALLS__,
+    ),
+  ).toEqual(['prepare_remote_path']);
+  await page.evaluate(() =>
+    (
+      window as Window & {
+        __TAU_RESOLVE_PREVIEW__?: (value: unknown) => void;
+      }
+    ).__TAU_RESOLVE_PREVIEW__?.({ kind: 'file', token: 'original-token' }),
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as Window & { __TAU_PREVIEW_CALLS__?: string[] })
+            .__TAU_PREVIEW_CALLS__,
+      ),
+    )
+    .toEqual(['prepare_remote_path', 'show_remote_preview']);
+  await expect(page.locator('.path-feedback')).toHaveCount(0);
+});
+
+test('wraps and clamps reviewed remote preview failure copy', async ({
+  page,
+}) => {
   await page.addInitScript(() => {
     window.__TAURI_INTERNALS__ = {
       transformCallback: (callback: unknown): unknown => callback,
@@ -217,20 +280,49 @@ test('shows reviewed remote preview failure copy', async ({ page }) => {
         if (command === 'remote_preview_available')
           return Promise.resolve(true);
         if (command === 'prepare_remote_path')
-          return Promise.reject({ kind: 'too_large' });
+          return Promise.reject({ kind: 'not_found_or_unreadable' });
         return Promise.resolve(null);
       },
     };
   });
   await page.goto(`${fixtureUrl}&remote=true`);
 
-  await page
+  const path = page
     .locator('[data-message-id="fixture-remote-paths"]')
-    .getByRole('button', { name: 'Preview path src/remote.ts' })
-    .click();
-  await expect(page.locator('.path-feedback[role="status"]')).toHaveText(
-    'File is too large to preview (64 MiB maximum).',
+    .getByRole('button', { name: 'Preview path src/remote.ts' });
+  await path.evaluate((element) => {
+    Object.assign((element as HTMLElement).style, {
+      position: 'fixed',
+      right: '0',
+      bottom: '0',
+      zIndex: '1000',
+    });
+  });
+  await path.click();
+  const feedback = page.locator('.path-feedback[role="status"]');
+  await expect(feedback).toHaveText(
+    'File could not be read. Check that it exists and you have access.',
   );
+  await expect
+    .poll(async () => {
+      const box = await feedback.boundingBox();
+      const viewport = page.viewportSize();
+      return feedback.evaluate(
+        (element, bounds) =>
+          Boolean(
+            bounds.box &&
+            bounds.viewport &&
+            bounds.box.x >= 8 &&
+            bounds.box.y >= 8 &&
+            bounds.box.x + bounds.box.width <= bounds.viewport.width - 8 &&
+            bounds.box.y + bounds.box.height <= bounds.viewport.height - 8 &&
+            element.scrollWidth <= element.clientWidth &&
+            element.scrollHeight <= element.clientHeight,
+          ),
+        { box, viewport },
+      );
+    })
+    .toBe(true);
 });
 
 test('decodes explicit file destinations and keeps invalid ones inert', async ({
@@ -989,7 +1081,8 @@ test('leaves remote paths in fenced transcript markdown as code', async ({
     '/home/agent/.pi/workflows/implement/RHI-6092/implementation-plan.md',
   );
 
-  await workspace.click();
+  await workspace.focus();
+  await workspace.press('Space');
   await expect
     .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
     .toEqual(['/home/agent/rhinestone/workspace']);

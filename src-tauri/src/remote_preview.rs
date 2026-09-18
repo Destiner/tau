@@ -7,11 +7,11 @@ use crate::{
 use serde::Serialize;
 use std::{
     fs::{self, OpenOptions},
-    io::{Read, Write},
+    io::{ErrorKind, Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
         Arc, Mutex,
     },
     time::{Duration, Instant},
@@ -54,7 +54,7 @@ struct ActiveTransfer {
     owner: String,
     request_id: String,
     cancel: Arc<AtomicBool>,
-    process_id: Option<u32>,
+    process_id: Arc<AtomicU32>,
 }
 
 struct QueuedSnapshot {
@@ -62,10 +62,11 @@ struct QueuedSnapshot {
     permit: Arc<AtomicBool>,
 }
 
+#[derive(Clone)]
 struct Snapshot {
     token: String,
     path: PathBuf,
-    _directory: SnapshotDirectory,
+    _directory: Arc<SnapshotDirectory>,
     generation: u64,
     window: String,
     owner: String,
@@ -153,7 +154,7 @@ pub async fn prepare_remote_path(
             owner: owner_id.clone(),
             request_id: request_id.clone(),
             cancel: cancel.clone(),
-            process_id: None,
+            process_id: Arc::new(AtomicU32::new(0)),
         });
         Ok((generation, owner_revision))
     })?;
@@ -176,17 +177,23 @@ pub async fn prepare_remote_path(
             owner_revision,
             transfer_request,
             cancel,
-        )?;
+        );
         let mut manager = transfer_state.lock().map_err(|_| unavailable())?;
         let current = manager.active.as_ref().is_some_and(|active| {
             active.generation == generation && !active.cancel.load(Ordering::Acquire)
         }) && manager.generation == generation
             && manager.owner_revision == owner_revision;
+        if manager
+            .active
+            .as_ref()
+            .is_some_and(|active| active.generation == generation)
+        {
+            manager.active.take();
+        }
         if !current {
             return Err("The remote file preview was superseded.".into());
         }
-        manager.active.take();
-        match transfer_result {
+        match transfer_result? {
             TransferResult::Directory => Ok(PreparedRemotePath::Directory),
             TransferResult::File(snapshot) => {
                 let token = snapshot.token.clone();
@@ -245,40 +252,58 @@ pub async fn show_remote_preview(
         let queued_request = request_id.clone();
         let closure_permit = permit.clone();
         let (sender, receiver) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
-        window
+        if window
             .run_on_main_thread(move || {
-                if !closure_permit.load(Ordering::Acquire) {
-                    let _ = sender.send(Err("The remote file preview was superseded.".into()));
-                    return;
-                }
-                let result = (|| {
-                    let mut manager = state.lock().map_err(|_| unavailable())?;
-                    let queued = manager.queued.as_ref().filter(|queued| {
-                        queued.snapshot.token == queued_token
-                            && queued.snapshot.request_id == queued_request
-                            && queued.permit.load(Ordering::Acquire)
-                            && queued.snapshot.generation == manager.generation
-                            && queued.snapshot.owner_revision == manager.owner_revision
-                    });
-                    let queued = queued.ok_or_else(|| {
-                        "The remote file preview is no longer available.".to_string()
-                    })?;
-                    macos::show(&queued.snapshot.token, &queued.snapshot.path)?;
-                    let displayed = manager.queued.take().expect("validated queued snapshot");
-                    manager.displayed = Some(displayed.snapshot);
-                    Ok(())
+                let snapshot = (|| {
+                    let manager = state.lock().map_err(|_| unavailable())?;
+                    manager
+                        .queued
+                        .as_ref()
+                        .filter(|queued| {
+                            queued.snapshot.token == queued_token
+                                && queued.snapshot.request_id == queued_request
+                                && Arc::ptr_eq(&queued.permit, &closure_permit)
+                                && queued.permit.load(Ordering::Acquire)
+                                && queued.snapshot.generation == manager.generation
+                                && queued.snapshot.owner_revision == manager.owner_revision
+                        })
+                        .map(|queued| queued.snapshot.clone())
+                        .ok_or_else(|| {
+                            "The remote file preview is no longer available.".to_string()
+                        })
                 })();
+                let result = snapshot.and_then(|snapshot| {
+                    if let Err(error) = macos::show(&snapshot.token, &snapshot.path) {
+                        macos::close_if(&snapshot.token);
+                        return Err(error);
+                    }
+                    if commit_presented_snapshot(&state, &snapshot.token, &closure_permit).is_err()
+                    {
+                        macos::close_if(&snapshot.token);
+                        return Err("The remote file preview was superseded.".into());
+                    }
+                    Ok(())
+                });
                 let _ = sender.send(result);
             })
-            .map_err(|_| "Quick Look could not be opened.".to_string())?;
+            .is_err()
+        {
+            permit.store(false, Ordering::Release);
+            revoke_and_close_presentation(&window, &previews.inner, &token);
+            return Err("Quick Look could not be opened.".into());
+        }
         match receiver.recv_timeout(Duration::from_secs(5)) {
-            Ok(result) => {
-                result?;
+            Ok(Ok(())) => {
                 monitor_displayed_snapshot(previews.inner.clone(), window.clone(), token.clone());
+            }
+            Ok(Err(error)) => {
+                permit.store(false, Ordering::Release);
+                revoke_and_close_presentation(&window, &previews.inner, &token);
+                return Err(error);
             }
             Err(_) => {
                 permit.store(false, Ordering::Release);
-                remove_queued(&previews.inner, &request_id);
+                revoke_and_close_presentation(&window, &previews.inner, &token);
                 return Err("Quick Look did not respond.".into());
             }
         }
@@ -286,7 +311,7 @@ pub async fn show_remote_preview(
     #[cfg(not(target_os = "macos"))]
     {
         permit.store(false, Ordering::Release);
-        remove_queued(&previews.inner, &request_id);
+        revoke_presentation(&previews.inner, &token);
         return Err("Quick Look is only available on macOS.".into());
     }
 
@@ -471,15 +496,59 @@ fn monitor_displayed_snapshot(
     });
 }
 
-fn remove_queued(state: &Arc<Mutex<PreviewManager>>, request_id: &str) {
-    if let Ok(mut manager) = state.lock() {
-        if manager
-            .queued
-            .as_ref()
-            .is_some_and(|queued| queued.snapshot.request_id == request_id)
-        {
-            invalidate_queued(&mut manager);
-        }
+#[cfg(target_os = "macos")]
+fn revoke_and_close_presentation(
+    window: &WebviewWindow,
+    state: &Arc<Mutex<PreviewManager>>,
+    token: &str,
+) {
+    if let Some(snapshot) = revoke_presentation(state, token) {
+        let displayed_token = snapshot.token.clone();
+        let _ = window.run_on_main_thread(move || {
+            macos::close_if(&displayed_token);
+            drop(snapshot);
+        });
+    }
+}
+
+fn commit_presented_snapshot(
+    state: &Arc<Mutex<PreviewManager>>,
+    token: &str,
+    permit: &Arc<AtomicBool>,
+) -> Result<(), String> {
+    let mut manager = state.lock().map_err(|_| unavailable())?;
+    let current = manager.queued.as_ref().is_some_and(|queued| {
+        queued.snapshot.token == token
+            && Arc::ptr_eq(&queued.permit, permit)
+            && queued.permit.load(Ordering::Acquire)
+            && queued.snapshot.generation == manager.generation
+            && queued.snapshot.owner_revision == manager.owner_revision
+    });
+    if !current {
+        return Err("The remote file preview was superseded.".into());
+    }
+    let displayed = manager.queued.take().expect("validated queued snapshot");
+    manager.displayed = Some(displayed.snapshot);
+    Ok(())
+}
+
+fn revoke_presentation(state: &Arc<Mutex<PreviewManager>>, token: &str) -> Option<Snapshot> {
+    let mut manager = state.lock().ok()?;
+    if manager
+        .queued
+        .as_ref()
+        .is_some_and(|queued| queued.snapshot.token == token)
+    {
+        invalidate_queued(&mut manager);
+    }
+    if manager
+        .displayed
+        .as_ref()
+        .is_some_and(|snapshot| snapshot.token == token)
+    {
+        manager.displayed.take()
+    } else {
+        None
     }
 }
 
@@ -492,7 +561,8 @@ fn invalidate_queued(manager: &mut PreviewManager) {
 fn stop_active_transfer(manager: &mut PreviewManager) {
     if let Some(active) = manager.active.take() {
         active.cancel.store(true, Ordering::Release);
-        if let Some(process_id) = active.process_id {
+        let process_id = active.process_id.swap(0, Ordering::AcqRel);
+        if process_id != 0 {
             kill_process_group(process_id);
         }
     }
@@ -561,9 +631,14 @@ printf '\000%s\000END\000' "$3""#;
         .stderr(Stdio::null())
         .spawn()
         .map_err(|_| "The SSH transfer could not be started.".to_string())?;
-    let stdout = child.stdout.take().ok_or_else(unavailable)?;
     let process_id = child.id();
-    {
+    let stdout = child.stdout.take().ok_or_else(unavailable)?;
+    if let Err(error) = set_nonblocking(&stdout) {
+        kill_process_group(process_id);
+        let _ = child.wait();
+        return Err(error);
+    }
+    let process_registration = {
         let mut manager = coordinator.lock().map_err(|_| unavailable())?;
         let owner_is_current = manager.owner_revision == owner_revision;
         let active = manager.active.as_mut().filter(|active| {
@@ -578,8 +653,9 @@ printf '\000%s\000END\000' "$3""#;
             let _ = child.wait();
             return Err("The remote file preview was superseded.".into());
         };
-        active.process_id = Some(process_id);
-    }
+        active.process_id.store(process_id, Ordering::Release);
+        active.process_id.clone()
+    };
     let started = Instant::now();
     let finished = Arc::new(AtomicBool::new(false));
     start_watchdog(process_id, cancel.clone(), finished.clone(), started);
@@ -587,14 +663,15 @@ printf '\000%s\000END\000' "$3""#;
         child,
         stdout,
         process_id,
+        process_registration,
         finished,
         retired: false,
     };
 
     let prefix = format!("\0{marker}\0").into_bytes();
-    find_prefix(&mut process.stdout, &prefix, started)?;
+    find_prefix(&mut process.stdout, &prefix, started, &cancel)?;
     check_transfer(&cancel, started)?;
-    let kind = read_field(&mut process.stdout, 16, started)?;
+    let kind = read_field(&mut process.stdout, 16, started, &cancel)?;
     if kind == b"D" {
         let status = process.wait(&cancel, started)?;
         return if status.success() {
@@ -604,14 +681,14 @@ printf '\000%s\000END\000' "$3""#;
         };
     }
     if kind == b"E" {
-        let _category = read_field(&mut process.stdout, 32, started)?;
+        let _category = read_field(&mut process.stdout, 32, started, &cancel)?;
         let _ = process.wait(&cancel, started)?;
         return Err("The remote file could not be read.".into());
     }
     if kind != b"F" {
         return Err("The remote file response was invalid.".into());
     }
-    let size_text = read_field(&mut process.stdout, 32, started)?;
+    let size_text = read_field(&mut process.stdout, 32, started, &cancel)?;
     let size = std::str::from_utf8(&size_text)
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
@@ -619,7 +696,7 @@ printf '\000%s\000END\000' "$3""#;
     if size > MAX_FILE_BYTES {
         return Err("The remote file is larger than 64 MiB.".into());
     }
-    let basename = String::from_utf8(read_field(&mut process.stdout, 1024, started)?)
+    let basename = String::from_utf8(read_field(&mut process.stdout, 1024, started, &cancel)?)
         .map_err(|_| "The remote filename is unsupported.".to_string())?;
     if basename.is_empty()
         || basename == "."
@@ -629,12 +706,12 @@ printf '\000%s\000END\000' "$3""#;
     {
         return Err("The remote filename is unsupported.".into());
     }
-    let directory = SnapshotDirectory::create()?;
+    let directory = Arc::new(SnapshotDirectory::create()?);
     let output_path = directory.path().join(basename);
-    write_payload(&mut process.stdout, &output_path, size, started)?;
+    write_payload(&mut process.stdout, &output_path, size, started, &cancel)?;
     let expected_trailer = format!("\0{marker}\0END\0").into_bytes();
     let mut trailer = vec![0; expected_trailer.len()];
-    read_exact_deadline(&mut process.stdout, &mut trailer, started)?;
+    read_exact_deadline(&mut process.stdout, &mut trailer, started, &cancel)?;
     if trailer != expected_trailer {
         return Err("The remote file transfer was incomplete.".into());
     }
@@ -660,6 +737,7 @@ struct TransferProcess {
     child: Child,
     stdout: std::process::ChildStdout,
     process_id: u32,
+    process_registration: Arc<AtomicU32>,
     finished: Arc<AtomicBool>,
     retired: bool,
 }
@@ -675,6 +753,7 @@ impl TransferProcess {
                 // The group leader may exit while proxy/wrapper descendants
                 // still own pipes or credentials. Retire the whole group on
                 // successful and failed terminal paths alike.
+                self.process_registration.store(0, Ordering::Release);
                 kill_process_group(self.process_id);
                 self.retired = true;
                 self.finished.store(true, Ordering::Release);
@@ -689,6 +768,7 @@ impl TransferProcess {
 impl Drop for TransferProcess {
     fn drop(&mut self) {
         if !self.retired {
+            self.process_registration.store(0, Ordering::Release);
             kill_process_group(self.process_id);
             let _ = self.child.wait();
             self.retired = true;
@@ -736,6 +816,25 @@ fn kill_process_group(process_id: u32) {
 #[cfg(not(unix))]
 fn kill_process_group(_process_id: u32) {}
 
+#[cfg(unix)]
+fn set_nonblocking(stdout: &std::process::ChildStdout) -> Result<(), String> {
+    use std::os::fd::AsRawFd;
+
+    let descriptor = stdout.as_raw_fd();
+    // SAFETY: fcntl only reads or updates flags for this live pipe descriptor.
+    let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFL) };
+    if flags < 0 || unsafe { libc::fcntl(descriptor, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
+    {
+        return Err(unavailable());
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_nonblocking(_stdout: &std::process::ChildStdout) -> Result<(), String> {
+    Ok(())
+}
+
 fn check_transfer(cancel: &AtomicBool, started: Instant) -> Result<(), String> {
     if cancel.load(Ordering::Acquire) {
         return Err("The remote file preview was superseded.".into());
@@ -746,11 +845,16 @@ fn check_transfer(cancel: &AtomicBool, started: Instant) -> Result<(), String> {
     Ok(())
 }
 
-fn find_prefix(reader: &mut impl Read, prefix: &[u8], started: Instant) -> Result<(), String> {
+fn find_prefix(
+    reader: &mut impl Read,
+    prefix: &[u8],
+    started: Instant,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
     let mut matched = 0;
     for _ in 0..MAX_PREAMBLE_BYTES {
         let mut byte = [0];
-        read_exact_deadline(reader, &mut byte, started)?;
+        read_exact_deadline(reader, &mut byte, started, cancel)?;
         matched = if byte[0] == prefix[matched] {
             matched + 1
         } else if byte[0] == prefix[0] {
@@ -765,11 +869,16 @@ fn find_prefix(reader: &mut impl Read, prefix: &[u8], started: Instant) -> Resul
     Err("The SSH response did not contain a preview.".into())
 }
 
-fn read_field(reader: &mut impl Read, max: usize, started: Instant) -> Result<Vec<u8>, String> {
+fn read_field(
+    reader: &mut impl Read,
+    max: usize,
+    started: Instant,
+    cancel: &AtomicBool,
+) -> Result<Vec<u8>, String> {
     let mut value = Vec::new();
     while value.len() <= max {
         let mut byte = [0];
-        read_exact_deadline(reader, &mut byte, started)?;
+        read_exact_deadline(reader, &mut byte, started, cancel)?;
         if byte[0] == 0 {
             return Ok(value);
         }
@@ -782,13 +891,23 @@ fn read_exact_deadline(
     reader: &mut impl Read,
     output: &mut [u8],
     started: Instant,
+    cancel: &AtomicBool,
 ) -> Result<(), String> {
-    if started.elapsed() >= PREPARATION_TIMEOUT {
-        return Err("The remote file preview timed out.".into());
+    let mut offset = 0;
+    while offset < output.len() {
+        check_transfer(cancel, started)?;
+        match reader.read(&mut output[offset..]) {
+            Ok(0) => return Err("The remote file transfer was incomplete.".into()),
+            Ok(count) => offset += count,
+            Err(error)
+                if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::Interrupted) =>
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(_) => return Err("The remote file transfer was incomplete.".into()),
+        }
     }
-    reader
-        .read_exact(output)
-        .map_err(|_| "The remote file transfer was incomplete.".into())
+    Ok(())
 }
 
 fn write_payload(
@@ -796,6 +915,7 @@ fn write_payload(
     path: &Path,
     size: u64,
     started: Instant,
+    cancel: &AtomicBool,
 ) -> Result<(), String> {
     #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;
@@ -808,7 +928,7 @@ fn write_payload(
     let mut buffer = [0_u8; 64 * 1024];
     while remaining > 0 {
         let count = usize::try_from(remaining.min(buffer.len() as u64)).unwrap_or(buffer.len());
-        read_exact_deadline(reader, &mut buffer[..count], started)?;
+        read_exact_deadline(reader, &mut buffer[..count], started, cancel)?;
         file.write_all(&buffer[..count])
             .map_err(|_| unavailable())?;
         remaining -= count as u64;
@@ -920,6 +1040,88 @@ mod macos {
 mod tests {
     use super::*;
 
+    fn snapshot(token: &str, generation: u64) -> Snapshot {
+        let directory = Arc::new(SnapshotDirectory::create().unwrap());
+        let path = directory.path().join("preview.txt");
+        fs::write(&path, b"preview").unwrap();
+        Snapshot {
+            token: token.into(),
+            path,
+            _directory: directory,
+            generation,
+            window: "main".into(),
+            owner: "owner".into(),
+            owner_revision: 1,
+            request_id: format!("request-{token}"),
+            created: Instant::now(),
+        }
+    }
+
+    #[test]
+    fn presentation_revocation_cleans_queued_and_just_displayed_tokens() {
+        let queued_permit = Arc::new(AtomicBool::new(true));
+        let state = Arc::new(Mutex::new(PreviewManager {
+            generation: 1,
+            owner_revision: 1,
+            queued: Some(QueuedSnapshot {
+                snapshot: snapshot("queued", 1),
+                permit: queued_permit.clone(),
+            }),
+            ..Default::default()
+        }));
+        queued_permit.store(false, Ordering::Release);
+        assert!(revoke_presentation(&state, "queued").is_none());
+        assert!(state.lock().unwrap().queued.is_none());
+
+        let displayed_permit = Arc::new(AtomicBool::new(true));
+        state.lock().unwrap().queued = Some(QueuedSnapshot {
+            snapshot: snapshot("displayed", 1),
+            permit: displayed_permit.clone(),
+        });
+        commit_presented_snapshot(&state, "displayed", &displayed_permit).unwrap();
+        displayed_permit.store(false, Ordering::Release);
+        let retired = revoke_presentation(&state, "displayed").expect("displayed snapshot");
+        assert_eq!(retired.token, "displayed");
+        assert!(state.lock().unwrap().displayed.is_none());
+    }
+
+    #[test]
+    fn presentation_finishing_after_revocation_is_rejected() {
+        use std::sync::Barrier;
+
+        let permit = Arc::new(AtomicBool::new(true));
+        let state = Arc::new(Mutex::new(PreviewManager {
+            generation: 1,
+            owner_revision: 1,
+            queued: Some(QueuedSnapshot {
+                snapshot: snapshot("late", 1),
+                permit: permit.clone(),
+            }),
+            ..Default::default()
+        }));
+        let entered = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let worker_state = state.clone();
+        let worker_permit = permit.clone();
+        let worker_entered = entered.clone();
+        let worker_release = release.clone();
+        let completion = std::thread::spawn(move || {
+            worker_entered.wait();
+            worker_release.wait();
+            commit_presented_snapshot(&worker_state, "late", &worker_permit)
+        });
+
+        entered.wait();
+        permit.store(false, Ordering::Release);
+        assert!(revoke_presentation(&state, "late").is_none());
+        release.wait();
+
+        assert!(completion.join().unwrap().is_err());
+        let manager = state.lock().unwrap();
+        assert!(manager.queued.is_none());
+        assert!(manager.displayed.is_none());
+    }
+
     #[test]
     fn rejects_control_characters_and_empty_paths() {
         assert!(validate_path("").is_err());
@@ -930,8 +1132,12 @@ mod tests {
     #[test]
     fn finds_marker_after_a_banner_without_consuming_payload() {
         let mut input = &b"banner\r\n\0TOKEN\0F\0"[..];
-        find_prefix(&mut input, b"\0TOKEN\0", Instant::now()).expect("marker");
-        assert_eq!(read_field(&mut input, 16, Instant::now()).unwrap(), b"F");
+        let cancel = AtomicBool::new(false);
+        find_prefix(&mut input, b"\0TOKEN\0", Instant::now(), &cancel).expect("marker");
+        assert_eq!(
+            read_field(&mut input, 16, Instant::now(), &cancel).unwrap(),
+            b"F"
+        );
     }
 
     #[test]
@@ -939,7 +1145,14 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("binary");
         let bytes = b"\0TOKEN\0END\0\xff";
-        write_payload(&mut &bytes[..], &path, bytes.len() as u64, Instant::now()).unwrap();
+        write_payload(
+            &mut &bytes[..],
+            &path,
+            bytes.len() as u64,
+            Instant::now(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
         assert_eq!(fs::read(path).unwrap(), bytes);
     }
 
@@ -969,7 +1182,7 @@ mod tests {
             owner: "owner".into(),
             request_id: format!("request-{generation}"),
             cancel: cancel.clone(),
-            process_id: None,
+            process_id: Arc::new(AtomicU32::new(0)),
         });
         transfer_remote_path(
             coordinator,
@@ -1051,6 +1264,70 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn failed_transfer_clears_the_retired_process_registration() {
+        let (_ssh_dir, connection) =
+            fake_ssh("#!/bin/sh\nfor last do :; done\nexec /bin/sh -c \"$last\"\n");
+        let coordinator = Arc::new(Mutex::new(PreviewManager {
+            generation: 1,
+            ..Default::default()
+        }));
+
+        let result = transfer(&coordinator, &connection, "/tmp", "tau-missing-preview", 1);
+
+        assert_eq!(
+            result.err().as_deref(),
+            Some("The remote file could not be read.")
+        );
+        let manager = coordinator.lock().unwrap();
+        assert_eq!(
+            manager
+                .active
+                .as_ref()
+                .unwrap()
+                .process_id
+                .load(Ordering::Acquire),
+            0
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deadline_interrupts_a_child_pipe_held_by_a_helper() {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "sleep 60 & printf x"]);
+        configure_process_group(&mut command);
+        let mut child = command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let process_id = child.id();
+        let mut reader = child.stdout.take().unwrap();
+        set_nonblocking(&reader).unwrap();
+        read_exact_deadline(
+            &mut reader,
+            &mut [0],
+            Instant::now(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let started = Instant::now()
+            .checked_sub(PREPARATION_TIMEOUT - Duration::from_millis(50))
+            .unwrap();
+        let began = Instant::now();
+
+        let error = read_exact_deadline(&mut reader, &mut [0], started, &AtomicBool::new(false))
+            .unwrap_err();
+
+        kill_process_group(process_id);
+        let _ = child.wait();
+        assert_eq!(error, "The remote file preview timed out.");
+        assert!(began.elapsed() < Duration::from_secs(1));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn successful_leader_exit_still_retires_process_group_helpers() {
         let mut command = Command::new("/bin/sh");
         command.args([
@@ -1074,6 +1351,7 @@ mod tests {
             child,
             stdout,
             process_id,
+            process_registration: Arc::new(AtomicU32::new(process_id)),
             finished,
             retired: false,
         };
