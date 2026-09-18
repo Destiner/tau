@@ -9,8 +9,11 @@ use std::{
     fs::{self, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
-    process::Stdio,
-    sync::{Arc, Mutex},
+    process::{Child, Stdio},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 use tauri::{State, WebviewWindow};
@@ -31,6 +34,7 @@ struct PreviewManager {
     generation: u64,
     staged: Option<Snapshot>,
     displayed: Option<Snapshot>,
+    active: Option<(u64, Arc<Mutex<Child>>)>,
 }
 
 struct Snapshot {
@@ -77,11 +81,14 @@ pub async fn prepare_remote_path(
         let mut manager = previews.inner.lock().map_err(|_| unavailable())?;
         manager.generation = manager.generation.checked_add(1).ok_or_else(unavailable)?;
         manager.staged.take();
+        stop_active_transfer(&mut manager);
         manager.generation
     };
     let state = previews.inner.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
+    let transfer_state = state.clone();
+    let transfer_result = tauri::async_runtime::spawn_blocking(move || {
         transfer_remote_path(
+            &transfer_state,
             &remote.connection_string,
             &remote.working_directory,
             &path,
@@ -91,12 +98,20 @@ pub async fn prepare_remote_path(
         )
     })
     .await
-    .map_err(|_| "The remote file preview could not be prepared.".to_string())??;
+    .map_err(|_| "The remote file preview could not be prepared.".to_string())?;
 
     let mut manager = state.lock().map_err(|_| unavailable())?;
+    if manager
+        .active
+        .as_ref()
+        .is_some_and(|(active_generation, _)| *active_generation == generation)
+    {
+        manager.active.take();
+    }
     if manager.generation != generation {
         return Err("The remote file preview was superseded.".into());
     }
+    let result = transfer_result?;
     match result {
         TransferResult::Directory => Ok(PreparedRemotePath::Directory),
         TransferResult::File(snapshot) => {
@@ -170,6 +185,7 @@ pub fn cancel_remote_path(
     pi.require_owner(&owner_id)?;
     let mut manager = previews.inner.lock().map_err(|_| unavailable())?;
     manager.generation = manager.generation.saturating_add(1);
+    stop_active_transfer(&mut manager);
     manager.staged.take();
     Ok(())
 }
@@ -180,8 +196,17 @@ impl RemotePreviewState {
         macos::close();
         if let Ok(mut manager) = self.inner.lock() {
             manager.generation = manager.generation.saturating_add(1);
+            stop_active_transfer(&mut manager);
             manager.staged.take();
             manager.displayed.take();
+        }
+    }
+}
+
+fn stop_active_transfer(manager: &mut PreviewManager) {
+    if let Some((_, child)) = manager.active.take() {
+        if let Ok(mut child) = child.lock() {
+            let _ = child.kill();
         }
     }
 }
@@ -203,6 +228,7 @@ enum TransferResult {
 }
 
 fn transfer_remote_path(
+    coordinator: &Arc<Mutex<PreviewManager>>,
     connection_string: &str,
     working_directory: &str,
     authored_path: &str,
@@ -238,6 +264,24 @@ printf '\000%s\000END\000' "$3""#;
         .map_err(|_| "The SSH transfer could not be started.".to_string())?;
     let mut stdout = child.stdout.take().ok_or_else(unavailable)?;
     let mut stderr = child.stderr.take().ok_or_else(unavailable)?;
+    let child = Arc::new(Mutex::new(child));
+    {
+        let mut manager = coordinator.lock().map_err(|_| unavailable())?;
+        if manager.generation != generation {
+            kill_child(&child);
+            return Err("The remote file preview was superseded.".into());
+        }
+        manager.active = Some((generation, child.clone()));
+    }
+    let finished = Arc::new(AtomicBool::new(false));
+    let timeout_child = child.clone();
+    let timeout_finished = finished.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(PREPARATION_TIMEOUT);
+        if !timeout_finished.load(Ordering::Acquire) {
+            kill_child(&timeout_child);
+        }
+    });
     std::thread::spawn(move || {
         let mut sink = [0_u8; 8192];
         let mut total = 0;
@@ -253,7 +297,8 @@ printf '\000%s\000END\000' "$3""#;
     find_prefix(&mut stdout, &prefix, started)?;
     let kind = read_field(&mut stdout, 16, started)?;
     if kind == b"D" {
-        let status = child.wait().map_err(|_| unavailable())?;
+        let status = wait_child(&child)?;
+        finished.store(true, Ordering::Release);
         return if status.success() {
             Ok(TransferResult::Directory)
         } else {
@@ -261,7 +306,7 @@ printf '\000%s\000END\000' "$3""#;
         };
     }
     if kind != b"F" {
-        let _ = child.kill();
+        kill_child(&child);
         return Err("The remote file response was invalid.".into());
     }
     let size_text = read_field(&mut stdout, 32, started)?;
@@ -270,7 +315,7 @@ printf '\000%s\000END\000' "$3""#;
         .and_then(|value| value.parse::<u64>().ok())
         .ok_or_else(|| "The remote file size was invalid.".to_string())?;
     if size > MAX_FILE_BYTES {
-        let _ = child.kill();
+        kill_child(&child);
         return Err("The remote file is larger than 64 MiB.".into());
     }
     let basename = String::from_utf8(read_field(&mut stdout, 1024, started)?)
@@ -281,7 +326,7 @@ printf '\000%s\000END\000' "$3""#;
         || basename.contains(['/', '\\'])
         || basename.chars().any(char::is_control)
     {
-        let _ = child.kill();
+        kill_child(&child);
         return Err("The remote filename is unsupported.".into());
     }
     let directory = tempfile::Builder::new()
@@ -294,10 +339,11 @@ printf '\000%s\000END\000' "$3""#;
     let mut trailer = vec![0; expected_trailer.len()];
     read_exact_deadline(&mut stdout, &mut trailer, started)?;
     if trailer != expected_trailer {
-        let _ = child.kill();
+        kill_child(&child);
         return Err("The remote file transfer was incomplete.".into());
     }
-    let status = child.wait().map_err(|_| unavailable())?;
+    let status = wait_child(&child)?;
+    finished.store(true, Ordering::Release);
     if !status.success() {
         return Err("The remote file could not be read.".into());
     }
@@ -310,6 +356,20 @@ printf '\000%s\000END\000' "$3""#;
         window,
         owner,
     }))
+}
+
+fn kill_child(child: &Arc<Mutex<Child>>) {
+    if let Ok(mut child) = child.lock() {
+        let _ = child.kill();
+    }
+}
+
+fn wait_child(child: &Arc<Mutex<Child>>) -> Result<std::process::ExitStatus, String> {
+    child
+        .lock()
+        .map_err(|_| unavailable())?
+        .wait()
+        .map_err(|_| unavailable())
 }
 
 fn find_prefix(reader: &mut impl Read, prefix: &[u8], started: Instant) -> Result<(), String> {
@@ -488,26 +548,34 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn transfers_binary_files_and_classifies_directories_through_fake_ssh() {
+    fn fake_ssh(script: &str) -> (TempDir, String) {
         use std::os::unix::fs::PermissionsExt;
 
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("ssh");
+        fs::write(&executable, script).unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+        let connection = format!("{} fixture", executable.display());
+        (directory, connection)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn transfers_binary_files_and_classifies_directories_through_fake_ssh() {
         let remote = tempfile::tempdir().unwrap();
         let bytes = b"binary\0payload\xff\0TAU_PREVIEW_marker\0END\0";
         fs::write(remote.path().join("quoted name.bin"), bytes).unwrap();
         fs::create_dir(remote.path().join("folder")).unwrap();
 
-        let ssh_dir = tempfile::tempdir().unwrap();
-        let ssh = ssh_dir.path().join("ssh");
-        fs::write(
-            &ssh,
-            "#!/bin/sh\nfor last do :; done\nexec /bin/sh -c \"$last\"\n",
-        )
-        .unwrap();
-        fs::set_permissions(&ssh, fs::Permissions::from_mode(0o700)).unwrap();
-        let connection = format!("{} fixture", ssh.display());
+        let (_ssh_dir, connection) =
+            fake_ssh("#!/bin/sh\nfor last do :; done\nexec /bin/sh -c \"$last\"\n");
 
+        let coordinator = Arc::new(Mutex::new(PreviewManager {
+            generation: 1,
+            ..Default::default()
+        }));
         let result = transfer_remote_path(
+            &coordinator,
             &connection,
             remote.path().to_str().unwrap(),
             "quoted name.bin",
@@ -525,8 +593,10 @@ mod tests {
             .permissions()
             .readonly());
 
+        coordinator.lock().unwrap().generation = 2;
         assert!(matches!(
             transfer_remote_path(
+                &coordinator,
                 &connection,
                 remote.path().to_str().unwrap(),
                 "folder",
@@ -537,5 +607,42 @@ mod tests {
             .expect("directory classification"),
             TransferResult::Directory
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancellation_stops_a_blocked_ssh_transfer() {
+        let (_ssh_dir, connection) = fake_ssh("#!/bin/sh\nsleep 60\n");
+        let coordinator = Arc::new(Mutex::new(PreviewManager {
+            generation: 1,
+            ..Default::default()
+        }));
+        let transfer_coordinator = coordinator.clone();
+        let transfer = std::thread::spawn(move || {
+            transfer_remote_path(
+                &transfer_coordinator,
+                &connection,
+                "/tmp",
+                "missing",
+                1,
+                "main".into(),
+                "owner".into(),
+            )
+        });
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let active = coordinator.lock().unwrap().active.is_some();
+            if active {
+                break;
+            }
+            assert!(Instant::now() < deadline, "SSH child was not registered");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        {
+            let mut manager = coordinator.lock().unwrap();
+            manager.generation = 2;
+            stop_active_transfer(&mut manager);
+        }
+        assert!(transfer.join().unwrap().is_err());
     }
 }
