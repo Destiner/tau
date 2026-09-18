@@ -12,6 +12,7 @@ import {
   parseFileReference,
   parseMarkdownFileDestination,
   protectLocalFileHrefs,
+  restoreProtectedLocalFileHrefs,
   resolveFilePath,
 } from './markdown';
 
@@ -196,6 +197,14 @@ describe('explicit Markdown file destinations', () => {
     ]);
     expect(protectedLinks.html).toContain('https://tau.invalid/__file_');
     expect(protectedLinks.html).toContain('<a>foreign</a>');
+  });
+
+  it('restores dollar replacement patterns in file URLs literally', () => {
+    expect(
+      restoreProtectedLocalFileHrefs('<a href="placeholder">item</a>', [
+        { placeholder: 'placeholder', href: "file:///tmp/$&-$'.txt" },
+      ]),
+    ).toBe('<a href="file:///tmp/$&amp;-$\'.txt">item</a>');
   });
 });
 

@@ -128,9 +128,7 @@ function renderMarkdown(source: string, options: MarkdownOptions = {}): string {
       DIAGRAM_EXPAND_ATTRIBUTE,
     ],
   });
-  for (const link of protectedLinks.links) {
-    html = html.replace(link.placeholder, escapeHtmlAttribute(link.href));
-  }
+  html = restoreProtectedLocalFileHrefs(html, protectedLinks.links);
   const withoutEmptyTableHeaders = removeEmptyTableHeaders(html);
   const linked =
     options.basePath || options.copyPaths
@@ -141,9 +139,24 @@ function renderMarkdown(source: string, options: MarkdownOptions = {}): string {
     : addDiagramExpandButtons(addCodeCopyButtons(linked));
 }
 
+interface ProtectedLocalFileHref {
+  placeholder: string;
+  href: string;
+}
+
+function restoreProtectedLocalFileHrefs(
+  html: string,
+  links: ProtectedLocalFileHref[],
+): string {
+  for (const link of links) {
+    html = html.replace(link.placeholder, () => escapeHtmlAttribute(link.href));
+  }
+  return html;
+}
+
 function protectLocalFileHrefs(html: string): {
   html: string;
-  links: Array<{ placeholder: string; href: string }>;
+  links: ProtectedLocalFileHref[];
 } {
   const links: Array<{ placeholder: string; href: string }> = [];
   const nonce = Math.random().toString(36).slice(2);
@@ -499,6 +512,7 @@ export {
   parseFileReference,
   parseMarkdownFileDestination,
   protectLocalFileHrefs,
+  restoreProtectedLocalFileHrefs,
   resolveFilePath,
   isWebUrl,
   isPathOpenGesture,

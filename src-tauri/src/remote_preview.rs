@@ -24,6 +24,7 @@ const MAX_PREAMBLE_BYTES: usize = 64 * 1024;
 const PREPARATION_TIMEOUT: Duration = Duration::from_secs(30);
 const TOKEN_LIFETIME: Duration = Duration::from_secs(60);
 
+#[derive(Clone)]
 pub struct RemotePreviewState {
     inner: Arc<Mutex<PreviewManager>>,
     transfer_gate: Arc<Mutex<()>>,
@@ -41,6 +42,7 @@ impl Default for RemotePreviewState {
 #[derive(Default)]
 struct PreviewManager {
     generation: u64,
+    owner_revision: u64,
     staged: Option<Snapshot>,
     queued: Option<QueuedSnapshot>,
     displayed: Option<Snapshot>,
@@ -52,7 +54,7 @@ struct ActiveTransfer {
     owner: String,
     request_id: String,
     cancel: Arc<AtomicBool>,
-    process_id: u32,
+    process_id: Option<u32>,
 }
 
 struct QueuedSnapshot {
@@ -67,6 +69,7 @@ struct Snapshot {
     generation: u64,
     window: String,
     owner: String,
+    owner_revision: u64,
     request_id: String,
     created: Instant,
 }
@@ -132,26 +135,37 @@ pub async fn prepare_remote_path(
     let _span = telemetry_context
         .as_ref()
         .and_then(|context| telemetry.start_command_span(context, "prepare_remote_path"));
-    pi.require_owner(&owner_id)?;
     validate_identifier(&request_id)?;
     validate_path(&path)?;
     let remote = storage::remote_project(&project_path)?;
     let window_label = window.label().to_string();
-    let generation = {
+    let cancel = Arc::new(AtomicBool::new(false));
+    let (generation, owner_revision) = pi.with_owner(&owner_id, |owner_revision| {
         let mut manager = previews.inner.lock().map_err(|_| unavailable())?;
         manager.generation = manager.generation.checked_add(1).ok_or_else(unavailable)?;
+        manager.owner_revision = owner_revision;
         manager.staged.take();
         invalidate_queued(&mut manager);
         stop_active_transfer(&mut manager);
-        manager.generation
-    };
-    let state = previews.inner.clone();
-    let transfer_state = state.clone();
+        let generation = manager.generation;
+        manager.active = Some(ActiveTransfer {
+            generation,
+            owner: owner_id.clone(),
+            request_id: request_id.clone(),
+            cancel: cancel.clone(),
+            process_id: None,
+        });
+        Ok((generation, owner_revision))
+    })?;
+    let transfer_state = previews.inner.clone();
     let transfer_gate = previews.transfer_gate.clone();
     let transfer_request = request_id.clone();
-    let transfer_result = tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || {
         let _gate = transfer_gate.lock().map_err(|_| unavailable())?;
-        transfer_remote_path(
+        if cancel.load(Ordering::Acquire) {
+            return Err("The remote file preview was superseded.".into());
+        }
+        let transfer_result = transfer_remote_path(
             &transfer_state,
             &remote.connection_string,
             &remote.working_directory,
@@ -159,32 +173,32 @@ pub async fn prepare_remote_path(
             generation,
             window_label,
             owner_id,
+            owner_revision,
             transfer_request,
-        )
+            cancel,
+        )?;
+        let mut manager = transfer_state.lock().map_err(|_| unavailable())?;
+        let current = manager.active.as_ref().is_some_and(|active| {
+            active.generation == generation && !active.cancel.load(Ordering::Acquire)
+        }) && manager.generation == generation
+            && manager.owner_revision == owner_revision;
+        if !current {
+            return Err("The remote file preview was superseded.".into());
+        }
+        manager.active.take();
+        match transfer_result {
+            TransferResult::Directory => Ok(PreparedRemotePath::Directory),
+            TransferResult::File(snapshot) => {
+                let token = snapshot.token.clone();
+                manager.staged = Some(snapshot);
+                drop(manager);
+                schedule_token_expiry(transfer_state.clone(), generation, token.clone());
+                Ok(PreparedRemotePath::File { token })
+            }
+        }
     })
     .await
-    .map_err(|_| "The remote file preview could not be prepared.".to_string())?;
-
-    let mut manager = state.lock().map_err(|_| unavailable())?;
-    if manager
-        .active
-        .as_ref()
-        .is_some_and(|active| active.generation == generation)
-    {
-        manager.active.take();
-    }
-    if manager.generation != generation {
-        return Err("The remote file preview was superseded.".into());
-    }
-    match transfer_result? {
-        TransferResult::Directory => Ok(PreparedRemotePath::Directory),
-        TransferResult::File(snapshot) => {
-            let token = snapshot.token.clone();
-            manager.staged = Some(snapshot);
-            schedule_token_expiry(state.clone(), generation, token.clone());
-            Ok(PreparedRemotePath::File { token })
-        }
-    }
+    .map_err(|_| "The remote file preview could not be prepared.".to_string())?
 }
 
 #[tauri::command]
@@ -202,14 +216,14 @@ pub async fn show_remote_preview(
     let _span = telemetry_context
         .as_ref()
         .and_then(|context| telemetry.start_command_span(context, "show_remote_preview"));
-    pi.require_owner(&owner_id)?;
     let permit = Arc::new(AtomicBool::new(true));
-    {
+    pi.with_owner(&owner_id, |owner_revision| {
         let mut manager = previews.inner.lock().map_err(|_| unavailable())?;
         let valid = manager.staged.as_ref().is_some_and(|snapshot| {
             snapshot.token == token
                 && snapshot.window == window.label()
                 && snapshot.owner == owner_id
+                && snapshot.owner_revision == owner_revision
                 && snapshot.request_id == request_id
                 && snapshot.created.elapsed() < TOKEN_LIFETIME
         });
@@ -221,7 +235,8 @@ pub async fn show_remote_preview(
             snapshot,
             permit: permit.clone(),
         });
-    }
+        Ok(())
+    })?;
 
     #[cfg(target_os = "macos")]
     {
@@ -243,11 +258,12 @@ pub async fn show_remote_preview(
                             && queued.snapshot.request_id == queued_request
                             && queued.permit.load(Ordering::Acquire)
                             && queued.snapshot.generation == manager.generation
+                            && queued.snapshot.owner_revision == manager.owner_revision
                     });
                     let queued = queued.ok_or_else(|| {
                         "The remote file preview is no longer available.".to_string()
                     })?;
-                    macos::show(&queued.snapshot.request_id, &queued.snapshot.path)?;
+                    macos::show(&queued.snapshot.token, &queued.snapshot.path)?;
                     let displayed = manager.queued.take().expect("validated queued snapshot");
                     manager.displayed = Some(displayed.snapshot);
                     Ok(())
@@ -258,11 +274,7 @@ pub async fn show_remote_preview(
         match receiver.recv_timeout(Duration::from_secs(5)) {
             Ok(result) => {
                 result?;
-                monitor_displayed_snapshot(
-                    previews.inner.clone(),
-                    window.clone(),
-                    request_id.clone(),
-                );
+                monitor_displayed_snapshot(previews.inner.clone(), window.clone(), token.clone());
             }
             Err(_) => {
                 permit.store(false, Ordering::Release);
@@ -289,8 +301,9 @@ pub fn cancel_remote_path(
     owner_id: String,
     request_id: String,
 ) -> Result<(), String> {
-    pi.require_owner(&owner_id)?;
-    let mut manager = previews.inner.lock().map_err(|_| unavailable())?;
+    let mut manager = pi.with_owner(&owner_id, |_| {
+        previews.inner.lock().map_err(|_| unavailable())
+    })?;
     if manager
         .active
         .as_ref()
@@ -323,8 +336,9 @@ pub fn cancel_remote_path(
     if let Some(snapshot) = displayed {
         #[cfg(target_os = "macos")]
         {
+            let displayed_token = snapshot.token.clone();
             let _ = window.run_on_main_thread(move || {
-                macos::close_if(&request_id);
+                macos::close_if(&displayed_token);
                 drop(snapshot);
             });
         }
@@ -335,12 +349,13 @@ pub fn cancel_remote_path(
 }
 
 impl RemotePreviewState {
-    pub fn replace_owner(&self, window: &WebviewWindow, owner_id: &str) {
+    pub fn replace_owner(&self, window: &WebviewWindow, owner_id: &str, owner_revision: u64) {
         let displayed = if let Ok(mut manager) = self.inner.lock() {
-            let owns_work = manager
-                .active
-                .as_ref()
-                .is_some_and(|active| active.owner != owner_id)
+            let owns_work = manager.owner_revision != owner_revision
+                || manager
+                    .active
+                    .as_ref()
+                    .is_some_and(|active| active.owner != owner_id)
                 || manager
                     .staged
                     .as_ref()
@@ -355,30 +370,26 @@ impl RemotePreviewState {
                 manager.staged.take();
                 invalidate_queued(&mut manager);
             }
+            manager.owner_revision = owner_revision;
             manager
                 .displayed
                 .as_ref()
                 .filter(|snapshot| snapshot.owner != owner_id)
-                .map(|snapshot| snapshot.request_id.clone())
-                .and_then(|request_id| {
-                    manager
-                        .displayed
-                        .take()
-                        .map(|snapshot| (request_id, snapshot))
-                })
+                .map(|snapshot| snapshot.token.clone())
+                .and_then(|token| manager.displayed.take().map(|snapshot| (token, snapshot)))
         } else {
             None
         };
-        if let Some((request_id, snapshot)) = displayed {
+        if let Some((token, snapshot)) = displayed {
             #[cfg(target_os = "macos")]
             {
                 let _ = window.run_on_main_thread(move || {
-                    macos::close_if(&request_id);
+                    macos::close_if(&token);
                     drop(snapshot);
                 });
             }
             #[cfg(not(target_os = "macos"))]
-            drop((request_id, snapshot));
+            drop((token, snapshot));
         }
     }
 
@@ -392,6 +403,10 @@ impl RemotePreviewState {
             invalidate_queued(&mut manager);
             manager.displayed.take();
         }
+        // A worker owns partial snapshots and its process group while holding
+        // this gate. Waiting for it makes normal RunEvent::Exit cleanup real,
+        // rather than relying on destructors after Tauri exits.
+        let _retired = self.transfer_gate.lock();
     }
 }
 
@@ -415,17 +430,17 @@ fn schedule_token_expiry(state: Arc<Mutex<PreviewManager>>, generation: u64, tok
 fn monitor_displayed_snapshot(
     state: Arc<Mutex<PreviewManager>>,
     window: WebviewWindow,
-    request_id: String,
+    token: String,
 ) {
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_millis(500));
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        let checked_request = request_id.clone();
+        let checked_token = token.clone();
         if window
             .run_on_main_thread(move || {
-                let visible = macos::is_visible(&checked_request);
+                let visible = macos::is_visible(&checked_token);
                 if !visible {
-                    macos::close_if(&checked_request);
+                    macos::close_if(&checked_token);
                 }
                 let _ = sender.send(visible);
             })
@@ -433,17 +448,21 @@ fn monitor_displayed_snapshot(
         {
             break;
         }
-        if receiver
-            .recv_timeout(Duration::from_secs(2))
-            .unwrap_or(false)
-        {
+        let visible = loop {
+            match receiver.recv_timeout(Duration::from_secs(2)) {
+                Ok(visible) => break visible,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break false,
+            }
+        };
+        if visible {
             continue;
         }
         if let Ok(mut manager) = state.lock() {
             if manager
                 .displayed
                 .as_ref()
-                .is_some_and(|snapshot| snapshot.request_id == request_id)
+                .is_some_and(|snapshot| snapshot.token == token)
             {
                 manager.displayed.take();
             }
@@ -473,7 +492,9 @@ fn invalidate_queued(manager: &mut PreviewManager) {
 fn stop_active_transfer(manager: &mut PreviewManager) {
     if let Some(active) = manager.active.take() {
         active.cancel.store(true, Ordering::Release);
-        kill_process_group(active.process_id);
+        if let Some(process_id) = active.process_id {
+            kill_process_group(process_id);
+        }
     }
 }
 
@@ -509,14 +530,16 @@ fn transfer_remote_path(
     generation: u64,
     window: String,
     owner: String,
+    owner_revision: u64,
     request_id: String,
+    cancel: Arc<AtomicBool>,
 ) -> Result<TransferResult, String> {
     let marker = format!("TAU_PREVIEW_{}", Uuid::new_v4().simple());
     let script = r#"p=$1
 case "$p" in "~/"*) p=$HOME/${p#\~/} ;; /*) ;; *) p=$2/$p ;; esac
 if [ -d "$p" ]; then printf '\000%s\000D\000' "$3"; exit 0; fi
-if [ ! -f "$p" ]; then exit 44; fi
-size=$(wc -c < "$p") || exit 45
+if [ ! -f "$p" ]; then printf '\000%s\000E\000unreadable\000' "$3"; exit 44; fi
+size=$(wc -c < "$p") || { printf '\000%s\000E\000unreadable\000' "$3"; exit 45; }
 size=$(printf '%s' "$size" | tr -d '[:space:]')
 base=${p##*/}
 printf '\000%s\000F\000%s\000%s\000' "$3" "$size" "$base"
@@ -539,22 +562,23 @@ printf '\000%s\000END\000' "$3""#;
         .spawn()
         .map_err(|_| "The SSH transfer could not be started.".to_string())?;
     let stdout = child.stdout.take().ok_or_else(unavailable)?;
-    let cancel = Arc::new(AtomicBool::new(false));
     let process_id = child.id();
     {
         let mut manager = coordinator.lock().map_err(|_| unavailable())?;
-        if manager.generation != generation {
+        let owner_is_current = manager.owner_revision == owner_revision;
+        let active = manager.active.as_mut().filter(|active| {
+            owner_is_current
+                && active.generation == generation
+                && active.owner == owner
+                && active.request_id == request_id
+                && !active.cancel.load(Ordering::Acquire)
+        });
+        let Some(active) = active else {
             kill_process_group(process_id);
             let _ = child.wait();
             return Err("The remote file preview was superseded.".into());
-        }
-        manager.active = Some(ActiveTransfer {
-            generation,
-            owner: owner.clone(),
-            request_id: request_id.clone(),
-            cancel: cancel.clone(),
-            process_id,
-        });
+        };
+        active.process_id = Some(process_id);
     }
     let started = Instant::now();
     let finished = Arc::new(AtomicBool::new(false));
@@ -564,6 +588,7 @@ printf '\000%s\000END\000' "$3""#;
         stdout,
         process_id,
         finished,
+        retired: false,
     };
 
     let prefix = format!("\0{marker}\0").into_bytes();
@@ -577,6 +602,11 @@ printf '\000%s\000END\000' "$3""#;
         } else {
             Err("The remote directory could not be inspected.".into())
         };
+    }
+    if kind == b"E" {
+        let _category = read_field(&mut process.stdout, 32, started)?;
+        let _ = process.wait(&cancel, started)?;
+        return Err("The remote file could not be read.".into());
     }
     if kind != b"F" {
         return Err("The remote file response was invalid.".into());
@@ -620,6 +650,7 @@ printf '\000%s\000END\000' "$3""#;
         generation,
         window,
         owner,
+        owner_revision,
         request_id,
         created: Instant::now(),
     }))
@@ -630,6 +661,7 @@ struct TransferProcess {
     stdout: std::process::ChildStdout,
     process_id: u32,
     finished: Arc<AtomicBool>,
+    retired: bool,
 }
 
 impl TransferProcess {
@@ -640,6 +672,11 @@ impl TransferProcess {
     ) -> Result<std::process::ExitStatus, String> {
         loop {
             if let Some(status) = self.child.try_wait().map_err(|_| unavailable())? {
+                // The group leader may exit while proxy/wrapper descendants
+                // still own pipes or credentials. Retire the whole group on
+                // successful and failed terminal paths alike.
+                kill_process_group(self.process_id);
+                self.retired = true;
                 self.finished.store(true, Ordering::Release);
                 return Ok(status);
             }
@@ -651,14 +688,12 @@ impl TransferProcess {
 
 impl Drop for TransferProcess {
     fn drop(&mut self) {
-        self.finished.store(true, Ordering::Release);
-        match self.child.try_wait() {
-            Ok(Some(_)) => {}
-            _ => {
-                kill_process_group(self.process_id);
-                let _ = self.child.wait();
-            }
+        if !self.retired {
+            kill_process_group(self.process_id);
+            let _ = self.child.wait();
+            self.retired = true;
         }
+        self.finished.store(true, Ordering::Release);
     }
 }
 
@@ -928,6 +963,14 @@ mod tests {
         path: &str,
         generation: u64,
     ) -> Result<TransferResult, String> {
+        let cancel = Arc::new(AtomicBool::new(false));
+        coordinator.lock().unwrap().active = Some(ActiveTransfer {
+            generation,
+            owner: "owner".into(),
+            request_id: format!("request-{generation}"),
+            cancel: cancel.clone(),
+            process_id: None,
+        });
         transfer_remote_path(
             coordinator,
             connection,
@@ -936,7 +979,9 @@ mod tests {
             generation,
             "main".into(),
             "owner".into(),
+            0,
             format!("request-{generation}"),
+            cancel,
         )
     }
 
@@ -1002,6 +1047,45 @@ mod tests {
             .expect("directory"),
             TransferResult::Directory
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn successful_leader_exit_still_retires_process_group_helpers() {
+        let mut command = Command::new("/bin/sh");
+        command.args([
+            "-c",
+            "sleep 60 >/dev/null 2>&1 & helper=$!; printf '%s\\n' \"$helper\"; exit 0",
+        ]);
+        configure_process_group(&mut command);
+        let mut child = command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut stdout = child.stdout.take().unwrap();
+        let mut pid = String::new();
+        std::io::BufRead::read_line(&mut std::io::BufReader::new(&mut stdout), &mut pid).unwrap();
+        let helper = pid.trim().parse::<i32>().unwrap();
+        let process_id = child.id();
+        let finished = Arc::new(AtomicBool::new(false));
+        let mut process = TransferProcess {
+            child,
+            stdout,
+            process_id,
+            finished,
+            retired: false,
+        };
+
+        process
+            .wait(&AtomicBool::new(false), Instant::now())
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while unsafe { libc::kill(helper, 0) } == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_ne!(unsafe { libc::kill(helper, 0) }, 0, "helper survived");
     }
 
     #[cfg(unix)]

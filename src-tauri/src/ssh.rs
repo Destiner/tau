@@ -41,6 +41,7 @@ const REMOTE_SHELL_LAUNCHER: &str = r#"case "${SHELL##*/}" in csh|tcsh) command=
 pub struct SshConnection {
     executable: PathBuf,
     arguments: Vec<String>,
+    option_names: Vec<char>,
     connection_string: String,
 }
 
@@ -76,11 +77,12 @@ impl SshConnection {
             resolve_ssh_binary()?
         };
 
-        let arguments = normalize_ssh_arguments(words)?;
+        let (arguments, option_names) = normalize_ssh_arguments(words)?;
 
         Ok(Self {
             executable,
             arguments,
+            option_names,
             connection_string: connection_string.to_string(),
         })
     }
@@ -95,15 +97,18 @@ impl SshConnection {
             .arguments
             .split_last()
             .expect("validated SSH connection arguments");
-        if options.iter().any(|option| {
-            option.strip_prefix('-').is_some_and(|flags| {
-                flags
-                    .chars()
-                    .any(|flag| matches!(flag, 'f' | 'N' | 's' | 't'))
-            })
+        if self.option_names.iter().any(|flag| {
+            matches!(
+                flag,
+                'f' | 'G' | 'M' | 'N' | 'O' | 'Q' | 's' | 't' | 'V' | 'W'
+            )
         }) {
             return Err("The SSH connection uses a mode that cannot transfer previews.".into());
         }
+        // OpenSSH uses first-value-wins for most -o settings, while short flags
+        // such as -A/-X and -S are effectively last-value-wins. Keep both sides
+        // of user arguments intentional so saved connection options cannot undo
+        // the transfer sandbox.
         command
             .args(SSH_OPTIONS)
             .args([
@@ -119,11 +124,19 @@ impl SshConnection {
                 "PermitLocalCommand=no",
                 "-o",
                 "RequestTTY=no",
-                "-T",
-                "-S",
-                "none",
+                "-o",
+                "ForkAfterAuthentication=no",
+                "-o",
+                "SessionType=default",
+                "-o",
+                "ControlMaster=no",
+                "-o",
+                "ControlPersist=no",
+                "-o",
+                "ControlPath=none",
             ])
             .args(options)
+            .args(["-a", "-x", "-T", "-S", "none"])
             .arg(destination)
             .arg(remote_command);
         Ok(command)
@@ -161,8 +174,9 @@ impl SshConnection {
     }
 }
 
-fn normalize_ssh_arguments(words: Vec<String>) -> Result<Vec<String>, String> {
+fn normalize_ssh_arguments(words: Vec<String>) -> Result<(Vec<String>, Vec<char>), String> {
     let mut options = Vec::new();
+    let mut option_names = Vec::new();
     let mut destination = None;
     let mut words = words.into_iter();
     while let Some(word) = words.next() {
@@ -180,10 +194,14 @@ fn normalize_ssh_arguments(words: Vec<String>) -> Result<Vec<String>, String> {
             if option.starts_with('-') {
                 return Err("Use OpenSSH short options in the connection string.".into());
             }
-            let separate_argument = option.char_indices().any(|(index, name)| {
-                SSH_OPTIONS_WITH_ARGUMENTS.contains(&name)
-                    && index + name.len_utf8() == option.len()
-            });
+            let mut separate_argument = false;
+            for (index, name) in option.char_indices() {
+                option_names.push(name);
+                if SSH_OPTIONS_WITH_ARGUMENTS.contains(&name) {
+                    separate_argument = index + name.len_utf8() == option.len();
+                    break;
+                }
+            }
             options.push(word);
             if separate_argument {
                 options.push(words.next().ok_or_else(|| {
@@ -201,7 +219,7 @@ fn normalize_ssh_arguments(words: Vec<String>) -> Result<Vec<String>, String> {
         .filter(|destination| !destination.is_empty())
         .ok_or_else(|| "The SSH connection string does not include a destination.".to_string())?;
     options.push(destination);
-    Ok(options)
+    Ok((options, option_names))
 }
 
 #[tauri::command]
@@ -490,6 +508,16 @@ mod tests {
 
         let destination = SshConnection::parse("user@example").expect("destination");
         assert_eq!(destination.arguments, ["user@example"]);
+
+        for connection in [
+            "ssh -i/tmp/id_ed25519 user@example",
+            "ssh -F/tmp/ssh_config user@example",
+            "ssh -Jjump-host user@example",
+            "ssh -vi/tmp/identity-with-fnst user@example",
+        ] {
+            let parsed = SshConnection::parse(connection).expect("attached option value");
+            assert!(parsed.transfer_command("preview").is_ok(), "{connection}");
+        }
     }
 
     #[test]
@@ -519,8 +547,57 @@ mod tests {
     }
 
     #[test]
+    fn preview_transfers_enforce_effective_openssh_settings() {
+        let ssh = Path::new("/usr/bin/ssh");
+        if !ssh.is_file() {
+            return;
+        }
+        let connection = SshConnection::parse(
+            "ssh -A -X -S /tmp/shared.sock -o ForkAfterAuthentication=yes -o SessionType=none -J jump user@example",
+        )
+        .expect("preview connection");
+        let command = connection
+            .transfer_command("preview")
+            .expect("safe transfer");
+        let mut arguments = command
+            .get_args()
+            .map(|argument| argument.to_os_string())
+            .collect::<Vec<_>>();
+        arguments.pop();
+        let output = Command::new(ssh)
+            .arg("-G")
+            .args(arguments)
+            .output()
+            .expect("ssh -G");
+        assert!(output.status.success());
+        let settings = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
+        for setting in [
+            "forwardagent no",
+            "forwardx11 no",
+            "requesttty false",
+            "forkafterauthentication no",
+            "sessiontype default",
+            "controlmaster false",
+            "clearallforwardings yes",
+        ] {
+            assert!(settings.contains(setting), "missing {setting}: {settings}");
+        }
+        assert!(settings.contains("proxyjump jump"));
+        assert!(!settings.contains("controlpath /tmp/shared.sock"));
+    }
+
+    #[test]
     fn preview_transfers_reject_forced_tty_and_background_modes() {
-        for mode in ["-t", "-tt", "-N", "-f", "-s"] {
+        for mode in [
+            "-t",
+            "-tt",
+            "-N",
+            "-f",
+            "-s",
+            "-M",
+            "-Ocheck",
+            "-Wlocalhost:22",
+        ] {
             let connection = SshConnection::parse(&format!("ssh {mode} user@example"))
                 .expect("parsed connection");
             assert!(connection.transfer_command("preview").is_err(), "{mode}");

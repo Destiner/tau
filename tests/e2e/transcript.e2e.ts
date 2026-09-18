@@ -209,6 +209,30 @@ test('previews remote files and keeps explicit copy actions', async ({
     ]);
 });
 
+test('shows reviewed remote preview failure copy', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__TAURI_INTERNALS__ = {
+      transformCallback: (callback: unknown): unknown => callback,
+      invoke: (command: string): Promise<unknown> => {
+        if (command === 'remote_preview_available')
+          return Promise.resolve(true);
+        if (command === 'prepare_remote_path')
+          return Promise.reject({ kind: 'too_large' });
+        return Promise.resolve(null);
+      },
+    };
+  });
+  await page.goto(`${fixtureUrl}&remote=true`);
+
+  await page
+    .locator('[data-message-id="fixture-remote-paths"]')
+    .getByRole('button', { name: 'Preview path src/remote.ts' })
+    .click();
+  await expect(page.locator('.path-feedback[role="status"]')).toHaveText(
+    'File is too large to preview (64 MiB maximum).',
+  );
+});
+
 test('decodes explicit file destinations and keeps invalid ones inert', async ({
   page,
 }) => {

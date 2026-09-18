@@ -45,7 +45,7 @@
 import { homeDir } from '@tauri-apps/api/path';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { openPath, openUrl } from '@tauri-apps/plugin-opener';
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import {
   CODE_COPY_ATTRIBUTE,
@@ -57,7 +57,15 @@ import {
   renderMarkdown,
   resolveFilePath,
 } from '../../lib/markdown';
+import {
+  createPathPreviewCoordinator,
+  pathPreviewCoordinatorKey,
+} from '../../lib/path-preview-coordinator';
 import { piOwnerArgs } from '../../lib/pi/ownership';
+import {
+  remotePreviewErrorCopy,
+  remotePreviewErrorKind,
+} from '../../lib/remote-preview-errors';
 import { invokeTraced } from '../../lib/telemetry';
 
 import DiagramViewer from './DiagramViewer.vue';
@@ -92,6 +100,11 @@ let copiedElement: HTMLElement | undefined;
 let feedbackAnchor: HTMLElement | undefined;
 let feedbackRevision = 0;
 let mounted = true;
+const previewCoordinator = inject(
+  pathPreviewCoordinatorKey,
+  createPathPreviewCoordinator(),
+);
+const previewOrigin = Symbol('markdown-path-origin');
 let activeRemoteRequest: string | undefined;
 let pointerActivation:
   { link: HTMLElement; x: number; y: number; moved: boolean } | undefined;
@@ -387,9 +400,29 @@ async function activateRemotePath(
     await copyPath(path, anchor);
     return;
   }
-  if (activeRemoteRequest) return;
   const revision = ++feedbackRevision;
   const requestId = crypto.randomUUID();
+  const projectPath = props.remoteProjectPath;
+  const cancel = (): void => {
+    if (activeRemoteRequest === requestId) activeRemoteRequest = undefined;
+    if (revision === feedbackRevision) {
+      feedbackRevision += 1;
+      clearCopied();
+    }
+    void invokeTraced('cancel_remote_path', {
+      ...piOwnerArgs(),
+      requestId,
+    }).catch(() => undefined);
+  };
+  if (
+    previewCoordinator.start(
+      previewOrigin,
+      `${projectPath}\0${path}`,
+      requestId,
+      cancel,
+    ) === 'duplicate'
+  )
+    return;
   activeRemoteRequest = requestId;
   previewAvailable ??= invokeTraced<boolean>('remote_preview_available');
   let loading: ReturnType<typeof setTimeout> | undefined;
@@ -407,7 +440,7 @@ async function activateRemotePath(
       { kind: 'directory' } | { kind: 'file'; token: string }
     >('prepare_remote_path', {
       ...piOwnerArgs(),
-      projectPath: props.remoteProjectPath,
+      projectPath,
       requestId,
       path,
     });
@@ -425,10 +458,13 @@ async function activateRemotePath(
     if (actionIsCurrent(revision)) clearCopied();
   } catch (error) {
     clearTimeout(loading);
-    console.error('Could not preview the remote path', error);
-    if (actionIsCurrent(revision))
-      showPathFeedback(anchor, 'Could not preview file. Try again.', 'error');
+    if (actionIsCurrent(revision)) {
+      const kind = remotePreviewErrorKind(error);
+      if (kind !== 'superseded')
+        showPathFeedback(anchor, remotePreviewErrorCopy(kind), 'error');
+    }
   } finally {
+    previewCoordinator.finish(requestId);
     if (activeRemoteRequest === requestId) activeRemoteRequest = undefined;
   }
 }
@@ -512,17 +548,16 @@ function cancelPointerActivation(): void {
 function cancelPendingAction(): void {
   feedbackRevision += 1;
   clearCopied();
-  const requestId = activeRemoteRequest;
-  activeRemoteRequest = undefined;
-  if (requestId)
-    void invokeTraced('cancel_remote_path', {
-      ...piOwnerArgs(),
-      requestId,
-    }).catch(() => undefined);
+  previewCoordinator.cancelOrigin(previewOrigin);
 }
 
 watch(
-  () => [props.source, props.basePath, props.remoteProjectPath],
+  () => [
+    props.source,
+    props.basePath,
+    props.remoteProjectPath,
+    props.copyPaths,
+  ],
   cancelPendingAction,
 );
 onMounted(() => {
