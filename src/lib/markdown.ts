@@ -14,7 +14,7 @@ interface MarkdownOptions {
   inline?: boolean;
   /** Directory that relative file paths are resolved against. */
   basePath?: string;
-  /** Remote paths are links that copy instead of opening on this machine. */
+  /** Remote paths use button semantics because activation is app-managed. */
   copyPaths?: boolean;
 }
 

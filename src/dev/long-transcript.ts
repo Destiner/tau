@@ -70,6 +70,8 @@ A paragraph with [Tau docs](https://example.com/tau/docs), *real emphasis*, ~~a 
 
 Local source: \`src/components/TranscriptView.vue\`.
 
+Local directory: \`src/components/\`.
+
 ---
 
 > A quote, ruled rather than boxed.

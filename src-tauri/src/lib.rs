@@ -2,11 +2,11 @@ mod admin;
 #[cfg(any(dev, test))]
 mod dev_workspace;
 mod feedback;
+mod file_preview;
 mod models;
 mod pi;
 mod profile;
 mod quit;
-mod remote_preview;
 mod settings;
 mod ssh;
 mod storage;
@@ -45,7 +45,7 @@ pub fn run() {
 
     let builder = tauri::Builder::default()
         .manage(pi::PiState::default())
-        .manage(remote_preview::RemotePreviewState::default())
+        .manage(file_preview::FilePreviewState::default())
         .manage(quit::QuitState::default())
         .manage(telemetry)
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -103,6 +103,8 @@ pub fn run() {
             admin::read_admin_mode,
             admin::set_admin_mode,
             feedback::submit_issue_report,
+            file_preview::prepare_file_preview,
+            file_preview::release_file_preview,
             pi::claim_pi_frontend,
             pi::read_pi_frontend_revision,
             pi::send_pi,
@@ -111,7 +113,6 @@ pub fn run() {
             pi::stop_pi,
             quit::pending_quit_request,
             quit::resolve_quit_request,
-            remote_preview::preview_remote_path,
             settings::read_model_scope,
             settings::read_remote_model_scope,
             ssh::list_remote_directories,
@@ -138,7 +139,7 @@ pub fn run() {
         // marker must therefore be recorded and flushed here, not relied on
         // to happen implicitly when the managed `Telemetry` goes out of scope.
         if let tauri::RunEvent::Exit = event {
-            remote_preview::close();
+            file_preview::cleanup(app_handle);
             app_handle.state::<pi::PiState>().shutdown();
             let telemetry = app_handle.state::<telemetry::Telemetry>();
             telemetry.record_app_exited();

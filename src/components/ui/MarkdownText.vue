@@ -39,6 +39,12 @@
       :return-focus="viewerReturnFocus"
       @close="closeViewer"
     />
+    <FileViewer
+      v-if="fileViewer"
+      v-bind="fileViewer"
+      :return-focus="fileViewerReturnFocus"
+      @close="closeFileViewer"
+    />
   </div>
 </template>
 
@@ -56,6 +62,10 @@ import {
 } from 'vue';
 
 import {
+  filePreviewDirectoryForPath,
+  type FilePreviewDescriptor,
+} from '../../lib/file-preview';
+import {
   CODE_COPY_ATTRIBUTE,
   DIAGRAM_EXPAND_ATTRIBUTE,
   FILE_PATH_ATTRIBUTE,
@@ -68,6 +78,7 @@ import {
 import { invokeTraced } from '../../lib/telemetry';
 
 import DiagramViewer from './DiagramViewer.vue';
+import FileViewer from './FileViewer.vue';
 import UiContextMenu from './UiContextMenu.vue';
 import type { UiMenuItem } from './UiMenu.vue';
 
@@ -99,7 +110,7 @@ let copiedElement: HTMLElement | undefined;
 let feedbackAnchor: HTMLElement | undefined;
 let feedbackRevision = 0;
 let mounted = true;
-let remotePreviewPending = false;
+let filePreviewPending = false;
 let pointerActivation:
   { link: HTMLElement; x: number; y: number; moved: boolean } | undefined;
 interface PathFeedback {
@@ -183,7 +194,9 @@ interface DiagramView {
 }
 
 const viewer = ref<DiagramView | null>(null);
+const fileViewer = ref<FilePreviewDescriptor | null>(null);
 let viewerTrigger: HTMLElement | undefined;
+let fileViewerTrigger: HTMLElement | undefined;
 
 function expandButtonAt(target: EventTarget | null): HTMLElement | null {
   if (!(target instanceof Element)) return null;
@@ -224,6 +237,24 @@ function viewerReturnFocus(): HTMLElement | undefined {
 
 function closeViewer(): void {
   viewer.value = null;
+}
+
+function fileViewerReturnFocus(): HTMLElement | undefined {
+  return fileViewerTrigger?.isConnected ? fileViewerTrigger : undefined;
+}
+
+async function releaseFilePreview(id: string): Promise<void> {
+  try {
+    await invokeTraced('release_file_preview', { id });
+  } catch {
+    console.error('Could not release the file preview');
+  }
+}
+
+function closeFileViewer(): void {
+  const preview = fileViewer.value;
+  fileViewer.value = null;
+  if (preview) void releaseFilePreview(preview.id);
 }
 
 /** Marks the copied code button, so its icon reports that the copy landed. */
@@ -402,19 +433,29 @@ function contextMenuItems(): UiMenuItem[] {
   return items;
 }
 
-type RemotePreviewResult = 'opened' | 'directory' | 'unsupported' | 'busy';
+type PreparedFilePreview =
+  | {
+      kind: 'ready';
+      id: string;
+      assetPath: string;
+      filename: string;
+      sourcePath: string;
+      byteLength: number;
+    }
+  | { kind: 'directory' }
+  | { kind: 'busy' };
 
-async function activateRemotePath(
+async function activateFilePath(
   path: string,
   anchor: HTMLElement,
 ): Promise<void> {
-  if (!props.remoteProjectPath) {
+  if (props.copyPaths && !props.remoteProjectPath) {
     await copyPath(path, anchor);
     return;
   }
-  if (remotePreviewPending) return;
+  if (!props.basePath || filePreviewPending) return;
 
-  remotePreviewPending = true;
+  filePreviewPending = true;
   const revision = ++feedbackRevision;
   let loading: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -422,27 +463,45 @@ async function activateRemotePath(
       if (actionIsCurrent(revision))
         showPathFeedback(anchor, 'Preparing preview…', 'loading');
     }, 200);
-    const result = await invokeTraced<RemotePreviewResult>(
-      'preview_remote_path',
+    const result = await invokeTraced<PreparedFilePreview>(
+      'prepare_file_preview',
       {
-        projectPath: props.remoteProjectPath,
+        projectPath: props.remoteProjectPath ?? null,
+        basePath: props.basePath,
         path,
       },
     );
     clearTimeout(loading);
-    if (!actionIsCurrent(revision)) return;
+    if (!actionIsCurrent(revision)) {
+      if (result.kind === 'ready') void releaseFilePreview(result.id);
+      return;
+    }
 
-    if (result === 'directory' || result === 'unsupported') {
-      await copyPath(path, anchor);
-    } else if (result === 'busy') {
+    if (result.kind === 'directory') {
+      if (props.remoteProjectPath) await copyPath(path, anchor);
+      else await openLocalPath(path, props.basePath, anchor);
+      return;
+    }
+    if (result.kind === 'busy') {
       showPathFeedback(
         anchor,
         'Another preview is loading. Try again.',
         'error',
       );
-    } else {
-      clearCopied();
+      return;
     }
+
+    clearCopied();
+    const previous = fileViewer.value;
+    fileViewerTrigger = anchor;
+    fileViewer.value = {
+      id: result.id,
+      assetPath: result.assetPath,
+      filename: result.filename,
+      directory: filePreviewDirectoryForPath(result.sourcePath, props.basePath),
+      byteLength: result.byteLength,
+    };
+    if (previous) void releaseFilePreview(previous.id);
   } catch {
     clearTimeout(loading);
     if (actionIsCurrent(revision)) {
@@ -453,7 +512,7 @@ async function activateRemotePath(
       );
     }
   } finally {
-    remotePreviewPending = false;
+    filePreviewPending = false;
   }
 }
 
@@ -503,11 +562,7 @@ async function activate(event: Event): Promise<void> {
         Boolean(window.getSelection()?.toString())))
   )
     return;
-  if (props.copyPaths) {
-    await activateRemotePath(path, link);
-    return;
-  }
-  if (props.basePath) await openLocalPath(path, props.basePath, link);
+  await activateFilePath(path, link);
 }
 
 function handleKeydown(event: KeyboardEvent): void {
@@ -565,6 +620,9 @@ onBeforeUnmount(() => {
   mounted = false;
   window.removeEventListener('resize', updateFeedbackPosition);
   document.removeEventListener('scroll', updateFeedbackPosition, true);
+  const preview = fileViewer.value;
+  fileViewer.value = null;
+  if (preview) void releaseFilePreview(preview.id);
   clearCopied();
 });
 </script>

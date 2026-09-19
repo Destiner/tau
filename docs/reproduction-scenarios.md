@@ -1,14 +1,14 @@
 # Deterministic reproduction scenarios
 
-## Remote file previews
+## File previews
 
-On macOS, activating a file path from a remote project downloads a private, read-only snapshot over the project's registered SSH connection and opens it in Tau's native **Remote Preview** Quick Look panel. Directories remain copy-only and report **Path Copied**. Other platforms retain copy-only behavior.
+Activating a regular local or remote file opens the same fullscreen preview inside Tau. Code and text use Tau's existing Ayu syntax highlighting; common images, PDFs, video, and audio use the webview's safe media elements. Unknown binary formats keep the preview open and report that no rendering is available. Escape or the top-right close control dismisses it and restores focus to the path that opened it.
 
-One request runs at a time, with a 64 MiB file limit and a 30-second transfer timeout. New clicks do not cancel or replace an in-flight request. Switching sessions or scrolling away does not cancel it either. A completed preview replaces the previous panel; its snapshot stays until the next preview or app exit. Quitting during a transfer or force-quitting can leave a private file in the operating-system temporary directory.
+Tau copies every regular file into a private, read-only snapshot before exposing only that snapshot through Tauri's dynamically scoped asset protocol. Remote snapshots travel over the project's registered SSH connection. One preparation runs at a time, every snapshot has a 64 MiB limit, and SSH preparation has a 30-second timeout. Text rendering reads at most the first 512 KiB. Closing or replacing a preview revokes and removes its snapshot; force-quitting can still leave a private temporary directory.
 
-This intentionally supports ordinary, non-interactive SSH connections and quiet remote shells. It does not handle shell banners on stdout, special SSH modes, or helper-process cleanup. Previewing never writes remotely, loads content into Tau's webview, or falls back to the default application.
+Directories keep their existing behavior: local directories open through the operating system, while remote directories copy the written path and report **Path Copied**. Previewing never writes to an original local or remote file. The SSH path supports ordinary, non-interactive connections and quiet remote shells; it does not handle shell banners on stdout or special SSH modes.
 
-For an interactive check, preview a text file and an image, copy a directory, and try a missing file. Verify a subsequent preview replaces the panel and quitting Tau removes the displayed snapshot. Rendering support depends on installed Quick Look providers.
+For an interactive check, preview short and long code files, a wide one-line file, an image, a PDF, a local directory, and a remote directory. Verify vertical and horizontal scrolling, the relative-versus-absolute directory label, Escape and close-button focus restoration, generic failure copy for a missing file, and cleanup when the preview closes.
 
 Checked-in Pi scenarios run the real Tau app against development-only mocked Tauri IPC and events. The same scenario source and browser adapter are used by Playwright and by the interactive runner; neither is included in production builds.
 

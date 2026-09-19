@@ -151,6 +151,7 @@ function createBrowserSandboxHandler(
   const workspace = createBrowserSandboxWorkspace();
   let generation = 1;
   let nextSession = 1;
+  let nextPreview = 1;
   let ownershipRevision = 0;
   let activeOwner = '';
   const runtimes = new Map<string, RuntimeSession>();
@@ -361,8 +362,23 @@ function createBrowserSandboxHandler(
     if (command === 'load_workspace') return cloneWorkspace();
     if (command === 'read_model_scope') return [];
     if (command === 'read_admin_mode') return false;
+    if (command === 'prepare_file_preview') {
+      const path = requiredString(args, 'path');
+      if (path.endsWith('/')) return { kind: 'directory' };
+      const basePath = requiredString(args, 'basePath');
+      const source = `// Browser sandbox preview\nexport const path = ${JSON.stringify(path)};\n`;
+      return {
+        kind: 'ready',
+        id: `browser-preview-${nextPreview++}`,
+        assetPath: `data:text/plain;charset=utf-8,${encodeURIComponent(source)}`,
+        filename: path.split('/').at(-1) ?? 'preview.ts',
+        sourcePath: path.startsWith('/') ? path : `${basePath}/${path}`,
+        byteLength: source.length,
+      };
+    }
     if (
       command === 'set_admin_mode' ||
+      command === 'release_file_preview' ||
       command === 'ingest_telemetry' ||
       command === 'submit_issue_report' ||
       command === 'plugin:window|show' ||

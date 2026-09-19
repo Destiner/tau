@@ -172,7 +172,7 @@ const props = defineProps<{
   showWorkingIndicator: boolean;
   workingLabel: string;
   basePath?: string;
-  /** Remote file paths copy rather than opening in the local file manager. */
+  /** Remote file paths use app-managed preview and directory-copy behavior. */
   copyPaths?: boolean;
   remoteProjectPath?: string;
   /** Session this transcript belongs to, under which its position is kept. */

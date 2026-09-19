@@ -74,13 +74,14 @@ rather than as part of the same set as the controls it labels.
 A surface token answers "how far from the canvas is this?", not "what color is
 this?". They stack in one order and are never used out of it.
 
-| Token            | Meaning                                                                    |
-| ---------------- | -------------------------------------------------------------------------- |
-| `--sunk`         | Inset _into_ a surface: a code block, a well, a read-only body of text.    |
-| `--canvas`       | The app background, and the background of a field the user types into.     |
-| `--panel`        | Chrome attached to the canvas: the sidebar, a header.                      |
-| `--panel-raised` | Detached from the app and floating over it: dialog, menu, popover, notice. |
-| `--user`         | The reader's own message. A single-purpose surface, not a rung.            |
+| Token              | Meaning                                                                     |
+| ------------------ | --------------------------------------------------------------------------- |
+| `--sunk`           | Inset _into_ a surface: a code block, a well, a read-only body of text.     |
+| `--canvas`         | The app background, and the background of a field the user types into.      |
+| `--panel`          | Chrome attached to the canvas: the sidebar, a header.                       |
+| `--panel-raised`   | Detached from the app and floating over it: dialog, menu, popover, notice.  |
+| `--preview-canvas` | A fullscreen file page: pure white in light appearance, pure black in dark. |
+| `--user`           | The reader's own message. A single-purpose surface, not a rung.             |
 
 `--scrim` dims the app behind a dialog. `--shadow-soft` lifts a menu or popover;
 `--shadow-strong` lifts a dialog. Nothing that is not floating has a shadow.

@@ -153,7 +153,7 @@ const props = defineProps<{
   submitting: boolean;
   disabled?: boolean;
   error: string;
-  /** Base for relative paths; remote paths copy instead of opening locally. */
+  /** Base for relative paths; remote paths use app-managed activation. */
   workingDirectory?: string;
   copyPaths?: boolean;
   remoteProjectPath?: string;

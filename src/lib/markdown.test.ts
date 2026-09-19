@@ -282,7 +282,7 @@ describe('linking file paths in markup', () => {
     expect(linkFilePaths(block)).toBe(block);
   });
 
-  it('leaves fenced paths unlinked when remote paths copy', () => {
+  it('leaves fenced paths unlinked when remote paths use buttons', () => {
     const block =
       '<pre><code>Repo /home/agent/rhinestone/orchestrator\nPlan /home/agent/.pi/workflows/implement/RHI-6092/implementation-plan.md\n</code></pre>';
     const html =
