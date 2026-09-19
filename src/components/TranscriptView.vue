@@ -150,16 +150,11 @@ import {
   nextTick,
   onBeforeUnmount,
   onMounted,
-  provide,
   ref,
   watch,
 } from 'vue';
 
 import type { ExtensionDialog as ExtensionPrompt } from '../composables/state';
-import {
-  createPathPreviewCoordinator,
-  pathPreviewCoordinatorKey,
-} from '../lib/path-preview-coordinator';
 import type { TranscriptEntry } from '../lib/pi/transcript';
 import { recallScroll, rememberScroll } from '../lib/transcript-scroll';
 
@@ -193,8 +188,6 @@ const emit = defineEmits<{
   'prompt-draft': [value: string];
   'load-history': [];
 }>();
-
-provide(pathPreviewCoordinatorKey, createPathPreviewCoordinator());
 
 const transcript = ref<HTMLElement>();
 const promptRow = ref<HTMLElement>();

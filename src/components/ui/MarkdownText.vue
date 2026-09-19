@@ -48,7 +48,6 @@ import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { openPath, openUrl } from '@tauri-apps/plugin-opener';
 import {
   computed,
-  inject,
   nextTick,
   onBeforeUnmount,
   onMounted,
@@ -66,15 +65,6 @@ import {
   renderMarkdown,
   resolveFilePath,
 } from '../../lib/markdown';
-import {
-  createPathPreviewCoordinator,
-  pathPreviewCoordinatorKey,
-} from '../../lib/path-preview-coordinator';
-import { piOwnerArgs } from '../../lib/pi/ownership';
-import {
-  remotePreviewErrorCopy,
-  remotePreviewErrorKind,
-} from '../../lib/remote-preview-errors';
 import { invokeTraced } from '../../lib/telemetry';
 
 import DiagramViewer from './DiagramViewer.vue';
@@ -109,12 +99,7 @@ let copiedElement: HTMLElement | undefined;
 let feedbackAnchor: HTMLElement | undefined;
 let feedbackRevision = 0;
 let mounted = true;
-const previewCoordinator = inject(
-  pathPreviewCoordinatorKey,
-  createPathPreviewCoordinator(),
-);
-const previewOrigin = Symbol('markdown-path-origin');
-let activeRemoteRequest: string | undefined;
+let remotePreviewPending = false;
 let pointerActivation:
   { link: HTMLElement; x: number; y: number; moved: boolean } | undefined;
 interface PathFeedback {
@@ -417,7 +402,7 @@ function contextMenuItems(): UiMenuItem[] {
   return items;
 }
 
-let previewAvailable: Promise<boolean> | undefined;
+type RemotePreviewResult = 'opened' | 'directory' | 'unsupported' | 'busy';
 
 async function activateRemotePath(
   path: string,
@@ -427,77 +412,48 @@ async function activateRemotePath(
     await copyPath(path, anchor);
     return;
   }
-  let revision: number | undefined;
-  const requestId = crypto.randomUUID();
-  const projectPath = props.remoteProjectPath;
-  // Preview ownership belongs to the transcript/document coordinator, not to
-  // this virtualized row. The async continuation may outlive its DOM anchor.
-  const isCurrent = (): boolean =>
-    revision !== undefined && revision === feedbackRevision;
-  const cancel = (): void => {
-    if (activeRemoteRequest === requestId) activeRemoteRequest = undefined;
-    if (isCurrent()) {
-      feedbackRevision += 1;
-      clearCopied();
-    }
-    void invokeTraced('cancel_remote_path', {
-      ...piOwnerArgs(),
-      requestId,
-    }).catch(() => undefined);
-  };
-  if (
-    previewCoordinator.start(
-      previewOrigin,
-      `${projectPath}\0${path}`,
-      requestId,
-      cancel,
-    ) === 'duplicate'
-  )
-    return;
-  revision = ++feedbackRevision;
-  activeRemoteRequest = requestId;
-  previewAvailable ??= invokeTraced<boolean>('remote_preview_available');
+  if (remotePreviewPending) return;
+
+  remotePreviewPending = true;
+  const revision = ++feedbackRevision;
   let loading: ReturnType<typeof setTimeout> | undefined;
   try {
-    if (!(await previewAvailable)) {
-      if (isCurrent()) await copyPath(path, anchor);
-      return;
-    }
-    if (!isCurrent()) return;
     loading = setTimeout(() => {
-      if (isCurrent())
+      if (actionIsCurrent(revision))
         showPathFeedback(anchor, 'Preparing preview…', 'loading');
     }, 200);
-    const prepared = await invokeTraced<
-      { kind: 'directory' } | { kind: 'file'; token: string }
-    >('prepare_remote_path', {
-      ...piOwnerArgs(),
-      projectPath,
-      requestId,
-      path,
-    });
+    const result = await invokeTraced<RemotePreviewResult>(
+      'preview_remote_path',
+      {
+        projectPath: props.remoteProjectPath,
+        path,
+      },
+    );
     clearTimeout(loading);
-    if (!isCurrent()) return;
-    if (prepared.kind === 'directory') {
+    if (!actionIsCurrent(revision)) return;
+
+    if (result === 'directory' || result === 'unsupported') {
       await copyPath(path, anchor);
-      return;
+    } else if (result === 'busy') {
+      showPathFeedback(
+        anchor,
+        'Another preview is loading. Try again.',
+        'error',
+      );
+    } else {
+      clearCopied();
     }
-    await invokeTraced('show_remote_preview', {
-      ...piOwnerArgs(),
-      requestId,
-      token: prepared.token,
-    });
-    if (isCurrent()) clearCopied();
-  } catch (error) {
+  } catch {
     clearTimeout(loading);
-    if (isCurrent()) {
-      const kind = remotePreviewErrorKind(error);
-      if (kind !== 'superseded')
-        showPathFeedback(anchor, remotePreviewErrorCopy(kind), 'error');
+    if (actionIsCurrent(revision)) {
+      showPathFeedback(
+        anchor,
+        'Could not preview file. Check the connection and path, then try again.',
+        'error',
+      );
     }
   } finally {
-    previewCoordinator.finish(requestId);
-    if (activeRemoteRequest === requestId) activeRemoteRequest = undefined;
+    remotePreviewPending = false;
   }
 }
 
@@ -587,10 +543,9 @@ function cancelPointerActivation(): void {
   pointerActivation = undefined;
 }
 
-function cancelPendingAction(): void {
+function invalidateFeedback(): void {
   feedbackRevision += 1;
   clearCopied();
-  previewCoordinator.cancelOrigin(previewOrigin);
 }
 
 watch(
@@ -600,7 +555,7 @@ watch(
     props.remoteProjectPath,
     props.copyPaths,
   ],
-  cancelPendingAction,
+  invalidateFeedback,
 );
 onMounted(() => {
   window.addEventListener('resize', updateFeedbackPosition);
@@ -610,9 +565,6 @@ onBeforeUnmount(() => {
   mounted = false;
   window.removeEventListener('resize', updateFeedbackPosition);
   document.removeEventListener('scroll', updateFeedbackPosition, true);
-  // Virtualization only detaches this row's feedback anchor. The transcript-
-  // scoped coordinator keeps an in-flight preview alive until its origin
-  // context changes or another target supersedes it.
   clearCopied();
 });
 </script>

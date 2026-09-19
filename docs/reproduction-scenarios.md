@@ -4,9 +4,11 @@
 
 On macOS, activating a file path from a remote project downloads a private, read-only snapshot over the project's registered SSH connection and opens it in Tau's native **Remote Preview** Quick Look panel. Directories remain copy-only and report **Path Copied**. Other platforms retain copy-only behavior.
 
-Snapshots are limited to 64 MiB and preparation to 30 seconds. Staged previews are single-use. Tau removes failed, replaced, and normally exited snapshots; forced termination can leave an owner-only file in the operating-system temporary directory. Previewing never writes remotely, loads content into Tau's webview, or falls back to the default application.
+One request runs at a time, with a 64 MiB file limit and a 30-second transfer timeout. New clicks do not cancel or replace an in-flight request. Switching sessions or scrolling away does not cancel it either. A completed preview replaces the previous panel; its snapshot stays until the next preview or app exit. Quitting during a transfer or force-quitting can leave a private file in the operating-system temporary directory.
 
-For an interactive check, activate representative text, image, PDF, media, archive, extensionless, and binary files in a remote project. Verify directories copy, a new preview replaces the old panel, and quitting Tau removes snapshots. Rendering support depends on installed Quick Look providers.
+This intentionally supports ordinary, non-interactive SSH connections and quiet remote shells. It does not handle shell banners on stdout, special SSH modes, or helper-process cleanup. Previewing never writes remotely, loads content into Tau's webview, or falls back to the default application.
+
+For an interactive check, preview a text file and an image, copy a directory, and try a missing file. Verify a subsequent preview replaces the panel and quitting Tau removes the displayed snapshot. Rendering support depends on installed Quick Look providers.
 
 Checked-in Pi scenarios run the real Tau app against development-only mocked Tauri IPC and events. The same scenario source and browser adapter are used by Playwright and by the interactive runner; neither is included in production builds.
 

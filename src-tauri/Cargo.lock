@@ -3563,7 +3563,6 @@ name = "tau"
 version = "0.1.2"
 dependencies = [
  "dirs",
- "libc",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",

@@ -82,18 +82,12 @@ pub fn run() {
                 quit::request_quit(app);
             }
         })
-        .on_window_event(|window, event| match event {
-            WindowEvent::ThemeChanged(theme) => {
+        .on_window_event(|window, event| {
+            if let WindowEvent::ThemeChanged(theme) = event {
                 if let Some(webview) = window.get_webview_window(window.label()) {
                     let _ = webview.set_background_color(Some(canvas_color(*theme)));
                 }
             }
-            WindowEvent::Destroyed => {
-                window
-                    .state::<remote_preview::RemotePreviewState>()
-                    .shutdown();
-            }
-            _ => {}
         })
         .setup(|app| {
             // Match both native surfaces to the system theme before revealing
@@ -117,10 +111,7 @@ pub fn run() {
             pi::stop_pi,
             quit::pending_quit_request,
             quit::resolve_quit_request,
-            remote_preview::cancel_remote_path,
-            remote_preview::prepare_remote_path,
-            remote_preview::remote_preview_available,
-            remote_preview::show_remote_preview,
+            remote_preview::preview_remote_path,
             settings::read_model_scope,
             settings::read_remote_model_scope,
             ssh::list_remote_directories,
@@ -147,9 +138,7 @@ pub fn run() {
         // marker must therefore be recorded and flushed here, not relied on
         // to happen implicitly when the managed `Telemetry` goes out of scope.
         if let tauri::RunEvent::Exit = event {
-            app_handle
-                .state::<remote_preview::RemotePreviewState>()
-                .shutdown();
+            remote_preview::close();
             app_handle.state::<pi::PiState>().shutdown();
             let telemetry = app_handle.state::<telemetry::Telemetry>();
             telemetry.record_app_exited();

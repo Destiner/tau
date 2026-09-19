@@ -19,7 +19,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tauri::{AppHandle, Emitter, Manager, Runtime, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 const MAX_RPC_LINE_BYTES: usize = 64 * 1024 * 1024;
 const STDERR_TAIL_LINES: usize = 8;
@@ -53,19 +53,6 @@ pub struct PiState {
 }
 
 impl PiState {
-    pub(crate) fn with_owner<T>(
-        &self,
-        owner_id: &str,
-        operation: impl FnOnce(u64) -> Result<T, String>,
-    ) -> Result<T, String> {
-        let manager = self
-            .inner
-            .lock()
-            .map_err(|_| "Pi ownership is unavailable.".to_string())?;
-        manager.require_owner(owner_id)?;
-        operation(manager.ownership_revision)
-    }
-
     pub fn shutdown(&self) {
         let processes = self
             .inner
@@ -285,7 +272,7 @@ pub struct OwnershipCommandError {
     message: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct StoppedRuntime {
     runtime_id: String,
     generation: u64,
@@ -325,9 +312,7 @@ pub fn read_pi_frontend_revision(
 
 #[tauri::command]
 pub async fn claim_pi_frontend(
-    window: WebviewWindow,
     state: State<'_, PiState>,
-    previews: State<'_, crate::remote_preview::RemotePreviewState>,
     telemetry: State<'_, Telemetry>,
     telemetry_context: Option<TraceContext>,
     owner_id: String,
@@ -341,12 +326,8 @@ pub async fn claim_pi_frontend(
         message,
     })?;
     let inner = Arc::clone(&state.inner);
-    let previews = (*previews).clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        claim_pi_frontend_inner_with(&inner, owner_id, expected_revision, |revision, owner| {
-            previews.replace_owner(&window, owner, revision);
-            Ok(())
-        })
+        claim_pi_frontend_inner(&inner, owner_id, expected_revision)
     })
     .await
     .map_err(|_| OwnershipCommandError {
@@ -414,20 +395,10 @@ fn record_ownership_cleanup(
     }
 }
 
-#[cfg(test)]
 fn claim_pi_frontend_inner(
     inner: &Arc<Mutex<PiManager>>,
     owner_id: String,
     expected_revision: u64,
-) -> Result<ClaimOutcome, ClaimFailure> {
-    claim_pi_frontend_inner_with(inner, owner_id, expected_revision, |_, _| Ok(()))
-}
-
-fn claim_pi_frontend_inner_with(
-    inner: &Arc<Mutex<PiManager>>,
-    owner_id: String,
-    expected_revision: u64,
-    before_activate: impl FnOnce(u64, &str) -> Result<(), String>,
 ) -> Result<ClaimOutcome, ClaimFailure> {
     let mut manager = inner.lock().map_err(|_| ClaimFailure {
         kind: "retryable",
@@ -490,11 +461,6 @@ fn claim_pi_frontend_inner_with(
             message,
             stopped,
         })?;
-    before_activate(manager.ownership_revision, &owner_id).map_err(|message| ClaimFailure {
-        kind: "retryable",
-        message,
-        stopped: stopped.clone(),
-    })?;
     manager.ownership = PiOwnership::Active { owner_id };
     Ok(ClaimOutcome {
         stopped,
