@@ -3235,6 +3235,242 @@ describe('active compaction', () => {
     expect(other.compacting).toBe(false);
   });
 
+  it('clears existing local feedback without removing Pi-owned failures', async () => {
+    const { handleRpc } = await import('./runtime');
+    const controller = makeController({
+      messagesLoaded: true,
+      streamSequence: 20,
+      localErrors: [
+        {
+          key: 7,
+          label: 'Conversation Not Shortened',
+          text: 'anchored failure',
+          anchor: 1,
+        },
+        {
+          key: 8,
+          label: 'Conversation Not Shortened',
+          text: 'unanchored failure',
+        },
+      ],
+      messages: [
+        { id: 'user-0', kind: 'user', text: 'retained question' },
+        {
+          id: 'extension-notify:info',
+          kind: 'notice',
+          text: 'old info',
+          noticeType: 'info',
+          anchor: 1,
+        },
+        {
+          id: 'extension-notify:warning',
+          kind: 'notice',
+          text: 'old warning',
+          noticeType: 'warning',
+          anchor: 1,
+        },
+        {
+          id: 'extension-notify:error',
+          kind: 'notice',
+          text: 'old error',
+          noticeType: 'error',
+          anchor: 1,
+        },
+        {
+          id: 'local-error-7',
+          kind: 'error',
+          text: 'anchored failure',
+          errorLabel: 'Conversation Not Shortened',
+          anchor: 1,
+        },
+        {
+          id: 'local-error-8',
+          kind: 'error',
+          text: 'unanchored failure',
+          errorLabel: 'Conversation Not Shortened',
+        },
+        {
+          id: 'assistant-failure',
+          kind: 'error',
+          text: 'Pi-owned failure',
+          errorLabel: 'Reply Failed',
+        },
+        {
+          id: 'tool-failure',
+          kind: 'tool',
+          text: 'failed command',
+          toolCallId: 'tool-1',
+          toolName: 'bash',
+          toolRunning: false,
+          toolErrored: true,
+        },
+      ],
+    });
+
+    await handleRpc(controller, { type: 'compaction_end', result: {} });
+
+    expect(controller.localErrors).toEqual([]);
+    expect(controller.messages.map((entry) => entry.id)).toEqual([
+      'user-0',
+      'assistant-failure',
+      'tool-failure',
+    ]);
+  });
+
+  it('keeps fresh feedback between post-compaction stream rows', async () => {
+    const { handleResponse, handleRpc } = await import('./runtime');
+    const controller = makeController({
+      messagesLoaded: true,
+      streaming: true,
+      working: true,
+      streamSequence: 10,
+      messages: [{ id: 'old-user', kind: 'user', text: 'old question' }],
+    });
+
+    await handleRpc(controller, { type: 'compaction_end', result: {} });
+    const request = mockInvoke.mock.calls
+      .filter(([command]) => command === 'send_pi')
+      .map(
+        ([, input]) => (input as { request: Record<string, unknown> }).request,
+      )
+      .find((candidate) => candidate.type === 'get_messages');
+    await handleRpc(controller, {
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: 'first output' },
+    });
+    await handleRpc(controller, {
+      type: 'extension_ui_request',
+      id: 'fresh-warning',
+      method: 'notify',
+      message: 'fresh notice',
+      notifyType: 'warning',
+    });
+    await handleRpc(controller, {
+      type: 'tool_execution_start',
+      toolCallId: 'later-tool',
+      toolName: 'bash',
+      args: { command: 'true' },
+    });
+
+    await handleResponse(controller, {
+      id: request?.id,
+      command: 'get_messages',
+      success: true,
+      data: {
+        messages: [
+          { role: 'compactionSummary', summary: 'summary' },
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'first output' }],
+          },
+        ],
+      },
+    });
+
+    expect(
+      controller.messages.map((entry) => [entry.kind, entry.text]),
+    ).toEqual([
+      ['compaction', ''],
+      ['assistant', 'first output'],
+      ['notice', 'fresh notice'],
+      ['tool', 'true'],
+    ]);
+  });
+
+  it('places fresh feedback observed before initial hydration above later output', async () => {
+    const { handleResponse, handleRpc } = await import('./runtime');
+    const controller = makeController({
+      messagesLoaded: false,
+      streaming: true,
+      working: true,
+    });
+
+    await handleRpc(controller, { type: 'compaction_end', result: {} });
+    const request = mockInvoke.mock.calls
+      .filter(([command]) => command === 'send_pi')
+      .map(
+        ([, input]) => (input as { request: Record<string, unknown> }).request,
+      )
+      .find((candidate) => candidate.type === 'get_messages');
+    await handleRpc(controller, {
+      type: 'extension_ui_request',
+      id: 'fresh-info',
+      method: 'notify',
+      message: 'before output',
+      notifyType: 'info',
+    });
+    await handleRpc(controller, {
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: 'later output' },
+    });
+
+    await handleResponse(controller, {
+      id: request?.id,
+      command: 'get_messages',
+      success: true,
+      data: {
+        messages: [{ role: 'compactionSummary', summary: 'summary' }],
+      },
+    });
+
+    expect(
+      controller.messages.map((entry) => [entry.kind, entry.text]),
+    ).toEqual([
+      ['compaction', ''],
+      ['notice', 'before output'],
+      ['assistant', 'later output'],
+    ]);
+  });
+
+  it('keeps compaction reconciliation pending when the next run starts', async () => {
+    const { handleResponse, handleRpc } = await import('./runtime');
+    const controller = makeController({
+      messagesLoaded: true,
+      streaming: true,
+      working: true,
+      streamSequence: 4,
+      messages: [{ id: 'old-user', kind: 'user', text: 'old question' }],
+    });
+
+    await handleRpc(controller, { type: 'compaction_end', result: {} });
+    const request = mockInvoke.mock.calls
+      .filter(([command]) => command === 'send_pi')
+      .map(
+        ([, input]) => (input as { request: Record<string, unknown> }).request,
+      )
+      .find((candidate) => candidate.type === 'get_messages');
+    await handleRpc(controller, {
+      type: 'extension_ui_request',
+      id: 'between-runs',
+      method: 'notify',
+      message: 'between runs',
+      notifyType: 'info',
+    });
+    await handleRpc(controller, { type: 'agent_start' });
+    await handleRpc(controller, {
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: 'new run output' },
+    });
+
+    expect(controller.compactionReconciliationPending).toBe(true);
+    expect(controller.compactionStreamSequence).toBe(4);
+
+    await handleResponse(controller, {
+      id: request?.id,
+      command: 'get_messages',
+      success: true,
+      data: {
+        messages: [{ role: 'compactionSummary', summary: 'summary' }],
+      },
+    });
+
+    expect(controller.messages.map((entry) => entry.text)).toEqual([
+      '',
+      'between runs',
+      'new run output',
+    ]);
+  });
+
   it('immediately reconciles the permanent boundary and keeps later output', async () => {
     const { handleResponse, handleRpc, requestEarlierHistory } =
       await import('./runtime');

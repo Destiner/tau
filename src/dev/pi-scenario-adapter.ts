@@ -172,6 +172,12 @@ const REQUIRED_NATIVE_COUNTS = {
     register_session: 5,
     set_active_session: 5,
   },
+  'saved-session-compaction-notifications': {
+    load_workspace: 1,
+    read_model_scope: 1,
+    register_session: 1,
+    set_active_session: 1,
+  },
   'saved-session-prompt-admission': {
     load_workspace: 1,
     read_model_scope: 1,

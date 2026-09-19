@@ -72,6 +72,7 @@ import {
   toolArgumentsText,
   toolResultText,
   toolSummary,
+  type LocalError,
   type TranscriptEntry,
   type TranscriptNoticeType,
 } from './transcript';
@@ -1287,8 +1288,9 @@ async function handleRpc(
     resetStreamAggregate(controller.runtimeId, controller.generation);
     controller.localErrors = [];
     controller.compacting = false;
-    controller.compactionReconciliationPending = false;
-    controller.compactionStreamSequence = controller.streamSequence;
+    if (!controller.compactionReconciliationPending) {
+      controller.compactionStreamSequence = controller.streamSequence;
+    }
     setControllerLifecycle(
       controller,
       { streaming: true, stopping: false, working: true },
@@ -1439,7 +1441,15 @@ async function handleRpc(
     } else if (asRecord(event.result)) {
       // Pi has persisted the compaction and rebuilt its message list before
       // this event. Reconcile from that source now: the same run may continue
-      // for a long time before settlement.
+      // for a long time before settlement. Feedback already shown belongs to
+      // the transcript Pi just replaced and must not be carried into it.
+      const localErrorIds = new Set(
+        controller.localErrors.map((error) => localErrorId(error.key)),
+      );
+      controller.messages = controller.messages.filter(
+        (entry) => entry.kind !== 'notice' && !localErrorIds.has(entry.id),
+      );
+      controller.localErrors = [];
       resetHistory(controller);
       controller.compactionReconciliationPending = true;
       controller.compactionStreamSequence = controller.streamSequence;
@@ -1608,22 +1618,46 @@ function sameLiveRow(
 
 /** Keeps output emitted after a message request when Pi answered an earlier
  * snapshot of the still-running turn. The authoritative prefix always wins. */
+function liveStreamSuffix(
+  previous: TranscriptEntry[],
+  dispatchStreamSequence: number,
+): TranscriptEntry[] {
+  return previous.filter((entry) => {
+    const sequence = streamEntrySequence(entry);
+    return sequence !== undefined && sequence >= dispatchStreamSequence;
+  });
+}
+
 function mergeLiveStreamSuffix(
   hydrated: TranscriptEntry[],
   previous: TranscriptEntry[],
   dispatchStreamSequence: number,
 ): TranscriptEntry[] {
-  const live = previous.filter((entry) => {
-    const sequence = streamEntrySequence(entry);
-    return sequence !== undefined && sequence >= dispatchStreamSequence;
-  });
+  const live = liveStreamSuffix(previous, dispatchStreamSequence);
   if (live.length === 0) return hydrated;
 
-  const maximumOverlap = Math.min(hydrated.length, live.length);
+  // Local rows can split one streamed text message into several visible rows.
+  // Compare their combined text with Pi's single hydrated message, but retain
+  // the split live rows so feedback can stay in the gap between them.
+  const comparableLive: TranscriptEntry[] = [];
+  for (const entry of live) {
+    const last = comparableLive[comparableLive.length - 1];
+    if (
+      last &&
+      (entry.kind === 'assistant' || entry.kind === 'thinking') &&
+      last.kind === entry.kind
+    ) {
+      last.text += entry.text;
+    } else {
+      comparableLive.push({ ...entry });
+    }
+  }
+
+  const maximumOverlap = Math.min(hydrated.length, comparableLive.length);
   for (let overlap = maximumOverlap; overlap > 0; overlap -= 1) {
     const hydratedStart = hydrated.length - overlap;
     if (
-      live
+      comparableLive
         .slice(0, overlap)
         .every((entry, index) =>
           sameLiveRow(hydrated[hydratedStart + index]!, entry),
@@ -1633,6 +1667,50 @@ function mergeLiveStreamSuffix(
     }
   }
   return [...hydrated, ...live];
+}
+
+/** Re-bases feedback raised after compaction onto the compacted Pi prefix while
+ * retaining the live-output gap in which each row was observed. */
+function reanchorCompactionLocalEntries(
+  reconciled: TranscriptEntry[],
+  previous: TranscriptEntry[],
+  errors: LocalError[],
+  dispatchStreamSequence: number,
+): void {
+  const live = liveStreamSuffix(previous, dispatchStreamSequence);
+  const liveIds = new Set(live.map((entry) => entry.id));
+  const errorsById = new Map(
+    errors.map((error) => [localErrorId(error.key), error]),
+  );
+  const oldBase = previous.filter(
+    (entry) =>
+      entry.kind !== 'notice' &&
+      !errorsById.has(entry.id) &&
+      !liveIds.has(entry.id),
+  ).length;
+  const newBase = reconciled.length - live.length;
+  let precedingLiveRows = 0;
+  const observedLocalIds = new Set<string>();
+
+  for (const entry of previous) {
+    if (liveIds.has(entry.id)) {
+      precedingLiveRows += 1;
+      continue;
+    }
+    const error = errorsById.get(entry.id);
+    if (entry.kind !== 'notice' && !error) continue;
+
+    entry.anchor = newBase + precedingLiveRows;
+    observedLocalIds.add(entry.id);
+    if (error) error.anchor = entry.anchor;
+  }
+
+  for (const error of errors) {
+    const id = localErrorId(error.key);
+    if (observedLocalIds.has(id)) continue;
+    const oldAnchor = error.anchor ?? oldBase + live.length;
+    error.anchor = Math.max(0, oldAnchor + newBase - oldBase);
+  }
 }
 
 function revealCachedHistory(controller: SessionController): void {
@@ -2287,7 +2365,8 @@ async function handleResponse(
       previousTail,
       controller.streaming || resolvesPending,
     );
-    const reconciled = controller.compactionReconciliationPending
+    const reconcilingCompaction = controller.compactionReconciliationPending;
+    const reconciled = reconcilingCompaction
       ? mergeLiveStreamSuffix(
           hydrated,
           previousTail,
@@ -2296,6 +2375,14 @@ async function handleResponse(
       : resolvesStart && controller.reconnectingRemote
         ? mergeLiveStreamSuffix(hydrated, previousTail, 0)
         : hydrated;
+    if (reconcilingCompaction) {
+      reanchorCompactionLocalEntries(
+        reconciled,
+        previousTail,
+        controller.localErrors,
+        controller.compactionStreamSequence,
+      );
+    }
     const tail = mergeLocalEntries(
       reconciled,
       controller.localErrors,

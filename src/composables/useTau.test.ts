@@ -2906,6 +2906,124 @@ describe('turn failures', () => {
     tau.dispose();
   });
 
+  it('clears old feedback at compaction and keeps fresh notice order through settlement', async () => {
+    const { tau, controller, session } = await setupNamedSession();
+    const retained = { role: 'user', content: 'retained question' };
+
+    await settleWith(controller, session, [retained]);
+    emitRpc(controller, {
+      type: 'extension_ui_request',
+      id: 'old-warning',
+      method: 'notify',
+      message: 'old warning',
+      notifyType: 'warning',
+    });
+    emitRpc(controller, {
+      type: 'compaction_end',
+      errorMessage: 'Auto-compaction failed: overloaded',
+    });
+    await vi.waitFor(() => {
+      expect(controller.messages.map((entry) => entry.kind)).toEqual([
+        'user',
+        'notice',
+        'error',
+      ]);
+    });
+
+    const messagesBefore = sentRequests(controller, 'get_messages').length;
+    emitRpc(controller, {
+      type: 'compaction_end',
+      result: { summary: 'short' },
+    });
+    await vi.waitFor(() => {
+      expect(controller.messages.map((entry) => entry.kind)).toEqual(['user']);
+      expect(sentRequests(controller, 'get_messages')).toHaveLength(
+        messagesBefore + 1,
+      );
+    });
+
+    emitTextDelta(controller, 'first output');
+    emitRpc(controller, {
+      type: 'extension_ui_request',
+      id: 'fresh-info',
+      method: 'notify',
+      message: 'fresh notice',
+      notifyType: 'info',
+    });
+    emitRpc(controller, {
+      id: sentRequests(controller, 'get_messages')[messagesBefore]?.id,
+      type: 'response',
+      command: 'get_messages',
+      success: true,
+      data: {
+        messages: [
+          { role: 'compactionSummary', summary: 'short' },
+          retained,
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'first output' }],
+          },
+        ],
+      },
+    });
+    await vi.waitFor(() => {
+      expect(controller.messages.map((entry) => entry.text)).toEqual([
+        '',
+        'retained question',
+        'first output',
+        'fresh notice',
+      ]);
+    });
+
+    emitRpc(controller, {
+      type: 'tool_execution_start',
+      toolCallId: 'later-tool',
+      toolName: 'bash',
+      args: { command: 'true' },
+    });
+    emitRpc(controller, {
+      type: 'tool_execution_end',
+      toolCallId: 'later-tool',
+      result: { content: [{ type: 'text', text: 'done' }] },
+      isError: false,
+    });
+    await settleWith(controller, session, [
+      { role: 'compactionSummary', summary: 'short' },
+      retained,
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'first output' },
+          {
+            type: 'toolCall',
+            id: 'later-tool',
+            name: 'bash',
+            arguments: { command: 'true' },
+          },
+        ],
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'later-tool',
+        toolName: 'bash',
+        content: [{ type: 'text', text: 'done' }],
+        isError: false,
+      },
+    ]);
+
+    expect(controller.messages.map((entry) => entry.text)).toEqual([
+      '',
+      'retained question',
+      'first output',
+      'fresh notice',
+      'true',
+    ]);
+    expect(
+      controller.messages.filter((entry) => entry.text === 'old warning'),
+    ).toEqual([]);
+    tau.dispose();
+  });
+
   it('leaves a notice raised before the first turn above it', async () => {
     const { tau, controller, session } = await setupNamedSession();
 

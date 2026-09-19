@@ -5,6 +5,7 @@ import {
   hydrateTranscript,
   historyLayersFromEntries,
   historyPrefix,
+  localErrorId,
   mergeLocalEntries,
   messageFailure,
   parseSkillBlock,
@@ -774,6 +775,35 @@ describe('mergeLocalEntries', () => {
       'hello',
       'compaction failed',
       'extension-notify:2',
+    ]);
+  });
+
+  it('keeps the visible order of different local rows sharing a spot', () => {
+    const failure: LocalError = {
+      key: 2,
+      label: 'Conversation Not Shortened',
+      text: 'compaction failed',
+      anchor: 1,
+    };
+    const carriedNotice = notice('extension-notify:1', 1);
+    const carriedFailure: TranscriptEntry = {
+      id: localErrorId(failure.key),
+      kind: 'error',
+      text: failure.text,
+      errorLabel: failure.label,
+      anchor: 1,
+    };
+
+    const entries = mergeLocalEntries(
+      hydrateTranscript([{ role: 'user', content: 'hello' }]),
+      [failure],
+      [carriedNotice, carriedFailure],
+    );
+
+    expect(entries.map((entry) => entry.text)).toEqual([
+      'hello',
+      'extension-notify:1',
+      'compaction failed',
     ]);
   });
 

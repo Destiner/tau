@@ -6,6 +6,7 @@ import phantomFirstPromptRegistration from './phantom-first-prompt-registration'
 import planImplementReplacement from './plan-implement-replacement';
 import savedSessionCommandReplacement from './saved-session-command-replacement';
 import savedSessionCompaction from './saved-session-compaction';
+import savedSessionCompactionNotifications from './saved-session-compaction-notifications';
 import savedSessionExtensionPrompt, {
   emptySessionExtensionPrompt,
 } from './saved-session-extension-prompt';
@@ -35,6 +36,7 @@ const scenarios = [
   savedSessionBootstrap,
   savedSessionConversation,
   savedSessionCompaction,
+  savedSessionCompactionNotifications,
   savedSessionPromptAdmission,
   savedSessionStaleGeneration,
   savedSessionCommandReplacement,

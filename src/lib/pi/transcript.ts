@@ -478,17 +478,23 @@ function mergeLocalEntries(
   previous: TranscriptEntry[],
 ): TranscriptEntry[] {
   const held = new Map(errors.map((error) => [localErrorId(error.key), error]));
-  const locals: TranscriptEntry[] = errors.map((error) => ({
+  const previousIds = new Set(previous.map((entry) => entry.id));
+  const localErrorEntry = (error: LocalError): TranscriptEntry => ({
     id: localErrorId(error.key),
     kind: 'error',
     text: error.text,
     errorLabel: error.label,
     ...(error.anchor === undefined ? {} : { anchor: error.anchor }),
-  }));
+  });
+  const locals: TranscriptEntry[] = errors
+    .filter((error) => !previousIds.has(localErrorId(error.key)))
+    .map(localErrorEntry);
   const ids = new Set([...entries, ...locals].map((entry) => entry.id));
   for (const entry of previous) {
-    if (entry.kind !== 'notice' || ids.has(entry.id)) continue;
-    locals.push(entry);
+    if (ids.has(entry.id)) continue;
+    const error = held.get(entry.id);
+    if (entry.kind !== 'notice' && !error) continue;
+    locals.push(error ? localErrorEntry(error) : entry);
     ids.add(entry.id);
   }
   if (locals.length === 0) return entries;
