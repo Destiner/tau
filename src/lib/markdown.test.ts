@@ -38,6 +38,8 @@ describe('file references', () => {
     expect(parseFileReference('../tau/README.md')?.path).toBe(
       '../tau/README.md',
     );
+    expect(parseFileReference('../notes')?.path).toBe('../notes');
+    expect(parseFileReference('./build')?.path).toBe('./build');
     expect(parseFileReference('~/.config/pi/settings.json')?.path).toBe(
       '~/.config/pi/settings.json',
     );
@@ -94,7 +96,6 @@ describe('file references', () => {
     for (const candidate of [
       '/pre',
       '/usage',
-      './build',
       '~/Documents',
       '/ expanded',
       '/Users/tim /notes.md',
@@ -219,6 +220,7 @@ describe('path resolution', () => {
     expect(resolveFilePath('/work/tau', '../other/App.vue')).toBe(
       '/work/other/App.vue',
     );
+    expect(resolveFilePath('/work/tau', '../notes')).toBe('/work/notes');
   });
 
   it('keeps rooted paths and expands the home directory', () => {
@@ -246,9 +248,12 @@ describe('linking file paths in markup', () => {
     );
   });
 
-  it('links a path written as code', () => {
+  it('links paths written as code', () => {
     expect(linkFilePaths('<p><code>docs/extensions.md</code></p>')).toBe(
       '<p><code><a class="file-link" role="link" tabindex="0" data-tau-path="docs/extensions.md">docs/extensions.md</a></code></p>',
+    );
+    expect(linkFilePaths('<p><code>../notes</code></p>')).toBe(
+      '<p><code><a class="file-link" role="link" tabindex="0" data-tau-path="../notes">../notes</a></code></p>',
     );
   });
 

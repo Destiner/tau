@@ -283,6 +283,7 @@ function parseFileReference(candidate: string): FileReference | null {
   }
 
   const rooted = ROOTED_PATH.test(path);
+  const explicitRelative = path.startsWith('./') || path.startsWith('../');
   // Segment-edge spaces are legal on disk but much more likely to be prose.
   const body = rooted ? path.replace(ROOTED_PATH, '') : path;
   const segments = body.split('/').filter(Boolean);
@@ -298,8 +299,16 @@ function parseFileReference(candidate: string): FileReference | null {
   if (!rooted && !directory && !namedFile) return null;
   // An implicit one-word directory is more often a count, label, or prose.
   if (!rooted && directory && segments.length < 2) return null;
-  // A lone rooted word is also how slash commands and markup tags are written.
-  if (rooted && segments.length === 1 && !directory && !namedFile) return null;
+  // A lone absolute or home-rooted word can be a slash command or markup tag.
+  // Dot-relative syntax is explicit enough to name an extensionless directory.
+  if (
+    rooted &&
+    !explicitRelative &&
+    segments.length === 1 &&
+    !directory &&
+    !namedFile
+  )
+    return null;
   // Route parameters and brace alternatives describe URL shapes, not one file.
   if (
     ROUTE_TEMPLATE_PUNCTUATION.test(path) ||

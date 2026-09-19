@@ -38,12 +38,14 @@
             <!-- eslint-disable vue/no-v-html -- highlightCode returns only Shiki-generated markup -->
             <div
               v-if="highlighted"
+              ref="textContent"
               class="file-viewer-code"
               v-html="highlighted"
             ></div>
             <!-- eslint-enable vue/no-v-html -->
             <pre
               v-else
+              ref="textContent"
               class="file-viewer-plain"
             ><code>{{ text }}</code></pre>
           </template>
@@ -82,9 +84,7 @@
           </audio>
 
           <object
-            v-else-if="
-              previewType.kind === 'pdf' || previewType.kind === 'object'
-            "
+            v-else-if="previewType.kind === 'pdf'"
             class="file-viewer-object"
             :data="assetUrl"
             :type="previewType.mediaType"
@@ -93,6 +93,13 @@
           >
             <p class="file-viewer-fallback">Preview unavailable.</p>
           </object>
+
+          <p
+            v-else
+            class="file-viewer-fallback"
+          >
+            Preview unavailable.
+          </p>
         </div>
 
         <div
@@ -154,6 +161,7 @@ const emit = defineEmits<{ close: [] }>();
 
 const closeButton = ref<InstanceType<typeof UiIconButton>>();
 const content = ref<HTMLElement>();
+const textContent = ref<HTMLElement>();
 const text = ref<string | null>(null);
 const truncated = ref(false);
 const loading = ref(false);
@@ -205,6 +213,14 @@ async function loadPreview(): Promise<void> {
   request = new AbortController();
   text.value = null;
   truncated.value = false;
+  failure.value = false;
+
+  if (previewType.value.kind === 'object') {
+    clearLoadingTimers();
+    loading.value = false;
+    showLoading.value = false;
+    return;
+  }
 
   beginLoading();
   if (previewType.value.kind !== 'text') return;
@@ -239,6 +255,24 @@ function handleKeydownCapture(event: KeyboardEvent): void {
     event.preventDefault();
     event.stopImmediatePropagation();
     emit('close');
+    return;
+  }
+  if (
+    event.key.toLowerCase() === 'a' &&
+    (event.metaKey || event.ctrlKey) &&
+    !event.altKey &&
+    previewType.value.kind === 'text' &&
+    text.value !== null
+  ) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const selection = window.getSelection();
+    const target = textContent.value;
+    if (!selection || !target) return;
+    const range = document.createRange();
+    range.selectNodeContents(target);
+    selection.removeAllRanges();
+    selection.addRange(range);
     return;
   }
   if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -386,6 +420,8 @@ onBeforeUnmount(() => {
   padding: 20px 40px 40px;
   tab-size: 2;
   cursor: text;
+  /* stylelint-disable-next-line property-no-vendor-prefix -- WKWebView needs the prefix before Safari 17.4 */
+  -webkit-user-select: text;
   user-select: text;
 }
 

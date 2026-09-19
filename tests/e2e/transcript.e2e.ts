@@ -142,9 +142,17 @@ test('previews local files and keeps URL and path copy actions', async ({
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect(preview).toHaveCSS('background-color', 'rgb(0, 0, 0)');
   await page.emulateMedia({ colorScheme: 'light' });
+  const previewText = preview.locator('.file-viewer-code');
   await expect(
     preview.getByText("export const component = 'TranscriptView';"),
   ).toBeVisible();
+  await expect(previewText).toHaveCSS('-webkit-user-select', 'text');
+  await expect(close).toBeFocused();
+  await page.keyboard.press('Meta+A');
+  expect(
+    (await page.evaluate(() => window.getSelection()?.toString()))?.trimEnd(),
+  ).toBe((await previewText.textContent())?.trimEnd());
+  await expect(close).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(preview).toHaveCount(0);
   await expect(path).toBeFocused();
@@ -180,6 +188,46 @@ test('previews local files and keeps URL and path copy actions', async ({
       expect.objectContaining({ command: 'prepare_file_preview' }),
       expect.objectContaining({ command: 'release_file_preview' }),
     ]);
+});
+
+test('keeps unsupported previews in one terminal state', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__TAURI_INTERNALS__ = {
+      transformCallback: (callback: unknown): unknown => callback,
+      invoke: (command: string): Promise<unknown> => {
+        if (command !== 'prepare_file_preview') return Promise.resolve(null);
+        return Promise.resolve({
+          kind: 'ready',
+          id: 'unsupported-preview',
+          assetPath: 'data:application/octet-stream,127.0.0.1%20localhost',
+          filename: 'hosts',
+          sourcePath: '/etc/hosts',
+          byteLength: 19,
+        });
+      },
+    };
+  });
+  await page.goto(fixtureUrl);
+  await page.clock.install();
+
+  await page
+    .locator('[data-message-id="fixture-markdown-showcase"]')
+    .locator('[data-tau-path="src/components/TranscriptView.vue"]')
+    .click();
+  const preview = page.getByRole('dialog', { name: 'hosts' });
+  await expect(preview).toBeVisible();
+  await expect(preview).not.toHaveAttribute('aria-busy');
+  await expect(preview.getByText('Preview unavailable.')).toBeVisible();
+  await expect(preview.locator('.file-viewer-object')).toHaveCount(0);
+
+  await page.clock.fastForward(20_000);
+  await expect(preview.getByText('Preview unavailable.')).toBeVisible();
+  await expect(
+    preview.getByText('Loading preview', { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    preview.getByText('Couldn’t preview this file.', { exact: true }),
+  ).toHaveCount(0);
 });
 
 test('scrolls large file previews in both directions', async ({ page }) => {
