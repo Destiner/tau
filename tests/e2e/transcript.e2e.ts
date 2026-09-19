@@ -356,7 +356,7 @@ test('ignores duplicate remote activation while showing delayed loading', async 
     .locator('[data-message-id="fixture-remote-paths"]')
     .getByRole('button', { name: 'Preview path src/remote.ts' });
   await path.click();
-  await expect(page.locator('.path-feedback')).toHaveText('Preparing preview…');
+  await expect(page.locator('.path-feedback')).toHaveText('Opening…');
   await path.click();
   expect(
     await page.evaluate(
@@ -473,7 +473,7 @@ test('shows generic remote preview failure copy', async ({ page }) => {
     .getByRole('button', { name: 'Preview path src/remote.ts' })
     .click();
   await expect(page.locator('.path-feedback[role="status"]')).toHaveText(
-    'Could not preview file. Check the connection and path, then try again.',
+    'Preview unavailable',
   );
 });
 
@@ -494,7 +494,7 @@ test('shows remote preview busy copy', async ({ page }) => {
     .getByRole('button', { name: 'Preview path src/remote.ts' })
     .click();
   await expect(page.locator('.path-feedback[role="status"]')).toHaveText(
-    'Another preview is loading. Try again.',
+    'Can’t open right now',
   );
 });
 
@@ -1322,7 +1322,10 @@ test('leaves remote paths in fenced transcript markdown as code', async ({
   await expect
     .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
     .toEqual(['/home/agent/rhinestone/workspace']);
-  await expect(page.locator('.path-feedback')).toHaveText('Path Copied');
+  const feedback = page.locator('.path-feedback');
+  await expect(feedback).toHaveText('Copied');
+  await expect(feedback).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await expect(feedback).not.toHaveCSS('box-shadow', 'none');
 
   await copy.click();
   await expect

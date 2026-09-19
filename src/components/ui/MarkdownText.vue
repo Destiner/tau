@@ -167,7 +167,7 @@ async function openLocalPath(
   } catch (error) {
     console.error('Could not open the path', error);
     if (actionIsCurrent(revision))
-      showPathFeedback(anchor, 'Could not open path. Try again.', 'error');
+      showPathFeedback(anchor, 'Couldn’t open path. Try again.', 'error');
   }
 }
 
@@ -345,11 +345,11 @@ async function copyPath(path: string, anchor: HTMLElement): Promise<void> {
   } catch (error) {
     console.error('Could not copy the path', error);
     if (revision === feedbackRevision)
-      showPathFeedback(anchor, 'Could not copy path. Try again.', 'error');
+      showPathFeedback(anchor, 'Couldn’t copy path. Try again.', 'error');
     return;
   }
   if (revision === feedbackRevision)
-    showPathFeedback(anchor, 'Path Copied', 'success');
+    showPathFeedback(anchor, 'Copied', 'success');
 }
 
 /** A remote home is unknown, so a tilde path cannot truthfully be made full. */
@@ -369,11 +369,10 @@ async function copyFullPath(path: string, anchor: HTMLElement): Promise<void> {
   } catch (error) {
     console.error('Could not copy the full path', error);
     if (actionIsCurrent(revision))
-      showPathFeedback(anchor, 'Could not copy path. Try again.', 'error');
+      showPathFeedback(anchor, 'Couldn’t copy path. Try again.', 'error');
     return;
   }
-  if (actionIsCurrent(revision))
-    showPathFeedback(anchor, 'Path Copied', 'success');
+  if (actionIsCurrent(revision)) showPathFeedback(anchor, 'Copied', 'success');
 }
 
 interface ContextCopyTarget {
@@ -461,7 +460,7 @@ async function activateFilePath(
   try {
     loading = setTimeout(() => {
       if (actionIsCurrent(revision))
-        showPathFeedback(anchor, 'Preparing preview…', 'loading');
+        showPathFeedback(anchor, 'Opening…', 'loading');
     }, 200);
     const result = await invokeTraced<PreparedFilePreview>(
       'prepare_file_preview',
@@ -483,11 +482,7 @@ async function activateFilePath(
       return;
     }
     if (result.kind === 'busy') {
-      showPathFeedback(
-        anchor,
-        'Another preview is loading. Try again.',
-        'error',
-      );
+      showPathFeedback(anchor, 'Can’t open right now', 'error');
       return;
     }
 
@@ -505,11 +500,7 @@ async function activateFilePath(
   } catch {
     clearTimeout(loading);
     if (actionIsCurrent(revision)) {
-      showPathFeedback(
-        anchor,
-        'Could not preview file. Check the connection and path, then try again.',
-        'error',
-      );
+      showPathFeedback(anchor, 'Preview unavailable', 'error');
     }
   } finally {
     filePreviewPending = false;
@@ -1131,9 +1122,9 @@ onBeforeUnmount(() => {
   max-width: min(240px, calc(100vw - 16px));
   padding: 5px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--raised);
-  box-shadow: var(--shadow-sm);
+  border-radius: var(--radius-md);
+  background: var(--panel-raised);
+  box-shadow: 0 8px 20px var(--shadow-soft);
   color: var(--text);
   font-size: var(--text-xs);
   line-height: 1.3;
