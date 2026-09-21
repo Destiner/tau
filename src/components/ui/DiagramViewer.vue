@@ -248,6 +248,9 @@ function syncViewport(): void {
 onMounted(async () => {
   mounted = true;
   document.addEventListener('keydown', handleKeydownCapture, true);
+  window.dispatchEvent(
+    new CustomEvent('tau:fullscreen-viewer-state', { detail: true }),
+  );
   await nextTick();
   if (!mounted) return;
   vector = drawing.value?.querySelector('svg') ?? null;
@@ -273,6 +276,9 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   mounted = false;
   document.removeEventListener('keydown', handleKeydownCapture, true);
+  window.dispatchEvent(
+    new CustomEvent('tau:fullscreen-viewer-state', { detail: false }),
+  );
   canvas.value?.removeEventListener('gesturestart', handleGestureStart);
   canvas.value?.removeEventListener('gesturechange', handleGestureChange);
   resizeObserver?.disconnect();

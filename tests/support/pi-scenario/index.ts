@@ -157,6 +157,19 @@ type PiRpcEvent =
     }
   | { type: 'agent_settled' }
   | {
+      type: 'auto_retry_start';
+      attempt: number;
+      maxAttempts: number;
+      delayMs: number;
+      errorMessage: string;
+    }
+  | {
+      type: 'auto_retry_end';
+      success: boolean;
+      attempt: number;
+      finalError?: string;
+    }
+  | {
       type: 'extension_ui_request';
       id: string;
       method: 'select' | 'confirm' | 'input' | 'editor';

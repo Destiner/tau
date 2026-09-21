@@ -75,6 +75,14 @@ async function dispatchRequest(
   return id;
 }
 
+function feedbackMessage(controller: SessionController): string {
+  return (
+    [...controller.feedback]
+      .reverse()
+      .find((incident) => !incident.acknowledged)?.message ?? ''
+  );
+}
+
 function makeController(
   overrides: Partial<SessionController> = {},
 ): SessionController {
@@ -114,8 +122,8 @@ function makeController(
     historyRequestId: '',
     localErrors: [],
     draft: '',
-    status: '',
-    actionError: '',
+    retry: undefined,
+    feedback: [],
     currentModelProvider: '',
     currentModelId: '',
     currentModelName: '',
@@ -152,6 +160,7 @@ beforeEach(async () => {
   mockInvoke.mockClear();
   rpcSpans.clear();
   state.controllers.splice(0);
+  state.workspaceFeedback = [];
   state.ephemeralSessions.splice(0);
   state.extensionDialogs.splice(0);
   state.activeProjectPath = '';
@@ -229,8 +238,7 @@ describe('project selection persistence', () => {
       expect.anything(),
       expect.anything(),
     );
-    expect(controller.status).toBe('');
-    expect(controller.actionError).toBe('');
+    expect(controller.feedback).toEqual([]);
     expect(controller.localErrors).toEqual([]);
   });
 
@@ -269,7 +277,7 @@ describe('project selection persistence', () => {
 
     await persistProjectSelection(controller.projectPath, controller);
 
-    expect(controller.status).toBe(
+    expect(feedbackMessage(controller)).toBe(
       'This selection could not be saved. Select it again.',
     );
   });
@@ -1323,7 +1331,7 @@ describe('command-created session durability', () => {
       path: '/tmp/project/plan-a.jsonl',
       title: 'Plan',
     });
-    expect(controller.status).toBe(
+    expect(feedbackMessage(controller)).toBe(
       'This session could not be saved. Continue here, then try reopening it.',
     );
     expect(controller.syncing).toBe(false);
@@ -2388,7 +2396,7 @@ describe('command-created session durability', () => {
     expect(controller.generation).toBe(1);
     expect(controller.sessionId).toBe('identity-b');
     expect(controller.syncing).toBe(true);
-    expect(controller.status).toBe('');
+    expect(feedbackMessage(controller)).toBe('');
     expect(controller.materializationMessagesRequestId).toBe(
       verificationRequestId,
     );
@@ -2730,6 +2738,7 @@ describe('prompt delivery', () => {
       promptSubmitting: true,
       working: true,
       draft: 'A newer draft',
+      retry: { generation: 1, attempt: 1, reason: 'rate_limit' },
       submittedPrompt: {
         requestId: 'prompt-1',
         generation: 1,
@@ -2751,6 +2760,7 @@ describe('prompt delivery', () => {
     expect(controller.promptSubmitting).toBe(false);
     expect(controller.working).toBe(false);
     expect(controller.submittedPrompt).toBeUndefined();
+    expect(controller.retry).toBeUndefined();
     expect(controller.draft).toBe('  Keep this draft  \n\nA newer draft');
     expect(controller.messages).toEqual([]);
   });
@@ -2827,10 +2837,10 @@ describe('prompt delivery', () => {
     expect(controller.draft).toBe('  Keep this draft  \n\nA newer draft');
     expect(controller.messages).toEqual([]);
     expect(controller.lastUserMessageAt).toBe(0);
-    expect(controller.status).toBe(
+    expect(controller.feedback).toEqual([]);
+    expect(state.remoteConnectionError).toBe(
       'The remote Pi process stopped unexpectedly. Check the connection and try again.',
     );
-    expect(state.remoteConnectionError).toBe(controller.status);
     expect(state.remoteRetry?.controllerKey).toBe(controller.key);
   });
 
@@ -2969,7 +2979,7 @@ describe('prompt delivery', () => {
     expect(controller.pendingPrompt).toBeUndefined();
     expect(controller.draft).toBe('  Keep this draft  \n\nA newer draft');
     expect(controller.messages).toEqual([]);
-    expect(controller.status).toBe(
+    expect(feedbackMessage(controller)).toBe(
       'The message could not be sent. Reopen the session and try again.',
     );
   });
@@ -2989,7 +2999,7 @@ describe('extension failures', () => {
       error: rawDetails,
     });
 
-    expect(controller.status).toBe(
+    expect(feedbackMessage(controller)).toBe(
       'A Pi extension failed. Review the extension setup and try again.',
     );
     expect(controller.messages).toEqual([]);
@@ -4023,7 +4033,7 @@ describe('compacted history', () => {
       historyAvailable: true,
       historyLoading: false,
     });
-    expect(controller.status).toBe(
+    expect(feedbackMessage(controller)).toBe(
       'Earlier messages could not be loaded. Try again.',
     );
   });
@@ -4341,7 +4351,7 @@ describe('Pi RPC span lifecycle', () => {
       kind: 'error',
       message: 'RAW_BRIDGE_ERROR_SECRET_SENTINEL',
     });
-    expect(controller.status).toBe(piConnectionFailureMessage);
+    expect(feedbackMessage(controller)).toBe(piConnectionFailureMessage);
 
     await handleBridgeEvent({
       runtimeId: controller.runtimeId,
@@ -4358,8 +4368,8 @@ describe('Pi RPC span lifecycle', () => {
       streaming: false,
       stopping: false,
       working: false,
-      status: piProcessExitMessage,
     });
+    expect(feedbackMessage(controller)).toBe(piProcessExitMessage);
     expect(controller.messages.map(({ text }) => text)).toEqual([
       'Keep this prompt',
       'Keep this partial reply',
@@ -4420,8 +4430,8 @@ describe('Pi RPC span lifecycle', () => {
       remoteDisconnected: true,
       reconnectingRemote: false,
       draft: 'Keep this newer draft',
-      status: remoteDisconnectedMessage,
     });
+    expect(feedbackMessage(controller)).toBe(remoteDisconnectedMessage);
     expect(controller.messages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ kind: 'assistant', text: 'Partial reply' }),
@@ -4485,8 +4495,8 @@ describe('Pi RPC span lifecycle', () => {
       connectingRemote: false,
       remoteDisconnected: true,
       reconnectingRemote: false,
-      status: remoteReconnectFailureMessage,
     });
+    expect(feedbackMessage(controller)).toBe(remoteReconnectFailureMessage);
     expect(state.remoteDialogOpen).toBe(false);
     expect(state.remoteRetry).toBeUndefined();
   });
@@ -4517,8 +4527,8 @@ describe('Pi RPC span lifecycle', () => {
       starting: false,
       remoteDisconnected: true,
       reconnectingRemote: false,
-      status: remoteReconnectFailureMessage,
     });
+    expect(feedbackMessage(controller)).toBe(remoteReconnectFailureMessage);
     expect(state.remoteDialogOpen).toBe(false);
   });
 
@@ -4584,7 +4594,7 @@ describe('Pi RPC span lifecycle', () => {
     expect(controller.ready).toBe(true);
     expect(controller.working).toBe(true);
     expect(controller.messages).toHaveLength(1);
-    expect(controller.status).toBe(
+    expect(feedbackMessage(controller)).toBe(
       'The Pi process could not be closed. Restart Tau and try again.',
     );
   });

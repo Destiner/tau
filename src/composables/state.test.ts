@@ -65,8 +65,8 @@ function testController(
     historyRequestId: '',
     localErrors: [],
     draft: '',
-    status: '',
-    actionError: '',
+    retry: undefined,
+    feedback: [],
     currentModelProvider: '',
     currentModelId: '',
     currentModelName: '',
@@ -444,7 +444,14 @@ describe('setControllerLifecycle', () => {
     setTelemetryEnabled(true);
     const controller = testController({
       draft: 'tau-canary-draft-text',
-      status: 'tau-canary-status-text',
+      feedback: [
+        {
+          id: 1,
+          title: 'Canary',
+          message: 'tau-canary-status-text',
+          acknowledged: false,
+        },
+      ],
     });
 
     setControllerLifecycle(controller, { working: true }, 'message_send');
@@ -455,6 +462,70 @@ describe('setControllerLifecycle', () => {
       ([name]) => name === 'ingest_telemetry',
     );
     expect(JSON.stringify(ingestCall)).not.toContain('tau-canary');
+  });
+});
+
+describe('fallback feedback', () => {
+  it('holds background failures for their controller and allows repeat incidents', async () => {
+    const { acknowledgeFeedback, activeFeedback, setControllerError, state } =
+      await import('./state');
+    const first = testController({ key: 'first', unread: false });
+    const second = testController({ key: 'second' });
+    state.controllers = [first, second];
+    state.workspaceFeedback = [];
+    state.activeControllerKey = second.key;
+
+    setControllerError(first, 'The message could not be sent. Try again.');
+    expect(activeFeedback.value).toBeUndefined();
+    expect(first.unread).toBe(true);
+
+    state.activeControllerKey = first.key;
+    expect(activeFeedback.value?.message).toBe(
+      'The message could not be sent. Try again.',
+    );
+    acknowledgeFeedback(activeFeedback.value!);
+    expect(activeFeedback.value).toBeUndefined();
+
+    setControllerError(first, 'The message could not be sent. Try again.');
+    expect(first.feedback).toHaveLength(2);
+    expect(activeFeedback.value?.id).not.toBe(first.feedback[0]?.id);
+  });
+
+  it('coalesces one runtime failure cascade and reopens remote recovery', async () => {
+    const {
+      acknowledgeFeedback,
+      activeFeedback,
+      reopenRemoteFeedback,
+      setControllerError,
+      state,
+    } = await import('./state');
+    const controller = testController({ key: 'remote' });
+    state.controllers = [controller];
+    state.workspaceFeedback = [];
+    state.activeControllerKey = controller.key;
+    const stored = state.controllers[0]!;
+
+    setControllerError(
+      stored,
+      'The remote connection was lost. Reconnect to continue.',
+    );
+    const incidentId = activeFeedback.value?.id;
+    setControllerError(
+      stored,
+      'The remote connection failed. Try reconnecting again.',
+    );
+
+    expect(stored.feedback).toHaveLength(1);
+    expect(activeFeedback.value).toMatchObject({
+      id: incidentId,
+      action: 'reconnect',
+      message: 'The remote connection failed. Try reconnecting again.',
+    });
+
+    acknowledgeFeedback(activeFeedback.value!);
+    expect(activeFeedback.value).toBeUndefined();
+    reopenRemoteFeedback(stored);
+    expect(activeFeedback.value?.id).toBe(incidentId);
   });
 });
 

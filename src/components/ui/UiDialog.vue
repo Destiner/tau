@@ -19,7 +19,10 @@
             >{{ description }}</DialogDescription
           >
         </header>
-        <div class="ui-dialog-body">
+        <div
+          v-if="$slots.default"
+          class="ui-dialog-body"
+        >
           <slot />
         </div>
         <footer
@@ -54,14 +57,21 @@ const props = withDefaults(
     /** Panel width: 440px for a connection, 480px for a directory browser. */
     width?: 'sm' | 'md';
     busy?: boolean;
+    /** Whether Escape, the scrim, or a close request may dismiss the dialog. */
+    dismissible?: boolean;
     /** Persistent control that receives focus after this dialog closes. */
     returnFocus?: () => HTMLElement | undefined;
   }>(),
-  { description: undefined, width: 'sm', returnFocus: undefined },
+  {
+    description: undefined,
+    width: 'sm',
+    dismissible: true,
+    returnFocus: undefined,
+  },
 );
 
 function handleOpenChange(next: boolean): void {
-  if (!next && props.busy) return;
+  if (!next && (props.busy || !props.dismissible)) return;
   open.value = next;
 }
 

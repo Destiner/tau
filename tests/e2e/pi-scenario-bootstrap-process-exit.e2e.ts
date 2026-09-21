@@ -43,26 +43,29 @@ test('bounds a bootstrap process exit and reconnects from the session row', asyn
   await releaseGate(page, beforeFailure);
   await waitForGate(page, afterError);
 
-  await expect(page.getByRole('status')).toHaveText(connectionFailure);
+  const feedback = page.getByRole('dialog');
+  await expect(feedback).toHaveAccessibleName('Pi Disconnected');
+  await expect(feedback).toContainText(connectionFailure);
   await expectNoRawFailure(page);
   await releaseGate(page, afterError);
   await waitForGate(page, afterExit);
 
-  await expect(page.getByRole('status')).toHaveText(processFailure);
+  await expect(feedback).toContainText(processFailure);
   await expect(page.getByText('Loading', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('img', { name: 'Working' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Stop Pi' })).toHaveCount(0);
   await expect(
-    page.getByRole('button', { name: 'Send Message' }),
+    page.locator('button[aria-label="Send Message"]'),
   ).toBeDisabled();
   await expectNoRawFailure(page);
 
+  await feedback.getByRole('button', { name: 'Close' }).click();
   await releaseGate(page, afterExit);
   await page.getByRole('button', { name: /^Main\b/ }).click();
 
   const composer = page.getByRole('textbox', { name: 'Message Pi' });
   await expect(composer).toBeEnabled();
-  await expect(page.getByRole('status')).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.getByText('Loading', { exact: true })).toHaveCount(0);
   await composer.fill('Recovery is available');
   await expect(

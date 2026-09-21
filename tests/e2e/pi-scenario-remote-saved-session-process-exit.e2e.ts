@@ -30,30 +30,33 @@ test('reconnects an established remote session only when requested', async ({
   await page.goto(scenarioUrl);
   await waitForGate(page, beforeFailure);
 
-  const composer = page.getByRole('textbox', { name: 'Message Pi' });
+  const composer = page.locator('textarea[aria-label="Message Pi"]');
   await composer.fill('Keep this draft');
   await releaseGate(page, beforeFailure);
   await waitForGate(page, afterError);
-  await releaseGate(page, afterError);
-  await waitForGate(page, afterExit);
 
-  await expect(page.getByRole('status')).toHaveText(
+  const reconnectStatus = page.locator('.reconnect-status');
+  const reconnect = reconnectStatus.getByRole('button', { name: 'Reconnect' });
+  await expect(reconnectStatus).toContainText(
     'The remote connection was lost. Reconnect to continue.',
   );
-  await expect(page.getByRole('button', { name: 'Reconnect' })).toBeVisible();
-  await expect(
-    page.getByRole('button', { name: 'Send Message' }),
-  ).toBeDisabled();
-  await expect(composer).toHaveValue('Keep this draft');
+  await expect(reconnect).toBeDisabled();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.locator('.status-row')).toHaveCount(0);
+  await expect(composer).toHaveCount(0);
   await expect(page.locator('body')).not.toContainText(
     'RAW_EXIT_SECRET_SENTINEL',
   );
   await expect(page.locator('[aria-label="Working"]')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Reconnect' })).toHaveCount(1);
 
+  await releaseGate(page, afterError);
+  await waitForGate(page, afterExit);
+  await expect(reconnect).toBeEnabled();
   await releaseGate(page, afterExit);
-  await page.getByRole('button', { name: 'Reconnect' }).click();
+  await reconnect.click();
 
-  await expect(page.getByRole('button', { name: 'Reconnect' })).toHaveCount(0);
+  await expect(reconnectStatus).toHaveCount(0);
   await expect(composer).toBeEnabled();
   await expect(composer).toBeFocused();
   await expect(composer).toHaveValue('Keep this draft');

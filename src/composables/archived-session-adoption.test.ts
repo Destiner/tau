@@ -246,7 +246,7 @@ describe('a workflow phase Pi hands back', () => {
         PHASE_SESSION.id,
       );
     });
-    expect(controller.status).toBe('');
+    expect(controller.feedback).toEqual([]);
     expect(
       mocks.records.find((record) => record.id === PHASE_SESSION.id)?.archived,
     ).toBe(false);
@@ -332,7 +332,7 @@ describe('a workflow phase Pi hands back', () => {
 
     await vi.waitFor(() => {
       expect(controller.sessionId).toBe(PHASE_SESSION.id);
-      expect(controller.status).toBe(
+      expect(controller.feedback.at(-1)?.message).toBe(
         'This session could not be saved. Continue here, then try reopening it.',
       );
     });

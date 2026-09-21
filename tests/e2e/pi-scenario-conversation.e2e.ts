@@ -143,8 +143,8 @@ test('restores an immediately cleared composer when delivery fails', async ({
 }) => {
   await page.goto(scenarioUrl);
 
-  const composer = page.getByRole('textbox', { name: 'Message Pi' });
-  const send = page.getByRole('button', { name: 'Send Message' });
+  const composer = page.locator('textarea[aria-label="Message Pi"]');
+  const send = page.locator('button[aria-label="Send Message"]');
   await page.waitForFunction(() => Boolean(window.__TAURI_INTERNALS__));
   await page.evaluate(() => {
     const testWindow = window as typeof window & {
@@ -199,6 +199,13 @@ test('restores an immediately cleared composer when delivery fails', async ({
     ).__TAU_FAILED_PROMPT_DELIVERY__?.reject(),
   );
   await expect(composer).toHaveValue(`  ${prompt}  `);
+  const feedback = page.getByRole('dialog', { name: 'Message Not Sent' });
+  await expect(feedback).toContainText(
+    'The message could not be sent. Reopen the session and try again.',
+  );
+  await expect(page.locator('.status-row')).toHaveCount(0);
+  await feedback.getByRole('button', { name: 'Close' }).click();
+  await expect(composer).toBeFocused();
   await expect(send).toBeEnabled();
   await expect(page.getByText(prompt, { exact: true })).toHaveCount(0);
 

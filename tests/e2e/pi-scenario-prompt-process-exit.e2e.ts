@@ -39,7 +39,7 @@ test('keeps a partial failed prompt local to its owning session', async ({
 }) => {
   await page.goto(scenarioUrl);
 
-  const composer = page.getByRole('textbox', { name: 'Message Pi' });
+  const composer = page.locator('textarea[aria-label="Message Pi"]');
   await expect(composer).toBeEnabled();
   await page.getByRole('button', { name: /^Backup\b/ }).click();
   await expect(page.getByRole('heading', { name: 'Backup' })).toBeVisible();
@@ -62,14 +62,16 @@ test('keeps a partial failed prompt local to its owning session', async ({
 
   await releaseGate(page, beforeFailure);
   await waitForGate(page, afterError);
-  await expect(page.getByRole('status')).toHaveText(connectionFailure);
+  const feedback = page.getByRole('dialog');
+  await expect(feedback).toHaveAccessibleName('Pi Disconnected');
+  await expect(feedback).toContainText(connectionFailure);
   await expect(transcript).toContainText(prompt);
   await expect(transcript).toContainText(partial);
   await expectNoRawFailure(page);
 
   await releaseGate(page, afterError);
   await waitForGate(page, afterExit);
-  await expect(page.getByRole('status')).toHaveText(processFailure);
+  await expect(feedback).toContainText(processFailure);
   await expect(page.getByRole('button', { name: 'Stop Pi' })).toHaveCount(0);
   await expect(page.getByRole('img', { name: 'Working' })).toHaveCount(0);
   await expect(
@@ -79,11 +81,12 @@ test('keeps a partial failed prompt local to its owning session', async ({
   await expect(transcript).toContainText(partial);
   await expect(composer).toHaveValue('');
   await expectNoRawFailure(page);
+  await feedback.getByRole('button', { name: 'Close' }).click();
   await releaseGate(page, afterExit);
 
   await page.getByRole('button', { name: /^Backup\b/ }).click();
   await expect(page.getByRole('heading', { name: 'Backup' })).toBeVisible();
-  await expect(page.getByRole('status')).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.getByLabel('Transcript')).toHaveCount(0);
   await expect(page.locator('body')).not.toContainText(prompt);
   await expect(page.locator('body')).not.toContainText(partial);

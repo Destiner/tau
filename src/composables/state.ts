@@ -7,6 +7,7 @@
 import { computed, reactive } from 'vue';
 
 import type { CommandOption } from '../lib/commands';
+import { errorCopy, feedbackTitle } from '../lib/error-copy';
 import { scopeModels } from '../lib/pi/model-scope';
 import type { ModelOption, ThinkingLevel } from '../lib/pi/model-scope';
 import type {
@@ -152,6 +153,23 @@ interface PendingPrompt {
   telemetryContext?: TraceContext;
 }
 
+interface RetryPresentation {
+  generation: number;
+  attempt: number;
+  reason: string;
+}
+
+type FeedbackAction = 'initialize' | 'reconnect' | 'reload';
+
+interface FeedbackIncident {
+  id: number;
+  title: string;
+  message: string;
+  acknowledged: boolean;
+  action?: FeedbackAction;
+  controllerKey?: string;
+}
+
 interface SessionController {
   key: string;
   runtimeId: string;
@@ -205,8 +223,8 @@ interface SessionController {
   /** Failures Pi reports as events only; its message list never carries them. */
   localErrors: LocalError[];
   draft: string;
-  status: string;
-  actionError: string;
+  retry?: RetryPresentation;
+  feedback: FeedbackIncident[];
   currentModelProvider: string;
   currentModelId: string;
   currentModelName: string;
@@ -337,7 +355,7 @@ const state = reactive({
   activeSessionId: '',
   activeSessionPath: '',
   activeControllerKey: '',
-  workspaceStatus: '',
+  workspaceFeedback: [] as FeedbackIncident[],
   controllers: [] as SessionController[],
   ephemeralSessions: [] as EphemeralSession[],
   extensionDialogs: [] as ExtensionDialog[],
@@ -422,6 +440,7 @@ const idleRuntimeLimit = 6;
 let phantomSequence = 0;
 let controllerSequence = 0;
 let activitySequence = 0;
+let feedbackSequence = 0;
 const extensionDialogTimeouts = new Map<
   string,
   ReturnType<typeof setTimeout>
@@ -515,12 +534,16 @@ const draft = computed({
     if (session?.phantom) session.title = draftTitle(value);
   },
 });
-const status = computed(
-  () =>
-    activeController.value?.status ||
-    activeController.value?.actionError ||
-    state.workspaceStatus,
-);
+const retryPresentation = computed(() => activeController.value?.retry);
+const activeFeedback = computed(() => {
+  const controllerFeedback = activeController.value?.feedback.find(
+    (incident) => !incident.acknowledged,
+  );
+  return (
+    controllerFeedback ??
+    state.workspaceFeedback.find((incident) => !incident.acknowledged)
+  );
+});
 const streaming = computed(() => activeController.value?.streaming === true);
 const compacting = computed(() => activeController.value?.compacting === true);
 const stopping = computed(() => activeController.value?.stopping === true);
@@ -570,7 +593,11 @@ const canDraft = computed(() =>
 const sessionLoading = computed(() => {
   const controller = activeController.value;
   if (!controller || controller.phantom) return false;
-  if (controller.messages.length > 0 || controller.status) return false;
+  if (
+    controller.messages.length > 0 ||
+    controller.feedback.some((incident) => !incident.acknowledged)
+  )
+    return false;
   return !controller.ready || controller.starting || controller.syncing;
 });
 
@@ -949,8 +976,8 @@ function createController(
     historyRequestId: '',
     localErrors: [],
     draft: '',
-    status: '',
-    actionError: '',
+    retry: undefined,
+    feedback: [],
     currentModelProvider: '',
     currentModelId: '',
     currentModelName: '',
@@ -1177,7 +1204,6 @@ function presentRemoteConnectionError(
     'bridge_event_failed',
   );
   controller.runStateRequestId = '';
-  controller.status = message;
   if (!isControllerSelected(controller)) return;
 
   const project = state.workspace?.projects.find(
@@ -1194,7 +1220,7 @@ function presentRemoteConnectionError(
   state.remoteDialogStep = 'connection';
   state.remoteConnectionString = project.connectionString;
   clearRemoteDirectoryBrowser();
-  state.remoteConnectionError = controller.status;
+  state.remoteConnectionError = message;
   state.remoteConnecting = false;
   state.remoteDialogOpen = true;
 }
@@ -1214,32 +1240,94 @@ function finishRemoteConnection(controller: SessionController): void {
   }
 }
 
+function feedbackAction(message: string): FeedbackAction | undefined {
+  if (message === errorCopy.piOwnership) return 'initialize';
+  if (
+    message === errorCopy.piNotFound ||
+    message === errorCopy.piOwnershipConflict ||
+    message === errorCopy.loadWorkspace
+  )
+    return 'reload';
+  if (message.startsWith('The remote connection')) return 'reconnect';
+  return undefined;
+}
+
+function feedbackFamily(message: string): string {
+  if (
+    /\b(?:Pi|remote) (?:connection|process)\b|remote connection/i.test(message)
+  )
+    return 'runtime-connection';
+  return message;
+}
+
+function publishFeedback(
+  incidents: FeedbackIncident[],
+  message: string,
+  controllerKey?: string,
+): FeedbackIncident {
+  const family = feedbackFamily(message);
+  const previous = [...incidents]
+    .reverse()
+    .find(
+      (incident) =>
+        !incident.acknowledged && feedbackFamily(incident.message) === family,
+    );
+  if (previous) {
+    previous.title = feedbackTitle(message);
+    previous.message = message;
+    previous.action = feedbackAction(message);
+    return previous;
+  }
+  const incident = {
+    id: (feedbackSequence += 1),
+    title: feedbackTitle(message),
+    message,
+    acknowledged: false,
+    ...(feedbackAction(message) ? { action: feedbackAction(message) } : {}),
+    ...(controllerKey ? { controllerKey } : {}),
+  } satisfies FeedbackIncident;
+  incidents.push(incident);
+  if (incidents.length > 20) incidents.splice(0, incidents.length - 20);
+  return incident;
+}
+
 function setControllerError(
   controller: SessionController,
   message: string,
 ): void {
-  controller.status = message;
+  publishFeedback(controller.feedback, message, controller.key);
+  if (!isControllerSelected(controller)) controller.unread = true;
 }
 
-function setControllerActionError(
-  controller: SessionController,
-  message: string,
-): void {
-  controller.actionError = message;
-}
-
-function clearControllerActionError(
+function clearControllerFeedback(
   controller: SessionController | undefined,
+  message?: string,
 ): void {
-  if (controller) controller.actionError = '';
+  if (!controller) return;
+  for (const incident of controller.feedback) {
+    if (!message || incident.message === message) incident.acknowledged = true;
+  }
 }
 
 function setWorkspaceError(message: string): void {
-  state.workspaceStatus = message;
+  publishFeedback(state.workspaceFeedback, message);
 }
 
-function clearWorkspaceError(): void {
-  state.workspaceStatus = '';
+function acknowledgeFeedback(incident: FeedbackIncident): void {
+  incident.acknowledged = true;
+}
+
+function reopenRemoteFeedback(controller: SessionController): void {
+  const incident = [...controller.feedback]
+    .reverse()
+    .find((candidate) => candidate.action === 'reconnect');
+  if (incident) incident.acknowledged = false;
+}
+
+function resolveRemoteFeedback(controller: SessionController): void {
+  for (const incident of controller.feedback) {
+    if (incident.action === 'reconnect') incident.acknowledged = true;
+  }
 }
 
 const MAX_STATE_SUMMARY_COUNT = 1_000_000;
@@ -1363,6 +1451,9 @@ export type {
   RemoteDirectoryChoice,
   StateSnapshot,
   TranscriptKindCounts,
+  FeedbackAction,
+  FeedbackIncident,
+  RetryPresentation,
 };
 
 export {
@@ -1385,7 +1476,8 @@ export {
   activeController,
   messages,
   draft,
-  status,
+  retryPresentation,
+  activeFeedback,
   streaming,
   compacting,
   stopping,
@@ -1452,10 +1544,11 @@ export {
   clearRemoteRetry,
   finishRemoteConnection,
   setControllerError,
-  setControllerActionError,
-  clearControllerActionError,
+  clearControllerFeedback,
   setWorkspaceError,
-  clearWorkspaceError,
+  acknowledgeFeedback,
+  reopenRemoteFeedback,
+  resolveRemoteFeedback,
   classifyControllerLifecycle,
   setControllerLifecycle,
   sessionWorkInProgress,

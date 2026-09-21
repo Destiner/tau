@@ -52,7 +52,8 @@ withDefaults(
     /**
      * The name of the thing the trigger does — an icon button's label, said
      * out loud — or the value a row shows too little of, such as a project's
-     * path. Never a shortcut hint, and never a sentence.
+     * path. A reviewed status reason may be a sentence; never show raw error
+     * payloads or shortcut hints here.
      */
     text: string;
     side?: 'top' | 'right' | 'bottom' | 'left';

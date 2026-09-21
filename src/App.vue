@@ -53,24 +53,6 @@
             </UiButton>
           </div>
         </template>
-        <div
-          v-if="state.workspaceStatus"
-          class="first-run-error"
-          role="alert"
-        >
-          <p>{{ state.workspaceStatus }}</p>
-          <UiButton
-            v-if="
-              state.workspace === null && state.ownershipFailure === 'retryable'
-            "
-            variant="ghost"
-            size="md"
-            :disabled="state.initializing"
-            @click="initialize"
-          >
-            Try Again
-          </UiButton>
-        </div>
       </section>
     </main>
 
@@ -135,7 +117,15 @@
           v-if="!sessionLoading && !activeExtensionDialog"
           class="composer-area"
         >
+          <ReconnectStatus
+            v-if="remoteReconnectFeedback"
+            :message="remoteReconnectFeedback.message"
+            :busy="feedbackActionBusy"
+            :disabled="!activeController?.remoteDisconnected"
+            @reconnect="handleRemoteReconnect"
+          />
           <ComposerBar
+            v-else
             ref="composerBar"
             :header-element="() => sessionHeader?.header"
             @send="handleComposerSend"
@@ -151,6 +141,16 @@
       :error="quitError"
       @cancel="cancelQuit"
       @confirm="confirmQuit"
+    />
+
+    <FeedbackDialog
+      :key="activeFeedback?.id"
+      :open="feedbackDialogOpen"
+      :incident="activeFeedback"
+      :busy="feedbackActionBusy"
+      :return-focus="feedbackReturnFocus"
+      @action="handleFeedbackAction"
+      @close="closeFeedback"
     />
 
     <RemoteDialog
@@ -184,8 +184,10 @@ import {
 } from 'vue';
 
 import ComposerBar from './components/ComposerBar.vue';
+import FeedbackDialog from './components/FeedbackDialog.vue';
 import ProjectSidebar from './components/ProjectSidebar.vue';
 import QuitConfirmation from './components/QuitConfirmation.vue';
+import ReconnectStatus from './components/ReconnectStatus.vue';
 import RemoteDialog from './components/RemoteDialog.vue';
 import SessionHeader from './components/SessionHeader.vue';
 import TranscriptView from './components/TranscriptView.vue';
@@ -200,6 +202,7 @@ import { invokeTraced } from './lib/telemetry';
 
 const NEW_SESSION_EVENT = 'tau://new-session';
 const QUIT_REQUEST_EVENT = 'tau://quit-requested';
+const FULLSCREEN_VIEWER_STATE_EVENT = 'tau:fullscreen-viewer-state';
 /** How long a session may hydrate before it is worth reporting as loading. */
 const LOADING_INDICATOR_DELAY_MS = 200;
 const PREPARATION_INDICATOR_DELAY_MS = 200;
@@ -224,6 +227,8 @@ const quitRequest = ref<QuitRequest | null>(null);
 const quitSessionCount = ref(0);
 const quitBusy = ref(false);
 const quitError = ref('');
+const feedbackFocusTarget = ref<HTMLElement>();
+const fullscreenViewerOpen = ref(false);
 const adminCode = createAdminCodeMatcher(isEditableTarget);
 let unlistenWindowFocus: UnlistenFn | undefined;
 let unlistenNewSessionMenu: UnlistenFn | undefined;
@@ -232,6 +237,8 @@ let loadingIndicatorTimer: ReturnType<typeof setTimeout> | undefined;
 let preparationIndicatorTimer: ReturnType<typeof setTimeout> | undefined;
 const {
   state,
+  activeController,
+  activeFeedback,
   activeProject,
   projectActionsDisabled,
   messages,
@@ -244,6 +251,7 @@ const {
   activeExtensionDialog,
   sessionLoading,
   initialize,
+  acknowledgeFeedback,
   addLocalProject,
   openRemoteProjectDialog,
   dispose,
@@ -252,6 +260,7 @@ const {
   chooseRemoteDirectory,
   newSession,
   sendMessage,
+  reconnectRemoteSession,
   loadEarlierHistory,
   submitExtensionDialog,
   cancelExtensionDialog,
@@ -263,6 +272,33 @@ const {
  * renders that itself from the label.
  */
 
+const remoteReconnectFeedback = computed(() =>
+  activeFeedback.value?.action === 'reconnect'
+    ? activeFeedback.value
+    : undefined,
+);
+const feedbackDialogOpen = computed(
+  () =>
+    Boolean(activeFeedback.value) &&
+    !remoteReconnectFeedback.value &&
+    quitRequest.value === null &&
+    !state.remoteDialogOpen &&
+    !activeExtensionDialog.value &&
+    !fullscreenViewerOpen.value,
+);
+const feedbackActionBusy = computed(() => {
+  switch (activeFeedback.value?.action) {
+    case 'initialize':
+      return state.initializing;
+    case 'reconnect':
+      return Boolean(
+        activeController.value?.reconnectingRemote ||
+        activeController.value?.starting,
+      );
+    default:
+      return false;
+  }
+});
 const workspaceIsEmpty = computed(
   () => state.workspace !== null && state.workspace.projects.length === 0,
 );
@@ -331,6 +367,10 @@ onMounted(() => {
   void watchMenuActions();
   document.addEventListener('contextmenu', handleDocumentContextMenu);
   document.addEventListener('keydown', handleDocumentKeydown);
+  window.addEventListener(
+    FULLSCREEN_VIEWER_STATE_EVENT,
+    handleFullscreenViewerState,
+  );
 });
 onBeforeUnmount(() => {
   dispose();
@@ -341,6 +381,10 @@ onBeforeUnmount(() => {
   unlistenQuitRequest?.();
   document.removeEventListener('contextmenu', handleDocumentContextMenu);
   document.removeEventListener('keydown', handleDocumentKeydown);
+  window.removeEventListener(
+    FULLSCREEN_VIEWER_STATE_EVENT,
+    handleFullscreenViewerState,
+  );
 });
 
 watch(
@@ -363,8 +407,22 @@ watch(workspaceIsEmpty, (empty) => {
 
 watch(activeExtensionDialog, (dialog) => {
   void nextTick(() => {
-    if (!dialog) composerBar.value?.focus();
+    if (!dialog && !activeFeedback.value && !fullscreenViewerOpen.value) {
+      composerBar.value?.focus();
+    }
   });
+});
+
+watch(activeFeedback, (incident, previous) => {
+  if (incident && incident.id !== previous?.id) {
+    const focused = document.activeElement;
+    feedbackFocusTarget.value =
+      focused instanceof HTMLElement ? focused : undefined;
+    return;
+  }
+  if (!incident && previous?.action === 'reconnect') {
+    void nextTick(() => composerBar.value?.focus());
+  }
 });
 
 /**
@@ -384,7 +442,12 @@ watch(
     sessionHeader.value?.cancelRename();
     if (!controllerKey) return;
     void nextTick(() => {
-      if (!state.remoteDialogOpen && !activeExtensionDialog.value) {
+      if (
+        !state.remoteDialogOpen &&
+        !activeExtensionDialog.value &&
+        !activeFeedback.value &&
+        !fullscreenViewerOpen.value
+      ) {
         composerBar.value?.focus();
       }
     });
@@ -413,7 +476,12 @@ watch(
 watch(sessionLoading, (loading) => {
   if (loading) return;
   void nextTick(() => {
-    if (!state.remoteDialogOpen && !activeExtensionDialog.value) {
+    if (
+      !state.remoteDialogOpen &&
+      !activeExtensionDialog.value &&
+      !activeFeedback.value &&
+      !fullscreenViewerOpen.value
+    ) {
       composerBar.value?.focus();
     }
   });
@@ -421,14 +489,57 @@ watch(sessionLoading, (loading) => {
 
 watch(promptSubmitting, () => {
   void nextTick(() => {
-    if (!state.remoteDialogOpen && !activeExtensionDialog.value) {
+    if (
+      !state.remoteDialogOpen &&
+      !activeExtensionDialog.value &&
+      !activeFeedback.value &&
+      !fullscreenViewerOpen.value
+    ) {
       composerBar.value?.focus();
     }
   });
 });
 
+function handleFullscreenViewerState(event: Event): void {
+  fullscreenViewerOpen.value = Boolean((event as CustomEvent<unknown>).detail);
+}
+
+function closeFeedback(): void {
+  if (activeFeedback.value) acknowledgeFeedback(activeFeedback.value);
+}
+
+function feedbackReturnFocus(): HTMLElement | undefined {
+  const previous = feedbackFocusTarget.value;
+  if (previous?.isConnected) return previous;
+  return (
+    composerBar.value?.input ??
+    firstRunLocalProjectButton.value?.button ??
+    projectSidebar.value?.openProjectButton
+  );
+}
+
+async function handleRemoteReconnect(): Promise<void> {
+  await reconnectRemoteSession();
+}
+
+async function handleFeedbackAction(): Promise<void> {
+  const incident = activeFeedback.value;
+  if (!incident?.action) return;
+  if (incident.action === 'reconnect') {
+    await handleRemoteReconnect();
+    return;
+  }
+  acknowledgeFeedback(incident);
+  if (incident.action === 'initialize') {
+    await initialize();
+    return;
+  }
+  window.location.reload();
+}
+
 function focusComposer(): void {
-  composerBar.value?.focus();
+  if (!activeFeedback.value && !fullscreenViewerOpen.value)
+    composerBar.value?.focus();
 }
 
 function remoteDialogReturnFocus(): HTMLElement | undefined {
@@ -702,13 +813,6 @@ function isTitlebarControl(target: EventTarget | null): boolean {
   align-items: center;
   gap: 10px;
   color: var(--muted);
-  font-size: var(--text-sm);
-}
-
-.first-run-content .first-run-error {
-  max-width: 44ch;
-  margin: 12px 0 0;
-  color: var(--danger);
   font-size: var(--text-sm);
 }
 

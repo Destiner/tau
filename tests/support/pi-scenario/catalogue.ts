@@ -4,6 +4,7 @@ import phantomCommandOnly from './phantom-command-only';
 import phantomCommandRegistration from './phantom-command-registration';
 import phantomFirstPromptRegistration from './phantom-first-prompt-registration';
 import planImplementReplacement from './plan-implement-replacement';
+import savedSessionAutoRetry from './saved-session-auto-retry';
 import savedSessionCommandReplacement from './saved-session-command-replacement';
 import savedSessionCompaction from './saved-session-compaction';
 import savedSessionCompactionNotifications from './saved-session-compaction-notifications';
@@ -34,6 +35,7 @@ import type { PiScenario, PiScenarioMetadata } from './index';
 const scenarios = [
   emptyWorkspace,
   savedSessionBootstrap,
+  savedSessionAutoRetry,
   savedSessionConversation,
   savedSessionCompaction,
   savedSessionCompactionNotifications,

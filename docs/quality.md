@@ -28,8 +28,9 @@ from a rule here. If it isn't, the rubric is missing a rule, not an entry.
 - **Locality.** Everything renders where its context lives: a message
   belonging to a session appears in that session's transcript; session
   state lives in that session's indicators; a dialog's failure lands in
-  that dialog. Nothing pops over the UI, and nothing steals attention
-  from what the user is doing.
+  that dialog. Foreground operation failures without an owning surface use
+  the app-level fallback dialog; background-session failures wait until their
+  session is selected. No other feedback pops over the UI or steals attention.
 - **Never lose the user's work.** Typed text is sacred; no action, error,
   or race destroys it.
 - **Keyboard-first (north star).** The long-term goal is that nearly all
@@ -68,8 +69,9 @@ from a rule here. If it isn't, the rubric is missing a rule, not an entry.
   as cosmetic; only purely cosmetic operations may fail silently, and once
   structured logging exists, every failure is logged regardless. `[audit]`
 - Failures surface by locality: in the turn, session, or dialog they belong
-  to. A background session's failure waits behind its status indicator
-  until the user looks. `[audit]`
+  to. A foreground failure with no dedicated surface uses one fallback dialog;
+  a background session's failure waits behind its status indicator until the
+  user selects that session. `[audit]`
 - Every error has reviewed, operation-specific plain-language copy stating
   what happened and what to do next. Raw technical details never reach the UI.
   `[audit]`
@@ -114,8 +116,9 @@ Concurrency bugs are the worst UX bugs.
 
 ## 6. Keyboard and focus
 
-- When transient UI closes, focus lands somewhere deliberate — never
-  dropped on the document body. `[e2e]`
+- When transient UI closes, focus returns to a still-valid originating
+  control or the active composer — never behind another modal or onto the
+  document body. `[e2e]`
 - Escape dismisses only the topmost dismissible transient layer. If the
   topmost surface cannot be safely dismissed, Escape does nothing; it is never
   destructive. `[e2e]`

@@ -45,6 +45,7 @@ import {
 import {
   activeController,
   activeExtensionDialog,
+  activeFeedback,
   activeProject,
   projectActionsDisabled,
   applyRemoteDirectoryListing,
@@ -54,10 +55,10 @@ import {
   canReconnectRemote,
   canRenameSession,
   clearActiveSession,
-  clearControllerActionError,
+  acknowledgeFeedback,
+  clearControllerFeedback,
   clearRemoteDirectoryBrowser,
   clearRemoteRetry,
-  clearWorkspaceError,
   commands,
   compacting,
   controllerByKey,
@@ -93,6 +94,8 @@ import {
   promptSubmitting,
   archivedSessionEntries,
   relativeTimestamp,
+  reopenRemoteFeedback,
+  retryPresentation,
   runtimeAvailable,
   sessionLastUserMessageAt,
   sessionSortAt,
@@ -101,13 +104,11 @@ import {
   sessionLoading,
   sessionTitle,
   setActiveSessionView,
-  setControllerActionError,
   setControllerError,
   setControllerLifecycle,
   setWorkspaceError,
   settingsDisabled,
   state,
-  status,
   stopping,
   streaming,
   type ProjectSummary,
@@ -226,7 +227,6 @@ function useTau() {
       );
       if (operation.lifecycle !== lifecycle) return;
       state.workspace = workspace;
-      state.workspaceStatus = '';
       state.activeProjectPath = state.workspace.activeProjectPath;
       const selectedProject = state.workspace.projects.find(
         (project) => project.selected,
@@ -248,7 +248,7 @@ function useTau() {
         setActiveSessionView(selectedProject, selectedSession, controller);
         const needsLocalRuntime = !selectedProject.connectionString;
         if (needsLocalRuntime && !state.workspace.piPath) {
-          controller.status = 'Pi was not found. Install Pi, then restart Tau.';
+          setControllerError(controller, errorCopy.piNotFound);
           return;
         }
         await startController(
@@ -283,6 +283,7 @@ function useTau() {
       unlisten = undefined;
     }
     for (const controller of state.controllers) {
+      controller.retry = undefined;
       clearSessionReplacementWatch(controller);
       clearAbortWatch(controller);
       clearRemoteConnectionWatch(controller);
@@ -303,7 +304,6 @@ function useTau() {
 
   async function addLocalProject(): Promise<void> {
     if (projectActionsDisabled.value) return;
-    clearWorkspaceError();
     let selection: string | null;
     try {
       selection = await open({
@@ -346,7 +346,6 @@ function useTau() {
 
   function openRemoteProjectDialog(): void {
     if (projectActionsDisabled.value) return;
-    clearWorkspaceError();
     clearRemoteRetry();
     state.remoteDialogMode = 'add';
     state.remoteDialogStep = 'connection';
@@ -480,7 +479,6 @@ function useTau() {
 
   async function toggleProject(project: ProjectSummary): Promise<void> {
     if (projectActionsDisabled.value) return;
-    clearWorkspaceError();
     try {
       state.workspace = await invokeTraced<WorkspaceSnapshot>(
         'set_project_collapsed',
@@ -508,7 +506,6 @@ function useTau() {
       return;
     }
 
-    clearWorkspaceError();
     const projects = [...workspace.projects];
     const [project] = projects.splice(fromIndex, 1);
     if (!project) return;
@@ -528,7 +525,6 @@ function useTau() {
 
   async function removeProject(project: ProjectSummary): Promise<void> {
     if (projectActionsDisabled.value) return;
-    clearWorkspaceError();
     state.removingProjectPaths.push(project.path);
     const projectControllers = state.controllers.filter(
       (controller) => controller.projectPath === project.path,
@@ -568,9 +564,8 @@ function useTau() {
     session: SessionSummary,
   ): Promise<void> {
     if (!canArchiveSession(project, session)) return;
-    clearWorkspaceError();
     const controller = controllerForSession(project.path, session.id);
-    clearControllerActionError(controller);
+    clearControllerFeedback(controller, errorCopy.archiveSession);
     const discardedViewWasSelected =
       state.activeProjectPath === project.path &&
       state.activeSessionId === session.id;
@@ -616,7 +611,7 @@ function useTau() {
       else await newSession(updatedProject);
     } catch {
       const errorController = controller ?? ensureController(project, session);
-      setControllerActionError(errorController, errorCopy.archiveSession);
+      setControllerError(errorController, errorCopy.archiveSession);
       if (!isSessionSelected(project, session)) errorController.unread = true;
     }
   }
@@ -626,7 +621,6 @@ function useTau() {
     session: SessionSummary,
   ): Promise<void> {
     if (projectActionsDisabled.value) return;
-    clearWorkspaceError();
     try {
       state.workspace = await invokeTraced<WorkspaceSnapshot>(
         'unarchive_session',
@@ -644,7 +638,6 @@ function useTau() {
     bootstrap = false,
   ): Promise<SessionController | undefined> {
     if (!bootstrap && projectActionsDisabled.value) return;
-    clearWorkspaceError();
     const actionSpan = startActionSpan('session.new');
     try {
       const previous = activeController.value;
@@ -659,7 +652,6 @@ function useTau() {
         void persistExpandedProject(project.path, actionSpan.context);
       }
       setActiveSessionView(project, session, controller);
-      controller.status = '';
       await persistProjectSelection(
         project.path,
         controller,
@@ -707,6 +699,7 @@ function useTau() {
         const controller = activeController.value;
         if (controller) {
           controller.unread = false;
+          if (controller.remoteDisconnected) reopenRemoteFeedback(controller);
           if (
             !controller.phantom &&
             !controller.ready &&
@@ -728,7 +721,7 @@ function useTau() {
       removeEmptyActivePhantom();
       const controller = ensureController(project, session);
       setActiveSessionView(project, session, controller);
-      if (!controller.remoteDisconnected) controller.status = '';
+      if (controller.remoteDisconnected) reopenRemoteFeedback(controller);
       controller.unread = false;
       await persistProjectSelection(
         project.path,
@@ -834,7 +827,6 @@ function useTau() {
       if (!command) {
         appendOptimisticPrompt(controller, message, optimisticId);
       }
-      controller.status = '';
       try {
         // Sending to a session whose record is still archived is an implicit
         // unarchive: activity proves the session is wanted again.
@@ -906,7 +898,6 @@ function useTau() {
         'stop_requested',
         actionSpan.context,
       );
-      controller.status = '';
       watchAbort(controller);
       try {
         await rpc(
@@ -940,7 +931,6 @@ function useTau() {
       controllerTelemetryScope(controller),
     );
     try {
-      controller.status = '';
       if (controller.phantom) {
         controller.currentModelProvider = model.provider;
         controller.currentModelId = model.id;
@@ -983,7 +973,6 @@ function useTau() {
       controllerTelemetryScope(controller),
     );
     try {
-      controller.status = '';
       const requestId = nextRequestId('session-name');
       controller.pendingSessionRename = {
         requestId,
@@ -1032,7 +1021,6 @@ function useTau() {
       controllerTelemetryScope(controller),
     );
     try {
-      controller.status = '';
       if (controller.phantom) {
         controller.currentEffort = level;
         return;
@@ -1105,7 +1093,9 @@ function useTau() {
     activeController,
     messages,
     draft,
-    status,
+    retryPresentation,
+    activeFeedback,
+    acknowledgeFeedback,
     streaming,
     compacting,
     stopping,

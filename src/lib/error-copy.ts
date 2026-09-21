@@ -20,6 +20,7 @@ const errorCopy = {
     'The message could not be sent. Reopen the session and try again.',
   modelChange:
     'The model could not be changed. Reopen the session and try again.',
+  piNotFound: 'Pi was not found. Install Pi, then restart Tau.',
   piOwnership: 'Tau could not prepare Pi. Try again.',
   piOwnershipConflict: 'Another Tau window owns Pi. Reload Tau to continue.',
   piStart: 'Pi could not be started. Restart Tau and try again.',
@@ -47,6 +48,71 @@ const errorCopy = {
   workspaceSelection: 'This selection could not be saved. Select it again.',
 } as const;
 
+function feedbackTitle(message: string): string {
+  switch (message) {
+    case errorCopy.archiveSession:
+      return 'Session Not Archived';
+    case errorCopy.bridgeEvent:
+    case errorCopy.sessionRefresh:
+      return 'Session Not Updated';
+    case errorCopy.closePi:
+      return 'Pi Did Not Close';
+    case errorCopy.effortChange:
+      return 'Thinking Effort Not Changed';
+    case errorCopy.extensionFailure:
+      return 'Extension Failed';
+    case errorCopy.extensionResponse:
+      return 'Response Not Sent';
+    case errorCopy.folderPicker:
+      return 'Folder Picker Unavailable';
+    case errorCopy.historyLoad:
+      return 'Earlier Messages Not Loaded';
+    case errorCopy.importProject:
+      return 'Project Not Added';
+    case errorCopy.loadWorkspace:
+      return 'Projects Not Loaded';
+    case errorCopy.messageSend:
+      return 'Message Not Sent';
+    case errorCopy.modelChange:
+      return 'Model Not Changed';
+    case errorCopy.piNotFound:
+      return 'Pi Not Found';
+    case errorCopy.piOwnership:
+    case errorCopy.piOwnershipConflict:
+      return 'Pi Unavailable';
+    case errorCopy.piStart:
+      return 'Pi Not Started';
+    case errorCopy.projectOrder:
+      return 'Project Order Not Saved';
+    case errorCopy.removeProject:
+      return 'Project Not Removed';
+    case errorCopy.restoreSession:
+      return 'Session Not Restored';
+    case errorCopy.sessionRegistration:
+      return 'Session Not Saved';
+    case errorCopy.sessionRename:
+      return 'Session Not Renamed';
+    case errorCopy.settingConfirmation:
+      return 'Setting Not Confirmed';
+    case errorCopy.sidebarChange:
+      return 'Sidebar Change Not Saved';
+    case errorCopy.stopWork:
+      return 'Work Not Stopped';
+    case errorCopy.unsavedSession:
+      return 'Previous Session Unavailable';
+    case errorCopy.workspaceSelection:
+      return 'Selection Not Saved';
+    default:
+      if (message.startsWith('The remote connection'))
+        return 'Remote Connection Lost';
+      if (message.startsWith('The remote Pi')) return 'Remote Pi Unavailable';
+      if (message.startsWith('Could not connect')) return 'Connection Failed';
+      if (message.startsWith('The Pi connection')) return 'Pi Disconnected';
+      if (message.startsWith('The Pi process')) return 'Pi Process Stopped';
+      return 'Operation Failed';
+  }
+}
+
 function rpcFailureCopy(command: string): string {
   switch (command) {
     case 'abort':
@@ -66,4 +132,4 @@ function rpcFailureCopy(command: string): string {
   }
 }
 
-export { errorCopy, rpcFailureCopy };
+export { errorCopy, feedbackTitle, rpcFailureCopy };

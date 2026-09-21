@@ -130,6 +130,12 @@ const REQUIRED_NATIVE_COUNTS = {
     register_session: 1,
     set_active_session: 1,
   },
+  'saved-session-auto-retry': {
+    load_workspace: 1,
+    read_model_scope: 1,
+    register_session: 1,
+    set_active_session: 1,
+  },
   'saved-session-history': {
     load_workspace: 1,
     read_model_scope: 1,

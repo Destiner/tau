@@ -1,25 +1,5 @@
 <template>
   <div
-    v-if="status || canReconnectRemote"
-    class="status-row"
-  >
-    <p
-      v-if="status"
-      class="status"
-      role="status"
-    >
-      {{ status }}
-    </p>
-    <UiButton
-      v-if="canReconnectRemote"
-      variant="ghost"
-      size="sm"
-      @click="reconnect"
-    >
-      Reconnect
-    </UiButton>
-  </div>
-  <div
     ref="composer"
     class="composer"
     :class="{ disabled: !canDraft }"
@@ -56,7 +36,10 @@
         @keydown="handleComposerKeydown"
       ></textarea>
     </UiContextMenu>
-    <div class="composer-toolbar">
+    <div
+      class="composer-toolbar"
+      :class="{ 'has-retry': retryPresentation }"
+    >
       <ModelSelector
         v-model:open="modelSelectorOpen"
         :model-value="`${currentModelProvider}/${currentModelId}`"
@@ -76,6 +59,19 @@
         :max-width="110"
         @update:model-value="handleEffortChange"
       />
+      <UiTooltip
+        v-if="retryPresentation"
+        :text="retryPresentation.reason"
+      >
+        <span
+          ref="retryIndicator"
+          class="retry-indicator"
+          role="status"
+          tabindex="0"
+          :aria-label="`Retrying. ${retryPresentation.reason}`"
+          >Retrying…</span
+        >
+      </UiTooltip>
       <UiTooltip
         v-if="streaming"
         text="Stop Pi"
@@ -135,7 +131,6 @@ import textFieldItems from '../lib/text-menu';
 
 import CommandMenu from './CommandMenu.vue';
 import ModelSelector from './ModelSelector.vue';
-import UiButton from './ui/UiButton.vue';
 import UiContextMenu from './ui/UiContextMenu.vue';
 import UiIcon from './ui/UiIcon.vue';
 import UiIconButton from './ui/UiIconButton.vue';
@@ -150,10 +145,8 @@ const props = defineProps<{
 const emit = defineEmits<{ send: [] }>();
 
 const {
-  activeController,
   canCompose,
   canDraft,
-  canReconnectRemote,
   commands,
   compacting,
   currentEffort,
@@ -165,11 +158,10 @@ const {
   effortLabels,
   efforts,
   models,
-  reconnectRemoteSession,
   selectEffort,
   selectModel,
+  retryPresentation,
   settingsDisabled,
-  status,
   stop,
   streaming,
   stopping,
@@ -177,6 +169,7 @@ const {
 
 const composer = ref<HTMLElement>();
 const composerInput = ref<HTMLTextAreaElement>();
+const retryIndicator = ref<HTMLElement>();
 const commandMenu = ref<InstanceType<typeof CommandMenu>>();
 const commandMenuDismissed = ref(false);
 const commandSelectedIndex = ref(0);
@@ -215,6 +208,17 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', updateCommandMenuLayout);
 });
 
+watch(retryPresentation, (retry, previous) => {
+  if (retry || !previous || document.activeElement !== retryIndicator.value)
+    return;
+  void nextTick(() => {
+    const sendButton = composer.value?.querySelector<HTMLButtonElement>(
+      '.send-button:not(:disabled)',
+    );
+    (sendButton ?? composerInput.value)?.focus();
+  });
+});
+
 watch([commandQuery, commands], ([query]) => {
   commandSelectedIndex.value = 0;
   // A dismissed menu stays closed until the composer leaves the command it was
@@ -230,7 +234,7 @@ watch(effortSelectorOpen, (open) => {
   if (open) modelSelectorOpen.value = false;
 });
 
-watch([commandMenuActive, filteredCommands, status], () => {
+watch([commandMenuActive, filteredCommands], () => {
   if (!commandMenuActive.value) return;
   void nextTick(updateCommandMenuLayout);
 });
@@ -303,19 +307,6 @@ function send(): void {
   emit('send');
 }
 
-async function reconnect(): Promise<void> {
-  const controllerKey = activeController.value?.key;
-  await reconnectRemoteSession();
-  await nextTick();
-  if (
-    controllerKey &&
-    activeController.value?.key === controllerKey &&
-    canDraft.value
-  ) {
-    composerInput.value?.focus();
-  }
-}
-
 function dismissCommandMenu(): void {
   if (commandMenuActive.value) commandMenuDismissed.value = true;
 }
@@ -341,26 +332,6 @@ defineExpose({
 </script>
 
 <style scoped>
-.status-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  margin: 0 0 6px;
-}
-
-.status {
-  flex: 1;
-  margin: 0;
-  color: var(--muted);
-  font-size: 11px;
-  cursor: text;
-  /* stylelint-disable-next-line property-no-vendor-prefix -- WKWebView needs the prefix before Safari 17.4 */
-  -webkit-user-select: text;
-  user-select: text;
-}
-
-/* stylelint-disable-next-line no-descending-specificity */
 .composer {
   position: relative;
   width: 100%;
@@ -406,8 +377,31 @@ defineExpose({
   padding: 0;
 }
 
+.retry-indicator {
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-sm);
+  margin-left: auto;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  outline: 0;
+  color: var(--accent);
+  font-size: var(--text-xs);
+  font-weight: 550;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.retry-indicator:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
 .send-button {
   margin-left: auto;
+}
+
+.composer-toolbar.has-retry .send-button {
+  margin-left: 0;
 }
 
 /* Phosphor's stop and triangle read larger than the old glyphs at the same

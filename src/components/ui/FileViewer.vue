@@ -334,10 +334,16 @@ watch(
 
 onMounted(() => {
   document.addEventListener('keydown', handleKeydownCapture, true);
+  window.dispatchEvent(
+    new CustomEvent('tau:fullscreen-viewer-state', { detail: true }),
+  );
 });
 
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleKeydownCapture, true);
+  window.dispatchEvent(
+    new CustomEvent('tau:fullscreen-viewer-state', { detail: false }),
+  );
   request?.abort();
   clearLoadingTimers();
 });

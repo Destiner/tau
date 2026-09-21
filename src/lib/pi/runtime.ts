@@ -29,6 +29,7 @@ import {
   presentRemoteConnectionError,
   replacementProbeDelays,
   replacementProbeTimers,
+  resolveRemoteFeedback,
   setControllerError,
   setWorkspaceError,
   setControllerLifecycle,
@@ -133,7 +134,6 @@ async function sendPhantomMessage(
     parentContext,
   );
   if (!command) appendOptimisticPrompt(controller, message, optimisticId);
-  controller.status = '';
 
   if (controller.ready && controller.generation) {
     setControllerLifecycle(
@@ -215,7 +215,7 @@ async function startController(
   controller.efforts = [];
   controller.commands = [];
   controller.commandsLoaded = false;
-  controller.status = '';
+  controller.retry = undefined;
   discardControllerDialogs(controller);
   void refreshModelScope(controller, project, parentContext);
 
@@ -263,11 +263,13 @@ async function startController(
     const message = project.connectionString
       ? errorCopy.remoteConnection
       : errorCopy.piStart;
-    if (controller.pendingPrompt) cancelPendingPrompt(controller, message);
+    if (controller.pendingPrompt) {
+      cancelPendingPrompt(controller, message, !project.connectionString);
+    }
     if (project.connectionString && controller.reconnectingRemote) {
       controller.reconnectingRemote = false;
       controller.remoteDisconnected = true;
-      controller.status = remoteReconnectFailureMessage;
+      setControllerError(controller, remoteReconnectFailureMessage);
     } else if (project.connectionString) {
       presentRemoteConnectionError(controller, message);
     } else setControllerError(controller, message);
@@ -1029,7 +1031,7 @@ function watchRemoteConnection(controller: SessionController): void {
       if (controller.disposed || !controller.connectingRemote) return;
       controller.remoteConnectionTimedOut = true;
       if (controller.pendingPrompt) {
-        cancelPendingPrompt(controller, remoteConnectionTimeoutMessage);
+        cancelPendingPrompt(controller, remoteConnectionTimeoutMessage, false);
       }
       if (controller.reconnectingRemote) {
         controller.reconnectingRemote = false;
@@ -1039,7 +1041,7 @@ function watchRemoteConnection(controller: SessionController): void {
           { starting: false, connectingRemote: false, syncing: false },
           'bridge_event_failed',
         );
-        controller.status = remoteReconnectFailureMessage;
+        setControllerError(controller, remoteReconnectFailureMessage);
       } else {
         presentRemoteConnectionError(
           controller,
@@ -1103,6 +1105,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
       );
       flushStreamAggregate(controller.runtimeId, controller.generation);
       discardControllerDialogs(controller);
+      controller.retry = undefined;
       controller.generation = event.generation;
     }
     return;
@@ -1121,6 +1124,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
   }
   if (event.kind === 'stderr') return;
   if (event.kind === 'error') {
+    controller.retry = undefined;
     const project = state.workspace?.projects.find(
       (item) => item.path === controller.projectPath,
     );
@@ -1133,9 +1137,10 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
       : piConnectionFailureMessage;
     if (controller.connectingRemote) {
       clearRemoteConnectionWatch(controller);
-      if (controller.pendingPrompt) cancelPendingPrompt(controller, message);
+      if (controller.pendingPrompt)
+        cancelPendingPrompt(controller, message, false);
       if (controller.reconnectingRemote) {
-        controller.status = remoteReconnectFailureMessage;
+        setControllerError(controller, remoteReconnectFailureMessage);
       } else {
         presentRemoteConnectionError(controller, message);
       }
@@ -1186,7 +1191,9 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
         event.code === 0
           ? 'The remote Pi process stopped before it was ready.'
           : remotePiProcessExitMessage;
-      if (controller.pendingPrompt) cancelPendingPrompt(controller, failure);
+      if (controller.pendingPrompt) {
+        cancelPendingPrompt(controller, failure, false);
+      }
       presentRemoteConnectionError(controller, failure);
       return;
     }
@@ -1252,7 +1259,8 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     controller.generation = 0;
     controller.remoteDisconnected = recoverableRemoteExit;
     controller.reconnectingRemote = false;
-    controller.status = message;
+    controller.retry = undefined;
+    if (message) setControllerError(controller, message);
     if (recoverableRemoteExit && !isControllerSelected(controller)) {
       controller.unread = true;
     }
@@ -1296,7 +1304,6 @@ async function handleRpc(
       { streaming: true, stopping: false, working: true },
       'agent_start',
     );
-    controller.status = '';
     const stateRequestId = nextRequestId('run-state');
     controller.runStateRequestId = stateRequestId;
     await rpc(controller, { id: stateRequestId, type: 'get_state' });
@@ -1507,7 +1514,7 @@ async function handleRpc(
       { syncing: true, working: false, streaming: false, stopping: false },
       'agent_settled',
     );
-    controller.status = '';
+    controller.retry = undefined;
     if (!isControllerSelected(controller)) controller.unread = true;
     watchSessionReplacement(controller);
     const stateRequestId = nextRequestId('settled-state');
@@ -1529,11 +1536,19 @@ async function handleRpc(
     return;
   }
   if (type === 'auto_retry_start') {
-    controller.status = retryStatus(event);
+    controller.retry = {
+      generation: controller.generation,
+      attempt: Math.max(1, Number(event.attempt) || 1),
+      reason: retryStatus(event),
+    };
+    return;
+  }
+  if (type === 'auto_retry_end') {
+    controller.retry = undefined;
     return;
   }
   if (type === 'extension_error') {
-    controller.status = errorCopy.extensionFailure;
+    setControllerError(controller, errorCopy.extensionFailure);
   }
 }
 
@@ -1741,7 +1756,7 @@ async function requestEarlierHistory(
   } catch {
     controller.historyRequestId = '';
     setHistoryLoading(controller, false);
-    controller.status = errorCopy.historyLoad;
+    setControllerError(controller, errorCopy.historyLoad);
   }
 }
 
@@ -1928,9 +1943,10 @@ async function handleResponse(
       return;
     }
 
-    controller.status = resolvesHistory
+    const failureMessage = resolvesHistory
       ? errorCopy.historyLoad
       : rpcFailureCopy(command);
+    setControllerError(controller, failureMessage);
     if (resolvesMaterializationBarrier) {
       controller.materializationBarrierRequestId = '';
     }
@@ -1971,7 +1987,7 @@ async function handleResponse(
       if (resolvesStartMessages && controller.reconnectingRemote) {
         controller.reconnectingRemote = false;
         controller.remoteDisconnected = true;
-        controller.status = remoteReconnectFailureMessage;
+        setControllerError(controller, remoteReconnectFailureMessage);
         void stopControllerProcess(controller, responseContext, false);
         return;
       }
@@ -1996,14 +2012,14 @@ async function handleResponse(
       );
     }
     if (resolvesPendingPrerequisite) {
-      cancelPendingPrompt(controller, controller.status);
+      cancelPendingPrompt(controller, failureMessage);
       return;
     }
     const failedPendingSetting =
       Boolean(pending?.settingsRequestId) &&
       responseId === pending?.settingsRequestId;
     if (failedPendingSetting) {
-      cancelPendingPrompt(controller, controller.status);
+      cancelPendingPrompt(controller, failureMessage);
       return;
     }
     const failedPendingRequest =
@@ -2012,7 +2028,7 @@ async function handleResponse(
         (command === 'get_messages' &&
           responseId === pending?.messagesRequestId));
     if (failedPendingRequest) {
-      cancelPendingPrompt(controller, controller.status);
+      cancelPendingPrompt(controller, failureMessage);
     }
     if (command === 'get_state') {
       if (resolvesBootstrap) controller.bootstrapStateRequestId = '';
@@ -2027,7 +2043,7 @@ async function handleResponse(
       if (resolvesBootstrap && controller.reconnectingRemote) {
         controller.reconnectingRemote = false;
         controller.remoteDisconnected = true;
-        controller.status = remoteReconnectFailureMessage;
+        setControllerError(controller, remoteReconnectFailureMessage);
         void stopControllerProcess(controller, responseContext, false);
         return;
       }
@@ -2166,7 +2182,7 @@ async function handleResponse(
     else if (data.isCompacting === false || !nowStreaming) {
       controller.compacting = false;
     }
-    controller.status = '';
+    if (sessionChanged) controller.retry = undefined;
     clearRemoteConnectionWatch(controller);
     finishRemoteConnection(controller);
 
@@ -2399,7 +2415,7 @@ async function handleResponse(
       if (controller.reconnectingRemote) {
         controller.remoteDisconnected = false;
         controller.reconnectingRemote = false;
-        controller.status = '';
+        resolveRemoteFeedback(controller);
       }
     }
     setControllerLifecycle(
@@ -2463,7 +2479,6 @@ async function handleResponse(
     controller.firstVisibleHistoryLayer = layers.length - 1;
     const tail = controller.messages.slice(controller.historyPrefixLength);
     applyHistoryTail(controller, tail);
-    controller.status = '';
     return;
   }
 
@@ -2570,7 +2585,6 @@ async function handleResponse(
       pending.settingsRequestId = '';
       pending.settingsStep = '';
       controller.currentEffort = pending.selectedEffort;
-      controller.status = '';
       await requestPendingMessages(controller);
       return;
     }
@@ -2580,7 +2594,6 @@ async function handleResponse(
       controller.pendingSettingRequestId = '';
       clearSettingRequestWatch(controller);
     }
-    controller.status = '';
   }
 }
 
@@ -3565,10 +3578,11 @@ function recoverSubmittedPrompt(controller: SessionController): void {
 function cancelPendingPrompt(
   controller: SessionController,
   message: string,
+  publishError = true,
 ): void {
   const prompt = controller.pendingPrompt;
   if (!prompt) {
-    setControllerError(controller, message);
+    if (publishError) setControllerError(controller, message);
     return;
   }
   controller.pendingPrompt = undefined;
@@ -3583,7 +3597,7 @@ function cancelPendingPrompt(
     (message) => message.id !== prompt.optimisticId,
   );
   restoreSubmittedDraft(controller, prompt.draft);
-  setControllerError(controller, message);
+  if (publishError) setControllerError(controller, message);
 }
 
 /**
@@ -3618,10 +3632,8 @@ function pushError(
 }
 
 function retryStatus(event: Record<string, unknown>): string {
-  const attempt = String(event.attempt ?? '');
-  const maxAttempts = event.maxAttempts ? `/${String(event.maxAttempts)}` : '';
   const failure = describePiError(stringValue(event.errorMessage));
-  return `Retrying (${attempt}${maxAttempts}): ${retryPiErrorMessage(failure.kind)}`;
+  return retryPiErrorMessage(failure.kind);
 }
 
 function appendStream(
@@ -3692,7 +3704,7 @@ async function retireUnsavedSession(
     state.activeSessionId = session.id;
     state.activeSessionPath = '';
   }
-  controller.status = errorCopy.unsavedSession;
+  setControllerError(controller, errorCopy.unsavedSession);
 }
 
 function removeEmptyActivePhantom(): void {
@@ -3747,6 +3759,7 @@ function removeEphemeralSession(
     const controller = controllerByKey(session.controllerKey);
     if (controller) {
       controller.disposed = true;
+      controller.retry = undefined;
       clearSessionReplacementWatch(controller);
       clearMaterializationVerificationWatch(controller);
       clearAbortWatch(controller);
@@ -3765,6 +3778,7 @@ function removeProjectUiState(projectPath: string): void {
   for (const controller of state.controllers) {
     if (controller.projectPath !== projectPath) continue;
     controller.disposed = true;
+    controller.retry = undefined;
     clearSessionReplacementWatch(controller);
     clearMaterializationVerificationWatch(controller);
     clearAbortWatch(controller);
@@ -3881,6 +3895,7 @@ async function stopControllerProcess(
   abandonPendingRpcSpans(controller.runtimeId, generation, 'abandoned_stop');
   flushStreamAggregate(controller.runtimeId, generation);
   controller.generation = 0;
+  controller.retry = undefined;
   controller.compacting = false;
   controller.compactionReconciliationPending = false;
   controller.compactionStreamSequence = controller.streamSequence;

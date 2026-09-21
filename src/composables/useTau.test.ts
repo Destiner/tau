@@ -1,10 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PiBridgeEvent } from '../lib/pi/bridge';
 import { frontendOwnership, OwnershipClaimError } from '../lib/pi/ownership';
 
-import { nextRequestId } from './state';
+import { nextRequestId, state } from './state';
 import type {
   ProjectSummary,
   SessionController,
@@ -14,6 +14,14 @@ import type {
 import useTau from './useTau';
 
 type Tau = ReturnType<typeof useTau>;
+
+function feedbackMessage(controller: SessionController): string {
+  return (
+    [...controller.feedback]
+      .reverse()
+      .find((incident) => !incident.acknowledged)?.message ?? ''
+  );
+}
 
 const mocks = vi.hoisted(() => ({
   workspace: null as WorkspaceSnapshot | null,
@@ -54,6 +62,10 @@ vi.mock('@tauri-apps/api/event', () => ({
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn(async () => mocks.projectSelection),
 }));
+
+beforeEach(() => {
+  state.workspaceFeedback = [];
+});
 
 describe('session drafts and selection', () => {
   it('opens a usable new session when the first local project is imported', async () => {
@@ -1726,7 +1738,7 @@ describe('session replacement hardening', () => {
     const rows = tau.projectSessions(registered);
     expect(rows.map((row) => row.title)).toEqual(['New Session', other.title]);
     expect(tau.state.activeSessionId).toBe(rows[0]?.id);
-    expect(controller.status).toBe(
+    expect(feedbackMessage(controller)).toBe(
       'The previous session is unavailable. Enter a message to continue in this new session.',
     );
 
@@ -1981,7 +1993,13 @@ describe('extension UI protocol', () => {
   it('keeps extension drafts and notices in their owning session', async () => {
     const { firstController, firstSession, secondController, project, tau } =
       await setupExtensionControllers();
-    firstController.status = 'Tau connection warning';
+    firstController.feedback.push({
+      id: 1,
+      title: 'Connection Warning',
+      message: 'Tau connection warning',
+      acknowledged: false,
+      controllerKey: firstController.key,
+    });
 
     emitRpc(firstController, {
       type: 'extension_ui_request',
@@ -2018,7 +2036,7 @@ describe('extension UI protocol', () => {
     });
 
     expect(firstController.draft).toBe('/implement');
-    expect(firstController.status).toBe('Tau connection warning');
+    expect(feedbackMessage(firstController)).toBe('Tau connection warning');
     expect(firstController.unread).toBe(true);
     expect(secondController.messages).toEqual([]);
     expect(firstController.messages).toEqual([
@@ -2065,7 +2083,9 @@ describe('extension UI protocol', () => {
     await tau.selectSession(project, firstSession);
 
     expect(tau.draft.value).toBe('/implement');
-    expect(tau.status.value).toBe('');
+    expect(tau.activeFeedback.value?.message ?? '').toBe(
+      'Tau connection warning',
+    );
     expect(tau.messages.value).toBe(firstController.messages);
     tau.dispose();
   });
@@ -2494,7 +2514,7 @@ describe('interrupting a run', () => {
         expect(tau.stopping.value).toBe(false);
       });
       expect(tau.streaming.value).toBe(true);
-      expect(tau.status.value).toBe('');
+      expect(tau.activeFeedback.value?.message ?? '').toBe('');
       // Rehydrating mid-run would drop the deltas the run is still streaming.
       expect(sentRequests(controller, 'get_messages')).toEqual([]);
 
@@ -2503,7 +2523,7 @@ describe('interrupting a run', () => {
       await vi.waitFor(() => {
         expect(tau.streaming.value).toBe(false);
       });
-      expect(tau.status.value).toBe('');
+      expect(tau.activeFeedback.value?.message ?? '').toBe('');
       tau.dispose();
     } finally {
       vi.useRealTimers();
@@ -2539,7 +2559,7 @@ describe('interrupting a run', () => {
         expect(tau.streaming.value).toBe(false);
       });
       expect(tau.stopping.value).toBe(false);
-      expect(tau.status.value).toBe('');
+      expect(tau.activeFeedback.value?.message ?? '').toBe('');
       await vi.waitFor(() => {
         expect(sentRequests(controller, 'get_messages')).toHaveLength(1);
       });
@@ -2797,13 +2817,15 @@ describe('turn failures', () => {
     });
 
     await vi.waitFor(() => {
-      expect(controller.status).toBe(
+      expect(feedbackMessage(controller)).toBe(
         'The message could not be sent. Reopen the session and try again.',
       );
     });
     expect(controller.draft).toBe('Keep this prompt\n\nKeep this newer draft');
     expect(controller.messages).toEqual([]);
-    expect(controller.status).not.toContain('RAW_PROMPT_REJECTION_CANARY');
+    expect(feedbackMessage(controller)).not.toContain(
+      'RAW_PROMPT_REJECTION_CANARY',
+    );
     tau.dispose();
   });
 
@@ -3056,7 +3078,7 @@ describe('turn failures', () => {
     tau.dispose();
   });
 
-  it('says what it is retrying rather than only that it is', async () => {
+  it('keeps reviewed retry state until Pi ends the retry lifecycle', async () => {
     const { tau, controller } = await setupNamedSession();
 
     emitRpc(controller, {
@@ -3068,10 +3090,58 @@ describe('turn failures', () => {
     });
 
     await vi.waitFor(() => {
-      expect(controller.status).toBe(
-        'Retrying (1/3): The model provider is temporarily unavailable.',
-      );
+      expect(controller.retry).toEqual({
+        generation: controller.generation,
+        attempt: 1,
+        reason: 'The model provider is temporarily unavailable.',
+      });
     });
+
+    emitRpc(controller, { type: 'agent_start' });
+    await vi.waitFor(() => expect(controller.streaming).toBe(true));
+    expect(controller.retry?.reason).toBe(
+      'The model provider is temporarily unavailable.',
+    );
+
+    emitRpc(controller, {
+      type: 'auto_retry_start',
+      attempt: 2,
+      maxAttempts: 3,
+      delayMs: 2_000,
+      errorMessage: 'fetch failed: RAW_RETRY_PROVIDER_PAYLOAD',
+    });
+    expect(controller.retry).toEqual({
+      generation: controller.generation,
+      attempt: 2,
+      reason: 'The model provider could not be reached.',
+    });
+    expect(JSON.stringify(controller.retry)).not.toContain('RAW_RETRY');
+
+    emitRpc(controller, {
+      type: 'auto_retry_end',
+      success: true,
+      attempt: 2,
+    });
+    expect(controller.retry).toBeUndefined();
+    tau.dispose();
+  });
+
+  it('clears retry state at settlement when Pi omits its end event', async () => {
+    const { tau, controller } = await setupNamedSession();
+
+    emitRpc(controller, {
+      type: 'auto_retry_start',
+      attempt: 1,
+      maxAttempts: 3,
+      delayMs: 1_000,
+      errorMessage: '429 too many requests',
+    });
+    expect(controller.retry?.reason).toBe(
+      'The model provider is receiving too many requests.',
+    );
+
+    emitRpc(controller, { type: 'agent_settled' });
+    expect(controller.retry).toBeUndefined();
     tau.dispose();
   });
 });
@@ -3418,7 +3488,7 @@ describe('prompt submission', () => {
       );
 
       tau.draft.value = 'Edited after recovery';
-      const failureStatus = controller.status;
+      const failureStatus = feedbackMessage(controller);
       emitRpc(controller, {
         id: failedRequestId,
         type: 'response',
@@ -3428,7 +3498,7 @@ describe('prompt submission', () => {
       await vi.waitFor(() => {
         expect(tau.draft.value).toBe('Edited after recovery');
       });
-      expect(controller.status).toBe(failureStatus);
+      expect(feedbackMessage(controller)).toBe(failureStatus);
       expect(
         controller.messages.some(
           (entry) =>
@@ -3516,7 +3586,7 @@ describe('session naming', () => {
     });
 
     await vi.waitFor(() => {
-      expect(controller.status).toBe(
+      expect(feedbackMessage(controller)).toBe(
         'The session could not be renamed. Choose another name and try again.',
       );
       expect(sentRequests(controller, 'get_state')).toHaveLength(1);
@@ -3564,7 +3634,7 @@ describe('session naming', () => {
       });
 
       await vi.waitFor(() => {
-        expect(controller.status).toBe(
+        expect(feedbackMessage(controller)).toBe(
           'The session could not be renamed. Choose another name and try again.',
         );
       });
@@ -3588,7 +3658,7 @@ describe('session naming', () => {
       expect(controller.sessionName).toBe('naming-target');
       expect(tau.sessionTitle.value).toBe('naming-target');
       expect(tau.projectSessions(project)[0]?.title).toBe('naming-target');
-      expect(controller.status).toBe(
+      expect(feedbackMessage(controller)).toBe(
         'The session could not be renamed. Choose another name and try again.',
       );
       expect(controller.pendingSessionRename).toBeUndefined();
@@ -3644,11 +3714,11 @@ describe('project removal', () => {
       expect(tau.isProjectRemoving(project.path)).toBe(false);
       expect(controller.disposed).toBe(false);
       expect(controller.draft).toBe('Keep this draft');
-      expect(controller.status).toBe('');
-      expect(tau.state.workspaceStatus).toBe(
+      expect(feedbackMessage(controller)).toBe('');
+      expect(tau.state.workspaceFeedback.at(-1)?.message ?? '').toBe(
         'The project could not be removed. Try again.',
       );
-      expect(tau.status.value).toBe(
+      expect(tau.activeFeedback.value?.message ?? '').toBe(
         'The project could not be removed. Try again.',
       );
       expect(stoppedRuntimes()).toEqual([]);
@@ -3730,7 +3800,7 @@ describe('session settings', () => {
 
       expect(tau.settingsDisabled.value).toBe(false);
       expect(controller.pendingEffort).toBe('');
-      expect(controller.status).toBe(
+      expect(feedbackMessage(controller)).toBe(
         'The setting could not be confirmed. Try again.',
       );
     } finally {
@@ -3896,14 +3966,15 @@ describe('workspace ownership gate', () => {
       .mockRejectedValueOnce(new OwnershipClaimError('conflict'));
     const tau = useTau();
     tau.state.workspace = null;
-    tau.state.workspaceStatus = '';
+    tau.state.workspaceFeedback = [];
 
     try {
       await tau.initialize();
       expect(tau.state.ownershipFailure).toBe('conflict');
-      expect(tau.state.workspaceStatus).toBe(
-        'Another Tau window owns Pi. Reload Tau to continue.',
-      );
+      expect(tau.state.workspaceFeedback.at(-1)).toMatchObject({
+        message: 'Another Tau window owns Pi. Reload Tau to continue.',
+        action: 'reload',
+      });
       expect(tau.projectActionsDisabled.value).toBe(true);
     } finally {
       claim.mockRestore();
@@ -3919,14 +3990,15 @@ describe('workspace failure copy', () => {
       .mockRejectedValueOnce(new Error('RAW_OWNER_CANARY'));
     const tau = useTau();
     tau.state.workspace = null;
-    tau.state.workspaceStatus = '';
+    tau.state.workspaceFeedback = [];
     vi.mocked(invoke).mockClear();
 
     try {
       await tau.initialize();
-      expect(tau.state.workspaceStatus).toBe(
-        'Tau could not prepare Pi. Try again.',
-      );
+      expect(tau.state.workspaceFeedback.at(-1)).toMatchObject({
+        message: 'Tau could not prepare Pi. Try again.',
+        action: 'initialize',
+      });
       expect(
         vi
           .mocked(invoke)
@@ -3957,14 +4029,18 @@ describe('workspace failure copy', () => {
     tau.state.activeSessionPath = '';
     tau.state.activeControllerKey = '';
     tau.state.controllers.splice(0);
-    tau.state.workspaceStatus = '';
+    tau.state.workspaceFeedback = [];
 
     try {
       await tau.initialize();
-      expect(tau.state.workspaceStatus).toBe(
-        'Your projects could not be loaded. Restart Tau and try again.',
+      expect(tau.state.workspaceFeedback.at(-1)).toMatchObject({
+        message:
+          'Your projects could not be loaded. Restart Tau and try again.',
+        action: 'reload',
+      });
+      expect(tau.state.workspaceFeedback.at(-1)?.message ?? '').not.toContain(
+        canary,
       );
-      expect(tau.state.workspaceStatus).not.toContain(canary);
     } finally {
       if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
       tau.dispose();
@@ -3986,17 +4062,17 @@ describe('workspace action status', () => {
 
     try {
       await tau.toggleProject(project);
-      expect(tau.state.workspaceStatus).toBe(
+      expect(tau.state.workspaceFeedback.at(-1)?.message ?? '').toBe(
         'The sidebar change could not be saved. Try again.',
       );
-      expect(controller.status).toBe('');
-      expect(tau.status.value).toBe(
+      expect(feedbackMessage(controller)).toBe('');
+      expect(tau.activeFeedback.value?.message ?? '').toBe(
         'The sidebar change could not be saved. Try again.',
       );
 
+      tau.acknowledgeFeedback(tau.activeFeedback.value!);
       await tau.toggleProject(project);
-      expect(tau.state.workspaceStatus).toBe('');
-      expect(tau.status.value).toBe('');
+      expect(tau.activeFeedback.value?.message ?? '').toBe('');
     } finally {
       if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
       tau.dispose();
@@ -4041,14 +4117,14 @@ describe('archive failure locality', () => {
       rejectArchive?.(new Error('Could not archive the session'));
       await archive;
 
-      expect(firstController.actionError).toBe(
+      expect(feedbackMessage(firstController)).toBe(
         'The session could not be archived. Try again.',
       );
       expect(firstController.unread).toBe(true);
-      expect(secondController.actionError).toBe('');
+      expect(feedbackMessage(secondController)).toBe('');
 
       await tau.selectSession(project, firstSession);
-      expect(tau.status.value).toBe(
+      expect(tau.activeFeedback.value?.message ?? '').toBe(
         'The session could not be archived. Try again.',
       );
 
@@ -4067,8 +4143,8 @@ describe('archive failure locality', () => {
       };
       await tau.archiveSession(project, firstSession);
 
-      expect(firstController.actionError).toBe('');
-      expect(tau.status.value).toBe('');
+      expect(feedbackMessage(firstController)).toBe('');
+      expect(tau.activeFeedback.value?.message ?? '').toBe('');
     } finally {
       if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
       tau.dispose();
