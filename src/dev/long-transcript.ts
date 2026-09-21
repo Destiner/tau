@@ -1,4 +1,4 @@
-import type { TranscriptEntry } from '../lib/pi/transcript';
+import { hydrateTranscript, type TranscriptEntry } from '../lib/pi/transcript';
 
 const assistantParagraphs = [
   'The visible transcript stays responsive because only nearby rows are mounted, while every message remains directly reachable through the scrollbar.',
@@ -157,28 +157,37 @@ function createLongTranscript(count = 5_000): TranscriptEntry[] {
 }
 
 function createVerboseToolTranscript(): TranscriptEntry[] {
+  const argumentTail = 'ARGUMENT_TAIL_SENTINEL';
+  const resultTail = 'RESULT_TAIL_SENTINEL';
   const lines = Array.from(
-    { length: 40 },
-    (_, index) => `Detail line ${index + 1}.`,
+    { length: 260 },
+    (_, index) => `Detail line ${index + 1} preserves the complete payload.`,
   ).join('\n');
-
-  return [
+  const [tool] = hydrateTranscript([
     {
-      id: 'fixture-verbose-tool',
-      kind: 'tool',
-      text: '/tmp/tau-fixture/verbose.jsonl',
+      role: 'assistant',
+      content: [
+        {
+          type: 'toolCall',
+          id: 'fixture-verbose-call',
+          name: 'read',
+          arguments: {
+            path: '/tmp/tau-fixture/verbose.jsonl',
+            detail: `${lines}\n${argumentTail}`,
+          },
+        },
+      ],
+    },
+    {
+      role: 'toolResult',
       toolCallId: 'fixture-verbose-call',
       toolName: 'read',
-      toolRunning: false,
-      toolErrored: false,
-      toolArguments: JSON.stringify(
-        { path: '/tmp/tau-fixture/verbose.jsonl', lines },
-        null,
-        2,
-      ),
-      toolResult: lines,
+      content: [{ type: 'text', text: `${lines}\n${resultTail}` }],
+      isError: false,
     },
-  ];
+  ]);
+
+  return tool ? [{ ...tool, id: 'fixture-verbose-tool' }] : [];
 }
 
 function createCompactToolTranscript(): TranscriptEntry[] {

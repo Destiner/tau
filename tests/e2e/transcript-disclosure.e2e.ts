@@ -74,7 +74,12 @@ test('scrolls an expanded tool call as one payload', async ({ page }) => {
   await tool.locator('.activity-header').click();
 
   const details = tool.locator('.activity-details');
+  const argumentsBody = details.locator('.activity-detail-body').nth(0);
+  const resultBody = details.locator('.activity-detail-body').nth(1);
   await expect(details).toBeVisible();
+  await expect(argumentsBody).toContainText('ARGUMENT_TAIL_SENTINEL');
+  await expect(resultBody).toContainText('RESULT_TAIL_SENTINEL');
+  await expect.poll(() => resultBody.textContent()).not.toMatch(/\n…$/);
   await expect
     .poll(() =>
       details.evaluate((element) => ({
@@ -105,8 +110,16 @@ test('scrolls an expanded tool call as one payload', async ({ page }) => {
     element.scrollTop = element.scrollHeight;
   });
   await expect
-    .poll(() => details.evaluate((element) => element.scrollTop))
-    .toBeGreaterThan(0);
+    .poll(() =>
+      details.evaluate(
+        (element) =>
+          element.scrollHeight - element.clientHeight - element.scrollTop,
+      ),
+    )
+    .toBeLessThanOrEqual(1);
+  await expect
+    .poll(() => resultBody.textContent())
+    .toMatch(/RESULT_TAIL_SENTINEL$/);
 });
 
 test('keeps early rows mounted when an underfilled tool run is expanded', async ({

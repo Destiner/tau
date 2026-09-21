@@ -3226,6 +3226,45 @@ Full review instructions
   });
 });
 
+describe('live tool transcript events', () => {
+  it('keeps complete arguments and results before settlement', async () => {
+    const { handleRpc } = await import('./runtime');
+    const controller = makeController({ streaming: true, working: true });
+    const argumentTail = 'LIVE_ARGUMENT_TAIL_SENTINEL';
+    const resultTail = 'LIVE_RESULT_TAIL_SENTINEL';
+    const args = {
+      command: `printf %s ${'argument '.repeat(520)}${argumentTail}`,
+    };
+    const result = `${'result '.repeat(650)}${resultTail}`;
+
+    await handleRpc(controller, {
+      type: 'tool_execution_start',
+      toolCallId: 'long-live-call',
+      toolName: 'bash',
+      args,
+    });
+    await handleRpc(controller, {
+      type: 'tool_execution_end',
+      toolCallId: 'long-live-call',
+      result: { content: [{ type: 'text', text: result }] },
+      isError: false,
+    });
+
+    expect(controller.messages[0]).toMatchObject({
+      toolRunning: false,
+      toolErrored: false,
+      toolArguments: JSON.stringify(args, null, 2),
+      toolResult: result,
+    });
+    expect(
+      controller.messages[0]?.toolArguments?.indexOf(argumentTail),
+    ).toBeGreaterThan(4_000);
+    expect(
+      controller.messages[0]?.toolResult?.indexOf(resultTail),
+    ).toBeGreaterThan(4_000);
+  });
+});
+
 describe('active compaction', () => {
   it('tracks start and end events per session', async () => {
     const { handleRpc } = await import('./runtime');

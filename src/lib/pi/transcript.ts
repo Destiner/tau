@@ -73,13 +73,6 @@ interface HistoryLayer {
 type JsonRecord = Record<string, unknown>;
 
 /**
- * How much of a call's arguments and result a row carries. The expansion is a
- * look at what the tool was asked and what came back, not a file viewer, and
- * every tool row in a long transcript holds its own copy.
- */
-const detailLimit = 4_000;
-
-/**
  * Rebuilds the transcript from Pi's message list. `previous` holds the entries
  * being replaced so their ids can carry over: a settled turn rewrites rows the
  * reader may be looking at, and a fresh id costs the virtualizer the height it
@@ -560,18 +553,14 @@ function toolArgumentsText(args: unknown): string {
   const record = asRecord(args);
   if (!record || Object.keys(record).length === 0) return '';
   try {
-    return clampDetail(JSON.stringify(record, null, 2) ?? '');
+    return JSON.stringify(record, null, 2) ?? '';
   } catch {
     return '';
   }
 }
 
 function toolResultText(content: unknown): string {
-  return clampDetail(contentText(content));
-}
-
-function clampDetail(text: string): string {
-  return text.length > detailLimit ? `${text.slice(0, detailLimit)}\n…` : text;
+  return contentText(content);
 }
 
 function contentText(value: unknown): string {

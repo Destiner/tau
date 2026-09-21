@@ -10,6 +10,8 @@ import {
   messageFailure,
   parseSkillBlock,
   projectOrdinaryUserMessage,
+  toolArgumentsText,
+  toolResultText,
   toolSummary,
 } from './transcript';
 
@@ -317,6 +319,67 @@ describe('hydrateTranscript', () => {
       text: 'ls',
       toolResult: 'src\ntests',
     });
+  });
+
+  it('keeps complete tool details while hydrating paired messages', () => {
+    const argumentTail = 'ARGUMENT_TAIL_SENTINEL';
+    const resultTail = 'RESULT_TAIL_SENTINEL';
+    const argumentsValue = {
+      command: `printf %s ${'argument '.repeat(520)}${argumentTail}`,
+    };
+    const resultText = `${'result '.repeat(650)}${resultTail}`;
+    const result = hydrateTranscript([
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'toolCall',
+            id: 'long-call',
+            name: 'bash',
+            arguments: argumentsValue,
+          },
+        ],
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'long-call',
+        toolName: 'bash',
+        content: [{ type: 'text', text: resultText }],
+        isError: false,
+      },
+    ]);
+
+    expect(result[0]).toMatchObject({
+      toolArguments: JSON.stringify(argumentsValue, null, 2),
+      toolResult: resultText,
+    });
+    expect(result[0]?.toolArguments?.indexOf(argumentTail)).toBeGreaterThan(
+      4_000,
+    );
+    expect(result[0]?.toolResult?.indexOf(resultTail)).toBeGreaterThan(4_000);
+  });
+
+  it('keeps complete unmatched errors and legacy bash output', () => {
+    const error = `${'error '.repeat(700)}ERROR_TAIL_SENTINEL`;
+    const output = `${'output '.repeat(650)}BASH_TAIL_SENTINEL`;
+    const result = hydrateTranscript([
+      {
+        role: 'toolResult',
+        toolCallId: 'unmatched-call',
+        toolName: 'read',
+        content: [{ type: 'text', text: error }],
+        isError: true,
+      },
+      {
+        role: 'bashExecution',
+        command: 'legacy-command',
+        output,
+        exitCode: 0,
+      },
+    ]);
+
+    expect(result[0]).toMatchObject({ toolErrored: true, toolResult: error });
+    expect(result[1]).toMatchObject({ toolErrored: false, toolResult: output });
   });
 
   it('accepts block-based user content', () => {
@@ -670,6 +733,54 @@ describe('historyLayersFromEntries', () => {
     });
   });
 
+  it('keeps complete tool details in compacted history', () => {
+    const tail = 'HISTORY_RESULT_TAIL_SENTINEL';
+    const resultText = `${'history '.repeat(600)}${tail}`;
+    const entries = [
+      {
+        type: 'message',
+        id: 'a',
+        parentId: null,
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'toolCall',
+              id: 'history-call',
+              name: 'read',
+              arguments: { path: '/tmp/history' },
+            },
+          ],
+        },
+      },
+      {
+        type: 'message',
+        id: 'b',
+        parentId: 'a',
+        message: {
+          role: 'toolResult',
+          toolCallId: 'history-call',
+          toolName: 'read',
+          content: [{ type: 'text', text: resultText }],
+          isError: false,
+        },
+      },
+      message('c', 'b', 'user', 'kept'),
+      {
+        type: 'compaction',
+        id: 'd',
+        parentId: 'c',
+        firstKeptEntryId: 'c',
+        summary: 'summary',
+      },
+    ];
+
+    const layers = historyLayersFromEntries(entries, 'd');
+
+    expect(layers[0]?.rows[0]?.toolResult).toBe(resultText);
+    expect(layers[0]?.rows[0]?.toolResult).toContain(tail);
+  });
+
   it('ignores entries from an abandoned branch', () => {
     const entries = [
       message('a', null, 'user', 'root'),
@@ -884,6 +995,29 @@ describe('parseSkillBlock', () => {
     expect(
       parseSkillBlock('<skill name="review">missing location</skill>'),
     ).toBeUndefined();
+  });
+});
+
+describe('tool detail formatting', () => {
+  it('keeps complete pretty-printed arguments beyond the former limit', () => {
+    const args = {
+      path: '/tmp/long-result',
+      payload: `${'a'.repeat(4_100)}ARGUMENT_TAIL_SENTINEL`,
+    };
+    const expected = JSON.stringify(args, null, 2);
+
+    expect(toolArgumentsText(args)).toBe(expected);
+    expect(toolArgumentsText(args).endsWith('\n…')).toBe(false);
+  });
+
+  it('preserves result boundaries, Unicode, and Pi-supplied ellipses exactly', () => {
+    const atFormerLimit = 'a'.repeat(4_000);
+    const acrossFormerLimit = `${'a'.repeat(3_999)}😀RESULT_TAIL_SENTINEL`;
+    const piEllipsis = `${'b'.repeat(4_100)}\n…`;
+
+    expect(toolResultText(atFormerLimit)).toBe(atFormerLimit);
+    expect(toolResultText(acrossFormerLimit)).toBe(acrossFormerLimit);
+    expect(toolResultText(piEllipsis)).toBe(piEllipsis);
   });
 });
 
