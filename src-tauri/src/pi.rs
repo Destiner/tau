@@ -6,7 +6,7 @@ use serde_json::Value;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     env,
     ffi::{OsStr, OsString},
     io::{BufRead, BufReader, Read, Write},
@@ -28,6 +28,7 @@ const LOGIN_SHELL_TIMEOUT: Duration = Duration::from_secs(5);
 const LOGIN_SHELL_OUTPUT_LIMIT_BYTES: usize = 1024 * 1024;
 const PI_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const PI_STOP_TIMEOUT: Duration = Duration::from_secs(3);
+const PI_STOP_GRACE_PERIOD: Duration = Duration::from_secs(1);
 const PI_WRITER_QUEUE_CAPACITY: usize = 32;
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const LOGIN_SHELL_PATH_MARKER: &str = "__TAU_PATH__";
@@ -40,6 +41,7 @@ const LOGIN_SHELL_ARGUMENTS: [&[&str]; 4] = [&["-lic"], &["-i", "-c"], &["-lc"],
 const CSH_LOGIN_SHELL_ARGUMENTS: [&[&str]; 2] = [&["-i", "-c"], &["-c"]];
 
 type StderrTail = Arc<Mutex<VecDeque<String>>>;
+type PiWriter = Arc<Mutex<Option<mpsc::SyncSender<PiWriteRequest>>>>;
 
 #[derive(Default)]
 struct LoginShellEnvironment {
@@ -117,8 +119,20 @@ struct PiProcess {
     owner_id: String,
     generation: u64,
     child: Arc<Mutex<Child>>,
-    writer: mpsc::SyncSender<PiWriteRequest>,
+    writer: PiWriter,
     usable: Arc<AtomicBool>,
+}
+
+impl PiProcess {
+    fn close_stdin(&self) {
+        self.usable.store(false, Ordering::Release);
+        // Closing the shared sender also fences retained process handles. The
+        // writer owns stdin and releases it without holding a process lock.
+        self.writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+    }
 }
 
 struct PiWriteRequest {
@@ -989,7 +1003,7 @@ pub fn send_pi<R: Runtime>(
     result
 }
 
-fn spawn_stdin_writer(mut stdin: ChildStdin) -> Result<mpsc::SyncSender<PiWriteRequest>, String> {
+fn spawn_stdin_writer(mut stdin: ChildStdin) -> Result<PiWriter, String> {
     let (sender, receiver) = mpsc::sync_channel::<PiWriteRequest>(PI_WRITER_QUEUE_CAPACITY);
     thread::Builder::new()
         .name("tau-pi-stdin".into())
@@ -1006,7 +1020,7 @@ fn spawn_stdin_writer(mut stdin: ChildStdin) -> Result<mpsc::SyncSender<PiWriteR
         .map_err(|_| {
             "Tau could not start the Pi input stream. Reopen the session and try again.".to_string()
         })?;
-    Ok(sender)
+    Ok(Arc::new(Mutex::new(Some(sender))))
 }
 
 fn send_pi_to_state(
@@ -1022,17 +1036,21 @@ fn send_pi_to_state(
     }
     line.push(b'\n');
 
-    let manager = state
-        .inner
-        .lock()
-        .map_err(|_| "Pi process state is unavailable.".to_string())?;
-    manager.require_owner(owner_id)?;
-    let process = manager
-        .processes
-        .get(&runtime_id)
-        .filter(|process| process.owner_id == owner_id)
-        .ok_or_else(|| "The selected Pi runtime is not running.".to_string())?;
-    send_pi_line(process, line, PI_WRITE_TIMEOUT)
+    let process = {
+        let manager = state
+            .inner
+            .lock()
+            .map_err(|_| "Pi process state is unavailable.".to_string())?;
+        manager.require_owner(owner_id)?;
+        manager
+            .processes
+            .get(&runtime_id)
+            .filter(|process| process.owner_id == owner_id)
+            .cloned()
+            .ok_or_else(|| "The selected Pi runtime is not running.".to_string())?
+    };
+    // A blocked write must not prevent shutdown from closing this runtime.
+    send_pi_line(&process, line, PI_WRITE_TIMEOUT)
 }
 
 fn send_pi_line(process: &PiProcess, line: Vec<u8>, timeout: Duration) -> Result<(), String> {
@@ -1042,6 +1060,14 @@ fn send_pi_line(process: &PiProcess, line: Vec<u8>, timeout: Duration) -> Result
     let (result_sender, result_receiver) = mpsc::sync_channel(1);
     process
         .writer
+        .lock()
+        .map_err(|_| {
+            "The Pi input stream is unavailable. Reopen the session and try again.".to_string()
+        })?
+        .as_ref()
+        .ok_or_else(|| {
+            "Pi is no longer accepting requests. Restart Tau and try again.".to_string()
+        })?
         .try_send(PiWriteRequest {
             line,
             result: result_sender,
@@ -1131,105 +1157,115 @@ fn stop_runtime_process(manager: &mut PiManager, runtime_id: &str) -> Result<(),
 fn stop_stale_processes(
     manager: &mut PiManager,
 ) -> Result<Vec<StoppedRuntime>, (String, Vec<StoppedRuntime>)> {
-    if manager.processes.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let deadline = Instant::now() + PI_STOP_TIMEOUT;
-    let mut kill_sent = HashSet::new();
+    let runtimes = manager
+        .processes
+        .iter()
+        .map(|(id, process)| (id.clone(), process.clone()))
+        .collect::<Vec<_>>();
+    let processes = runtimes
+        .iter()
+        .map(|(_, process)| process)
+        .collect::<Vec<_>>();
+    let results = stop_processes(&processes);
     let mut first_error = None;
     let mut stopped = Vec::new();
-    for process in manager.processes.values() {
-        process.usable.store(false, Ordering::Release);
-    }
-
-    loop {
-        let mut exited = Vec::new();
-        for (runtime_id, process) in &manager.processes {
-            match process.child.try_lock() {
-                Ok(mut child) => match child.try_wait() {
-                    Ok(Some(_)) => exited.push(runtime_id.clone()),
-                    Ok(None) if !kill_sent.contains(runtime_id) => {
-                        if child.kill().is_ok() {
-                            kill_sent.insert(runtime_id.clone());
-                        } else if first_error.is_none() {
-                            first_error = Some("Tau could not stop Pi. Try again.".to_string());
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(_) if first_error.is_none() => {
-                        first_error =
-                            Some("Tau could not check whether Pi stopped. Try again.".to_string());
-                    }
-                    Err(_) => {}
-                },
-                Err(std::sync::TryLockError::Poisoned(_)) if first_error.is_none() => {
-                    first_error = Some("Pi process state is unavailable. Try again.".into());
-                }
-                Err(_) => {}
-            }
-        }
-        for runtime_id in exited {
-            if let Some(process) = manager.processes.remove(&runtime_id) {
+    for ((runtime_id, process), result) in runtimes.into_iter().zip(results) {
+        match result {
+            Ok(()) => {
+                manager.processes.remove(&runtime_id);
                 stopped.push(StoppedRuntime {
                     runtime_id,
                     generation: process.generation,
                 });
             }
+            Err(error) => {
+                first_error.get_or_insert(error);
+            }
         }
-        if manager.processes.is_empty() {
-            return match first_error {
-                Some(error) => Err((error, stopped)),
-                None => Ok(stopped),
-            };
-        }
-        if Instant::now() >= deadline {
-            return Err((
-                first_error.unwrap_or_else(|| "Pi did not stop in time. Try again.".to_string()),
-                stopped,
-            ));
-        }
-        thread::sleep(PROCESS_POLL_INTERVAL);
+    }
+    match first_error {
+        Some(error) => Err((error, stopped)),
+        None => Ok(stopped),
     }
 }
 
 fn stop_all_processes(processes: Vec<PiProcess>) {
-    for process in processes {
-        let _ = stop_process(&process);
-    }
+    let _ = stop_processes(&processes.iter().collect::<Vec<_>>());
 }
 
 fn stop_process(process: &PiProcess) -> Result<(), String> {
-    stop_child(&process.child)
+    stop_processes(&[process]).remove(0)
+}
+
+fn stop_processes(processes: &[&PiProcess]) -> Vec<Result<(), String>> {
+    for process in processes {
+        process.close_stdin();
+    }
+    let children = processes
+        .iter()
+        .map(|process| &process.child)
+        .collect::<Vec<_>>();
+    stop_children(&children, PI_STOP_GRACE_PERIOD)
 }
 
 fn stop_child(child: &Arc<Mutex<Child>>) -> Result<(), String> {
-    let deadline = Instant::now() + PI_STOP_TIMEOUT;
-    let mut kill_sent = false;
+    stop_children(&[child], Duration::ZERO).remove(0)
+}
+
+fn stop_children(
+    children: &[&Arc<Mutex<Child>>],
+    grace_period: Duration,
+) -> Vec<Result<(), String>> {
+    let started = Instant::now();
+    let kill_after = started + grace_period;
+    let deadline = started + PI_STOP_TIMEOUT;
+    let mut results = vec![None; children.len()];
+    let mut errors = vec![None; children.len()];
+    let mut kill_sent = vec![false; children.len()];
+
+    // All children share a deadline: quitting with many warm runtimes must not
+    // wait through one grace period per SSH connection. A blocked stdin writer
+    // cannot deliver EOF, so killing the direct child remains the fallback.
     loop {
-        match child.try_lock() {
-            Ok(mut child) => {
-                if child
-                    .try_wait()
-                    .map_err(|_| "Tau could not check whether Pi stopped. Try again.".to_string())?
-                    .is_some()
-                {
-                    return Ok(());
-                }
-                if !kill_sent {
-                    child
-                        .kill()
-                        .map_err(|_| "Tau could not stop Pi. Try again.".to_string())?;
-                    kill_sent = true;
-                }
+        for (index, child) in children.iter().enumerate() {
+            if results[index].is_some() {
+                continue;
             }
-            Err(std::sync::TryLockError::WouldBlock) => {}
-            Err(std::sync::TryLockError::Poisoned(_)) => {
-                return Err("Pi process state is unavailable. Try again.".into());
+            match child.try_lock() {
+                Ok(mut child) => match child.try_wait() {
+                    Ok(Some(_)) => results[index] = Some(Ok(())),
+                    Ok(None) if !kill_sent[index] && Instant::now() >= kill_after => {
+                        match child.kill() {
+                            Ok(()) => kill_sent[index] = true,
+                            Err(_) => {
+                                errors[index] =
+                                    Some("Tau could not stop Pi. Try again.".to_string());
+                            }
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(_) => {
+                        errors[index] =
+                            Some("Tau could not check whether Pi stopped. Try again.".to_string());
+                    }
+                },
+                Err(std::sync::TryLockError::WouldBlock) => {}
+                Err(std::sync::TryLockError::Poisoned(_)) => {
+                    results[index] =
+                        Some(Err("Pi process state is unavailable. Try again.".into()));
+                }
             }
         }
-        if Instant::now() >= deadline {
-            return Err("Pi did not stop in time. Try again.".into());
+        if results.iter().all(Option::is_some) || Instant::now() >= deadline {
+            return results
+                .into_iter()
+                .zip(errors)
+                .map(|(result, error)| {
+                    result.unwrap_or_else(|| {
+                        Err(error.unwrap_or_else(|| "Pi did not stop in time. Try again.".into()))
+                    })
+                })
+                .collect();
         }
         thread::sleep(PROCESS_POLL_INTERVAL);
     }
@@ -1712,7 +1748,21 @@ mod tests {
         )
         .expect("start replacement frontend runtime");
         assert!(second_generation > first_generation);
-        expect_outer_event(&events, "started", second_generation);
+        // EOF lets the scenario adapter report its intentionally incomplete
+        // script on stderr before exiting; these belong to the old generation.
+        let deadline = Instant::now() + EVENT_TIMEOUT;
+        loop {
+            let event = events
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .expect("replacement started event");
+            if event["generation"] == first_generation {
+                assert_eq!(event["kind"], "stderr");
+                continue;
+            }
+            assert_eq!(event["generation"], second_generation);
+            assert_eq!(event["kind"], "started");
+            break;
+        }
         assert!(send_pi_to_state(
             &state,
             "owner-a",
@@ -1742,6 +1792,44 @@ mod tests {
     }
 
     #[test]
+    fn replacing_a_runtime_waits_for_eof_before_starting_its_successor() {
+        let _lock = ENVIRONMENT_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let fixture = NativePiFixture::new(None);
+        let (app, _events) = fixture.app_and_events();
+        let handle = app.handle().clone();
+        let state = handle.state::<PiState>();
+        let telemetry = handle.state::<Telemetry>();
+        claim_for_test(&state, "owner-a");
+        let start = || {
+            let mut command = Command::new("sh");
+            command.args(["-c", "while IFS= read -r line; do :; done; exit 0"]);
+            spawn_command(
+                handle.clone(),
+                &state,
+                &telemetry,
+                None,
+                "owner-a".into(),
+                "runtime-a".into(),
+                command,
+            )
+            .expect("start EOF-aware runtime")
+        };
+        let first_generation = start();
+        let first = state.inner.lock().expect("Pi manager").processes["runtime-a"].clone();
+
+        let second_generation = start();
+
+        assert!(second_generation > first_generation);
+        assert_clean_exit(&first);
+        let second = state.inner.lock().expect("Pi manager").processes["runtime-a"].clone();
+        assert!(second.usable.load(Ordering::Acquire));
+        state.shutdown();
+        assert_clean_exit(&second);
+    }
+
+    #[test]
     fn frontend_takeover_retries_kill_after_child_lock_contention() {
         let state = PiState::default();
         claim_pi_frontend_inner(&state.inner, "owner-a".into(), 0).expect("first claim");
@@ -1757,7 +1845,7 @@ mod tests {
         let holder = thread::spawn(move || {
             let _guard = child.lock().expect("child lock");
             locked_sender.send(()).expect("report child lock");
-            thread::sleep(Duration::from_millis(50));
+            thread::sleep(PI_STOP_GRACE_PERIOD + Duration::from_millis(50));
         });
         locked_receiver.recv().expect("wait for child lock");
 
@@ -2124,20 +2212,195 @@ mod tests {
         );
     }
 
+    fn eof_process(generation: u64) -> PiProcess {
+        scripted_process(
+            "while IFS= read -r line; do :; done; sleep 0.05; exit 0",
+            generation,
+        )
+    }
+
+    fn assert_clean_exit(process: &PiProcess) {
+        assert!(process
+            .child
+            .lock()
+            .expect("child lock")
+            .try_wait()
+            .expect("child status")
+            .expect("child exited")
+            .success());
+        assert!(!process.usable.load(Ordering::Acquire));
+        assert!(process.writer.lock().expect("writer lock").is_none());
+    }
+
+    #[test]
+    fn stopping_closes_stdin_even_with_retained_process_handles() {
+        let process = eof_process(1);
+        let retained = process.clone();
+        send_pi_line(&process, b"request\n".to_vec(), PI_WRITE_TIMEOUT).expect("write before stop");
+
+        stop_process(&process).expect("stop on EOF");
+
+        assert_clean_exit(&retained);
+        assert!(send_pi_line(&retained, b"late\n".to_vec(), PI_WRITE_TIMEOUT).is_err());
+        stop_process(&retained).expect("repeated stop");
+    }
+
+    #[test]
+    fn frontend_takeover_delivers_eof_to_every_stale_runtime() {
+        let state = PiState::default();
+        claim_for_test(&state, "owner-a");
+        let first = eof_process(1);
+        let second = eof_process(2);
+        {
+            let mut manager = state.inner.lock().expect("Pi manager");
+            manager.processes.insert("first".into(), first.clone());
+            manager.processes.insert("second".into(), second.clone());
+        }
+
+        let outcome = claim_pi_frontend_inner(&state.inner, "owner-b".into(), 1)
+            .expect("take over after EOF");
+
+        assert_eq!(outcome.stopped.len(), 2);
+        assert_clean_exit(&first);
+        assert_clean_exit(&second);
+        assert!(state.inner.lock().expect("Pi manager").processes.is_empty());
+    }
+
+    #[test]
+    fn failed_takeover_retains_only_children_that_could_not_be_stopped() {
+        let mut manager = PiManager::default();
+        let responsive = eof_process(1);
+        let locked = sleeping_process(2);
+        manager
+            .processes
+            .insert("responsive".into(), responsive.clone());
+        manager.processes.insert("locked".into(), locked.clone());
+        let guard = locked.child.lock().expect("hold child lock");
+
+        let (_, stopped) = stop_stale_processes(&mut manager).expect_err("locked child times out");
+
+        assert_eq!(stopped.len(), 1);
+        assert_eq!(stopped[0].runtime_id, "responsive");
+        assert_clean_exit(&responsive);
+        assert_eq!(manager.processes.len(), 1);
+        assert!(manager.processes.contains_key("locked"));
+        drop(guard);
+        stop_stale_processes(&mut manager).expect("retry cleanup");
+        assert!(manager.processes.is_empty());
+    }
+
+    #[test]
+    fn app_shutdown_delivers_eof_to_all_managed_children() {
+        let state = PiState::default();
+        let processes = [eof_process(1), eof_process(2)];
+        {
+            let mut manager = state.inner.lock().expect("Pi manager");
+            for (index, process) in processes.iter().enumerate() {
+                manager.processes.insert(index.to_string(), process.clone());
+            }
+        }
+
+        state.shutdown();
+
+        for process in &processes {
+            assert_clean_exit(process);
+        }
+        let manager = state.inner.lock().expect("Pi manager");
+        assert!(matches!(manager.ownership, PiOwnership::ShuttingDown));
+        assert!(manager.processes.is_empty());
+    }
+
+    #[test]
+    fn app_shutdown_does_not_wait_for_an_in_flight_write_acknowledgement() {
+        let state = Arc::new(PiState::default());
+        claim_for_test(&state, "owner-a");
+        let process = sleeping_process(1);
+        let (sender, requests) = mpsc::sync_channel(1);
+        *process.writer.lock().expect("writer lock") = Some(sender);
+        state
+            .inner
+            .lock()
+            .expect("Pi manager")
+            .processes
+            .insert("runtime-a".into(), process.clone());
+        let sending_state = Arc::clone(&state);
+        let sending = thread::spawn(move || {
+            send_pi_to_state(
+                &sending_state,
+                "owner-a",
+                "runtime-a".into(),
+                json!({"type": "get_state"}),
+            )
+        });
+        let pending = requests
+            .recv_timeout(PI_WRITE_TIMEOUT)
+            .expect("write awaiting acknowledgement");
+        let started = Instant::now();
+
+        state.shutdown();
+
+        assert!(started.elapsed() < PI_STOP_TIMEOUT);
+        assert!(process
+            .child
+            .lock()
+            .expect("child lock")
+            .try_wait()
+            .expect("child status")
+            .is_some());
+        drop(pending);
+        assert!(sending.join().expect("sending thread").is_err());
+    }
+
+    #[test]
+    fn app_shutdown_uses_one_grace_period_for_unresponsive_children() {
+        let state = PiState::default();
+        let processes = (0..4).map(sleeping_process).collect::<Vec<_>>();
+        {
+            let mut manager = state.inner.lock().expect("Pi manager");
+            for (index, process) in processes.iter().enumerate() {
+                manager.processes.insert(index.to_string(), process.clone());
+            }
+        }
+        let started = Instant::now();
+
+        state.shutdown();
+
+        assert!(started.elapsed() >= PI_STOP_GRACE_PERIOD);
+        assert!(started.elapsed() < PI_STOP_TIMEOUT);
+        for process in &processes {
+            let status = process
+                .child
+                .lock()
+                .expect("child lock")
+                .try_wait()
+                .expect("child status")
+                .expect("child reaped");
+            assert!(!status.success());
+        }
+    }
+
     #[test]
     fn stopping_one_runtime_keeps_other_processes() {
         let mut manager = PiManager::default();
-        manager
-            .processes
-            .insert("first".into(), sleeping_process(1));
+        let first = eof_process(1);
+        manager.processes.insert("first".into(), first.clone());
         manager
             .processes
             .insert("second".into(), sleeping_process(2));
 
         stop_runtime_process(&mut manager, "first").expect("stop first runtime");
 
+        assert_clean_exit(&first);
         assert!(!manager.processes.contains_key("first"));
-        assert!(manager.processes.contains_key("second"));
+        let second = &manager.processes["second"];
+        assert!(second.usable.load(Ordering::Acquire));
+        assert!(second
+            .child
+            .lock()
+            .expect("second child")
+            .try_wait()
+            .expect("second status")
+            .is_none());
         let processes = manager
             .processes
             .drain()
@@ -2148,12 +2411,16 @@ mod tests {
     }
 
     fn sleeping_process(generation: u64) -> PiProcess {
+        scripted_process("exec sleep 60", generation)
+    }
+
+    fn scripted_process(script: &str, generation: u64) -> PiProcess {
         let mut child = Command::new("sh")
-            .args(["-c", "sleep 60"])
+            .args(["-c", script])
             .stdin(Stdio::piped())
             .spawn()
-            .expect("sleep process");
-        let stdin = child.stdin.take().expect("sleep stdin");
+            .expect("scripted process");
+        let stdin = child.stdin.take().expect("scripted stdin");
         PiProcess {
             owner_id: "owner-a".into(),
             generation,
@@ -2176,7 +2443,8 @@ mod tests {
         .expect_err("an unread pipe should time out");
 
         assert_eq!(error, "Pi did not accept the request in time. Try again.");
-        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(started.elapsed() < PI_STOP_TIMEOUT);
+        assert!(process.writer.lock().expect("writer lock").is_none());
         assert_eq!(
             send_pi_line(&process, b"retry\n".to_vec(), Duration::from_millis(100))
                 .expect_err("a timed-out runtime stays unavailable"),
@@ -2195,7 +2463,7 @@ mod tests {
 
         stop_process(&process).expect("stop process while its exit is watched");
 
-        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(started.elapsed() < PI_STOP_TIMEOUT);
         assert!(waiter.join().expect("exit watcher").is_some());
     }
 }
