@@ -1,5 +1,7 @@
 import { shallowRef } from 'vue';
 
+import { adaptMermaidSource } from './mermaid-source';
+
 type DiagramRenderer = typeof import('beautiful-mermaid').renderMermaidSVG;
 
 /**
@@ -162,9 +164,12 @@ function renderDiagram(source: string, fence: string): string | null {
   const cached = cache.get(source);
   if (cached !== undefined) return cached;
 
+  const adapted = adaptMermaidSource(source);
+  if (adapted.kind === 'unsafe') return null;
+
   let svg: string;
   try {
-    svg = render(source, OPTIONS);
+    svg = render(adapted.source, OPTIONS);
   } catch (error) {
     // A diagram that cannot be read is content rather than a failure, and the
     // source the reader was sent is what it falls back to. Half of a diagram

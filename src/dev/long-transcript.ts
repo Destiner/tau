@@ -135,6 +135,15 @@ graph TD
   Runtime -->|No| Start[Start Pi]
   Start --> Send
   Send --> Stream[Stream the answer]
+  Stream --> E[Planner]
+  E --> F{Route exists
+for both sides?}
+  F -->|No| G[Decline]
+  F -->|Yes| H[Price]
+  E --> I{Delivery only
++ dynamic preview
++ no result?}
+  I -->|Yes| J[Use fallback]
 \`\`\`
 
 \`\`\`mermaid
@@ -146,6 +155,12 @@ sequenceDiagram
 
 \`\`\`mermaid
 not a diagram the parser can read
+\`\`\`
+
+\`\`\`mermaid
+graph TD
+  A[An incomplete label
+  B --> C
 \`\`\`
 
 \`\`\`mermaid
