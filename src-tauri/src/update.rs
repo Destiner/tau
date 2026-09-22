@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, Runtime, State};
+use tauri::{AppHandle, Emitter, Runtime, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::quit::QuitState;
@@ -374,11 +374,8 @@ fn updater_public_key() -> Option<&'static str> {
 }
 
 #[tauri::command]
-pub fn update_snapshot<R: Runtime>(
-    app: AppHandle<R>,
-    state: State<'_, UpdateState>,
-) -> UpdateSnapshot {
-    let availability = ensure_available(&app);
+pub fn update_snapshot(state: State<'_, UpdateState>) -> UpdateSnapshot {
+    let availability = ensure_available();
     state.with_coordinator(|coordinator| {
         let mut snapshot = coordinator.snapshot(availability.is_ok());
         if let Err(error) = availability {
@@ -394,7 +391,7 @@ pub async fn check_for_update<R: Runtime>(
     state: State<'_, UpdateState>,
     manual: Option<bool>,
 ) -> Result<UpdateCheckResult, UpdateError> {
-    if let Err(error) = ensure_available(&app) {
+    if let Err(error) = ensure_available() {
         if matches!(
             error.category,
             UpdateErrorCategory::Unavailable | UpdateErrorCategory::Unsupported
@@ -460,7 +457,7 @@ pub async fn download_update<R: Runtime>(
     state: State<'_, UpdateState>,
     operation_id: u64,
 ) -> Result<(), UpdateError> {
-    ensure_available(&app)?;
+    ensure_available()?;
     let update = state.with_coordinator(|coordinator| coordinator.begin_download(operation_id))?;
     if let Err(error) = installed_app_path().and_then(|path| preflight_app_path(&path)) {
         let status = state.with_coordinator(|coordinator| {
@@ -572,7 +569,7 @@ pub async fn install_update<R: Runtime>(
     operation_id: u64,
     request_id: u64,
 ) -> Result<(), UpdateError> {
-    ensure_available(&app)?;
+    ensure_available()?;
     #[cfg(target_os = "macos")]
     let app_path = installed_app_path()?;
     if !quit_state.consume_update_authorization(request_id, operation_id) {
@@ -852,18 +849,16 @@ fn emit_status<R: Runtime>(app: &AppHandle<R>, snapshot: UpdateStatusSnapshot) {
     let _ = app.emit(UPDATE_STATUS_EVENT, snapshot);
 }
 
-fn ensure_available<R: Runtime>(app: &AppHandle<R>) -> Result<(), UpdateError> {
+fn ensure_available() -> Result<(), UpdateError> {
     if updater_public_key().is_none() {
         return Err(UpdateError::unavailable());
     }
     if !cfg!(all(target_os = "macos", not(any(dev, test)))) {
         return Err(UpdateError::unsupported());
     }
-    preflight_app_path(&installed_app_path_from_executable(
-        &app.path()
-            .executable_dir()
-            .map_err(|_| UpdateError::unsupported())?,
-    )?)
+    // Tauri's executable_dir is the user's executable directory and is
+    // unsupported on macOS; it is not the directory of this process.
+    preflight_app_path(&installed_app_path()?)
 }
 
 fn installed_app_path() -> Result<PathBuf, UpdateError> {
@@ -988,7 +983,7 @@ mod tests {
             .expect("updater plugin initializes");
         assert!(app.updater_builder().build().is_ok());
 
-        let error = ensure_available(app.handle()).expect_err("test builds cannot update");
+        let error = ensure_available().expect_err("test builds cannot update");
         assert!(matches!(
             error.category,
             UpdateErrorCategory::Unavailable | UpdateErrorCategory::Unsupported

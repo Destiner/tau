@@ -139,6 +139,30 @@ describe('update service', () => {
     expect(test.service.state.failureUnread).toBe(false);
   });
 
+  it('surfaces a failed first check while the initial snapshot is pending', async () => {
+    const test = harness();
+    let finishSnapshot!: (value: { supported: true; status: 'idle' }) => void;
+    test.respond(
+      'update_snapshot',
+      new Promise<{ supported: true; status: 'idle' }>(
+        (resolve) => (finishSnapshot = resolve),
+      ),
+    );
+    test.respond('check_for_update', new Error('network failure'));
+
+    test.service.initialize();
+    await test.service.check(true);
+    expect(test.service.state).toMatchObject({
+      phase: 'failure',
+      failureCategory: 'checkFailed',
+      failureUnread: true,
+    });
+
+    finishSnapshot({ supported: true, status: 'idle' });
+    await flush();
+    expect(test.service.state.phase).toBe('failure');
+  });
+
   it('does not let the initial snapshot overwrite a newer check', async () => {
     const test = harness();
     let finishSnapshot!: (value: typeof preparedSnapshot) => void;

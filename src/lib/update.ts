@@ -403,7 +403,6 @@ function createUpdateService(
       return;
 
     const attempt = ++operation;
-    const wasUnavailable = state.phase === 'unavailable';
     clearScheduledCheck();
     lastCheckAt = dependencies.clock.now();
     state.phase = 'checking';
@@ -441,15 +440,7 @@ function createUpdateService(
               : 'available'
             : result.status;
       } catch (error) {
-        if (disposed || attempt !== operation) return;
-        if (wasUnavailable) {
-          state.phase = 'unavailable';
-          state.version = undefined;
-          updateOperationId = undefined;
-          prepared = false;
-        } else {
-          fail(attempt, error, 'checkFailed');
-        }
+        fail(attempt, error, 'checkFailed');
       }
     })();
     checkFlight = flight;
