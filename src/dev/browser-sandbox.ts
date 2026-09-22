@@ -42,6 +42,7 @@ type BrowserSandboxHandler = (
 interface BrowserSandboxOptions {
   updatesSupported?: boolean;
   updateAvailable?: boolean;
+  updateCheckDelayMs?: number;
   updateProgressDelayMs?: number;
   emitAppEvent?: (event: string, payload: unknown) => Promise<void>;
   simulateUpdateRestart?: () => Promise<never>;
@@ -426,6 +427,11 @@ function createBrowserSandboxHandler(
       };
     }
     if (command === 'check_for_update') {
+      if (options.updateCheckDelayMs) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, options.updateCheckDelayMs),
+        );
+      }
       if (options.updateAvailable) {
         return {
           status: 'available',
@@ -721,9 +727,11 @@ function createBrowserSandboxHandler(
 
 function installBrowserSandbox(): void {
   setSidebarWidthStorage(createMemorySidebarWidthStorage());
+  const testUpdate = new URLSearchParams(window.location.search).get(
+    'test-update',
+  );
   const updateFixtureRequested =
-    new URLSearchParams(window.location.search).get('test-update') ===
-    'available';
+    testUpdate === 'available' || testUpdate === 'checking';
   const updateAvailable =
     updateFixtureRequested &&
     sessionStorage.getItem('tau-update-fixture-installed') !== 'true';
@@ -732,6 +740,7 @@ function installBrowserSandbox(): void {
     {
       updatesSupported: updateFixtureRequested,
       updateAvailable,
+      updateCheckDelayMs: testUpdate === 'checking' ? 1_000 : undefined,
       updateProgressDelayMs: 180,
       emitAppEvent: (event, payload) => emit(event, payload),
       async simulateUpdateRestart(): Promise<never> {

@@ -35,6 +35,30 @@ test('downloads and installs an available update after idle auto-confirmation', 
   ).toBeVisible();
 });
 
+test('keeps update popover geometry stable while checking', async ({
+  page,
+}) => {
+  await page.goto('/?test-update=checking');
+
+  const trigger = page.getByRole('button', {
+    name: `Tau version ${appVersion}`,
+  });
+  await trigger.click();
+  const popover = page.locator('.update-popover');
+  await popover.getByRole('button', { name: 'Skip' }).click();
+  await trigger.click();
+  await expect(popover.getByText('Tau is up to date')).toBeVisible();
+  const boxBeforeCheck = await popover.boundingBox();
+
+  await popover.getByRole('button', { name: 'Check for Updates' }).click();
+  const checking = popover.getByRole('button', { name: 'Checking…' });
+  await expect(checking).toBeDisabled();
+  await expect(popover).toHaveAttribute('aria-busy', 'true');
+  expect(await popover.boundingBox()).toEqual(boxBeforeCheck);
+
+  await expect(popover.getByText('Version 0.2.0 available')).toBeVisible();
+});
+
 test('shows and dismisses an available update from the version control', async ({
   page,
 }) => {

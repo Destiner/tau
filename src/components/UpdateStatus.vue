@@ -32,7 +32,7 @@
         align="end"
         :side-offset="5"
         aria-label="Tau Update"
-        :aria-busy="update.inProgress.value || undefined"
+        :aria-busy="isBusy || undefined"
       >
         <div
           class="update-copy"
@@ -61,7 +61,7 @@
         <footer class="update-actions">
           <UiButton
             v-if="state.phase === 'available'"
-            :disabled="update.inProgress.value"
+            :disabled="isBusy"
             @click="dismiss"
           >
             Skip
@@ -69,7 +69,7 @@
           <UiButton
             v-if="primaryAction"
             variant="primary"
-            :disabled="update.inProgress.value"
+            :disabled="isBusy"
             @click="runPrimaryAction"
           >
             {{ primaryAction }}
@@ -119,6 +119,9 @@ const triggerLabel = computed(() => {
   const suffix = indicator.value === 'failure' ? ', update failed' : '';
   return `Tau version ${appVersion}${suffix}`;
 });
+const isBusy = computed(
+  () => update.inProgress.value || state.phase === 'checking',
+);
 const showProgress = computed(
   () => state.phase === 'downloading' || state.phase === 'verifying',
 );
@@ -181,6 +184,8 @@ const description = computed(() => {
 });
 const primaryAction = computed(() => {
   switch (state.phase) {
+    case 'checking':
+      return 'Checking…';
     case 'available':
     case 'failure':
       return 'Update';
