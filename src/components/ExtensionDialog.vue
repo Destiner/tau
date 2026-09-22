@@ -5,6 +5,7 @@
     aria-modal="false"
     :aria-label="title"
     :aria-busy="submitting || undefined"
+    @keydown.capture="handleKeydown"
     @submit.prevent="handleSubmit"
   >
     <MarkdownText
@@ -169,6 +170,7 @@ const dialogInput = ref<
 >();
 const primaryAction = ref<InstanceType<typeof UiButton>>();
 const selectedIndex = ref(0);
+let escapeClaimed = false;
 
 /**
  * Focus never scrolls: the prompt sits at the end of the transcript, which
@@ -182,7 +184,10 @@ onMounted(() => {
 watch(
   () => props.submitting,
   (submitting, wasSubmitting) => {
-    if (!submitting && wasSubmitting) void nextTick(focusDialog);
+    if (!submitting && wasSubmitting) {
+      escapeClaimed = false;
+      void nextTick(focusDialog);
+    }
   },
 );
 
@@ -216,6 +221,17 @@ function reject(): void {
 
 function cancel(): void {
   if (!props.submitting && !props.disabled) emit('cancel');
+}
+
+function handleKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Escape' || event.isComposing) return;
+
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  if (escapeClaimed || props.submitting || props.disabled) return;
+
+  escapeClaimed = true;
+  cancel();
 }
 
 function handleSubmit(): void {

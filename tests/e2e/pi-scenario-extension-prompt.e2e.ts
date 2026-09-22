@@ -56,6 +56,27 @@ test('renders a prompt asked of a session that holds nothing yet', async ({
   await expect(transcript.locator('.message')).toHaveCount(1);
 });
 
+test('Escape cancels a focused prompt through its originating runtime', async ({
+  page,
+}) => {
+  await page.goto(
+    '/?test-scenario=saved-session-extension-prompt-escape-cancellation',
+  );
+
+  const prompt = page.getByRole('dialog', {
+    name: 'Which label should the release carry?',
+  });
+  await expect(prompt.getByRole('option', { name: 'patch' })).toBeFocused();
+  await page.keyboard.press('Escape');
+
+  await expect(prompt).toHaveCount(0);
+  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeFocused();
+  const verification = await page.evaluate(() =>
+    window.__TAU_PI_SCENARIO__?.verify(),
+  );
+  expect(verification?.ok).toBe(true);
+});
+
 test('Escape dismisses only a dismissible layer above the prompt', async ({
   page,
 }) => {
@@ -64,11 +85,6 @@ test('Escape dismisses only a dismissible layer above the prompt', async ({
   const prompt = page.getByRole('dialog', {
     name: 'Which label should the release carry?',
   });
-  await expect(prompt).toBeVisible();
-
-  // The workflow question cannot be dismissed without cancelling it, so an
-  // unclaimed Escape leaves both it and its current answer alone.
-  await page.keyboard.press('Escape');
   await expect(prompt).toBeVisible();
 
   const trigger = page.getByRole('button', { name: 'Open Project' });

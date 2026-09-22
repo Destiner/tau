@@ -1856,6 +1856,77 @@ describe('extension UI protocol', () => {
     }
   });
 
+  it('keeps a failed cancellation retryable without duplicate sends or composer loss', async () => {
+    const { firstController, firstSession, project, tau } =
+      await setupExtensionControllers();
+    await tau.selectSession(project, firstSession);
+    tau.draft.value = 'Keep the normal message draft';
+    emitRpc(firstController, {
+      type: 'extension_ui_request',
+      id: 'cancel-retry',
+      method: 'editor',
+      title: 'Release notes',
+      prefill: 'Unfinished prompt answer',
+    });
+    const dialog = tau.activeExtensionDialog.value;
+    if (!dialog) throw new Error('Expected the extension prompt');
+
+    const defaultInvoke = vi.mocked(invoke).getMockImplementation();
+    let rejectSend: ((error: Error) => void) | undefined;
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      const request = (args as { request?: { type?: string } })?.request;
+      if (command === 'send_pi' && request?.type === 'extension_ui_response') {
+        await new Promise<never>((_resolve, reject) => {
+          rejectSend = reject;
+        });
+      }
+      return defaultInvoke?.(command, args);
+    });
+
+    try {
+      const cancellation = tau.cancelExtensionDialog();
+      await vi.waitFor(() => expect(dialog.submitting).toBe(true));
+      await tau.cancelExtensionDialog();
+      expect(sentRequests(firstController, 'extension_ui_response')).toEqual([
+        {
+          type: 'extension_ui_response',
+          id: 'cancel-retry',
+          cancelled: true,
+        },
+      ]);
+
+      rejectSend?.(new Error('Pi is unavailable'));
+      await cancellation;
+      expect(tau.activeExtensionDialog.value).toBe(dialog);
+      expect(dialog).toMatchObject({
+        draft: 'Unfinished prompt answer',
+        submitting: false,
+        error: 'The response could not be sent. Try again.',
+      });
+      expect(tau.draft.value).toBe('Keep the normal message draft');
+
+      if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
+      await tau.cancelExtensionDialog();
+      expect(tau.activeExtensionDialog.value).toBeUndefined();
+      expect(tau.draft.value).toBe('Keep the normal message draft');
+      expect(sentRequests(firstController, 'extension_ui_response')).toEqual([
+        {
+          type: 'extension_ui_response',
+          id: 'cancel-retry',
+          cancelled: true,
+        },
+        {
+          type: 'extension_ui_response',
+          id: 'cancel-retry',
+          cancelled: true,
+        },
+      ]);
+    } finally {
+      if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
+      tau.dispose();
+    }
+  });
+
   it('keeps dialogs in their originating session while users switch freely', async () => {
     const {
       firstController,

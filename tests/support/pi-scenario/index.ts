@@ -13,16 +13,19 @@ type PiRequestMatcher =
   | { type: 'prompt'; message: string }
   | {
       type: 'extension_ui_response';
+      extensionRequestId: string;
       variant: 'value';
       value: string;
     }
   | {
       type: 'extension_ui_response';
+      extensionRequestId: string;
       variant: 'confirmed';
       confirmed: boolean;
     }
   | {
       type: 'extension_ui_response';
+      extensionRequestId: string;
       variant: 'cancelled';
       cancelled: true;
     };
@@ -418,6 +421,7 @@ function matcherFromRequest(
     return { type, message: requiredString(request, 'message') };
   }
 
+  const extensionRequestId = requiredString(request, 'id');
   const variants = ['value', 'confirmed', 'cancelled'].filter(
     (field) => request[field] !== undefined,
   );
@@ -429,6 +433,7 @@ function matcherFromRequest(
   if (variants[0] === 'value') {
     return {
       type,
+      extensionRequestId,
       variant: 'value',
       value: requiredString(request, 'value'),
     };
@@ -437,12 +442,22 @@ function matcherFromRequest(
     if (typeof request.confirmed !== 'boolean') {
       throw new Error('Pi request field confirmed must be a boolean.');
     }
-    return { type, variant: 'confirmed', confirmed: request.confirmed };
+    return {
+      type,
+      extensionRequestId,
+      variant: 'confirmed',
+      confirmed: request.confirmed,
+    };
   }
   if (request.cancelled !== true) {
     throw new Error('Pi request field cancelled must be true.');
   }
-  return { type, variant: 'cancelled', cancelled: true };
+  return {
+    type,
+    extensionRequestId,
+    variant: 'cancelled',
+    cancelled: true,
+  };
 }
 
 function meaningfulDiff(

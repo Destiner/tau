@@ -61,7 +61,10 @@ from a rule here. If it isn't, the rubric is missing a rule, not an entry.
   a failed operation, transient UI appearing or erroring, and an app
   restart. `[unit]`
 - Dismissing or cancelling never destroys typed text without an obvious
-  way back. `[audit]`
+  way back. Explicitly cancelling a tool or extension prompt, including with
+  Escape while it is focused, may discard that prompt's unfinished answer;
+  ordinary composer text, failed operations, and unrelated context changes
+  still preserve their drafts. `[audit]`
 
 ## 3. Failure
 
@@ -120,8 +123,9 @@ Concurrency bugs are the worst UX bugs.
   control or the active composer — never behind another modal or onto the
   document body. `[e2e]`
 - Escape dismisses only the topmost dismissible transient layer. If the
-  topmost surface cannot be safely dismissed, Escape does nothing; it is never
-  destructive. `[e2e]`
+  topmost surface cannot be safely dismissed, Escape does nothing. Focused
+  tool and extension prompts are explicitly cancellable under the input
+  integrity exception above. `[e2e]`
 - The current accessibility level (semantics, roles, live regions) is the
   bar: maintained in changed code, neither regressed nor expanded. `[audit]`
 

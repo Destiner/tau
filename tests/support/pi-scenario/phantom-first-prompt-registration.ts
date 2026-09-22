@@ -129,6 +129,7 @@ const scenario = definePiScenario({
       capture: 'setup-choice-response',
       match: {
         type: 'extension_ui_response',
+        extensionRequestId: 'setup-choice',
         variant: 'value',
         value: 'Continue',
       },
@@ -149,6 +150,7 @@ const scenario = definePiScenario({
       capture: 'setup-confirmation-response',
       match: {
         type: 'extension_ui_response',
+        extensionRequestId: 'setup-confirmation',
         variant: 'confirmed',
         confirmed: true,
       },

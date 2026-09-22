@@ -9,6 +9,7 @@
       session-key="extension-dialog-fixture"
       :copy-paths="remote"
       :prompt="promptVisible && !answered ? prompt : undefined"
+      :prompt-disabled="disabled"
       @prompt-submit="handleSubmit"
       @prompt-cancel="handleCancel"
       @prompt-draft="updateDraft"
@@ -35,6 +36,10 @@ import type { TranscriptEntry } from '../lib/pi/transcript';
 const params = new URLSearchParams(window.location.search);
 const remote = params.get('remote') === 'true';
 const delayed = params.get('delayed') === 'true';
+const requestedMethod = params.get('method');
+const method = isPromptMethod(requestedMethod) ? requestedMethod : 'select';
+const submitting = params.get('submitting') === 'true';
+const disabled = params.get('disabled') === 'true';
 
 const title = [
   'Plan /home/agent/.pi/workflows/implement/RHI-6283/implementation-plan.md',
@@ -74,13 +79,16 @@ const messages = ref<TranscriptEntry[]>(
 const prompt = reactive<ExtensionDialog>({
   key: 'fixture-prompt',
   requestId: 'fixture-request',
-  method: 'select',
+  method,
   title,
   message,
-  options: Array.from({ length: 12 }, (_, index) => `label-${index}`),
-  draft: '',
-  submitting: false,
-  error: '',
+  options:
+    method === 'select'
+      ? Array.from({ length: 12 }, (_, index) => `label-${index}`)
+      : undefined,
+  draft: params.get('draft') ?? '',
+  submitting,
+  error: params.get('error') ?? '',
   controllerKey: 'fixture-controller',
   runtimeId: 'fixture-runtime',
   generation: 1,
@@ -92,6 +100,7 @@ const prompt = reactive<ExtensionDialog>({
 const promptVisible = ref(!delayed);
 const answered = ref(false);
 const outcome = ref('');
+const cancelCount = ref(0);
 
 function showPrompt(): void {
   promptVisible.value = true;
@@ -107,8 +116,20 @@ function handleSubmit(value: string | boolean): void {
 }
 
 function handleCancel(): void {
+  cancelCount.value += 1;
   answered.value = true;
-  outcome.value = JSON.stringify({ cancel: true });
+  outcome.value = JSON.stringify({ cancel: true, count: cancelCount.value });
+}
+
+function isPromptMethod(
+  value: string | null,
+): value is ExtensionDialog['method'] {
+  return (
+    value === 'select' ||
+    value === 'confirm' ||
+    value === 'input' ||
+    value === 'editor'
+  );
 }
 </script>
 

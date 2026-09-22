@@ -10,6 +10,7 @@ import savedSessionCompaction from './saved-session-compaction';
 import savedSessionCompactionNotifications from './saved-session-compaction-notifications';
 import savedSessionExtensionPrompt, {
   emptySessionExtensionPrompt,
+  escapeCancellationPrompt,
 } from './saved-session-extension-prompt';
 import {
   savedSessionHistory,
@@ -56,6 +57,7 @@ const scenarios = [
   savedSessionLongHistory,
   savedSessionExtensionPrompt,
   emptySessionExtensionPrompt,
+  escapeCancellationPrompt,
   archivedSessionsReview,
 ] as const satisfies readonly PiScenario[];
 

@@ -60,6 +60,48 @@ const savedSessionExtensionPrompt = definePiScenario({
  * workflow phase usually asks: the transcript holds the prompt alone, and the
  * empty session's full-height composer is not what takes the pane.
  */
+const escapeCancellationPrompt = definePiScenario({
+  metadata: {
+    name: 'saved-session-extension-prompt-escape-cancellation',
+    purpose: 'Cancel a focused extension prompt with Escape.',
+    qualityRule:
+      'docs/quality.md Keyboard and focus: Escape dismisses only the focused prompt.',
+    schemaVersion: 1,
+  },
+  runtimes: [{ key: runtime, generation: 2 }],
+  steps: [
+    ...successfulBootstrapSteps(runtime, 'bootstrap', mainSessionState).map(
+      (step) =>
+        step.kind === 'response' && step.command === 'get_messages'
+          ? { ...step, data: { messages: history } }
+          : step,
+    ),
+    {
+      kind: 'event',
+      runtime,
+      event: {
+        type: 'extension_ui_request',
+        id: 'escape-cancel-1',
+        method: 'select',
+        title: 'Which label should the release carry?',
+        message: 'Pick the one the changelog uses.',
+        options: ['patch', 'minor', 'major'],
+      },
+    },
+    {
+      kind: 'request',
+      runtime,
+      capture: 'escape-cancellation',
+      match: {
+        type: 'extension_ui_response',
+        extensionRequestId: 'escape-cancel-1',
+        variant: 'cancelled',
+        cancelled: true,
+      },
+    },
+  ],
+});
+
 const emptySessionExtensionPrompt = definePiScenario({
   metadata: {
     name: 'empty-session-extension-prompt',
@@ -76,4 +118,4 @@ const emptySessionExtensionPrompt = definePiScenario({
 });
 
 export default savedSessionExtensionPrompt;
-export { emptySessionExtensionPrompt, promptTimeout };
+export { emptySessionExtensionPrompt, escapeCancellationPrompt, promptTimeout };

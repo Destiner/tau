@@ -262,6 +262,132 @@ test('reaches an option below the fold and reports the choice', async ({
   await expect(prompt).toBeHidden();
 });
 
+for (const method of ['select', 'confirm', 'input', 'editor'] as const) {
+  test(`Escape cancels a focused ${method} prompt without bubbling`, async ({
+    page,
+  }) => {
+    await page.goto(`${fixtureUrl}&method=${method}&draft=unfinished`);
+    const prompt = page.getByRole('dialog');
+    const control =
+      method === 'select'
+        ? prompt.getByRole('option').first()
+        : method === 'confirm'
+          ? prompt.getByRole('button', { name: 'Confirm' })
+          : prompt.getByRole('textbox');
+    await expect(control).toBeFocused();
+
+    const result = await control.evaluate((element) => {
+      const observed = { document: 0, window: 0 };
+      document.addEventListener(
+        'keydown',
+        () => {
+          observed.document += 1;
+        },
+        { once: true },
+      );
+      window.addEventListener(
+        'keydown',
+        () => {
+          observed.window += 1;
+        },
+        { once: true },
+      );
+      const event = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      element.dispatchEvent(event);
+      return { defaultPrevented: event.defaultPrevented, observed };
+    });
+
+    expect(result).toEqual({
+      defaultPrevented: true,
+      observed: { document: 0, window: 0 },
+    });
+    await expect(page.getByTestId('dialog-outcome')).toHaveText(
+      '{"cancel":true,"count":1}',
+    );
+    await expect(prompt).toHaveCount(0);
+  });
+}
+
+test('consumes Escape while a prompt is submitting or disabled', async ({
+  page,
+}) => {
+  for (const state of ['submitting', 'disabled'] as const) {
+    await page.goto(`${fixtureUrl}&method=input&${state}=true`);
+    const prompt = page.getByRole('dialog');
+    const result = await prompt.evaluate((element) => {
+      const event = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      element.dispatchEvent(event);
+      return event.defaultPrevented;
+    });
+
+    expect(result).toBe(true);
+    await expect(prompt).toBeVisible();
+    await expect(page.getByTestId('dialog-outcome')).toBeEmpty();
+  }
+});
+
+test('ignores composition Escape and claims repeated cancellation once', async ({
+  page,
+}) => {
+  await page.goto(`${fixtureUrl}&method=input&draft=unfinished`);
+  const input = page.getByRole('dialog').getByRole('textbox');
+
+  const composingPrevented = await input.evaluate((element) => {
+    const event = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      cancelable: true,
+      isComposing: true,
+    });
+    element.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  expect(composingPrevented).toBe(false);
+  await expect(page.getByRole('dialog')).toBeVisible();
+
+  await input.evaluate((element) => {
+    for (const repeat of [false, true]) {
+      element.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Escape',
+          bubbles: true,
+          cancelable: true,
+          repeat,
+        }),
+      );
+    }
+  });
+  await expect(page.getByTestId('dialog-outcome')).toHaveText(
+    '{"cancel":true,"count":1}',
+  );
+});
+
+test('a context menu above the prompt owns the first Escape', async ({
+  page,
+}) => {
+  await page.goto(`${fixtureUrl}&method=input&draft=unfinished`);
+  const prompt = page.getByRole('dialog');
+  const input = prompt.getByRole('textbox');
+  await input.click({ button: 'right' });
+  await expect(page.getByRole('menu')).toBeVisible();
+
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await expect(prompt).toBeVisible();
+  await expect(input).toBeFocused();
+
+  await page.keyboard.press('Escape');
+  await expect(prompt).toHaveCount(0);
+});
+
 function distanceFromEnd(element: HTMLElement): number {
   return element.scrollHeight - element.scrollTop - element.clientHeight;
 }
