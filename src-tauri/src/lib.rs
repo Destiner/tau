@@ -30,6 +30,10 @@ const NEW_SESSION_EVENT: &str = "tau://new-session";
 const LIGHT_CANVAS: Color = Color(252, 252, 252, 255);
 const DARK_CANVAS: Color = Color(16, 20, 28, 255);
 
+pub fn update_swap_helper_exit_code() -> Option<i32> {
+    update::swap_helper_exit_code()
+}
+
 /// How long the window stays hidden waiting for the frontend to show it.
 const REVEAL_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -141,6 +145,7 @@ pub fn run() {
             update::download_update,
             update::request_update_restart,
             update::install_update,
+            update::restart_after_update,
         ])
         .build(context)
         .expect("error while building tauri application");

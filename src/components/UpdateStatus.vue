@@ -172,7 +172,7 @@ const description = computed(() => {
     case 'installing':
       return 'Tau will restart when installation finishes.';
     case 'restart-needed':
-      return 'Quit and reopen Tau to finish updating.';
+      return 'The update is installed. Restart Tau to finish.';
     case 'failure':
       return updateFailureDescription(state.failureCategory);
     case 'current':
@@ -188,6 +188,8 @@ const primaryAction = computed(() => {
       return 'Update';
     case 'awaiting-confirmation':
       return 'Update and Restart';
+    case 'restart-needed':
+      return 'Restart Tau';
     case 'current':
     case 'unavailable':
       return 'Check for Updates';
@@ -218,6 +220,8 @@ function runPrimaryAction(): void {
     void update.download();
   } else if (state.phase === 'awaiting-confirmation') {
     void update.requestInstall();
+  } else if (state.phase === 'restart-needed') {
+    void update.restart();
   } else {
     void update.check(true);
   }

@@ -92,9 +92,15 @@ describe('browser sandbox seed', () => {
 
     await handle('install_update', { requestId: 1, operationId: 1 });
     await expect(handle('update_snapshot')).resolves.toMatchObject({
-      status: 'installing',
+      status: 'restartNeeded',
       operationId: 1,
     });
+    await expect(
+      handle('restart_after_update', { operationId: 2 }),
+    ).rejects.toThrow('rejected update restart arguments');
+    await expect(
+      handle('restart_after_update', { operationId: 1 }),
+    ).resolves.toBeNull();
   });
 
   it('preserves mutable history when a runtime stops and starts again', async () => {

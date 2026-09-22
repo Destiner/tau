@@ -8,6 +8,7 @@ const UPDATE_PROGRESS_EVENT = 'tau://update-progress';
 const UPDATE_STATUS_EVENT = 'tau://update-status';
 const CHECK_FOR_UPDATES_EVENT = 'tau://check-for-updates';
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const SCHEDULER_RETRY_MS = 60 * 1000;
 
 type UpdateErrorCategory =
   | 'unavailable'
@@ -54,6 +55,7 @@ type NativeUpdateStatus =
   | 'downloading'
   | 'prepared'
   | 'installing'
+  | 'restartNeeded'
   | 'failed';
 
 interface NativeUpdateSnapshot {
@@ -69,7 +71,7 @@ interface NativeTerminalUpdateSnapshot {
   supported: boolean;
   status: Extract<
     NativeUpdateStatus,
-    'upToDate' | 'available' | 'prepared' | 'failed'
+    'upToDate' | 'available' | 'prepared' | 'restartNeeded' | 'failed'
   >;
   operationId: number;
   manual: boolean;
@@ -79,7 +81,7 @@ interface NativeTerminalUpdateSnapshot {
 
 const TERMINAL_UPDATE_STATUSES = new Set<
   NativeTerminalUpdateSnapshot['status']
->(['upToDate', 'available', 'prepared', 'failed']);
+>(['upToDate', 'available', 'prepared', 'restartNeeded', 'failed']);
 
 interface UpdateCheckResult {
   status: 'unavailable' | 'current' | 'available';
@@ -98,6 +100,11 @@ interface Clock {
   now(): number;
 }
 
+interface Timer {
+  setTimeout(callback: () => void, delayMs: number): unknown;
+  clearTimeout(handle: unknown): void;
+}
+
 type Invoke = <T>(
   command:
     | 'update_snapshot'
@@ -106,7 +113,8 @@ type Invoke = <T>(
     | 'set_dismissed_update_version'
     | 'download_update'
     | 'request_update_restart'
-    | 'install_update',
+    | 'install_update'
+    | 'restart_after_update',
   args?: Record<string, unknown>,
 ) => Promise<T>;
 
@@ -117,6 +125,7 @@ type Listen = <T>(
 
 interface UpdateDependencies {
   clock: Clock;
+  timer: Timer;
   invoke: Invoke;
   listen: Listen;
 }
@@ -132,6 +141,7 @@ interface UpdateService {
   dismiss(): Promise<void>;
   requestInstall(): Promise<void>;
   install(requestId: number, operationId: number): Promise<void>;
+  restart(): Promise<void>;
   consumeReveal(): boolean;
   acknowledgeFailure(): void;
 }
@@ -203,6 +213,11 @@ function updateFailureDescription(
 
 const defaultDependencies: UpdateDependencies = {
   clock: { now: () => Date.now() },
+  timer: {
+    setTimeout: (callback, delayMs) => globalThis.setTimeout(callback, delayMs),
+    clearTimeout: (handle) =>
+      globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>),
+  },
   invoke: invokeTraced as Invoke,
   listen: listen as Listen,
 };
@@ -226,6 +241,8 @@ function createUpdateService(
   let disposed = false;
   let lastCheckAt = Number.NEGATIVE_INFINITY;
   let checkFlight: Promise<void> | undefined;
+  let checkTimer: unknown;
+  let schedulerEnabled = false;
   let operation = 0;
   let latestNativeOperationId = 0;
   let consumedRevealToken = 0;
@@ -293,6 +310,9 @@ function createUpdateService(
       case 'installing':
         state.phase = 'installing';
         break;
+      case 'restartNeeded':
+        state.phase = 'restart-needed';
+        break;
       case 'checking':
         state.phase = 'checking';
         break;
@@ -317,7 +337,8 @@ function createUpdateService(
       ((['downloading', 'verifying'].includes(state.phase) &&
         (snapshot.status === 'prepared' || snapshot.status === 'failed')) ||
         (state.phase === 'installing' &&
-          (snapshot.status === 'failed' ||
+          (snapshot.status === 'restartNeeded' ||
+            snapshot.status === 'failed' ||
             (snapshot.status === 'prepared' &&
               snapshot.errorCategory !== undefined &&
               snapshot.errorCategory !== null))));
@@ -344,14 +365,46 @@ function createUpdateService(
     );
   }
 
+  function clearScheduledCheck(): void {
+    if (checkTimer === undefined) return;
+    dependencies.timer.clearTimeout(checkTimer);
+    checkTimer = undefined;
+  }
+
+  function scheduleNextCheck(): void {
+    if (disposed || !schedulerEnabled) return;
+    clearScheduledCheck();
+    const elapsed = dependencies.clock.now() - lastCheckAt;
+    const checkBlocked =
+      inProgress.value ||
+      state.phase === 'awaiting-confirmation' ||
+      state.phase === 'restart-needed';
+    const delay = !Number.isFinite(elapsed)
+      ? CHECK_INTERVAL_MS
+      : elapsed >= CHECK_INTERVAL_MS && checkBlocked
+        ? SCHEDULER_RETRY_MS
+        : Math.max(0, CHECK_INTERVAL_MS - elapsed);
+    checkTimer = dependencies.timer.setTimeout(() => {
+      checkTimer = undefined;
+      if (disposed) return;
+      void check().finally(scheduleNextCheck);
+    }, delay);
+  }
+
   async function check(manual = false): Promise<void> {
     if (checkFlight) return checkFlight;
-    if (inProgress.value || state.phase === 'awaiting-confirmation') return;
+    if (
+      inProgress.value ||
+      state.phase === 'awaiting-confirmation' ||
+      state.phase === 'restart-needed'
+    )
+      return;
     if (!manual && dependencies.clock.now() - lastCheckAt < CHECK_INTERVAL_MS)
       return;
 
     const attempt = ++operation;
     const wasUnavailable = state.phase === 'unavailable';
+    clearScheduledCheck();
     lastCheckAt = dependencies.clock.now();
     state.phase = 'checking';
     state.version = undefined;
@@ -404,6 +457,7 @@ function createUpdateService(
       await flight;
     } finally {
       if (checkFlight === flight) checkFlight = undefined;
+      scheduleNextCheck();
     }
   }
 
@@ -466,11 +520,15 @@ function createUpdateService(
       dismissedVersion = version ?? undefined;
       if (!snapshot || operation !== initializationGeneration) return;
       applySnapshot(snapshot, false);
-      if (
-        snapshot.supported &&
-        (snapshot.status === 'idle' || snapshot.status === 'upToDate')
-      )
+      if (!snapshot.supported) return;
+      schedulerEnabled = true;
+      if (snapshot.status === 'idle' || snapshot.status === 'upToDate') {
         void check();
+      } else {
+        if (!Number.isFinite(lastCheckAt))
+          lastCheckAt = dependencies.clock.now();
+        scheduleNextCheck();
+      }
     });
   }
 
@@ -572,6 +630,20 @@ function createUpdateService(
     }
   }
 
+  async function restart(): Promise<void> {
+    if (state.phase !== 'restart-needed' || updateOperationId === undefined)
+      return;
+    try {
+      await dependencies.invoke<void>('restart_after_update', {
+        operationId: updateOperationId,
+      });
+    } catch (error) {
+      state.failureCategory =
+        updateErrorCategory(error) ?? 'authorizationExpired';
+      state.failureUnread = true;
+    }
+  }
+
   function consumeReveal(): boolean {
     if (consumedRevealToken >= state.revealToken) return false;
     consumedRevealToken = state.revealToken;
@@ -584,6 +656,8 @@ function createUpdateService(
 
   function dispose(): void {
     disposed = true;
+    schedulerEnabled = false;
+    clearScheduledCheck();
     operation += 1;
     for (const unlisten of unlisteners.splice(0)) unlisten();
   }
@@ -599,6 +673,7 @@ function createUpdateService(
     dismiss,
     requestInstall,
     install,
+    restart,
     consumeReveal,
     acknowledgeFailure,
   };

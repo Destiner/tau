@@ -24,8 +24,12 @@ test('downloads and installs an available update after idle auto-confirmation', 
   await expect(page.getByText('Update and Restart Tau?')).toHaveCount(0);
   await expect(popover.getByText('Restart needed')).toBeVisible();
   await expect(
-    popover.getByText('Quit and reopen Tau to finish updating.'),
+    popover.getByText('The update is installed. Restart Tau to finish.'),
   ).toBeVisible();
+  const restart = popover.getByRole('button', { name: 'Restart Tau' });
+  await expect(restart).toBeVisible();
+  await restart.click();
+  await expect(popover.getByText('Restart needed')).toBeVisible();
 });
 
 test('shows and dismisses an available update from the version control', async ({

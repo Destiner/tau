@@ -96,6 +96,7 @@ pub enum UpdateStatus {
     Downloading,
     Prepared,
     Installing,
+    RestartNeeded,
     Failed,
 }
 
@@ -147,6 +148,7 @@ enum Phase {
     Downloading(u64),
     Prepared(u64),
     Installing(u64),
+    RestartNeeded(u64),
     Failed(u64),
 }
 
@@ -157,6 +159,7 @@ impl Phase {
             | Self::Downloading(id)
             | Self::Prepared(id)
             | Self::Installing(id)
+            | Self::RestartNeeded(id)
             | Self::Failed(id) => Some(id),
             Self::Idle | Self::UpToDate | Self::Available => None,
         }
@@ -258,13 +261,31 @@ impl UpdateCoordinator {
         }
     }
 
-    fn begin_install(&mut self, operation_id: u64) -> Result<(Update, Vec<u8>), UpdateError> {
+    fn begin_install(&mut self, operation_id: u64) -> Result<Vec<u8>, UpdateError> {
         self.validate_prepared(operation_id)?;
-        let update = self.candidate.clone().expect("validated candidate");
         let bytes = self.verified_bytes.clone().expect("validated bytes");
         self.phase = Phase::Installing(operation_id);
         self.error = None;
-        Ok((update, bytes))
+        Ok(bytes)
+    }
+
+    fn finish_install(&mut self, operation_id: u64) {
+        if self.phase == Phase::Installing(operation_id) {
+            self.phase = Phase::RestartNeeded(operation_id);
+            self.verified_bytes = None;
+            self.error = None;
+        }
+    }
+
+    fn validate_restart_needed(&self, operation_id: u64) -> Result<(), UpdateError> {
+        if self.phase == Phase::RestartNeeded(operation_id) {
+            Ok(())
+        } else {
+            Err(UpdateError::new(
+                UpdateErrorCategory::AuthorizationExpired,
+                "This update request has expired. Try again.",
+            ))
+        }
     }
 
     fn fail(&mut self, operation_id: u64, error: UpdateError) {
@@ -289,6 +310,7 @@ impl UpdateCoordinator {
             Phase::Downloading(_) => UpdateStatus::Downloading,
             Phase::Prepared(_) => UpdateStatus::Prepared,
             Phase::Installing(_) => UpdateStatus::Installing,
+            Phase::RestartNeeded(_) => UpdateStatus::RestartNeeded,
             Phase::Failed(_) => UpdateStatus::Failed,
         };
         UpdateSnapshot {
@@ -310,6 +332,7 @@ impl UpdateCoordinator {
             Phase::Downloading(_) => UpdateStatus::Downloading,
             Phase::Prepared(_) => UpdateStatus::Prepared,
             Phase::Installing(_) => UpdateStatus::Installing,
+            Phase::RestartNeeded(_) => UpdateStatus::RestartNeeded,
             Phase::Failed(_) => UpdateStatus::Failed,
         };
         UpdateStatusSnapshot {
@@ -550,6 +573,8 @@ pub async fn install_update<R: Runtime>(
     request_id: u64,
 ) -> Result<(), UpdateError> {
     ensure_available(&app)?;
+    #[cfg(target_os = "macos")]
+    let app_path = installed_app_path()?;
     if !quit_state.consume_update_authorization(request_id, operation_id) {
         return Err(UpdateError::new(
             UpdateErrorCategory::AuthorizationExpired,
@@ -557,16 +582,22 @@ pub async fn install_update<R: Runtime>(
         ));
     }
 
-    let (update, bytes) =
-        match state.with_coordinator(|coordinator| coordinator.begin_install(operation_id)) {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                quit_state.release_update_install(request_id, operation_id);
-                return Err(error);
-            }
-        };
+    let bytes = match state.with_coordinator(|coordinator| coordinator.begin_install(operation_id))
+    {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            quit_state.release_update_install(request_id, operation_id);
+            return Err(error);
+        }
+    };
 
-    let install_result = tokio::task::spawn_blocking(move || update.install(&bytes)).await;
+    #[cfg(target_os = "macos")]
+    let install_result =
+        tokio::task::spawn_blocking(move || install_macos_update(&bytes, &app_path)).await;
+    #[cfg(not(target_os = "macos"))]
+    let install_result: Result<Result<(), std::io::Error>, tokio::task::JoinError> =
+        unreachable!("updates are only available on macOS");
+
     if !matches!(install_result, Ok(Ok(()))) {
         let error = UpdateError::new(
             UpdateErrorCategory::InstallFailed,
@@ -581,8 +612,206 @@ pub async fn install_update<R: Runtime>(
         return Err(error);
     }
 
+    let status = state.with_coordinator(|coordinator| {
+        coordinator.finish_install(operation_id);
+        coordinator.status_snapshot(operation_id)
+    });
+    quit_state.release_update_install(request_id, operation_id);
+    emit_status(&app, status);
     app.request_restart();
     Ok(())
+}
+
+#[tauri::command]
+pub fn restart_after_update<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, UpdateState>,
+    operation_id: u64,
+) -> Result<(), UpdateError> {
+    state.with_coordinator(|coordinator| coordinator.validate_restart_needed(operation_id))?;
+    app.request_restart();
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn install_macos_update(bytes: &[u8], app_path: &Path) -> std::io::Result<()> {
+    install_macos_update_with_swap(bytes, app_path, swap_app_bundles)
+}
+
+#[cfg(target_os = "macos")]
+fn install_macos_update_with_swap(
+    bytes: &[u8],
+    app_path: &Path,
+    swap: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    use flate2::read::GzDecoder;
+    use std::io::{Error, ErrorKind};
+
+    let parent = app_path.parent().ok_or_else(|| {
+        Error::new(
+            ErrorKind::InvalidInput,
+            "installed app has no parent directory",
+        )
+    })?;
+    let staging = match tempfile::Builder::new()
+        .prefix(".tau-update-")
+        .tempdir_in(parent)
+    {
+        Ok(staging) => staging,
+        Err(error) if error.kind() == ErrorKind::PermissionDenied => {
+            tempfile::Builder::new().prefix("tau-update-").tempdir()?
+        }
+        Err(error) => return Err(error),
+    };
+    let mut archive = tar::Archive::new(GzDecoder::new(bytes));
+    archive.unpack(staging.path())?;
+
+    let mut entries = std::fs::read_dir(staging.path())?;
+    let staged_app = entries
+        .next()
+        .transpose()?
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_dir() && path.extension().is_some_and(|extension| extension == "app")
+        })
+        .ok_or_else(|| Error::new(ErrorKind::InvalidData, "update archive has no app bundle"))?;
+    if entries.next().transpose()?.is_some() {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            "update archive has multiple top-level entries",
+        ));
+    }
+
+    // The exchange is a single filesystem operation: failure leaves the
+    // installed bundle untouched, while success moves the old bundle into the
+    // private staging directory for best-effort cleanup.
+    swap(app_path, &staged_app)
+}
+
+#[cfg(target_os = "macos")]
+fn swap_app_bundles(installed: &Path, staged: &Path) -> std::io::Result<()> {
+    match swap_app_bundles_atomic(installed, staged) {
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            swap_app_bundles_privileged(installed, staged)
+        }
+        result => result,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn swap_app_bundles_atomic(installed: &Path, staged: &Path) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::io::{Error, ErrorKind};
+    use std::os::unix::ffi::OsStrExt;
+
+    let installed = CString::new(installed.as_os_str().as_bytes())
+        .map_err(|_| Error::new(ErrorKind::InvalidInput, "installed app path contains NUL"))?;
+    let staged = CString::new(staged.as_os_str().as_bytes())
+        .map_err(|_| Error::new(ErrorKind::InvalidInput, "staged app path contains NUL"))?;
+    // SAFETY: both C strings live for the duration of the call and point to
+    // existing paths. RENAME_SWAP leaves both paths present on success.
+    let result = unsafe {
+        libc::renameatx_np(
+            libc::AT_FDCWD,
+            installed.as_ptr(),
+            libc::AT_FDCWD,
+            staged.as_ptr(),
+            libc::RENAME_SWAP,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(Error::last_os_error())
+    }
+}
+
+#[cfg(target_os = "macos")]
+const PRIVILEGED_SWAP_SCRIPT: &str = r#"
+on run argv
+  if (count of argv) is not 3 then error "invalid updater arguments"
+  set helperPath to item 1 of argv
+  set installedPath to item 2 of argv
+  set stagedPath to item 3 of argv
+  do shell script quoted form of helperPath & " --tau-apply-update " & quoted form of installedPath & " " & quoted form of stagedPath with administrator privileges
+end run
+"#;
+
+#[cfg(target_os = "macos")]
+fn privileged_swap_command(
+    helper: &Path,
+    installed: &Path,
+    staged: &Path,
+) -> std::process::Command {
+    let mut command = std::process::Command::new("/usr/bin/osascript");
+    command
+        .args(["-e", PRIVILEGED_SWAP_SCRIPT, "--"])
+        .arg(helper)
+        .arg(installed)
+        .arg(staged);
+    command
+}
+
+#[cfg(target_os = "macos")]
+fn swap_app_bundles_privileged(installed: &Path, staged: &Path) -> std::io::Result<()> {
+    use std::io::Error;
+
+    let helper = std::env::current_exe()?;
+    let status = privileged_swap_command(&helper, installed, staged).status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(Error::other("privileged app exchange failed"))
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn swap_helper_exit_code() -> Option<i32> {
+    use std::ffi::OsStr;
+
+    let mut arguments = std::env::args_os().skip(1);
+    if arguments.next().as_deref() != Some(OsStr::new("--tau-apply-update")) {
+        return None;
+    }
+    let installed = arguments.next().map(PathBuf::from);
+    let staged = arguments.next().map(PathBuf::from);
+    if arguments.next().is_some() {
+        return Some(1);
+    }
+    let result = match installed.zip(staged) {
+        Some((installed, staged)) => (|| -> Result<(), UpdateError> {
+            let failure = || {
+                UpdateError::new(
+                    UpdateErrorCategory::InstallFailed,
+                    "The update could not be installed. Try again.",
+                )
+            };
+            let own_bundle = installed_app_path()?
+                .canonicalize()
+                .map_err(|_| failure())?;
+            let installed = installed.canonicalize().map_err(|_| failure())?;
+            let staged = staged.canonicalize().map_err(|_| failure())?;
+            if own_bundle != installed
+                || !staged.is_dir()
+                || !staged
+                    .extension()
+                    .is_some_and(|extension| extension == "app")
+            {
+                return Err(failure());
+            }
+            swap_app_bundles_atomic(&installed, &staged).map_err(|_| failure())
+        })(),
+        None => Err(UpdateError::new(
+            UpdateErrorCategory::InstallFailed,
+            "The update could not be installed. Try again.",
+        )),
+    };
+    Some(if result.is_ok() { 0 } else { 1 })
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn swap_helper_exit_code() -> Option<i32> {
+    None
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -725,6 +954,8 @@ fn map_download_error(error: tauri_plugin_updater::Error) -> UpdateError {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    #[cfg(target_os = "macos")]
+    use std::io::{Error, ErrorKind};
     use std::sync::mpsc;
     use std::time::Duration;
 
@@ -826,6 +1057,26 @@ mod tests {
                 candidate: None,
                 error_category: Some(UpdateErrorCategory::DownloadFailed),
             }
+        );
+    }
+
+    #[test]
+    fn completed_install_is_restartable_without_installing_again() {
+        let mut coordinator = UpdateCoordinator {
+            phase: Phase::Installing(7),
+            verified_bytes: Some(vec![1, 2, 3]),
+            ..Default::default()
+        };
+
+        coordinator.finish_install(7);
+
+        assert_eq!(coordinator.phase, Phase::RestartNeeded(7));
+        assert!(coordinator.verified_bytes.is_none());
+        assert_eq!(coordinator.validate_restart_needed(7), Ok(()));
+        assert!(coordinator.validate_restart_needed(8).is_err());
+        assert_eq!(
+            coordinator.status_snapshot(7).status,
+            UpdateStatus::RestartNeeded
         );
     }
 
@@ -953,5 +1204,81 @@ mod tests {
         let app = directory.path().join("Tau.app");
         fs::create_dir(&app).expect("app bundle");
         assert_eq!(preflight_app_path(&app), Ok(()));
+    }
+
+    #[cfg(target_os = "macos")]
+    fn updater_archive(marker: &[u8]) -> Vec<u8> {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+
+        let encoder = GzEncoder::new(Vec::new(), Compression::default());
+        let mut archive = tar::Builder::new(encoder);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(marker.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        archive
+            .append_data(&mut header, "Tau.app/version", marker)
+            .expect("archive marker");
+        archive
+            .into_inner()
+            .expect("archive encoder")
+            .finish()
+            .expect("compressed archive")
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn failed_bundle_exchange_preserves_the_installed_app() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let app = directory.path().join("Tau.app");
+        fs::create_dir(&app).expect("installed app");
+        fs::write(app.join("version"), b"old").expect("old marker");
+
+        let error = install_macos_update_with_swap(
+            &updater_archive(b"new"),
+            &app,
+            |_installed, _staged| Err(Error::new(ErrorKind::PermissionDenied, "injected")),
+        )
+        .expect_err("injected exchange failure");
+
+        assert_eq!(error.kind(), ErrorKind::PermissionDenied);
+        assert_eq!(fs::read(app.join("version")).unwrap(), b"old");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn privileged_exchange_passes_shell_metacharacters_as_arguments() {
+        use std::ffi::OsStr;
+
+        let helper = Path::new("/Applications/Tau.app/Contents/MacOS/tau");
+        let installed = Path::new("/Applications/Tau '$(touch injected)'.app");
+        let staged = Path::new("/tmp/Tau '; rm -rf ~'.app");
+        let command = privileged_swap_command(helper, installed, staged);
+        let arguments = command.get_args().collect::<Vec<_>>();
+
+        assert_eq!(arguments[0], OsStr::new("-e"));
+        assert_eq!(arguments[1], OsStr::new(PRIVILEGED_SWAP_SCRIPT));
+        assert_eq!(arguments[2], OsStr::new("--"));
+        assert_eq!(arguments[3], helper.as_os_str());
+        assert_eq!(arguments[4], installed.as_os_str());
+        assert_eq!(arguments[5], staged.as_os_str());
+        assert!(PRIVILEGED_SWAP_SCRIPT.contains("quoted form of installedPath"));
+        assert!(!PRIVILEGED_SWAP_SCRIPT.contains("touch injected"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn atomic_exchange_handles_shell_metacharacters_as_plain_path_data() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let sentinel = directory.path().join("injected");
+        let app = directory.path().join("Tau '$(touch injected)' ;.app");
+        fs::create_dir(&app).expect("installed app");
+        fs::write(app.join("version"), b"old").expect("old marker");
+
+        install_macos_update(&updater_archive(b"new"), &app).expect("atomic exchange");
+
+        assert_eq!(fs::read(app.join("version")).unwrap(), b"new");
+        assert!(!sentinel.exists());
     }
 }

@@ -45,7 +45,7 @@ interface BrowserSandboxOptions {
 }
 
 type SandboxUpdateStatus =
-  'available' | 'prepared' | 'authorized' | 'installing';
+  'available' | 'prepared' | 'authorized' | 'installing' | 'restartNeeded';
 
 interface SandboxQuitRequest {
   requestId: number;
@@ -412,7 +412,9 @@ function createBrowserSandboxHandler(
             ? 'available'
             : updateStatus === 'installing'
               ? 'installing'
-              : 'prepared',
+              : updateStatus === 'restartNeeded'
+                ? 'restartNeeded'
+                : 'prepared',
         operationId: updateOperationId,
         candidate: { version: updateVersion },
       };
@@ -479,8 +481,19 @@ function createBrowserSandboxHandler(
       ) {
         throw new Error('Browser sandbox rejected update install arguments.');
       }
-      updateStatus = 'installing';
+      updateStatus = 'restartNeeded';
       authorizedQuitRequest = null;
+      return null;
+    }
+    if (command === 'restart_after_update') {
+      const operationId = requiredPositiveInteger(args, 'operationId');
+      if (
+        !options.updateAvailable ||
+        updateStatus !== 'restartNeeded' ||
+        operationId !== updateOperationId
+      ) {
+        throw new Error('Browser sandbox rejected update restart arguments.');
+      }
       return null;
     }
     if (command === 'prepare_file_preview') {

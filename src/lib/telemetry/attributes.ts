@@ -129,6 +129,7 @@ const TAURI_INVOKE_COMMANDS = [
   'download_update',
   'request_update_restart',
   'install_update',
+  'restart_after_update',
   'start_pi',
   'start_pi_remote',
   'stop_pi',

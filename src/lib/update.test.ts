@@ -39,6 +39,7 @@ interface TestHarness {
   calls: Array<{ command: string; args?: Record<string, unknown> }>;
   respond(command: string, ...values: unknown[]): void;
   advance(ms: number): void;
+  pendingTimers(): number;
   emit(event: string, payload?: unknown): void;
 }
 
@@ -50,8 +51,20 @@ function harness(): TestHarness {
     ['update_snapshot', [{ supported: false, status: 'idle' }]],
   ]);
   const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+  let nextTimerId = 1;
+  const timers = new Map<number, { at: number; callback: () => void }>();
   const dependencies: UpdateDependencies = {
     clock: { now: () => now },
+    timer: {
+      setTimeout(callback, delayMs) {
+        const id = nextTimerId++;
+        timers.set(id, { at: now + delayMs, callback });
+        return id;
+      },
+      clearTimeout(handle) {
+        timers.delete(handle as number);
+      },
+    },
     invoke: vi.fn(
       async <T>(command: string, args?: Record<string, unknown>) => {
         calls.push({ command, args });
@@ -74,6 +87,17 @@ function harness(): TestHarness {
     },
     advance(ms: number): void {
       now += ms;
+      while (true) {
+        const due = [...timers.entries()]
+          .filter(([, timer]) => timer.at <= now)
+          .sort((left, right) => left[1].at - right[1].at)[0];
+        if (!due) break;
+        timers.delete(due[0]);
+        due[1].callback();
+      }
+    },
+    pendingTimers(): number {
+      return timers.size;
     },
     emit(event: string, payload?: unknown): void {
       listeners.get(event)?.({ payload });
@@ -211,6 +235,75 @@ describe('update service', () => {
     expect(
       test.calls.filter(({ command }) => command === 'check_for_update'),
     ).toHaveLength(3);
+  });
+
+  it('checks every six hours while the app remains focused', async () => {
+    const test = harness();
+    test.respond('update_snapshot', {
+      supported: true,
+      status: 'available',
+      operationId: 7,
+      candidate: { version: '0.2.0' },
+    });
+    test.respond('check_for_update', current, current);
+
+    test.service.initialize();
+    await flush();
+    expect(test.pendingTimers()).toBe(1);
+
+    test.advance(CHECK_INTERVAL_MS - 1);
+    await flush();
+    expect(
+      test.calls.filter(({ command }) => command === 'check_for_update'),
+    ).toHaveLength(0);
+
+    test.advance(1);
+    await flush();
+    expect(
+      test.calls.filter(({ command }) => command === 'check_for_update'),
+    ).toHaveLength(1);
+    expect(test.pendingTimers()).toBe(1);
+
+    test.advance(CHECK_INTERVAL_MS);
+    await flush();
+    expect(
+      test.calls.filter(({ command }) => command === 'check_for_update'),
+    ).toHaveLength(2);
+    expect(test.pendingTimers()).toBe(1);
+  });
+
+  it('coalesces a scheduled check with focus and cancels it on dispose', async () => {
+    const test = harness();
+    test.respond('update_snapshot', {
+      supported: true,
+      status: 'available',
+      operationId: 7,
+      candidate: { version: '0.2.0' },
+    });
+    let finishCheck!: (value: typeof current) => void;
+    test.respond(
+      'check_for_update',
+      new Promise<typeof current>((resolve) => (finishCheck = resolve)),
+    );
+
+    test.service.initialize();
+    await flush();
+    test.advance(CHECK_INTERVAL_MS);
+    test.service.handleFocus();
+    expect(
+      test.calls.filter(({ command }) => command === 'check_for_update'),
+    ).toHaveLength(1);
+
+    finishCheck(current);
+    await flush();
+    expect(test.pendingTimers()).toBe(1);
+    test.service.dispose();
+    expect(test.pendingTimers()).toBe(0);
+    test.advance(CHECK_INTERVAL_MS);
+    await flush();
+    expect(
+      test.calls.filter(({ command }) => command === 'check_for_update'),
+    ).toHaveLength(1);
   });
 
   it('keeps one check in flight', async () => {
@@ -401,6 +494,34 @@ describe('update service', () => {
       args: { requestId: 3, operationId: 7 },
     });
     expect(test.service.state.phase).toBe('restart-needed');
+
+    await test.service.restart();
+    expect(test.calls.at(-1)).toMatchObject({
+      command: 'restart_after_update',
+      args: { operationId: 7 },
+    });
+    expect(
+      test.calls.filter(({ command }) => command === 'install_update'),
+    ).toHaveLength(1);
+  });
+
+  it('restores restart-only recovery from the native snapshot', async () => {
+    const test = harness();
+    test.respond('update_snapshot', {
+      ...preparedSnapshot,
+      status: 'restartNeeded',
+    });
+    test.respond('restart_after_update', undefined);
+
+    test.service.initialize();
+    await flush();
+    expect(test.service.state.phase).toBe('restart-needed');
+
+    await test.service.restart();
+    expect(test.calls.at(-1)).toMatchObject({
+      command: 'restart_after_update',
+      args: { operationId: 7 },
+    });
   });
 
   it('rechecks after a manual check invalidates an available candidate', async () => {
