@@ -143,7 +143,10 @@
 </template>
 
 <script setup lang="ts">
-import { useVirtualizer } from '@tanstack/vue-virtual';
+import {
+  measureElement as measureVirtualElement,
+  useVirtualizer,
+} from '@tanstack/vue-virtual';
 import type { ComponentPublicInstance } from 'vue';
 import {
   computed,
@@ -230,7 +233,7 @@ let following = restored?.following ?? true;
  */
 let lastScrollOffset = restored?.offset ?? 0;
 
-const rowVirtualizer = useVirtualizer(
+const rowVirtualizer = useVirtualizer<HTMLElement, HTMLElement>(
   computed(() => {
     const messages = props.messages;
     const showWorkingIndicator = props.showWorkingIndicator;
@@ -241,6 +244,25 @@ const rowVirtualizer = useVirtualizer(
       estimateSize: (index: number): number => estimateRowSize(messages[index]),
       getItemKey: (index: number): string =>
         messages[index]?.id ?? workingRowKey,
+      /**
+       * Vue calls row refs while WebKit is still attaching their descendants.
+       * An offsetHeight read there can cache that incomplete height until the
+       * ResizeObserver runs, briefly drawing the end window below the fold.
+       * While following the end, keep the estimate for a row's first
+       * synchronous pass; observer entries and already-settled measurements
+       * remain authoritative. A reader in history still needs synchronous
+       * measurements so prepended rows can restore their anchor immediately.
+       */
+      measureElement: (element, entry, instance): number => {
+        if (entry || !following)
+          return measureVirtualElement(element, entry, instance);
+        const index = instance.indexFromElement(element);
+        const key = instance.options.getItemKey(index);
+        return (
+          instance.itemSizeCache.get(key) ??
+          instance.options.estimateSize(index)
+        );
+      },
       anchorTo: 'end' as const,
       scrollEndThreshold: followThreshold,
       /**
