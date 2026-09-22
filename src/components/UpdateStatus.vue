@@ -7,6 +7,11 @@
         type="button"
         :aria-label="triggerLabel"
       >
+        <template v-if="firstRun">
+          <span class="first-run-name">tau</span>
+          <span class="version-number">{{ appVersion }}</span>
+        </template>
+        <template v-else>v{{ appVersion }}</template>
         <span
           v-if="indicator === 'accent' || indicator === 'downloading'"
           class="update-indicator"
@@ -18,11 +23,6 @@
           class="update-failure-mark"
           name="cross"
         />
-        <template v-if="firstRun">
-          <span class="first-run-name">tau</span>
-          <span class="version-number">{{ appVersion }}</span>
-        </template>
-        <template v-else>v{{ appVersion }}</template>
       </button>
     </PopoverTrigger>
     <PopoverPortal>
@@ -61,16 +61,14 @@
         <footer class="update-actions">
           <UiButton
             v-if="state.phase === 'available'"
-            size="md"
             :disabled="update.inProgress.value"
             @click="dismiss"
           >
-            Not Now
+            Skip
           </UiButton>
           <UiButton
             v-if="primaryAction"
             variant="primary"
-            size="md"
             :disabled="update.inProgress.value"
             @click="runPrimaryAction"
           >
@@ -187,9 +185,8 @@ const primaryAction = computed(() => {
     case 'failure':
       return 'Update';
     case 'awaiting-confirmation':
-      return 'Update and Restart';
     case 'restart-needed':
-      return 'Restart Tau';
+      return 'Restart';
     case 'current':
     case 'unavailable':
       return 'Check for Updates';
@@ -293,7 +290,6 @@ function runPrimaryAction(): void {
   z-index: 20;
   flex-direction: column;
   width: min(250px, calc(100vw - 18px));
-  padding: 11px;
   outline: 0;
   gap: 8px;
 }

@@ -287,9 +287,7 @@ const feedbackDialogOpen = computed(
     !fullscreenViewerOpen.value,
 );
 const quitTitle = computed(() =>
-  quitRequest.value?.intent === 'updateRestart'
-    ? 'Update and Restart Tau?'
-    : 'Quit Tau?',
+  quitRequest.value?.intent === 'updateRestart' ? 'Restart Tau?' : 'Quit Tau?',
 );
 const quitAction = computed(() =>
   quitRequest.value?.intent === 'updateRestart' ? 'Restart' : 'Quit',

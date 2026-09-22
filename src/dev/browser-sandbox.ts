@@ -40,8 +40,11 @@ type BrowserSandboxHandler = (
 ) => Promise<unknown>;
 
 interface BrowserSandboxOptions {
+  updatesSupported?: boolean;
   updateAvailable?: boolean;
+  updateProgressDelayMs?: number;
   emitAppEvent?: (event: string, payload: unknown) => Promise<void>;
+  simulateUpdateRestart?: () => Promise<never>;
 }
 
 type SandboxUpdateStatus =
@@ -404,7 +407,10 @@ function createBrowserSandboxHandler(
     if (command === 'get_dismissed_update_version') return null;
     if (command === 'pending_quit_request') return pendingQuitRequest;
     if (command === 'update_snapshot') {
-      if (!options.updateAvailable) return { supported: false, status: 'idle' };
+      const supported = options.updatesSupported ?? options.updateAvailable;
+      if (!supported) return { supported: false, status: 'idle' };
+      if (!options.updateAvailable)
+        return { supported: true, status: 'upToDate' };
       return {
         supported: true,
         status:
@@ -420,12 +426,15 @@ function createBrowserSandboxHandler(
       };
     }
     if (command === 'check_for_update') {
-      return options.updateAvailable
-        ? {
-            status: 'available',
-            version: updateVersion,
-            operationId: updateOperationId,
-          }
+      if (options.updateAvailable) {
+        return {
+          status: 'available',
+          version: updateVersion,
+          operationId: updateOperationId,
+        };
+      }
+      return options.updatesSupported
+        ? { status: 'current' }
         : { status: 'unavailable' };
     }
     if (command === 'download_update') {
@@ -437,6 +446,27 @@ function createBrowserSandboxHandler(
       ) {
         throw new Error('Browser sandbox rejected update download arguments.');
       }
+      const emitProgress = async (
+        downloadedBytes: number,
+        phase: 'downloading' | 'verifying',
+      ): Promise<void> => {
+        if (options.updateProgressDelayMs) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, options.updateProgressDelayMs),
+          );
+        }
+        await options.emitAppEvent?.('tau://update-progress', {
+          operationId,
+          downloadedBytes,
+          totalBytes: 100,
+          phase,
+        });
+      };
+      await emitProgress(0, 'downloading');
+      await emitProgress(35, 'downloading');
+      await emitProgress(72, 'downloading');
+      await emitProgress(100, 'downloading');
+      await emitProgress(100, 'verifying');
       updateStatus = 'prepared';
       return null;
     }
@@ -481,8 +511,10 @@ function createBrowserSandboxHandler(
       ) {
         throw new Error('Browser sandbox rejected update install arguments.');
       }
-      updateStatus = 'restartNeeded';
+      updateStatus = 'installing';
       authorizedQuitRequest = null;
+      if (options.simulateUpdateRestart) return options.simulateUpdateRestart();
+      updateStatus = 'restartNeeded';
       return null;
     }
     if (command === 'restart_after_update') {
@@ -689,14 +721,25 @@ function createBrowserSandboxHandler(
 
 function installBrowserSandbox(): void {
   setSidebarWidthStorage(createMemorySidebarWidthStorage());
-  const updateAvailable =
+  const updateFixtureRequested =
     new URLSearchParams(window.location.search).get('test-update') ===
     'available';
+  const updateAvailable =
+    updateFixtureRequested &&
+    sessionStorage.getItem('tau-update-fixture-installed') !== 'true';
   const handleCommand = createBrowserSandboxHandler(
     (event) => emit<PiBridgeEvent>('pi-event', event),
     {
+      updatesSupported: updateFixtureRequested,
       updateAvailable,
+      updateProgressDelayMs: 180,
       emitAppEvent: (event, payload) => emit(event, payload),
+      async simulateUpdateRestart(): Promise<never> {
+        sessionStorage.setItem('tau-update-fixture-installed', 'true');
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        window.location.reload();
+        return new Promise(() => undefined);
+      },
     },
   );
   mockWindows('main');

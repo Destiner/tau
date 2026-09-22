@@ -65,20 +65,32 @@ describe('browser sandbox seed', () => {
       status: 'prepared',
       operationId: 1,
     });
+    expect(
+      appEvents
+        .filter(({ event }) => event === 'tau://update-progress')
+        .map(({ payload }) => payload),
+    ).toEqual([
+      expect.objectContaining({ downloadedBytes: 0, phase: 'downloading' }),
+      expect.objectContaining({ downloadedBytes: 35, phase: 'downloading' }),
+      expect.objectContaining({ downloadedBytes: 72, phase: 'downloading' }),
+      expect.objectContaining({ downloadedBytes: 100, phase: 'downloading' }),
+      expect.objectContaining({ downloadedBytes: 100, phase: 'verifying' }),
+    ]);
 
     await handle('request_update_restart', { operationId: 1 });
-    expect(appEvents).toEqual([
-      {
-        event: 'tau://quit-requested',
-        payload: {
-          requestId: 1,
-          intent: 'updateRestart',
-          operationId: 1,
-        },
+    const quitEvent = appEvents.find(
+      ({ event }) => event === 'tau://quit-requested',
+    );
+    expect(quitEvent).toEqual({
+      event: 'tau://quit-requested',
+      payload: {
+        requestId: 1,
+        intent: 'updateRestart',
+        operationId: 1,
       },
-    ]);
+    });
     await expect(handle('pending_quit_request')).resolves.toEqual(
-      appEvents[0]?.payload,
+      quitEvent?.payload,
     );
     await expect(
       handle('resolve_quit_request', { requestId: 2, confirmed: true }),
