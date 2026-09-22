@@ -6,6 +6,16 @@ const FLOWCHART = 'graph TD\n  Prompt[Prompt] --> Answer[Answer]\n';
 
 const SEQUENCE = 'sequenceDiagram\n  Tau->>Pi: prompt\n';
 
+const MULTILINE_FLOWCHART = `flowchart LR
+  E[Planner] --> F{Route exists
+for both sides?}
+  F -->|No| G[Decline]
+  F -->|Yes| H[Price]
+  E --> I{Delivery only
++ dynamic preview
++ no result?}
+  I -->|Yes| J[Use fallback]`;
+
 /** The renderer is loaded asynchronously, so nothing is drawn on the first tick. */
 async function ready(): Promise<void> {
   await vi.waitFor(
@@ -29,6 +39,58 @@ describe('drawing a fenced diagram', () => {
     expect(svg).toContain('<svg');
     expect(svg).toContain('viewBox');
     expect(svg).toContain('prompt');
+  });
+
+  it('preserves physical newlines inside flowchart node labels', async () => {
+    await ready();
+    const svg = renderDiagram(MULTILINE_FLOWCHART, 'mermaid') ?? '';
+    const nodes = [...svg.matchAll(/<g class="node"[^>]+>/g)].map(
+      ([node]) => node,
+    );
+    const edges = [...svg.matchAll(/<polyline class="edge"[^>]*>/g)];
+
+    expect(nodes).toHaveLength(6);
+    expect(edges).toHaveLength(5);
+    expect(
+      edges.map(([edge]) => [
+        /data-from="([^"]+)"/.exec(edge)?.[1],
+        /data-to="([^"]+)"/.exec(edge)?.[1],
+        /data-label="([^"]+)"/.exec(edge)?.[1],
+      ]),
+    ).toEqual([
+      ['E', 'F', undefined],
+      ['F', 'G', 'No'],
+      ['F', 'H', 'Yes'],
+      ['E', 'I', undefined],
+      ['I', 'J', 'Yes'],
+    ]);
+    expect(
+      nodes.filter((node) => node.includes('data-shape="diamond"')),
+    ).toHaveLength(2);
+    expect(nodes).toContainEqual(
+      expect.stringContaining(
+        'data-id="F" data-label="Route exists\nfor both sides?"',
+      ),
+    );
+    expect(nodes).toContainEqual(
+      expect.stringContaining(
+        'data-id="I" data-label="Delivery only\n+ dynamic preview\n+ no result?"',
+      ),
+    );
+    for (const label of [
+      'Route exists',
+      'for both sides?',
+      'Delivery only',
+      '+ dynamic preview',
+      '+ no result?',
+    ]) {
+      expect(svg).toContain(label);
+    }
+    for (const label of ['F', 'I', 'for']) {
+      expect(nodes.some((node) => node.includes(`data-label="${label}"`))).toBe(
+        false,
+      );
+    }
   });
 
   it('carries the app’s own colours rather than a palette of its own', async () => {
@@ -86,6 +148,11 @@ describe('drawing a fenced diagram', () => {
     // and a mislabelled fence both are.
     expect(renderDiagram('not a diagram at all\n', 'mermaid')).toBeNull();
     expect(renderDiagram('', 'mermaid')).toBeNull();
+    // An incomplete multiline label would otherwise become a plausible but
+    // partial graph, so it remains the source the reader was sent.
+    expect(
+      renderDiagram('graph TD\n  A[unfinished\n  B --> C', 'mermaid'),
+    ).toBeNull();
     // Longer than a diagram, whatever else it is.
     expect(
       renderDiagram(`graph TD\n${'  A --> B\n'.repeat(1_000)}`, 'mermaid'),

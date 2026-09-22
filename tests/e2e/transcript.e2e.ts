@@ -1075,12 +1075,30 @@ test('draws a fenced diagram in the scheme around it', async ({ page }) => {
   await expect(
     diagram.locator('text', { hasText: 'Session live?' }),
   ).toHaveCount(1);
+  await expect(diagram.locator('g.node')).toHaveCount(11);
+  await expect(diagram.locator('polyline.edge')).toHaveCount(11);
+  await expect(diagram.locator('g.node[data-shape="diamond"]')).toHaveCount(3);
+  await expect(diagram.locator('g.node[data-id="F"]')).toHaveAttribute(
+    'data-label',
+    'Route exists\nfor both sides?',
+  );
+  await expect(diagram.locator('g.node[data-id="I"]')).toHaveAttribute(
+    'data-label',
+    'Delivery only\n+ dynamic preview\n+ no result?',
+  );
+  for (const label of ['F', 'I', 'for']) {
+    await expect(diagram.locator(`g.node[data-label="${label}"]`)).toHaveCount(
+      0,
+    );
+  }
 
-  // A fence the parser cannot read, and one that has not reached its closing
-  // fence, both stay the source the reader was sent.
-  await expect(
-    showcase.locator('.code-block[data-tau-lang="mermaid"]'),
-  ).toHaveCount(2);
+  // Invalid, unsafe multiline, and not-yet-closed fences all stay readable as
+  // the source the reader was sent.
+  const sourceBlocks = showcase.locator('.code-block[data-tau-lang="mermaid"]');
+  await expect(sourceBlocks).toHaveCount(3);
+  const incomplete = sourceBlocks.filter({ hasText: 'An incomplete label' });
+  await expect(incomplete).toContainText('B --> C');
+  await expect(incomplete.locator('.diagram-expand')).toHaveCount(0);
 
   // Ruled like the block its source would have been, but not filled like one:
   // the page a diagram is drawn on is the one the message is on.
@@ -1142,6 +1160,13 @@ test('expands a drawn diagram into a fullscreen pan-and-zoom viewer', async ({
   await expect(
     vector.locator('text', { hasText: 'Session live?' }),
   ).toHaveCount(1);
+  await expect(
+    vector.locator('g.node[data-id="F"] text', { hasText: 'for both sides?' }),
+  ).toHaveCount(1);
+  await expect(
+    vector.locator('g.node[data-id="I"] text', { hasText: '+ no result?' }),
+  ).toHaveCount(1);
+  await expect(vector.locator('g.node[data-shape="diamond"]')).toHaveCount(3);
   await expect(vector).toHaveAttribute('width', '100%');
   await expect(vector).toHaveAttribute('height', '100%');
   await expect(vector).toHaveAttribute('preserveAspectRatio', 'none');
