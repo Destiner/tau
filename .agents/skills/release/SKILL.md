@@ -77,12 +77,16 @@ After workflow success, query the release for `TAG` and verify:
 
 - It exists and `isDraft` is true; “published as a draft” means created but **not publicly published**.
 - Its title is `Tau <version>` and it is not a prerelease.
-- It contains the single uploaded asset `tau-<version>-apple-silicon.dmg`, with nonzero size and completed upload state. GitHub's automatic source archives are not uploaded assets.
+- It contains exactly four uploaded assets, each with nonzero size and completed upload state: `tau-<version>-apple-silicon.dmg`, `tau-<version>-darwin-aarch64.tar.gz`, `tau-<version>-darwin-aarch64.tar.gz.sig`, and `latest.json`. GitHub's automatic source archives are not uploaded assets.
 - The successful run built `RELEASE_SHA`.
 
 The workflow already creates a lightweight `v<version>` tag immediately before the draft. Fulfill “tag the release commit” by verifying that remote tag targets exactly `RELEASE_SHA`, then fetching and checking it locally. For example, inspect `gh api "repos/$REPO/git/ref/tags/$TAG"`, require `object.type == commit` and `object.sha == RELEASE_SHA`, fetch without force, and check `git rev-parse "$TAG^{commit}"`.
 
 Do not rely on a release's `target_commitish` or `--verify-tag` alone as proof of the commit. A missing/mismatched tag or non-draft release is a stop condition, not permission to create, move, or repair it automatically.
+
+Download all four draft assets with authenticated `gh release download "$TAG" --repo "$REPO" --dir "$ASSETS_DIR"` into a new temporary directory outside the repository. Compare every file's SHA-256 against the checksums printed by the successful run's verification step. Stop if checksums are missing or differ. Keep these exact files through the smoke test and post-publication checks; a local build is not a substitute for the runner's artifacts.
+
+Check `latest.json` against the schema in `scripts/updater-release.ts`: the exact release version, only the `darwin-aarch64` platform, the immutable archive URL `https://github.com/Destiner/tau/releases/download/$TAG/tau-$VERSION-darwin-aarch64.tar.gz`, and signature content matching the `.sig` asset exactly. Require the run's artifact verification to have succeeded, including cryptographic updater signature verification against the pinned public key. Do not regenerate signatures, manifests, or assets. The updater endpoint is fixed to `Destiner/tau`; stop if the resolved repository does not match.
 
 ## 5. Write Features/Fixes notes
 
@@ -112,20 +116,33 @@ Read back the body and draft status. Preserve any existing manually authored not
 
 ## 6. Explicit publication approval
 
-Present the version, exact commit, successful run URL, draft URL, asset name, and complete proposed release notes. Report check results and the distribution smoke-test status from `docs/releases.md`. Ask the user to perform/confirm that manual smoke test; never claim it passed based on CI signing checks alone.
+Present the version, exact commit, successful run URL, draft URL, all four asset names, and complete proposed release notes. Report check results and the distribution smoke-test status from `docs/releases.md`. Ask the user to perform/confirm that manual smoke test using the exact checksum-verified DMG: unchanged HTTPS upload, Safari download on a clean test Mac, checksum comparison, install and launch without quarantine or Gatekeeper overrides, and `spctl` reporting `accepted` with `source=Notarized Developer ID`. Never claim it passed based on CI signing checks alone.
 
 Then ask explicitly: **“Publish Tau <version> with these release notes?”** Leave it as a draft while awaiting an answer. Selecting a bump, asking to release, approving a push, or silence does not count. Approval applies only to the specific version, commit, and notes just shown; material changes require renewed approval. Do not publish with an unconfirmed required smoke test.
 
-Only after explicit approval, recheck draft status, exact tag SHA, asset, successful run, and approved body. If anything changed, stop and ask again. Then:
+Only after explicit approval, recheck draft status, non-prerelease status, exact tag SHA, all four assets (including checksums), successful run, and approved body. If anything changed, stop and ask again. Publish as the latest stable release:
 
 ```sh
-gh release edit "$TAG" --repo "$REPO" --draft=false
+gh release edit "$TAG" --repo "$REPO" --draft=false --latest
 ```
 
-Query it again and require `isDraft == false` with a publication timestamp. Return the release URL and version. Publication follows repository visibility; do not imply a private repository's release is publicly downloadable.
+Query it again and require `isDraft == false`, `isPrerelease == false`, and a publication timestamp. Verify GitHub's latest release resolves to this exact tag (for example, `gh api "repos/$REPO/releases/latest"`), corresponding to the **Latest** badge.
+
+## 7. Verify public updater distribution
+
+Before announcing completion, follow `docs/releases.md` to verify the public updater endpoint without authentication. Use the retained checksum-verified draft assets, not a guessed local `target/release-assets` directory; CI artifacts are not automatically present locally. Set `PUBLIC_MANIFEST` to a new temporary file outside the repository:
+
+```sh
+curl -fsSL https://github.com/Destiner/tau/releases/latest/download/latest.json \
+  -o "$PUBLIC_MANIFEST"
+cmp "$ASSETS_DIR/latest.json" "$PUBLIC_MANIFEST"
+curl -fIL "$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["platforms"]["darwin-aarch64"]["url"])' "$PUBLIC_MANIFEST")"
+```
+
+Require the public manifest to be byte-for-byte identical to the verified draft manifest and its immutable archive URL to be reachable. Only after these checks pass, return the release URL and version. The current repository is public; publishing exposes both the DMG and updater assets. Publication also makes the release discoverable by installed clients through the latest endpoint.
 
 ## Failures and partial runs
 
-Stop on failed checks, push failure, unsuccessful workflow, missing assets, inconsistent provenance, or GitHub API errors. Report the exact stage, run URL, and any existing draft/tag; do not claim completion or blindly retry. Local version commits or a successful push do not authorize further repair actions.
+Stop on failed checks, push failure, unsuccessful workflow, missing assets, inconsistent provenance, or GitHub API errors. Report the exact stage, run URL, and any existing draft/tag; do not claim completion or blindly retry. Local version commits or a successful push do not authorize further repair actions. If post-publication checks fail, report that the release is already published but distribution verification failed; do not announce completion, unpublish, replace assets, or dispatch another run automatically.
 
 A workflow may create its tag and then fail to create/upload the draft. Inspect both before proposing recovery. Follow `docs/releases.md`: incomplete draft/tag deletion requires explicit permission, and manual completion requires the exact verified artifact. Never delete or retarget a published release to reuse a version. Resume verified existing state instead of bumping again or starting duplicate runs.
