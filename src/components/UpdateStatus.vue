@@ -259,6 +259,7 @@ function runPrimaryAction(): void {
 .update-indicator {
   width: 5px;
   height: 5px;
+  transform: translateY(-2px);
   border-radius: 50%;
 }
 
