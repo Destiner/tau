@@ -29,6 +29,7 @@
         </div>
         <footer class="quit-confirmation-actions">
           <UiButton
+            size="md"
             :disabled="busy"
             @click="cancel"
           >
@@ -36,6 +37,7 @@
           </UiButton>
           <UiButton
             ref="confirmButton"
+            size="md"
             variant="primary"
             :disabled="busy"
             @click="confirm"
