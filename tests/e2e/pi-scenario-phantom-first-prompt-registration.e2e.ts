@@ -2,6 +2,8 @@ import type { Page } from '@playwright/test';
 
 import { expect, test } from './fixtures';
 
+test.use({ pausedClock: true });
+
 const scenarioUrl = '/?test-scenario=phantom-first-prompt-registration';
 const prompt = 'Keep the first prompt visible';
 const sessionName = 'First prompt';

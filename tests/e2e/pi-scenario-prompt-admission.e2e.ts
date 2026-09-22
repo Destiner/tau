@@ -2,6 +2,8 @@ import type { Page } from '@playwright/test';
 
 import { expect, test } from './fixtures';
 
+test.use({ pausedClock: true });
+
 const scenarioUrl = '/?test-scenario=saved-session-prompt-admission';
 const confirmedPrompt = 'Confirm this fixture prompt';
 const absentPrompt = 'Reconcile this fixture prompt';
@@ -47,9 +49,14 @@ test('styles and serializes optimistic ordinary prompt admission', async ({
   await expect(confirmedRow).toHaveCSS('opacity', '1');
 
   await releaseGate(page, 'prompt-confirmed');
+  // The second prompt needs its own timestamp, before settlement probes fire.
+  await page.clock.runFor(1);
   await composer.fill(absentPrompt);
   await expect(send).toBeEnabled();
   await send.click();
+  await waitForGate(page, 'before-admission-acknowledgement');
+  await releaseGate(page, 'before-admission-acknowledgement');
+  await page.clock.runFor(150);
   await waitForGate(page, 'stale-idle-admission');
 
   const absentRow = page

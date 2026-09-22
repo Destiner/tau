@@ -48,7 +48,7 @@ The `saved-session-compaction` scenario first pauses at `compaction-started` aft
 
 The `saved-session-compaction-notifications` scenario pauses at `before-successful-compaction` with info, warning, and error notices plus a local compaction failure visible. Release it to inspect `compacted-hydration-pending`: the old local feedback is gone immediately, while a fresh warning remains between two continued output rows. Releasing that gate hydrates the permanent boundary and pauses at `compacted-notifications-reconciled`, where the same fresh warning must remain unique and in place.
 
-The `saved-session-prompt-admission` scenario pauses while `Confirm this fixture prompt` is optimistic, then after `agent_start` confirms it. Its second prompt, `Reconcile this fixture prompt`, receives a successful preflight and an idle state before hydration proves Pi did not record it. While paused, the composer accepts the next draft but Send remains disabled; releasing the gate removes the absent optimistic row.
+The `saved-session-prompt-admission` scenario pauses while `Confirm this fixture prompt` is optimistic, then after `agent_start` confirms it. Its second prompt, `Reconcile this fixture prompt`, pauses at `before-admission-acknowledgement` before the successful preflight response. Release it to let the delayed admission probe report an idle state before hydration proves Pi did not record the prompt. While paused, the composer accepts the next draft but Send remains disabled; releasing the gate removes the absent optimistic row.
 
 The history scenarios open a saved session whose transcript arrives already complete, as one created elsewhere does — by a workflow extension, or on another machine. `saved-session-short-history` holds one turn and cannot scroll, `saved-session-history` fills the viewport, and `saved-session-long-history` is read back through rows that were only ever estimated. Nothing is submitted in any of them: the whole point is the first render.
 
@@ -85,6 +85,8 @@ Scenario source lives in `tests/support/pi-scenario/`. Each typed scenario has s
 `catalogue.ts` is the single browser-scenario catalogue. Add a scenario there once; the interactive command's validation/list and the browser adapter both read it. Native command fixtures remain in `src/dev/pi-scenario-adapter.ts`, outside the Pi protocol engine.
 
 Playwright selects scenarios directly with `?test-scenario=<name>`, so headless tests do not use the interactive wrapper. Full-app scenario tests must import the shared fixture from `tests/e2e/fixtures.ts` to verify scenario completion and fail on browser errors.
+
+For event- and gate-driven tapes, opt into `test.use({ pausedClock: true })` before navigation. Real-time replacement and prompt-admission probes can otherwise overtake slow browser assertions and send an unexpected `get_state` between scripted steps. Advance `page.clock` explicitly when testing a timer: the prompt-admission test releases `before-admission-acknowledgement`, then runs 150 ms to trigger its reconciliation probe. Advance time between separate prompts as well so their timestamps remain distinct. Keep timer-driven scenarios, such as extension-prompt expiry and delayed workflow replacement, on their own explicit clock policy; do not ignore unexpected requests in the adapter.
 
 ## From a failure report to a regression
 

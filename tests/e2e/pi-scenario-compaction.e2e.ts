@@ -2,6 +2,8 @@ import type { Page } from '@playwright/test';
 
 import { expect, test } from './fixtures';
 
+test.use({ pausedClock: true });
+
 const scenarioUrl = '/?test-scenario=saved-session-compaction';
 const firstPrompt = 'Compact this fixture';
 const secondPrompt = 'Miss the compaction start';
@@ -101,6 +103,7 @@ test('shows non-interruptible compaction from events and reconciled state', asyn
   await expect(composer).toHaveValue(secondPrompt);
 
   await releaseGate(page, 'compaction-ended-continuing');
+  await page.clock.runFor(1);
   await page.getByRole('button', { name: 'Send Message' }).click();
 
   await waitForGate(page, 'missed-start-reconciled');

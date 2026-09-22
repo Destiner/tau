@@ -107,6 +107,7 @@ const scenario = definePiScenario({
       capture: 'absent-prompt',
       match: { type: 'prompt', message: absentPrompt },
     },
+    { kind: 'gate', name: 'before-admission-acknowledgement', required: true },
     { kind: 'response', request: 'absent-prompt', command: 'prompt' },
     {
       kind: 'request',

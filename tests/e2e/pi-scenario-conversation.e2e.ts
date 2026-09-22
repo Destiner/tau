@@ -1,5 +1,7 @@
 import { expect, test } from './fixtures';
 
+test.use({ pausedClock: true });
+
 const scenarioUrl = '/?test-scenario=saved-session-conversation';
 const prompt = 'Explain the fixture';
 const firstDelta = 'Deterministic';
@@ -217,7 +219,6 @@ test('restores an immediately cleared composer when delivery fails', async ({
 test('submits and settles a deterministic streamed conversation', async ({
   page,
 }) => {
-  await page.clock.install();
   await page.goto(scenarioUrl);
 
   const composer = page.getByRole('textbox', { name: 'Message Pi' });
@@ -257,8 +258,6 @@ test('submits and settles a deterministic streamed conversation', async ({
   });
 
   await composer.fill(prompt);
-  const pauseTarget = await page.evaluate(() => Date.now() + 1_000);
-  await page.clock.pauseAt(pauseTarget);
   await page.getByRole('button', { name: 'Send Message' }).click();
 
   await expect(page.getByText(prompt, { exact: true })).toBeVisible();

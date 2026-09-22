@@ -1,5 +1,7 @@
 import { expect, test } from './fixtures';
 
+test.use({ pausedClock: true });
+
 const scenarioUrl = '/?test-scenario=saved-session-command-replacement';
 const command = '/mock 42';
 const replacementName = '42 • plan';
