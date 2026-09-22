@@ -4,6 +4,7 @@ const scenarioUrl = '/?test-scenario=plan-implement-replacement';
 const planName = 'docs · RHI-6267 · Plan';
 const implementName = 'docs · RHI-6267 · Implement';
 const hydrationGate = 'plan-hydration-lagged';
+const identityGate = 'before-implement-identity';
 const implementGate = 'implement-active';
 
 test('preserves and selects phases when a delayed probe discovers Implement', async ({
@@ -35,15 +36,26 @@ test('preserves and selects phases when a delayed probe discovers Implement', as
   );
   await page.evaluate(
     (gate) => window.__TAU_PI_SCENARIO__?.waitForGate(gate),
+    identityGate,
+  );
+  const planRow = sidebar.getByRole('button', {
+    name: new RegExp(`^${planName}\\b`),
+  });
+  await expect(page.getByRole('heading', { name: planName })).toBeVisible();
+  await expect(planRow).toHaveCount(1);
+  await expect(planRow).toHaveAttribute('aria-current', 'page');
+  await page.evaluate(
+    (gate) => window.__TAU_PI_SCENARIO__?.releaseGate(gate),
+    identityGate,
+  );
+  await page.evaluate(
+    (gate) => window.__TAU_PI_SCENARIO__?.waitForGate(gate),
     implementGate,
   );
 
   await expect(
     page.getByRole('heading', { name: implementName }),
   ).toBeVisible();
-  const planRow = sidebar.getByRole('button', {
-    name: new RegExp(`^${planName}\\b`),
-  });
   const implementRow = sidebar.getByRole('button', {
     name: new RegExp(`${implementName}\\b`),
   });

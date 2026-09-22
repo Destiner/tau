@@ -136,6 +136,9 @@ function makeController(
     commands: [],
     commandsLoaded: false,
     pendingPrompt: undefined,
+    sessionNameRevision: 0,
+    sessionNameStateRequestId: '',
+    sessionNameStateRevision: 0,
     bootstrapStateRequestId: '',
     bootstrapSessionPath: '',
     runStateRequestId: '',
@@ -1248,6 +1251,158 @@ describe('command-created session durability', () => {
     expect(state.ephemeralSessions[0]!.sortAt).toBeGreaterThan(2);
     expect(state.activeSessionId).toBe('implement-b');
     expect(state.activeSessionPath).toBe('/tmp/project/implement-b.jsonl');
+  });
+
+  it('does not apply a successor name notification to its registered predecessor', async () => {
+    const telemetry = await import('../telemetry');
+    const { handleResponse, handleRpc } = await import('./runtime');
+    const controller = makeController({
+      sessionId: 'plan-a',
+      sessionPath: '/tmp/project/plan-a.jsonl',
+      sessionName: 'Plan',
+      materializationVerified: true,
+    });
+    state.controllers.push(controller);
+    state.workspace = registeredWorkspace(controller, 'Plan');
+    state.activeProjectPath = controller.projectPath;
+    state.activeSessionId = controller.sessionId;
+    state.activeSessionPath = controller.sessionPath;
+    state.activeControllerKey = controller.key;
+
+    await handleRpc(controller, {
+      type: 'session_info_changed',
+      name: 'Implement',
+    });
+
+    expect(controller.sessionName).toBe('Plan');
+    expect(state.workspace.projects[0]?.sessions).toEqual([
+      expect.objectContaining({ id: 'plan-a', title: 'Plan' }),
+    ]);
+    expect(telemetry.invokeTraced).not.toHaveBeenCalledWith(
+      'register_session',
+      expect.anything(),
+      expect.anything(),
+    );
+
+    await handleResponse(controller, {
+      id: controller.sessionNameStateRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'implement-b',
+        sessionFile: '/tmp/project/implement-b.jsonl',
+        sessionName: 'Implement',
+        isStreaming: false,
+      },
+    });
+
+    expect(state.workspace.projects[0]?.sessions).toEqual([
+      expect.objectContaining({ id: 'plan-a', title: 'Plan' }),
+    ]);
+    expect(state.ephemeralSessions).toEqual([
+      expect.objectContaining({ id: 'implement-b', title: 'Implement' }),
+    ]);
+  });
+
+  it('does not carry an outgoing optimistic rename into its successor', async () => {
+    const { handleResponse, rpc } = await import('./runtime');
+    const controller = makeController({
+      sessionId: 'plan-a',
+      sessionPath: '/tmp/project/plan-a.jsonl',
+      sessionName: 'Optimistic Plan',
+      materializationVerified: true,
+      pendingSessionRename: {
+        requestId: 'rename-plan',
+        previousName: 'Plan',
+        previousTitle: 'Plan',
+      },
+    });
+    state.controllers.push(controller);
+    state.workspace = registeredWorkspace(controller, 'Optimistic Plan');
+    await rpc(controller, {
+      id: 'rename-plan',
+      type: 'set_session_name',
+      name: 'Optimistic Plan',
+    });
+    const replacementRequestId = await dispatchRequest(
+      controller,
+      'get_state',
+      'replacement-probe',
+    );
+    controller.replacementProbeRequestId = replacementRequestId;
+
+    await handleResponse(controller, {
+      id: replacementRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'implement-b',
+        sessionFile: '/tmp/project/implement-b.jsonl',
+        sessionName: 'Implement',
+        isStreaming: false,
+      },
+    });
+    expect(controller.pendingSessionRename).toBeUndefined();
+    expect(controller.sessionName).toBe('Implement');
+
+    await handleResponse(controller, {
+      id: 'rename-plan',
+      command: 'set_session_name',
+      success: false,
+    });
+    expect(controller.sessionName).toBe('Implement');
+    expect(controller.feedback).toEqual([]);
+  });
+
+  it('keeps name refresh failures and timeouts cosmetic and retryable', async () => {
+    vi.useFakeTimers();
+    try {
+      const { handleResponse, handleRpc } = await import('./runtime');
+      const controller = makeController({ sessionName: 'Safe name' });
+      state.controllers.push(controller);
+      state.workspace = registeredWorkspace(controller, 'Safe name');
+
+      await handleRpc(controller, {
+        type: 'session_info_changed',
+        name: 'Untrusted failure payload',
+      });
+      const failedRequestId = controller.sessionNameStateRequestId;
+      await handleResponse(controller, {
+        id: failedRequestId,
+        command: 'get_state',
+        success: false,
+      });
+
+      expect(controller.sessionNameStateRequestId).toBe('');
+      expect(controller.sessionName).toBe('Safe name');
+      expect(controller.ready).toBe(true);
+      expect(controller.feedback).toEqual([]);
+
+      await handleRpc(controller, {
+        type: 'session_info_changed',
+        name: 'Untrusted timeout payload',
+      });
+      const timedOutRequestId = controller.sessionNameStateRequestId;
+      expect(timedOutRequestId).not.toBe('');
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(controller.sessionNameStateRequestId).toBe('');
+      expect(controller.ready).toBe(true);
+
+      await handleResponse(controller, {
+        id: timedOutRequestId,
+        command: 'get_state',
+        success: true,
+        data: {
+          sessionId: controller.sessionId,
+          sessionFile: controller.sessionPath,
+          sessionName: 'Late unsafe name',
+          isStreaming: false,
+        },
+      });
+      expect(controller.sessionName).toBe('Safe name');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps a registered predecessor title when a probe discovers its successor', async () => {

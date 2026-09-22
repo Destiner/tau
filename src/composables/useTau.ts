@@ -23,6 +23,7 @@ import {
   recoverSubmittedPrompt,
   registerConnectedSession,
   requestEarlierHistory,
+  requestSessionNameRefresh,
   releaseIdleRuntimes,
   releaseRuntime,
   removeEmptyActivePhantom,
@@ -979,6 +980,7 @@ function useTau() {
         previousName: controller.sessionName,
         previousTitle: sessionTitle.value,
       };
+      controller.sessionNameRevision += 1;
       applySessionName(controller, next);
       try {
         await rpc(
@@ -993,6 +995,7 @@ function useTau() {
       } catch {
         const pending = controller.pendingSessionRename;
         if (pending?.requestId === requestId) {
+          controller.sessionNameRevision += 1;
           applySessionName(
             controller,
             pending.previousName,
@@ -1000,6 +1003,7 @@ function useTau() {
           );
           controller.pendingSessionRename = undefined;
         }
+        await requestSessionNameRefresh(controller);
         setControllerError(controller, errorCopy.sessionRename);
       }
     } finally {

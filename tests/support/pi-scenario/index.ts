@@ -156,6 +156,7 @@ type PiRpcEvent =
       assistantMessageEvent: { type: 'text_delta'; delta: string };
     }
   | { type: 'agent_settled' }
+  | { type: 'session_info_changed'; name: string }
   | {
       type: 'auto_retry_start';
       attempt: number;

@@ -296,6 +296,21 @@ const planImplementReplacement = definePiScenario({
     },
     { kind: 'gate', name: 'plan-hydration-lagged', required: true },
     {
+      kind: 'event',
+      runtime,
+      event: {
+        type: 'session_info_changed',
+        name: implementState.sessionName,
+      },
+    },
+    {
+      kind: 'request',
+      runtime,
+      capture: 'implement-name-refresh',
+      match: { type: 'get_state' },
+    },
+    { kind: 'gate', name: 'before-implement-identity', required: true },
+    {
       kind: 'response',
       request: 'implement-probe',
       command: 'get_state',

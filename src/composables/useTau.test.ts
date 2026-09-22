@@ -3538,6 +3538,7 @@ describe('session naming', () => {
       type: 'session_info_changed',
       name: 'Migration plan',
     });
+    await answerSessionNameRefresh(controller, 'Migration plan');
     await vi.waitFor(() => {
       expect(invoke).toHaveBeenCalledWith(
         'register_session',
@@ -3547,13 +3548,83 @@ describe('session naming', () => {
     });
   });
 
+  it('does not let an older state read roll back an optimistic rename', async () => {
+    const { tau, controller } = await setupNamedSession();
+    const { rpc } = await import('../lib/pi/runtime');
+    const staleRequestId = nextRequestId('stale-name-state');
+    await rpc(controller, { id: staleRequestId, type: 'get_state' });
+
+    await tau.renameSession('Optimistic name');
+    emitRpc(controller, {
+      id: staleRequestId,
+      type: 'response',
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: controller.sessionId,
+        sessionFile: controller.sessionPath,
+        sessionName: 'naming-target',
+        isStreaming: false,
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(tau.sessionTitle.value).toBe('Optimistic name');
+    });
+  });
+
+  it('rechecks Pi after a rename send fails during a concurrent invalidation', async () => {
+    const { tau, controller } = await setupNamedSession();
+    const defaultInvoke = vi.mocked(invoke).getMockImplementation();
+    let rejectRename!: (error: unknown) => void;
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      const request = (args as { request?: { type?: string } })?.request;
+      if (command === 'send_pi' && request?.type === 'set_session_name') {
+        return await new Promise((_resolve, reject) => {
+          rejectRename = reject;
+        });
+      }
+      return defaultInvoke?.(command, args);
+    });
+
+    try {
+      const rename = tau.renameSession('Optimistic name');
+      await vi.waitFor(() => {
+        expect(controller.pendingSessionRename).toBeDefined();
+      });
+      emitRpc(controller, {
+        type: 'session_info_changed',
+        name: 'Untrusted concurrent payload',
+      });
+      await answerSessionNameRefresh(controller, 'Extension name');
+      expect(tau.sessionTitle.value).toBe('Optimistic name');
+
+      rejectRename(new Error('Pi is unavailable'));
+      await rename;
+      await vi.waitFor(() => {
+        expect(sentRequests(controller, 'get_state')).toHaveLength(2);
+      });
+      await answerSessionNameRefresh(controller, 'Extension name');
+      await vi.waitFor(() => {
+        expect(tau.sessionTitle.value).toBe('Extension name');
+      });
+    } finally {
+      if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
+    }
+  });
+
   it('adopts a name Pi reports without being asked', async () => {
     const { tau, project, controller } = await setupNamedSession();
 
     emitRpc(controller, {
       type: 'session_info_changed',
-      name: 'Named by an extension',
+      name: 'Untrusted event payload',
     });
+    await vi.waitFor(() => {
+      expect(sentRequests(controller, 'get_state')).toHaveLength(1);
+    });
+    expect(tau.sessionTitle.value).toBe('naming-target');
+    await answerSessionNameRefresh(controller, 'Named by an extension');
 
     await vi.waitFor(() => {
       expect(tau.sessionTitle.value).toBe('Named by an extension');
@@ -3567,9 +3638,58 @@ describe('session naming', () => {
     );
   });
 
+  it('coalesces repeated notifications and applies only the latest confirmed name', async () => {
+    const { tau, controller } = await setupNamedSession();
+    controller.currentModelName = 'Keep this model';
+    controller.messages = [{ id: 'keep-row', kind: 'assistant', text: 'Keep' }];
+    controller.streaming = true;
+
+    emitRpc(controller, {
+      type: 'session_info_changed',
+      name: 'First untrusted payload',
+    });
+    await vi.waitFor(() => {
+      expect(controller.sessionNameStateRequestId).not.toBe('');
+    });
+    const firstRequestId = controller.sessionNameStateRequestId;
+    emitRpc(controller, {
+      type: 'session_info_changed',
+      name: 'Second untrusted payload',
+    });
+    expect(sentRequests(controller, 'get_state')).toHaveLength(1);
+
+    emitRpc(controller, {
+      id: firstRequestId,
+      type: 'response',
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: controller.sessionId,
+        sessionFile: controller.sessionPath,
+        sessionName: 'Stale confirmed name',
+        isStreaming: false,
+      },
+    });
+    await vi.waitFor(() => {
+      expect(sentRequests(controller, 'get_state')).toHaveLength(2);
+    });
+    expect(tau.sessionTitle.value).toBe('naming-target');
+
+    await answerSessionNameRefresh(controller, 'Latest confirmed name');
+    await vi.waitFor(() => {
+      expect(tau.sessionTitle.value).toBe('Latest confirmed name');
+    });
+    expect(controller.currentModelName).toBe('Keep this model');
+    expect(controller.messages).toEqual([
+      { id: 'keep-row', kind: 'assistant', text: 'Keep' },
+    ]);
+    expect(controller.streaming).toBe(true);
+  });
+
   it('reads the name back from Pi when it rejects a rename', async () => {
     const { tau, project, controller, session } = await setupNamedSession();
     emitRpc(controller, { type: 'session_info_changed', name: 'Named in Pi' });
+    await answerSessionNameRefresh(controller, 'Named in Pi');
     await vi.waitFor(() => {
       expect(controller.sessionName).toBe('Named in Pi');
     });
@@ -3589,10 +3709,10 @@ describe('session naming', () => {
       expect(feedbackMessage(controller)).toBe(
         'The session could not be renamed. Choose another name and try again.',
       );
-      expect(sentRequests(controller, 'get_state')).toHaveLength(1);
+      expect(sentRequests(controller, 'get_state')).toHaveLength(2);
     });
     emitRpc(controller, {
-      id: sentRequests(controller, 'get_state')[0]?.id,
+      id: sentRequests(controller, 'get_state')[1]?.id,
       type: 'response',
       command: 'get_state',
       success: true,
@@ -4715,6 +4835,29 @@ function emitTextDelta(
         type: 'message_update',
         assistantMessageEvent: { type: 'text_delta', delta },
       }),
+    },
+  });
+}
+
+async function answerSessionNameRefresh(
+  controller: SessionController,
+  name: string,
+): Promise<void> {
+  await vi.waitFor(() => {
+    expect(controller.sessionNameStateRequestId).not.toBe('');
+  });
+  emitRpc(controller, {
+    id: controller.sessionNameStateRequestId,
+    type: 'response',
+    command: 'get_state',
+    success: true,
+    data: {
+      model: { provider: 'provider', id: 'alpha', name: 'Alpha' },
+      thinkingLevel: 'high',
+      sessionId: controller.sessionId,
+      sessionFile: controller.sessionPath,
+      sessionName: name,
+      isStreaming: controller.streaming,
     },
   });
 }

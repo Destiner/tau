@@ -190,6 +190,8 @@ async function startController(
   controller.commandPromptRequestId = '';
   controller.commandSyncRequestId = '';
   controller.replacementProbeRequestId = '';
+  clearSessionNameRefresh(controller);
+  controller.sessionNameRevision = 0;
   controller.postSettlementHydration = false;
   controller.settledAssistantActivity = false;
   controller.materializationBarrierRequestId = '';
@@ -526,6 +528,7 @@ interface RpcDispatchSnapshot {
   sessionId: string;
   sessionPath: string;
   messagesHydrationSequence: number;
+  sessionNameRevision: number;
   materializationBarrierRequestId: string;
   materializationStateRequestId: string;
   materializationMessagesRequestId: string;
@@ -541,6 +544,7 @@ function captureRpcDispatchSnapshot(
     sessionId: controller.sessionId,
     sessionPath: controller.sessionPath,
     messagesHydrationSequence: controller.messagesHydrationSequence,
+    sessionNameRevision: controller.sessionNameRevision,
     materializationBarrierRequestId: controller.materializationBarrierRequestId,
     materializationStateRequestId: controller.materializationStateRequestId,
     materializationMessagesRequestId:
@@ -601,6 +605,11 @@ function cleanupRejectedRpcDispatch(
   }
   if (controller.replacementProbeRequestId === requestId) {
     controller.replacementProbeRequestId = '';
+  }
+  if (controller.sessionNameStateRequestId === requestId) {
+    const revision = controller.sessionNameStateRevision;
+    const trailing = finishSessionNameRefresh(controller, requestId, revision);
+    if (trailing) void requestSessionNameRefresh(controller);
   }
   if (controller.materializationBarrierRequestId === requestId) {
     controller.materializationBarrierRequestId = '';
@@ -997,6 +1006,8 @@ function recoverControllerDialogDrafts(
 function clearExtensionUiState(): void {
   for (const timeout of extensionDialogTimeouts.values()) clearTimeout(timeout);
   extensionDialogTimeouts.clear();
+  for (const controller of state.controllers)
+    clearSessionNameRefresh(controller);
   state.extensionDialogs.splice(0);
 }
 
@@ -1016,11 +1027,16 @@ const remoteConnectionTimeoutMessage =
   'The remote connection timed out. Check the connection and try again.';
 const remoteConnectionTimeoutMs = 10_000;
 const settingRequestTimeoutMs = 10_000;
+const sessionNameRefreshTimeoutMs = 10_000;
 /** Pi normally emits `agent_start` immediately after prompt preflight succeeds.
  * Wait for that direct confirmation before falling back to state hydration. */
 const promptAdmissionReconcileDelay = 150;
 const remoteConnectionTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const settingRequestTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const sessionNameRefreshTimers = new Map<
+  string,
+  ReturnType<typeof setTimeout>
+>();
 
 function watchRemoteConnection(controller: SessionController): void {
   clearRemoteConnectionWatch(controller);
@@ -1081,6 +1097,62 @@ function clearSettingRequestWatch(controller: SessionController): void {
   clearTimeout(timer);
 }
 
+function clearSessionNameRefresh(controller: SessionController): void {
+  const timer = sessionNameRefreshTimers.get(controller.key);
+  if (timer) clearTimeout(timer);
+  sessionNameRefreshTimers.delete(controller.key);
+  controller.sessionNameStateRequestId = '';
+  controller.sessionNameStateRevision = 0;
+}
+
+function finishSessionNameRefresh(
+  controller: SessionController,
+  requestId: string,
+  revision: number,
+): boolean {
+  if (controller.sessionNameStateRequestId !== requestId) return false;
+  clearSessionNameRefresh(controller);
+  return controller.sessionNameRevision > revision;
+}
+
+async function requestSessionNameRefresh(
+  controller: SessionController,
+): Promise<void> {
+  if (
+    controller.disposed ||
+    !controller.generation ||
+    controller.sessionNameStateRequestId
+  ) {
+    return;
+  }
+  const requestId = nextRequestId('session-name-state');
+  const revision = controller.sessionNameRevision;
+  controller.sessionNameStateRequestId = requestId;
+  controller.sessionNameStateRevision = revision;
+  sessionNameRefreshTimers.set(
+    controller.key,
+    setTimeout(() => {
+      if (controller.sessionNameStateRequestId !== requestId) return;
+      endPendingRpcSpan(
+        rpcSpanKey(controller.runtimeId, controller.generation, requestId),
+        'timeout',
+      );
+      const trailing = finishSessionNameRefresh(
+        controller,
+        requestId,
+        revision,
+      );
+      if (trailing) void requestSessionNameRefresh(controller);
+    }, sessionNameRefreshTimeoutMs),
+  );
+  try {
+    await rpc(controller, { id: requestId, type: 'get_state' });
+  } catch {
+    // Transport cleanup clears this cosmetic request. A later notification or
+    // ordinary state synchronization can retry without stopping the runtime.
+  }
+}
+
 async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
   const controller = controllerByRuntimeId(event.runtimeId);
   if (!controller) return;
@@ -1103,6 +1175,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
         controller.generation,
         'abandoned_generation_change',
       );
+      clearSessionNameRefresh(controller);
       flushStreamAggregate(controller.runtimeId, controller.generation);
       discardControllerDialogs(controller);
       controller.retry = undefined;
@@ -1175,6 +1248,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     );
     flushStreamAggregate(controller.runtimeId, event.generation);
     clearSessionReplacementWatch(controller);
+    clearSessionNameRefresh(controller);
     clearMaterializationVerificationWatch(controller);
     clearAbortWatch(controller);
     clearRemoteConnectionWatch(controller);
@@ -1528,11 +1602,11 @@ async function handleRpc(
     });
     return;
   }
-  // Pi announces every rename, whether it came from Tau's header, one of Pi's
-  // own commands, or an extension, so the name is only ever read back from Pi.
+  // Pi's notification has no session identity. Treat it as an invalidation:
+  // an extension may already have replaced the session behind this runtime.
   if (type === 'session_info_changed') {
-    applySessionName(controller, stringValue(event.name));
-    await persistSessionName(controller);
+    controller.sessionNameRevision += 1;
+    await requestSessionNameRefresh(controller);
     return;
   }
   if (type === 'auto_retry_start') {
@@ -1781,6 +1855,7 @@ async function handleResponse(
     });
   }
   const responseContext = pendingResult.context;
+  const sessionNameRevisionAtResponse = controller.sessionNameRevision;
   const responseDispatchStillCurrent = Boolean(
     pendingResult.dispatchSnapshot &&
     pendingResult.method === command &&
@@ -1812,6 +1887,13 @@ async function handleResponse(
     Boolean(controller.replacementProbeRequestId) &&
     responseId === controller.replacementProbeRequestId;
   if (resolvesReplacementProbe) controller.replacementProbeRequestId = '';
+  const resolvesSessionNameState =
+    command === 'get_state' &&
+    Boolean(controller.sessionNameStateRequestId) &&
+    responseId === controller.sessionNameStateRequestId;
+  const sessionNameStateRevision = resolvesSessionNameState
+    ? controller.sessionNameStateRevision
+    : 0;
   const resolvesCommandSync =
     command === 'get_state' &&
     Boolean(controller.commandSyncRequestId) &&
@@ -1890,6 +1972,12 @@ async function handleResponse(
     return;
   }
   if (
+    command === 'set_session_name' &&
+    controller.pendingSessionRename?.requestId !== responseId
+  ) {
+    return;
+  }
+  if (
     command === 'prompt' &&
     Boolean(controller.commandPromptRequestId) &&
     responseId === controller.commandPromptRequestId
@@ -1912,12 +2000,22 @@ async function handleResponse(
     }
   }
   if (response.success !== true) {
+    if (resolvesSessionNameState) {
+      const trailing = finishSessionNameRefresh(
+        controller,
+        responseId,
+        sessionNameStateRevision,
+      );
+      if (trailing) void requestSessionNameRefresh(controller);
+      return;
+    }
     const resolvesCurrentStateRequest =
       command !== 'get_state' ||
       responseDispatchStillCurrent ||
       resolvesBootstrap ||
       resolvesRunState ||
       resolvesReplacementProbe ||
+      resolvesSessionNameState ||
       resolvesCommandSync ||
       resolvesAbortProbe ||
       resolvesAdmissionState ||
@@ -2078,6 +2176,7 @@ async function handleResponse(
     if (command === 'set_session_name') {
       const pending = controller.pendingSessionRename;
       if (pending?.requestId === responseId) {
+        controller.sessionNameRevision += 1;
         applySessionName(
           controller,
           pending.previousName,
@@ -2085,14 +2184,7 @@ async function handleResponse(
         );
         controller.pendingSessionRename = undefined;
       }
-      try {
-        await rpc(controller, {
-          id: nextRequestId('session-name-state'),
-          type: 'get_state',
-        });
-      } catch {
-        // The confirmed title is already restored; resync is cosmetic here.
-      }
+      await requestSessionNameRefresh(controller);
     }
     return;
   }
@@ -2107,8 +2199,47 @@ async function handleResponse(
     controller.pendingSessionRename = undefined;
   }
   const data = asRecord(response.data);
+  if (resolvesSessionNameState && !data) {
+    const trailing = finishSessionNameRefresh(
+      controller,
+      responseId,
+      sessionNameStateRevision,
+    );
+    if (trailing) void requestSessionNameRefresh(controller);
+    return;
+  }
 
+  let trailingSessionNameRefresh: boolean;
   if (command === 'get_state' && data) {
+    if (resolvesSessionNameState) {
+      const piSessionId = stringValue(data.sessionId);
+      const piSessionPath = stringValue(data.sessionFile);
+      const sessionChanged =
+        !controller.phantom &&
+        Boolean(piSessionId && piSessionPath) &&
+        (controller.sessionId !== piSessionId ||
+          controller.sessionPath !== piSessionPath);
+      if (!piSessionId || !piSessionPath || !sessionChanged) {
+        const revisionIsCurrent =
+          sessionNameStateRevision === controller.sessionNameRevision;
+        const trailing = finishSessionNameRefresh(
+          controller,
+          responseId,
+          sessionNameStateRevision,
+        );
+        if (
+          piSessionId &&
+          piSessionPath &&
+          revisionIsCurrent &&
+          !controller.pendingSessionRename
+        ) {
+          applySessionName(controller, stringValue(data.sessionName));
+          await persistSessionName(controller);
+        }
+        if (trailing) void requestSessionNameRefresh(controller);
+        return;
+      }
+    }
     if (resolvesMaterializationState) {
       controller.materializationStateRequestId = '';
     }
@@ -2164,7 +2295,16 @@ async function handleResponse(
       if (!controllerIdentityMatches(controller, outgoingIdentity)) return;
     }
     const reportedSessionName = stringValue(data.sessionName);
-    if (!sessionChanged) applySessionName(controller, reportedSessionName);
+    const nameResponseIsCurrent =
+      pendingResult.dispatchSnapshot?.sessionNameRevision ===
+      controller.sessionNameRevision;
+    if (
+      !sessionChanged &&
+      nameResponseIsCurrent &&
+      !controller.pendingSessionRename
+    ) {
+      applySessionName(controller, reportedSessionName);
+    }
     const nowStreaming = data.isStreaming === true;
     const promptTriggeredReplacement =
       sessionChanged && (resolvesRunState || resolvesAdmissionState);
@@ -2205,6 +2345,12 @@ async function handleResponse(
         'abandoned_replacement',
       );
       clearSessionReplacementWatch(controller);
+      trailingSessionNameRefresh =
+        controller.sessionNameRevision > sessionNameRevisionAtResponse;
+      if (controller.sessionNameStateRequestId) {
+        clearSessionNameRefresh(controller);
+      }
+      controller.pendingSessionRename = undefined;
       clearMaterializationVerificationWatch(controller);
       clearAbortWatch(controller);
       controller.hasPiTranscript = false;
@@ -2232,6 +2378,9 @@ async function handleResponse(
       controller.pendingSettingRequestId = '';
       clearSettingRequestWatch(controller);
       syncingAfterSessionChange = true;
+      if (trailingSessionNameRefresh) {
+        void requestSessionNameRefresh(controller);
+      }
     }
     const materializationBarrierForCurrentSession =
       resolvesMaterializationBarrier && !sessionChanged && !unsavedSession;
@@ -3761,6 +3910,7 @@ function removeEphemeralSession(
       controller.disposed = true;
       controller.retry = undefined;
       clearSessionReplacementWatch(controller);
+      clearSessionNameRefresh(controller);
       clearMaterializationVerificationWatch(controller);
       clearAbortWatch(controller);
       void stopControllerProcess(controller);
@@ -3780,6 +3930,7 @@ function removeProjectUiState(projectPath: string): void {
     controller.disposed = true;
     controller.retry = undefined;
     clearSessionReplacementWatch(controller);
+    clearSessionNameRefresh(controller);
     clearMaterializationVerificationWatch(controller);
     clearAbortWatch(controller);
   }
@@ -3798,6 +3949,7 @@ function canReleaseRuntime(controller: SessionController): boolean {
     !controller.syncing &&
     !controller.pendingSettingRequestId &&
     !controller.pendingSessionRename &&
+    !controller.sessionNameStateRequestId &&
     !controllerHasPendingDialog(controller) &&
     !watchingSessionReplacement(controller) &&
     !watchingMaterializationVerification(controller)
@@ -3888,6 +4040,7 @@ async function stopControllerProcess(
   // that landed while it was in flight.
   const replacedDuringStop = controller.sessionId !== stoppedSessionId;
   clearSessionReplacementWatch(controller);
+  clearSessionNameRefresh(controller);
   clearMaterializationVerificationWatch(controller);
   clearAbortWatch(controller);
   clearRemoteConnectionWatch(controller);
@@ -3963,6 +4116,7 @@ export {
   handleRpc,
   handleResponse,
   requestEarlierHistory,
+  requestSessionNameRefresh,
   applyPendingSessionSettings,
   applyPendingSessionEffort,
   requestPendingMessages,

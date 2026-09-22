@@ -239,6 +239,11 @@ interface SessionController {
   pendingPrompt?: PendingPrompt;
   submittedPrompt?: SubmittedPrompt;
   pendingSessionRename?: PendingSessionRename;
+  /** Advances whenever a name notification or optimistic rename invalidates older reads. */
+  sessionNameRevision: number;
+  /** Correlates the identity-bearing read scheduled by a name notification. */
+  sessionNameStateRequestId: string;
+  sessionNameStateRevision: number;
   bootstrapStateRequestId: string;
   bootstrapSessionPath: string;
   runStateRequestId: string;
@@ -992,6 +997,9 @@ function createController(
     pendingPrompt: undefined,
     submittedPrompt: undefined,
     pendingSessionRename: undefined,
+    sessionNameRevision: 0,
+    sessionNameStateRequestId: '',
+    sessionNameStateRevision: 0,
     bootstrapStateRequestId: '',
     bootstrapSessionPath: '',
     runStateRequestId: '',
