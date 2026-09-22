@@ -285,9 +285,8 @@ function runPrimaryAction(): void {
 .version-label,
 .first-run-name,
 .version-number {
-  display: flex;
-  align-items: center;
-  align-self: stretch;
+  height: 100%;
+  line-height: var(--control-sm);
 }
 
 .first-run-name {
