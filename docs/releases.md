@@ -107,7 +107,7 @@ No personal GitHub token is needed: the workflow's built-in `GITHUB_TOKEN` has `
 
 3. Open **Actions → Release → Run workflow**, select `main`, and run it. Approve the `release` environment deployment if configured.
 4. The workflow checks version and release availability, then builds, signs, notarizes, staples, and verifies with `bun run release:macos`.
-5. Open the resulting draft under **Releases**, write the features/fixes description, and complete the distribution smoke test below.
+5. Open the resulting draft under **Releases** and write the features/fixes description. The distribution smoke test below is optional, not a publication requirement.
 6. Publish it as a normal release, not a pre-release, with **Set as the latest release** enabled. Confirm GitHub shows the **Latest** badge; clients resolve `latest.json` through that designation.
 7. After publication, verify the public manifest is the exact staged file and its immutable archive URL is reachable:
 
@@ -120,6 +120,8 @@ No personal GitHub token is needed: the workflow's built-in `GITHUB_TOKEN` has `
    ```
 
    Do not announce the release until these checks pass.
+
+8. Update the Download link in `README.md` to the published version's immutable DMG URL, verify it is reachable, and commit the link change as `docs: update download link to v<version>` after the repository's pre-commit checks. Push normally to `main`; leave the release tag on the original release commit.
 
 The concurrency group prevents an active release from being cancelled, but it is not a FIFO queue: GitHub may replace an older pending run when another is dispatched. An existing release (including a draft) or an existing exact version tag stops the workflow; API failures also stop it. The workflow rechecks before signing and before creating the tag, never moves tags itself, and never replaces existing assets.
 
@@ -181,9 +183,9 @@ TAU_UPDATER_PUBLIC_KEY="$(cat ~/.tauri/tau-updater.key.pub)" \
   bun run verify:macos-release -- /path/to/release-assets/<version>
 ```
 
-## Distribution smoke test
+## Optional distribution smoke test
 
-Test the exact verified DMG through a normal browser download before publishing it. Upload it unchanged to an HTTPS host, download it in Safari on a clean test Mac, confirm its printed SHA-256 checksum, drag Tau into Applications, and open it without using `xattr`, `chmod`, or Gatekeeper overrides. Confirm the installed app independently:
+This manual check is optional and does not block publication. When performed, test the exact verified DMG through a normal browser download. Upload it unchanged to an HTTPS host, download it in Safari on a clean test Mac, confirm its printed SHA-256 checksum, drag Tau into Applications, and open it without using `xattr`, `chmod`, or Gatekeeper overrides. Confirm the installed app independently:
 
 ```sh
 spctl --assess --type execute --verbose=4 /Applications/Tau.app

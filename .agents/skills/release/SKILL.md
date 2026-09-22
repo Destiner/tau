@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Release Tau
 
-Follow this flow only when explicitly invoked. Creating or editing this skill is not authorization to release. A release request authorizes the version-bump commit, normal push, workflow dispatch, and draft notes—not publication.
+Follow this flow only when explicitly invoked. Creating or editing this skill is not authorization to release. A release request authorizes the version-bump commit, normal push, workflow dispatch, draft notes, and a post-publication README download-link commit and normal push—not publication.
 
 ## Sources and boundaries
 
@@ -84,7 +84,7 @@ The workflow already creates a lightweight `v<version>` tag immediately before t
 
 Do not rely on a release's `target_commitish` or `--verify-tag` alone as proof of the commit. A missing/mismatched tag or non-draft release is a stop condition, not permission to create, move, or repair it automatically.
 
-Download all four draft assets with authenticated `gh release download "$TAG" --repo "$REPO" --dir "$ASSETS_DIR"` into a new temporary directory outside the repository. Compare every file's SHA-256 against the checksums printed by the successful run's verification step. Stop if checksums are missing or differ. Keep these exact files through the smoke test and post-publication checks; a local build is not a substitute for the runner's artifacts.
+Download all four draft assets with authenticated `gh release download "$TAG" --repo "$REPO" --dir "$ASSETS_DIR"` into a new temporary directory outside the repository. Compare every file's SHA-256 against the checksums printed by the successful run's verification step. Stop if checksums are missing or differ. Keep these exact files through the post-publication checks; a local build is not a substitute for the runner's artifacts.
 
 Check `latest.json` against the schema in `scripts/updater-release.ts`: the exact release version, only the `darwin-aarch64` platform, the immutable archive URL `https://github.com/Destiner/tau/releases/download/$TAG/tau-$VERSION-darwin-aarch64.tar.gz`, and signature content matching the `.sig` asset exactly. Require the run's artifact verification to have succeeded, including cryptographic updater signature verification against the pinned public key. Do not regenerate signatures, manifests, or assets. The updater endpoint is fixed to `Destiner/tau`; stop if the resolved repository does not match.
 
@@ -116,9 +116,9 @@ Read back the body and draft status. Preserve any existing manually authored not
 
 ## 6. Explicit publication approval
 
-Present the version, exact commit, successful run URL, draft URL, all four asset names, and complete proposed release notes. Report check results and the distribution smoke-test status from `docs/releases.md`. Ask the user to perform/confirm that manual smoke test using the exact checksum-verified DMG: unchanged HTTPS upload, Safari download on a clean test Mac, checksum comparison, install and launch without quarantine or Gatekeeper overrides, and `spctl` reporting `accepted` with `source=Notarized Developer ID`. Never claim it passed based on CI signing checks alone.
+Present the version, exact commit, successful run URL, draft URL, all four asset names, and complete proposed release notes. Report check results. The manual DMG distribution smoke test in `docs/releases.md` is optional, not a publication gate: do not require it or ask for confirmation before publishing. Never claim it passed based on CI signing checks alone.
 
-Then ask explicitly: **“Publish Tau <version> with these release notes?”** Leave it as a draft while awaiting an answer. Selecting a bump, asking to release, approving a push, or silence does not count. Approval applies only to the specific version, commit, and notes just shown; material changes require renewed approval. Do not publish with an unconfirmed required smoke test.
+Then ask explicitly: **“Publish Tau <version> with these release notes?”** Leave it as a draft while awaiting an answer. Selecting a bump, asking to release, approving a push, or silence does not count. Approval applies only to the specific version, commit, and notes just shown; material changes require renewed approval.
 
 Only after explicit approval, recheck draft status, non-prerelease status, exact tag SHA, all four assets (including checksums), successful run, and approved body. If anything changed, stop and ask again. Publish as the latest stable release:
 
@@ -139,7 +139,15 @@ cmp "$ASSETS_DIR/latest.json" "$PUBLIC_MANIFEST"
 curl -fIL "$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["platforms"]["darwin-aarch64"]["url"])' "$PUBLIC_MANIFEST")"
 ```
 
-Require the public manifest to be byte-for-byte identical to the verified draft manifest and its immutable archive URL to be reachable. Only after these checks pass, return the release URL and version. The current repository is public; publishing exposes both the DMG and updater assets. Publication also makes the release discoverable by installed clients through the latest endpoint.
+Require the public manifest to be byte-for-byte identical to the verified draft manifest and its immutable archive URL to be reachable. Only after these checks pass, continue to the README update below. The current repository is public; publishing exposes both the DMG and updater assets. Publication also makes the release discoverable by installed clients through the latest endpoint.
+
+## 8. Update the README download link
+
+After publication and public distribution verification succeed, update only the Download link in `README.md` to `https://github.com/Destiner/tau/releases/download/$TAG/tau-$VERSION-apple-silicon.dmg`. Verify that public URL is reachable. Do not point the README at an unpublished draft.
+
+Require a clean working tree on `main`; stop if unrelated changes appeared. Fetch `origin` and fast-forward only if needed; stop on divergence. If the link already matches, do not create an empty commit. Otherwise run the repository's pre-commit checks from `AGENTS.md`, inspect the diff for only the intended link change, stage `README.md` explicitly, and commit as `docs: update download link to v<version>`. Push with a normal `git push origin main`; never move the release tag to this follow-up commit. Report failures without undoing the already-published release.
+
+Return the release URL, version, and README commit SHA (or note that the link was already current).
 
 ## Failures and partial runs
 
