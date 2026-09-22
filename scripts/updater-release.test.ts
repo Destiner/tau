@@ -147,6 +147,19 @@ describe('updater release configuration', () => {
     expect(releaseScript).toContain('TAU_UPDATER_PUBLIC_KEY');
   });
 
+  it('avoids Finder-driven DMG packaging for default macOS builds', () => {
+    const macos = JSON.parse(
+      readFileSync(join(root, 'src-tauri/tauri.macos.conf.json'), 'utf8'),
+    ) as { bundle: { targets: string[] } };
+
+    expect(macos.bundle.targets).toEqual(['app']);
+    const releaseScript = readFileSync(
+      join(root, 'scripts/release-macos.ts'),
+      'utf8',
+    );
+    expect(releaseScript).toMatch(/'--bundles',\s*'app,dmg'/);
+  });
+
   it('requires updater secrets and uploads all assets without clobbering', () => {
     const workflow = readFileSync(
       join(root, '.github/workflows/release.yml'),
