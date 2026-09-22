@@ -11,7 +11,12 @@
           <span class="first-run-name">tau</span>
           <span class="version-number">{{ appVersion }}</span>
         </template>
-        <template v-else>v{{ appVersion }}</template>
+        <span
+          v-else
+          class="version-label"
+        >
+          v{{ appVersion }}
+        </span>
         <span
           v-if="indicator === 'accent' || indicator === 'downloading'"
           class="update-indicator"
@@ -231,15 +236,16 @@ function runPrimaryAction(): void {
   position: relative;
   top: 1px;
   align-items: center;
-  padding: 5px 6px;
+  height: var(--control-sm);
+  padding: 0 6px;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: var(--text-xs);
-  line-height: var(--leading-tight);
+  line-height: 1;
   white-space: nowrap;
-  gap: 4px;
+  gap: 6px;
 }
 
 .update-trigger:hover,
@@ -273,8 +279,15 @@ function runPrimaryAction(): void {
 .first-run-trigger {
   top: 0;
   margin: 0 0 14px;
-  padding: 4px 6px;
   gap: 8px;
+}
+
+.version-label,
+.first-run-name,
+.version-number {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
 }
 
 .first-run-name {
