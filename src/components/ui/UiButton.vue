@@ -55,6 +55,12 @@ defineExpose({
   white-space: nowrap;
 }
 
+.ui-button.sm {
+  height: var(--control-sm);
+  padding: 0 7px;
+  font-size: var(--text-xs);
+}
+
 .ui-button.md {
   height: var(--control-lg);
   padding: 0 11px;
