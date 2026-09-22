@@ -48,6 +48,55 @@ describe('browser sandbox seed', () => {
     expect(second.projects[0]?.sessions).toHaveLength(3);
   });
 
+  it('enforces the updater command contract and quit authorization', async () => {
+    const appEvents: Array<{ event: string; payload: unknown }> = [];
+    const handle = createBrowserSandboxHandler(async () => undefined, {
+      updateAvailable: true,
+      emitAppEvent: async (event, payload) => {
+        appEvents.push({ event, payload });
+      },
+    });
+
+    await expect(
+      handle('download_update', { operation_id: 1 }),
+    ).rejects.toThrow('positive integer operationId');
+    await handle('download_update', { operationId: 1 });
+    await expect(handle('update_snapshot')).resolves.toMatchObject({
+      status: 'prepared',
+      operationId: 1,
+    });
+
+    await handle('request_update_restart', { operationId: 1 });
+    expect(appEvents).toEqual([
+      {
+        event: 'tau://quit-requested',
+        payload: {
+          requestId: 1,
+          intent: 'updateRestart',
+          operationId: 1,
+        },
+      },
+    ]);
+    await expect(handle('pending_quit_request')).resolves.toEqual(
+      appEvents[0]?.payload,
+    );
+    await expect(
+      handle('resolve_quit_request', { requestId: 2, confirmed: true }),
+    ).resolves.toBe(false);
+    await expect(
+      handle('resolve_quit_request', { requestId: 1, confirmed: true }),
+    ).resolves.toBe(true);
+    await expect(
+      handle('install_update', { requestId: 1, operationId: 2 }),
+    ).rejects.toThrow('rejected update install arguments');
+
+    await handle('install_update', { requestId: 1, operationId: 1 });
+    await expect(handle('update_snapshot')).resolves.toMatchObject({
+      status: 'installing',
+      operationId: 1,
+    });
+  });
+
   it('preserves mutable history when a runtime stops and starts again', async () => {
     const events: PiBridgeEvent[] = [];
     const handle = createBrowserSandboxHandler(async (event) => {

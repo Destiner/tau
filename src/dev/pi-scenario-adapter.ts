@@ -590,6 +590,18 @@ function installPiScenarioAdapter(scenarioName: string): void {
         count(command);
         return null;
       }
+      if (command === 'get_dismissed_update_version') {
+        count(command);
+        return null;
+      }
+      if (command === 'update_snapshot') {
+        count(command);
+        return { supported: false, status: 'idle' };
+      }
+      if (command === 'check_for_update') {
+        count(command);
+        return { status: 'unavailable' };
+      }
       if (command === 'set_admin_mode') {
         if (typeof args.enabled !== 'boolean') {
           throw new Error('set_admin_mode enabled must be a boolean.');

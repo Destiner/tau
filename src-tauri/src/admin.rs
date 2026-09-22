@@ -14,7 +14,8 @@ use crate::profile;
 use crate::telemetry::{trace_context::TraceContext, Telemetry};
 
 const PREFERENCES_FILE: &str = "preferences.json";
-const WRITE_ERROR: &str = "Admin mode could not be saved.";
+const WRITE_ERROR: &str = "Preferences could not be saved.";
+const MAX_DISMISSED_VERSION_LEN: usize = 128;
 
 /// Tau's persisted preferences. `default` on both the container and its
 /// fields keeps an older or hand-edited file readable: anything missing or
@@ -23,6 +24,7 @@ const WRITE_ERROR: &str = "Admin mode could not be saved.";
 #[serde(rename_all = "camelCase", default)]
 struct Preferences {
     admin_mode: bool,
+    dismissed_update_version: Option<String>,
 }
 
 /// Reads the persisted setting straight from disk. Called before the Tauri
@@ -56,30 +58,59 @@ pub fn set_admin_mode(
         .as_ref()
         .and_then(|context| telemetry.start_command_span(context, "set_admin_mode"));
     telemetry.set_enabled(enabled);
-    write_admin_mode_in(&resolve_preferences_dir(), enabled)
+    let dir = resolve_preferences_dir();
+    let mut preferences = read_preferences_in(&dir);
+    preferences.admin_mode = enabled;
+    write_preferences_in(&dir, &preferences)
+}
+
+#[tauri::command]
+pub fn get_dismissed_update_version() -> Option<String> {
+    read_preferences_in(&resolve_preferences_dir()).dismissed_update_version
+}
+
+#[tauri::command]
+pub fn set_dismissed_update_version(version: Option<String>) -> Result<(), String> {
+    let version = version
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if version
+        .as_ref()
+        .is_some_and(|value| value.len() > MAX_DISMISSED_VERSION_LEN)
+    {
+        return Err(WRITE_ERROR.to_string());
+    }
+
+    let dir = resolve_preferences_dir();
+    let mut preferences = read_preferences_in(&dir);
+    preferences.dismissed_update_version = version;
+    write_preferences_in(&dir, &preferences)
 }
 
 fn resolve_preferences_dir() -> PathBuf {
     profile::app_data_dir()
 }
 
-fn read_admin_mode_in(dir: &Path) -> bool {
+fn read_preferences_in(dir: &Path) -> Preferences {
     fs::read_to_string(dir.join(PREFERENCES_FILE))
         .ok()
         .and_then(|contents| serde_json::from_str::<Preferences>(&contents).ok())
         .unwrap_or_default()
-        .admin_mode
 }
 
-/// Rewrites the whole preferences file, preserving nothing but the fields
-/// `Preferences` knows about — there is exactly one setting today, and a
-/// partial update would need a read-modify-write race this switch does not
-/// justify.
+fn read_admin_mode_in(dir: &Path) -> bool {
+    read_preferences_in(dir).admin_mode
+}
+
+#[cfg(test)]
 fn write_admin_mode_in(dir: &Path, enabled: bool) -> Result<(), String> {
-    let contents = serde_json::to_vec(&Preferences {
-        admin_mode: enabled,
-    })
-    .map_err(|_| WRITE_ERROR.to_string())?;
+    let mut preferences = read_preferences_in(dir);
+    preferences.admin_mode = enabled;
+    write_preferences_in(dir, &preferences)
+}
+
+fn write_preferences_in(dir: &Path, preferences: &Preferences) -> Result<(), String> {
+    let contents = serde_json::to_vec(preferences).map_err(|_| WRITE_ERROR.to_string())?;
     fs::create_dir_all(dir).map_err(|_| WRITE_ERROR.to_string())?;
     let path = dir.join(PREFERENCES_FILE);
     fs::write(&path, contents).map_err(|_| WRITE_ERROR.to_string())?;
@@ -108,6 +139,32 @@ mod tests {
         assert!(read_admin_mode_in(directory.path()));
 
         write_admin_mode_in(directory.path(), false).expect("disable admin mode");
+        assert!(!read_admin_mode_in(directory.path()));
+    }
+
+    #[test]
+    fn preference_updates_preserve_the_other_setting() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        write_preferences_in(
+            directory.path(),
+            &Preferences {
+                admin_mode: true,
+                dismissed_update_version: Some("2.0.0".into()),
+            },
+        )
+        .expect("write preferences");
+
+        write_admin_mode_in(directory.path(), false).expect("disable admin mode");
+        let preferences = read_preferences_in(directory.path());
+        assert!(!preferences.admin_mode);
+        assert_eq!(
+            preferences.dismissed_update_version.as_deref(),
+            Some("2.0.0")
+        );
+
+        let mut preferences = read_preferences_in(directory.path());
+        preferences.dismissed_update_version = Some("2.1.0".into());
+        write_preferences_in(directory.path(), &preferences).expect("dismiss update");
         assert!(!read_admin_mode_in(directory.path()));
     }
 

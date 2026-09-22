@@ -12,7 +12,7 @@
         @open-auto-focus="handleOpenAutoFocus"
       >
         <div class="quit-confirmation-copy">
-          <DialogTitle class="quit-confirmation-title">Quit Tau?</DialogTitle>
+          <DialogTitle class="quit-confirmation-title">{{ title }}</DialogTitle>
           <DialogDescription
             v-if="sessionCount > 0"
             class="quit-confirmation-description"
@@ -42,7 +42,7 @@
             :disabled="busy"
             @click="confirm"
           >
-            Quit
+            {{ action }}
           </UiButton>
         </footer>
       </DialogContent>
@@ -69,8 +69,10 @@ const props = withDefaults(
     sessionCount: number;
     busy?: boolean;
     error?: string;
+    title?: string;
+    action?: string;
   }>(),
-  { busy: false, error: '' },
+  { busy: false, error: '', title: 'Quit Tau?', action: 'Quit' },
 );
 
 const emit = defineEmits<{

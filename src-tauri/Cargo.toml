@@ -28,7 +28,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 shell-words = "1"
 tauri-plugin-opener = "2"
+tauri-plugin-updater = "=2.10.1"
 tauri-plugin-window-state = "2.4.1"
+tokio = { version = "1", features = ["rt", "time"] }
 uuid = { version = "1", features = ["v4"] }
 tempfile = "3"
 

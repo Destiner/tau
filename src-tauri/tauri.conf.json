@@ -34,6 +34,12 @@
   "plugins": {
     "opener": {
       "requireLiteralLeadingDot": false
+    },
+    "updater": {
+      "pubkey": "",
+      "endpoints": [
+        "https://github.com/Destiner/tau/releases/latest/download/latest.json"
+      ]
     }
   },
   "bundle": {

@@ -11,6 +11,7 @@ mod settings;
 mod ssh;
 mod storage;
 mod telemetry;
+mod update;
 
 use std::time::Duration;
 
@@ -47,10 +48,12 @@ pub fn run() {
         .manage(pi::PiState::default())
         .manage(file_preview::FilePreviewState::default())
         .manage(quit::QuitState::default())
+        .manage(update::UpdateState::default())
         .manage(telemetry)
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init());
+        .plugin(tauri_plugin_opener::init())
+        .plugin(update::plugin());
     // Development windows start fresh; the plugin otherwise writes geometry
     // to one shared app-config file, independently of Tau's workspace store.
     #[cfg(not(dev))]
@@ -78,6 +81,8 @@ pub fn run() {
         .on_menu_event(|app, event| {
             if event.id() == NEW_SESSION_MENU_ID {
                 let _ = app.emit(NEW_SESSION_EVENT, ());
+            } else if event.id() == update::CHECK_FOR_UPDATES_MENU_ID {
+                let _ = app.emit(update::CHECK_FOR_UPDATES_EVENT, ());
             } else if event.id() == quit::QUIT_MENU_ID {
                 quit::request_quit(app);
             }
@@ -102,6 +107,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             admin::read_admin_mode,
             admin::set_admin_mode,
+            admin::get_dismissed_update_version,
+            admin::set_dismissed_update_version,
             feedback::submit_issue_report,
             file_preview::prepare_file_preview,
             file_preview::release_file_preview,
@@ -129,6 +136,11 @@ pub fn run() {
             storage::set_project_collapsed,
             storage::unarchive_session,
             telemetry::ingest::ingest_telemetry,
+            update::update_snapshot,
+            update::check_for_update,
+            update::download_update,
+            update::request_update_restart,
+            update::install_update,
         ])
         .build(context)
         .expect("error while building tauri application");
@@ -196,6 +208,14 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
                 true,
                 &[
                     &PredefinedMenuItem::about(app, None, Some(about_metadata))?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &MenuItem::with_id(
+                        app,
+                        update::CHECK_FOR_UPDATES_MENU_ID,
+                        "Check for Updates…",
+                        true,
+                        None::<&str>,
+                    )?,
                     &PredefinedMenuItem::separator(app)?,
                     &PredefinedMenuItem::services(app, None)?,
                     &PredefinedMenuItem::separator(app)?,
