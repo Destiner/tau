@@ -63,7 +63,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/release-preflight.sh
-      - name: Import Apple credentials
+      - name: Build frontend without release credentials
+        run: bun run build
+      - name: Import release credentials
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -100,6 +102,9 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_PATH: ${{ runner.temp }}/tau-notary.p8
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAU_UPDATER_PUBLIC_KEY: ${{ secrets.TAU_UPDATER_PUBLIC_KEY }}
         run: bun run release:macos
       - name: Remove Apple credentials
         if: always()
@@ -127,14 +132,17 @@ jobs:
           VERSION: ${{ needs.preflight.outputs.version }}
         run: |
           bash scripts/release-preflight.sh
-          cd src-tauri/target/aarch64-apple-darwin/release/bundle/dmg
-          shopt -s nullglob
-          dmgs=(*.dmg)
-          test "${#dmgs[@]}" -eq 1
-          artifact="tau-$VERSION-apple-silicon.dmg"
-          mv "${dmgs[0]}" "$artifact"
+          assets="$GITHUB_WORKSPACE/src-tauri/target/release-assets/$VERSION"
+          expected=(
+            "$assets/tau-$VERSION-apple-silicon.dmg"
+            "$assets/tau-$VERSION-darwin-aarch64.tar.gz"
+            "$assets/tau-$VERSION-darwin-aarch64.tar.gz.sig"
+            "$assets/latest.json"
+          )
+          test "$(find "$assets" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 4
+          for asset in "${expected[@]}"; do test -f "$asset"; done
           gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
             -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA"
-          gh release create "$TAG" "$artifact" \
+          gh release create "$TAG" "$assets"/* \
             --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
             --title "Tau $VERSION" --notes ''

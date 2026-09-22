@@ -161,6 +161,17 @@ describe('validateAttribute', () => {
   });
 
   it('accepts every reviewed invoke command and outcome', () => {
+    expect(TAURI_INVOKE_COMMANDS).toEqual(
+      expect.arrayContaining([
+        'update_snapshot',
+        'check_for_update',
+        'get_dismissed_update_version',
+        'set_dismissed_update_version',
+        'download_update',
+        'request_update_restart',
+        'install_update',
+      ]),
+    );
     for (const command of TAURI_INVOKE_COMMANDS) {
       expect(
         validateAttribute('tauri.invoke', 'tau.invoke.command', command),

@@ -12,7 +12,7 @@
 /* ── Floating surface ───────────────────────────────────────────────────── */
 
 .ui-surface {
-  padding: 4px;
+  padding: 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--panel-raised);

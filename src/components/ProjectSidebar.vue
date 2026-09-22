@@ -227,11 +227,7 @@
           :submit-report="submitIssueReport"
         />
       </div>
-      <span
-        class="sidebar-version"
-        :aria-label="`Tau version ${appVersion}`"
-        >v{{ appVersion }}</span
-      >
+      <UpdateStatus />
     </footer>
 
     <div
@@ -267,7 +263,6 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { ProjectSummary, SessionSummary } from '../composables/state';
 import useTau from '../composables/useTau';
 import { adminMode } from '../lib/admin-mode';
-import appVersion from '../lib/app-version';
 import {
   applyHeldOrder,
   heldSessions,
@@ -282,6 +277,7 @@ import {
 
 import ArchivedSessionsList from './ArchivedSessionsList.vue';
 import IssueReportPopover from './IssueReportPopover.vue';
+import UpdateStatus from './UpdateStatus.vue';
 import UiContextMenu from './ui/UiContextMenu.vue';
 import UiIcon from './ui/UiIcon.vue';
 import UiIconButton from './ui/UiIconButton.vue';
@@ -667,17 +663,6 @@ defineExpose({
   align-items: center;
   justify-content: space-between;
   padding: 6px;
-}
-
-.sidebar-version {
-  position: relative;
-  top: 1px;
-  padding-inline: 6px;
-  color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: var(--text-xs);
-  line-height: var(--leading-tight);
-  white-space: nowrap;
 }
 
 /* Both sidebar bodies fill the space between titlebar and footer. The

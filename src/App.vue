@@ -27,13 +27,7 @@
           <span>Preparing Pi</span>
         </div>
         <template v-if="workspaceIsEmpty">
-          <p
-            class="first-run-version"
-            :aria-label="`Tau version ${appVersion}`"
-          >
-            <span class="first-run-name">tau</span>
-            <span class="first-run-version-number">{{ appVersion }}</span>
-          </p>
+          <UpdateStatus first-run />
           <div class="first-run-actions">
             <UiButton
               ref="firstRunLocalProjectButton"
@@ -139,6 +133,8 @@
       :session-count="quitSessionCount"
       :busy="quitBusy"
       :error="quitError"
+      :title="quitTitle"
+      :action="quitAction"
       @cancel="cancelQuit"
       @confirm="confirmQuit"
     />
@@ -191,14 +187,15 @@ import ReconnectStatus from './components/ReconnectStatus.vue';
 import RemoteDialog from './components/RemoteDialog.vue';
 import SessionHeader from './components/SessionHeader.vue';
 import TranscriptView from './components/TranscriptView.vue';
+import UpdateStatus from './components/UpdateStatus.vue';
 import UiButton from './components/ui/UiButton.vue';
 import UiSpinner from './components/ui/UiSpinner.vue';
 import useTau from './composables/useTau';
 import { createAdminCodeMatcher } from './lib/admin-code';
 import { toggleAdminMode } from './lib/admin-mode';
-import appVersion from './lib/app-version';
 import { loadSidebarWidth } from './lib/sidebar-width';
 import { invokeTraced } from './lib/telemetry';
+import { useUpdate } from './lib/update';
 
 const NEW_SESSION_EVENT = 'tau://new-session';
 const QUIT_REQUEST_EVENT = 'tau://quit-requested';
@@ -210,6 +207,8 @@ const EDITABLE_SELECTOR = 'input, textarea, select';
 
 interface QuitRequest {
   requestId: number;
+  intent?: 'ordinary' | 'updateRestart';
+  operationId?: number;
 }
 
 const transcriptView = ref<InstanceType<typeof TranscriptView>>();
@@ -230,6 +229,7 @@ const quitError = ref('');
 const feedbackFocusTarget = ref<HTMLElement>();
 const fullscreenViewerOpen = ref(false);
 const adminCode = createAdminCodeMatcher(isEditableTarget);
+const update = useUpdate();
 let unlistenWindowFocus: UnlistenFn | undefined;
 let unlistenNewSessionMenu: UnlistenFn | undefined;
 let unlistenQuitRequest: UnlistenFn | undefined;
@@ -285,6 +285,12 @@ const feedbackDialogOpen = computed(
     !state.remoteDialogOpen &&
     !activeExtensionDialog.value &&
     !fullscreenViewerOpen.value,
+);
+const quitTitle = computed(() =>
+  quitRequest.value?.intent === 'updateRestart' ? 'Restart Tau?' : 'Quit Tau?',
+);
+const quitAction = computed(() =>
+  quitRequest.value?.intent === 'updateRestart' ? 'Restart' : 'Quit',
 );
 const feedbackActionBusy = computed(() => {
   switch (activeFeedback.value?.action) {
@@ -362,6 +368,7 @@ const remoteDirectoryOptions = computed(() => {
 });
 
 onMounted(() => {
+  update.initialize();
   void initialize();
   void watchWindowFocus();
   void watchMenuActions();
@@ -373,6 +380,7 @@ onMounted(() => {
   );
 });
 onBeforeUnmount(() => {
+  update.dispose();
   dispose();
   clearTimeout(loadingIndicatorTimer);
   clearTimeout(preparationIndicatorTimer);
@@ -582,6 +590,7 @@ async function watchWindowFocus(): Promise<void> {
     unlistenWindowFocus = await getCurrentWindow().onFocusChanged(
       ({ payload }) => {
         windowFocused.value = payload;
+        if (payload) update.handleFocus();
       },
     );
   } catch {
@@ -611,18 +620,35 @@ async function watchMenuActions(): Promise<void> {
 async function handleQuitRequest(request: QuitRequest): Promise<void> {
   if (!Number.isSafeInteger(request.requestId) || request.requestId <= 0)
     return;
+  if (
+    request.intent === 'updateRestart' &&
+    (!Number.isSafeInteger(request.operationId) ||
+      (request.operationId ?? 0) <= 0)
+  )
+    return;
   if (quitRequest.value?.requestId === request.requestId) return;
 
   const sessionCount = inProgressSessionCount.value;
   if (sessionCount === 0) {
     try {
-      await invokeTraced('resolve_quit_request', {
+      const accepted = await invokeTraced<boolean>('resolve_quit_request', {
         requestId: request.requestId,
         confirmed: true,
       });
-      return;
+      if (accepted) {
+        if (
+          request.intent === 'updateRestart' &&
+          request.operationId !== undefined
+        ) {
+          await update.install(request.requestId, request.operationId);
+        }
+        return;
+      }
     } catch {
-      quitError.value = 'Tau could not quit. Try again.';
+      quitError.value =
+        request.intent === 'updateRestart'
+          ? 'Tau could not restart. Try again.'
+          : 'Tau could not quit. Try again.';
     }
   } else {
     quitError.value = '';
@@ -655,11 +681,20 @@ async function resolveQuitRequest(confirmed: boolean): Promise<void> {
       quitError.value = 'This quit request expired. Press ⌘Q to try again.';
       return;
     }
+    if (
+      confirmed &&
+      request.intent === 'updateRestart' &&
+      request.operationId !== undefined
+    ) {
+      await update.install(request.requestId, request.operationId);
+    }
     quitRequest.value = null;
   } catch {
     quitError.value = confirmed
-      ? 'Tau could not quit. Try again.'
-      : 'The quit confirmation could not close. Try again.';
+      ? request.intent === 'updateRestart'
+        ? 'Tau could not restart. Try again.'
+        : 'Tau could not quit. Try again.'
+      : 'The confirmation could not close. Try again.';
   } finally {
     quitBusy.value = false;
   }
@@ -783,23 +818,6 @@ function isTitlebarControl(target: EventTarget | null): boolean {
   padding: 24px;
   color: var(--muted);
   text-align: center;
-}
-
-.first-run-version {
-  display: flex;
-  margin: 0 0 14px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: var(--text-xs);
-  line-height: var(--leading-ui);
-  gap: 8px;
-}
-
-.first-run-name {
-  color: var(--text);
-}
-
-.first-run-version-number {
-  color: var(--faint);
 }
 
 .first-run-actions {

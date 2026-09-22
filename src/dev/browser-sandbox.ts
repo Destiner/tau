@@ -39,6 +39,23 @@ type BrowserSandboxHandler = (
   args?: InvokeArgs,
 ) => Promise<unknown>;
 
+interface BrowserSandboxOptions {
+  updatesSupported?: boolean;
+  updateAvailable?: boolean;
+  updateProgressDelayMs?: number;
+  emitAppEvent?: (event: string, payload: unknown) => Promise<void>;
+  simulateUpdateRestart?: () => Promise<never>;
+}
+
+type SandboxUpdateStatus =
+  'available' | 'prepared' | 'authorized' | 'installing' | 'restartNeeded';
+
+interface SandboxQuitRequest {
+  requestId: number;
+  intent: 'updateRestart';
+  operationId: number;
+}
+
 const ROOT = '/browser-dev/projects';
 const FIXED_NOW = '2026-06-15T10:30:00.000Z';
 const MODELS = [
@@ -128,6 +145,25 @@ function requiredString(args: Record<string, unknown>, key: string): string {
   return value;
 }
 
+function requiredPositiveInteger(
+  args: Record<string, unknown>,
+  key: string,
+): number {
+  const value = args[key];
+  if (!Number.isSafeInteger(value) || (value as number) <= 0) {
+    throw new Error(`Browser sandbox expected a positive integer ${key}.`);
+  }
+  return value as number;
+}
+
+function requiredBoolean(args: Record<string, unknown>, key: string): boolean {
+  const value = args[key];
+  if (typeof value !== 'boolean') {
+    throw new Error(`Browser sandbox expected ${key}.`);
+  }
+  return value;
+}
+
 function requireOwner(
   args: Record<string, unknown>,
   activeOwner: string,
@@ -147,6 +183,7 @@ function createMemorySidebarWidthStorage(): SidebarWidthStorage {
 
 function createBrowserSandboxHandler(
   emitEvent: EmitPiEvent,
+  options: BrowserSandboxOptions = {},
 ): BrowserSandboxHandler {
   const workspace = createBrowserSandboxWorkspace();
   let generation = 1;
@@ -154,6 +191,11 @@ function createBrowserSandboxHandler(
   let nextPreview = 1;
   let ownershipRevision = 0;
   let activeOwner = '';
+  let updateStatus: SandboxUpdateStatus = 'available';
+  let pendingQuitRequest: SandboxQuitRequest | null = null;
+  let authorizedQuitRequest: SandboxQuitRequest | null = null;
+  const updateOperationId = 1;
+  const updateVersion = '0.2.0';
   const runtimes = new Map<string, RuntimeSession>();
   const sessions = new Map<string, SessionData>(
     workspace.projects.flatMap((project) =>
@@ -362,6 +404,130 @@ function createBrowserSandboxHandler(
     if (command === 'load_workspace') return cloneWorkspace();
     if (command === 'read_model_scope') return [];
     if (command === 'read_admin_mode') return false;
+    if (command === 'get_dismissed_update_version') return null;
+    if (command === 'pending_quit_request') return pendingQuitRequest;
+    if (command === 'update_snapshot') {
+      const supported = options.updatesSupported ?? options.updateAvailable;
+      if (!supported) return { supported: false, status: 'idle' };
+      if (!options.updateAvailable)
+        return { supported: true, status: 'upToDate' };
+      return {
+        supported: true,
+        status:
+          updateStatus === 'available'
+            ? 'available'
+            : updateStatus === 'installing'
+              ? 'installing'
+              : updateStatus === 'restartNeeded'
+                ? 'restartNeeded'
+                : 'prepared',
+        operationId: updateOperationId,
+        candidate: { version: updateVersion },
+      };
+    }
+    if (command === 'check_for_update') {
+      if (options.updateAvailable) {
+        return {
+          status: 'available',
+          version: updateVersion,
+          operationId: updateOperationId,
+        };
+      }
+      return options.updatesSupported
+        ? { status: 'current' }
+        : { status: 'unavailable' };
+    }
+    if (command === 'download_update') {
+      const operationId = requiredPositiveInteger(args, 'operationId');
+      if (
+        !options.updateAvailable ||
+        operationId !== updateOperationId ||
+        updateStatus !== 'available'
+      ) {
+        throw new Error('Browser sandbox rejected update download arguments.');
+      }
+      const emitProgress = async (
+        downloadedBytes: number,
+        phase: 'downloading' | 'verifying',
+      ): Promise<void> => {
+        if (options.updateProgressDelayMs) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, options.updateProgressDelayMs),
+          );
+        }
+        await options.emitAppEvent?.('tau://update-progress', {
+          operationId,
+          downloadedBytes,
+          totalBytes: 100,
+          phase,
+        });
+      };
+      await emitProgress(0, 'downloading');
+      await emitProgress(35, 'downloading');
+      await emitProgress(72, 'downloading');
+      await emitProgress(100, 'downloading');
+      await emitProgress(100, 'verifying');
+      updateStatus = 'prepared';
+      return null;
+    }
+    if (command === 'request_update_restart') {
+      const operationId = requiredPositiveInteger(args, 'operationId');
+      if (
+        !options.updateAvailable ||
+        operationId !== updateOperationId ||
+        updateStatus !== 'prepared'
+      ) {
+        throw new Error('Browser sandbox rejected update restart arguments.');
+      }
+      pendingQuitRequest = {
+        requestId: 1,
+        intent: 'updateRestart',
+        operationId,
+      };
+      await options.emitAppEvent?.('tau://quit-requested', pendingQuitRequest);
+      return null;
+    }
+    if (command === 'resolve_quit_request') {
+      const requestId = requiredPositiveInteger(args, 'requestId');
+      const confirmed = requiredBoolean(args, 'confirmed');
+      if (!pendingQuitRequest || requestId !== pendingQuitRequest.requestId) {
+        return false;
+      }
+      if (confirmed) {
+        authorizedQuitRequest = pendingQuitRequest;
+        updateStatus = 'authorized';
+      }
+      pendingQuitRequest = null;
+      return true;
+    }
+    if (command === 'install_update') {
+      const requestId = requiredPositiveInteger(args, 'requestId');
+      const operationId = requiredPositiveInteger(args, 'operationId');
+      if (
+        !options.updateAvailable ||
+        updateStatus !== 'authorized' ||
+        requestId !== authorizedQuitRequest?.requestId ||
+        operationId !== authorizedQuitRequest.operationId
+      ) {
+        throw new Error('Browser sandbox rejected update install arguments.');
+      }
+      updateStatus = 'installing';
+      authorizedQuitRequest = null;
+      if (options.simulateUpdateRestart) return options.simulateUpdateRestart();
+      updateStatus = 'restartNeeded';
+      return null;
+    }
+    if (command === 'restart_after_update') {
+      const operationId = requiredPositiveInteger(args, 'operationId');
+      if (
+        !options.updateAvailable ||
+        updateStatus !== 'restartNeeded' ||
+        operationId !== updateOperationId
+      ) {
+        throw new Error('Browser sandbox rejected update restart arguments.');
+      }
+      return null;
+    }
     if (command === 'prepare_file_preview') {
       const path = requiredString(args, 'path');
       if (path.endsWith('/')) return { kind: 'directory' };
@@ -378,6 +544,7 @@ function createBrowserSandboxHandler(
     }
     if (
       command === 'set_admin_mode' ||
+      command === 'set_dismissed_update_version' ||
       command === 'release_file_preview' ||
       command === 'ingest_telemetry' ||
       command === 'submit_issue_report' ||
@@ -554,8 +721,26 @@ function createBrowserSandboxHandler(
 
 function installBrowserSandbox(): void {
   setSidebarWidthStorage(createMemorySidebarWidthStorage());
-  const handleCommand = createBrowserSandboxHandler((event) =>
-    emit<PiBridgeEvent>('pi-event', event),
+  const updateFixtureRequested =
+    new URLSearchParams(window.location.search).get('test-update') ===
+    'available';
+  const updateAvailable =
+    updateFixtureRequested &&
+    sessionStorage.getItem('tau-update-fixture-installed') !== 'true';
+  const handleCommand = createBrowserSandboxHandler(
+    (event) => emit<PiBridgeEvent>('pi-event', event),
+    {
+      updatesSupported: updateFixtureRequested,
+      updateAvailable,
+      updateProgressDelayMs: 180,
+      emitAppEvent: (event, payload) => emit(event, payload),
+      async simulateUpdateRestart(): Promise<never> {
+        sessionStorage.setItem('tau-update-fixture-installed', 'true');
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        window.location.reload();
+        return new Promise(() => undefined);
+      },
+    },
   );
   mockWindows('main');
   mockIPC(handleCommand, { shouldMockEvents: true });
