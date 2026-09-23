@@ -17,9 +17,9 @@ describe('operational error copy', () => {
   it('uses operation-specific fallback headings', () => {
     expect(feedbackTitle(errorCopy.messageSend)).toBe('Message Not Sent');
     expect(feedbackTitle(errorCopy.piOwnership)).toBe('Pi Unavailable');
-    expect(
-      feedbackTitle('The remote connection was lost. Reconnect to continue.'),
-    ).toBe('Remote Connection Lost');
+    expect(feedbackTitle('The connection was lost.')).toBe(
+      'Remote Connection Lost',
+    );
   });
 
   it('does not expose an unknown command or rejection payload', () => {

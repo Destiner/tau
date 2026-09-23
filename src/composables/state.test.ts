@@ -508,11 +508,13 @@ describe('fallback feedback', () => {
     state.activeControllerKey = controller.key;
     const stored = state.controllers[0]!;
 
-    setControllerError(
-      stored,
-      'The remote connection was lost. Reconnect to continue.',
-    );
+    setControllerError(stored, 'The connection was lost.');
     const incidentId = activeFeedback.value?.id;
+    expect(activeFeedback.value).toMatchObject({
+      title: 'Remote Connection Lost',
+      action: 'reconnect',
+      message: 'The connection was lost.',
+    });
     setControllerError(
       stored,
       'The remote connection failed. Try reconnecting again.',

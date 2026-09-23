@@ -103,7 +103,10 @@ function feedbackTitle(message: string): string {
     case errorCopy.workspaceSelection:
       return 'Selection Not Saved';
     default:
-      if (message.startsWith('The remote connection'))
+      if (
+        message === 'The connection was lost.' ||
+        message.startsWith('The remote connection')
+      )
         return 'Remote Connection Lost';
       if (message.startsWith('The remote Pi')) return 'Remote Pi Unavailable';
       if (message.startsWith('Could not connect')) return 'Connection Failed';
