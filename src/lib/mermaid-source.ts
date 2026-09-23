@@ -85,7 +85,6 @@ function scanLabel(
 ): { end: number; replacements: number[] } | { unsafe: boolean } {
   const quoted = source[contentOffset] === '"';
   let offset = contentOffset + (quoted ? 1 : 0);
-  let conflictingCloser = false;
   const replacements: number[] = [];
 
   while (offset < source.length) {
@@ -94,9 +93,6 @@ function scanLabel(
         source[offset] === '"' &&
         source.startsWith(delimiter.closer, offset + 1)
       ) {
-        if (conflictingCloser && replacements.length > 0) {
-          return { unsafe: true };
-        }
         return {
           end: offset + 1 + delimiter.closer.length,
           replacements,
@@ -105,10 +101,6 @@ function scanLabel(
       if (source[offset] === '"' && replacements.length > 0) {
         return { unsafe: true };
       }
-      if (source.startsWith(delimiter.closer, offset)) {
-        if (replacements.length > 0) return { unsafe: true };
-        conflictingCloser = true;
-      }
     } else if (source.startsWith(delimiter.closer, offset)) {
       return { end: offset + delimiter.closer.length, replacements };
     } else if (source[offset] === '"' && replacements.length > 0) {
@@ -116,7 +108,6 @@ function scanLabel(
     }
 
     if (source[offset] === '\r' && source[offset + 1] === '\n') {
-      if (quoted && conflictingCloser) return { unsafe: true };
       if (!quoted && startsStatement(source, offset + 2)) {
         return { unsafe: true };
       }
@@ -125,7 +116,6 @@ function scanLabel(
       continue;
     }
     if (source[offset] === '\n') {
-      if (quoted && conflictingCloser) return { unsafe: true };
       if (!quoted && startsStatement(source, offset + 1)) {
         return { unsafe: true };
       }
