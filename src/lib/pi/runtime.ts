@@ -1019,8 +1019,7 @@ const remotePiConnectionFailureMessage =
   'The remote Pi connection failed. Check the connection and try again.';
 const remotePiProcessExitMessage =
   'The remote Pi process stopped unexpectedly. Check the connection and try again.';
-const remoteDisconnectedMessage =
-  'The remote connection was lost. Reconnect to continue.';
+const remoteDisconnectedMessage = 'The connection was lost.';
 const remoteReconnectFailureMessage =
   'The remote connection failed. Try reconnecting again.';
 const remoteConnectionTimeoutMessage =

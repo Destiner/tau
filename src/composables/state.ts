@@ -1256,12 +1256,17 @@ function feedbackAction(message: string): FeedbackAction | undefined {
     message === errorCopy.loadWorkspace
   )
     return 'reload';
-  if (message.startsWith('The remote connection')) return 'reconnect';
+  if (
+    message === 'The connection was lost.' ||
+    message.startsWith('The remote connection')
+  )
+    return 'reconnect';
   return undefined;
 }
 
 function feedbackFamily(message: string): string {
   if (
+    message === 'The connection was lost.' ||
     /\b(?:Pi|remote) (?:connection|process)\b|remote connection/i.test(message)
   )
     return 'runtime-connection';

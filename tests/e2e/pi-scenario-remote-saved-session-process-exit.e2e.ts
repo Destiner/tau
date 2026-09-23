@@ -37,9 +37,7 @@ test('reconnects an established remote session only when requested', async ({
 
   const reconnectStatus = page.locator('.reconnect-status');
   const reconnect = reconnectStatus.getByRole('button', { name: 'Reconnect' });
-  await expect(reconnectStatus).toContainText(
-    'The remote connection was lost. Reconnect to continue.',
-  );
+  await expect(reconnectStatus).toContainText('The connection was lost.');
   await expect(reconnect).toBeDisabled();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.locator('.status-row')).toHaveCount(0);
