@@ -35,9 +35,32 @@
           class="file-viewer-content"
         >
           <template v-if="previewType.kind === 'text' && text !== null">
+            <div
+              v-if="previewType.presentation === 'markdown'"
+              ref="textContent"
+              class="file-viewer-document"
+            >
+              <p
+                v-if="!text"
+                class="file-viewer-empty"
+              >
+                Empty document
+              </p>
+              <MarkdownContent
+                v-else
+                :source="text"
+                :base-path="documentDirectory"
+                :copy-paths="Boolean(remoteIdentity)"
+                :remote-project-path="remoteIdentity"
+                :resolve-preview-path="resolveDocumentPath"
+                preview-files
+                restrict-images
+                @file-preview="replacePreview"
+              />
+            </div>
             <!-- eslint-disable vue/no-v-html -- highlightCode returns only Shiki-generated markup -->
             <div
-              v-if="highlighted"
+              v-else-if="highlighted"
               ref="textContent"
               class="file-viewer-code"
               v-html="highlighted"
@@ -143,10 +166,20 @@ import {
   classifyFilePreview,
   fetchTextPreview,
   filePreviewAssetUrl,
+  filePreviewDirectoryForPath,
+  resolveFilePreviewContextPath,
   type FilePreviewDescriptor,
 } from '../../lib/file-preview';
+import {
+  isTopmostFullscreenViewer,
+  isUiMenuOpen,
+  registerFullscreenViewer,
+  unregisterFullscreenViewer,
+  type FullscreenViewer,
+} from '../../lib/fullscreen-viewer';
 import highlightCode from '../../lib/highlight';
 
+import MarkdownContent from './MarkdownContent.vue';
 import UiIcon from './UiIcon.vue';
 import UiIconButton from './UiIconButton.vue';
 
@@ -157,7 +190,10 @@ const props = defineProps<
   }
 >();
 
-const emit = defineEmits<{ close: [] }>();
+const emit = defineEmits<{
+  close: [];
+  replace: [preview: FilePreviewDescriptor];
+}>();
 
 const closeButton = ref<InstanceType<typeof UiIconButton>>();
 const content = ref<HTMLElement>();
@@ -168,6 +204,26 @@ const loading = ref(false);
 const showLoading = ref(false);
 const failure = ref(false);
 const previewType = computed(() => classifyFilePreview(props.filename));
+const documentDirectory = computed(() =>
+  props.sourcePath
+    ? filePreviewDirectoryForPath(props.sourcePath)
+    : props.projectRoot,
+);
+const remoteIdentity = computed(() => props.remoteIdentity);
+
+function resolveDocumentPath(path: string): string {
+  return props.sourcePath
+    ? resolveFilePreviewContextPath(path, {
+        sourcePath: props.sourcePath,
+        projectRoot: props.projectRoot,
+        remoteIdentity: props.remoteIdentity,
+      })
+    : path;
+}
+
+function replacePreview(preview: FilePreviewDescriptor): void {
+  emit('replace', preview);
+}
 const assetUrl = computed(() => filePreviewAssetUrl(props.assetPath));
 const highlighted = computed(() => {
   const source = text.value;
@@ -176,6 +232,7 @@ const highlighted = computed(() => {
 });
 
 let request: AbortController | undefined;
+let fullscreenViewer: FullscreenViewer | undefined;
 let loadingDelay = 0;
 let loadingDeadline = 0;
 
@@ -192,7 +249,10 @@ function beginLoading(): void {
   loadingDelay = window.setTimeout(() => {
     showLoading.value = true;
   }, 200);
-  loadingDeadline = window.setTimeout(failLoading, 15_000);
+  loadingDeadline = window.setTimeout(() => {
+    request?.abort();
+    failLoading();
+  }, 15_000);
 }
 
 function finishLoading(): void {
@@ -212,6 +272,7 @@ async function loadPreview(): Promise<void> {
   request?.abort();
   request = new AbortController();
   text.value = null;
+  content.value?.scrollTo(0, 0);
   truncated.value = false;
   failure.value = false;
 
@@ -252,6 +313,12 @@ function handleOpenChange(open: boolean): void {
 
 function handleKeydownCapture(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
+    if (
+      !fullscreenViewer ||
+      !isTopmostFullscreenViewer(fullscreenViewer) ||
+      isUiMenuOpen()
+    )
+      return;
     event.preventDefault();
     event.stopImmediatePropagation();
     emit('close');
@@ -262,7 +329,10 @@ function handleKeydownCapture(event: KeyboardEvent): void {
     (event.metaKey || event.ctrlKey) &&
     !event.altKey &&
     previewType.value.kind === 'text' &&
-    text.value !== null
+    text.value !== null &&
+    fullscreenViewer !== undefined &&
+    isTopmostFullscreenViewer(fullscreenViewer) &&
+    !isUiMenuOpen()
   ) {
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -333,17 +403,13 @@ watch(
 );
 
 onMounted(() => {
+  fullscreenViewer = registerFullscreenViewer();
   document.addEventListener('keydown', handleKeydownCapture, true);
-  window.dispatchEvent(
-    new CustomEvent('tau:fullscreen-viewer-state', { detail: true }),
-  );
 });
 
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleKeydownCapture, true);
-  window.dispatchEvent(
-    new CustomEvent('tau:fullscreen-viewer-state', { detail: false }),
-  );
+  if (fullscreenViewer) unregisterFullscreenViewer(fullscreenViewer);
   request?.abort();
   clearLoadingTimers();
 });
@@ -431,6 +497,18 @@ onBeforeUnmount(() => {
   user-select: text;
 }
 
+:global(.file-viewer-document) {
+  width: min(100%, 800px);
+  min-height: 100%;
+  margin: 0 auto;
+  padding: 20px 40px 60px;
+}
+
+:global(.file-viewer-empty) {
+  margin: 0;
+  color: var(--muted);
+}
+
 :global(.file-viewer-code pre) {
   min-width: min-content;
   min-height: 100%;
@@ -515,7 +593,8 @@ onBeforeUnmount(() => {
 
 @media (width <= 720px) {
   :global(.file-viewer-code),
-  :global(.file-viewer-plain) {
+  :global(.file-viewer-plain),
+  :global(.file-viewer-document) {
     padding-right: 20px;
     padding-left: 20px;
   }

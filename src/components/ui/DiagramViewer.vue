@@ -57,6 +57,13 @@ import {
   type Point,
   type Size,
 } from '../../lib/diagram-viewport';
+import {
+  isTopmostFullscreenViewer,
+  isUiMenuOpen,
+  registerFullscreenViewer,
+  unregisterFullscreenViewer,
+  type FullscreenViewer,
+} from '../../lib/fullscreen-viewer';
 
 const props = defineProps<{
   /** The drawn diagram, at the natural size its width and height name. */
@@ -85,6 +92,7 @@ let minimumScale = MIN_SCALE;
 let vector: SVGSVGElement | null = null;
 let renderFrame = 0;
 let resizeObserver: ResizeObserver | undefined;
+let fullscreenViewer: FullscreenViewer | undefined;
 let mounted = false;
 
 function bounds(): DiagramBounds {
@@ -106,7 +114,14 @@ function handleOpenChange(open: boolean): void {
  * this viewer owns Escape before it can reach any whole-app handler.
  */
 function handleKeydownCapture(event: KeyboardEvent): void {
-  if (event.key !== 'Escape') return;
+  if (
+    event.key !== 'Escape' ||
+    !fullscreenViewer ||
+    !isTopmostFullscreenViewer(fullscreenViewer) ||
+    isUiMenuOpen()
+  ) {
+    return;
+  }
   event.preventDefault();
   event.stopImmediatePropagation();
   emit('close');
@@ -247,10 +262,8 @@ function syncViewport(): void {
 
 onMounted(async () => {
   mounted = true;
+  fullscreenViewer = registerFullscreenViewer();
   document.addEventListener('keydown', handleKeydownCapture, true);
-  window.dispatchEvent(
-    new CustomEvent('tau:fullscreen-viewer-state', { detail: true }),
-  );
   await nextTick();
   if (!mounted) return;
   vector = drawing.value?.querySelector('svg') ?? null;
@@ -276,9 +289,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   mounted = false;
   document.removeEventListener('keydown', handleKeydownCapture, true);
-  window.dispatchEvent(
-    new CustomEvent('tau:fullscreen-viewer-state', { detail: false }),
-  );
+  if (fullscreenViewer) unregisterFullscreenViewer(fullscreenViewer);
   canvas.value?.removeEventListener('gesturestart', handleGestureStart);
   canvas.value?.removeEventListener('gesturechange', handleGestureChange);
   resizeObserver?.disconnect();

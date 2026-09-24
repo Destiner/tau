@@ -8,15 +8,38 @@ interface FilePreviewDescriptor {
   filename: string;
   directory: string;
   byteLength: number;
+  /** Original document path, used to resolve document-relative links. */
+  sourcePath?: string;
+  /** Root used when a document path itself is relative. */
+  projectRoot?: string;
+  /** Opaque identity of the remote project that owns this document. */
+  remoteIdentity?: string;
+}
+
+interface FilePreviewPathContext {
+  sourcePath: string;
+  projectRoot?: string;
+  remoteIdentity?: string;
 }
 
 type FilePreviewKind = 'text' | 'image' | 'pdf' | 'video' | 'audio' | 'object';
+type TextPreviewPresentation = 'source' | 'markdown';
 
-interface FilePreviewType {
-  kind: FilePreviewKind;
+interface TextFilePreviewType {
+  kind: 'text';
+  language?: string;
+  mediaType: string;
+  presentation: TextPreviewPresentation;
+}
+
+interface MediaFilePreviewType {
+  kind: Exclude<FilePreviewKind, 'text'>;
+  /** Kept optional so existing callers can inspect the common preview shape. */
   language?: string;
   mediaType: string;
 }
+
+type FilePreviewType = TextFilePreviewType | MediaFilePreviewType;
 
 const TEXT_EXTENSIONS = new Map<string, string | undefined>([
   ['bash', 'bash'],
@@ -33,6 +56,7 @@ const TEXT_EXTENSIONS = new Map<string, string | undefined>([
   ['jsonl', 'json'],
   ['jsx', 'tsx'],
   ['log', undefined],
+  ['markdown', 'markdown'],
   ['md', 'markdown'],
   ['mdx', 'markdown'],
   ['mjs', 'javascript'],
@@ -52,6 +76,9 @@ const TEXT_EXTENSIONS = new Map<string, string | undefined>([
   ['yml', 'yaml'],
   ['zsh', 'bash'],
 ]);
+
+const MARKDOWN_EXTENSIONS = new Set(['markdown', 'md']);
+const MARKDOWN_NAMES = new Set(['readme']);
 
 const TEXT_NAMES = new Map<string, string | undefined>([
   ['dockerfile', 'bash'],
@@ -111,6 +138,7 @@ function classifyFilePreview(filename: string): FilePreviewType {
       kind: 'text',
       language: TEXT_NAMES.get(name),
       mediaType: 'text/plain;charset=utf-8',
+      presentation: MARKDOWN_NAMES.has(name) ? 'markdown' : 'source',
     };
   }
   if (TEXT_EXTENSIONS.has(ext)) {
@@ -118,6 +146,7 @@ function classifyFilePreview(filename: string): FilePreviewType {
       kind: 'text',
       language: TEXT_EXTENSIONS.get(ext),
       mediaType: 'text/plain;charset=utf-8',
+      presentation: MARKDOWN_EXTENSIONS.has(ext) ? 'markdown' : 'source',
     };
   }
   const image = IMAGE_TYPES.get(ext);
@@ -191,6 +220,29 @@ function filePreviewDirectoryLabel(
   return comparedDirectory.startsWith(prefix)
     ? normalized.slice(project.length + 1)
     : normalized;
+}
+
+/** Resolves a document link without decoding it or expanding a remote home. */
+function resolveFilePreviewContextPath(
+  path: string,
+  context: FilePreviewPathContext,
+): string {
+  if (isAbsolutePath(path) || path === '~' || path.startsWith('~/'))
+    return normalizePreviewPath(path);
+
+  let sourcePath = normalizePreviewPath(context.sourcePath);
+  if (
+    context.projectRoot &&
+    !isAbsolutePath(sourcePath) &&
+    sourcePath !== '~' &&
+    !sourcePath.startsWith('~/')
+  ) {
+    sourcePath = normalizePreviewPath(`${context.projectRoot}/${sourcePath}`);
+  }
+
+  const separator = sourcePath.lastIndexOf('/');
+  const directory = separator < 0 ? '.' : sourcePath.slice(0, separator) || '/';
+  return normalizePreviewPath(`${directory}/${path}`);
 }
 
 /** Labels a file's parent, relative only when the file is inside the project. */
@@ -308,11 +360,15 @@ export {
   filePreviewDirectoryLabel,
   isBrowserPreviewUrl,
   normalizePreviewPath,
+  resolveFilePreviewContextPath,
 };
 
 export type {
   FilePreviewDescriptor,
   FilePreviewKind,
+  FilePreviewPathContext,
   FilePreviewType,
+  TextFilePreviewType,
   TextPreview,
+  TextPreviewPresentation,
 };
