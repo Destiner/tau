@@ -11,6 +11,7 @@ import {
   cancelExtensionDialog as sendExtensionDialogCancellation,
   cancelPendingPrompt,
   clearAbortWatch,
+  clearPendingQueue,
   clearExtensionUiState,
   clearRemoteConnectionWatch,
   clearSessionReplacementWatch,
@@ -33,6 +34,7 @@ import {
   sendPhantomMessage,
   startController,
   stopControllerProcess,
+  submitQueuedMessage,
   submitExtensionDialog as sendExtensionDialogResponse,
   watchAbort,
   watchSettingRequest,
@@ -53,6 +55,11 @@ import {
   canArchiveSession,
   canCompose,
   canDraft,
+  canQueue,
+  activeQueue,
+  queueBusy,
+  queueFeedback,
+  queueFailedDrafts,
   canReconnectRemote,
   canRenameSession,
   clearActiveSession,
@@ -765,10 +772,31 @@ function useTau() {
     );
   }
 
-  async function sendMessage(): Promise<void> {
+  async function sendMessage(
+    intent: 'steer' | 'followUp' = 'steer',
+  ): Promise<void> {
     const controller = activeController.value;
     const submittedDraft = controller?.draft ?? '';
     const message = submittedDraft.trim();
+    if (controller?.streaming) {
+      if (
+        !message ||
+        !canQueue.value ||
+        invokesExtensionCommand(controller, message)
+      )
+        return;
+      markUserMessageSubmitted(controller);
+      const project = state.workspace?.projects.find(
+        (candidate) => candidate.path === controller.projectPath,
+      );
+      const sessionRecord = project?.sessions.find(
+        (candidate) => candidate.id === controller.sessionId,
+      );
+      if (project && sessionRecord?.archived)
+        void unarchiveSession(project, sessionRecord);
+      await submitQueuedMessage(controller, submittedDraft, intent);
+      return;
+    }
     if (
       !controller ||
       !message ||
@@ -877,6 +905,20 @@ function useTau() {
     } finally {
       actionSpan.end();
     }
+  }
+
+  async function clearQueue(): Promise<void> {
+    const controller = activeController.value;
+    if (controller) await clearPendingQueue(controller);
+  }
+
+  function recoverQueueDraft(index: number): void {
+    const controller = activeController.value;
+    if (!controller || controller.draft || !controller.queueFailedDrafts[index])
+      return;
+    controller.draft = controller.queueFailedDrafts[index];
+    controller.queueFailedDrafts.splice(index, 1);
+    controller.queueFeedback = '';
   }
 
   async function stop(): Promise<void> {
@@ -1119,6 +1161,11 @@ function useTau() {
     settingsDisabled,
     canDraft,
     canCompose,
+    canQueue,
+    activeQueue,
+    queueBusy,
+    queueFeedback,
+    queueFailedDrafts,
     canReconnectRemote,
     canRenameSession,
     sessionLoading,
@@ -1153,6 +1200,8 @@ function useTau() {
     projectIndicator,
     indicatorLabel,
     sendMessage,
+    clearQueue,
+    recoverQueueDraft,
     reconnectRemoteSession,
     stop,
     loadEarlierHistory,

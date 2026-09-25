@@ -72,22 +72,39 @@
           >Retrying…</span
         >
       </UiTooltip>
-      <UiTooltip
-        v-if="streaming"
-        text="Stop Pi"
-      >
-        <UiIconButton
-          class="send-button stop"
-          size="sm"
-          variant="fill"
-          tone="danger"
-          :disabled="compacting || stopping || !canDraft"
-          label="Stop Pi"
-          @click="stop"
+      <template v-if="streaming">
+        <UiTooltip
+          v-if="draft.trim()"
+          text="Queue Message"
         >
-          <UiIcon name="stop" />
-        </UiIconButton>
-      </UiTooltip>
+          <UiIconButton
+            class="send-button"
+            size="sm"
+            variant="fill"
+            :disabled="!canQueue || extensionCommandDraft"
+            label="Queue Message"
+            @click="sendSteer"
+          >
+            <UiIcon name="queue" />
+          </UiIconButton>
+        </UiTooltip>
+        <UiTooltip
+          v-else
+          text="Stop Pi"
+        >
+          <UiIconButton
+            class="send-button stop"
+            size="sm"
+            variant="fill"
+            tone="danger"
+            :disabled="compacting || stopping || !canDraft"
+            label="Stop Pi"
+            @click="stop"
+          >
+            <UiIcon name="stop" />
+          </UiIconButton>
+        </UiTooltip>
+      </template>
       <UiTooltip
         v-else
         text="Send Message"
@@ -98,7 +115,7 @@
           variant="fill"
           :disabled="!canCompose || !draft.trim()"
           label="Send Message"
-          @click="send"
+          @click="sendSteer"
         >
           <UiIcon name="triangle" />
         </UiIconButton>
@@ -127,6 +144,7 @@ import {
   slashCommandQuery,
 } from '../lib/commands';
 import type { ThinkingLevel } from '../lib/pi/model-scope';
+import { invokesExtensionCommand } from '../lib/pi/runtime';
 import textFieldItems from '../lib/text-menu';
 
 import CommandMenu from './CommandMenu.vue';
@@ -142,11 +160,12 @@ const props = defineProps<{
   headerElement: () => HTMLElement | undefined;
 }>();
 
-const emit = defineEmits<{ send: [] }>();
+const emit = defineEmits<{ send: [intent: 'steer' | 'followUp'] }>();
 
 const {
   canCompose,
   canDraft,
+  canQueue,
   commands,
   compacting,
   currentEffort,
@@ -165,6 +184,7 @@ const {
   stop,
   streaming,
   stopping,
+  activeController,
 } = useTau();
 
 const composer = ref<HTMLElement>();
@@ -180,6 +200,12 @@ const modelSelectorOpen = ref(false);
 const effortSelectorOpen = ref(false);
 
 const commandQuery = computed(() => slashCommandQuery(draft.value));
+const extensionCommandDraft = computed(() =>
+  Boolean(
+    activeController.value &&
+    invokesExtensionCommand(activeController.value, draft.value.trim()),
+  ),
+);
 const filteredCommands = computed(() =>
   commandQuery.value === null
     ? []
@@ -279,16 +305,21 @@ function handleComposerKeydown(event: KeyboardEvent): void {
       if (selectedCommand.value) selectCommand(selectedCommand.value, true);
       return;
     }
-    if (event.key === 'Enter') {
+    if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
-      if (selectedCommand.value) selectCommand(selectedCommand.value);
+      if (selectedCommand.value)
+        selectCommand(
+          selectedCommand.value,
+          false,
+          event.metaKey || event.ctrlKey ? 'followUp' : 'steer',
+        );
       return;
     }
   }
 
   if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
-    send();
+    send(event.metaKey || event.ctrlKey ? 'followUp' : 'steer');
   }
 }
 
@@ -296,15 +327,22 @@ function handleHighlight(index: number): void {
   commandSelectedIndex.value = index;
 }
 
-function selectCommand(command: CommandOption, completeOnly = false): void {
+function selectCommand(
+  command: CommandOption,
+  completeOnly = false,
+  intent: 'steer' | 'followUp' = 'steer',
+): void {
   const selection = commandSelection(command, completeOnly);
   draft.value = selection.draft;
   commandSelectedIndex.value = 0;
-  if (selection.submit) send();
+  if (selection.submit) send(intent);
 }
 
-function send(): void {
-  emit('send');
+function sendSteer(): void {
+  send('steer');
+}
+function send(intent: 'steer' | 'followUp' = 'steer'): void {
+  emit('send', intent);
 }
 
 function dismissCommandMenu(): void {

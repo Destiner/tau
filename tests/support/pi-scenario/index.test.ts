@@ -676,6 +676,119 @@ describe('PiScenarioEngine', () => {
     );
   });
 
+  it('models streaming queue requests, queue updates, and clear-queue results', () => {
+    const engine = new PiScenarioEngine(
+      definePiScenario({
+        metadata: {
+          name: 'streaming-queue',
+          purpose: 'Exercise the Pi streaming queue protocol.',
+          qualityRule: 'State correctness',
+          schemaVersion: 1,
+        },
+        runtimes: [{ key: 'main', generation: 1 }],
+        steps: [
+          {
+            kind: 'request',
+            runtime: 'main',
+            capture: 'steer-prompt',
+            match: {
+              type: 'prompt',
+              message: 'Prioritize the tests',
+              streamingBehavior: 'steer',
+            },
+          },
+          { kind: 'response', request: 'steer-prompt', command: 'prompt' },
+          {
+            kind: 'request',
+            runtime: 'main',
+            capture: 'steering-mode',
+            match: { type: 'set_steering_mode', mode: 'one-at-a-time' },
+          },
+          {
+            kind: 'response',
+            request: 'steering-mode',
+            command: 'set_steering_mode',
+          },
+          {
+            kind: 'request',
+            runtime: 'main',
+            capture: 'follow-up-mode',
+            match: { type: 'set_follow_up_mode', mode: 'all' },
+          },
+          {
+            kind: 'response',
+            request: 'follow-up-mode',
+            command: 'set_follow_up_mode',
+          },
+          {
+            kind: 'event',
+            runtime: 'main',
+            event: {
+              type: 'queue_update',
+              steering: ['Prioritize the tests'],
+              followUp: ['Then summarize the result'],
+            },
+          },
+          {
+            kind: 'request',
+            runtime: 'main',
+            capture: 'clear-queue',
+            match: { type: 'clear_queue' },
+          },
+          {
+            kind: 'response',
+            request: 'clear-queue',
+            command: 'clear_queue',
+            data: {
+              steering: ['Prioritize the tests'],
+              followUp: ['Then summarize the result'],
+            },
+          },
+        ],
+      }),
+    );
+    engine.bindRuntime('main', 'runtime-dynamic-47');
+
+    consumeRequest(engine, 'prompt-id', 'prompt', {
+      message: 'Prioritize the tests',
+      streamingBehavior: 'steer',
+    });
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { id: 'prompt-id', command: 'prompt' },
+    });
+    consumeRequest(engine, 'steering-mode-id', 'set_steering_mode', {
+      mode: 'one-at-a-time',
+    });
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { command: 'set_steering_mode' },
+    });
+    consumeRequest(engine, 'follow-up-mode-id', 'set_follow_up_mode', {
+      mode: 'all',
+    });
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: { command: 'set_follow_up_mode' },
+    });
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: {
+        type: 'queue_update',
+        steering: ['Prioritize the tests'],
+        followUp: ['Then summarize the result'],
+      },
+    });
+    consumeRequest(engine, 'clear-queue-id', 'clear_queue');
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: {
+        id: 'clear-queue-id',
+        command: 'clear_queue',
+        data: {
+          steering: ['Prioritize the tests'],
+          followUp: ['Then summarize the result'],
+        },
+      },
+    });
+    engine.verifyComplete();
+  });
+
   it('captures dynamic request ids and correlates a delayed response to the right request', () => {
     const engine = new PiScenarioEngine(
       definePiScenario({
@@ -720,6 +833,53 @@ describe('PiScenarioEngine', () => {
         id: 'generated-prompt-id',
         command: 'prompt',
         success: true,
+      },
+    });
+    engine.verifyComplete();
+  });
+
+  it('returns a correlated failed queue prompt response', () => {
+    const engine = new PiScenarioEngine(
+      definePiScenario({
+        metadata: {
+          name: 'rejected-queue-prompt',
+          purpose: 'Exercise failed Pi queue admissions.',
+          qualityRule: 'Failure locality',
+          schemaVersion: 1,
+        },
+        runtimes: [{ key: 'main', generation: 1 }],
+        steps: [
+          {
+            kind: 'request',
+            runtime: 'main',
+            capture: 'queued',
+            match: {
+              type: 'prompt',
+              message: 'Keep this',
+              streamingBehavior: 'steer',
+            },
+          },
+          {
+            kind: 'response',
+            request: 'queued',
+            command: 'prompt',
+            success: false,
+            error: 'Simulated rejection',
+          },
+        ],
+      }),
+    );
+    engine.bindRuntime('main', 'runtime-dynamic-47');
+    consumeRequest(engine, 'queued-id', 'prompt', {
+      message: 'Keep this',
+      streamingBehavior: 'steer',
+    });
+    expect(takeRequiredOutput(engine)).toMatchObject({
+      value: {
+        id: 'queued-id',
+        command: 'prompt',
+        success: false,
+        error: 'Simulated rejection',
       },
     });
     engine.verifyComplete();

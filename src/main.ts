@@ -35,6 +35,18 @@ void loadAdminMode();
 
 async function mountApp(): Promise<void> {
   const fixture = new URLSearchParams(window.location.search).get('fixture');
+  if (import.meta.env.DEV && fixture === 'queue-rpc-preview' && !isTauri()) {
+    const [{ default: installBrowserSandbox }, { default: QueueRpcPreview }] =
+      await Promise.all([
+        import('./dev/browser-sandbox'),
+        import('./dev/QueueRpcPreview.vue'),
+      ]);
+    installBrowserSandbox(true);
+    const app = createApp(QueueRpcPreview);
+    app.config.errorHandler = vueErrorHandler;
+    app.mount('#app');
+    return;
+  }
   if (import.meta.env.DEV && fixture === 'quit-confirmation') {
     const { default: QuitConfirmationFixture } =
       await import('./dev/QuitConfirmationFixture.vue');

@@ -10,6 +10,13 @@ import type { CommandOption } from '../lib/commands';
 import { errorCopy, feedbackTitle } from '../lib/error-copy';
 import { scopeModels } from '../lib/pi/model-scope';
 import type { ModelOption, ThinkingLevel } from '../lib/pi/model-scope';
+import {
+  emptyQueue,
+  queueHasWork,
+  visibleQueue,
+  type QueueSnapshot,
+  type QueueSubmission,
+} from '../lib/pi/queue';
 import type {
   HistoryLayer,
   LocalError,
@@ -238,6 +245,15 @@ interface SessionController {
   commandsLoaded: boolean;
   pendingPrompt?: PendingPrompt;
   submittedPrompt?: SubmittedPrompt;
+  queue: QueueSnapshot;
+  queueVersion: number;
+  queueSubmissions: QueueSubmission[];
+  queueSteeringMode: string;
+  queueFollowUpMode: string;
+  queuePreparing: boolean;
+  queueClearing: boolean;
+  queueFeedback: string;
+  queueFailedDrafts: string[];
   pendingSessionRename?: PendingSessionRename;
   /** Advances whenever a name notification or optimistic rename invalidates older reads. */
   sessionNameRevision: number;
@@ -392,6 +408,10 @@ function sessionWorkInProgress(controller: SessionController): boolean {
     controller.promptSubmitting ||
     Boolean(controller.pendingPrompt) ||
     Boolean(controller.submittedPrompt) ||
+    controller.queuePreparing ||
+    controller.queueClearing ||
+    controller.queueFailedDrafts.length > 0 ||
+    queueHasWork(controller.queue, controller.queueSubmissions) ||
     controllerHasPendingDialog(controller)
   );
 }
@@ -550,6 +570,43 @@ const activeFeedback = computed(() => {
   );
 });
 const streaming = computed(() => activeController.value?.streaming === true);
+const activeQueue = computed(() => {
+  const controller = activeController.value;
+  return controller
+    ? visibleQueue(controller.queue, controller.queueSubmissions)
+    : emptyQueue();
+});
+const queueFeedback = computed(
+  () => activeController.value?.queueFeedback ?? '',
+);
+const queueBusy = computed(() =>
+  Boolean(
+    activeController.value?.queueClearing ||
+    activeController.value?.queuePreparing ||
+    activeController.value?.queueSubmissions.length,
+  ),
+);
+const queueFailedDrafts = computed(
+  () => activeController.value?.queueFailedDrafts ?? [],
+);
+const canQueue = computed(() => {
+  const controller = activeController.value;
+  return Boolean(
+    controller &&
+    canDraft.value &&
+    controller.ready &&
+    !controller.phantom &&
+    controller.streaming &&
+    !controller.stopping &&
+    !controller.compacting &&
+    !controller.compactionReconciliationPending &&
+    !controller.starting &&
+    !controller.pendingPrompt &&
+    !controller.submittedPrompt &&
+    !controller.queueClearing &&
+    !controller.remoteDisconnected,
+  );
+});
 const compacting = computed(() => activeController.value?.compacting === true);
 const stopping = computed(() => activeController.value?.stopping === true);
 const promptSubmitting = computed(
@@ -881,14 +938,48 @@ function workspaceContainsSession(controller: SessionController): boolean {
   );
 }
 
+const interruptedQueueDrafts = new Map<
+  string,
+  { drafts: string[]; lostQueuedMessages: boolean }
+>();
+
+function queueRecoveryKey(projectPath: string, sessionId: string): string {
+  return `${projectPath}\u0000${sessionId}`;
+}
+
+function stashInterruptedQueueDrafts(
+  controller: SessionController,
+  drafts: string[],
+  lostQueuedMessages = false,
+): void {
+  if ((!drafts.length && !lostQueuedMessages) || !controller.sessionId) return;
+  const key = queueRecoveryKey(controller.projectPath, controller.sessionId);
+  const previous = interruptedQueueDrafts.get(key);
+  interruptedQueueDrafts.set(key, {
+    drafts: [...(previous?.drafts ?? []), ...drafts],
+    lostQueuedMessages: Boolean(
+      previous?.lostQueuedMessages || lostQueuedMessages,
+    ),
+  });
+}
+
 function ensureController(
   project: ProjectSummary,
   session: SessionSummary,
 ): SessionController {
-  return (
+  const controller =
     controllerForSession(project.path, session.id) ??
-    createController(project, session, nextControllerKey())
-  );
+    createController(project, session, nextControllerKey());
+  const key = queueRecoveryKey(project.path, session.id);
+  const recovered = interruptedQueueDrafts.get(key);
+  if (recovered) {
+    controller.queueFailedDrafts.push(...recovered.drafts);
+    controller.queueFeedback = recovered.lostQueuedMessages
+      ? 'Pending messages were lost when Pi switched sessions. They were not resent.'
+      : 'Review unsent messages before retrying.';
+    interruptedQueueDrafts.delete(key);
+  }
+  return controller;
 }
 
 function inheritControllerSettings(
@@ -996,6 +1087,15 @@ function createController(
     commandsLoaded: false,
     pendingPrompt: undefined,
     submittedPrompt: undefined,
+    queue: emptyQueue(),
+    queueVersion: 0,
+    queueSubmissions: [],
+    queueSteeringMode: '',
+    queueFollowUpMode: '',
+    queuePreparing: false,
+    queueClearing: false,
+    queueFeedback: '',
+    queueFailedDrafts: [],
     pendingSessionRename: undefined,
     sessionNameRevision: 0,
     sessionNameStateRequestId: '',
@@ -1492,6 +1592,11 @@ export {
   retryPresentation,
   activeFeedback,
   streaming,
+  activeQueue,
+  queueFeedback,
+  queueBusy,
+  queueFailedDrafts,
+  canQueue,
   compacting,
   stopping,
   promptSubmitting,
@@ -1530,6 +1635,7 @@ export {
   createPhantomSession,
   workspaceContainsSession,
   ensureController,
+  stashInterruptedQueueDrafts,
   inheritControllerSettings,
   createController,
   controllerForSession,
