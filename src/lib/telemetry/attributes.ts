@@ -162,6 +162,9 @@ const PI_RPC_METHODS = [
   'set_thinking_level',
   'set_session_name',
   'prompt',
+  'set_steering_mode',
+  'set_follow_up_mode',
+  'clear_queue',
   'abort',
   'extension_ui_response',
 ] as const;

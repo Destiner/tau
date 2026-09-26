@@ -34,6 +34,7 @@ import {
   setWorkspaceError,
   setControllerLifecycle,
   state,
+  stashInterruptedQueueDrafts,
   touchController,
   workspaceContainsSession,
   type EphemeralSession,
@@ -59,6 +60,13 @@ import { describePiError, retryPiErrorMessage } from './error';
 import type { ModelOption } from './model-scope';
 import { piOwnerArgs } from './ownership';
 import {
+  emptyQueue,
+  parseQueueSnapshot,
+  queueHasWork,
+  type QueueKind,
+  type QueueSubmission,
+} from './queue';
+import {
   asRecord,
   contentText,
   hydrateTranscript,
@@ -79,6 +87,265 @@ import {
 } from './transcript';
 
 const materializationVerificationRetryDelays = [250, 750, 1_500];
+
+const QUEUE_REQUEST_TIMEOUT_MS = 8_000;
+interface QueueWaiter {
+  controller: SessionController;
+  generation: number;
+  sessionId: string;
+  sessionPath: string;
+  method: string;
+  resolve: (result: 'ok' | 'rejected' | 'uncertain') => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+const queueWaiters = new Map<string, QueueWaiter>();
+const queuePreparations = new Map<string, Promise<boolean>>();
+
+function queueIdentityCurrent(
+  controller: SessionController,
+  generation: number,
+  sessionId: string,
+  sessionPath: string,
+): boolean {
+  return (
+    !controller.disposed &&
+    controller.generation === generation &&
+    controller.sessionId === sessionId &&
+    controller.sessionPath === sessionPath
+  );
+}
+
+async function queueRpc(
+  controller: SessionController,
+  request: Record<string, unknown>,
+): Promise<'ok' | 'rejected' | 'uncertain'> {
+  const id = stringValue(request.id);
+  const method = stringValue(request.type);
+  return new Promise((resolve) => {
+    let finished = false;
+    const complete = (result: 'ok' | 'rejected' | 'uncertain'): void => {
+      if (finished) return;
+      finished = true;
+      const waiter = queueWaiters.get(id);
+      if (waiter?.resolve === complete) queueWaiters.delete(id);
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      endPendingRpcSpan(
+        rpcSpanKey(controller.runtimeId, controller.generation, id),
+        'timeout',
+      );
+      complete('uncertain');
+    }, QUEUE_REQUEST_TIMEOUT_MS);
+    queueWaiters.set(id, {
+      controller,
+      generation: controller.generation,
+      sessionId: controller.sessionId,
+      sessionPath: controller.sessionPath,
+      method,
+      resolve: complete,
+      timer,
+    });
+    void rpc(controller, request).catch(() => complete('rejected'));
+  });
+}
+
+function resetQueue(
+  controller: SessionController,
+  interrupted = false,
+  replacement = false,
+): void {
+  const hadWork = queueHasWork(controller.queue, controller.queueSubmissions);
+  if (replacement) {
+    stashInterruptedQueueDrafts(
+      controller,
+      [
+        ...controller.queueFailedDrafts,
+        ...controller.queueSubmissions.map((submission) => submission.draft),
+      ],
+      controller.queue.steering.length > 0 ||
+        controller.queue.followUp.length > 0,
+    );
+    controller.queueFailedDrafts = [];
+  }
+  for (const [id, waiter] of queueWaiters) {
+    if (
+      waiter.controller.key !== controller.key ||
+      waiter.controller.runtimeId !== controller.runtimeId
+    )
+      continue;
+    queueWaiters.delete(id);
+    endPendingRpcSpan(
+      rpcSpanKey(controller.runtimeId, waiter.generation, id),
+      'abandoned_replacement',
+    );
+    waiter.resolve('uncertain');
+  }
+  queuePreparations.delete(controller.key);
+  if (!replacement) {
+    for (const submission of controller.queueSubmissions)
+      recoverQueueDraft(controller, submission.draft);
+  }
+  controller.queue = emptyQueue();
+  controller.queueVersion += 1;
+  controller.queueSubmissions = [];
+  controller.queueSteeringMode = '';
+  controller.queueFollowUpMode = '';
+  controller.queuePreparing = false;
+  controller.queueClearing = false;
+  if (replacement) controller.queueFeedback = '';
+  else if (interrupted && hadWork)
+    controller.queueFeedback =
+      'Pending messages were lost when Pi disconnected. They were not resent.';
+}
+
+function recoverQueueDraft(controller: SessionController, draft: string): void {
+  if (!controller.draft) controller.draft = draft;
+  else controller.queueFailedDrafts.push(draft);
+}
+
+async function prepareQueueModes(
+  controller: SessionController,
+): Promise<boolean> {
+  const existing = queuePreparations.get(controller.key);
+  if (existing) return existing;
+  const generation = controller.generation;
+  const sessionId = controller.sessionId;
+  const sessionPath = controller.sessionPath;
+  controller.queuePreparing = true;
+  const prepare = (async (): Promise<boolean> => {
+    for (const [field, method, mode] of [
+      ['queueSteeringMode', 'set_steering_mode', 'all'],
+      ['queueFollowUpMode', 'set_follow_up_mode', 'one-at-a-time'],
+    ] as const) {
+      if (controller[field] === mode) continue;
+      const result = await queueRpc(controller, {
+        id: nextRequestId('queue-mode'),
+        type: method,
+        mode,
+      });
+      if (
+        !queueIdentityCurrent(controller, generation, sessionId, sessionPath) ||
+        result !== 'ok'
+      )
+        return false;
+      controller[field] = mode;
+    }
+    return true;
+  })().finally(() => {
+    if (queuePreparations.get(controller.key) !== prepare) return;
+    if (queueIdentityCurrent(controller, generation, sessionId, sessionPath))
+      controller.queuePreparing = false;
+    queuePreparations.delete(controller.key);
+  });
+  queuePreparations.set(controller.key, prepare);
+  return prepare;
+}
+
+async function submitQueuedMessage(
+  controller: SessionController,
+  draft: string,
+  kind: QueueKind,
+): Promise<void> {
+  const text = draft.trim();
+  if (
+    !text ||
+    !controller.ready ||
+    !controller.streaming ||
+    controller.stopping ||
+    controller.compacting ||
+    controller.queueClearing ||
+    controller.disposed
+  )
+    return;
+  const generation = controller.generation;
+  const sessionId = controller.sessionId;
+  const sessionPath = controller.sessionPath;
+  const id = nextRequestId('queue-prompt');
+  const key = kind === 'steer' ? 'steering' : 'followUp';
+  const submission: QueueSubmission = {
+    id,
+    text,
+    draft,
+    kind,
+    version: controller.queueVersion,
+    baselineCount: controller.queue[key].filter((item) => item === text).length,
+  };
+  controller.queueSubmissions.push(submission);
+  controller.draft = '';
+  controller.queueFeedback = 'Submitting…';
+  const prepared = await prepareQueueModes(controller);
+  if (!queueIdentityCurrent(controller, generation, sessionId, sessionPath))
+    return;
+  if (!prepared) {
+    controller.queueSubmissions = controller.queueSubmissions.filter(
+      (item) => item.id !== submission.id,
+    );
+    recoverQueueDraft(controller, draft);
+    controller.queueFeedback =
+      'Could not prepare queue delivery. Check the Pi version and try again.';
+    return;
+  }
+  const result = await queueRpc(controller, {
+    id,
+    type: 'prompt',
+    message: text,
+    streamingBehavior: kind,
+  });
+  if (!queueIdentityCurrent(controller, generation, sessionId, sessionPath))
+    return;
+  controller.queueSubmissions = controller.queueSubmissions.filter(
+    (item) => item.id !== submission.id,
+  );
+  if (result === 'rejected') {
+    recoverQueueDraft(controller, draft);
+    controller.queueFeedback = 'Message was not queued. Try again.';
+  } else if (result === 'uncertain') {
+    controller.queueFailedDrafts.push(draft);
+    controller.queueFeedback =
+      'Queue confirmation was lost. Check the transcript before resending.';
+  } else
+    controller.queueFeedback = controller.queueSubmissions.length
+      ? 'Submitting…'
+      : controller.queueFailedDrafts.length
+        ? 'Review unsent messages before retrying.'
+        : '';
+}
+
+async function clearPendingQueue(controller: SessionController): Promise<void> {
+  if (controller.queueClearing || !controller.generation || controller.disposed)
+    return;
+  if (controller.queuePreparing || controller.queueSubmissions.length) {
+    controller.queueFeedback =
+      'Wait for queued submissions to finish before clearing.';
+    return;
+  }
+  const generation = controller.generation;
+  const sessionId = controller.sessionId;
+  const sessionPath = controller.sessionPath;
+  controller.queueClearing = true;
+  controller.queueFeedback = 'Clearing…';
+  const version = controller.queueVersion;
+  const result = await queueRpc(controller, {
+    id: nextRequestId('clear-queue'),
+    type: 'clear_queue',
+  });
+  if (!queueIdentityCurrent(controller, generation, sessionId, sessionPath))
+    return;
+  controller.queueClearing = false;
+  if (result === 'ok') {
+    if (controller.queueVersion === version) {
+      controller.queue = emptyQueue();
+      controller.queueVersion += 1;
+    }
+    controller.queueFeedback = '';
+  } else
+    controller.queueFeedback =
+      result === 'uncertain'
+        ? 'Clear All was not confirmed. Check the queue before trying again.'
+        : 'Could not clear the queue. Upgrade Pi if this command is unavailable, then retry.';
+}
 
 interface MaterializationVerificationRetry {
   generation: number;
@@ -166,6 +433,7 @@ async function startController(
   parentContext?: TraceContext,
 ): Promise<void> {
   if (controller.starting || controller.disposed) return;
+  resetQueue(controller, controller.generation > 0);
   setControllerLifecycle(
     controller,
     {
@@ -1178,6 +1446,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
       flushStreamAggregate(controller.runtimeId, controller.generation);
       discardControllerDialogs(controller);
       controller.retry = undefined;
+      resetQueue(controller, true);
       controller.generation = event.generation;
     }
     return;
@@ -1286,6 +1555,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
       cancelPendingPrompt(controller, message || 'The Pi process stopped.');
     }
     settleInterruptedSubmittedPrompt(controller);
+    resetQueue(controller, true);
     for (const entry of controller.messages) {
       if (entry.kind === 'tool' && entry.toolRunning) entry.toolRunning = false;
     }
@@ -1354,6 +1624,14 @@ async function handleRpc(
   }
   if (type === 'response') {
     await handleResponse(controller, event);
+    return;
+  }
+  if (type === 'queue_update') {
+    const snapshot = parseQueueSnapshot(event);
+    if (snapshot && controller.ready) {
+      controller.queue = snapshot;
+      controller.queueVersion += 1;
+    }
     return;
   }
   if (type === 'agent_start') {
@@ -1854,6 +2132,34 @@ async function handleResponse(
     });
   }
   const responseContext = pendingResult.context;
+  const queueWaiter = queueWaiters.get(responseId);
+  if (
+    queueWaiter &&
+    queueWaiter.controller.key === controller.key &&
+    queueWaiter.controller.runtimeId === controller.runtimeId &&
+    queueWaiter.method === command
+  ) {
+    queueWaiter.resolve(
+      queueIdentityCurrent(
+        controller,
+        queueWaiter.generation,
+        queueWaiter.sessionId,
+        queueWaiter.sessionPath,
+      )
+        ? response.success === true
+          ? 'ok'
+          : 'rejected'
+        : 'uncertain',
+    );
+    return;
+  }
+  if (
+    command === 'set_steering_mode' ||
+    command === 'set_follow_up_mode' ||
+    command === 'clear_queue' ||
+    (command === 'prompt' && responseId.startsWith('queue-prompt'))
+  )
+    return;
   const sessionNameRevisionAtResponse = controller.sessionNameRevision;
   const responseDispatchStillCurrent = Boolean(
     pendingResult.dispatchSnapshot &&
@@ -2325,6 +2631,7 @@ async function handleResponse(
     clearRemoteConnectionWatch(controller);
     finishRemoteConnection(controller);
 
+    if (sessionChanged) resetQueue(controller, true, true);
     if (resolvesPending && pending) {
       materializePendingSession(controller, piSessionId, piSessionPath);
     } else if (piSessionId && !controller.phantom && !unsavedSession) {
@@ -2381,6 +2688,8 @@ async function handleResponse(
         void requestSessionNameRefresh(controller);
       }
     }
+    controller.queueSteeringMode = stringValue(data.steeringMode);
+    controller.queueFollowUpMode = stringValue(data.followUpMode);
     const materializationBarrierForCurrentSession =
       resolvesMaterializationBarrier && !sessionChanged && !unsavedSession;
     if (materializationBarrierForCurrentSession) {
@@ -3875,6 +4184,8 @@ function removeEmptyActivePhantom(): void {
     controller.hasPiTranscript ||
     controller.postSettlementHydration ||
     controller.draft.trim() ||
+    queueHasWork(controller.queue, controller.queueSubmissions) ||
+    controller.queueFailedDrafts.length > 0 ||
     (controller.working && !unansweredUnsavedCommand) ||
     controllerHasPendingDialog(controller)
   ) {
@@ -3947,6 +4258,9 @@ function canReleaseRuntime(controller: SessionController): boolean {
     !controller.starting &&
     !controller.syncing &&
     !controller.pendingSettingRequestId &&
+    !queueHasWork(controller.queue, controller.queueSubmissions) &&
+    !controller.queuePreparing &&
+    !controller.queueClearing &&
     !controller.pendingSessionRename &&
     !controller.sessionNameStateRequestId &&
     !controllerHasPendingDialog(controller) &&
@@ -3973,6 +4287,8 @@ async function discardReleasedEmptySession(
     controller.materializationVerified ||
     controller.remoteDisconnected ||
     controller.draft.trim() ||
+    queueHasWork(controller.queue, controller.queueSubmissions) ||
+    controller.queueFailedDrafts.length > 0 ||
     controllerHasPendingDialog(controller)
   ) {
     return false;
@@ -4046,6 +4362,7 @@ async function stopControllerProcess(
   discardControllerDialogs(controller, generation);
   abandonPendingRpcSpans(controller.runtimeId, generation, 'abandoned_stop');
   flushStreamAggregate(controller.runtimeId, generation);
+  resetQueue(controller, true);
   controller.generation = 0;
   controller.retry = undefined;
   controller.compacting = false;
@@ -4099,6 +4416,8 @@ export {
   refreshModelScope,
   requestBootstrap,
   rpc,
+  submitQueuedMessage,
+  clearPendingQueue,
   submitExtensionDialog,
   cancelExtensionDialog,
   respondToExtensionDialog,

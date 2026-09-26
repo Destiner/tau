@@ -1,0 +1,377 @@
+diff --git a/dist/index.js b/dist/index.js
+index e7e087bcb6f29d0d8f36cd558e0183bc0f162fcb..4f504ebd921c5b7ab432633198c0dfaa5c82105a 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -432,17 +432,17 @@ function parseFlowchart(lines) {
+     }
+     if (line === "end") {
+       const completed = subgraphStack.pop();
+-      if (completed) {
+-        if (subgraphStack.length > 0) {
+-          subgraphStack[subgraphStack.length - 1].children.push(completed);
+-        } else {
+-          graph.subgraphs.push(completed);
+-        }
++      if (!completed) throw new Error("Invalid flowchart statement");
++      if (subgraphStack.length > 0) {
++        subgraphStack[subgraphStack.length - 1].children.push(completed);
++      } else {
++        graph.subgraphs.push(completed);
+       }
+       continue;
+     }
+     parseEdgeLine(line, graph, subgraphStack);
+   }
++  if (subgraphStack.length > 0) throw new Error("Invalid flowchart statement");
+   return graph;
+ }
+ function parseStateDiagram(lines) {
+@@ -598,34 +598,34 @@ var ARROW_REGEX = /^(<)?(-->|-.->|==>|---|-\.-|===)(?:\|([^|]*)\|)?/;
+ var TEXT_ARROW_REGEX = /^(<)?(--|-\.|==)\s+(.+?)\s+(-->|---|\.\->|-\.\-|==>|===)/;
+ var NODE_PATTERNS = [
+   // Triple delimiters (must be first)
+-  { regex: /^([\w-]+)\(\(\((.+?)\)\)\)/, shape: "doublecircle" },
++  { regex: /^([\w-]+)\(\(\((.+?)\)\)\)/, shape: "doublecircle", opener: "(((", closer: ")))" },
+   // A(((text)))
+   // Double delimiters with mixed brackets
+-  { regex: /^([\w-]+)\(\[(.+?)\]\)/, shape: "stadium" },
++  { regex: /^([\w-]+)\(\[(.+?)\]\)/, shape: "stadium", opener: "([", closer: "])" },
+   // A([text])
+-  { regex: /^([\w-]+)\(\((.+?)\)\)/, shape: "circle" },
++  { regex: /^([\w-]+)\(\((.+?)\)\)/, shape: "circle", opener: "((", closer: "))" },
+   // A((text))
+-  { regex: /^([\w-]+)\[\[(.+?)\]\]/, shape: "subroutine" },
++  { regex: /^([\w-]+)\[\[(.+?)\]\]/, shape: "subroutine", opener: "[[", closer: "]]" },
+   // A[[text]]
+-  { regex: /^([\w-]+)\[\((.+?)\)\]/, shape: "cylinder" },
++  { regex: /^([\w-]+)\[\((.+?)\)\]/, shape: "cylinder", opener: "[(", closer: ")]" },
+   // A[(text)]
+   // Trapezoid variants — must come before plain [text]
+-  { regex: /^([\w-]+)\[\/(.+?)\\\]/, shape: "trapezoid" },
++  { regex: /^([\w-]+)\[\/(.+?)\\\]/, shape: "trapezoid", opener: "[/", closer: "\\]" },
+   // A[/text\]
+-  { regex: /^([\w-]+)\[\\(.+?)\/\]/, shape: "trapezoid-alt" },
++  { regex: /^([\w-]+)\[\\(.+?)\/\]/, shape: "trapezoid-alt", opener: "[\\", closer: "/]" },
+   // A[\text/]
+   // Asymmetric flag shape
+-  { regex: /^([\w-]+)>(.+?)\]/, shape: "asymmetric" },
++  { regex: /^([\w-]+)>(.+?)\]/, shape: "asymmetric", opener: ">", closer: "]" },
+   // A>text]
+   // Double curly braces (hexagon) — must come before single {text}
+-  { regex: /^([\w-]+)\{\{(.+?)\}\}/, shape: "hexagon" },
++  { regex: /^([\w-]+)\{\{(.+?)\}\}/, shape: "hexagon", opener: "{{", closer: "}}" },
+   // A{{text}}
+   // Single-char delimiters (last — most common, least specific)
+-  { regex: /^([\w-]+)\[(.+?)\]/, shape: "rectangle" },
++  { regex: /^([\w-]+)\[(.+?)\]/, shape: "rectangle", opener: "[", closer: "]" },
+   // A[text]
+-  { regex: /^([\w-]+)\((.+?)\)/, shape: "rounded" },
++  { regex: /^([\w-]+)\((.+?)\)/, shape: "rounded", opener: "(", closer: ")" },
+   // A(text)
+-  { regex: /^([\w-]+)\{(.+?)\}/, shape: "diamond" }
++  { regex: /^([\w-]+)\{(.+?)\}/, shape: "diamond", opener: "{", closer: "}" }
+   // A{text}
+ ];
+ var BARE_NODE_REGEX = /^([\w-]+)/;
+@@ -633,7 +633,7 @@ var CLASS_SHORTHAND_REGEX = /^:::([\w][\w-]*)/;
+ function parseEdgeLine(line, graph, subgraphStack) {
+   let remaining = line.trim();
+   const firstGroup = consumeNodeGroup(remaining, graph, subgraphStack);
+-  if (!firstGroup || firstGroup.ids.length === 0) return;
++  if (!firstGroup || firstGroup.ids.length === 0) throw new Error("Invalid flowchart statement");
+   remaining = firstGroup.remaining.trim();
+   let prevGroupIds = firstGroup.ids;
+   while (remaining.length > 0) {
+@@ -652,7 +652,7 @@ function parseEdgeLine(line, graph, subgraphStack) {
+       hasArrowEnd = arrowOp.endsWith(">");
+     } else {
+       const textMatch = remaining.match(TEXT_ARROW_REGEX);
+-      if (!textMatch) break;
++      if (!textMatch) throw new Error("Invalid flowchart statement");
+       hasArrowStart = Boolean(textMatch[1]);
+       const rawLabel = textMatch[3].trim();
+       edgeLabel = rawLabel ? normalizeBrTags(rawLabel) : void 0;
+@@ -663,7 +663,7 @@ function parseEdgeLine(line, graph, subgraphStack) {
+       hasArrowEnd = closeOp.endsWith(">");
+     }
+     const nextGroup = consumeNodeGroup(remaining, graph, subgraphStack);
+-    if (!nextGroup || nextGroup.ids.length === 0) break;
++    if (!nextGroup || nextGroup.ids.length === 0) throw new Error("Invalid flowchart statement");
+     remaining = nextGroup.remaining.trim();
+     for (const sourceId of prevGroupIds) {
+       for (const targetId of nextGroup.ids) {
+@@ -688,7 +688,7 @@ function consumeNodeGroup(text, graph, subgraphStack) {
+   while (remaining.startsWith("&")) {
+     remaining = remaining.slice(1).trim();
+     const next = consumeNode(remaining, graph, subgraphStack);
+-    if (!next) break;
++    if (!next) throw new Error("Invalid flowchart statement");
+     ids.push(next.id);
+     remaining = next.remaining.trim();
+   }
+@@ -697,14 +697,32 @@ function consumeNodeGroup(text, graph, subgraphStack) {
+ function consumeNode(text, graph, subgraphStack) {
+   let id = null;
+   let remaining = text;
+-  for (const { regex, shape } of NODE_PATTERNS) {
+-    const match = text.match(regex);
+-    if (match) {
+-      id = match[1];
+-      const label = normalizeBrTags(match[2]);
+-      registerNode(graph, subgraphStack, { id, label, shape });
+-      remaining = text.slice(match[0].length);
+-      break;
++  const prefix = text.match(BARE_NODE_REGEX);
++  if (prefix) {
++    const openerOffset = prefix[0].length;
++    const pattern = NODE_PATTERNS.find(({ opener }) => text.startsWith(opener, openerOffset));
++    if (pattern) {
++      id = prefix[0];
++      const start = openerOffset + pattern.opener.length;
++      let end;
++      let rawLabel;
++      if (text[start] === '"') {
++        const quote = text.indexOf('"', start + 1);
++        if (quote < 0 || !text.startsWith(pattern.closer, quote + 1)) {
++          throw new Error("Invalid flowchart statement");
++        }
++        rawLabel = text.slice(start + 1, quote);
++        end = quote + 1 + pattern.closer.length;
++      } else {
++        const match = text.match(pattern.regex);
++        if (!match) throw new Error("Invalid flowchart statement");
++        rawLabel = match[2];
++        end = match[0].length;
++      }
++      registerNode(graph, subgraphStack, { id, label: normalizeBrTags(rawLabel), shape: pattern.shape });
++      remaining = text.slice(end);
++    } else if (/^[\[({>]/.test(text[openerOffset] ?? '')) {
++      throw new Error("Invalid flowchart statement");
+     }
+   }
+   if (id === null) {
+@@ -726,11 +744,22 @@ function consumeNode(text, graph, subgraphStack) {
+   return { id, remaining };
+ }
+ function registerNode(graph, subgraphStack, node) {
+-  const isNew = !graph.nodes.has(node.id);
+-  if (isNew) {
+-    graph.nodes.set(node.id, node);
++  graph.nodes.set(node.id, node);
++  if (subgraphStack.length > 0) {
++    const owner = [...graph.subgraphs, ...subgraphStack].map(sg => findOwner(sg, node.id)).find(sg => sg !== void 0);
++    if (owner && owner !== subgraphStack[subgraphStack.length - 1]) {
++      throw new Error("Conflicting flowchart subgraph ownership");
++    }
++    trackInSubgraph(subgraphStack, node.id);
++  }
++}
++function findOwner(subgraph, id) {
++  if (subgraph.nodeIds.includes(id)) return subgraph;
++  for (const child of subgraph.children) {
++    const owner = findOwner(child, id);
++    if (owner) return owner;
+   }
+-  trackInSubgraph(subgraphStack, node.id);
++  return void 0;
+ }
+ function trackInSubgraph(subgraphStack, nodeId) {
+   if (subgraphStack.length > 0) {
+diff --git a/src/parser.ts b/src/parser.ts
+index 685835e3f1a9a480370ec8e1ff40b7356a3ed3c1..612764f1674f60d12af22497bf7d9a006205f7b0 100644
+--- a/src/parser.ts
++++ b/src/parser.ts
+@@ -147,12 +147,11 @@ function parseFlowchart(lines: string[]): MermaidGraph {
+     // --- subgraph end ---
+     if (line === 'end') {
+       const completed = subgraphStack.pop()
+-      if (completed) {
+-        if (subgraphStack.length > 0) {
+-          subgraphStack[subgraphStack.length - 1]!.children.push(completed)
+-        } else {
+-          graph.subgraphs.push(completed)
+-        }
++      if (!completed) throw new Error('Invalid flowchart statement')
++      if (subgraphStack.length > 0) {
++        subgraphStack[subgraphStack.length - 1]!.children.push(completed)
++      } else {
++        graph.subgraphs.push(completed)
+       }
+       continue
+     }
+@@ -161,6 +160,7 @@ function parseFlowchart(lines: string[]): MermaidGraph {
+     parseEdgeLine(line, graph, subgraphStack)
+   }
+-
++
++  if (subgraphStack.length > 0) throw new Error('Invalid flowchart statement')
+   return graph
+ }
+-
++
+@@ -410,30 +410,30 @@ const TEXT_ARROW_REGEX = /^(<)?(--|-\.|==)\s+(.+?)\s+(-->|---|\.\->|-\.\-|==>|==
+  * Node shape patterns — ordered from most specific delimiters to least.
+  * Multi-char delimiters must be tried before single-char to avoid false matches.
+  */
+-const NODE_PATTERNS: Array<{ regex: RegExp; shape: NodeShape }> = [
++const NODE_PATTERNS: Array<{ opener: string; closer: string; regex: RegExp; shape: NodeShape }> = [
+   // Triple delimiters (must be first)
+-  { regex: /^([\w-]+)\(\(\((.+?)\)\)\)/, shape: 'doublecircle' },  // A(((text)))
++  { opener: '(((', closer: ')))', regex: /^([\w-]+)\(\(\((.+?)\)\)\)/, shape: 'doublecircle' },  // A(((text)))
+-
++
+   // Double delimiters with mixed brackets
+-  { regex: /^([\w-]+)\(\[(.+?)\]\)/,     shape: 'stadium' },       // A([text])
+-  { regex: /^([\w-]+)\(\((.+?)\)\)/,     shape: 'circle' },        // A((text))
+-  { regex: /^([\w-]+)\[\[(.+?)\]\]/,     shape: 'subroutine' },    // A[[text]]
+-  { regex: /^([\w-]+)\[\((.+?)\)\]/,     shape: 'cylinder' },      // A[(text)]
++  { opener: '([', closer: '])', regex: /^([\w-]+)\(\[(.+?)\]\)/, shape: 'stadium' },       // A([text])
++  { opener: '((', closer: '))', regex: /^([\w-]+)\(\((.+?)\)\)/, shape: 'circle' },        // A((text))
++  { opener: '[[', closer: ']]', regex: /^([\w-]+)\[\[(.+?)\]\]/, shape: 'subroutine' },    // A[[text]]
++  { opener: '[(', closer: ')]', regex: /^([\w-]+)\[\((.+?)\)\]/, shape: 'cylinder' },      // A[(text)]
+-
++
+   // Trapezoid variants — must come before plain [text]
+-  { regex: /^([\w-]+)\[\/(.+?)\\\]/,     shape: 'trapezoid' },     // A[/text\]
+-  { regex: /^([\w-]+)\[\\(.+?)\/\]/,     shape: 'trapezoid-alt' }, // A[\text/]
++  { opener: '[/', closer: '\\]', regex: /^([\w-]+)\[\/(.+?)\\\]/, shape: 'trapezoid' },     // A[/text\]
++  { opener: '[\\', closer: '/]', regex: /^([\w-]+)\[\\(.+?)\/\]/, shape: 'trapezoid-alt' }, // A[\text/]
+-
++
+   // Asymmetric flag shape
+-  { regex: /^([\w-]+)>(.+?)\]/,          shape: 'asymmetric' },    // A>text]
++  { opener: '>', closer: ']', regex: /^([\w-]+)>(.+?)\]/, shape: 'asymmetric' },    // A>text]
+-
++
+   // Double curly braces (hexagon) — must come before single {text}
+-  { regex: /^([\w-]+)\{\{(.+?)\}\}/,     shape: 'hexagon' },       // A{{text}}
++  { opener: '{{', closer: '}}', regex: /^([\w-]+)\{\{(.+?)\}\}/, shape: 'hexagon' },       // A{{text}}
+-
++
+   // Single-char delimiters (last — most common, least specific)
+-  { regex: /^([\w-]+)\[(.+?)\]/,         shape: 'rectangle' },     // A[text]
+-  { regex: /^([\w-]+)\((.+?)\)/,         shape: 'rounded' },       // A(text)
+-  { regex: /^([\w-]+)\{(.+?)\}/,         shape: 'diamond' },       // A{text}
++  { opener: '[', closer: ']', regex: /^([\w-]+)\[(.+?)\]/, shape: 'rectangle' },     // A[text]
++  { opener: '(', closer: ')', regex: /^([\w-]+)\((.+?)\)/, shape: 'rounded' },       // A(text)
++  { opener: '{', closer: '}', regex: /^([\w-]+)\{(.+?)\}/, shape: 'diamond' },       // A{text}
+ ]
+-
++
+ /** Regex for a bare node reference (just an ID, no shape brackets) */
+@@ -456,7 +456,7 @@ function parseEdgeLine(
+-
++
+   // Parse the first node group (possibly with & separators)
+   const firstGroup = consumeNodeGroup(remaining, graph, subgraphStack)
+-  if (!firstGroup || firstGroup.ids.length === 0) return
++  if (!firstGroup || firstGroup.ids.length === 0) throw new Error('Invalid flowchart statement')
+-
++
+   remaining = firstGroup.remaining.trim()
+   let prevGroupIds = firstGroup.ids
+@@ -480,7 +480,7 @@ function parseEdgeLine(
+     } else {
+       // Fallback: text-embedded label syntax (-- Yes -->, -. Maybe .->, == Sure ==>)
+       const textMatch = remaining.match(TEXT_ARROW_REGEX)
+-      if (!textMatch) break
++      if (!textMatch) throw new Error('Invalid flowchart statement')
+       hasArrowStart = Boolean(textMatch[1])
+       const rawLabel = textMatch[3]!.trim()
+       edgeLabel = rawLabel ? normalizeBrTags(rawLabel) : undefined
+@@ -493,7 +493,7 @@ function parseEdgeLine(
+-
++
+     // Parse the next node group
+     const nextGroup = consumeNodeGroup(remaining, graph, subgraphStack)
+-    if (!nextGroup || nextGroup.ids.length === 0) break
++    if (!nextGroup || nextGroup.ids.length === 0) throw new Error('Invalid flowchart statement')
+-
++
+     remaining = nextGroup.remaining.trim()
+-
++
+@@ -539,7 +539,7 @@ function consumeNodeGroup(
+   while (remaining.startsWith('&')) {
+     remaining = remaining.slice(1).trim()
+     const next = consumeNode(remaining, graph, subgraphStack)
+-    if (!next) break
++    if (!next) throw new Error('Invalid flowchart statement')
+     ids.push(next.id)
+     remaining = next.remaining.trim()
+   }
+@@ -566,15 +566,32 @@ function consumeNode(
+   let id: string | null = null
+   let remaining: string = text
+-
++
+-  // Try each node pattern (shape-qualified)
+-  for (const { regex, shape } of NODE_PATTERNS) {
+-    const match = text.match(regex)
+-    if (match) {
+-      id = match[1]!
+-      const label = normalizeBrTags(match[2]!)
+-      registerNode(graph, subgraphStack, { id, label, shape })
+-      remaining = text.slice(match[0].length)
+-      break
++  const prefix = text.match(BARE_NODE_REGEX)
++  if (prefix) {
++    const openerOffset = prefix[0].length
++    const pattern = NODE_PATTERNS.find(({ opener }) => text.startsWith(opener, openerOffset))
++    if (pattern) {
++      id = prefix[0]
++      const start = openerOffset + pattern.opener.length
++      let end: number
++      let rawLabel: string
++      if (text[start] === '"') {
++        const quote = text.indexOf('"', start + 1)
++        if (quote < 0 || !text.startsWith(pattern.closer, quote + 1)) {
++          throw new Error('Invalid flowchart statement')
++        }
++        rawLabel = text.slice(start + 1, quote)
++        end = quote + 1 + pattern.closer.length
++      } else {
++        const match = text.match(pattern.regex)
++        if (!match) throw new Error('Invalid flowchart statement')
++        rawLabel = match[2]!
++        end = match[0].length
++      }
++      registerNode(graph, subgraphStack, { id, label: normalizeBrTags(rawLabel), shape: pattern.shape })
++      remaining = text.slice(end)
++    } else if (/^[\[({>]/.test(text[openerOffset] ?? '')) {
++      throw new Error('Invalid flowchart statement')
+     }
+   }
+-
++
+@@ -610,11 +627,25 @@ function registerNode(
+   subgraphStack: MermaidSubgraph[],
+   node: MermaidNode
+ ): void {
+-  const isNew = !graph.nodes.has(node.id)
+-  if (isNew) {
+-    graph.nodes.set(node.id, node)
++  graph.nodes.set(node.id, node)
++  if (subgraphStack.length > 0) {
++    const owner = [...graph.subgraphs, ...subgraphStack]
++      .map(sg => findOwner(sg, node.id))
++      .find((sg): sg is MermaidSubgraph => sg !== undefined)
++    if (owner && owner !== subgraphStack[subgraphStack.length - 1]) {
++      throw new Error('Conflicting flowchart subgraph ownership')
++    }
++    trackInSubgraph(subgraphStack, node.id)
++  }
++}
++
++function findOwner(subgraph: MermaidSubgraph, id: string): MermaidSubgraph | undefined {
++  if (subgraph.nodeIds.includes(id)) return subgraph
++  for (const child of subgraph.children) {
++    const owner = findOwner(child, id)
++    if (owner) return owner
+   }
+-  trackInSubgraph(subgraphStack, node.id)
++  return undefined
+ }
+-
++
+ /** Add node ID to the innermost subgraph if we're inside one */

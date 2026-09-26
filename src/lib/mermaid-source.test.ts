@@ -52,6 +52,12 @@ for both sides?}
     );
   });
 
+  it('keeps interior closers in quoted multiline labels', () => {
+    expect(adapted('graph TD\r\n  A["first ] and []\r\nsecond"] --> B')).toBe(
+      'graph TD\r\n  A["first ] and []\\nsecond"] --> B',
+    );
+  });
+
   it('adapts multiple multiline nodes in one statement', () => {
     const source = `graph LR
   A[first
@@ -137,12 +143,6 @@ second}`,
     `graph TD
   A[first
 second"still]`,
-    `graph TD
-  A["first
-second]still"]`,
-    `graph TD
-  A["first ] fragment
-second"] --> B`,
     `graph TD
   A[first
 second] trailing text`,
