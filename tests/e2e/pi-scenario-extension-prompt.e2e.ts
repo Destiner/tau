@@ -59,6 +59,9 @@ test('renders a prompt asked of a session that holds nothing yet', async ({
 test('Escape cancels a focused prompt through its originating runtime', async ({
   page,
 }) => {
+  const time = new Date('2026-01-02T12:00:00Z');
+  await page.clock.install({ time });
+  await page.clock.pauseAt(time);
   await page.goto(
     '/?test-scenario=saved-session-extension-prompt-escape-cancellation',
   );

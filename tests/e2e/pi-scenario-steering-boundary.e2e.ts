@@ -2,6 +2,8 @@ import type { Page } from '@playwright/test';
 
 import { expect, test } from './fixtures';
 
+test.use({ pausedClock: true });
+
 const scenarioUrl = '/?test-scenario=saved-session-steering-boundary';
 const initialPrompt = 'Hold the tool turn';
 const steeringMessages = [

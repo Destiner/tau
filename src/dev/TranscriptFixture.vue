@@ -98,6 +98,8 @@ if (remote) {
 
 Source \`src/remote.ts\`
 
+Line reference: src/ranged.ts:42-50
+
 [Encoded file](docs/My%20File.md) · [Local file](file:///tmp/My%20File.txt) · [Invalid file](%zz)
 
 \`\`\`md

@@ -21,7 +21,7 @@ interface MarkdownOptions {
 interface FileReference {
   /** The part of the candidate that forms the reference, line suffix included. */
   text: string;
-  /** The path itself, as written, without any `:line:column` suffix. */
+  /** The path itself, as written, without a numeric line marker. */
   path: string;
 }
 
@@ -73,11 +73,11 @@ const EXPAND_ICON =
 const DIAGRAM_BLOCK = /<div class="diagram"><svg[\s\S]*?<\/svg><\/div>/g;
 
 /**
- * A path embedded in prose, plus a `:line:column` tail. Whitespace ends these
+ * A path embedded in prose, possibly with a numeric line marker. Whitespace ends these
  * candidates; a rooted path that fills its rendered line is handled separately
  * so its spaces and punctuation are unambiguous.
  */
-const PATH_CANDIDATE = /[A-Za-z0-9~._/][A-Za-z0-9~._+@:/-]*/g;
+const PATH_CANDIDATE = /[A-Za-z0-9~._/][A-Za-z0-9~._+@:/-]*(?:–\d+)?/g;
 
 /** Existing links and diagrams are left exactly as written. */
 const OPAQUE_ELEMENTS = new Set(['a', 'pre', 'svg']);
@@ -86,7 +86,7 @@ const APPLE_PLATFORM = /^(?:Mac|iPhone|iPad|iPod)/;
 
 const TAG = /<\/?([A-Za-z][^\s/>]*)[^>]*>/g;
 
-const LINE_SUFFIX = /^(.+?):\d+(?::\d+)?$/;
+const LINE_SUFFIX = /^(.+?):\d+(?::\d+|[-–]\d+)?$/;
 
 const TRAILING_PUNCTUATION = /[.,;:!?]+$/;
 
@@ -396,9 +396,9 @@ function linkTextLine(text: string, copyPaths: boolean): string {
 
     const reference = parseFileReference(candidate);
     if (!reference) return candidate;
-    // Whatever the reference stopped short of is punctuation, not the path.
-    const trailing = candidate.slice(reference.text.length);
-    return fileLink(reference.path, reference.text, copyPaths) + trailing;
+    // Keep the marker and sentence punctuation visible but outside the link.
+    const trailing = candidate.slice(reference.path.length);
+    return fileLink(reference.path, reference.path, copyPaths) + trailing;
   });
 }
 
@@ -449,7 +449,12 @@ function linkStandaloneRootedPath(
 
   const reference = parseFileReference(candidate);
   if (!reference || reference.text !== candidate) return null;
-  return `${leading}${fileLink(reference.path, encodedCandidate, copyPaths)}${trailing}`;
+  const marker = reference.text.slice(reference.path.length);
+  const encodedPath = encodedCandidate.slice(
+    0,
+    encodedCandidate.length - marker.length,
+  );
+  return `${leading}${fileLink(reference.path, encodedPath, copyPaths)}${marker}${trailing}`;
 }
 
 function fileLink(path: string, text: string, copyPath = false): string {
