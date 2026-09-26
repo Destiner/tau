@@ -103,9 +103,7 @@ test('keeps tooltip contents reactive without exposing fixture session IDs', asy
   await row.locator('.session-select').hover();
   const tooltip = page.locator('.ui-tooltip.session-tooltip');
   await expect(tooltip).toBeVisible();
-  await expect(tooltip.locator('.session-tooltip-status')).toHaveText(
-    'Unsent draft',
-  );
+  await expect(tooltip.locator('.session-tooltip-status')).toHaveText('Draft');
   await expect(tooltip.locator('.session-tooltip-name strong')).toHaveText(
     'Updated',
   );

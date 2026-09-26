@@ -21,7 +21,7 @@ test('wraps an unbroken link without widening the composer', async ({
   await composer.fill(`https://example.com/${'a'.repeat(10_000)}`);
 
   const draftIndicator = page.locator(
-    '.session-row .ui-status-dot[aria-label="Unsent draft"]',
+    '.session-row .ui-status-dot[aria-label="Draft"]',
   );
   await expect(draftIndicator).toHaveCSS('width', '6px');
   await expect(draftIndicator).toHaveCSS('height', '6px');

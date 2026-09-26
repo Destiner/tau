@@ -351,7 +351,7 @@ describe('sessionTooltipStatus', () => {
 
   it.each([
     ['working', { working: true, draft: 'Unsent', unread: true }, 'Working'],
-    ['draft', { draft: 'Unsent', unread: true }, 'Unsent draft'],
+    ['draft', { draft: 'Unsent', unread: true }, 'Draft'],
     ['unread', { unread: true }, 'Unread'],
   ] as const)(
     'uses the existing %s session indicator status before lower-priority states',

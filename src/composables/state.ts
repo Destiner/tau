@@ -113,7 +113,7 @@ type SessionIndicator = 'new' | 'draft' | 'working' | '';
 
 const indicatorLabels: Record<Exclude<SessionIndicator, ''>, string> = {
   new: 'Unread',
-  draft: 'Unsent draft',
+  draft: 'Draft',
   working: 'Working',
 };
 
