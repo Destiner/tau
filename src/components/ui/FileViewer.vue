@@ -548,6 +548,10 @@ onBeforeUnmount(() => {
 
 :global(.file-viewer-frontmatter-row dt) {
   color: var(--muted);
+  cursor: text;
+  /* stylelint-disable-next-line property-no-vendor-prefix -- WKWebView needs the prefix before Safari 17.4 */
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 :global(.file-viewer-frontmatter-row dd) {

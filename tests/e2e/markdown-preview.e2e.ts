@@ -175,6 +175,26 @@ test('renders YAML frontmatter as a compact metadata sheet above the Markdown bo
   ]);
   await expect(sheet).toHaveCSS('padding', '8px');
   await expect(sheet.locator('img')).toHaveCount(0);
+  const key = sheet.locator('dt').first();
+  await expect(key).toHaveCSS('-webkit-user-select', 'text');
+  await expect(key).toHaveCSS('cursor', 'text');
+  const textBounds = await key.evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const { x, y, width, height } = range.getBoundingClientRect();
+    return { x, y, width, height };
+  });
+  await page.mouse.move(textBounds.x + 1, textBounds.y + textBounds.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    textBounds.x + textBounds.width + 2,
+    textBounds.y + textBounds.height / 2,
+    { steps: 8 },
+  );
+  await page.mouse.up();
+  expect(await page.evaluate(() => window.getSelection()?.toString())).toBe(
+    'title',
+  );
   await expect(dialog.getByText('Frontmatter', { exact: true })).toHaveCount(0);
   await expect(dialog.getByRole('heading', { name: 'Release' })).toBeVisible();
   await expect(dialog.getByRole('link', { name: 'Next' })).toBeVisible();
