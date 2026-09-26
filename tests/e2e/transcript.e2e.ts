@@ -190,6 +190,117 @@ test('previews local files and keeps URL and path copy actions', async ({
     ]);
 });
 
+test('links only filenames in line references and previews clean local paths', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const calls: unknown[] = [];
+    const writes: string[] = [];
+    Object.assign(window, { __TAU_PREVIEW_CALLS__: calls });
+    window.__TAU_CLIPBOARD_WRITES__ = writes;
+    window.__TAURI_INTERNALS__ = {
+      transformCallback: (callback: unknown): unknown => callback,
+      invoke: (
+        command: string,
+        payload?: { text?: string; path?: string },
+      ): Promise<unknown> => {
+        if (command === 'plugin:clipboard-manager|write_text') {
+          writes.push(payload?.text ?? '');
+          return Promise.resolve(null);
+        }
+        if (command === 'prepare_file_preview') {
+          calls.push(payload);
+          if (payload?.path !== 'src/components/ProjectSidebar.vue') {
+            return Promise.reject(new Error('Unexpected preview path'));
+          }
+          const source = 'export const fixture = true;\n';
+          return Promise.resolve({
+            kind: 'ready',
+            id: 'line-preview',
+            assetPath: `data:text/plain;charset=utf-8,${encodeURIComponent(source)}`,
+            filename: 'ProjectSidebar.vue',
+            sourcePath:
+              '/Users/someone/code/tau/src/components/ProjectSidebar.vue',
+            byteLength: source.length,
+          });
+        }
+        return Promise.resolve(null);
+      },
+    };
+  });
+  await page.goto(fixtureUrl);
+  const message = page.locator('[data-message-id="fixture-markdown-showcase"]');
+  for (const [label, path, marker] of [
+    ['Line', 'src/components/ProjectSidebar.vue', ':922'],
+    ['Range', 'tests/playwright-config.test.ts', ':21–31'],
+  ] as const) {
+    const paragraph = message
+      .locator('p')
+      .filter({ hasText: `${label} reference:` })
+      .first();
+    const link = paragraph.locator('[data-tau-path]');
+    await expect(link).toHaveText(path);
+    await expect(paragraph).toContainText(`${path}${marker}`);
+    expect(
+      await link.evaluate((element) => element.nextSibling?.textContent),
+    ).toBe(marker + (label === 'Line' ? '.' : ''));
+    await expect(paragraph.locator('[data-tau-path]')).toHaveCount(1);
+  }
+  const line = message
+    .locator('p')
+    .filter({ hasText: 'Line reference:' })
+    .first();
+  const link = line.locator('[data-tau-path]');
+  const markerBox = await link.evaluate((element) => {
+    const node = element.nextSibling!;
+    const range = document.createRange();
+    range.setStart(node, 0);
+    range.setEnd(node, 4);
+    const { x, y, width, height } = range.getBoundingClientRect();
+    return { x: x + width / 2, y: y + height / 2 };
+  });
+  await page.mouse.click(markerBox.x, markerBox.y);
+  expect(
+    await page.evaluate(
+      () =>
+        (window as Window & { __TAU_PREVIEW_CALLS__?: unknown[] })
+          .__TAU_PREVIEW_CALLS__,
+    ),
+  ).toEqual([]);
+  await link.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Copy Path', exact: true }).click();
+  await link.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Copy Full Path' }).click();
+  await expect
+    .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
+    .toEqual([
+      'src/components/ProjectSidebar.vue',
+      '/Users/someone/code/tau/src/components/ProjectSidebar.vue',
+    ]);
+  await link.click();
+  const preview = page.getByRole('dialog', { name: 'ProjectSidebar.vue' });
+  await expect(preview.getByText('export const fixture = true;')).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as Window & { __TAU_PREVIEW_CALLS__?: unknown[] })
+            .__TAU_PREVIEW_CALLS__,
+      ),
+    )
+    .toEqual([
+      expect.objectContaining({
+        basePath: '/Users/someone/code/tau',
+        projectPath: null,
+        path: 'src/components/ProjectSidebar.vue',
+      }),
+    ]);
+  await page.keyboard.press('Escape');
+  await expect(link).toBeFocused();
+  await link.press('Enter');
+  await expect(preview).toBeVisible();
+});
+
 test('keeps unsupported previews in one terminal state', async ({ page }) => {
   await page.addInitScript(() => {
     window.__TAURI_INTERNALS__ = {
@@ -375,6 +486,81 @@ test('previews remote files and keeps explicit copy actions', async ({
     ]);
   await expect(page.locator('.path-feedback')).toHaveCount(0);
   await page.keyboard.press('Escape');
+});
+
+test('keeps remote range markers outside preview and copy targets', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const calls: unknown[] = [];
+    const writes: string[] = [];
+    Object.assign(window, { __TAU_PREVIEW_CALLS__: calls });
+    window.__TAU_CLIPBOARD_WRITES__ = writes;
+    window.__TAURI_INTERNALS__ = {
+      transformCallback: (callback: unknown): unknown => callback,
+      invoke: (
+        command: string,
+        payload?: { text?: string; path?: string },
+      ): Promise<unknown> => {
+        if (command === 'plugin:clipboard-manager|write_text') {
+          writes.push(payload?.text ?? '');
+          return Promise.resolve(null);
+        }
+        if (command === 'prepare_file_preview') {
+          calls.push(payload);
+          if (payload?.path !== 'src/ranged.ts')
+            return Promise.reject(new Error('Unexpected preview path'));
+          const source = 'export const remote = true;\n';
+          return Promise.resolve({
+            kind: 'ready',
+            id: 'remote-range-preview',
+            assetPath: `data:text/plain;charset=utf-8,${encodeURIComponent(source)}`,
+            filename: 'ranged.ts',
+            sourcePath: '/home/agent/rhinestone/src/ranged.ts',
+            byteLength: source.length,
+          });
+        }
+        return Promise.resolve(null);
+      },
+    };
+  });
+  await page.goto(`${fixtureUrl}&remote=true`);
+  const line = page
+    .locator('[data-message-id="fixture-remote-paths"] p')
+    .filter({ hasText: 'Line reference:' });
+  const link = line.getByRole('button', { name: 'Preview path src/ranged.ts' });
+  await expect(link).toHaveText('src/ranged.ts');
+  expect(
+    await link.evaluate((element) => element.nextSibling?.textContent),
+  ).toBe(':42-50');
+  await link.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Copy Path', exact: true }).click();
+  await link.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Copy Full Path' }).click();
+  await expect
+    .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
+    .toEqual(['src/ranged.ts', '/home/agent/rhinestone/src/ranged.ts']);
+  await link.click();
+  await expect(
+    page
+      .getByRole('dialog', { name: 'ranged.ts' })
+      .getByText('export const remote = true;'),
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as Window & { __TAU_PREVIEW_CALLS__?: unknown[] })
+            .__TAU_PREVIEW_CALLS__,
+      ),
+    )
+    .toEqual([
+      expect.objectContaining({
+        projectPath: 'ssh:fixture-project',
+        basePath: '/home/agent/rhinestone',
+        path: 'src/ranged.ts',
+      }),
+    ]);
 });
 
 test('ignores duplicate remote activation while showing delayed loading', async ({
