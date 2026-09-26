@@ -114,6 +114,8 @@ import {
   sessionLastActive,
   sessionLoading,
   sessionTitle,
+  tooltipTitleMarkdown,
+  activeSession,
   setActiveSessionView,
   setControllerError,
   setControllerLifecycle,
@@ -1037,6 +1039,9 @@ function useTau() {
         requestId,
         previousName: controller.sessionName,
         previousTitle: sessionTitle.value,
+        previousTitleMarkdown: activeSession.value
+          ? tooltipTitleMarkdown(activeSession.value)
+          : undefined,
       };
       controller.sessionNameRevision += 1;
       applySessionName(controller, next);
@@ -1058,6 +1063,7 @@ function useTau() {
             controller,
             pending.previousName,
             pending.previousTitle,
+            pending.previousTitleMarkdown,
           );
           controller.pendingSessionRename = undefined;
         }

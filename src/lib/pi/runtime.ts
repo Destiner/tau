@@ -17,6 +17,7 @@ import {
   controllerHasPendingDialog,
   createPhantomSession,
   draftTitle,
+  sessionTitleMarkdown,
   ephemeralSessionByController,
   extensionDialogTimeouts,
   finishRemoteConnection,
@@ -1171,7 +1172,10 @@ function handleExtensionUIRequest(
   if (method === 'set_editor_text' && typeof request.text === 'string') {
     controller.draft = request.text;
     const session = ephemeralSessionByController(controller.key);
-    if (session?.phantom) session.title = draftTitle(request.text);
+    if (session?.phantom) {
+      session.title = draftTitle(request.text);
+      session.titleMarkdown = sessionTitleMarkdown(request.text);
+    }
   }
 }
 
@@ -2486,6 +2490,7 @@ async function handleResponse(
           controller,
           pending.previousName,
           pending.previousTitle,
+          pending.previousTitleMarkdown,
         );
         controller.pendingSessionRename = undefined;
       }
@@ -3505,14 +3510,17 @@ function applySessionName(
   controller: SessionController,
   name: string,
   fallbackTitle = '',
+  fallbackTitleMarkdown?: string,
 ): void {
   controller.sessionName = name;
   const title = name || fallbackTitle;
   if (!title) return;
+  const titleMarkdown = fallbackTitleMarkdown ?? sessionTitleMarkdown(title);
 
   const ephemeral = ephemeralSessionByController(controller.key);
   if (ephemeral && !ephemeral.phantom) {
     ephemeral.title = title;
+    ephemeral.titleMarkdown = titleMarkdown;
     return;
   }
 
@@ -3522,7 +3530,10 @@ function applySessionName(
   const session = project?.sessions.find(
     (candidate) => candidate.id === controller.sessionId,
   );
-  if (session) session.title = title;
+  if (session) {
+    session.title = title;
+    session.titleMarkdown = titleMarkdown;
+  }
 }
 
 async function persistSessionName(
@@ -3877,6 +3888,7 @@ function rebindEphemeralSession(controller: SessionController): void {
   session.path = controller.sessionPath;
   session.phantom = false;
   session.title = controller.sessionName || 'New Session';
+  session.titleMarkdown = sessionTitleMarkdown(session.title);
   // Every workflow phase is a new session even though it reuses this object.
   // Give it fresh activity and selection instead of inheriting the first
   // phase's ordering or leaving the predecessor highlighted.
@@ -3929,7 +3941,9 @@ function materializePendingSession(
     session.id = sessionId;
     session.path = sessionPath;
     session.phantom = false;
-    session.title = draftTitle(controller.pendingPrompt?.message ?? '');
+    const message = controller.pendingPrompt?.message ?? '';
+    session.title = draftTitle(message);
+    session.titleMarkdown = sessionTitleMarkdown(message);
   }
   if (isControllerSelected(controller)) {
     state.activeSessionId = sessionId;

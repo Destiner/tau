@@ -111,6 +111,49 @@ function testController(
   };
 }
 
+describe('session tooltip source', () => {
+  it('keeps indentation, blank lines and Unicode within 240 characters', async () => {
+    const { sessionTitleMarkdown, tooltipTitleMarkdown, draftTitle } =
+      await import('./state');
+    const source = '  **Hello**\r\n\r\n\t```\n🚀';
+    expect(sessionTitleMarkdown(source)).toBe(source);
+    expect(draftTitle(source)).toBe('**Hello** ``` 🚀');
+    expect(
+      tooltipTitleMarkdown({
+        title: 'Compact',
+        titleMarkdown: source,
+      } as SessionSummary),
+    ).toBe(source);
+    expect(tooltipTitleMarkdown({ title: 'Fallback' } as SessionSummary)).toBe(
+      'Fallback',
+    );
+    expect(sessionTitleMarkdown(' \n\t')).toBe('New Session');
+    expect(Array.from(sessionTitleMarkdown('🚀'.repeat(241)))).toHaveLength(
+      240,
+    );
+    expect(sessionTitleMarkdown('x'.repeat(239) + '**more')).toBe(
+      'x'.repeat(239) + '*',
+    );
+  });
+
+  it('updates phantom preview with drafts without altering the draft', async () => {
+    const { state, draft, createPhantomSession } = await import('./state');
+    const controller = testController({ key: 'draft-owner', phantom: true });
+    state.controllers = [controller];
+    state.activeControllerKey = controller.key;
+    const session = createPhantomSession(
+      controller.projectPath,
+      controller.key,
+    );
+    state.ephemeralSessions = [session];
+    draft.value = '  **First**\n\n  - next';
+    expect(controller.draft).toBe('  **First**\n\n  - next');
+    expect(session.titleMarkdown).toBe(controller.draft);
+    draft.value = '   ';
+    expect(session.titleMarkdown).toBe('New Session');
+  });
+});
+
 describe('classifyControllerLifecycle', () => {
   it('returns idle when no lifecycle flag is set', async () => {
     const { classifyControllerLifecycle } = await import('./state');

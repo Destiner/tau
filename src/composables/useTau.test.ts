@@ -476,7 +476,23 @@ describe('session drafts and selection', () => {
     expect(currentEffortLabel.value).toBe('High');
     expect(settingsDisabled.value).toBe(false);
 
-    draft.value = 'Start background work';
+    emitRpc(controller, {
+      type: 'extension_ui_request',
+      id: 'tooltip-draft',
+      method: 'set_editor_text',
+      text: 'Extension *draft*\n\n- item',
+    });
+    expect(
+      projectSessions(project).find(
+        (session) => session.id === controller.sessionId,
+      )?.titleMarkdown,
+    ).toBe('Extension *draft*\n\n- item');
+    draft.value = '**Start**\n\n  background work';
+    expect(
+      projectSessions(project).find(
+        (session) => session.id === controller.sessionId,
+      )?.titleMarkdown,
+    ).toBe(draft.value);
     await sendMessage();
     expect(controller.promptSubmitting).toBe(true);
     expect(draft.value).toBe('');
@@ -496,6 +512,11 @@ describe('session drafts and selection', () => {
     });
     await vi.waitFor(() => {
       expect(controller.sessionId).toBe('materialized');
+      expect(
+        projectSessions(project).find(
+          (session) => session.id === 'materialized',
+        )?.titleMarkdown,
+      ).toBe('**Start**\n\n  background work');
       expect(controller.pendingPrompt?.messagesRequestId).not.toBe('');
       expect(
         sentRequests(controller, 'get_messages').some(
@@ -3613,6 +3634,9 @@ describe('session naming', () => {
 
     const rename = tau.renameSession('  Migration   plan  ');
     expect(tau.sessionTitle.value).toBe('Migration plan');
+    expect(tau.projectSessions(project)[0]?.titleMarkdown).toBe(
+      'Migration plan',
+    );
     expect(tau.projectSessions(project)[0]?.title).toBe('Migration plan');
     await rename;
     expect(sentRequests(controller, 'set_session_name')).toEqual([
@@ -3789,8 +3813,10 @@ describe('session naming', () => {
       expect(controller.sessionName).toBe('Named in Pi');
     });
 
+    tau.projectSessions(project)[0]!.titleMarkdown = 'Named\n\nin Pi';
     await tau.renameSession('Named in Tau');
     expect(tau.sessionTitle.value).toBe('Named in Tau');
+    expect(tau.projectSessions(project)[0]?.titleMarkdown).toBe('Named in Tau');
     expect(tau.projectSessions(project)[0]?.title).toBe('Named in Tau');
     emitRpc(controller, {
       id: sentRequests(controller, 'set_session_name')[0]?.id,
@@ -3799,6 +3825,9 @@ describe('session naming', () => {
       success: false,
       error: { message: 'Session name cannot be empty' },
     });
+    expect(tau.projectSessions(project)[0]?.titleMarkdown).toBe(
+      'Named\n\nin Pi',
+    );
 
     await vi.waitFor(() => {
       expect(feedbackMessage(controller)).toBe(
@@ -3824,6 +3853,9 @@ describe('session naming', () => {
     await vi.waitFor(() => {
       expect(tau.sessionTitle.value).toBe('Named in Pi');
       expect(tau.projectSessions(project)[0]?.title).toBe('Named in Pi');
+      expect(tau.projectSessions(project)[0]?.titleMarkdown).toBe(
+        'Named in Pi',
+      );
     });
   });
 
@@ -3861,6 +3893,8 @@ describe('session naming', () => {
 
   it('rolls the optimistic title back when sending the rename fails', async () => {
     const { tau, project, controller } = await setupNamedSession();
+    const session = tau.projectSessions(project)[0]!;
+    session.titleMarkdown = 'Original\n\n**preview**';
     const defaultInvoke = vi.mocked(invoke).getMockImplementation();
     vi.mocked(invoke).mockImplementation(async (command, args) => {
       if (command === 'send_pi') throw new Error('Pi is unavailable');
@@ -3873,6 +3907,9 @@ describe('session naming', () => {
       expect(controller.sessionName).toBe('naming-target');
       expect(tau.sessionTitle.value).toBe('naming-target');
       expect(tau.projectSessions(project)[0]?.title).toBe('naming-target');
+      expect(tau.projectSessions(project)[0]?.titleMarkdown).toBe(
+        'Original\n\n**preview**',
+      );
       expect(feedbackMessage(controller)).toBe(
         'The session could not be renamed. Choose another name and try again.',
       );

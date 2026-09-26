@@ -132,9 +132,10 @@
                     <span class="session-tooltip-status">{{
                       sessionTooltipStatus(project, session)
                     }}</span>
-                    <span class="session-tooltip-name">{{
-                      session.title
-                    }}</span>
+                    <MarkdownText
+                      class="session-tooltip-name"
+                      :source="tooltipTitleMarkdown(session)"
+                    />
                     <span
                       v-if="sessionLastActive(project, session)"
                       class="session-tooltip-date"
@@ -288,6 +289,7 @@ import Sortable, { type SortableEvent } from 'sortablejs';
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import type { ProjectSummary, SessionSummary } from '../composables/state';
+import { tooltipTitleMarkdown } from '../composables/state';
 import useTau from '../composables/useTau';
 import { adminMode } from '../lib/admin-mode';
 import {
@@ -305,6 +307,7 @@ import {
 import ArchivedSessionsList from './ArchivedSessionsList.vue';
 import IssueReportPopover from './IssueReportPopover.vue';
 import UpdateStatus from './UpdateStatus.vue';
+import MarkdownText from './ui/MarkdownText.vue';
 import UiContextMenu from './ui/UiContextMenu.vue';
 import UiIcon from './ui/UiIcon.vue';
 import UiIconButton from './ui/UiIconButton.vue';

@@ -41,9 +41,10 @@
           >
             <template #content>
               <span class="session-tooltip-status">Archived</span>
-              <span class="session-tooltip-name">{{
-                entry.session.title
-              }}</span>
+              <MarkdownText
+                class="session-tooltip-name"
+                :source="tooltipTitleMarkdown(entry.session)"
+              />
               <span
                 v-if="relativeTime(entry)"
                 class="session-tooltip-date"
@@ -110,6 +111,7 @@ import type {
   ArchivedSessionEntry,
   ProjectSummary,
 } from '../composables/state';
+import { tooltipTitleMarkdown } from '../composables/state';
 import useTau from '../composables/useTau';
 import {
   groupArchivedByTime,
@@ -117,6 +119,7 @@ import {
 } from '../lib/archived-groups';
 import archivedWindow from '../lib/archived-window';
 
+import MarkdownText from './ui/MarkdownText.vue';
 import UiIcon from './ui/UiIcon.vue';
 import UiIconButton from './ui/UiIconButton.vue';
 import UiTooltip from './ui/UiTooltip.vue';

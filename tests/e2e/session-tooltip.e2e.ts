@@ -55,17 +55,21 @@ test('shows a complete, app-drawn tooltip for an ellipsized session title', asyn
   // The clipped copy deliberately does not receive pointer input in WebKit:
   // hovering it must still reach the button that owns the app tooltip.
   await title.hover();
-  const tooltip = page.locator('.ui-tooltip', { hasText: longTitle });
+  const tooltip = page.locator('.ui-tooltip', { hasText: 'Markdown preview' });
   await expect(tooltip).toBeVisible();
   await expect(tooltip.locator('.session-tooltip-status')).toHaveText(
     'Working',
   );
-  await expect(tooltip.locator('.session-tooltip-name')).toHaveText(longTitle);
+  const markdown = tooltip.locator('.session-tooltip-name');
+  await expect(markdown.locator('strong')).toHaveText('Markdown preview');
+  await expect(markdown.locator('p code')).toHaveText('inline code');
+  await expect(markdown.locator('li')).toHaveCount(2);
+  await expect(markdown.locator('li li')).toHaveText('Nested item');
+  await expect(markdown.locator('pre')).toContainText('const ready = true;');
   await expect(tooltip.locator('.session-tooltip-date')).toHaveText(
     '2 hours ago',
   );
   await expect(tooltip).not.toContainText('working-session-opaque-7fb4d9');
-  await expect(tooltip.locator('strong')).toHaveCount(0);
   await expectBottomStartAlignment(trigger, tooltip);
 
   // Focus is an interaction path too, and does not expose a browser title.
@@ -80,7 +84,7 @@ test('keeps tooltip contents reactive without exposing fixture session IDs', asy
 }) => {
   await page.goto(fixtureUrl);
 
-  const replacementTitle = '<mark>Updated markup remains text</mark>';
+  const replacementTitle = '**Updated**\n\nSecond paragraph';
   await page.evaluate((title) => {
     const fixture = window.__TAU_SESSION_TOOLTIP_FIXTURE__;
     if (!fixture) throw new Error('Expected session-tooltip fixture API.');
@@ -90,16 +94,16 @@ test('keeps tooltip contents reactive without exposing fixture session IDs', asy
 
   const row = page.locator('.session-row', { hasText: replacementTitle });
   await row.locator('.session-select').hover();
-  const tooltip = page.locator('.ui-tooltip', { hasText: replacementTitle });
+  const tooltip = page.locator('.ui-tooltip.session-tooltip');
   await expect(tooltip).toBeVisible();
   await expect(tooltip.locator('.session-tooltip-status')).toHaveText(
     'Unsent draft',
   );
-  await expect(tooltip.locator('.session-tooltip-name')).toHaveText(
-    replacementTitle,
+  await expect(tooltip.locator('.session-tooltip-name strong')).toHaveText(
+    'Updated',
   );
+  await expect(tooltip.locator('.session-tooltip-name p')).toHaveCount(2);
   await expect(tooltip).not.toContainText('working-session-opaque-7fb4d9');
-  await expect(tooltip.locator('mark')).toHaveCount(0);
 
   await page.evaluate(() => {
     window.__TAU_SESSION_TOOLTIP_FIXTURE__?.setStatus('unread');
@@ -130,6 +134,66 @@ test('keeps tooltip contents reactive without exposing fixture session IDs', asy
   await expect(tooltip).toBeHidden();
 });
 
+test('sanitizes unsafe Markdown and bounds truncated multiline previews', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 360, height: 320 });
+  await page.goto(fixtureUrl);
+  const row = page.locator('.session-row').first();
+  const source =
+    'Safe [web link](https://example.com) [unsafe](javascript:alert(1)) <img src=x onerror=alert(1)>\n\n' +
+    Array.from({ length: 40 }, (_, index) => `line ${index}`).join('  \n');
+  await page.evaluate((text) => {
+    window.__TAU_SESSION_TOOLTIP_FIXTURE__?.setMarkdown(text);
+  }, source);
+  await row.locator('.session-select').hover();
+  const tooltip = page.locator('.ui-tooltip.session-tooltip');
+  await expect(tooltip).toBeVisible();
+  await expect(
+    tooltip.locator('[onerror], a[href^="javascript:"]'),
+  ).toHaveCount(0);
+  await expect(tooltip.locator('a[href="https://example.com"]')).toHaveCount(1);
+  const bounds = await tooltip.boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(bounds!.height).toBeLessThanOrEqual(320);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(360);
+  await page.evaluate(() => {
+    window.__TAU_SESSION_TOOLTIP_FIXTURE__?.setMarkdown(
+      '```js\n' + 'x'.repeat(235),
+    );
+  });
+  await expect(tooltip.locator('.session-tooltip-name')).toContainText('x');
+  await expect(tooltip).not.toContainText('working-session-opaque-7fb4d9');
+});
+
+test('opens Markdown web links externally without navigating the app', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.__TAU_TOOLTIP_OPENED_URLS__ = [];
+    window.__TAURI_INTERNALS__ = {
+      transformCallback: (callback: unknown): unknown => callback,
+      invoke: async (command: string, payload?: { url?: string }) => {
+        if (command === 'plugin:opener|open_url')
+          window.__TAU_TOOLTIP_OPENED_URLS__?.push(payload?.url ?? '');
+        return null;
+      },
+    } as typeof window.__TAURI_INTERNALS__;
+  });
+  await page.goto(fixtureUrl);
+  await page.evaluate(() => {
+    window.__TAU_SESSION_TOOLTIP_FIXTURE__?.setMarkdown(
+      '[Website](https://example.com)',
+    );
+  });
+  await page.locator('.session-row').first().locator('.session-select').hover();
+  await page.locator('.session-tooltip-name a').click();
+  await expect
+    .poll(() => page.evaluate(() => window.__TAU_TOOLTIP_OPENED_URLS__))
+    .toEqual(['https://example.com']);
+  expect(page.url()).toContain(fixtureUrl);
+});
+
 test('uses the same structured tooltip while reviewing archived sessions', async ({
   page,
 }) => {
@@ -143,20 +207,21 @@ test('uses the same structured tooltip while reviewing archived sessions', async
   const row = archivedList.locator('.row', { hasText: archivedTitle });
   const trigger = row.locator('.copy');
   await trigger.hover();
-  const tooltip = page.locator('.ui-tooltip', { hasText: archivedTitle });
+  const tooltip = page.locator('.ui-tooltip', { hasText: 'Archived notes' });
   await expect(tooltip).toBeVisible();
   await expect(tooltip.locator('.session-tooltip-status')).toHaveText(
     'Archived',
   );
-  await expect(tooltip.locator('.session-tooltip-name')).toHaveText(
-    archivedTitle,
+  await expect(tooltip.locator('.session-tooltip-name p')).toHaveCount(2);
+  await expect(tooltip.locator('.session-tooltip-name em')).toHaveText('notes');
+  await expect(tooltip.locator('.session-tooltip-name code')).toHaveText(
+    'code',
   );
   await expect(tooltip.locator('.session-tooltip-date')).toHaveText(
     '3 weeks ago',
   );
   await expect(row.locator('.name')).toHaveCSS('pointer-events', 'none');
   await expect(tooltip).not.toContainText('archived-session-opaque-c0ffee');
-  await expect(tooltip.locator('em')).toHaveCount(0);
   await expectBottomStartAlignment(trigger, tooltip);
 
   await row.locator('.unarchive').hover();

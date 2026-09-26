@@ -106,6 +106,8 @@ pub struct SessionSummary {
     pub id: String,
     pub path: String,
     pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_markdown: Option<String>,
     /// The model id Pi last recorded for the session, when known.
     #[serde(default)]
     pub model: String,
@@ -146,4 +148,19 @@ pub struct TauSessionRecord {
     pub name: Option<String>,
     #[serde(default)]
     pub archived: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SessionSummary;
+
+    #[test]
+    fn legacy_session_summaries_default_title_markdown() {
+        let summary: SessionSummary = serde_json::from_str(
+            r#"{"id":"session-1","path":"/tmp/session.jsonl","title":"Legacy","model":"","lastActive":"now","lastUserMessageAt":0,"sortAt":0,"archived":false,"selected":false}"#,
+        )
+        .expect("legacy session summary");
+
+        assert_eq!(summary.title_markdown, None);
+    }
 }
