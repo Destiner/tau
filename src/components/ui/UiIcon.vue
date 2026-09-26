@@ -57,6 +57,15 @@
       d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z"
     />
     <path
+      v-else-if="name === 'queue'"
+      d="M32,56h96M32,112h96M32,168h74M144,184h80m-30-30,30,30-30,30"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="16"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <path
       v-else-if="name === 'stop'"
       d="M208,32H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32Zm0,176H48V48H208V208Z"
     />
@@ -91,6 +100,7 @@ defineProps<{
     | 'grip'
     | 'info'
     | 'plus'
+    | 'queue'
     | 'stop'
     | 'triangle'
     | 'trash'

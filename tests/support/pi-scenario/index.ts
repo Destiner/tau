@@ -10,7 +10,14 @@ type PiRequestMatcher =
   | { type: 'set_model'; provider: string; modelId: string }
   | { type: 'set_thinking_level'; level: string }
   | { type: 'set_session_name'; name: string }
-  | { type: 'prompt'; message: string }
+  | {
+      type: 'prompt';
+      message: string;
+      streamingBehavior?: 'steer' | 'followUp';
+    }
+  | { type: 'set_steering_mode'; mode: 'all' | 'one-at-a-time' }
+  | { type: 'set_follow_up_mode'; mode: 'all' | 'one-at-a-time' }
+  | { type: 'clear_queue' }
   | {
       type: 'extension_ui_response';
       extensionRequestId: string;
@@ -121,7 +128,15 @@ type ScriptedPiResponse =
   | {
       kind: 'response';
       request: string;
-      command: 'prompt';
+      command: 'prompt' | 'set_steering_mode' | 'set_follow_up_mode';
+      success?: boolean;
+      error?: string;
+    }
+  | {
+      kind: 'response';
+      request: string;
+      command: 'clear_queue';
+      data: { steering: readonly string[]; followUp: readonly string[] };
     };
 
 type PiRpcEvent =
@@ -157,6 +172,11 @@ type PiRpcEvent =
   | {
       type: 'message_update';
       assistantMessageEvent: { type: 'text_delta'; delta: string };
+    }
+  | {
+      type: 'queue_update';
+      steering: readonly string[];
+      followUp: readonly string[];
     }
   | { type: 'agent_settled' }
   | { type: 'session_info_changed'; name: string }
@@ -251,7 +271,8 @@ type PiResponseData =
   | { models: readonly PiModel[] }
   | { commands: readonly PiCommand[] }
   | { levels: readonly string[] }
-  | { messages: readonly PiMessage[] };
+  | { messages: readonly PiMessage[] }
+  | { steering: readonly string[]; followUp: readonly string[] };
 
 interface ResolvedPiResponse {
   kind: 'response';
@@ -260,7 +281,8 @@ interface ResolvedPiResponse {
     type: 'response';
     id: string;
     command: ScriptedPiResponse['command'];
-    success: true;
+    success: boolean;
+    error?: string;
     data?: PiResponseData;
   };
 }
@@ -349,6 +371,9 @@ const RPC_METHODS = new Set<PiRpcMethod>([
   'set_thinking_level',
   'set_session_name',
   'prompt',
+  'set_steering_mode',
+  'set_follow_up_mode',
+  'clear_queue',
   'abort',
   'extension_ui_response',
 ]);
@@ -418,8 +443,31 @@ function matcherFromRequest(
     return { type, name: requiredString(request, 'name') };
   }
   if (type === 'prompt') {
-    return { type, message: requiredString(request, 'message') };
+    const streamingBehavior = request.streamingBehavior;
+    if (streamingBehavior === undefined) {
+      return { type, message: requiredString(request, 'message') };
+    }
+    if (streamingBehavior !== 'steer' && streamingBehavior !== 'followUp') {
+      throw new Error(
+        'Pi request field streamingBehavior must be "steer" or "followUp".',
+      );
+    }
+    return {
+      type,
+      message: requiredString(request, 'message'),
+      streamingBehavior,
+    };
   }
+  if (type === 'set_steering_mode' || type === 'set_follow_up_mode') {
+    const mode = request.mode;
+    if (mode !== 'all' && mode !== 'one-at-a-time') {
+      throw new Error(
+        'Pi request field mode must be "all" or "one-at-a-time".',
+      );
+    }
+    return { type, mode };
+  }
+  if (type === 'clear_queue') return { type };
 
   const extensionRequestId = requiredString(request, 'id');
   const variants = ['value', 'confirmed', 'cancelled'].filter(
@@ -780,7 +828,8 @@ class PiScenarioEngine {
           type: 'response',
           id: captured.id,
           command: output.command,
-          success: true,
+          success: 'success' in output ? output.success !== false : true,
+          ...('error' in output ? { error: output.error } : {}),
           ...('data' in output ? { data: output.data } : {}),
         },
       };

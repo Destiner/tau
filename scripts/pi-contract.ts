@@ -380,6 +380,21 @@ function validateState(response: JsonRecord): string {
   if (state.isStreaming) {
     throw new ContractError('A new isolated Pi RPC session started streaming.');
   }
+  if (!['all', 'one-at-a-time'].includes(String(state.steeringMode))) {
+    throw new ContractError('get_state.data.steeringMode is unsupported.');
+  }
+  if (!['all', 'one-at-a-time'].includes(String(state.followUpMode))) {
+    throw new ContractError('get_state.data.followUpMode is unsupported.');
+  }
+  if (
+    typeof state.pendingMessageCount !== 'number' ||
+    !Number.isInteger(state.pendingMessageCount) ||
+    state.pendingMessageCount < 0
+  ) {
+    throw new ContractError(
+      'get_state.data.pendingMessageCount must be a nonnegative integer.',
+    );
+  }
   requireNonEmptyString(state.sessionId, 'get_state.data.sessionId');
   requireNonEmptyString(state.sessionFile, 'get_state.data.sessionFile');
   return thinkingLevel;

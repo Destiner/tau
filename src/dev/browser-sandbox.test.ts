@@ -168,6 +168,127 @@ describe('browser sandbox seed', () => {
     });
   });
 
+  it('models streaming queues, queue modes, and clearing queued prompts', async () => {
+    const events: PiBridgeEvent[] = [];
+    let releaseAgentStart: (() => void) | undefined;
+    let agentStartReached: (() => void) | undefined;
+    const agentStartBlocked = new Promise<void>((resolve) => {
+      releaseAgentStart = resolve;
+    });
+    const agentStarted = new Promise<void>((resolve) => {
+      agentStartReached = resolve;
+    });
+    const handle = createBrowserSandboxHandler(async (event) => {
+      events.push(event);
+      if (event.line && JSON.parse(event.line).type === 'agent_start') {
+        agentStartReached?.();
+        await agentStartBlocked;
+      }
+    });
+    const runtimeId = 'runtime-queue';
+    await claimOwner(handle);
+    await handle('start_pi', {
+      ...ownerArgs,
+      runtimeId,
+      projectPath: '/browser-dev/projects/atlas',
+      sessionPath: '/browser-dev/projects/atlas/atlas-overview.jsonl',
+    });
+
+    await handle('send_pi', {
+      ...ownerArgs,
+      runtimeId,
+      request: {
+        type: 'set_steering_mode',
+        id: 'steering-mode',
+        mode: 'one-at-a-time',
+      },
+    });
+    await handle('send_pi', {
+      ...ownerArgs,
+      runtimeId,
+      request: {
+        type: 'set_follow_up_mode',
+        id: 'follow-up-mode',
+        mode: 'all',
+      },
+    });
+    await handle('send_pi', {
+      ...ownerArgs,
+      runtimeId,
+      request: { type: 'get_state', id: 'queued-state' },
+    });
+
+    const firstPrompt = handle('send_pi', {
+      ...ownerArgs,
+      runtimeId,
+      request: { type: 'prompt', id: 'first-prompt', message: 'First' },
+    });
+    await agentStarted;
+    await handle('send_pi', {
+      ...ownerArgs,
+      runtimeId,
+      request: {
+        type: 'prompt',
+        id: 'steer-prompt',
+        message: 'Steer next',
+        streamingBehavior: 'steer',
+      },
+    });
+    await handle('send_pi', {
+      ...ownerArgs,
+      runtimeId,
+      request: {
+        type: 'prompt',
+        id: 'follow-up-prompt',
+        message: 'Follow up next',
+        streamingBehavior: 'followUp',
+      },
+    });
+    await handle('send_pi', {
+      ...ownerArgs,
+      runtimeId,
+      request: { type: 'clear_queue', id: 'clear-queue' },
+    });
+    releaseAgentStart?.();
+    await firstPrompt;
+
+    const lines = rpcLines(events);
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'response',
+          id: 'queued-state',
+          data: expect.objectContaining({
+            steeringMode: 'one-at-a-time',
+            followUpMode: 'all',
+          }),
+        }),
+        expect.objectContaining({
+          type: 'response',
+          id: 'clear-queue',
+          command: 'clear_queue',
+          data: {
+            steering: ['Steer next'],
+            followUp: ['Follow up next'],
+          },
+        }),
+      ]),
+    );
+    expect(lines.filter((line) => line.type === 'queue_update')).toEqual([
+      {
+        type: 'queue_update',
+        steering: ['Steer next'],
+        followUp: [],
+      },
+      {
+        type: 'queue_update',
+        steering: ['Steer next'],
+        followUp: ['Follow up next'],
+      },
+      { type: 'queue_update', steering: [], followUp: [] },
+    ]);
+  });
+
   it.each(['abort', 'stop'] as const)(
     'does not continue a prompt after %s invalidates its async work',
     async (interruption) => {

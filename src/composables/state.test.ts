@@ -79,6 +79,15 @@ function testController(
     commands: [],
     commandsLoaded: false,
     pendingPrompt: undefined,
+    queue: { steering: [], followUp: [] },
+    queueVersion: 0,
+    queueSubmissions: [],
+    queueSteeringMode: '',
+    queueFollowUpMode: '',
+    queuePreparing: false,
+    queueClearing: false,
+    queueFeedback: '',
+    queueFailedDrafts: [],
     sessionNameRevision: 0,
     sessionNameStateRequestId: '',
     sessionNameStateRevision: 0,
@@ -632,4 +641,76 @@ describe('buildStateSnapshot', () => {
       }
     },
   );
+});
+
+describe('queue recovery identity', () => {
+  it('holds an interrupted predecessor draft until that session is reopened', async () => {
+    const { ensureController, stashInterruptedQueueDrafts, state } =
+      await import('./state');
+    const session: SessionSummary = {
+      id: 'old',
+      path: '/tmp/project/old.jsonl',
+      title: 'Old',
+      lastActive: 'now',
+      lastUserMessageAt: 0,
+      sortAt: 1,
+      archived: false,
+      selected: false,
+    };
+    const project: ProjectSummary = {
+      path: '/tmp/project',
+      name: 'Project',
+      workingDirectory: '/tmp/project',
+      collapsed: false,
+      selected: true,
+      sessions: [session],
+    };
+    state.controllers.splice(0);
+    stashInterruptedQueueDrafts(
+      testController({ projectPath: project.path, sessionId: session.id }),
+      ['unacknowledged text'],
+    );
+    const successor = ensureController(project, {
+      ...session,
+      id: 'new',
+      path: '/tmp/project/new.jsonl',
+    });
+    expect(successor.queueFailedDrafts).toEqual([]);
+    const reopened = ensureController(project, session);
+    expect(reopened.queueFailedDrafts).toEqual(['unacknowledged text']);
+    expect(reopened.queueFeedback).toContain('unsent');
+  });
+
+  it('reports acknowledged queue work lost by session replacement without replaying it', async () => {
+    const { ensureController, stashInterruptedQueueDrafts, state } =
+      await import('./state');
+    const session: SessionSummary = {
+      id: 'queued',
+      path: '/tmp/project/queued.jsonl',
+      title: 'Queued',
+      lastActive: 'now',
+      lastUserMessageAt: 0,
+      sortAt: 1,
+      archived: false,
+      selected: false,
+    };
+    const project: ProjectSummary = {
+      path: '/tmp/project',
+      name: 'Project',
+      workingDirectory: '/tmp/project',
+      collapsed: false,
+      selected: true,
+      sessions: [session],
+    };
+    state.controllers.splice(0);
+    stashInterruptedQueueDrafts(
+      testController({ projectPath: project.path, sessionId: session.id }),
+      [],
+      true,
+    );
+    const reopened = ensureController(project, session);
+    expect(reopened.queueFailedDrafts).toEqual([]);
+    expect(reopened.queueFeedback).toContain('were lost');
+    expect(reopened.queueFeedback).toContain('not resent');
+  });
 });
