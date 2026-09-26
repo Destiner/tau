@@ -146,6 +146,60 @@ flowchart LR
   await expect(dialog.locator('.file-viewer-code')).toHaveCount(0);
 });
 
+test('renders YAML frontmatter as a compact metadata sheet above the Markdown body', async ({
+  page,
+}) => {
+  await openFixture(page, {
+    [transcriptPath]: {
+      filename: 'notes.md',
+      sourcePath: `${localRoot}/docs/notes.md`,
+      source:
+        '---\ntitle: September release\ntags:\n  - desktop\n  - release\nauthors:\n  - name: Amina\n    role: maintainer\nunsafe: <img src=x onerror=alert(1)>\n---\n# Release\n\n[Next](./next.md)\n',
+    },
+  });
+  await openDocument(page);
+  const dialog = page.getByRole('dialog', { name: 'notes.md' });
+  const sheet = dialog.locator('.file-viewer-frontmatter');
+  await expect(sheet).toBeVisible();
+  await expect(sheet.locator('dt')).toHaveText([
+    'title',
+    'tags',
+    'authors',
+    'unsafe',
+  ]);
+  await expect(sheet.locator('dd')).toHaveText([
+    'September release',
+    'desktop, release',
+    'name · Amina, role · maintainer',
+    '<img src=x onerror=alert(1)>',
+  ]);
+  await expect(sheet).toHaveCSS('padding', '8px');
+  await expect(sheet.locator('img')).toHaveCount(0);
+  await expect(dialog.getByText('Frontmatter', { exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('heading', { name: 'Release' })).toBeVisible();
+  await expect(dialog.getByRole('link', { name: 'Next' })).toBeVisible();
+  await expect(dialog.locator('.markdown hr')).toHaveCount(0);
+});
+
+test('does not strip incomplete or invalid frontmatter from a file preview', async ({
+  page,
+}) => {
+  await openFixture(page, {
+    [transcriptPath]: {
+      filename: 'draft.md',
+      sourcePath: `${localRoot}/draft.md`,
+      source: '---\ntitle: [invalid\n---\n# Draft\n',
+    },
+  });
+  await openDocument(page);
+  const dialog = page.getByRole('dialog', { name: 'draft.md' });
+  await expect(dialog.locator('.file-viewer-frontmatter')).toHaveCount(0);
+  await expect(dialog.locator('.markdown')).toContainText('title: [invalid');
+  await expect(
+    dialog.getByRole('heading', { name: 'Draft', exact: true }),
+  ).toBeVisible();
+});
+
 test('replaces a local document through relative links while retaining the original transcript trigger', async ({
   page,
 }) => {

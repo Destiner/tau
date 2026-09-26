@@ -41,22 +41,40 @@
               class="file-viewer-document"
             >
               <p
-                v-if="!text"
+                v-if="!markdownPreview.body && !markdownPreview.fields.length"
                 class="file-viewer-empty"
               >
                 Empty document
               </p>
-              <MarkdownContent
-                v-else
-                :source="text"
-                :base-path="documentDirectory"
-                :copy-paths="Boolean(remoteIdentity)"
-                :remote-project-path="remoteIdentity"
-                :resolve-preview-path="resolveDocumentPath"
-                preview-files
-                restrict-images
-                @file-preview="replacePreview"
-              />
+              <template v-else>
+                <section
+                  v-if="markdownPreview.fields.length"
+                  class="file-viewer-frontmatter"
+                  aria-label="Frontmatter"
+                >
+                  <dl>
+                    <div
+                      v-for="field in markdownPreview.fields"
+                      :key="field.key"
+                      class="file-viewer-frontmatter-row"
+                    >
+                      <dt>{{ field.key }}</dt>
+                      <dd>{{ field.value }}</dd>
+                    </div>
+                  </dl>
+                </section>
+                <MarkdownContent
+                  v-if="markdownPreview.body"
+                  :source="markdownPreview.body"
+                  :base-path="documentDirectory"
+                  :copy-paths="Boolean(remoteIdentity)"
+                  :remote-project-path="remoteIdentity"
+                  :resolve-preview-path="resolveDocumentPath"
+                  preview-files
+                  restrict-images
+                  @file-preview="replacePreview"
+                />
+              </template>
             </div>
             <!-- eslint-disable vue/no-v-html -- highlightCode returns only Shiki-generated markup -->
             <div
@@ -178,6 +196,7 @@ import {
   type FullscreenViewer,
 } from '../../lib/fullscreen-viewer';
 import highlightCode from '../../lib/highlight';
+import { parsePreviewMarkdown } from '../../lib/markdown-frontmatter';
 
 import MarkdownContent from './MarkdownContent.vue';
 import UiIcon from './UiIcon.vue';
@@ -204,6 +223,7 @@ const loading = ref(false);
 const showLoading = ref(false);
 const failure = ref(false);
 const previewType = computed(() => classifyFilePreview(props.filename));
+const markdownPreview = computed(() => parsePreviewMarkdown(text.value ?? ''));
 const documentDirectory = computed(() =>
   props.sourcePath
     ? filePreviewDirectoryForPath(props.sourcePath)
@@ -504,6 +524,42 @@ onBeforeUnmount(() => {
   padding: 20px 40px 60px;
 }
 
+:global(.file-viewer-frontmatter) {
+  margin-bottom: 24px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  font-size: var(--text-md);
+}
+
+:global(.file-viewer-frontmatter dl) {
+  display: grid;
+  margin: 0;
+  gap: 9px;
+}
+
+:global(.file-viewer-frontmatter-row) {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 12px;
+  line-height: 1.5;
+}
+
+:global(.file-viewer-frontmatter-row dt) {
+  color: var(--muted);
+}
+
+:global(.file-viewer-frontmatter-row dd) {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: text;
+  /* stylelint-disable-next-line property-no-vendor-prefix -- WKWebView needs the prefix before Safari 17.4 */
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 :global(.file-viewer-empty) {
   margin: 0;
   color: var(--muted);
@@ -597,6 +653,11 @@ onBeforeUnmount(() => {
   :global(.file-viewer-document) {
     padding-right: 20px;
     padding-left: 20px;
+  }
+
+  :global(.file-viewer-frontmatter-row) {
+    grid-template-columns: 1fr;
+    gap: 0;
   }
 }
 </style>
