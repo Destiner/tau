@@ -409,7 +409,7 @@ test('scrolls large file previews in both directions', async ({ page }) => {
     .toEqual({ left: 400, top: 400 });
 });
 
-test('previews remote files and keeps explicit copy actions', async ({
+test('previews remote range references and keeps explicit copy actions', async ({
   page,
 }) => {
   await page.addInitScript(() => {
@@ -432,13 +432,16 @@ test('previews remote files and keeps explicit copy actions', async ({
         }
         if (command === 'prepare_file_preview') {
           previewCalls.push({ command, payload });
+          if ((payload as { path?: string })?.path !== 'src/ranged.ts') {
+            return Promise.reject(new Error('Unexpected preview path'));
+          }
           const source = 'export const remote = true;\n';
           return Promise.resolve({
             kind: 'ready',
             id: 'remote-preview',
             assetPath: `data:text/plain;charset=utf-8,${encodeURIComponent(source)}`,
-            filename: 'remote.ts',
-            sourcePath: '/home/agent/rhinestone/src/remote.ts',
+            filename: 'ranged.ts',
+            sourcePath: '/home/agent/rhinestone/src/ranged.ts',
             byteLength: source.length,
           });
         }
@@ -448,9 +451,14 @@ test('previews remote files and keeps explicit copy actions', async ({
   });
   await page.goto(`${fixtureUrl}&remote=true`);
 
-  const path = page
-    .locator('[data-message-id="fixture-remote-paths"]')
-    .getByRole('button', { name: 'Preview path src/remote.ts' });
+  const line = page
+    .locator('[data-message-id="fixture-remote-paths"] p')
+    .filter({ hasText: 'Line reference:' });
+  const path = line.getByRole('button', { name: 'Preview path src/ranged.ts' });
+  await expect(path).toHaveText('src/ranged.ts');
+  expect(
+    await path.evaluate((element) => element.nextSibling?.textContent),
+  ).toBe(':42-50');
 
   await path.click({ button: 'right' });
   await page.getByRole('menuitem', { name: 'Copy Path', exact: true }).click();
@@ -461,8 +469,8 @@ test('previews remote files and keeps explicit copy actions', async ({
 
   await expect
     .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
-    .toEqual(['src/remote.ts', '/home/agent/rhinestone/src/remote.ts']);
-  const preview = page.getByRole('dialog', { name: 'remote.ts' });
+    .toEqual(['src/ranged.ts', '/home/agent/rhinestone/src/ranged.ts']);
+  const preview = page.getByRole('dialog', { name: 'ranged.ts' });
   await expect(preview).toBeVisible();
   await expect(preview.locator('.file-viewer-directory')).toHaveText('src');
   await expect(preview.getByText('export const remote = true;')).toBeVisible();
@@ -480,87 +488,12 @@ test('previews remote files and keeps explicit copy actions', async ({
         payload: expect.objectContaining({
           projectPath: 'ssh:fixture-project',
           basePath: '/home/agent/rhinestone',
-          path: 'src/remote.ts',
+          path: 'src/ranged.ts',
         }),
       },
     ]);
   await expect(page.locator('.path-feedback')).toHaveCount(0);
   await page.keyboard.press('Escape');
-});
-
-test('keeps remote range markers outside preview and copy targets', async ({
-  page,
-}) => {
-  await page.addInitScript(() => {
-    const calls: unknown[] = [];
-    const writes: string[] = [];
-    Object.assign(window, { __TAU_PREVIEW_CALLS__: calls });
-    window.__TAU_CLIPBOARD_WRITES__ = writes;
-    window.__TAURI_INTERNALS__ = {
-      transformCallback: (callback: unknown): unknown => callback,
-      invoke: (
-        command: string,
-        payload?: { text?: string; path?: string },
-      ): Promise<unknown> => {
-        if (command === 'plugin:clipboard-manager|write_text') {
-          writes.push(payload?.text ?? '');
-          return Promise.resolve(null);
-        }
-        if (command === 'prepare_file_preview') {
-          calls.push(payload);
-          if (payload?.path !== 'src/ranged.ts')
-            return Promise.reject(new Error('Unexpected preview path'));
-          const source = 'export const remote = true;\n';
-          return Promise.resolve({
-            kind: 'ready',
-            id: 'remote-range-preview',
-            assetPath: `data:text/plain;charset=utf-8,${encodeURIComponent(source)}`,
-            filename: 'ranged.ts',
-            sourcePath: '/home/agent/rhinestone/src/ranged.ts',
-            byteLength: source.length,
-          });
-        }
-        return Promise.resolve(null);
-      },
-    };
-  });
-  await page.goto(`${fixtureUrl}&remote=true`);
-  const line = page
-    .locator('[data-message-id="fixture-remote-paths"] p')
-    .filter({ hasText: 'Line reference:' });
-  const link = line.getByRole('button', { name: 'Preview path src/ranged.ts' });
-  await expect(link).toHaveText('src/ranged.ts');
-  expect(
-    await link.evaluate((element) => element.nextSibling?.textContent),
-  ).toBe(':42-50');
-  await link.click({ button: 'right' });
-  await page.getByRole('menuitem', { name: 'Copy Path', exact: true }).click();
-  await link.click({ button: 'right' });
-  await page.getByRole('menuitem', { name: 'Copy Full Path' }).click();
-  await expect
-    .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
-    .toEqual(['src/ranged.ts', '/home/agent/rhinestone/src/ranged.ts']);
-  await link.click();
-  await expect(
-    page
-      .getByRole('dialog', { name: 'ranged.ts' })
-      .getByText('export const remote = true;'),
-  ).toBeVisible();
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          (window as Window & { __TAU_PREVIEW_CALLS__?: unknown[] })
-            .__TAU_PREVIEW_CALLS__,
-      ),
-    )
-    .toEqual([
-      expect.objectContaining({
-        projectPath: 'ssh:fixture-project',
-        basePath: '/home/agent/rhinestone',
-        path: 'src/ranged.ts',
-      }),
-    ]);
 });
 
 test('ignores duplicate remote activation while showing delayed loading', async ({
