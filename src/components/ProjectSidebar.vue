@@ -121,29 +121,56 @@
                   archivable: canArchiveSession(project, session),
                 }"
               >
-                <button
-                  class="session-select"
-                  type="button"
-                  :aria-current="
-                    isSessionSelected(project, session) ? 'page' : undefined
-                  "
-                  :disabled="projectActionsDisabled"
-                  @click="() => selectSession(project, session)"
+                <UiTooltip
+                  :text="session.title"
+                  content-class="session-tooltip"
+                  side="bottom"
+                  align="start"
+                  :delay="700"
                 >
-                  <UiStatusDot
-                    :tone="sessionIndicator(project, session) || undefined"
-                    :label="indicatorLabel(sessionIndicator(project, session))"
-                  />
-                  <span class="session-copy">
-                    <span class="session-title">{{ session.title }}</span>
+                  <template #content>
+                    <span class="session-tooltip-status">{{
+                      sessionTooltipStatus(project, session)
+                    }}</span>
+                    <span class="session-tooltip-name">{{
+                      session.title
+                    }}</span>
                     <span
                       v-if="sessionLastActive(project, session)"
-                      class="session-time"
+                      class="session-tooltip-date"
+                      >{{
+                        expandedRelativeTime(
+                          sessionLastActive(project, session),
+                        )
+                      }}</span
                     >
-                      {{ sessionLastActive(project, session) }}
+                  </template>
+                  <button
+                    class="session-select"
+                    type="button"
+                    :aria-current="
+                      isSessionSelected(project, session) ? 'page' : undefined
+                    "
+                    :disabled="projectActionsDisabled"
+                    @click="() => selectSession(project, session)"
+                  >
+                    <UiStatusDot
+                      :tone="sessionIndicator(project, session) || undefined"
+                      :label="
+                        indicatorLabel(sessionIndicator(project, session))
+                      "
+                    />
+                    <span class="session-copy">
+                      <span class="session-title">{{ session.title }}</span>
+                      <span
+                        v-if="sessionLastActive(project, session)"
+                        class="session-time"
+                      >
+                        {{ sessionLastActive(project, session) }}
+                      </span>
                     </span>
-                  </span>
-                </button>
+                  </button>
+                </UiTooltip>
                 <UiTooltip
                   v-if="canArchiveSession(project, session)"
                   text="Archive Session"
@@ -314,6 +341,8 @@ const {
   reorderProjects,
   selectSession,
   sessionIndicator,
+  sessionTooltipStatus,
+  expandedRelativeTime,
   sessionLastActive,
   state,
   submitIssueReport,
@@ -889,6 +918,9 @@ defineExpose({
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+
+  /* WebKit generates a native tooltip for ellipsized text even without title. */
+  pointer-events: none;
 }
 
 /* stylelint-disable-next-line no-descending-specificity */

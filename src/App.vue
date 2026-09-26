@@ -62,6 +62,8 @@
         :class="{
           'empty-session': sessionIsEmpty,
           'loading-session': sessionLoading,
+          'has-queue':
+            queueVisible && !activeExtensionDialog && !remoteReconnectFeedback,
         }"
       >
         <SessionHeader
@@ -107,6 +109,22 @@
         A prompt takes the composer's place rather than sitting above it: the
         session is waiting on an answer, so there is nothing to send.
       -->
+        <MessageQueue
+          v-if="
+            queueVisible &&
+            !sessionLoading &&
+            !activeExtensionDialog &&
+            !remoteReconnectFeedback
+          "
+          :queue="activeQueue"
+          :feedback="queueFeedback"
+          :busy="queueBusy"
+          :failed-drafts="queueFailedDrafts"
+          :can-recover="!activeController?.draft"
+          @clear="handleQueueClear"
+          @recover="handleQueueRecover"
+          @dismiss="dismissQueueFeedback"
+        />
         <footer
           v-if="!sessionLoading && !activeExtensionDialog"
           class="composer-area"
@@ -181,6 +199,7 @@ import {
 
 import ComposerBar from './components/ComposerBar.vue';
 import FeedbackDialog from './components/FeedbackDialog.vue';
+import MessageQueue from './components/MessageQueue.vue';
 import ProjectSidebar from './components/ProjectSidebar.vue';
 import QuitConfirmation from './components/QuitConfirmation.vue';
 import ReconnectStatus from './components/ReconnectStatus.vue';
@@ -243,6 +262,13 @@ const {
   projectActionsDisabled,
   messages,
   canDraft,
+  activeQueue,
+  queueFeedback,
+  dismissQueueFeedback,
+  queueBusy,
+  queueFailedDrafts,
+  clearQueue,
+  recoverQueueDraft,
   streaming,
   compacting,
   stopping,
@@ -318,6 +344,14 @@ const sessionIsEmpty = computed(
     messages.value.length === 0 &&
     !compacting.value &&
     !activeExtensionDialog.value,
+);
+const queueVisible = computed(() =>
+  Boolean(
+    activeQueue.value.steering.length ||
+    activeQueue.value.followUp.length ||
+    queueFeedback.value ||
+    queueFailedDrafts.value.length,
+  ),
 );
 const transcriptBasePath = computed(
   () => activeProject.value?.workingDirectory,
@@ -550,6 +584,19 @@ function focusComposer(): void {
     composerBar.value?.focus();
 }
 
+async function handleQueueClear(): Promise<void> {
+  await clearQueue();
+  if (!queueVisible.value) {
+    await nextTick();
+    focusComposer();
+  }
+}
+
+function handleQueueRecover(index: number): void {
+  recoverQueueDraft(index);
+  void nextTick(focusComposer);
+}
+
 function remoteDialogReturnFocus(): HTMLElement | undefined {
   if (state.remoteDialogMode === 'retry' && composerBar.value?.input) {
     return composerBar.value.input;
@@ -561,9 +608,9 @@ function remoteDialogReturnFocus(): HTMLElement | undefined {
 }
 
 /** A send starts with the transcript pinned to its end. */
-function handleComposerSend(): void {
-  transcriptView.value?.scrollToEnd();
-  void sendMessage();
+function handleComposerSend(intent: 'steer' | 'followUp'): void {
+  if (!streaming.value) transcriptView.value?.scrollToEnd();
+  void sendMessage(intent);
 }
 
 function handleExtensionSubmit(value: string | boolean): void {
@@ -839,6 +886,10 @@ function isTitlebarControl(target: EventTarget | null): boolean {
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
+}
+
+.session-pane.has-queue:not(.empty-session, .loading-session) {
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
 }
 
 .session-pane.empty-session,

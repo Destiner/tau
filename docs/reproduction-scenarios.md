@@ -70,6 +70,12 @@ The process-failure scenarios expose each transport transition without exposing 
 
 The `saved-session-auto-retry` scenario pauses before automatic retry, while the selected plain amber `Retrying…` label is visible beside Stop, and after Pi ends the retry. It verifies the reviewed reason tooltip, raw-payload privacy, and stable composer/control geometry.
 
+The `saved-session-message-queue` scenario starts a held saved-session run. Submit a steering message with Enter and a follow-up with Cmd+Enter; the rail above the composer reflects Pi's queue snapshots and the messages do not appear in the transcript prematurely. Release `queue-rendered`, choose Clear All, and verify that the current run was not aborted. Submit another steering message, then Stop: no clear request is sent and the queued item remains visible. The fixture uses Pi's streaming behavior, mode setters, queue snapshots, and correlated clear response rather than a Tau-side scheduler.
+
+The `saved-session-queue-rejection` scenario pauses after a queued prompt request but before Pi rejects it. Type a new composer draft, then release `submission-requested`: the new text stays intact and the unsent message appears under Review Unsent. Restore Draft is disabled until the composer is empty; restoring the old text then focuses the composer. Release `submission-rejected` to finish.
+
+The `saved-session-steering-boundary` scenario holds a tool turn while three steering messages enter the queue. Release `steering-queued` to deliver them at one boundary as distinct transcript rows. After `steering-boundary-delivered`, queue two follow-ups with Cmd+Enter; release `follow-ups-queued` and `first-follow-up-hydrated` in turn to verify one-at-a-time delivery and exactly-once hydration. This simulates Pi's scheduling events; Tau never dispatches follow-ups itself.
+
 ## Inspect and control a paused scenario
 
 The browser console exposes `window.__TAU_PI_SCENARIO__` only while a scenario is selected. Its methods are:

@@ -17,6 +17,7 @@ import {
   savedSessionLongHistory,
   savedSessionShortHistory,
 } from './saved-session-history';
+import savedSessionMessageQueue from './saved-session-message-queue';
 import {
   remotePhantomPromptProcessExit,
   remoteSavedSessionProcessExit,
@@ -24,6 +25,8 @@ import {
   savedSessionPromptProcessExit,
 } from './saved-session-process-failures';
 import savedSessionPromptAdmission from './saved-session-prompt-admission';
+import savedSessionQueueRejection from './saved-session-queue-rejection';
+import savedSessionSteeringBoundary from './saved-session-steering-boundary';
 import {
   savedSessionBootstrap,
   savedSessionConversation,
@@ -41,6 +44,9 @@ const scenarios = [
   savedSessionCompaction,
   savedSessionCompactionNotifications,
   savedSessionPromptAdmission,
+  savedSessionMessageQueue,
+  savedSessionQueueRejection,
+  savedSessionSteeringBoundary,
   savedSessionStaleGeneration,
   savedSessionCommandReplacement,
   planImplementReplacement,

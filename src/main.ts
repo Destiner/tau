@@ -67,6 +67,14 @@ async function mountApp(): Promise<void> {
     app.mount('#app');
     return;
   }
+  if (import.meta.env.DEV && fixture === 'session-tooltip') {
+    const { default: SessionTooltipFixture } =
+      await import('./dev/SessionTooltipFixture.vue');
+    const app = createApp(SessionTooltipFixture);
+    app.config.errorHandler = vueErrorHandler;
+    app.mount('#app');
+    return;
+  }
   if (import.meta.env.DEV && fixture === 'session-order') {
     const { default: SessionOrderFixture } =
       await import('./dev/SessionOrderFixture.vue');

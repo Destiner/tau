@@ -30,6 +30,10 @@ interface RuntimeSession {
   projectPath: string;
   streaming: boolean;
   promptGeneration: number;
+  steeringQueue: string[];
+  followUpQueue: string[];
+  steeringMode: 'all' | 'one-at-a-time';
+  followUpMode: 'all' | 'one-at-a-time';
   session: SessionData;
 }
 
@@ -165,6 +169,17 @@ function requiredBoolean(args: Record<string, unknown>, key: string): boolean {
   return value;
 }
 
+function requiredQueueMode(
+  args: Record<string, unknown>,
+  key: string,
+): 'all' | 'one-at-a-time' {
+  const value = args[key];
+  if (value !== 'all' && value !== 'one-at-a-time') {
+    throw new Error(`Browser sandbox expected ${key}.`);
+  }
+  return value;
+}
+
 function requireOwner(
   args: Record<string, unknown>,
   activeOwner: string,
@@ -277,6 +292,10 @@ function createBrowserSandboxHandler(
       thinkingLevel: runtime.session.effort,
       isStreaming: runtime.streaming,
       isCompacting: false,
+      steeringMode: runtime.steeringMode,
+      followUpMode: runtime.followUpMode,
+      pendingMessageCount:
+        runtime.steeringQueue.length + runtime.followUpQueue.length,
     };
   }
 
@@ -299,7 +318,6 @@ function createBrowserSandboxHandler(
     if (!isActive()) return;
     await response(runtime, request);
     if (!isActive()) return;
-
     const reply = `Browser sandbox received: “${message}”\n\nThis reply is generated locally and the workspace will reset on reload.`;
     await bridge(runtime, {
       type: 'message_start',
@@ -320,6 +338,26 @@ function createBrowserSandboxHandler(
     if (!isActive()) return;
     runtime.streaming = false;
     await bridge(runtime, { type: 'agent_settled' });
+  }
+
+  async function queuePrompt(
+    runtime: RuntimeSession,
+    request: Record<string, unknown>,
+  ): Promise<void> {
+    const message = requiredString(request, 'message');
+    const behavior = request.streamingBehavior;
+    if (behavior !== 'steer' && behavior !== 'followUp') {
+      throw new Error('Browser sandbox expected streamingBehavior.');
+    }
+    const queue =
+      behavior === 'steer' ? runtime.steeringQueue : runtime.followUpQueue;
+    queue.push(message);
+    await bridge(runtime, {
+      type: 'queue_update',
+      steering: runtime.steeringQueue,
+      followUp: runtime.followUpQueue,
+    });
+    await response(runtime, request);
   }
 
   async function handlePiRequest(
@@ -357,6 +395,27 @@ function createBrowserSandboxHandler(
         runtime.session.effort = requiredString(request, 'level');
         await response(runtime, request);
         return;
+      case 'set_steering_mode':
+        runtime.steeringMode = requiredQueueMode(request, 'mode');
+        await response(runtime, request);
+        return;
+      case 'set_follow_up_mode':
+        runtime.followUpMode = requiredQueueMode(request, 'mode');
+        await response(runtime, request);
+        return;
+      case 'clear_queue': {
+        const data = {
+          steering: runtime.steeringQueue.splice(0),
+          followUp: runtime.followUpQueue.splice(0),
+        };
+        await bridge(runtime, {
+          type: 'queue_update',
+          steering: runtime.steeringQueue,
+          followUp: runtime.followUpQueue,
+        });
+        await response(runtime, request, data);
+        return;
+      }
       case 'set_session_name':
         runtime.session.name = requiredString(request, 'name');
         await response(runtime, request);
@@ -367,7 +426,11 @@ function createBrowserSandboxHandler(
         });
         return;
       case 'prompt':
-        await runPrompt(runtime, request);
+        if (runtime.streaming && request.streamingBehavior !== undefined) {
+          await queuePrompt(runtime, request);
+        } else {
+          await runPrompt(runtime, request);
+        }
         return;
       case 'abort':
         runtime.promptGeneration += 1;
@@ -592,6 +655,10 @@ function createBrowserSandboxHandler(
         projectPath,
         streaming: false,
         promptGeneration: 0,
+        steeringQueue: [],
+        followUpQueue: [],
+        steeringMode: 'all',
+        followUpMode: 'all',
         session: sessionData,
       };
       const replaced = runtimes.get(runtimeId);

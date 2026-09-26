@@ -79,6 +79,15 @@ function testController(
     commands: [],
     commandsLoaded: false,
     pendingPrompt: undefined,
+    queue: { steering: [], followUp: [] },
+    queueVersion: 0,
+    queueSubmissions: [],
+    queueSteeringMode: '',
+    queueFollowUpMode: '',
+    queuePreparing: false,
+    queueClearing: false,
+    queueFeedback: '',
+    queueFailedDrafts: [],
     sessionNameRevision: 0,
     sessionNameStateRequestId: '',
     sessionNameStateRevision: 0,
@@ -274,6 +283,123 @@ describe('sessionWorkInProgress', () => {
     ];
 
     expect(inProgressSessionCount.value).toBe(2);
+  });
+});
+
+describe('sessionTooltipStatus', () => {
+  const session: SessionSummary = {
+    id: 'session-1',
+    path: '/tmp/project/session.jsonl',
+    title: 'Session',
+    lastActive: 'now',
+    lastUserMessageAt: 0,
+    sortAt: 1,
+    archived: false,
+    selected: false,
+  };
+  const project: ProjectSummary = {
+    path: '/tmp/project',
+    name: 'Project',
+    workingDirectory: '/tmp/project',
+    collapsed: false,
+    selected: false,
+    sessions: [session],
+  };
+
+  it.each([
+    ['working', { working: true, draft: 'Unsent', unread: true }, 'Working'],
+    ['draft', { draft: 'Unsent', unread: true }, 'Unsent draft'],
+    ['unread', { unread: true }, 'Unread'],
+  ] as const)(
+    'uses the existing %s session indicator status before lower-priority states',
+    async (_name, controllerState, expected) => {
+      const { sessionTooltipStatus, state } = await import('./state');
+      state.controllers = [testController(controllerState)];
+      state.extensionDialogs = [];
+
+      expect(sessionTooltipStatus(project, session)).toBe(expected);
+    },
+  );
+
+  it('treats a whitespace-only draft as Idle', async () => {
+    const { sessionTooltipStatus, state } = await import('./state');
+    state.controllers = [testController({ draft: '  \n  ' })];
+    state.extensionDialogs = [];
+
+    expect(sessionTooltipStatus(project, session)).toBe('Idle');
+  });
+
+  it('puts a pending extension dialog before working and draft', async () => {
+    const { sessionTooltipStatus, state } = await import('./state');
+    const controller = testController({ working: true, draft: 'Unsent' });
+    state.controllers = [controller];
+    state.extensionDialogs = [
+      {
+        key: 'dialog-1',
+        requestId: 'request-1',
+        method: 'confirm',
+        title: 'Continue?',
+        draft: '',
+        submitting: false,
+        error: '',
+        controllerKey: controller.key,
+        runtimeId: controller.runtimeId,
+        generation: controller.generation,
+        projectName: 'Project',
+        sessionName: 'Session',
+      },
+    ];
+
+    expect(sessionTooltipStatus(project, session)).toBe('Unread');
+  });
+
+  it('uses Archived as an override even when the controller has an indicator', async () => {
+    const { sessionTooltipStatus, state } = await import('./state');
+    state.controllers = [
+      testController({ working: true, draft: 'Unsent', unread: true }),
+    ];
+    const archivedSession = { ...session, archived: true };
+
+    expect(sessionTooltipStatus(project, archivedSession)).toBe('Archived');
+  });
+
+  it('falls back to Idle without creating or changing a missing controller', async () => {
+    const { sessionTooltipStatus, state } = await import('./state');
+    state.controllers = [];
+    const controllers = state.controllers;
+    const projectBefore = { ...project, sessions: [...project.sessions] };
+    const sessionBefore = { ...session };
+
+    expect(sessionTooltipStatus(project, session)).toBe('Idle');
+    expect(state.controllers).toBe(controllers);
+    expect(project).toEqual(projectBefore);
+    expect(session).toEqual(sessionBefore);
+  });
+});
+
+describe('expandedRelativeTime', () => {
+  it.each([
+    ['now', 'just now'],
+    ['1m', '1 minute ago'],
+    ['2m', '2 minutes ago'],
+    ['1h', '1 hour ago'],
+    ['2h', '2 hours ago'],
+    ['1d', '1 day ago'],
+    ['2d', '2 days ago'],
+    ['1w', '1 week ago'],
+    ['3w', '3 weeks ago'],
+    ['1y', '1 year ago'],
+    ['2y', '2 years ago'],
+  ])('expands %s to %s', async (value, expected) => {
+    const { expandedRelativeTime } = await import('./state');
+
+    expect(expandedRelativeTime(value)).toBe(expected);
+  });
+
+  it('preserves an empty value', async () => {
+    const { expandedRelativeTime } = await import('./state');
+
+    expect(expandedRelativeTime('')).toBe('');
   });
 });
 
@@ -632,4 +758,76 @@ describe('buildStateSnapshot', () => {
       }
     },
   );
+});
+
+describe('queue recovery identity', () => {
+  it('holds an interrupted predecessor draft until that session is reopened', async () => {
+    const { ensureController, stashInterruptedQueueDrafts, state } =
+      await import('./state');
+    const session: SessionSummary = {
+      id: 'old',
+      path: '/tmp/project/old.jsonl',
+      title: 'Old',
+      lastActive: 'now',
+      lastUserMessageAt: 0,
+      sortAt: 1,
+      archived: false,
+      selected: false,
+    };
+    const project: ProjectSummary = {
+      path: '/tmp/project',
+      name: 'Project',
+      workingDirectory: '/tmp/project',
+      collapsed: false,
+      selected: true,
+      sessions: [session],
+    };
+    state.controllers.splice(0);
+    stashInterruptedQueueDrafts(
+      testController({ projectPath: project.path, sessionId: session.id }),
+      ['unacknowledged text'],
+    );
+    const successor = ensureController(project, {
+      ...session,
+      id: 'new',
+      path: '/tmp/project/new.jsonl',
+    });
+    expect(successor.queueFailedDrafts).toEqual([]);
+    const reopened = ensureController(project, session);
+    expect(reopened.queueFailedDrafts).toEqual(['unacknowledged text']);
+    expect(reopened.queueFeedback).toContain('unsent');
+  });
+
+  it('reports acknowledged queue work lost by session replacement without replaying it', async () => {
+    const { ensureController, stashInterruptedQueueDrafts, state } =
+      await import('./state');
+    const session: SessionSummary = {
+      id: 'queued',
+      path: '/tmp/project/queued.jsonl',
+      title: 'Queued',
+      lastActive: 'now',
+      lastUserMessageAt: 0,
+      sortAt: 1,
+      archived: false,
+      selected: false,
+    };
+    const project: ProjectSummary = {
+      path: '/tmp/project',
+      name: 'Project',
+      workingDirectory: '/tmp/project',
+      collapsed: false,
+      selected: true,
+      sessions: [session],
+    };
+    state.controllers.splice(0);
+    stashInterruptedQueueDrafts(
+      testController({ projectPath: project.path, sessionId: session.id }),
+      [],
+      true,
+    );
+    const reopened = ensureController(project, session);
+    expect(reopened.queueFailedDrafts).toEqual([]);
+    expect(reopened.queueFeedback).toContain('were lost');
+    expect(reopened.queueFeedback).toContain('not resent');
+  });
 });
