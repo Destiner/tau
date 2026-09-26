@@ -51,6 +51,8 @@ interface SessionSummary {
   id: string;
   path: string;
   title: string;
+  /** Bounded display-only source, before compact title normalization. */
+  titleMarkdown?: string;
   /** The model id Pi last recorded for the session, empty when unknown. */
   model?: string;
   lastActive: string;
@@ -126,6 +128,7 @@ interface PendingSessionRename {
   requestId: string;
   previousName: string;
   previousTitle: string;
+  previousTitleMarkdown?: string;
 }
 
 interface SubmittedPrompt {
@@ -556,7 +559,10 @@ const draft = computed({
     if (!controller) return;
     controller.draft = value;
     const session = ephemeralSessionByController(controller.key);
-    if (session?.phantom) session.title = draftTitle(value);
+    if (session?.phantom) {
+      session.title = draftTitle(value);
+      session.titleMarkdown = sessionTitleMarkdown(value);
+    }
   },
 });
 const retryPresentation = computed(() => activeController.value?.retry);
@@ -934,6 +940,7 @@ function createPhantomSession(
     id: `phantom-${now}-${phantomSequence}`,
     path: '',
     title: 'New Session',
+    titleMarkdown: 'New Session',
     lastActive: 'now',
     lastUserMessageAt: 0,
     sortAt: now,
@@ -1224,6 +1231,16 @@ function relativeTimestamp(timestamp: number): string {
 
 function draftTitle(value: string): string {
   return normalizeSessionName(value) || 'New Session';
+}
+
+function sessionTitleMarkdown(value: string): string {
+  return value.trim()
+    ? Array.from(value).slice(0, 240).join('')
+    : 'New Session';
+}
+
+function tooltipTitleMarkdown(session: SessionSummary): string {
+  return sessionTitleMarkdown(session.titleMarkdown ?? session.title);
 }
 
 function normalizeSessionName(value: string): string {
@@ -1671,6 +1688,8 @@ export {
   markUserMessageSubmitted,
   relativeTimestamp,
   draftTitle,
+  sessionTitleMarkdown,
+  tooltipTitleMarkdown,
   normalizeSessionName,
   commandOption,
   normalizeEffort,

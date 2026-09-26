@@ -1933,10 +1933,11 @@ mod tests {
         let exited = expect_outer_event(&events, "exited", generation);
         assert_eq!(exited["runtimeId"], "native-failure");
         assert_eq!(exited["code"], 23);
-        assert_eq!(
-            exited["message"],
-            "Pi exited with status 23. scripted transport failure"
-        );
+        // The stderr reader may emit its event after the exit reader snapshots
+        // the best-effort tail, even when the event arrives first on this channel.
+        assert!(exited["message"]
+            .as_str()
+            .is_some_and(|message| message.starts_with("Pi exited with status 23.")));
         assert!(state.inner.lock().expect("Pi manager").processes.is_empty());
     }
 

@@ -182,7 +182,12 @@
 .session-tooltip {
   width: max-content;
   max-width: min(300px, calc(100vw - 12px));
+  max-height: min(
+    calc(100vh - 12px),
+    var(--reka-tooltip-content-available-height)
+  );
   padding: 9px 11px;
+  overflow-y: auto;
   text-align: left;
 }
 
@@ -205,6 +210,17 @@
 
 .session-tooltip-date {
   margin-top: 12px;
+}
+
+.session-tooltip .session-tooltip-name {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.session-tooltip .session-tooltip-name :is(pre, table, .code-block) {
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 /* ── Pick row ───────────────────────────────────────────────────────────── */

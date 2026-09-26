@@ -27,12 +27,15 @@ type TooltipStatus = 'working' | 'draft' | 'unread' | 'idle';
 
 interface SessionTooltipFixtureApi {
   setTitle(title: string): void;
+  setMarkdown(source: string): void;
+  setArchivedMarkdown(source: string): void;
   setStatus(status: TooltipStatus): void;
 }
 
 declare global {
   interface Window {
     __TAU_SESSION_TOOLTIP_FIXTURE__?: SessionTooltipFixtureApi;
+    __TAU_TOOLTIP_OPENED_URLS__?: string[];
   }
 }
 
@@ -71,19 +74,26 @@ const workspace: WorkspaceSnapshot = {
       collapsed: false,
       selected: false,
       sessions: [
-        session('working-session-opaque-7fb4d9', longTitle, '2h'),
+        {
+          ...session('working-session-opaque-7fb4d9', longTitle, '2h'),
+          titleMarkdown:
+            '**Markdown preview** with `inline code`\n\n- First item\n  - Nested item\n\n```js\nconst ready = true;\n```',
+        },
         session('draft-session-opaque-a12c8e', 'Prepare release notes', '1d'),
         session(
           'unread-session-opaque-3e5f10',
           'Check the browser regression results',
           '1w',
         ),
-        session(
-          'archived-session-opaque-c0ffee',
-          '<em>Archived markup stays text</em> — a long archived session title',
-          '3w',
-          true,
-        ),
+        {
+          ...session(
+            'archived-session-opaque-c0ffee',
+            '<em>Archived markup stays text</em> — a long archived session title',
+            '3w',
+            true,
+          ),
+          titleMarkdown: 'Archived *notes*\n\nSecond paragraph with `code`',
+        },
       ],
     } satisfies ProjectSummary,
   ],
@@ -116,6 +126,18 @@ function primarySession(): SessionSummary {
 window.__TAU_SESSION_TOOLTIP_FIXTURE__ = {
   setTitle(title): void {
     primarySession().title = title;
+    primarySession().titleMarkdown = title;
+  },
+  setMarkdown(source): void {
+    primarySession().titleMarkdown = source;
+  },
+  setArchivedMarkdown(source): void {
+    const archived = state.workspace?.projects[0]?.sessions.find(
+      (session) => session.archived,
+    );
+    if (!archived)
+      throw new Error('Expected the archived tooltip fixture session.');
+    archived.titleMarkdown = source;
   },
   setStatus(status): void {
     const controller = state.controllers[0];

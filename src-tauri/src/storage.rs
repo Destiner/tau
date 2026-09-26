@@ -697,16 +697,16 @@ fn list_remote_sessions(remote: &RemoteProjectRecord) -> Vec<SessionSummary> {
         .map(|session| {
             let last_user_message_at = timestamp_millis(session.last_active);
             let sort_at = timestamp_millis(session.sort_at).max(last_user_message_at);
+            let title = session
+                .name
+                .as_deref()
+                .filter(|name| !name.is_empty())
+                .unwrap_or("New Session");
             SessionSummary {
                 id: session.id.clone(),
                 path: session.path.clone(),
-                title: single_line(
-                    session
-                        .name
-                        .as_deref()
-                        .filter(|name| !name.is_empty())
-                        .unwrap_or("New Session"),
-                ),
+                title: single_line(title),
+                title_markdown: Some(markdown_title(title)),
                 // Remote registries do not carry a model; the archived list
                 // omits the model line when it is empty.
                 model: String::new(),
@@ -762,6 +762,7 @@ pub(crate) fn list_sessions_in(session_dir: &Path) -> Result<Vec<SessionSummary>
             id: parsed.id.clone(),
             path: path.to_string_lossy().into_owned(),
             title: single_line(&title),
+            title_markdown: Some(markdown_title(&title)),
             model: parsed.model.clone(),
             last_active: if sort_at == 0 {
                 relative_time(modified)
@@ -906,6 +907,10 @@ fn single_line(value: &str) -> String {
         .chars()
         .take(240)
         .collect()
+}
+
+fn markdown_title(value: &str) -> String {
+    value.chars().take(240).collect()
 }
 
 fn sort_sessions(sessions: &mut [SessionSummary]) {
@@ -1141,6 +1146,109 @@ mod tests {
         );
         assert_eq!(session_title("", None, "Port Tau"), "Port Tau");
         assert_eq!(session_title("", Some(""), ""), "New Session");
+    }
+
+    #[test]
+    fn local_title_markdown_uses_the_same_winning_source_as_the_compact_title() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let registry = TauSessionRegistry {
+            sessions: vec![
+                TauSessionRecord {
+                    id: "pi".into(),
+                    name: Some("Stale Tau title".into()),
+                    archived: false,
+                },
+                TauSessionRecord {
+                    id: "registry".into(),
+                    name: Some("Tau *title*\nnext".into()),
+                    archived: false,
+                },
+                TauSessionRecord {
+                    id: "message".into(),
+                    name: None,
+                    archived: false,
+                },
+            ],
+            ..TauSessionRegistry::default()
+        };
+        fs::write(
+            directory.path().join(SESSION_REGISTRY_FILENAME),
+            serde_json::to_vec(&registry).expect("registry JSON"),
+        )
+        .expect("write registry");
+        for (id, body) in [
+            (
+                "pi",
+                r#"{"type":"session_info","name":"  Pi **title**\r\n\r\n\t```\nnext"}"#,
+            ),
+            (
+                "registry",
+                r#"{"type":"message","message":{"role":"assistant"}}"#,
+            ),
+            (
+                "message",
+                r#"{"type":"message","message":{"role":"user","content":"First **message**\nnext"}}"#,
+            ),
+        ] {
+            let mut file =
+                File::create(directory.path().join(format!("{id}.jsonl"))).expect("session file");
+            writeln!(file, r#"{{"type":"session","id":"{id}"}}"#).expect("header");
+            writeln!(file, "{body}").expect("body");
+        }
+
+        let sessions = list_sessions_in(directory.path()).expect("sessions");
+        let titles = sessions
+            .iter()
+            .map(|session| {
+                (
+                    session.id.as_str(),
+                    (session.title.as_str(), session.title_markdown.as_deref()),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!(
+            titles["pi"],
+            (
+                "  Pi **title**     ``` next",
+                Some("  Pi **title**\r\n\r\n\t```\nnext")
+            )
+        );
+        assert_eq!(
+            titles["registry"],
+            ("Tau *title* next", Some("Tau *title*\nnext"))
+        );
+        assert_eq!(
+            titles["message"],
+            ("First **message** next", Some("First **message**\nnext"))
+        );
+    }
+
+    #[test]
+    fn remote_title_markdown_preserves_whitespace_and_unicode_at_the_scalar_limit() {
+        let raw_title = format!(" \n\t{}é", "🦀".repeat(239));
+        let remote = RemoteProjectRecord {
+            connection_string: "ssh build-box".into(),
+            working_directory: "/home/timur".into(),
+            host: "build-box".into(),
+            active_session_id: String::new(),
+            sessions: vec![RemoteSessionRecord {
+                id: "remote-session".into(),
+                path: "/remote/session.jsonl".into(),
+                name: Some(raw_title.clone()),
+                archived: false,
+                last_active: 0,
+                sort_at: 0,
+            }],
+        };
+
+        let session = list_remote_sessions(&remote).pop().expect("remote session");
+        let markdown = session.title_markdown.expect("markdown title");
+        assert_eq!(markdown.chars().count(), 240);
+        assert_eq!(&markdown[..3], " \n\t");
+        assert_eq!(markdown, raw_title.chars().take(240).collect::<String>());
+        assert_eq!(session.title.chars().count(), 240);
+        assert!(session.title.starts_with("   "));
     }
 
     #[test]
