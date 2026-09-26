@@ -8,7 +8,9 @@ test.beforeEach(async ({ page }) => {
 test('renders bounded batches and reaches older groups without losing focus', async ({
   page,
 }) => {
-  test.setTimeout(120_000);
+  // Exercise multiple calendar groups without making every browser run mount
+  // the 2,500-row archive reserved for the isolated performance spec.
+  await page.evaluate(() => window.__TAU_ARCHIVE_FIXTURE__!.replace(350));
   const list = page.locator('.archived-list');
   const rows = list.locator('.row');
   await expect(rows).toHaveCount(50);
@@ -33,18 +35,18 @@ test('renders bounded batches and reaches older groups without losing focus', as
   await expect(rows).toHaveCount(100);
 
   // Navigate to the end a batch at a time, checking stable identities.
-  for (let i = 0; i < 50; i++) {
+  for (let i = 0; i < 7; i++) {
     const count = await rows.count();
-    if (count === 2500) break;
+    if (count === 350) break;
     await list.evaluate((element) => {
       element.scrollTop = element.scrollHeight;
     });
-    await expect(rows).toHaveCount(Math.min(count + 50, 2500));
+    await expect(rows).toHaveCount(Math.min(count + 50, 350));
   }
-  await expect(rows).toHaveCount(2500);
-  await expect(rows.last()).toContainText('Archive 2499');
+  await expect(rows).toHaveCount(350);
+  await expect(rows.last()).toContainText('Archive 349');
   const titles = await rows.locator('.name').allTextContents();
-  expect(new Set(titles).size).toBe(2500);
+  expect(new Set(titles).size).toBe(350);
 
   await page.getByRole('button', { name: 'Show Sessions' }).click();
   await page.getByRole('button', { name: 'Show Archived Sessions' }).click();
