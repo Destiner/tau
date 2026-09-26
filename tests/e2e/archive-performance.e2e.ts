@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 test('opens a 2500-session archive without mounting the whole list', async ({
   page,

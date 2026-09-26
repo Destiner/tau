@@ -18,6 +18,19 @@ function projectNamed(
   return project!;
 }
 
+describe('Archive E2E error guard', () => {
+  test.each(['archive-window', 'archive-performance'])(
+    '%s uses the shared browser-error fixture',
+    (name) => {
+      const source = readFileSync(
+        new URL(`./e2e/${name}.e2e.ts`, import.meta.url),
+        'utf8',
+      );
+      expect(source).toMatch(/import \{ expect, test \} from '\.\/fixtures';/);
+    },
+  );
+});
+
 describe('Playwright scheduling', () => {
   test('runs functional browsers at the configured capacity', () => {
     expect(playwrightConfig.workers).toBe(2);
