@@ -59,6 +59,14 @@ async function mountApp(): Promise<void> {
     app.mount('#app');
     return;
   }
+  if (import.meta.env.DEV && fixture === 'archive') {
+    const { default: ArchiveFixture } =
+      await import('./dev/ArchiveFixture.vue');
+    const app = createApp(ArchiveFixture);
+    app.config.errorHandler = vueErrorHandler;
+    app.mount('#app');
+    return;
+  }
   if (import.meta.env.DEV && fixture === 'session-order') {
     const { default: SessionOrderFixture } =
       await import('./dev/SessionOrderFixture.vue');

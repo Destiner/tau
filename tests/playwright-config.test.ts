@@ -6,7 +6,7 @@ import { describe, expect, test } from 'vitest';
 
 import playwrightConfig from '../playwright.config';
 
-const performanceSpec = '**/transcript-performance.e2e.ts';
+const performanceSpec = '**/*-performance.e2e.ts';
 
 function projectNamed(
   name: string,
@@ -27,7 +27,7 @@ describe('Playwright scheduling', () => {
     }
   });
 
-  test('runs the transcript benchmark in an isolated Chromium phase', () => {
+  test('runs both benchmarks in an isolated Chromium phase', () => {
     const project = projectNamed('chromium-performance');
 
     expect(project.testMatch).toBe(performanceSpec);

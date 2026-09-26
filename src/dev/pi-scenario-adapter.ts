@@ -339,7 +339,21 @@ function scenarioWorkspace(scenarioName: string): WorkspaceSnapshot {
     workspace.piPath = null;
   }
   if (scenarioName === 'archived-sessions-review') {
-    workspace.projects[0]?.sessions.push({
+    const project = workspace.projects[0];
+    // Keep the interactive archived row beyond the first render batch.
+    for (let index = 0; index < 60; index++) {
+      project?.sessions.push({
+        id: `archive-filler-${index}`,
+        path: `${PROJECT_PATH}/archive-filler-${index}.jsonl`,
+        title: `Archived fixture ${index}`,
+        lastActive: 'recently',
+        lastUserMessageAt: 0,
+        sortAt: Date.now() + 61 - index,
+        archived: true,
+        selected: false,
+      });
+    }
+    project?.sessions.push({
       id: ARCHIVED_SESSION.id,
       path: ARCHIVED_SESSION.path,
       title: ARCHIVED_SESSION.name,

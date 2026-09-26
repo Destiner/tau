@@ -1,7 +1,11 @@
 <template>
-  <div class="archived-list">
+  <div
+    ref="scrollElement"
+    class="archived-list"
+    @scroll="scheduleAppend"
+  >
     <template
-      v-for="group in groups"
+      v-for="group in windowed.groups"
       :key="group.label"
     >
       <button
@@ -20,7 +24,7 @@
       <template v-if="!closedGroups.has(group.label)">
         <div
           v-for="entry in group.items"
-          :key="entry.session.id"
+          :key="`${entry.projectPath}:${entry.session.id}`"
           class="row"
           :class="{
             selected:
@@ -66,11 +70,22 @@
     >
       No archived sessions
     </div>
+    <div
+      ref="sentinel"
+      aria-hidden="true"
+    ></div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from 'vue';
 
 import type {
   ArchivedSessionEntry,
@@ -81,6 +96,7 @@ import {
   groupArchivedByTime,
   type ArchivedGroup,
 } from '../lib/archived-groups';
+import archivedWindow from '../lib/archived-window';
 
 import UiIcon from './ui/UiIcon.vue';
 import UiIconButton from './ui/UiIconButton.vue';
@@ -96,12 +112,66 @@ const {
   unarchiveSession,
 } = useTau();
 
+const BATCH_SIZE = 50;
+const PREFETCH_PX = 200;
 const closedGroups = ref(new Set<string>());
+const budget = ref(BATCH_SIZE);
+const scrollElement = ref<HTMLElement>();
+const sentinel = ref<HTMLElement>();
+let observer: IntersectionObserver | undefined;
+let resizeObserver: ResizeObserver | undefined;
+let frame = 0;
+let disposed = false;
 const groups = computed<ArchivedGroup<ArchivedSessionEntry>[]>(() =>
   groupArchivedByTime(archivedSessionEntries.value, (entry) =>
     sessionSortAt(entry.projectPath, entry.session),
   ),
 );
+
+const windowed = computed(() =>
+  archivedWindow(groups.value, closedGroups.value, budget.value),
+);
+
+function scheduleAppend(): void {
+  if (disposed || frame || !windowed.value.hasMore) return;
+  frame = requestAnimationFrame(() => {
+    frame = 0;
+    const element = scrollElement.value;
+    if (
+      disposed ||
+      !element ||
+      !windowed.value.hasMore ||
+      element.scrollHeight - element.scrollTop - element.clientHeight >
+        PREFETCH_PX
+    )
+      return;
+    budget.value += BATCH_SIZE;
+  });
+}
+
+// Recheck after each patch: an underfilled viewport needs another batch, but
+// an ordinary viewport must not consume the entire archive while idle.
+watch(windowed, () => void nextTick(scheduleAppend), { flush: 'post' });
+
+onMounted(() => {
+  const element = scrollElement.value;
+  const target = sentinel.value;
+  if (!element || !target) return;
+  observer = new IntersectionObserver(scheduleAppend, {
+    root: element,
+    rootMargin: `0px 0px ${PREFETCH_PX}px 0px`,
+  });
+  observer.observe(target);
+  resizeObserver = new ResizeObserver(scheduleAppend);
+  resizeObserver.observe(element);
+  scheduleAppend();
+});
+onBeforeUnmount(() => {
+  disposed = true;
+  observer?.disconnect();
+  resizeObserver?.disconnect();
+  cancelAnimationFrame(frame);
+});
 
 function toggleGroup(label: string): void {
   const next = new Set(closedGroups.value);
