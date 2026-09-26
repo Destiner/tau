@@ -1,8 +1,14 @@
-import type { Locator } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
 import { expect, test } from './fixtures';
 
 const fixtureUrl = '/?fixture=session-tooltip';
+
+async function waitForFixture(page: Page): Promise<void> {
+  await page.waitForFunction(() =>
+    Boolean(window.__TAU_SESSION_TOOLTIP_FIXTURE__),
+  );
+}
 const longTitle =
   '<strong>Do not render markup</strong> — this intentionally long session title is clipped in the sidebar';
 const archivedTitle =
@@ -84,6 +90,7 @@ test('keeps tooltip contents reactive without exposing fixture session IDs', asy
 }) => {
   await page.goto(fixtureUrl);
 
+  await waitForFixture(page);
   const replacementTitle = '**Updated**\n\nSecond paragraph';
   await page.evaluate((title) => {
     const fixture = window.__TAU_SESSION_TOOLTIP_FIXTURE__;
@@ -140,6 +147,7 @@ test('sanitizes unsafe Markdown and bounds truncated multiline previews', async 
   await page.setViewportSize({ width: 360, height: 320 });
   await page.goto(fixtureUrl);
   const row = page.locator('.session-row').first();
+  await waitForFixture(page);
   const source =
     'Safe [web link](https://example.com) [unsafe](javascript:alert(1)) <img src=x onerror=alert(1)>\n\n' +
     Array.from({ length: 40 }, (_, index) => `line ${index}`).join('  \n');
@@ -171,6 +179,7 @@ test('keeps the end of tall active and archived previews reachable', async ({
 }) => {
   await page.setViewportSize({ width: 720, height: 520 });
   await page.goto(fixtureUrl);
+  await waitForFixture(page);
   const source = 'line\n'.repeat(46) + 'final line';
   expect(source).toHaveLength(240);
   await page.evaluate((markdown) => {
@@ -234,6 +243,7 @@ test('opens Markdown web links externally without navigating the app', async ({
     } as typeof window.__TAURI_INTERNALS__;
   });
   await page.goto(fixtureUrl);
+  await waitForFixture(page);
   await page.evaluate(() => {
     window.__TAU_SESSION_TOOLTIP_FIXTURE__?.setMarkdown(
       '[Website](https://example.com)',
