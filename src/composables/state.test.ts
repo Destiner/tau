@@ -286,6 +286,123 @@ describe('sessionWorkInProgress', () => {
   });
 });
 
+describe('sessionTooltipStatus', () => {
+  const session: SessionSummary = {
+    id: 'session-1',
+    path: '/tmp/project/session.jsonl',
+    title: 'Session',
+    lastActive: 'now',
+    lastUserMessageAt: 0,
+    sortAt: 1,
+    archived: false,
+    selected: false,
+  };
+  const project: ProjectSummary = {
+    path: '/tmp/project',
+    name: 'Project',
+    workingDirectory: '/tmp/project',
+    collapsed: false,
+    selected: false,
+    sessions: [session],
+  };
+
+  it.each([
+    ['working', { working: true, draft: 'Unsent', unread: true }, 'Working'],
+    ['draft', { draft: 'Unsent', unread: true }, 'Unsent draft'],
+    ['unread', { unread: true }, 'Unread'],
+  ] as const)(
+    'uses the existing %s session indicator status before lower-priority states',
+    async (_name, controllerState, expected) => {
+      const { sessionTooltipStatus, state } = await import('./state');
+      state.controllers = [testController(controllerState)];
+      state.extensionDialogs = [];
+
+      expect(sessionTooltipStatus(project, session)).toBe(expected);
+    },
+  );
+
+  it('treats a whitespace-only draft as Idle', async () => {
+    const { sessionTooltipStatus, state } = await import('./state');
+    state.controllers = [testController({ draft: '  \n  ' })];
+    state.extensionDialogs = [];
+
+    expect(sessionTooltipStatus(project, session)).toBe('Idle');
+  });
+
+  it('puts a pending extension dialog before working and draft', async () => {
+    const { sessionTooltipStatus, state } = await import('./state');
+    const controller = testController({ working: true, draft: 'Unsent' });
+    state.controllers = [controller];
+    state.extensionDialogs = [
+      {
+        key: 'dialog-1',
+        requestId: 'request-1',
+        method: 'confirm',
+        title: 'Continue?',
+        draft: '',
+        submitting: false,
+        error: '',
+        controllerKey: controller.key,
+        runtimeId: controller.runtimeId,
+        generation: controller.generation,
+        projectName: 'Project',
+        sessionName: 'Session',
+      },
+    ];
+
+    expect(sessionTooltipStatus(project, session)).toBe('Unread');
+  });
+
+  it('uses Archived as an override even when the controller has an indicator', async () => {
+    const { sessionTooltipStatus, state } = await import('./state');
+    state.controllers = [
+      testController({ working: true, draft: 'Unsent', unread: true }),
+    ];
+    const archivedSession = { ...session, archived: true };
+
+    expect(sessionTooltipStatus(project, archivedSession)).toBe('Archived');
+  });
+
+  it('falls back to Idle without creating or changing a missing controller', async () => {
+    const { sessionTooltipStatus, state } = await import('./state');
+    state.controllers = [];
+    const controllers = state.controllers;
+    const projectBefore = { ...project, sessions: [...project.sessions] };
+    const sessionBefore = { ...session };
+
+    expect(sessionTooltipStatus(project, session)).toBe('Idle');
+    expect(state.controllers).toBe(controllers);
+    expect(project).toEqual(projectBefore);
+    expect(session).toEqual(sessionBefore);
+  });
+});
+
+describe('expandedRelativeTime', () => {
+  it.each([
+    ['now', 'just now'],
+    ['1m', '1 minute ago'],
+    ['2m', '2 minutes ago'],
+    ['1h', '1 hour ago'],
+    ['2h', '2 hours ago'],
+    ['1d', '1 day ago'],
+    ['2d', '2 days ago'],
+    ['1w', '1 week ago'],
+    ['3w', '3 weeks ago'],
+    ['1y', '1 year ago'],
+    ['2y', '2 years ago'],
+  ])('expands %s to %s', async (value, expected) => {
+    const { expandedRelativeTime } = await import('./state');
+
+    expect(expandedRelativeTime(value)).toBe(expected);
+  });
+
+  it('preserves an empty value', async () => {
+    const { expandedRelativeTime } = await import('./state');
+
+    expect(expandedRelativeTime('')).toBe('');
+  });
+});
+
 describe('canArchiveSession', () => {
   const session: SessionSummary = {
     id: 'session-1',
