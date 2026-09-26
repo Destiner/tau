@@ -14,6 +14,16 @@ For an interactive check, preview short and long code files, a wide one-line fil
 
 Checked-in Pi scenarios run the real Tau app against development-only mocked Tauri IPC and events. The same scenario source and browser adapter are used by Playwright and by the interactive runner; neither is included in production builds.
 
+## Large archive fixture
+
+Open `/?fixture=archive` in the Vite development app to inspect a synthetic
+2,500-session archive across three projects and multiple calendar groups. Click
+**Show Archived Sessions** and scroll to the bottom to reveal batches of 50
+without a button. Close and reopen to reset the window. This fixture contains
+no real Pi transcripts or production metadata. Chromium and WebKit exercise
+it in `archive-window.e2e.ts`; the isolated Chromium performance phase measures
+opening and appending in `archive-performance.e2e.ts`.
+
 ## Run a scenario
 
 List the available names and their purposes:
@@ -30,7 +40,7 @@ bun run repro -- saved-session-stale-generation
 
 The command validates the name before starting Vite and opens the selected `test-scenario` URL. Stop the server with Ctrl-C. Ordinary `bun run dev` does not select or install a scenario; in a plain browser it installs a generic in-memory sandbox instead. That sandbox starts with the `atlas` and `notes` sample projects and resets on every page load.
 
-The `empty-workspace` scenario opens the real app shell with no projects or sessions, so the first-run experience can be reviewed without changing the workspace used by either the production or development app.
+The `empty-workspace` scenario opens the real app shell with no projects or sessions, so the first-run experience can be reviewed without changing the workspace used by either the production or development app. In `archived-sessions-review`, open the archive and scroll beyond the first 50 rows to find **Older archived work**; opening it browses read-only, while its Unarchive action restores it to the project list.
 
 The stale-generation scenario starts in the saved `Main` session. Submit exactly `Explain the fixture` in the composer. It streams `Deterministic reply.` and pauses before delivering the stale output. Inspect the working state, then release its one gate and confirm the visible working state is unchanged.
 

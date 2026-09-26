@@ -8,6 +8,17 @@ import { expect, test } from './fixtures';
  */
 const scenarioUrl = '/?test-scenario=archived-sessions-review';
 
+async function revealOlderRow(
+  page: import('@playwright/test').Page,
+): Promise<void> {
+  const list = page.locator('.archived-list');
+  await expect(list.locator('.row')).toHaveCount(50);
+  await list.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect(list.locator('.row')).toHaveCount(61);
+}
+
 test('opens the sidebar actions from empty project-list space', async ({
   page,
 }) => {
@@ -45,6 +56,7 @@ test('opens the sidebar actions from empty project-list space', async ({
   const archivedList = page.locator('.archived-list');
   await expect(archivedList).toBeVisible();
 
+  await revealOlderRow(page);
   // Opening the archived row consumes this scenario's second Pi runtime.
   const archivedRow = archivedList.locator('.row', {
     hasText: 'Older archived work',
@@ -55,7 +67,8 @@ test('opens the sidebar actions from empty project-list space', async ({
   await archivedRow
     .getByRole('button', { name: 'Unarchive Older archived work' })
     .click();
-  await expect(archivedList.getByText('No archived sessions')).toBeVisible();
+  await expect(archivedRow).toHaveCount(0);
+  await expect(archivedList.locator('.row')).toHaveCount(60);
 });
 
 test('reviews, opens, and unarchives an archived session', async ({ page }) => {
@@ -70,6 +83,7 @@ test('reviews, opens, and unarchives an archived session', async ({ page }) => {
   await expect(archivedList).toBeVisible();
   await expect(page.locator('.project-group')).toHaveCount(0);
   await expect(archivedList.getByText('Today', { exact: true })).toBeVisible();
+  await revealOlderRow(page);
   const row = archivedList.locator('.row', {
     hasText: 'Older archived work',
   });
@@ -91,7 +105,8 @@ test('reviews, opens, and unarchives an archived session', async ({ page }) => {
   await row
     .getByRole('button', { name: 'Unarchive Older archived work' })
     .click();
-  await expect(archivedList.getByText('No archived sessions')).toBeVisible();
+  await expect(row).toHaveCount(0);
+  await expect(archivedList.locator('.row')).toHaveCount(60);
 
   await page.getByRole('button', { name: 'Show Sessions' }).click();
   await expect(

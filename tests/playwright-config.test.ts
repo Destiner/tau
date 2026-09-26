@@ -6,7 +6,7 @@ import { describe, expect, test } from 'vitest';
 
 import playwrightConfig from '../playwright.config';
 
-const performanceSpec = '**/transcript-performance.e2e.ts';
+const performanceSpec = '**/*-performance.e2e.ts';
 
 function projectNamed(
   name: string,
@@ -18,6 +18,19 @@ function projectNamed(
   return project!;
 }
 
+describe('Archive E2E error guard', () => {
+  test.each(['archive-window', 'archive-performance'])(
+    '%s uses the shared browser-error fixture',
+    (name) => {
+      const source = readFileSync(
+        new URL(`./e2e/${name}.e2e.ts`, import.meta.url),
+        'utf8',
+      );
+      expect(source).toMatch(/import \{ expect, test \} from '\.\/fixtures';/);
+    },
+  );
+});
+
 describe('Playwright scheduling', () => {
   test('runs functional browsers at the configured capacity', () => {
     expect(playwrightConfig.workers).toBe(2);
@@ -27,7 +40,7 @@ describe('Playwright scheduling', () => {
     }
   });
 
-  test('runs the transcript benchmark in an isolated Chromium phase', () => {
+  test('runs both benchmarks in an isolated Chromium phase', () => {
     const project = projectNamed('chromium-performance');
 
     expect(project.testMatch).toBe(performanceSpec);
