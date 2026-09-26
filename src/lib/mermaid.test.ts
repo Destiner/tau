@@ -93,6 +93,59 @@ describe('drawing a fenced diagram', () => {
     }
   });
 
+  it('renders complete quoted code labels and later explicit shapes', async () => {
+    await ready();
+    const svg =
+      renderDiagram(
+        `graph TD
+  A["metadata.calls = request.tasks ?? []"] --> B
+  B{"root authority"} --> C["submit {proofs: []}, sponsored: true"]`,
+        'mermaid',
+      ) ?? '';
+    for (const [id, label, shape] of [
+      ['A', 'metadata.calls = request.tasks ?? []', 'rectangle'],
+      ['B', 'root authority', 'diamond'],
+      ['C', 'submit {proofs: []}, sponsored: true', 'rectangle'],
+    ]) {
+      expect(svg).toContain(
+        `data-id="${id}" data-label="${label}" data-shape="${shape}"`,
+      );
+      expect(svg).toContain(label);
+    }
+    expect(
+      [...svg.matchAll(/<polyline class="edge"[^>]*>/g)].map(([edge]) => [
+        /data-from="([^"]+)"/.exec(edge)?.[1],
+        /data-to="([^"]+)"/.exec(edge)?.[1],
+      ]),
+    ).toEqual([
+      ['A', 'B'],
+      ['B', 'C'],
+    ]);
+  });
+
+  it('decodes supported XML entities but rejects quote entities that break the label', async () => {
+    await ready();
+    const svg =
+      renderDiagram('graph TD\n A["fish &amp; chips"]', 'mermaid') ?? '';
+    expect(svg).toContain('data-label="fish &amp; chips"');
+    expect(svg).toContain('fish &amp; chips');
+    expect(
+      renderDiagram('graph TD\n A["say &quot; hello"]', 'mermaid'),
+    ).toBeNull();
+  });
+
+  it('does not render partially parsed flowcharts', async () => {
+    await ready();
+    for (const source of [
+      'A["broken]',
+      'A --> B garbage',
+      'A -->',
+      'A[ok]:::',
+    ]) {
+      expect(renderDiagram(`graph TD\n ${source}`, 'mermaid')).toBeNull();
+    }
+  });
+
   it('carries the app’s own colours rather than a palette of its own', async () => {
     await ready();
     const svg = renderDiagram(FLOWCHART, 'mermaid') ?? '';

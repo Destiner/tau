@@ -1069,7 +1069,7 @@ test('draws a fenced diagram in the scheme around it', async ({ page }) => {
   const diagram = showcase.locator('.diagram svg').first();
 
   // The renderer is loaded only once a transcript holds a diagram.
-  await expect(showcase.locator('.diagram')).toHaveCount(2, {
+  await expect(showcase.locator('.diagram')).toHaveCount(3, {
     timeout: 20_000,
   });
   await expect(
@@ -1092,13 +1092,37 @@ test('draws a fenced diagram in the scheme around it', async ({ page }) => {
     );
   }
 
+  const codeDiagram = showcase.locator('.diagram').filter({
+    has: page.locator(
+      'g.node[data-id="A"][data-label="metadata.calls = request.tasks ?? []"]',
+    ),
+  });
+  await expect(codeDiagram).toHaveCount(1);
+  const codeSvg = codeDiagram.locator('svg');
+  for (const [id, label, shape] of [
+    ['A', 'metadata.calls = request.tasks ?? []', 'rectangle'],
+    ['B', 'execute([bundle])', 'rectangle'],
+    ['C', 'execute([parent, ...children])', 'rectangle'],
+    ['D', 'root authority', 'diamond'],
+    ['E', 'submit {proofs: []}, sponsored: true', 'rectangle'],
+  ] as const) {
+    const node = codeSvg.locator(`g.node[data-id="${id}"]`);
+    await expect(node).toHaveAttribute('data-label', label);
+    await expect(node).toHaveAttribute('data-shape', shape);
+    await expect(node.locator('text')).toHaveText(label);
+  }
+  await expect(codeSvg.locator('polyline.edge')).toHaveCount(4);
+
   // Invalid, unsafe multiline, and not-yet-closed fences all stay readable as
   // the source the reader was sent.
   const sourceBlocks = showcase.locator('.code-block[data-tau-lang="mermaid"]');
-  await expect(sourceBlocks).toHaveCount(3);
+  await expect(sourceBlocks).toHaveCount(4);
   const incomplete = sourceBlocks.filter({ hasText: 'An incomplete label' });
   await expect(incomplete).toContainText('B --> C');
   await expect(incomplete.locator('.diagram-expand')).toHaveCount(0);
+  const malformed = sourceBlocks.filter({ hasText: 'trailing garbage' });
+  await expect(malformed).toContainText('A --> B trailing garbage');
+  await expect(malformed.locator('.diagram-expand')).toHaveCount(0);
 
   // Ruled like the block its source would have been, but not filled like one:
   // the page a diagram is drawn on is the one the message is on.
@@ -1131,11 +1155,11 @@ test('expands a drawn diagram into a fullscreen pan-and-zoom viewer', async ({
   const figure = showcase.locator('.diagram').first();
   const button = figure.locator('.diagram-expand');
 
-  await expect(showcase.locator('.diagram')).toHaveCount(2, {
+  await expect(showcase.locator('.diagram')).toHaveCount(3, {
     timeout: 20_000,
   });
   // Only drawn diagrams carry the button; the fences that stayed source do not.
-  await expect(showcase.locator('.diagram-expand')).toHaveCount(2);
+  await expect(showcase.locator('.diagram-expand')).toHaveCount(3);
 
   // The button keeps the copy button's terms: revealed by pointing at the figure.
   await expect
