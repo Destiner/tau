@@ -822,6 +822,25 @@ function indicatorLabel(indicator: SessionIndicator): string {
   return indicator ? indicatorLabels[indicator] : '';
 }
 
+function sessionTooltipStatus(
+  project: ProjectSummary,
+  session: SessionSummary,
+): string {
+  if (session.archived) return 'Archived';
+  return indicatorLabel(sessionIndicator(project, session)) || 'Idle';
+}
+
+function expandedRelativeTime(value: string): string {
+  if (value === 'now') return 'just now';
+  const match = /^(\d+)([mhdwy])$/.exec(value);
+  if (!match) return value;
+  const count = Number(match[1]);
+  const unit = { m: 'minute', h: 'hour', d: 'day', w: 'week', y: 'year' }[
+    match[2] as 'm' | 'h' | 'd' | 'w' | 'y'
+  ];
+  return `${count} ${unit}${count === 1 ? '' : 's'} ago`;
+}
+
 function projectIndicator(project: ProjectSummary): SessionIndicator {
   if (!project.collapsed) return '';
   const indicators = new Set(
@@ -1521,6 +1540,8 @@ export {
   sessionSortAt,
   isSessionSelected,
   sessionIndicator,
+  sessionTooltipStatus,
+  expandedRelativeTime,
   isSessionUnread,
   markSessionUnread,
   markSessionRead,

@@ -179,6 +179,34 @@
   }
 }
 
+.session-tooltip {
+  width: max-content;
+  max-width: min(300px, calc(100vw - 12px));
+  padding: 9px 11px;
+  text-align: left;
+}
+
+.session-tooltip-status,
+.session-tooltip-name,
+.session-tooltip-date {
+  display: block;
+}
+
+.session-tooltip-status,
+.session-tooltip-date {
+  color: var(--muted);
+}
+
+.session-tooltip-name {
+  margin-top: 5px;
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+}
+
+.session-tooltip-date {
+  margin-top: 12px;
+}
+
 /* ── Pick row ───────────────────────────────────────────────────────────── */
 
 /*

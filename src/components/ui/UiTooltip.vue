@@ -27,11 +27,13 @@
              trigger, for a long one that has to shift to stay on screen. -->
         <TooltipContent
           class="ui-tooltip"
+          :class="contentClass"
           :side="side"
+          :align="align"
           :side-offset="6"
           :collision-padding="6"
         >
-          {{ text }}
+          <slot name="content">{{ text }}</slot>
         </TooltipContent>
       </TooltipPortal>
     </TooltipRoot>
@@ -57,8 +59,10 @@ withDefaults(
      */
     text: string;
     side?: 'top' | 'right' | 'bottom' | 'left';
+    align?: 'start' | 'center' | 'end';
     delay?: number;
+    contentClass?: string;
   }>(),
-  { side: 'top', delay: 450 },
+  { side: 'top', align: 'center', delay: 450, contentClass: undefined },
 );
 </script>

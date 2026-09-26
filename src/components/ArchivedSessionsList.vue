@@ -28,22 +28,41 @@
               entry.session.id === state.activeSessionId,
           }"
         >
-          <button
-            class="copy"
-            type="button"
-            :aria-label="`Open ${entry.session.title}`"
-            :disabled="projectActionsDisabled"
-            @click="() => open(entry)"
+          <UiTooltip
+            :text="entry.session.title"
+            content-class="session-tooltip"
+            side="bottom"
+            align="start"
+            :delay="700"
           >
-            <span class="name">{{ entry.session.title }}</span>
-            <span class="meta">
-              <span class="project">{{ entry.projectName }}</span>
-              <template v-if="entry.session.model">
-                <span class="dot">·</span>
-                <span class="model">{{ entry.session.model }}</span>
-              </template>
-            </span>
-          </button>
+            <template #content>
+              <span class="session-tooltip-status">Archived</span>
+              <span class="session-tooltip-name">{{
+                entry.session.title
+              }}</span>
+              <span
+                v-if="relativeTime(entry)"
+                class="session-tooltip-date"
+                >{{ expandedRelativeTime(relativeTime(entry)) }}</span
+              >
+            </template>
+            <button
+              class="copy"
+              type="button"
+              :aria-label="`Open ${entry.session.title}`"
+              :disabled="projectActionsDisabled"
+              @click="() => open(entry)"
+            >
+              <span class="name">{{ entry.session.title }}</span>
+              <span class="meta">
+                <span class="project">{{ entry.projectName }}</span>
+                <template v-if="entry.session.model">
+                  <span class="dot">·</span>
+                  <span class="model">{{ entry.session.model }}</span>
+                </template>
+              </span>
+            </button>
+          </UiTooltip>
           <span class="time">{{ relativeTime(entry) }}</span>
           <UiTooltip text="Unarchive Session">
             <UiIconButton
@@ -88,6 +107,7 @@ import UiTooltip from './ui/UiTooltip.vue';
 
 const {
   archivedSessionEntries,
+  expandedRelativeTime,
   projectActionsDisabled,
   selectSession,
   sessionSortAt,
@@ -201,6 +221,9 @@ function open(entry: ArchivedSessionEntry): void {
   font-size: var(--text-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
+
+  /* Let the button receive hover instead of WebKit's native ellipsis tooltip. */
+  pointer-events: none;
 }
 
 .meta {
