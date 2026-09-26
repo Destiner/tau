@@ -182,7 +182,10 @@
 .session-tooltip {
   width: max-content;
   max-width: min(300px, calc(100vw - 12px));
-  max-height: calc(100vh - 12px);
+  max-height: min(
+    calc(100vh - 12px),
+    var(--reka-tooltip-content-available-height)
+  );
   padding: 9px 11px;
   overflow-y: auto;
   text-align: left;

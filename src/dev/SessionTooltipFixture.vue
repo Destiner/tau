@@ -28,6 +28,7 @@ type TooltipStatus = 'working' | 'draft' | 'unread' | 'idle';
 interface SessionTooltipFixtureApi {
   setTitle(title: string): void;
   setMarkdown(source: string): void;
+  setArchivedMarkdown(source: string): void;
   setStatus(status: TooltipStatus): void;
 }
 
@@ -129,6 +130,14 @@ window.__TAU_SESSION_TOOLTIP_FIXTURE__ = {
   },
   setMarkdown(source): void {
     primarySession().titleMarkdown = source;
+  },
+  setArchivedMarkdown(source): void {
+    const archived = state.workspace?.projects[0]?.sessions.find(
+      (session) => session.archived,
+    );
+    if (!archived)
+      throw new Error('Expected the archived tooltip fixture session.');
+    archived.titleMarkdown = source;
   },
   setStatus(status): void {
     const controller = state.controllers[0];

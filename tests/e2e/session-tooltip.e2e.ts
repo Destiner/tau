@@ -166,6 +166,59 @@ test('sanitizes unsafe Markdown and bounds truncated multiline previews', async 
   await expect(tooltip).not.toContainText('working-session-opaque-7fb4d9');
 });
 
+test('keeps the end of tall active and archived previews reachable', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 720, height: 520 });
+  await page.goto(fixtureUrl);
+  const source = 'line\n'.repeat(46) + 'final line';
+  expect(source).toHaveLength(240);
+  await page.evaluate((markdown) => {
+    const fixture = window.__TAU_SESSION_TOOLTIP_FIXTURE__;
+    fixture?.setMarkdown(markdown);
+    fixture?.setArchivedMarkdown(markdown);
+  }, source);
+
+  async function expectReachableDate(): Promise<void> {
+    const tooltip = page.locator('.ui-tooltip.session-tooltip');
+    await expect(tooltip).toBeVisible();
+    await expect(tooltip.locator('.session-tooltip-name')).toContainText(
+      'final line',
+    );
+    const scroll = await tooltip.evaluate((element) => {
+      const overflow = element.scrollHeight - element.clientHeight;
+      element.scrollTop = element.scrollHeight;
+      return overflow;
+    });
+    expect(scroll).toBeGreaterThan(0);
+    await expect
+      .poll(async () => {
+        const bounds = await tooltip.boundingBox();
+        const date = await tooltip
+          .locator('.session-tooltip-date')
+          .boundingBox();
+        if (!bounds || !date) return false;
+        return (
+          bounds.y >= 0 &&
+          bounds.y + bounds.height <= 520 + 1 &&
+          date.y >= bounds.y &&
+          date.y + date.height <= bounds.y + bounds.height &&
+          date.y + date.height <= 520 + 1
+        );
+      })
+      .toBe(true);
+  }
+
+  await page.locator('.session-row').first().locator('.session-select').hover();
+  await expectReachableDate();
+
+  await page.getByTestId('outside-sidebar').hover();
+  await expect(page.locator('.ui-tooltip.session-tooltip')).toBeHidden();
+  await page.getByRole('button', { name: 'Show Archived Sessions' }).click();
+  await page.locator('.archived-list .row .copy').first().hover();
+  await expectReachableDate();
+});
+
 test('opens Markdown web links externally without navigating the app', async ({
   page,
 }) => {
