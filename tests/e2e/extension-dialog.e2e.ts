@@ -6,12 +6,12 @@ const fixtureUrl = '/?fixture=extension-dialog';
 
 test.beforeEach(async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 600 });
-  await page.goto(fixtureUrl);
 });
 
 test('opens the transcript at a question larger than the pane', async ({
   page,
 }) => {
+  await page.goto(fixtureUrl);
   const transcript = page.getByLabel('Transcript');
   const prompt = page.getByRole('dialog');
   await expect(prompt).toBeVisible();
@@ -105,6 +105,7 @@ test('keeps a reader at the end when a prompt appears', async ({ page }) => {
 test('scrolls the question, its options, and the transcript as one region', async ({
   page,
 }) => {
+  await page.goto(fixtureUrl);
   const prompt = page.getByRole('dialog');
   const options = prompt.getByRole('listbox');
   const transcript = page.getByLabel('Transcript');
@@ -139,6 +140,7 @@ test('scrolls the question, its options, and the transcript as one region', asyn
 test('preserves block markdown carried in the dialog title', async ({
   page,
 }) => {
+  await page.goto(fixtureUrl);
   const title = page.locator('.extension-prompt-title');
 
   await expect(title.locator('p')).toHaveCount(3);
@@ -205,6 +207,7 @@ test('copies an absolute path from a remote dialog title', async ({ page }) => {
 });
 
 test('renders a table in the question as a table', async ({ page }) => {
+  await page.goto(fixtureUrl);
   const prompt = page.getByRole('dialog');
   const header = prompt.locator('.extension-prompt-message th').first();
   await expect(header).toBeVisible();
@@ -230,6 +233,7 @@ test('renders a table in the question as a table', async ({ page }) => {
 test('scrolls a table wider than the question inside itself', async ({
   page,
 }) => {
+  await page.goto(fixtureUrl);
   const prompt = page.getByRole('dialog');
   const table = prompt.locator('.extension-prompt-message table');
 
@@ -250,6 +254,7 @@ test('scrolls a table wider than the question inside itself', async ({
 test('reaches an option below the fold and reports the choice', async ({
   page,
 }) => {
+  await page.goto(fixtureUrl);
   const prompt = page.getByRole('dialog');
   const option = prompt.getByRole('option', { name: 'label-11' });
 
