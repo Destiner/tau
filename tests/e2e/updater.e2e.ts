@@ -47,12 +47,20 @@ test('keeps update popover geometry stable while checking', async ({
   const popover = page.locator('.update-popover');
   await popover.getByRole('button', { name: 'Skip' }).click();
   await trigger.click();
-  await expect(popover.getByText('Tau is up to date')).toBeVisible();
+  const copy = popover.locator('.update-copy');
+  await expect(copy.locator('strong')).toHaveText('Tau is up to date');
+  await expect(copy.locator('span')).toHaveText(
+    `Version ${appVersion} is installed.`,
+  );
   const boxBeforeCheck = await popover.boundingBox();
 
   await popover.getByRole('button', { name: 'Check for Updates' }).click();
   const checking = popover.getByRole('button', { name: 'Checking…' });
   await expect(checking).toBeDisabled();
+  await expect(copy.locator('strong')).toHaveText('Tau is up to date');
+  await expect(copy.locator('span')).toHaveText(
+    `Version ${appVersion} is installed.`,
+  );
   await expect(popover).toHaveAttribute('aria-busy', 'true');
   expect(await popover.boundingBox()).toEqual(boxBeforeCheck);
 

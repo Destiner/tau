@@ -100,6 +100,7 @@ withDefaults(defineProps<{ firstRun?: boolean }>(), { firstRun: false });
 const update = useUpdate();
 const state = update.state;
 const open = ref(false);
+const checkingCopy = ref<{ title: string; description: string } | null>(null);
 
 const indicator = computed<'accent' | 'downloading' | 'failure' | undefined>(
   () => {
@@ -135,7 +136,7 @@ const progressPercent = computed(() => {
 const title = computed(() => {
   switch (state.phase) {
     case 'checking':
-      return 'Checking for updates';
+      return checkingCopy.value?.title ?? 'Checking for updates';
     case 'available':
       return `Version ${state.version ?? ''} available`;
     case 'downloading':
@@ -159,7 +160,9 @@ const title = computed(() => {
 const description = computed(() => {
   switch (state.phase) {
     case 'checking':
-      return 'This should only take a moment.';
+      return (
+        checkingCopy.value?.description ?? 'This should only take a moment.'
+      );
     case 'available':
       return 'Download and restart when you are ready.';
     case 'downloading':
@@ -212,6 +215,14 @@ watch(open, (isOpen) => {
   if (isOpen) update.acknowledgeFailure();
 });
 
+watch(
+  () => state.phase,
+  (phase) => {
+    if (phase !== 'checking') checkingCopy.value = null;
+  },
+  { flush: 'sync' },
+);
+
 function dismiss(): void {
   void update.dismiss();
   open.value = false;
@@ -225,6 +236,7 @@ function runPrimaryAction(): void {
   } else if (state.phase === 'restart-needed') {
     void update.restart();
   } else {
+    checkingCopy.value = { title: title.value, description: description.value };
     void update.check(true);
   }
 }
