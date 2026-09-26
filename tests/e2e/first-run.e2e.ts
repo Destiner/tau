@@ -7,7 +7,7 @@ const scenarioUrl = '/?test-scenario=empty-workspace';
 test('shows preparation feedback while ownership is pending', async ({
   page,
 }) => {
-  await page.goto(`${scenarioUrl}&ownership-delay=500`);
+  await page.goto(`${scenarioUrl}&ownership-delay=3000`);
 
   await expect(page.locator('.first-run-preparing')).toContainText(
     'Preparing Pi',
