@@ -147,6 +147,14 @@ for both sides?}
 \`\`\`
 
 \`\`\`mermaid
+graph LR
+  A["metadata.calls = request.tasks ?? []"] --> B["execute([bundle])"]
+  B --> C["execute([parent, ...children])"]
+  C --> D
+  D{"root authority"} --> E["submit {proofs: []}, sponsored: true"]
+\`\`\`
+
+\`\`\`mermaid
 sequenceDiagram
   Tau->>Pi: prompt
   Pi-->>Tau: delta
@@ -161,6 +169,11 @@ not a diagram the parser can read
 graph TD
   A[An incomplete label
   B --> C
+\`\`\`
+
+\`\`\`mermaid
+graph TD
+  A --> B trailing garbage
 \`\`\`
 
 \`\`\`mermaid
