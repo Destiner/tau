@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parsePreviewMarkdown } from './markdown-frontmatter';
+import parsePreviewMarkdown from './markdown-frontmatter';
 
 describe('file preview frontmatter', () => {
   it('separates a valid YAML mapping and preserves field order', () => {

@@ -41,7 +41,6 @@ function formatValue(value: unknown, seen: Set<object>, depth: number): string {
   return formatted;
 }
 
-/** Only a complete, valid YAML mapping at the very start of a file is metadata. */
 function parsePreviewMarkdown(source: string): PreviewMarkdown {
   const fallback = { body: source, fields: [] };
   const opening = OPENING_FENCE.exec(source);
@@ -73,5 +72,4 @@ function parsePreviewMarkdown(source: string): PreviewMarkdown {
   }
 }
 
-export { parsePreviewMarkdown };
-export type { FrontmatterField, PreviewMarkdown };
+export default parsePreviewMarkdown;

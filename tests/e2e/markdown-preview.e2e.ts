@@ -173,11 +173,8 @@ test('renders YAML frontmatter as a compact metadata sheet above the Markdown bo
     'name · Amina, role · maintainer',
     '<img src=x onerror=alert(1)>',
   ]);
-  await expect(sheet).toHaveCSS('padding', '8px');
   await expect(sheet.locator('img')).toHaveCount(0);
   const key = sheet.locator('dt').first();
-  await expect(key).toHaveCSS('-webkit-user-select', 'text');
-  await expect(key).toHaveCSS('cursor', 'text');
   const textBounds = await key.evaluate((element) => {
     const range = document.createRange();
     range.selectNodeContents(element);

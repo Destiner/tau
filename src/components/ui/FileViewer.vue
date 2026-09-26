@@ -196,7 +196,7 @@ import {
   type FullscreenViewer,
 } from '../../lib/fullscreen-viewer';
 import highlightCode from '../../lib/highlight';
-import { parsePreviewMarkdown } from '../../lib/markdown-frontmatter';
+import parsePreviewMarkdown from '../../lib/markdown-frontmatter';
 
 import MarkdownContent from './MarkdownContent.vue';
 import UiIcon from './UiIcon.vue';
@@ -546,22 +546,22 @@ onBeforeUnmount(() => {
   line-height: 1.5;
 }
 
-:global(.file-viewer-frontmatter-row dt) {
-  color: var(--muted);
+:global(.file-viewer-frontmatter-row dt),
+:global(.file-viewer-frontmatter-row dd) {
   cursor: text;
   /* stylelint-disable-next-line property-no-vendor-prefix -- WKWebView needs the prefix before Safari 17.4 */
   -webkit-user-select: text;
   user-select: text;
 }
 
+:global(.file-viewer-frontmatter-row dt) {
+  color: var(--muted);
+}
+
 :global(.file-viewer-frontmatter-row dd) {
   margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  cursor: text;
-  /* stylelint-disable-next-line property-no-vendor-prefix -- WKWebView needs the prefix before Safari 17.4 */
-  -webkit-user-select: text;
-  user-select: text;
 }
 
 :global(.file-viewer-empty) {
