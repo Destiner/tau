@@ -9,6 +9,7 @@ import {
   filePreviewDirectoryLabel,
   isBrowserPreviewUrl,
   normalizePreviewPath,
+  resolveFilePreviewContextPath,
 } from './file-preview';
 
 describe('file preview classification', () => {
@@ -16,12 +17,36 @@ describe('file preview classification', () => {
     expect(classifyFilePreview('service.TS')).toMatchObject({
       kind: 'text',
       language: 'typescript',
+      presentation: 'source',
     });
     expect(classifyFilePreview('Dockerfile')).toMatchObject({
       kind: 'text',
       language: 'bash',
+      presentation: 'source',
     });
-    expect(classifyFilePreview('.gitignore')).toMatchObject({ kind: 'text' });
+    expect(classifyFilePreview('.gitignore')).toMatchObject({
+      kind: 'text',
+      presentation: 'source',
+    });
+  });
+
+  it('presents Markdown documents as prose and MDX as source', () => {
+    expect(classifyFilePreview('guide.MD')).toMatchObject({
+      kind: 'text',
+      presentation: 'markdown',
+    });
+    expect(classifyFilePreview('README')).toMatchObject({
+      kind: 'text',
+      presentation: 'markdown',
+    });
+    expect(classifyFilePreview('notes.MARKDOWN')).toMatchObject({
+      kind: 'text',
+      presentation: 'markdown',
+    });
+    expect(classifyFilePreview('component.MDX')).toMatchObject({
+      kind: 'text',
+      presentation: 'source',
+    });
   });
 
   it('classifies safe browser media and leaves unknown files as objects', () => {
@@ -48,6 +73,32 @@ describe('file preview directory labels', () => {
     expect(normalizePreviewPath('../../fixtures/../sample')).toBe(
       '../../sample',
     );
+  });
+
+  it('resolves document-relative paths without changing their encoding semantics', () => {
+    expect(
+      resolveFilePreviewContextPath('../images/My File.png', {
+        sourcePath: '/work/tau/docs/guide/README.md',
+        projectRoot: '/work/tau',
+      }),
+    ).toBe('/work/tau/docs/images/My File.png');
+    expect(
+      resolveFilePreviewContextPath('/etc/hosts', {
+        sourcePath: '/work/tau/docs/README.md',
+        projectRoot: '/work/tau',
+      }),
+    ).toBe('/etc/hosts');
+    const remoteDocument = {
+      sourcePath: '~/project/docs/README.md',
+      projectRoot: '~/project',
+      remoteIdentity: 'ssh:["agent@example.test","~/project"]',
+    };
+    expect(
+      resolveFilePreviewContextPath('../images/diagram.svg', remoteDocument),
+    ).toBe('~/project/images/diagram.svg');
+    expect(
+      resolveFilePreviewContextPath('~/notes/plan.md', remoteDocument),
+    ).toBe('~/notes/plan.md');
   });
 
   it('uses relative labels inside a project and absolute labels outside it', () => {
