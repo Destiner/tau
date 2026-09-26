@@ -123,6 +123,7 @@
           :can-recover="!activeController?.draft"
           @clear="handleQueueClear"
           @recover="handleQueueRecover"
+          @dismiss="dismissQueueFeedback"
         />
         <footer
           v-if="!sessionLoading && !activeExtensionDialog"
@@ -263,6 +264,7 @@ const {
   canDraft,
   activeQueue,
   queueFeedback,
+  dismissQueueFeedback,
   queueBusy,
   queueFailedDrafts,
   clearQueue,

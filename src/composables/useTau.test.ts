@@ -3218,6 +3218,30 @@ describe('turn failures', () => {
 });
 
 describe('prompt submission', () => {
+  it.each([
+    'Message was not queued. Try again.',
+    'Pending messages were lost when Pi disconnected. They were not resent.',
+  ])('clears stale queue status on an ordinary send: %s', async (feedback) => {
+    const { tau, controller } = await setupNamedSession();
+    controller.queueFeedback = feedback;
+    tau.draft.value = 'Continue normally';
+
+    await tau.sendMessage();
+
+    expect(sentRequests(controller, 'prompt')).toHaveLength(1);
+    expect(tau.queueFeedback.value).toBe('');
+    tau.dispose();
+  });
+
+  it('exposes extension command eligibility and dismisses queue status', async () => {
+    const { tau, controller } = await setupNamedSession();
+    controller.queueFeedback = 'Message was not queued. Try again.';
+    tau.dismissQueueFeedback();
+    expect(tau.queueFeedback.value).toBe('');
+    expect(tau.extensionCommandDraft.value).toBe(false);
+    tau.dispose();
+  });
+
   it('clears immediately, preserves new edits, and blocks repeat prompts while working', async () => {
     const { tau, controller } = await setupNamedSession();
     const defaultInvoke = vi.mocked(invoke).getMockImplementation();

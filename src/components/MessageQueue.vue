@@ -67,6 +67,14 @@
       role="status"
       >{{ feedback || 'Clearing…' }}</span
     >
+    <UiIconButton
+      v-if="feedback && !busy"
+      size="sm"
+      variant="fade"
+      label="Dismiss queue status"
+      @click="dismiss"
+      ><UiIcon name="cross"
+    /></UiIconButton>
     <button
       v-if="failedDrafts.length"
       type="button"
@@ -151,7 +159,11 @@ const props = defineProps<{
   failedDrafts: string[];
   canRecover: boolean;
 }>();
-const emit = defineEmits<{ clear: []; recover: [index: number] }>();
+const emit = defineEmits<{
+  clear: [];
+  recover: [index: number];
+  dismiss: [];
+}>();
 const details = ref<'failed' | null>(null);
 const messagePreview = ref<{
   kind: 'steering' | 'followUp';
@@ -180,6 +192,9 @@ watch(
 );
 function clear(): void {
   emit('clear');
+}
+function dismiss(): void {
+  emit('dismiss');
 }
 function scheduleMessageShow(
   event: Event,

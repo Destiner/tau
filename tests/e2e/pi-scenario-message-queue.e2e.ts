@@ -42,6 +42,10 @@ test('preserves a newer draft on queue rejection and restores the unsent draft o
   await waitForGate(page, 'submission-rejected');
 
   await expect(composer).toHaveValue('New draft stays');
+  const queue = page.getByRole('region', { name: 'Pending messages' });
+  await expect(queue).toContainText('Message was not queued. Try again.');
+  await queue.getByRole('button', { name: 'Dismiss queue status' }).click();
+  await expect(queue.locator('.queue-feedback')).toHaveCount(0);
   await page.getByRole('button', { name: 'Review Unsent (1)' }).click();
   const restore = page.getByRole('button', { name: 'Restore Draft' });
   await expect(restore).toBeDisabled();
@@ -101,6 +105,16 @@ test('queues busy composer messages and never clears them implicitly', async ({
   ).toBeVisible();
   await expect(queue.locator('.queue-ordinal')).toHaveText('1');
   await expect(queue.locator('.queue-feedback')).toHaveCount(0);
+  await page.setViewportSize({ width: 420, height: 540 });
+  expect(
+    await queue.evaluate((element) => {
+      const rail = element.querySelector('.queue-rail');
+      return Boolean(
+        rail && rail.getBoundingClientRect().right <= window.innerWidth,
+      );
+    }),
+  ).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 720 });
 
   await releaseGate(page, 'queue-rendered');
   await queue.getByRole('button', { name: 'Clear All' }).click();

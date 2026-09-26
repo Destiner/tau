@@ -1,5 +1,6 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
+import { computed } from 'vue';
 
 import { errorCopy } from '../lib/error-copy';
 import type { PiBridgeEvent } from '../lib/pi/bridge';
@@ -772,6 +773,13 @@ function useTau() {
     );
   }
 
+  const extensionCommandDraft = computed(() => {
+    const controller = activeController.value;
+    return Boolean(
+      controller && invokesExtensionCommand(controller, draft.value.trim()),
+    );
+  });
+
   async function sendMessage(
     intent: 'steer' | 'followUp' = 'steer',
   ): Promise<void> {
@@ -821,6 +829,7 @@ function useTau() {
       }
 
       controller.promptSubmitting = true;
+      controller.queueFeedback = '';
       controller.draft = '';
 
       if (controller.phantom) {
@@ -910,6 +919,11 @@ function useTau() {
   async function clearQueue(): Promise<void> {
     const controller = activeController.value;
     if (controller) await clearPendingQueue(controller);
+  }
+
+  function dismissQueueFeedback(): void {
+    const controller = activeController.value;
+    if (controller) controller.queueFeedback = '';
   }
 
   function recoverQueueDraft(index: number): void {
@@ -1166,6 +1180,8 @@ function useTau() {
     queueBusy,
     queueFeedback,
     queueFailedDrafts,
+    extensionCommandDraft,
+    dismissQueueFeedback,
     canReconnectRemote,
     canRenameSession,
     sessionLoading,

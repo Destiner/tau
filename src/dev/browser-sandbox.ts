@@ -9,10 +9,6 @@ import {
   type SidebarWidthStorage,
 } from '../lib/sidebar-width';
 
-import {
-  setQueuePreviewControls,
-  type QueuePreviewControls,
-} from './queue-preview-controls';
 import workspaceSeed from './workspace-seed.json';
 
 type PiMessage =
@@ -48,8 +44,6 @@ type BrowserSandboxHandler = (
 ) => Promise<unknown>;
 
 interface BrowserSandboxOptions {
-  queuePreview?: boolean;
-  onQueuePreviewControls?: (controls: QueuePreviewControls) => void;
   updatesSupported?: boolean;
   updateAvailable?: boolean;
   updateCheckDelayMs?: number;
@@ -324,16 +318,6 @@ function createBrowserSandboxHandler(
     if (!isActive()) return;
     await response(runtime, request);
     if (!isActive()) return;
-    if (options.queuePreview) {
-      await bridge(runtime, {
-        type: 'tool_execution_start',
-        toolCallId: `preview-${promptGeneration}`,
-        toolName: 'mock_tool',
-        args: { label: 'Held for preview' },
-      });
-      return;
-    }
-
     const reply = `Browser sandbox received: “${message}”\n\nThis reply is generated locally and the workspace will reset on reload.`;
     await bridge(runtime, {
       type: 'message_start',
@@ -355,79 +339,6 @@ function createBrowserSandboxHandler(
     runtime.streaming = false;
     await bridge(runtime, { type: 'agent_settled' });
   }
-
-  async function advanceQueuePreview(): Promise<void> {
-    const selected = workspace.projects
-      .flatMap((project) => project.sessions)
-      .find((candidate) => candidate.selected);
-    const runtime = [...runtimes.values()].find(
-      (candidate) =>
-        candidate.session.id === selected?.id && candidate.streaming,
-    );
-    if (!runtime) return;
-    await bridge(runtime, {
-      type: 'tool_execution_end',
-      toolCallId: `preview-${runtime.promptGeneration}`,
-      result: {
-        content: [{ type: 'text', text: 'Preview boundary released.' }],
-      },
-      isError: false,
-    });
-    const steering = runtime.steeringQueue.splice(0);
-    const followUp = steering.length
-      ? undefined
-      : runtime.followUpQueue.shift();
-    await bridge(runtime, {
-      type: 'queue_update',
-      steering: runtime.steeringQueue,
-      followUp: runtime.followUpQueue,
-    });
-    for (const text of [...steering, ...(followUp ? [followUp] : [])]) {
-      runtime.session.messages.push({ role: 'user', content: text });
-      await bridge(runtime, {
-        type: 'message_start',
-        message: { role: 'user', content: text },
-      });
-    }
-    const reply = steering.length
-      ? `Mock Pi delivered ${steering.length} steering message${steering.length === 1 ? '' : 's'} at this boundary.`
-      : followUp
-        ? 'Mock Pi delivered one follow-up.'
-        : 'Mock Pi finished the current work.';
-    const assistant: PiMessage = {
-      role: 'assistant',
-      content: [{ type: 'text', text: reply }],
-    };
-    await bridge(runtime, {
-      type: 'message_start',
-      message: { role: 'assistant', content: [] },
-    });
-    await bridge(runtime, {
-      type: 'message_update',
-      assistantMessageEvent: { type: 'text_delta', delta: reply },
-    });
-    runtime.session.messages.push(assistant);
-    await bridge(runtime, { type: 'message_end', message: assistant });
-    if (steering.length || runtime.followUpQueue.length) return;
-    runtime.streaming = false;
-    await bridge(runtime, { type: 'agent_settled' });
-  }
-
-  if (options.queuePreview)
-    options.onQueuePreviewControls?.({
-      advance: advanceQueuePreview,
-      status: () => {
-        const selected = workspace.projects
-          .flatMap((project) => project.sessions)
-          .find((candidate) => candidate.selected);
-        const runtime = [...runtimes.values()].find(
-          (candidate) => candidate.session.id === selected?.id,
-        );
-        return runtime?.streaming
-          ? `${runtime.steeringQueue.length} steering · ${runtime.followUpQueue.length} follow-up`
-          : 'Idle';
-      },
-    });
 
   async function queuePrompt(
     runtime: RuntimeSession,
@@ -881,7 +792,7 @@ function createBrowserSandboxHandler(
   return handleCommand;
 }
 
-function installBrowserSandbox(queuePreview = false): void {
+function installBrowserSandbox(): void {
   setSidebarWidthStorage(createMemorySidebarWidthStorage());
   const testUpdate = new URLSearchParams(window.location.search).get(
     'test-update',
@@ -894,10 +805,6 @@ function installBrowserSandbox(queuePreview = false): void {
   const handleCommand = createBrowserSandboxHandler(
     (event) => emit<PiBridgeEvent>('pi-event', event),
     {
-      queuePreview,
-      onQueuePreviewControls: queuePreview
-        ? setQueuePreviewControls
-        : undefined,
       updatesSupported: updateFixtureRequested,
       updateAvailable,
       updateCheckDelayMs: testUpdate === 'checking' ? 1_000 : undefined,

@@ -144,7 +144,6 @@ import {
   slashCommandQuery,
 } from '../lib/commands';
 import type { ThinkingLevel } from '../lib/pi/model-scope';
-import { invokesExtensionCommand } from '../lib/pi/runtime';
 import textFieldItems from '../lib/text-menu';
 
 import CommandMenu from './CommandMenu.vue';
@@ -184,7 +183,7 @@ const {
   stop,
   streaming,
   stopping,
-  activeController,
+  extensionCommandDraft,
 } = useTau();
 
 const composer = ref<HTMLElement>();
@@ -200,12 +199,6 @@ const modelSelectorOpen = ref(false);
 const effortSelectorOpen = ref(false);
 
 const commandQuery = computed(() => slashCommandQuery(draft.value));
-const extensionCommandDraft = computed(() =>
-  Boolean(
-    activeController.value &&
-    invokesExtensionCommand(activeController.value, draft.value.trim()),
-  ),
-);
 const filteredCommands = computed(() =>
   commandQuery.value === null
     ? []
