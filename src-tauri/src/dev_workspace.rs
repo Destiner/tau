@@ -76,6 +76,7 @@ pub fn seed(profile: &StorageProfile) -> Result<(), String> {
             }
             sessions.sessions.push(TauSessionRecord {
                 id,
+                path: None,
                 name: Some(session.title),
                 archived: false,
             });
