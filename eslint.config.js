@@ -61,6 +61,7 @@ export default [
           devDependencies: [
             'eslint.config.js',
             'vite.config.ts',
+            'vite.e2e.config.ts',
             'playwright.config.ts',
             '**/*.test.ts',
             'tests/**/*.ts',

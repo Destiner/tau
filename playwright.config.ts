@@ -9,15 +9,15 @@ export default defineConfig({
   expect: {
     timeout: 10_000,
   },
-  fullyParallel: false,
+  fullyParallel: true,
   workers: 2,
   reporter: 'line',
   use: {
     baseURL: `http://127.0.0.1:${port}`,
-    trace: 'retain-on-failure',
+    trace: process.env.CI ? 'on-first-retry' : 'retain-on-failure',
   },
   webServer: {
-    command: `bun run dev -- --host 127.0.0.1 --port ${port} --strictPort`,
+    command: `bun run build:e2e && bun run preview:e2e -- --host 127.0.0.1 --port ${port} --strictPort`,
     url: `http://127.0.0.1:${port}`,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

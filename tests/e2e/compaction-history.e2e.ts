@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 const fixtureUrl = '/?fixture=long-transcript&compacted=true';
 
@@ -15,6 +15,9 @@ for (const scheme of ['light', 'dark'] as const) {
     });
     const button = page.getByRole('button', { name: 'Load earlier messages' });
     await expect(button).toHaveText('compacted');
+    await page.evaluate(() => document.fonts.ready);
+    await button.scrollIntoViewIfNeeded();
+    await expect(button).toBeInViewport();
     const before = await button.boundingBox();
     expect(before).not.toBeNull();
 
