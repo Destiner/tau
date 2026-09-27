@@ -10,7 +10,7 @@
 
 `check` runs even if a lane fails or is skipped and succeeds only when all three succeed. PR concurrency cancels older runs for the same PR, not another PR. Installs remain frozen; Bun caches downloads by OS, architecture, and lockfile, not `node_modules`. Rust caches compiler/platform/dependency inputs; Playwright installs the locked browsers. The topology shortens the critical path to the longest lane plus the aggregate job, subject to runner and cache availability; it is not a hosted-CI speed guarantee.
 
-The PR workflow runs functional browser projects only. Two Chromium performance guards run separately with a single worker after functional projects in `bun run test:e2e`; validate in isolation with `CI=1 bun run test:e2e:performance --retries=0`. The real-Pi contract canary is opt-in (see [reproduction scenarios](reproduction-scenarios.md#real-pi-compatibility-canary)).
+The PR workflow runs functional browser projects only. Two Chromium performance guards run separately with a single worker after functional projects in `bun run test:e2e`; validate in isolation with `CI=1 bun run test:e2e:performance --retries=0`. The real-Pi contract canary is opt-in (see [reproduction](reproduction.md#real-pi-compatibility-canary)).
 
 ## Browser execution
 

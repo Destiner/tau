@@ -209,8 +209,8 @@ describe('path resolution', () => {
       '/Users/tim/notes.md',
     );
     expect(resolveFilePath('/work/tau', '~/notes.md')).toBe('~/notes.md');
-    expect(resolveFilePath('/work/tau/', 'docs//extensions.md')).toBe(
-      '/work/tau/docs/extensions.md',
+    expect(resolveFilePath('/work/tau/', 'docs//pi.md')).toBe(
+      '/work/tau/docs/pi.md',
     );
     expect(resolveFilePath('/work/tau', '../../../etc/hosts')).toBe(
       '/etc/hosts',
@@ -247,8 +247,8 @@ describe('linking file paths in markup', () => {
   });
 
   it('links paths in code but not HTML attributes', () => {
-    expect(linkFilePaths('<p><code>docs/extensions.md</code></p>')).toBe(
-      '<p><code><a class="file-link" role="link" tabindex="0" data-tau-path="docs/extensions.md">docs/extensions.md</a></code></p>',
+    expect(linkFilePaths('<p><code>docs/pi.md</code></p>')).toBe(
+      '<p><code><a class="file-link" role="link" tabindex="0" data-tau-path="docs/pi.md">docs/pi.md</a></code></p>',
     );
     expect(linkFilePaths('<p><code>../notes</code></p>')).toBe(
       '<p><code><a class="file-link" role="link" tabindex="0" data-tau-path="../notes">../notes</a></code></p>',
