@@ -15,7 +15,7 @@ const command = {
 const commandSessionState = {
   ...mainSessionState,
   sessionId: 'session-mcp',
-  sessionFile: '/fixture/tau-project/session-mcp.jsonl',
+  sessionFile: '/fixture/mission/sessions/session-mcp.jsonl',
   sessionName: 'MCP workflow',
 };
 

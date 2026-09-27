@@ -144,6 +144,8 @@ impl Default for TauSessionRegistry {
 #[serde(rename_all = "camelCase")]
 pub struct TauSessionRecord {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]

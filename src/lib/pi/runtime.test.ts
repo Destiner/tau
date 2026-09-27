@@ -1741,6 +1741,48 @@ describe('command-created session durability', () => {
     ).toEqual(['First title', 'Second title']);
   });
 
+  it('promotes a materialized external transcript but not an absent row', async () => {
+    const telemetry = await import('../telemetry');
+    const { registerConnectedSession } = await import('./runtime');
+    const { canArchiveSession } = await import('../../composables/state');
+    const controller = makeController({
+      sessionId: 'external-session',
+      sessionPath: '/tmp/mission/sessions/external-session.jsonl',
+      sessionName: 'Mission',
+      materializationVerified: true,
+    });
+    addEphemeral(controller);
+    vi.mocked(telemetry.invokeTraced).mockResolvedValueOnce(state.workspace);
+    await registerConnectedSession(controller);
+    expect(state.ephemeralSessions).toHaveLength(1);
+    expect(
+      canArchiveSession(
+        state.workspace!.projects[0]!,
+        state.ephemeralSessions[0]!,
+      ),
+    ).toBe(false);
+
+    vi.mocked(telemetry.invokeTraced).mockResolvedValueOnce(
+      registeredWorkspace(controller, 'Mission'),
+    );
+    await registerConnectedSession(controller);
+    expect(telemetry.invokeTraced).toHaveBeenCalledWith(
+      'register_session',
+      expect.objectContaining({
+        projectPath: controller.projectPath,
+        sessionPath: '/tmp/mission/sessions/external-session.jsonl',
+      }),
+      undefined,
+    );
+    expect(state.ephemeralSessions).toHaveLength(0);
+    expect(
+      canArchiveSession(
+        state.workspace!.projects[0]!,
+        state.workspace!.projects[0]!.sessions[0]!,
+      ),
+    ).toBe(true);
+  });
+
   it('does not let a weaker registration overwrite overlapping adoption', async () => {
     const telemetry = await import('../telemetry');
     const { registerConnectedSession } = await import('./runtime');
