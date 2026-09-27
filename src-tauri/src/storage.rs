@@ -1,7 +1,8 @@
 use crate::{
     models::{
         ProjectRecord, ProjectRegistry, ProjectSummary, RemoteProjectRecord, RemoteSessionRecord,
-        SessionSummary, TauSessionRecord, TauSessionRegistry, WorkspaceSnapshot,
+        SessionMutationResult, SessionSummary, TauSessionRecord, TauSessionRegistry,
+        WorkspaceSnapshot,
     },
     pi::{login_shell_pi_agent_dir, resolve_pi_binary},
     profile::{self, SESSION_REGISTRY_FILENAME},
@@ -29,281 +30,342 @@ static STORAGE_WRITE_LOCK: Mutex<()> = Mutex::new(());
 /// attached to. Stage 2 proved the pattern end to end on this one command;
 /// Stage 3 applies it to the rest of storage's ordinary invokes.
 #[tauri::command]
-pub fn load_workspace(
+pub async fn load_workspace(
     telemetry: State<'_, Telemetry>,
     telemetry_context: Option<TraceContext>,
 ) -> Result<WorkspaceSnapshot, String> {
     let _span = telemetry_context
         .as_ref()
         .and_then(|context| telemetry.start_command_span(context, "load_workspace"));
-    snapshot(&load_project_registry()?)
+    run_storage_worker(|| snapshot(&load_project_registry()?)).await
 }
 
 #[tauri::command]
-pub fn import_project(
+pub async fn import_project(
     telemetry: State<'_, Telemetry>,
     telemetry_context: Option<TraceContext>,
     path: String,
-) -> Result<WorkspaceSnapshot, String> {
+) -> Result<ProjectSummary, String> {
     let _span = telemetry_context
         .as_ref()
         .and_then(|context| telemetry.start_command_span(context, "import_project"));
-    let path = normalized_project_path(&path)?;
-    mutate_projects(|registry| {
-        if !registry.projects.iter().any(|project| project.path == path) {
-            registry.projects.push(ProjectRecord {
-                path: path.clone(),
-                collapsed: false,
-                remote: None,
-            });
-        }
-        if registry.active_project_path.is_empty() {
-            registry.active_project_path = path;
-        }
-        Ok(())
+    run_storage_worker(move || {
+        let path = normalized_project_path(&path)?;
+        let registry = mutate_projects(|registry| {
+            if !registry.projects.iter().any(|project| project.path == path) {
+                registry.projects.push(ProjectRecord {
+                    path: path.clone(),
+                    collapsed: false,
+                    remote: None,
+                });
+            }
+            if registry.active_project_path.is_empty() {
+                registry.active_project_path = path.clone();
+            }
+            Ok(())
+        })?;
+        project_summary(
+            registry
+                .projects
+                .iter()
+                .find(|project| project.path == path)
+                .unwrap(),
+            &registry.active_project_path,
+        )
     })
+    .await
 }
 
 #[tauri::command]
-pub fn import_remote_project(
+pub async fn import_remote_project(
     telemetry: State<'_, Telemetry>,
     telemetry_context: Option<TraceContext>,
     connection_string: String,
     working_directory: String,
     host: String,
-) -> Result<WorkspaceSnapshot, String> {
+) -> Result<ProjectSummary, String> {
     let _span = telemetry_context
         .as_ref()
         .and_then(|context| telemetry.start_command_span(context, "import_remote_project"));
-    let connection_string = connection_string.trim().to_string();
-    let working_directory = working_directory.trim_end_matches('/').to_string();
-    let working_directory = if working_directory.is_empty() {
-        "/".to_string()
-    } else {
-        working_directory
-    };
-    let host = host.trim().to_string();
-    if connection_string.is_empty() || !working_directory.starts_with('/') || host.is_empty() {
-        return Err("The selected remote directory is invalid.".into());
-    }
-    let new_path = remote_project_path(&connection_string, &working_directory)?;
-
-    mutate_projects(|registry| {
-        let path = registry
-            .projects
-            .iter()
-            .find(|project| {
-                project.remote.as_ref().is_some_and(|remote| {
-                    remote.connection_string == connection_string
-                        && remote.working_directory == working_directory
-                })
-            })
-            .map(|project| project.path.clone())
-            .unwrap_or_else(|| new_path.clone());
-        if let Some(project) = registry
-            .projects
-            .iter_mut()
-            .find(|project| project.path == path)
-        {
-            let previous = project.remote.take();
-            project.remote = Some(RemoteProjectRecord {
-                connection_string,
-                working_directory,
-                host,
-                active_session_id: previous
-                    .as_ref()
-                    .map(|remote| remote.active_session_id.clone())
-                    .unwrap_or_default(),
-                sessions: previous.map(|remote| remote.sessions).unwrap_or_default(),
-            });
+    run_storage_worker(move || {
+        let connection_string = connection_string.trim().to_string();
+        let working_directory = working_directory.trim_end_matches('/').to_string();
+        let working_directory = if working_directory.is_empty() {
+            "/".to_string()
         } else {
-            registry.projects.push(ProjectRecord {
-                path: path.clone(),
-                collapsed: false,
-                remote: Some(RemoteProjectRecord {
+            working_directory
+        };
+        let host = host.trim().to_string();
+        if connection_string.is_empty() || !working_directory.starts_with('/') || host.is_empty() {
+            return Err("The selected remote directory is invalid.".into());
+        }
+        let new_path = remote_project_path(&connection_string, &working_directory)?;
+
+        let registry = mutate_projects(|registry| {
+            let path = registry
+                .projects
+                .iter()
+                .find(|project| {
+                    project.remote.as_ref().is_some_and(|remote| {
+                        remote.connection_string == connection_string
+                            && remote.working_directory == working_directory
+                    })
+                })
+                .map(|project| project.path.clone())
+                .unwrap_or_else(|| new_path.clone());
+            if let Some(project) = registry
+                .projects
+                .iter_mut()
+                .find(|project| project.path == path)
+            {
+                let previous = project.remote.take();
+                project.remote = Some(RemoteProjectRecord {
                     connection_string,
                     working_directory,
                     host,
-                    active_session_id: String::new(),
-                    sessions: Vec::new(),
-                }),
-            });
-        }
-        if registry.active_project_path.is_empty() {
-            registry.active_project_path = path;
-        }
-        Ok(())
+                    active_session_id: previous
+                        .as_ref()
+                        .map(|remote| remote.active_session_id.clone())
+                        .unwrap_or_default(),
+                    sessions: previous.map(|remote| remote.sessions).unwrap_or_default(),
+                });
+            } else {
+                registry.projects.push(ProjectRecord {
+                    path: path.clone(),
+                    collapsed: false,
+                    remote: Some(RemoteProjectRecord {
+                        connection_string,
+                        working_directory,
+                        host,
+                        active_session_id: String::new(),
+                        sessions: Vec::new(),
+                    }),
+                });
+            }
+            if registry.active_project_path.is_empty() {
+                registry.active_project_path = path;
+            }
+            Ok(())
+        })?;
+        let project = registry
+            .projects
+            .iter()
+            .find(|project| project.path == new_path)
+            .ok_or_else(|| "The remote project is no longer available.".to_string())?;
+        project_summary(project, &registry.active_project_path)
     })
+    .await
 }
 
 #[tauri::command]
-pub fn remove_project(
+pub async fn remove_project(
     telemetry: State<'_, Telemetry>,
     telemetry_context: Option<TraceContext>,
     path: String,
-) -> Result<WorkspaceSnapshot, String> {
+) -> Result<(), String> {
     let _span = telemetry_context
         .as_ref()
         .and_then(|context| telemetry.start_command_span(context, "remove_project"));
-    mutate_projects(|registry| {
-        registry.projects.retain(|project| project.path != path);
-        if registry.active_project_path == path {
-            registry.active_project_path.clear();
-        }
-        Ok(())
+    run_storage_worker(move || {
+        mutate_projects(|registry| {
+            registry.projects.retain(|project| project.path != path);
+            if registry.active_project_path == path {
+                registry.active_project_path.clear();
+            }
+            Ok(())
+        })
+        .map(|_| ())
     })
+    .await
 }
 
 #[tauri::command]
-pub fn set_active_project(
+pub async fn set_active_project(
     telemetry: State<'_, Telemetry>,
     telemetry_context: Option<TraceContext>,
     path: String,
-) -> Result<WorkspaceSnapshot, String> {
+) -> Result<(), String> {
     let _span = telemetry_context
         .as_ref()
         .and_then(|context| telemetry.start_command_span(context, "set_active_project"));
-    mutate_projects(|registry| {
-        if !registry.projects.iter().any(|project| project.path == path) {
-            return Err("The project is not imported in Tau.".into());
-        }
-        registry.active_project_path = path;
-        Ok(())
+    run_storage_worker(move || {
+        mutate_projects(|registry| {
+            if !registry.projects.iter().any(|project| project.path == path) {
+                return Err("The project is not imported in Tau.".into());
+            }
+            registry.active_project_path = path;
+            Ok(())
+        })
+        .map(|_| ())
     })
+    .await
 }
 
 #[tauri::command]
-pub fn set_project_collapsed(
+pub async fn set_project_collapsed(
     telemetry: State<'_, Telemetry>,
     telemetry_context: Option<TraceContext>,
     path: String,
     collapsed: bool,
-) -> Result<WorkspaceSnapshot, String> {
+) -> Result<(), String> {
     let _span = telemetry_context
         .as_ref()
         .and_then(|context| telemetry.start_command_span(context, "set_project_collapsed"));
-    mutate_projects(|registry| {
-        let project = registry
+    run_storage_worker(move || {
+        mutate_projects(|registry| {
+            let project = registry
+                .projects
+                .iter_mut()
+                .find(|project| project.path == path)
+                .ok_or_else(|| "The project is not imported in Tau.".to_string())?;
+            project.collapsed = collapsed;
+            Ok(())
+        })
+        .map(|_| ())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn reorder_projects(
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
+    project_paths: Vec<String>,
+) -> Result<(), String> {
+    let _span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "reorder_projects"));
+    run_storage_worker(move || {
+        mutate_projects(|registry| reorder_project_records(&mut registry.projects, &project_paths))
+            .map(|_| ())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn set_active_session(
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
+    project_path: String,
+    session_id: String,
+) -> Result<(), String> {
+    let _span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "set_active_session"));
+    run_storage_worker(move || {
+        let _write_guard = lock_storage_writes()?;
+        let mut projects = load_project_registry()?;
+        let project = projects
             .projects
             .iter_mut()
-            .find(|project| project.path == path)
+            .find(|project| project.path == project_path)
             .ok_or_else(|| "The project is not imported in Tau.".to_string())?;
-        project.collapsed = collapsed;
-        Ok(())
+
+        if let Some(remote) = project.remote.as_mut() {
+            let changed = remote.active_session_id != session_id;
+            select_remote_session(remote, &session_id)?;
+            if changed || projects.active_project_path != project_path {
+                projects.active_project_path = project_path;
+                write_json_atomic(&project_registry_path()?, &projects)?;
+            }
+            return Ok(());
+        }
+
+        let registry_path = local_registry_path(&project_path)?;
+        let mut registry: TauSessionRegistry = read_json_or_default(&registry_path)?;
+        let changed = registry.active_session_id != session_id;
+        select_local_session(&mut registry, &session_id)?;
+        if changed {
+            write_json_atomic(&registry_path, &registry)?;
+        }
+        write_projects_if_changed(&projects, &project_path)
+    })
+    .await
+}
+
+fn write_projects_if_changed(projects: &ProjectRegistry, project_path: &str) -> Result<(), String> {
+    if projects.active_project_path != project_path {
+        let mut projects = projects.clone();
+        projects.active_project_path = project_path.to_string();
+        write_json_atomic(&project_registry_path()?, &projects)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn archive_session(
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
+    project_path: String,
+    session_id: String,
+) -> Result<SessionMutationResult, String> {
+    let _span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "archive_session"));
+    run_storage_worker(move || mutate_session_archive(&project_path, &session_id, true)).await
+}
+
+#[tauri::command]
+pub async fn unarchive_session(
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
+    project_path: String,
+    session_id: String,
+) -> Result<SessionMutationResult, String> {
+    let _span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "unarchive_session"));
+    run_storage_worker(move || mutate_session_archive(&project_path, &session_id, false)).await
+}
+
+fn mutate_session_archive(
+    project_path: &str,
+    session_id: &str,
+    archived: bool,
+) -> Result<SessionMutationResult, String> {
+    let _write_guard = lock_storage_writes()?;
+    let mut projects = load_project_registry()?;
+    let project = projects
+        .projects
+        .iter_mut()
+        .find(|project| project.path == project_path)
+        .ok_or_else(|| "The project is not imported in Tau.".to_string())?;
+    let active_session_id = if let Some(remote) = project.remote.as_mut() {
+        let before = serde_json::to_vec(&remote).map_err(|error| error.to_string())?;
+        if archived {
+            archive_remote_session(remote, session_id)?;
+        } else {
+            unarchive_remote_session(remote, session_id)?;
+        }
+        let active = remote.active_session_id.clone();
+        if serde_json::to_vec(&remote).map_err(|error| error.to_string())? != before {
+            write_json_atomic(&project_registry_path()?, &projects)?;
+        }
+        active
+    } else {
+        let path = local_registry_path(project_path)?;
+        let mut registry: TauSessionRegistry = read_json_or_default(&path)?;
+        let before = serde_json::to_vec(&registry).map_err(|error| error.to_string())?;
+        if archived {
+            archive_local_session(&mut registry, session_id)?;
+        } else {
+            unarchive_local_session(&mut registry, session_id)?;
+        }
+        if serde_json::to_vec(&registry).map_err(|error| error.to_string())? != before {
+            write_json_atomic(&path, &registry)?;
+        }
+        registry.active_session_id
+    };
+    Ok(SessionMutationResult {
+        session_id: session_id.to_string(),
+        archived,
+        active_session_id,
     })
 }
 
 #[tauri::command]
-pub fn reorder_projects(
-    telemetry: State<'_, Telemetry>,
-    telemetry_context: Option<TraceContext>,
-    project_paths: Vec<String>,
-) -> Result<WorkspaceSnapshot, String> {
-    let _span = telemetry_context
-        .as_ref()
-        .and_then(|context| telemetry.start_command_span(context, "reorder_projects"));
-    mutate_projects(|registry| reorder_project_records(&mut registry.projects, &project_paths))
-}
-
-#[tauri::command]
-pub fn set_active_session(
-    telemetry: State<'_, Telemetry>,
-    telemetry_context: Option<TraceContext>,
-    project_path: String,
-    session_id: String,
-) -> Result<WorkspaceSnapshot, String> {
-    let _span = telemetry_context
-        .as_ref()
-        .and_then(|context| telemetry.start_command_span(context, "set_active_session"));
-    let _write_guard = lock_storage_writes()?;
-    let mut projects = load_project_registry()?;
-    let project = projects
-        .projects
-        .iter_mut()
-        .find(|project| project.path == project_path)
-        .ok_or_else(|| "The project is not imported in Tau.".to_string())?;
-
-    if let Some(remote) = project.remote.as_mut() {
-        select_remote_session(remote, &session_id)?;
-        projects.active_project_path = project_path;
-        write_json_atomic(&project_registry_path()?, &projects)?;
-        return snapshot(&projects);
-    }
-
-    let registry_path = local_registry_path(&project_path)?;
-    let mut registry: TauSessionRegistry = read_json_or_default(&registry_path)?;
-    select_local_session(&mut registry, &session_id)?;
-    projects.active_project_path = project_path;
-    write_json_atomic(&registry_path, &registry)?;
-    write_json_atomic(&project_registry_path()?, &projects)?;
-    snapshot(&projects)
-}
-
-#[tauri::command]
-pub fn archive_session(
-    telemetry: State<'_, Telemetry>,
-    telemetry_context: Option<TraceContext>,
-    project_path: String,
-    session_id: String,
-) -> Result<WorkspaceSnapshot, String> {
-    let _span = telemetry_context
-        .as_ref()
-        .and_then(|context| telemetry.start_command_span(context, "archive_session"));
-    let _write_guard = lock_storage_writes()?;
-    let mut projects = load_project_registry()?;
-    let project = projects
-        .projects
-        .iter_mut()
-        .find(|project| project.path == project_path)
-        .ok_or_else(|| "The project is not imported in Tau.".to_string())?;
-
-    if let Some(remote) = project.remote.as_mut() {
-        archive_remote_session(remote, &session_id)?;
-        write_json_atomic(&project_registry_path()?, &projects)?;
-        return snapshot(&projects);
-    }
-
-    let registry_path = local_registry_path(&project_path)?;
-    let mut registry: TauSessionRegistry = read_json_or_default(&registry_path)?;
-    archive_local_session(&mut registry, &session_id)?;
-    write_json_atomic(&registry_path, &registry)?;
-    snapshot(&projects)
-}
-
-#[tauri::command]
-pub fn unarchive_session(
-    telemetry: State<'_, Telemetry>,
-    telemetry_context: Option<TraceContext>,
-    project_path: String,
-    session_id: String,
-) -> Result<WorkspaceSnapshot, String> {
-    let _span = telemetry_context
-        .as_ref()
-        .and_then(|context| telemetry.start_command_span(context, "unarchive_session"));
-    let _write_guard = lock_storage_writes()?;
-    let mut projects = load_project_registry()?;
-    let project = projects
-        .projects
-        .iter_mut()
-        .find(|project| project.path == project_path)
-        .ok_or_else(|| "The project is not imported in Tau.".to_string())?;
-
-    if let Some(remote) = project.remote.as_mut() {
-        unarchive_remote_session(remote, &session_id)?;
-        write_json_atomic(&project_registry_path()?, &projects)?;
-        return snapshot(&projects);
-    }
-
-    let registry_path = local_registry_path(&project_path)?;
-    let mut registry: TauSessionRegistry = read_json_or_default(&registry_path)?;
-    unarchive_local_session(&mut registry, &session_id)?;
-    write_json_atomic(&registry_path, &registry)?;
-    snapshot(&projects)
-}
-
-#[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub fn register_session(
+pub async fn register_session(
     telemetry: State<'_, Telemetry>,
     telemetry_context: Option<TraceContext>,
     project_path: String,
@@ -311,54 +373,191 @@ pub fn register_session(
     session_path: String,
     session_name: Option<String>,
     last_user_message_at: Option<u64>,
-    // Pi handing Tau this identity — a replacement or a materialized new
-    // session — is Tau adopting a session it is about to display, so the row
-    // has to exist and be reachable even if it was archived before.
     adopted: Option<bool>,
-) -> Result<WorkspaceSnapshot, String> {
+) -> Result<Option<SessionSummary>, String> {
     let _span = telemetry_context
         .as_ref()
         .and_then(|context| telemetry.start_command_span(context, "register_session"));
-    if session_id.trim().is_empty() || session_id.len() > 256 {
-        return Err("Pi returned an invalid session id.".into());
-    }
-    let adopted = adopted.unwrap_or(false);
-    let _write_guard = lock_storage_writes()?;
-    let mut projects = load_project_registry()?;
-    let project = projects
-        .projects
-        .iter_mut()
-        .find(|project| project.path == project_path)
-        .ok_or_else(|| "The project is not imported in Tau.".to_string())?;
-    if let Some(remote) = project.remote.as_mut() {
-        upsert_remote_session(
-            remote,
+    run_storage_worker(move || {
+        register_session_inner(
+            project_path,
             session_id,
             session_path,
             session_name.unwrap_or_default(),
             last_user_message_at,
+            adopted.unwrap_or(false),
+        )
+    })
+    .await
+}
+
+fn register_session_inner(
+    project_path: String,
+    session_id: String,
+    session_path: String,
+    session_name: String,
+    last_user_message_at: Option<u64>,
+    adopted: bool,
+) -> Result<Option<SessionSummary>, String> {
+    if session_id.trim().is_empty() || session_id.len() > 256 {
+        return Err("Pi returned an invalid session id.".into());
+    }
+    let projects = load_project_registry()?;
+    let project = projects
+        .projects
+        .iter()
+        .find(|project| project.path == project_path)
+        .ok_or_else(|| "The project is not imported in Tau.".to_string())?;
+    if project.remote.is_some() {
+        let _write_guard = lock_storage_writes()?;
+        let mut projects = load_project_registry()?;
+        let remote = projects
+            .projects
+            .iter_mut()
+            .find(|project| project.path == project_path)
+            .and_then(|project| project.remote.as_mut())
+            .ok_or_else(|| "The remote project is no longer available.".to_string())?;
+        let before = serde_json::to_vec(&remote).map_err(|error| error.to_string())?;
+        upsert_remote_session(
+            remote,
+            session_id.clone(),
+            session_path,
+            session_name,
+            last_user_message_at,
             adopted,
         );
-        write_json_atomic(&project_registry_path()?, &projects)?;
-        return snapshot(&projects);
+        let changed = serde_json::to_vec(&remote).map_err(|error| error.to_string())? != before;
+        let result = list_remote_sessions(remote)
+            .into_iter()
+            .find(|session| session.id == session_id);
+        if changed {
+            write_json_atomic(&project_registry_path()?, &projects)?;
+        }
+        return Ok(result);
     }
 
-    if PathBuf::from(&session_path).parent().is_none() {
-        return Err("Pi returned an invalid session path.".into());
-    }
-    // The registry has to live where the snapshot reads it. Keying it off the
-    // session file's own folder loses every session Pi opened under another
-    // working directory, which registers a row nothing ever lists again.
-    let registry_path = local_registry_path(&project_path)?;
-    let mut registry: TauSessionRegistry = read_json_or_default(&registry_path)?;
-    upsert_local_session(
-        &mut registry,
-        session_id,
-        session_name.unwrap_or_default(),
+    let directory = default_session_dir(&project_path)?;
+    register_local_session_in(
+        &directory,
+        &session_id,
+        &session_path,
+        session_name,
         adopted,
-    );
-    write_json_atomic(&registry_path, &registry)?;
-    snapshot(&projects)
+        Some(&project_path),
+    )
+}
+
+fn register_local_session_in(
+    directory: &Path,
+    session_id: &str,
+    session_path: &str,
+    session_name: String,
+    adopted: bool,
+    project_path: Option<&str>,
+) -> Result<Option<SessionSummary>, String> {
+    let Some(path) = discover_local_session(directory, session_path, session_id)? else {
+        return Ok(None);
+    };
+    let parsed = parse_session_file(&path)?
+        .ok_or_else(|| "The Pi session is no longer available.".to_string())?;
+    if parsed.id != session_id {
+        return Ok(None);
+    }
+    let modified = path
+        .metadata()
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+    let _write_guard = lock_storage_writes()?;
+    if let Some(project_path) = project_path {
+        let projects = load_project_registry()?;
+        if !projects
+            .projects
+            .iter()
+            .any(|project| project.path == project_path && project.remote.is_none())
+        {
+            return Err("The project is not imported in Tau.".into());
+        }
+    }
+    let registry_path = directory.join(SESSION_REGISTRY_FILENAME);
+    let mut registry: TauSessionRegistry = read_json_or_default(&registry_path)?;
+    let before = serde_json::to_vec(&registry).map_err(|error| error.to_string())?;
+    upsert_local_session(&mut registry, session_id.to_string(), session_name, adopted);
+    let record = registry
+        .sessions
+        .iter()
+        .find(|session| session.id == session_id)
+        .unwrap();
+    let result = local_session_summary(&path, &registry, record, parsed, modified);
+    if serde_json::to_vec(&registry).map_err(|error| error.to_string())? != before {
+        write_json_atomic(&registry_path, &registry)?;
+    }
+    Ok(Some(result))
+}
+
+fn discover_local_session(
+    directory: &Path,
+    supplied: &str,
+    session_id: &str,
+) -> Result<Option<PathBuf>, String> {
+    let supplied = Path::new(supplied);
+    if supplied.extension() == Some(OsStr::new("jsonl"))
+        && supplied.parent() == Some(directory)
+        && regular_session_file(supplied)
+        && parse_session_file(supplied)?.is_some_and(|parsed| parsed.id == session_id)
+    {
+        return Ok(Some(supplied.to_path_buf()));
+    }
+    // Pi's filenames end in the session ID. Inspect names first, not unrelated transcripts.
+    if !directory.is_dir() {
+        return Ok(None);
+    }
+    for entry in fs::read_dir(directory)
+        .map_err(|error| format!("Could not read saved Pi sessions: {error}"))?
+    {
+        let entry = entry.map_err(|error| format!("Could not read saved Pi sessions: {error}"))?;
+        let path = entry.path();
+        let name = path.file_name().and_then(OsStr::to_str).unwrap_or_default();
+        if (name == format!("{session_id}.jsonl")
+            || name.ends_with(&format!("_{session_id}.jsonl")))
+            && regular_session_file(&path)
+            && parse_session_file(&path)?.is_some_and(|parsed| parsed.id == session_id)
+        {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
+fn regular_session_file(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
+}
+
+fn local_session_summary(
+    path: &Path,
+    registry: &TauSessionRegistry,
+    record: &TauSessionRecord,
+    parsed: ParsedSession,
+    modified: SystemTime,
+) -> SessionSummary {
+    let title = session_title(&parsed.name, record.name.as_deref(), &parsed.first_message);
+    let sort_at = parsed.sort_at();
+    SessionSummary {
+        id: parsed.id,
+        path: path.to_string_lossy().into_owned(),
+        title: single_line(&title),
+        title_markdown: Some(markdown_title(&title)),
+        model: parsed.model,
+        last_active: if sort_at == 0 {
+            relative_time(modified)
+        } else {
+            relative_timestamp(sort_at)
+        },
+        last_user_message_at: parsed.last_user_message_at,
+        sort_at,
+        archived: record.archived,
+        selected: !record.archived && record.id == registry.active_session_id,
+    }
 }
 
 fn upsert_remote_session(
@@ -546,12 +745,15 @@ fn reorder_project_records(
 
 fn mutate_projects(
     mutation: impl FnOnce(&mut ProjectRegistry) -> Result<(), String>,
-) -> Result<WorkspaceSnapshot, String> {
+) -> Result<ProjectRegistry, String> {
     let _write_guard = lock_storage_writes()?;
     let mut registry = load_project_registry()?;
+    let before = serde_json::to_vec(&registry).map_err(|error| error.to_string())?;
     mutation(&mut registry)?;
-    write_json_atomic(&project_registry_path()?, &registry)?;
-    snapshot(&registry)
+    if serde_json::to_vec(&registry).map_err(|error| error.to_string())? != before {
+        write_json_atomic(&project_registry_path()?, &registry)?;
+    }
+    Ok(registry)
 }
 
 fn lock_storage_writes() -> Result<MutexGuard<'static, ()>, String> {
@@ -564,40 +766,52 @@ fn snapshot(registry: &ProjectRegistry) -> Result<WorkspaceSnapshot, String> {
     let projects = registry
         .projects
         .iter()
-        .map(|project| {
-            let selected = project.path == registry.active_project_path;
-            let (name, working_directory, connection_string, sessions) =
-                if let Some(remote) = project.remote.as_ref() {
-                    (
-                        remote_project_name(remote),
-                        remote.working_directory.clone(),
-                        Some(remote.connection_string.clone()),
-                        list_remote_sessions(remote),
-                    )
-                } else {
-                    (
-                        project_name(&project.path),
-                        project.path.clone(),
-                        None,
-                        list_project_sessions(&project.path)?,
-                    )
-                };
-            Ok(ProjectSummary {
-                name,
-                path: project.path.clone(),
-                working_directory,
-                connection_string,
-                collapsed: project.collapsed,
-                selected,
-                sessions,
-            })
-        })
+        .map(|project| project_summary(project, &registry.active_project_path))
         .collect::<Result<Vec<_>, String>>()?;
     Ok(WorkspaceSnapshot {
         active_project_path: registry.active_project_path.clone(),
         pi_path: resolve_pi_binary().map(|path| path.to_string_lossy().into_owned()),
         projects,
     })
+}
+
+fn project_summary(
+    project: &ProjectRecord,
+    active_project_path: &str,
+) -> Result<ProjectSummary, String> {
+    let (name, working_directory, connection_string, sessions) =
+        if let Some(remote) = project.remote.as_ref() {
+            (
+                remote_project_name(remote),
+                remote.working_directory.clone(),
+                Some(remote.connection_string.clone()),
+                list_remote_sessions(remote),
+            )
+        } else {
+            (
+                project_name(&project.path),
+                project.path.clone(),
+                None,
+                list_project_sessions(&project.path)?,
+            )
+        };
+    Ok(ProjectSummary {
+        name,
+        path: project.path.clone(),
+        working_directory,
+        connection_string,
+        collapsed: project.collapsed,
+        selected: project.path == active_project_path,
+        sessions,
+    })
+}
+
+async fn run_storage_worker<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|_| "Tau storage worker is unavailable.".to_string())?
 }
 
 fn project_registry_path() -> Result<PathBuf, String> {
@@ -1530,6 +1744,109 @@ mod tests {
         assert_eq!(projects[0].path, previous[0].path);
         assert_eq!(projects[1].path, previous[1].path);
         assert_eq!(projects[2].path, previous[2].path);
+    }
+
+    #[test]
+    fn registration_checks_only_the_candidate_file_and_its_identity() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let unrelated = directory.path().join("unrelated.jsonl");
+        fs::write(&unrelated, b"not a transcript").expect("unrelated file");
+        let path = directory.path().join("2026_session-1.jsonl");
+        assert!(
+            discover_local_session(directory.path(), path.to_str().unwrap(), "session-1")
+                .expect("missing file")
+                .is_none()
+        );
+        fs::write(&path, b"{\"type\":\"session\",\"id\":\"wrong\"}\n").expect("wrong identity");
+        assert!(
+            discover_local_session(directory.path(), path.to_str().unwrap(), "session-1")
+                .expect("wrong identity")
+                .is_none()
+        );
+        fs::write(&path, b"{\"type\":\"session\",\"id\":\"session-1\"}\n").expect("session file");
+        assert_eq!(
+            discover_local_session(directory.path(), "", "session-1").expect("filename fallback"),
+            Some(path.clone())
+        );
+        let outside = tempfile::tempdir().expect("other directory");
+        let outside_file = outside.path().join("session-1.jsonl");
+        fs::write(
+            &outside_file,
+            b"{\"type\":\"session\",\"id\":\"session-1\"}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            discover_local_session(
+                directory.path(),
+                outside_file.to_str().unwrap(),
+                "session-1"
+            )
+            .expect("outside file falls back to discoverable file"),
+            Some(path)
+        );
+    }
+
+    #[test]
+    fn local_registration_returns_only_the_verified_row_and_skips_missing_files() {
+        let session_dir = tempfile::tempdir().expect("session directory");
+        let session_dir = session_dir.path();
+        let path = session_dir.join("2026_verified.jsonl");
+        let path_string = path.to_str().unwrap().to_string();
+        assert!(register_local_session_in(
+            session_dir,
+            "verified",
+            &path_string,
+            String::new(),
+            false,
+            None,
+        )
+        .expect("unmaterialized registration")
+        .is_none());
+        let registry_path = session_dir.join(SESSION_REGISTRY_FILENAME);
+        assert!(!registry_path.exists());
+        fs::write(&path, b"{\"type\":\"session\",\"id\":\"verified\"}\n{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":\"Hello\",\"timestamp\":1000}}\n").unwrap();
+        let row = register_local_session_in(
+            session_dir,
+            "verified",
+            &path_string,
+            "Tau title".into(),
+            false,
+            None,
+        )
+        .expect("verified registration")
+        .expect("discoverable session");
+        assert_eq!(row.id, "verified");
+        assert_eq!(row.title, "Tau title");
+        assert_eq!(row.path, path_string);
+        assert_eq!(list_sessions_in(session_dir).unwrap().len(), 1);
+        let mut registry: TauSessionRegistry = read_json_or_default(&registry_path).unwrap();
+        archive_local_session(&mut registry, "verified").unwrap();
+        write_json_atomic(&registry_path, &registry).unwrap();
+        let row = register_local_session_in(
+            session_dir,
+            "verified",
+            &path_string,
+            String::new(),
+            true,
+            None,
+        )
+        .expect("adoption")
+        .expect("adopted row");
+        assert!(!row.archived);
+        let metadata = fs::metadata(&registry_path).unwrap();
+        register_local_session_in(
+            session_dir,
+            "verified",
+            &row.path,
+            String::new(),
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            fs::metadata(&registry_path).unwrap().modified().unwrap(),
+            metadata.modified().unwrap()
+        );
     }
 
     #[test]
