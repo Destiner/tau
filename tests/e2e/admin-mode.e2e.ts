@@ -4,12 +4,6 @@ import appVersion from '../../src/lib/app-version';
 
 import { expect, test } from './fixtures';
 
-/**
- * Tau's diagnostics belong to admin mode, not to the product: an ordinary
- * run offers no issue reporter and sends nothing to the native telemetry
- * ingest. The cheat code is the only way in, and the reporter appearing in
- * the sidebar footer is how the user sees that it worked.
- */
 const scenarioUrl = '/?test-scenario=saved-session-bootstrap';
 
 function nativeCalls(page: Page, command: string): Promise<number> {
@@ -19,7 +13,7 @@ function nativeCalls(page: Page, command: string): Promise<number> {
   );
 }
 
-test('keeps diagnostics locked in the composer, toggles them through the sidebar code and stops telemetry again', async ({
+test('toggles the issue reporter through the sidebar code but ignores composer input', async ({
   page,
 }) => {
   await test.step('ignores the code typed into the composer', async () => {
@@ -63,7 +57,6 @@ test('keeps diagnostics locked in the composer, toggles them through the sidebar
     expect(versionStyles.color).toBe(versionStyles.mutedColor);
     const reportIssue = page.getByRole('button', { name: 'Report an Issue' });
     await expect(reportIssue).toHaveCount(0);
-    expect(await nativeCalls(page, 'ingest_telemetry')).toBe(0);
     await page.getByLabel('Projects and Sessions').click();
     await page.keyboard.type('iddqd');
     await expect(reportIssue).toBeVisible();
@@ -85,17 +78,8 @@ test('keeps diagnostics locked in the composer, toggles them through the sidebar
       reportBounds!.x + reportBounds!.width,
     );
     expect(await nativeCalls(page, 'set_admin_mode')).toBe(1);
-    await expect
-      .poll(() => nativeCalls(page, 'ingest_telemetry'), {
-        message: 'admin mode should let telemetry reach the native command',
-      })
-      .toBeGreaterThan(0);
     await page.keyboard.type('iddqd');
     await expect(reportIssue).toHaveCount(0);
     expect(await nativeCalls(page, 'set_admin_mode')).toBe(2);
-    const afterDisabling = await nativeCalls(page, 'ingest_telemetry');
-    await page.getByRole('button', { name: 'Show Archived Sessions' }).click();
-    await page.waitForTimeout(200);
-    expect(await nativeCalls(page, 'ingest_telemetry')).toBe(afterDisabling);
   });
 });

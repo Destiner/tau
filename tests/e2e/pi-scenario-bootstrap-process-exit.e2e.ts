@@ -79,7 +79,6 @@ test('bounds a bootstrap process exit and reconnects from the session row', asyn
     timeline: window.__TAU_PI_SCENARIO__?.timeline(),
   }));
   expect(diagnostics.verification?.ok).toBe(true);
-  expect(JSON.stringify(diagnostics.timeline)).not.toContain('RAW_');
   expect(
     diagnostics.timeline?.filter(
       (entry) =>

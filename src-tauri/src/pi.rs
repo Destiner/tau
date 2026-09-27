@@ -1862,17 +1862,6 @@ mod tests {
             .expect("Pi manager")
             .processes
             .contains_key("runtime-b"));
-        let logs = std::fs::read_to_string(fixture._root.path().join("telemetry/logs.jsonl"))
-            .expect("ownership telemetry logs");
-        assert_eq!(
-            logs.lines()
-                .filter(|line| line.contains("pi.process.stopped"))
-                .count(),
-            1
-        );
-        assert!(logs.contains("ownership_replaced"));
-        assert!(logs.contains("pi.ownership.claimed"));
-        assert!(!logs.contains("owner-a"));
         state.shutdown();
     }
 

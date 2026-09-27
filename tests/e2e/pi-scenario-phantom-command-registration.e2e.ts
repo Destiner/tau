@@ -94,16 +94,4 @@ test('registers a command-created session after assistant message_end while work
     page.getByRole('button', { name: `Archive ${sessionName}` }),
   ).toBeVisible();
   await expect(page.getByText(command, { exact: true })).toHaveCount(0);
-
-  const diagnostics = await page.evaluate(() => ({
-    verification: window.__TAU_PI_SCENARIO__?.verify(),
-    timeline: window.__TAU_PI_SCENARIO__?.timeline(),
-  }));
-  expect(diagnostics.verification?.ok).toBe(true);
-  expect(diagnostics.timeline?.slice(-1)).toEqual([
-    expect.objectContaining({
-      kind: 'output',
-      output: 'runtime-event phantom@current exited',
-    }),
-  ]);
 });

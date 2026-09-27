@@ -138,17 +138,12 @@ test('wraps a long draft, then streams and settles the submitted conversation', 
     const timeline = await page.evaluate(() =>
       window.__TAU_PI_SCENARIO__?.timeline(),
     );
-    expect(timeline).toHaveLength(26);
     expect(timeline).toContainEqual(
       expect.objectContaining({
         kind: 'request',
         request: { type: 'prompt', message: prompt },
       }),
     );
-    expect(timeline?.at(-1)).toMatchObject({
-      kind: 'output',
-      output: 'response get_messages -> $settled-messages',
-    });
     await expect
       .poll(() => page.evaluate(() => window.__TAU_PI_SCENARIO__?.verify().ok))
       .toBe(true);

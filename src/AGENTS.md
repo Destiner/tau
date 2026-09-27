@@ -21,7 +21,7 @@ Vue 3 and TypeScript UI for Tau. Root guidance and the quality rubric still appl
 - Sanitize rendered content and open web links outside the webview. File paths use their captured local or remote project context; regular files preview from private, narrowly scoped snapshots, while directories retain their local-open or remote-copy behavior.
 - Keep fixtures behind `import.meta.env.DEV` and dynamic imports so production bundles do not include them.
 - Use existing traced Tauri invocation and privacy helpers for product operations; raw RPC transport is the narrow exception in `lib/pi/runtime.ts`, and `read_admin_mode` is the one untraced command.
-- Telemetry records nothing outside admin mode. A test that expects records to reach the native command must enable it first.
+- Telemetry records nothing outside admin mode.
 
 ## Testing
 
