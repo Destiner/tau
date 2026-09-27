@@ -1,316 +1,25 @@
+use super::{
+    discovery::{
+        discover_local_session, parse_session_file, single_line, timestamp_millis, ParsedSession,
+    },
+    registry::{
+        adoption_is_current, default_session_dir, load_project_registry, local_registry_path,
+        lock_storage_writes, project_registry_path, read_json_or_default, write_json_atomic,
+    },
+};
 use crate::{
     models::{
-        ProjectRecord, ProjectRegistry, ProjectSummary, RemoteProjectRecord, RemoteSessionRecord,
-        SessionMutationResult, SessionSummary, TauSessionRecord, TauSessionRegistry,
-        WorkspaceSnapshot,
+        ProjectRegistry, RemoteProjectRecord, RemoteSessionRecord, SessionMutationResult,
+        SessionSummary, TauSessionRecord, TauSessionRegistry,
     },
-    pi::{login_shell_pi_agent_dir, resolve_pi_binary},
-    profile::{self, SESSION_REGISTRY_FILENAME},
-    telemetry::{trace_context::TraceContext, Telemetry},
+    profile::SESSION_REGISTRY_FILENAME,
 };
-use serde::de::DeserializeOwned;
-use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
-    ffi::{OsStr, OsString},
-    fs::{self, File},
-    io::{BufRead, BufReader},
+    fs,
     path::{Path, PathBuf},
-    sync::{LazyLock, Mutex, MutexGuard},
     time::{Duration, SystemTime},
 };
-use tauri::State;
-
-const MAX_SESSION_LINE_BYTES: usize = 64 * 1024 * 1024;
-static STORAGE_WRITE_LOCK: Mutex<()> = Mutex::new(());
-static ARCHIVE_INTENTS: LazyLock<Mutex<HashMap<(String, String), u64>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
-fn archive_revision(project: &str, session: &str) -> Result<u64, String> {
-    ARCHIVE_INTENTS
-        .lock()
-        .map(|intents| {
-            intents
-                .get(&(project.to_owned(), session.to_owned()))
-                .copied()
-                .unwrap_or(0)
-        })
-        .map_err(|_| "Tau storage is unavailable.".to_string())
-}
-
-fn adoption_is_current(project: &str, session: &str, revision: u64) -> Result<bool, String> {
-    Ok(archive_revision(project, session)? == revision)
-}
-
-fn mark_archive_intent(project: &str, session: &str) -> Result<(), String> {
-    let mut intents = ARCHIVE_INTENTS
-        .lock()
-        .map_err(|_| "Tau storage is unavailable.".to_string())?;
-    let revision = intents
-        .entry((project.to_owned(), session.to_owned()))
-        .or_default();
-    *revision = revision.wrapping_add(1);
-    Ok(())
-}
-
-/// Every storage command below accepts the same optional, explicit
-/// `telemetry_context`: a caller without a span (or a malformed one) still
-/// runs normally, since telemetry failure must never fail the command it is
-/// attached to. Stage 2 proved the pattern end to end on this one command;
-/// Stage 3 applies it to the rest of storage's ordinary invokes.
-#[tauri::command]
-pub async fn load_workspace(
-    telemetry: State<'_, Telemetry>,
-    telemetry_context: Option<TraceContext>,
-) -> Result<WorkspaceSnapshot, String> {
-    let _span = telemetry_context
-        .as_ref()
-        .and_then(|context| telemetry.start_command_span(context, "load_workspace"));
-    run_storage_worker(|| snapshot(&load_project_registry()?)).await
-}
-
-#[tauri::command]
-pub async fn import_project(
-    telemetry: State<'_, Telemetry>,
-    telemetry_context: Option<TraceContext>,
-    path: String,
-) -> Result<ProjectSummary, String> {
-    let _span = telemetry_context
-        .as_ref()
-        .and_then(|context| telemetry.start_command_span(context, "import_project"));
-    run_storage_worker(move || {
-        let path = normalized_project_path(&path)?;
-        let registry = mutate_projects(|registry| {
-            if !registry.projects.iter().any(|project| project.path == path) {
-                registry.projects.push(ProjectRecord {
-                    path: path.clone(),
-                    collapsed: false,
-                    remote: None,
-                });
-            }
-            if registry.active_project_path.is_empty() {
-                registry.active_project_path = path.clone();
-            }
-            Ok(())
-        })?;
-        project_summary(
-            registry
-                .projects
-                .iter()
-                .find(|project| project.path == path)
-                .unwrap(),
-            &registry.active_project_path,
-        )
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn import_remote_project(
-    telemetry: State<'_, Telemetry>,
-    telemetry_context: Option<TraceContext>,
-    connection_string: String,
-    working_directory: String,
-    host: String,
-) -> Result<ProjectSummary, String> {
-    let _span = telemetry_context
-        .as_ref()
-        .and_then(|context| telemetry.start_command_span(context, "import_remote_project"));
-    run_storage_worker(move || {
-        let connection_string = connection_string.trim().to_string();
-        let working_directory = working_directory.trim_end_matches('/').to_string();
-        let working_directory = if working_directory.is_empty() {
-            "/".to_string()
-        } else {
-            working_directory
-        };
-        let host = host.trim().to_string();
-        if connection_string.is_empty() || !working_directory.starts_with('/') || host.is_empty() {
-            return Err("The selected remote directory is invalid.".into());
-        }
-        let new_path = remote_project_path(&connection_string, &working_directory)?;
-
-        let registry = mutate_projects(|registry| {
-            let path = registry
-                .projects
-                .iter()
-                .find(|project| {
-                    project.remote.as_ref().is_some_and(|remote| {
-                        remote.connection_string == connection_string
-                            && remote.working_directory == working_directory
-                    })
-                })
-                .map(|project| project.path.clone())
-                .unwrap_or_else(|| new_path.clone());
-            if let Some(project) = registry
-                .projects
-                .iter_mut()
-                .find(|project| project.path == path)
-            {
-                let previous = project.remote.take();
-                project.remote = Some(RemoteProjectRecord {
-                    connection_string,
-                    working_directory,
-                    host,
-                    active_session_id: previous
-                        .as_ref()
-                        .map(|remote| remote.active_session_id.clone())
-                        .unwrap_or_default(),
-                    sessions: previous.map(|remote| remote.sessions).unwrap_or_default(),
-                });
-            } else {
-                registry.projects.push(ProjectRecord {
-                    path: path.clone(),
-                    collapsed: false,
-                    remote: Some(RemoteProjectRecord {
-                        connection_string,
-                        working_directory,
-                        host,
-                        active_session_id: String::new(),
-                        sessions: Vec::new(),
-                    }),
-                });
-            }
-            if registry.active_project_path.is_empty() {
-                registry.active_project_path = path;
-            }
-            Ok(())
-        })?;
-        let project = registry
-            .projects
-            .iter()
-            .find(|project| project.path == new_path)
-            .ok_or_else(|| "The remote project is no longer available.".to_string())?;
-        project_summary(project, &registry.active_project_path)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn remove_project(
-    telemetry: State<'_, Telemetry>,
-    telemetry_context: Option<TraceContext>,
-    path: String,
-) -> Result<(), String> {
-    let _span = telemetry_context
-        .as_ref()
-        .and_then(|context| telemetry.start_command_span(context, "remove_project"));
-    run_storage_worker(move || {
-        mutate_projects(|registry| {
-            registry.projects.retain(|project| project.path != path);
-            if registry.active_project_path == path {
-                registry.active_project_path.clear();
-            }
-            Ok(())
-        })
-        .map(|_| ())
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn set_active_project(
-    telemetry: State<'_, Telemetry>,
-    telemetry_context: Option<TraceContext>,
-    path: String,
-) -> Result<(), String> {
-    let _span = telemetry_context
-        .as_ref()
-        .and_then(|context| telemetry.start_command_span(context, "set_active_project"));
-    run_storage_worker(move || {
-        mutate_projects(|registry| {
-            if !registry.projects.iter().any(|project| project.path == path) {
-                return Err("The project is not imported in Tau.".into());
-            }
-            registry.active_project_path = path;
-            Ok(())
-        })
-        .map(|_| ())
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn set_project_collapsed(
-    telemetry: State<'_, Telemetry>,
-    telemetry_context: Option<TraceContext>,
-    path: String,
-    collapsed: bool,
-) -> Result<(), String> {
-    let _span = telemetry_context
-        .as_ref()
-        .and_then(|context| telemetry.start_command_span(context, "set_project_collapsed"));
-    run_storage_worker(move || {
-        mutate_projects(|registry| {
-            let project = registry
-                .projects
-                .iter_mut()
-                .find(|project| project.path == path)
-                .ok_or_else(|| "The project is not imported in Tau.".to_string())?;
-            project.collapsed = collapsed;
-            Ok(())
-        })
-        .map(|_| ())
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn reorder_projects(
-    telemetry: State<'_, Telemetry>,
-    telemetry_context: Option<TraceContext>,
-    project_paths: Vec<String>,
-) -> Result<(), String> {
-    let _span = telemetry_context
-        .as_ref()
-        .and_then(|context| telemetry.start_command_span(context, "reorder_projects"));
-    run_storage_worker(move || {
-        mutate_projects(|registry| reorder_project_records(&mut registry.projects, &project_paths))
-            .map(|_| ())
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn set_active_session(
-    telemetry: State<'_, Telemetry>,
-    telemetry_context: Option<TraceContext>,
-    project_path: String,
-    session_id: String,
-) -> Result<(), String> {
-    let _span = telemetry_context
-        .as_ref()
-        .and_then(|context| telemetry.start_command_span(context, "set_active_session"));
-    run_storage_worker(move || {
-        let _write_guard = lock_storage_writes()?;
-        let mut projects = load_project_registry()?;
-        let project = projects
-            .projects
-            .iter_mut()
-            .find(|project| project.path == project_path)
-            .ok_or_else(|| "The project is not imported in Tau.".to_string())?;
-
-        if let Some(remote) = project.remote.as_mut() {
-            let changed = remote.active_session_id != session_id;
-            select_remote_session(remote, &session_id)?;
-            if changed || projects.active_project_path != project_path {
-                projects.active_project_path = project_path;
-                write_json_atomic(&project_registry_path()?, &projects)?;
-            }
-            return Ok(());
-        }
-
-        let registry_path = local_registry_path(&project_path)?;
-        let mut registry: TauSessionRegistry = read_json_or_default(&registry_path)?;
-        let changed = registry.active_session_id != session_id;
-        select_local_session(&mut registry, &session_id)?;
-        if changed {
-            write_json_atomic(&registry_path, &registry)?;
-        }
-        write_projects_if_changed(&mut projects, &project_path)
-    })
-    .await
-}
 
 fn write_projects_if_changed(
     projects: &mut ProjectRegistry,
@@ -322,36 +31,7 @@ fn write_projects_if_changed(
     }
     Ok(())
 }
-
-#[tauri::command]
-pub async fn archive_session(
-    telemetry: State<'_, Telemetry>,
-    telemetry_context: Option<TraceContext>,
-    project_path: String,
-    session_id: String,
-) -> Result<SessionMutationResult, String> {
-    let _span = telemetry_context
-        .as_ref()
-        .and_then(|context| telemetry.start_command_span(context, "archive_session"));
-    mark_archive_intent(&project_path, &session_id)?;
-    run_storage_worker(move || mutate_session_archive(&project_path, &session_id, true)).await
-}
-
-#[tauri::command]
-pub async fn unarchive_session(
-    telemetry: State<'_, Telemetry>,
-    telemetry_context: Option<TraceContext>,
-    project_path: String,
-    session_id: String,
-) -> Result<SessionMutationResult, String> {
-    let _span = telemetry_context
-        .as_ref()
-        .and_then(|context| telemetry.start_command_span(context, "unarchive_session"));
-    mark_archive_intent(&project_path, &session_id)?;
-    run_storage_worker(move || mutate_session_archive(&project_path, &session_id, false)).await
-}
-
-fn mutate_session_archive(
+pub(super) fn mutate_session_archive(
     project_path: &str,
     session_id: &str,
     archived: bool,
@@ -390,35 +70,7 @@ fn mutate_session_archive(
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub async fn register_session(
-    telemetry: State<'_, Telemetry>,
-    telemetry_context: Option<TraceContext>,
-    project_path: String,
-    session_id: String,
-    session_path: String,
-    session_name: Option<String>,
-    last_user_message_at: Option<u64>,
-    adopted: Option<bool>,
-) -> Result<Option<SessionSummary>, String> {
-    let _span = telemetry_context
-        .as_ref()
-        .and_then(|context| telemetry.start_command_span(context, "register_session"));
-    let revision = archive_revision(&project_path, &session_id)?;
-    run_storage_worker(move || {
-        register_session_inner(
-            project_path,
-            session_id,
-            session_path,
-            session_name.unwrap_or_default(),
-            last_user_message_at,
-            adopted.unwrap_or(false),
-            revision,
-        )
-    })
-    .await
-}
-
-fn register_session_inner(
+pub(super) fn register_session_inner(
     project_path: String,
     session_id: String,
     session_path: String,
@@ -533,43 +185,6 @@ fn register_local_session_in(
         write_json_atomic(&registry_path, &registry)?;
     }
     Ok(Some(result))
-}
-
-fn discover_local_session(
-    directory: &Path,
-    supplied: &str,
-    session_id: &str,
-) -> Result<Option<PathBuf>, String> {
-    let supplied = Path::new(supplied);
-    if supplied.is_absolute()
-        && supplied.extension() == Some(OsStr::new("jsonl"))
-        && regular_session_file(supplied)
-        && parse_session_file(supplied)?.is_some_and(|parsed| parsed.id == session_id)
-    {
-        return Ok(Some(supplied.to_path_buf()));
-    }
-    if !directory.is_dir() {
-        return Ok(None);
-    }
-    for entry in fs::read_dir(directory)
-        .map_err(|error| format!("Could not read saved Pi sessions: {error}"))?
-    {
-        let entry = entry.map_err(|error| format!("Could not read saved Pi sessions: {error}"))?;
-        let path = entry.path();
-        let name = path.file_name().and_then(OsStr::to_str).unwrap_or_default();
-        if (name == format!("{session_id}.jsonl")
-            || name.ends_with(&format!("_{session_id}.jsonl")))
-            && regular_session_file(&path)
-            && parse_session_file(&path)?.is_some_and(|parsed| parsed.id == session_id)
-        {
-            return Ok(Some(path));
-        }
-    }
-    Ok(None)
-}
-
-fn regular_session_file(path: &Path) -> bool {
-    fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
 }
 
 fn local_session_summary(
@@ -725,202 +340,7 @@ fn set_local_session_archived(
     Ok(())
 }
 
-fn reorder_project_records(
-    projects: &mut Vec<ProjectRecord>,
-    project_paths: &[String],
-) -> Result<(), String> {
-    const INVALID_ORDER: &str = "Project order must include every imported project exactly once.";
-    if projects.len() != project_paths.len() {
-        return Err(INVALID_ORDER.into());
-    }
-
-    let reordered = {
-        let projects_by_path = projects
-            .iter()
-            .map(|project| (project.path.as_str(), project))
-            .collect::<HashMap<_, _>>();
-        if projects_by_path.len() != projects.len() {
-            return Err(INVALID_ORDER.into());
-        }
-
-        let mut seen = HashSet::with_capacity(project_paths.len());
-        let mut reordered = Vec::with_capacity(project_paths.len());
-        for path in project_paths {
-            if !seen.insert(path.as_str()) {
-                return Err(INVALID_ORDER.into());
-            }
-            let project = projects_by_path
-                .get(path.as_str())
-                .ok_or_else(|| INVALID_ORDER.to_string())?;
-            reordered.push((*project).clone());
-        }
-        reordered
-    };
-
-    *projects = reordered;
-    Ok(())
-}
-
-fn mutate_projects(
-    mutation: impl FnOnce(&mut ProjectRegistry) -> Result<(), String>,
-) -> Result<ProjectRegistry, String> {
-    let _write_guard = lock_storage_writes()?;
-    let mut registry = load_project_registry()?;
-    let before = serde_json::to_vec(&registry).map_err(|error| error.to_string())?;
-    mutation(&mut registry)?;
-    if serde_json::to_vec(&registry).map_err(|error| error.to_string())? != before {
-        write_json_atomic(&project_registry_path()?, &registry)?;
-    }
-    Ok(registry)
-}
-
-fn lock_storage_writes() -> Result<MutexGuard<'static, ()>, String> {
-    STORAGE_WRITE_LOCK
-        .lock()
-        .map_err(|_| "Tau storage is unavailable.".to_string())
-}
-
-fn snapshot(registry: &ProjectRegistry) -> Result<WorkspaceSnapshot, String> {
-    let projects = registry
-        .projects
-        .iter()
-        .map(|project| project_summary(project, &registry.active_project_path))
-        .collect::<Result<Vec<_>, String>>()?;
-    Ok(WorkspaceSnapshot {
-        active_project_path: registry.active_project_path.clone(),
-        pi_path: resolve_pi_binary().map(|path| path.to_string_lossy().into_owned()),
-        projects,
-    })
-}
-
-fn project_summary(
-    project: &ProjectRecord,
-    active_project_path: &str,
-) -> Result<ProjectSummary, String> {
-    let (name, working_directory, connection_string, sessions) =
-        if let Some(remote) = project.remote.as_ref() {
-            (
-                remote_project_name(remote),
-                remote.working_directory.clone(),
-                Some(remote.connection_string.clone()),
-                list_remote_sessions(remote),
-            )
-        } else {
-            (
-                project_name(&project.path),
-                project.path.clone(),
-                None,
-                list_project_sessions(&project.path)?,
-            )
-        };
-    Ok(ProjectSummary {
-        name,
-        path: project.path.clone(),
-        working_directory,
-        connection_string,
-        collapsed: project.collapsed,
-        selected: project.path == active_project_path,
-        sessions,
-    })
-}
-
-async fn run_storage_worker<T: Send + 'static>(
-    work: impl FnOnce() -> Result<T, String> + Send + 'static,
-) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(work)
-        .await
-        .map_err(|_| "Tau storage worker is unavailable.".to_string())?
-}
-
-fn project_registry_path() -> Result<PathBuf, String> {
-    Ok(profile::current()?.data_dir().join("projects.json"))
-}
-
-pub(crate) fn remote_project(project_path: &str) -> Result<RemoteProjectRecord, String> {
-    load_project_registry()?
-        .projects
-        .into_iter()
-        .find(|project| project.path == project_path)
-        .and_then(|project| project.remote)
-        .ok_or_else(|| "The remote project is no longer available.".to_string())
-}
-
-fn load_project_registry() -> Result<ProjectRegistry, String> {
-    read_json_or_default(&project_registry_path()?)
-}
-
-fn normalized_project_path(path: &str) -> Result<String, String> {
-    let path = PathBuf::from(path);
-    if !path.is_dir() {
-        return Err("The selected project folder does not exist.".into());
-    }
-    let path = path
-        .canonicalize()
-        .map_err(|error| format!("Could not read the selected project folder: {error}"))?;
-    Ok(path.to_string_lossy().trim_end_matches('/').to_string())
-}
-
-fn remote_project_path(connection_string: &str, working_directory: &str) -> Result<String, String> {
-    let identity = serde_json::to_string(&(connection_string, working_directory))
-        .map_err(|error| format!("Could not encode the remote project identity: {error}"))?;
-    Ok(format!("ssh:{identity}"))
-}
-
-fn remote_project_name(remote: &RemoteProjectRecord) -> String {
-    Path::new(&remote.working_directory)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.is_empty())
-        .unwrap_or(&remote.host)
-        .to_string()
-}
-
-fn project_name(path: &str) -> String {
-    Path::new(path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.is_empty())
-        .unwrap_or("Project")
-        .to_string()
-}
-
-pub fn pi_agent_dir() -> Result<PathBuf, String> {
-    if let Some(path) = configured_pi_agent_dir(std::env::var_os("PI_CODING_AGENT_DIR"), None) {
-        return Ok(path);
-    }
-    if let Some(path) =
-        configured_pi_agent_dir(None, login_shell_pi_agent_dir().map(OsString::as_os_str))
-    {
-        return Ok(path);
-    }
-    dirs::home_dir()
-        .map(|path| path.join(".pi/agent"))
-        .ok_or_else(|| "Could not locate the home folder.".into())
-}
-
-fn configured_pi_agent_dir(
-    inherited: Option<OsString>,
-    login_shell: Option<&OsStr>,
-) -> Option<PathBuf> {
-    inherited
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            login_shell
-                .filter(|path| !path.is_empty())
-                .map(PathBuf::from)
-        })
-}
-
-fn local_registry_path(project_path: &str) -> Result<PathBuf, String> {
-    Ok(default_session_dir(project_path)?.join(SESSION_REGISTRY_FILENAME))
-}
-
-pub(crate) fn default_session_dir(project_path: &str) -> Result<PathBuf, String> {
-    Ok(profile::current()?.session_dir(project_path, &pi_agent_dir()?))
-}
-
-fn list_remote_sessions(remote: &RemoteProjectRecord) -> Vec<SessionSummary> {
+pub(super) fn list_remote_sessions(remote: &RemoteProjectRecord) -> Vec<SessionSummary> {
     let mut sessions = remote
         .sessions
         .iter()
@@ -952,7 +372,7 @@ fn list_remote_sessions(remote: &RemoteProjectRecord) -> Vec<SessionSummary> {
     sessions
 }
 
-fn list_project_sessions(project_path: &str) -> Result<Vec<SessionSummary>, String> {
+pub(super) fn list_project_sessions(project_path: &str) -> Result<Vec<SessionSummary>, String> {
     list_sessions_in(&default_session_dir(project_path)?)
 }
 
@@ -1074,135 +494,6 @@ fn session_title(pi_name: &str, tau_name: Option<&str>, first_message: &str) -> 
     "New Session".into()
 }
 
-struct ParsedSession {
-    id: String,
-    name: String,
-    model: String,
-    first_message: String,
-    first_agent_message_at: u64,
-    last_user_message_at: u64,
-}
-
-impl ParsedSession {
-    fn sort_at(&self) -> u64 {
-        if self.last_user_message_at > 0 {
-            self.last_user_message_at
-        } else {
-            self.first_agent_message_at
-        }
-    }
-}
-
-fn parse_session_file(path: &Path) -> Result<Option<ParsedSession>, String> {
-    let file =
-        File::open(path).map_err(|error| format!("Could not read a saved Pi session: {error}"))?;
-    let mut reader = BufReader::new(file);
-    let mut bytes = Vec::new();
-    let count = reader
-        .read_until(b'\n', &mut bytes)
-        .map_err(|error| format!("Could not read a saved Pi session: {error}"))?;
-    if count == 0 || bytes.len() > MAX_SESSION_LINE_BYTES {
-        return Ok(None);
-    }
-    let Ok(header) = serde_json::from_slice::<Value>(&bytes) else {
-        return Ok(None);
-    };
-    if header.get("type").and_then(Value::as_str) != Some("session") {
-        return Ok(None);
-    }
-    let Some(id) = header
-        .get("id")
-        .and_then(Value::as_str)
-        .filter(|id| !id.is_empty())
-    else {
-        return Ok(None);
-    };
-    let mut parsed = ParsedSession {
-        id: id.to_string(),
-        name: String::new(),
-        model: String::new(),
-        first_message: String::new(),
-        first_agent_message_at: 0,
-        last_user_message_at: 0,
-    };
-    loop {
-        bytes.clear();
-        let count = reader
-            .read_until(b'\n', &mut bytes)
-            .map_err(|error| format!("Could not read a saved Pi session: {error}"))?;
-        if count == 0 {
-            break;
-        }
-        if bytes.len() > MAX_SESSION_LINE_BYTES {
-            continue;
-        }
-        let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
-            continue;
-        };
-        match value.get("type").and_then(Value::as_str) {
-            Some("session_info") => {
-                parsed.name = value
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string();
-            }
-            Some("model_change") => {
-                if let Some(model_id) = value.get("modelId").and_then(Value::as_str) {
-                    parsed.model = model_id.to_string();
-                }
-            }
-            Some("message") => {
-                let Some(message) = value.get("message") else {
-                    continue;
-                };
-                let role = message.get("role").and_then(Value::as_str);
-                if role == Some("user") {
-                    if parsed.first_message.is_empty() {
-                        parsed.first_message = content_text(message.get("content"));
-                    }
-                    if let Some(timestamp) = message.get("timestamp").and_then(Value::as_u64) {
-                        parsed.last_user_message_at =
-                            parsed.last_user_message_at.max(timestamp_millis(timestamp));
-                    }
-                } else if role == Some("assistant") && parsed.first_agent_message_at == 0 {
-                    parsed.first_agent_message_at = message
-                        .get("timestamp")
-                        .and_then(Value::as_u64)
-                        .map(timestamp_millis)
-                        .unwrap_or_default();
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(Some(parsed))
-}
-
-fn content_text(value: Option<&Value>) -> String {
-    match value {
-        Some(Value::String(text)) => text.clone(),
-        Some(Value::Array(parts)) => parts
-            .iter()
-            .filter_map(|part| {
-                (part.get("type").and_then(Value::as_str) == Some("text"))
-                    .then(|| part.get("text").and_then(Value::as_str))
-                    .flatten()
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        _ => String::new(),
-    }
-}
-
-fn single_line(value: &str) -> String {
-    value
-        .replace(['\r', '\n', '\t'], " ")
-        .chars()
-        .take(240)
-        .collect()
-}
-
 fn markdown_title(value: &str) -> String {
     value.chars().take(240).collect()
 }
@@ -1223,16 +514,6 @@ fn unix_timestamp_millis() -> u64 {
         .as_millis()
         .try_into()
         .unwrap_or(u64::MAX)
-}
-
-fn timestamp_millis(timestamp: u64) -> u64 {
-    if timestamp == 0 {
-        0
-    } else if timestamp < 10_000_000_000 {
-        timestamp.saturating_mul(1_000)
-    } else {
-        timestamp
-    }
 }
 
 fn relative_timestamp(timestamp: u64) -> String {
@@ -1256,36 +537,50 @@ fn relative_time(modified: SystemTime) -> String {
     }
 }
 
-fn read_json_or_default<T: DeserializeOwned + Default>(path: &Path) -> Result<T, String> {
-    if !path.exists() {
-        return Ok(T::default());
-    }
-    let bytes =
-        fs::read(path).map_err(|error| format!("Could not read {}: {error}", path.display()))?;
-    serde_json::from_slice(&bytes)
-        .map_err(|error| format!("Could not parse {}: {error}", path.display()))
-}
+pub(super) fn set_active_session_inner(
+    project_path: String,
+    session_id: String,
+) -> Result<(), String> {
+    let _write_guard = lock_storage_writes()?;
+    let mut projects = load_project_registry()?;
+    let project = projects
+        .projects
+        .iter_mut()
+        .find(|project| project.path == project_path)
+        .ok_or_else(|| "The project is not imported in Tau.".to_string())?;
 
-fn write_json_atomic(path: &Path, value: &impl serde::Serialize) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| "The settings path is invalid.".to_string())?;
-    fs::create_dir_all(parent)
-        .map_err(|error| format!("Could not create {}: {error}", parent.display()))?;
-    let temporary = path.with_extension("tmp");
-    let bytes = serde_json::to_vec_pretty(value)
-        .map_err(|error| format!("Could not encode Tau settings: {error}"))?;
-    fs::write(&temporary, bytes)
-        .map_err(|error| format!("Could not write {}: {error}", temporary.display()))?;
-    fs::rename(&temporary, path)
-        .map_err(|error| format!("Could not save {}: {error}", path.display()))
+    if let Some(remote) = project.remote.as_mut() {
+        let changed = remote.active_session_id != session_id;
+        select_remote_session(remote, &session_id)?;
+        if changed || projects.active_project_path != project_path {
+            projects.active_project_path = project_path;
+            write_json_atomic(&project_registry_path()?, &projects)?;
+        }
+        return Ok(());
+    }
+
+    let registry_path = local_registry_path(&project_path)?;
+    let mut registry: TauSessionRegistry = read_json_or_default(&registry_path)?;
+    let changed = registry.active_session_id != session_id;
+    select_local_session(&mut registry, &session_id)?;
+    if changed {
+        write_json_atomic(&registry_path, &registry)?;
+    }
+    write_projects_if_changed(&mut projects, &project_path)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::{
+        projects::reorder_project_records,
+        registry::{
+            adoption_is_current, archive_revision, default_session_dir, local_registry_path,
+            mark_archive_intent, read_json_or_default, write_json_atomic,
+        },
+    };
     use super::*;
-    use std::io::Write;
-
+    use crate::models::ProjectRecord;
+    use std::{fs::File, io::Write};
     #[test]
     fn external_registered_transcript_is_discovered_after_reload() {
         let root = tempfile::tempdir().expect("temporary directory");
@@ -1492,81 +787,6 @@ mod tests {
             assert_eq!(local.title, "Local");
         }
     }
-
-    #[test]
-    fn default_session_path_matches_pi_encoding() {
-        let path = default_session_dir("/Users/timur/code/tau").expect("session path");
-        assert!(path.ends_with("sessions/--Users-timur-code-tau--"));
-
-        {
-            assert_eq!(
-                configured_pi_agent_dir(
-                    Some(OsString::from("/inherited/pi")),
-                    Some(OsStr::new("/login/pi")),
-                ),
-                Some(PathBuf::from("/inherited/pi")),
-            );
-            assert_eq!(
-                configured_pi_agent_dir(None, Some(OsStr::new("/login/pi"))),
-                Some(PathBuf::from("/login/pi")),
-            );
-        }
-    }
-
-    #[test]
-    fn parses_session_identity_and_title() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let path = directory.path().join("session.jsonl");
-        let mut file = File::create(&path).expect("session file");
-        writeln!(
-            file,
-            "{{\"type\":\"session\",\"version\":3,\"id\":\"session-1\",\"cwd\":\"/tmp\"}}"
-        )
-        .expect("header");
-        writeln!(
-            file,
-            "{{\"type\":\"message\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"Port Tau\"}}],\"timestamp\":1000}}}}"
-        )
-        .expect("first message");
-        writeln!(
-            file,
-            "{{\"type\":\"message\",\"message\":{{\"role\":\"user\",\"content\":\"Continue\",\"timestamp\":2000}}}}"
-        )
-        .expect("second message");
-        let parsed = parse_session_file(&path)
-            .expect("parsed file")
-            .expect("session");
-        assert_eq!(parsed.id, "session-1");
-        assert_eq!(parsed.first_message, "Port Tau");
-        assert_eq!(parsed.last_user_message_at, 2_000_000);
-        assert_eq!(parsed.sort_at(), 2_000_000);
-
-        {
-            let directory = tempfile::tempdir().expect("temporary directory");
-            let path = directory.path().join("session.jsonl");
-            let mut file = File::create(&path).expect("session file");
-            writeln!(
-                file,
-                "{{\"type\":\"session\",\"version\":3,\"id\":\"session-1\",\"cwd\":\"/tmp\"}}"
-            )
-            .expect("header");
-            writeln!(
-                file,
-                "{{\"type\":\"model_change\",\"provider\":\"openai-codex\",\"modelId\":\"gpt-5.5\"}}"
-            )
-            .expect("first model change");
-            writeln!(
-                file,
-                "{{\"type\":\"model_change\",\"provider\":\"anthropic\",\"modelId\":\"claude-opus-4-6\"}}"
-            )
-            .expect("second model change");
-            let parsed = parse_session_file(&path)
-                .expect("parsed file")
-                .expect("session");
-            assert_eq!(parsed.model, "claude-opus-4-6");
-        }
-    }
-
     #[test]
     fn unarchiving_sessions_preserves_the_record_and_keeps_selection() {
         let mut local = TauSessionRegistry {
@@ -1641,7 +861,6 @@ mod tests {
             assert!(remote.active_session_id.is_empty());
         }
     }
-
     #[test]
     fn archive_intent_fences_older_registration_adoption() {
         let project = "intent-test-project";
@@ -1786,102 +1005,6 @@ mod tests {
             assert_eq!(local.active_session_id, "phase");
         }
     }
-
-    #[test]
-    fn userless_sessions_sort_by_the_first_agent_message() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let path = directory.path().join("session.jsonl");
-        let mut file = File::create(&path).expect("session file");
-        writeln!(
-            file,
-            "{{\"type\":\"session\",\"version\":3,\"id\":\"session-1\",\"cwd\":\"/tmp\"}}"
-        )
-        .expect("header");
-        writeln!(
-            file,
-            "{{\"type\":\"message\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"Started by an extension\"}}],\"timestamp\":3000}}}}"
-        )
-        .expect("first agent message");
-        writeln!(
-            file,
-            "{{\"type\":\"message\",\"message\":{{\"role\":\"assistant\",\"content\":[],\"timestamp\":4000}}}}"
-        )
-        .expect("second agent message");
-
-        let parsed = parse_session_file(&path)
-            .expect("parsed file")
-            .expect("session");
-
-        assert_eq!(parsed.last_user_message_at, 0);
-        assert_eq!(parsed.first_agent_message_at, 3_000_000);
-        assert_eq!(parsed.sort_at(), 3_000_000);
-
-        {
-            let remote = RemoteProjectRecord {
-                connection_string: "ssh build-box".into(),
-                working_directory: "/home/timur".into(),
-                host: "build-box".into(),
-                active_session_id: "newer".into(),
-                sessions: vec![
-                    RemoteSessionRecord {
-                        id: "older".into(),
-                        path: "/remote/older.jsonl".into(),
-                        name: Some("Older session".into()),
-                        archived: false,
-                        last_active: 10,
-                        sort_at: 10,
-                    },
-                    RemoteSessionRecord {
-                        id: "newer".into(),
-                        path: "/remote/newer.jsonl".into(),
-                        name: Some("Newer session".into()),
-                        archived: false,
-                        last_active: 20,
-                        sort_at: 20,
-                    },
-                ],
-            };
-            let sessions = list_remote_sessions(&remote);
-            assert_eq!(sessions[0].id, "newer");
-            assert_eq!(sessions[0].last_user_message_at, 20_000);
-            assert!(sessions[0].selected);
-            assert_eq!(sessions[1].title, "Older session");
-        }
-
-        {
-            let remote = RemoteProjectRecord {
-                connection_string: "ssh build-box".into(),
-                working_directory: "/home/timur".into(),
-                host: "build-box".into(),
-                active_session_id: String::new(),
-                sessions: vec![
-                    RemoteSessionRecord {
-                        id: "user-session".into(),
-                        path: "/remote/user.jsonl".into(),
-                        name: None,
-                        archived: false,
-                        last_active: 20,
-                        sort_at: 20,
-                    },
-                    RemoteSessionRecord {
-                        id: "agent-session".into(),
-                        path: "/remote/agent.jsonl".into(),
-                        name: None,
-                        archived: false,
-                        last_active: 0,
-                        sort_at: 30,
-                    },
-                ],
-            };
-
-            let sessions = list_remote_sessions(&remote);
-
-            assert_eq!(sessions[0].id, "agent-session");
-            assert_eq!(sessions[0].last_user_message_at, 0);
-            assert_eq!(sessions[0].sort_at, 30_000);
-        }
-    }
-
     #[test]
     fn session_titles_prefer_the_name_pi_recorded() {
         assert_eq!(
@@ -2007,34 +1130,6 @@ mod tests {
             assert_eq!(registry.sessions[0].name, None);
         }
     }
-
-    #[test]
-    fn legacy_local_projects_remain_local() {
-        let project: ProjectRecord =
-            serde_json::from_str(r#"{"path":"/tmp/tau","collapsed":false}"#)
-                .expect("legacy project");
-        assert!(project.remote.is_none());
-
-        {
-            let first = remote_project_path("ssh build-box", "/home/timur/one")
-                .expect("first remote project");
-            let second = remote_project_path("ssh build-box", "/home/timur/two")
-                .expect("second remote project");
-            assert_ne!(first, second);
-        }
-
-        {
-            let remote = RemoteProjectRecord {
-                connection_string: "ssh build-box".into(),
-                working_directory: "/users/agent/rhinestone".into(),
-                host: "build-box".into(),
-                active_session_id: String::new(),
-                sessions: Vec::new(),
-            };
-            assert_eq!(remote_project_name(&remote), "rhinestone");
-        }
-    }
-
     #[test]
     fn local_sessions_register_into_the_registry_the_project_lists() {
         // Pi may open a session under another working directory; the row still
@@ -2138,7 +1233,6 @@ mod tests {
             assert_eq!(projects[2].path, previous[2].path);
         }
     }
-
     #[test]
     fn registration_checks_only_the_candidate_file_and_its_identity() {
         let directory = tempfile::tempdir().expect("temporary directory");
