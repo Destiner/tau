@@ -22,10 +22,6 @@ The transcript suites separate large virtualization/scrolling cases (`transcript
 
 `tests/ci-workflow.test.ts` verifies the gate's commands, setup, and all 64 success/failure/cancelled/skipped combinations. `tests/playwright-config.test.ts` checks worker scheduling, performance dependencies, and fixture isolation from production.
 
-## Cleanup audit
-
-`bun scripts/deslop-audit.ts --report` reports documentation/comment sizes and runner-discovered test counts against the pinned Git revision in `scripts/deslop-baseline.json`. `--check` additionally fails on unmet documentation/comment budgets or missing coverage mappings. The original test-count caps were waived in favor of preserving distinct regressions; counts remain informational. `scripts/deslop-mappings.json` maps consolidated cases to retained contracts, including lower-layer migrations; the ledger is review evidence, not proof of equivalent assertions. Rust counts include the union of feature configurations and report ignored tests separately; browser counts exclude duplicate engine executions. Comment counts cover TypeScript, JavaScript, Vue, CSS, and Rust, excluding string contents.
-
 ## Reproducible timing
 
 ```sh
