@@ -525,6 +525,7 @@ function installPiScenarioAdapter(scenarioName: string): void {
         // provide a saved-content transport.
         return { messages: null };
       }
+      if (command === 'cancel_saved_transcript') return null;
       if (command === 'register_session') {
         const invocation = count(command);
         const expected =

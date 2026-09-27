@@ -801,6 +801,7 @@ function createBrowserSandboxHandler(
       };
     }
     if (command === 'read_saved_transcript') return { messages: null };
+    if (command === 'cancel_saved_transcript') return undefined;
     throw new Error(
       `Unsupported browser sandbox command ${JSON.stringify(command)}.`,
     );

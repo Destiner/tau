@@ -9,11 +9,14 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
-    fs::{self, File},
+    fs::{self, OpenOptions},
     io::Read,
     path::{Path, PathBuf},
     process::Stdio,
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -22,6 +25,8 @@ const MAX_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ENTRIES: usize = 100_000;
 const MAX_LINE: usize = 8 * 1024 * 1024;
 const SSH_DEADLINE: Duration = Duration::from_secs(10);
+// A newer navigation supersedes even an SSH read already in progress.
+static READ_GENERATION: AtomicU64 = AtomicU64::new(0);
 static READ_SLOT: Mutex<()> = Mutex::new(());
 
 #[derive(Serialize)]
@@ -37,20 +42,50 @@ pub async fn read_saved_transcript(
     session_id: String,
     session_path: String,
 ) -> SavedTranscript {
-    // Never queue stale navigation behind a slow SSH read. All blocking work lives off IPC.
+    let generation = READ_GENERATION
+        .fetch_add(1, Ordering::AcqRel)
+        .wrapping_add(1);
     let messages = tauri::async_runtime::spawn_blocking(move || {
-        let _slot = READ_SLOT.try_lock().ok()?;
+        let current = || READ_GENERATION.load(Ordering::Acquire) == generation;
+        // Only the newest navigation may hold the read slot. While an old
+        // transport is being reaped, stale waiters exit rather than launching
+        // another SSH child or parsing another large local file.
+        let _slot = loop {
+            if !current() {
+                return None;
+            }
+            match READ_SLOT.try_lock() {
+                Ok(slot) => break slot,
+                Err(std::sync::TryLockError::Poisoned(_)) => return None,
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    thread::sleep(Duration::from_millis(10))
+                }
+            }
+        };
         let source = registered_source(&project_path, &session_id, &session_path)?;
+        if !current() {
+            return None;
+        }
         let bytes = match source {
             Source::Local(path) => read_local(&path)?,
-            Source::Remote { connection, path } => read_remote(&connection, &path)?,
+            Source::Remote { connection, path } => read_remote(&connection, &path, &current)?,
         };
-        project(&bytes, &session_id)
+        if !current() {
+            return None;
+        }
+        let messages = project(&bytes, &session_id)?;
+        current().then_some(messages)
     })
     .await
     .ok()
     .flatten();
     SavedTranscript { messages }
+}
+
+/// Call when leaving a saved preview without opening another one (e.g. a live session).
+#[tauri::command]
+pub fn cancel_saved_transcript() {
+    READ_GENERATION.fetch_add(1, Ordering::AcqRel);
 }
 
 enum Source {
@@ -97,7 +132,13 @@ fn registered_source(project_path: &str, session_id: &str, session_path: &str) -
 }
 
 fn read_local(path: &Path) -> Option<Vec<u8>> {
-    let file = File::open(path).ok()?;
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NONBLOCK);
+    let file = options.open(path).ok()?;
     let before = file.metadata().ok()?;
     if !before.is_file() || before.len() > MAX_BYTES {
         return None;
@@ -127,9 +168,9 @@ fn same_file(_before: &fs::Metadata, _after: &fs::Metadata) -> bool {
     false
 }
 
-fn read_remote(connection: &str, path: &str) -> Option<Vec<u8>> {
+fn read_remote(connection: &str, path: &str, current: &impl Fn() -> bool) -> Option<Vec<u8>> {
     // Python supplies a single-file fstat consistency check and byte ceiling. No remote file writes.
-    let script = "import os,sys\np=sys.argv[1]\ntry:\n f=open(p,'rb'); a=os.fstat(f.fileno())\n if not os.path.isfile(p) or a.st_size>67108864: sys.exit(1)\n b=f.read(67108865); z=os.fstat(f.fileno()); f.close()\n if len(b)>67108864 or len(b)!=a.st_size or (a.st_dev,a.st_ino,a.st_size,a.st_mtime_ns)!=(z.st_dev,z.st_ino,z.st_size,z.st_mtime_ns): sys.exit(1)\n sys.stdout.buffer.write(b)\nexcept (OSError,ValueError): sys.exit(1)";
+    let script = "import os,sys,stat\np=sys.argv[1]\ntry:\n fd=os.open(p,os.O_RDONLY|os.O_NONBLOCK); f=os.fdopen(fd,'rb'); a=os.fstat(f.fileno())\n if not stat.S_ISREG(a.st_mode) or a.st_size>67108864: sys.exit(1)\n b=f.read(67108865); z=os.fstat(f.fileno()); f.close()\n if len(b)>67108864 or len(b)!=a.st_size or (a.st_dev,a.st_ino,a.st_size,a.st_mtime_ns)!=(z.st_dev,z.st_ino,z.st_size,z.st_mtime_ns): sys.exit(1)\n sys.stdout.buffer.write(b)\nexcept (OSError,ValueError): sys.exit(1)";
     let command = format!(
         "python3 -c {} {}",
         shell_words::quote(script),
@@ -154,6 +195,11 @@ fn read_remote(connection: &str, path: &str) -> Option<Vec<u8>> {
     });
     let deadline = Instant::now() + SSH_DEADLINE;
     let status = loop {
+        if !current() {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
             Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(20)),
@@ -164,8 +210,19 @@ fn read_remote(connection: &str, path: &str) -> Option<Vec<u8>> {
             }
         }
     };
-    let bytes = reader.join().ok().flatten()?;
-    status.filter(|s| s.success()).map(|_| bytes)
+    // A remote descendant may inherit stdout after SSH exits. Never wait indefinitely for it.
+    let bytes = if status.is_some() && current() {
+        while !reader.is_finished() && Instant::now() < deadline && current() {
+            thread::sleep(Duration::from_millis(20));
+        }
+        reader
+            .is_finished()
+            .then(|| reader.join().ok().flatten())
+            .flatten()?
+    } else {
+        return None;
+    };
+    status.filter(|s| s.success() && current()).map(|_| bytes)
 }
 
 fn timestamp(entry: &Value) -> Option<i64> {
@@ -273,7 +330,7 @@ fn project(bytes: &[u8], session_id: &str) -> Option<Vec<Value>> {
     let latest = path.iter().rposition(|e| e["type"] == "compaction");
     let context = if let Some(index) = latest {
         let kept = path[index].get("firstKeptEntryId")?.as_str();
-        let retained = if kept.is_none() {
+        let retained = if kept.is_none_or(|id| id == path[index]["id"]) {
             Vec::new()
         } else {
             let kept = kept?;
@@ -384,6 +441,7 @@ fn project(bytes: &[u8], session_id: &str) -> Option<Vec<Value>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
     fn fixture(entries: Vec<Value>) -> Vec<u8> {
         let mut data = format!("{}\n", json!({"type":"session","version":3,"id":"s"})).into_bytes();
         for entry in entries {
@@ -455,6 +513,18 @@ mod tests {
         assert_eq!(result[0]["role"], "compactionSummary");
         assert_eq!(result[1]["timestamp"], 1767225600000_i64);
         assert_eq!(result[1]["content"], "text");
+        // Pi writes the compaction's own ID for retain-none, not null.
+        let mut compact = entry("compact", Some("root"), "compaction");
+        compact["summary"] = json!("saved");
+        compact["tokensBefore"] = json!(12);
+        compact["firstKeptEntryId"] = json!("compact");
+        let mut old = entry("old", None, "message");
+        old["message"] = json!({"role":"user","content":"discarded"});
+        let mut root = entry("root", Some("old"), "message");
+        root["message"] = json!({"role":"user","content":"also discarded"});
+        let result = project(&fixture(vec![old, root, compact]), "s").unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["summary"], "saved");
     }
     #[test]
     fn older_compaction_inside_retained_range_does_not_emit_two_summaries() {
@@ -497,7 +567,8 @@ mod tests {
         assert_eq!(
             read_remote(
                 &format!("{} fake-host", ssh.display()),
-                path.to_str().unwrap()
+                path.to_str().unwrap(),
+                &|| true
             ),
             Some(bytes.clone())
         );
@@ -509,6 +580,140 @@ mod tests {
         oversized.set_len(MAX_BYTES + 1).unwrap();
         assert!(read_local(&path).is_none());
     }
+    #[cfg(unix)]
+    #[test]
+    fn fifo_is_rejected_without_waiting_for_a_writer_locally_and_over_ssh() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("session.jsonl");
+        assert!(std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success());
+        let start = Instant::now();
+        assert!(read_local(&fifo).is_none());
+        assert!(start.elapsed() < Duration::from_secs(2));
+        let ssh = dir.path().join("ssh");
+        fs::write(
+            &ssh,
+            "#!/bin/sh\nfor word do command=$word; done\nexec /bin/sh -c \"$command\"\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&ssh).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&ssh, permissions).unwrap();
+        let start = Instant::now();
+        assert!(read_remote(
+            &format!("{} host", ssh.display()),
+            fifo.to_str().unwrap(),
+            &|| true
+        )
+        .is_none());
+        assert!(start.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn newer_read_interrupts_slow_ssh_instead_of_blocking_it() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let ssh = dir.path().join("ssh");
+        fs::write(&ssh, "#!/bin/sh\nsleep 5\n").unwrap();
+        let mut permissions = fs::metadata(&ssh).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&ssh, permissions).unwrap();
+        let generation = AtomicU64::new(1);
+        let started = Instant::now();
+        let result = thread::scope(|scope| {
+            let read = scope.spawn(|| {
+                read_remote(&format!("{} host", ssh.display()), "/unused", &|| {
+                    generation.load(Ordering::Acquire) == 1
+                })
+            });
+            thread::sleep(Duration::from_millis(100));
+            generation.store(2, Ordering::Release);
+            read.join().unwrap()
+        });
+        assert!(result.is_none());
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    // Opt-in real Pi canary; invoked by scripts/pi-contract.ts, not default cargo test.
+    #[test]
+    #[ignore]
+    fn real_pi_saved_projection_parity() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("parity.jsonl");
+        let mut old = entry("old", None, "message");
+        old["message"] = json!({"role":"user","content":"discarded"});
+        let mut compact = entry("compact", Some("old"), "compaction");
+        compact["firstKeptEntryId"] = json!("compact");
+        compact["summary"] = json!("summary");
+        compact["tokensBefore"] = json!(42);
+        let mut tail = entry("tail", Some("compact"), "message");
+        tail["message"] = json!({"role":"user","content":"kept"});
+        let bytes = fixture(vec![old, compact, tail]);
+        fs::write(&path, &bytes).unwrap();
+        let pi = std::env::var("TAU_PI_PATH").unwrap_or_else(|_| "pi".into());
+        let mut child = std::process::Command::new(pi)
+            .args([
+                "--mode",
+                "rpc",
+                "--offline",
+                "--no-tools",
+                "--no-extensions",
+                "--no-skills",
+                "--no-prompt-templates",
+                "--no-context-files",
+                "--no-themes",
+                "--session",
+            ])
+            .arg(&path)
+            .env("PI_CODING_AGENT_DIR", dir.path().join("config"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start real Pi for saved transcript parity");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"{\"id\":\"parity\",\"type\":\"get_messages\"}\n")
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let status = loop {
+            if let Ok(Some(status)) = child.try_wait() {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("Pi parity canary timed out");
+            }
+            thread::sleep(Duration::from_millis(20));
+        };
+        assert!(status.success(), "Pi parity canary exited unsuccessfully");
+        let mut stdout = String::new();
+        child
+            .stdout
+            .take()
+            .unwrap()
+            .read_to_string(&mut stdout)
+            .unwrap();
+        let response = stdout
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .find(|value| value["type"] == "response" && value["id"] == "parity")
+            .expect("Pi get_messages response");
+        assert_eq!(response["success"], true, "Pi rejected parity fixture");
+        assert_eq!(
+            response["data"]["messages"],
+            json!(project(&bytes, "s").unwrap())
+        );
+    }
+
     #[test]
     fn malformed_graph_and_unknown_semantics_fail_closed() {
         assert!(project(&fixture(vec![entry("a", Some("missing"), "message")]), "s").is_none());

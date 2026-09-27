@@ -347,7 +347,16 @@ const PAINT_WAIT_MS = 5_000;
 interface ActionMilestones {
   readonly span: CommandSpanHandle;
   /** Record a semantic readiness or successful durable-write boundary. */
-  mark: (kind: 'ready' | 'persisted') => void;
+  mark: (
+    kind:
+      | 'ready'
+      | 'persisted'
+      | 'persistence_failed'
+      | 'readable_memory'
+      | 'readable_saved'
+      | 'readable_rpc'
+      | 'hydrated',
+  ) => void;
   /** Call after the visible state mutation; does not wait for or prove paint. */
   afterRender: () => void;
   /** Cancel pending frames/timeouts on replacement, failure, or unmount. */

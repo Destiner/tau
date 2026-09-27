@@ -372,6 +372,84 @@ describe('command-created session durability', () => {
     };
   }
 
+  it('hydrates bootstrap without waiting for registration persistence', async () => {
+    const telemetry = await import('../telemetry');
+    const { handleResponse, rpc } = await import('./runtime');
+    const controller = makeController({ materializationVerified: true });
+    addEphemeral(controller);
+    state.workspace = registeredWorkspace(controller, 'Before');
+    let finishRegistration!: (value: SessionSummary | null) => void;
+    const registration = new Promise<SessionSummary | null>((resolve) => {
+      finishRegistration = resolve;
+    });
+    vi.mocked(telemetry.invokeTraced).mockImplementation(async (command) =>
+      command === 'register_session' ? registration : undefined,
+    );
+    const requestId = nextRequestId('bootstrap-state');
+    controller.bootstrapStateRequestId = requestId;
+    await rpc(controller, { id: requestId, type: 'get_state' });
+    await handleResponse(controller, {
+      id: requestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: controller.sessionId,
+        sessionFile: controller.sessionPath,
+        isStreaming: false,
+      },
+    });
+    expect(controller.startMessagesRequestId).toBeTruthy();
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'send_pi',
+      expect.objectContaining({
+        request: expect.objectContaining({ type: 'get_messages' }),
+      }),
+    );
+    finishRegistration(
+      registrationRow(registeredWorkspace(controller, 'After')),
+    );
+    await vi.waitFor(() => {
+      expect(state.workspace?.projects[0]?.sessions[0]?.title).toBe('After');
+    });
+  });
+
+  it('keeps a newer archive when an older registration resolves', async () => {
+    const telemetry = await import('../telemetry');
+    const { handleResponse, rpc } = await import('./runtime');
+    const controller = makeController({ materializationVerified: true });
+    addEphemeral(controller);
+    state.workspace = registeredWorkspace(controller, 'Before');
+    let finishRegistration!: (value: SessionSummary | null) => void;
+    vi.mocked(telemetry.invokeTraced).mockImplementation(async (command) =>
+      command === 'register_session'
+        ? new Promise<SessionSummary | null>((resolve) => {
+            finishRegistration = resolve;
+          })
+        : undefined,
+    );
+    const requestId = nextRequestId('bootstrap-state');
+    controller.bootstrapStateRequestId = requestId;
+    await rpc(controller, { id: requestId, type: 'get_state' });
+    await handleResponse(controller, {
+      id: requestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: controller.sessionId,
+        sessionFile: controller.sessionPath,
+      },
+    });
+    await vi.waitFor(() => expect(finishRegistration).toBeTypeOf('function'));
+    state.workspace.projects[0]!.sessions[0]!.archived = true;
+    finishRegistration(
+      registrationRow(registeredWorkspace(controller, 'After')),
+    );
+    await vi.waitFor(() => {
+      expect(state.workspace?.projects[0]?.sessions[0]?.title).toBe('After');
+    });
+    expect(state.workspace?.projects[0]?.sessions[0]?.archived).toBe(true);
+  });
+
   it('does not register an identity reported by command sync alone', async () => {
     const telemetry = await import('../telemetry');
     const { handleResponse, rpc } = await import('./runtime');

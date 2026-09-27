@@ -123,6 +123,27 @@ describe('action milestones', () => {
     expect(cancelAnimationFrame).toHaveBeenCalled();
   });
 
+  it('does not count a superseded selection between animation frames', async () => {
+    const telemetry = await import('./index');
+    telemetry.setTelemetryEnabled(true);
+    const old = telemetry.startActionMilestones('session.select');
+    old.afterRender();
+    vi.mocked(requestAnimationFrame).mock.calls[0]![0](0);
+    old.cancel();
+    const next = telemetry.startActionMilestones('session.select');
+    next.afterRender();
+    // Even a callback already queued by the browser must not report the old view.
+    vi.mocked(requestAnimationFrame).mock.calls[1]![0](16);
+    vi.mocked(requestAnimationFrame).mock.calls[2]![0](16);
+    vi.mocked(requestAnimationFrame).mock.calls[3]![0](32);
+    await telemetry.flushTelemetry();
+    const milestones = (await records()).filter(
+      (r) => r.family === 'action.milestone',
+    );
+    expect(milestones).toHaveLength(1);
+    expect(milestones[0]?.traceId).toBe(next.span.context?.traceId);
+  });
+
   it('does not record or schedule frames when admin is off, or after it is disabled', async () => {
     const telemetry = await import('./index');
     const off = telemetry.startActionMilestones('session.select');

@@ -16,13 +16,43 @@ use std::{
     fs::{self, File},
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
-    sync::{Mutex, MutexGuard},
+    sync::{LazyLock, Mutex, MutexGuard},
     time::{Duration, SystemTime},
 };
 use tauri::State;
 
 const MAX_SESSION_LINE_BYTES: usize = 64 * 1024 * 1024;
 static STORAGE_WRITE_LOCK: Mutex<()> = Mutex::new(());
+// Record archive intent before either command enters the worker pool.
+static ARCHIVE_INTENTS: LazyLock<Mutex<HashMap<(String, String), u64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn archive_revision(project: &str, session: &str) -> Result<u64, String> {
+    ARCHIVE_INTENTS
+        .lock()
+        .map(|intents| {
+            intents
+                .get(&(project.to_owned(), session.to_owned()))
+                .copied()
+                .unwrap_or(0)
+        })
+        .map_err(|_| "Tau storage is unavailable.".to_string())
+}
+
+fn adoption_is_current(project: &str, session: &str, revision: u64) -> Result<bool, String> {
+    Ok(archive_revision(project, session)? == revision)
+}
+
+fn mark_archive_intent(project: &str, session: &str) -> Result<(), String> {
+    let mut intents = ARCHIVE_INTENTS
+        .lock()
+        .map_err(|_| "Tau storage is unavailable.".to_string())?;
+    let revision = intents
+        .entry((project.to_owned(), session.to_owned()))
+        .or_default();
+    *revision = revision.wrapping_add(1);
+    Ok(())
+}
 
 /// Every storage command below accepts the same optional, explicit
 /// `telemetry_context`: a caller without a span (or a malformed one) still
@@ -302,6 +332,7 @@ pub async fn archive_session(
     let _span = telemetry_context
         .as_ref()
         .and_then(|context| telemetry.start_command_span(context, "archive_session"));
+    mark_archive_intent(&project_path, &session_id)?;
     run_storage_worker(move || mutate_session_archive(&project_path, &session_id, true)).await
 }
 
@@ -315,6 +346,7 @@ pub async fn unarchive_session(
     let _span = telemetry_context
         .as_ref()
         .and_then(|context| telemetry.start_command_span(context, "unarchive_session"));
+    mark_archive_intent(&project_path, &session_id)?;
     run_storage_worker(move || mutate_session_archive(&project_path, &session_id, false)).await
 }
 
@@ -378,6 +410,7 @@ pub async fn register_session(
     let _span = telemetry_context
         .as_ref()
         .and_then(|context| telemetry.start_command_span(context, "register_session"));
+    let revision = archive_revision(&project_path, &session_id)?;
     run_storage_worker(move || {
         register_session_inner(
             project_path,
@@ -386,6 +419,7 @@ pub async fn register_session(
             session_name.unwrap_or_default(),
             last_user_message_at,
             adopted.unwrap_or(false),
+            revision,
         )
     })
     .await
@@ -398,6 +432,7 @@ fn register_session_inner(
     session_name: String,
     last_user_message_at: Option<u64>,
     adopted: bool,
+    revision: u64,
 ) -> Result<Option<SessionSummary>, String> {
     if session_id.trim().is_empty() || session_id.len() > 256 {
         return Err("Pi returned an invalid session id.".into());
@@ -424,7 +459,7 @@ fn register_session_inner(
             session_path,
             session_name,
             last_user_message_at,
-            adopted,
+            adopted && adoption_is_current(&project_path, &session_id, revision)?,
         );
         let changed = serde_json::to_vec(&remote).map_err(|error| error.to_string())? != before;
         let result = list_remote_sessions(remote)
@@ -444,6 +479,7 @@ fn register_session_inner(
         session_name,
         adopted,
         Some(&project_path),
+        revision,
     )
 }
 
@@ -454,6 +490,7 @@ fn register_local_session_in(
     session_name: String,
     adopted: bool,
     project_path: Option<&str>,
+    revision: u64,
 ) -> Result<Option<SessionSummary>, String> {
     let Some(path) = discover_local_session(directory, session_path, session_id)? else {
         return Ok(None);
@@ -482,7 +519,11 @@ fn register_local_session_in(
     let registry_path = directory.join(SESSION_REGISTRY_FILENAME);
     let mut registry: TauSessionRegistry = read_json_or_default(&registry_path)?;
     let before = serde_json::to_vec(&registry).map_err(|error| error.to_string())?;
-    upsert_local_session(&mut registry, session_id.to_string(), session_name, adopted);
+    let adopt = adopted
+        && project_path.map_or(Ok(true), |project| {
+            adoption_is_current(project, session_id, revision)
+        })?;
+    upsert_local_session(&mut registry, session_id.to_string(), session_name, adopt);
     let record = registry
         .sessions
         .iter()
@@ -1605,6 +1646,73 @@ mod tests {
     }
 
     #[test]
+    fn archive_intent_fences_older_registration_adoption() {
+        let project = "intent-test-project";
+        let session = "intent-test-session";
+        let before = archive_revision(project, session).unwrap();
+        mark_archive_intent(project, session).unwrap();
+        assert!(!adoption_is_current(project, session, before).unwrap());
+        let after = archive_revision(project, session).unwrap();
+        assert!(adoption_is_current(project, session, after).unwrap());
+
+        let mut local = TauSessionRegistry {
+            sessions: vec![TauSessionRecord {
+                id: session.into(),
+                name: None,
+                archived: true,
+            }],
+            ..TauSessionRegistry::default()
+        };
+        upsert_local_session(
+            &mut local,
+            session.into(),
+            String::new(),
+            adoption_is_current(project, session, before).unwrap(),
+        );
+        assert!(local.sessions[0].archived);
+        upsert_local_session(
+            &mut local,
+            session.into(),
+            String::new(),
+            adoption_is_current(project, session, after).unwrap(),
+        );
+        assert!(!local.sessions[0].archived);
+
+        let mut remote = RemoteProjectRecord {
+            connection_string: "ssh build-box".into(),
+            working_directory: "/home/timur".into(),
+            host: "build-box".into(),
+            active_session_id: String::new(),
+            sessions: vec![RemoteSessionRecord {
+                id: session.into(),
+                path: "/remote/session.jsonl".into(),
+                name: None,
+                archived: true,
+                last_active: 0,
+                sort_at: 0,
+            }],
+        };
+        upsert_remote_session(
+            &mut remote,
+            session.into(),
+            "/remote/session.jsonl".into(),
+            String::new(),
+            None,
+            adoption_is_current(project, session, before).unwrap(),
+        );
+        assert!(remote.sessions[0].archived);
+        upsert_remote_session(
+            &mut remote,
+            session.into(),
+            "/remote/session.jsonl".into(),
+            String::new(),
+            None,
+            adoption_is_current(project, session, after).unwrap(),
+        );
+        assert!(!remote.sessions[0].archived);
+    }
+
+    #[test]
     fn adopting_a_session_pi_handed_back_restores_its_row() {
         let mut remote = RemoteProjectRecord {
             connection_string: "ssh build-box".into(),
@@ -1799,6 +1907,7 @@ mod tests {
             String::new(),
             false,
             None,
+            0,
         )
         .expect("unmaterialized registration")
         .is_none());
@@ -1812,6 +1921,7 @@ mod tests {
             "Tau title".into(),
             false,
             None,
+            0,
         )
         .expect("verified registration")
         .expect("discoverable session");
@@ -1829,6 +1939,7 @@ mod tests {
             String::new(),
             true,
             None,
+            0,
         )
         .expect("adoption")
         .expect("adopted row");
@@ -1841,6 +1952,7 @@ mod tests {
             String::new(),
             false,
             None,
+            0,
         )
         .unwrap();
         assert_eq!(

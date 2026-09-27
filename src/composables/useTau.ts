@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
-import { computed, nextTick } from 'vue';
+import { computed, nextTick, watch, type WatchStopHandle } from 'vue';
 
 import { errorCopy } from '../lib/error-copy';
 import type { PiBridgeEvent } from '../lib/pi/bridge';
@@ -49,6 +49,7 @@ import {
   type TelemetryScope,
 } from '../lib/telemetry';
 
+import { advanceArchiveRevision, archiveRevision } from './archive-revision';
 import {
   activeController,
   activeExtensionDialog,
@@ -146,6 +147,86 @@ let lifecycle = 0;
 
 // Serialize workspace writes without making navigation wait for disk I/O.
 let workspaceWrite: Promise<void> = Promise.resolve();
+const foldIntent = new WeakMap<
+  ProjectSummary,
+  { revision: number; confirmed: boolean }
+>();
+const archiveIntent = new WeakMap<SessionSummary, { confirmed: boolean }>();
+let orderRevision = 0;
+let currentSelectionTracker: (() => void) | undefined;
+
+function cancelSavedPreview(): void {
+  void invoke('cancel_saved_transcript').catch(() => undefined);
+}
+
+function trackSelection(
+  controller: SessionController,
+  milestones: ReturnType<typeof startActionMilestones>,
+  projectPath: string,
+  sessionId: string,
+): void {
+  currentSelectionTracker?.();
+  let stop: WatchStopHandle = () => undefined;
+  let readable = false;
+  const current = (): boolean =>
+    state.activeControllerKey === controller.key &&
+    state.activeProjectPath === projectPath &&
+    state.activeSessionId === sessionId &&
+    !controller.disposed;
+  const cancel = (): void => {
+    stop();
+    milestones.cancel();
+    if (currentSelectionTracker === cancel) currentSelectionTracker = undefined;
+  };
+  currentSelectionTracker = cancel;
+  stop = watch(
+    () =>
+      [
+        controller.ready,
+        controller.savedContentLoaded,
+        controller.messagesLoaded,
+        controller.messages.length,
+      ] as const,
+    () => {
+      if (!current()) {
+        cancel();
+        return;
+      }
+      if (controller.ready) milestones.mark('ready');
+      if (
+        !readable &&
+        (controller.savedContentLoaded ||
+          controller.messagesLoaded ||
+          controller.messages.length > 0)
+      ) {
+        readable = true;
+        milestones.mark(
+          controller.messagesLoaded
+            ? 'readable_rpc'
+            : controller.savedContentLoaded
+              ? 'readable_saved'
+              : 'readable_memory',
+        );
+      }
+      if (controller.messagesLoaded) milestones.mark('hydrated');
+    },
+    { immediate: true, flush: 'sync' },
+  );
+  void nextTick(() => {
+    if (current()) milestones.afterRender();
+    else cancel();
+  });
+}
+
+function trackSelectionWrite(
+  write: Promise<boolean>,
+  milestones: ReturnType<typeof startActionMilestones>,
+): void {
+  void write.then((success) =>
+    milestones.mark(success ? 'persisted' : 'persistence_failed'),
+  );
+}
+
 function mergeImportedProject(project: ProjectSummary): void {
   const workspace = state.workspace;
   if (!workspace) return;
@@ -373,6 +454,8 @@ function useTau() {
   }
 
   function dispose(): void {
+    currentSelectionTracker?.();
+    cancelSavedPreview();
     lifecycle += 1;
     if (!initialization) state.initializing = false;
     if (!initialization) {
@@ -581,6 +664,12 @@ function useTau() {
 
   async function toggleProject(project: ProjectSummary): Promise<void> {
     if (projectActionsDisabled.value) return;
+    const previous = foldIntent.get(project);
+    const intent = {
+      revision: (previous?.revision ?? 0) + 1,
+      confirmed: previous?.confirmed ?? project.collapsed,
+    };
+    foldIntent.set(project, intent);
     const collapsed = !project.collapsed;
     project.collapsed = collapsed;
     try {
@@ -588,8 +677,12 @@ function useTau() {
         path: project.path,
         collapsed,
       });
+      intent.confirmed = collapsed;
+      if (foldIntent.get(project)?.revision !== intent.revision)
+        foldIntent.get(project)!.confirmed = collapsed;
     } catch {
-      if (project.collapsed === collapsed) project.collapsed = !collapsed;
+      if (foldIntent.get(project)?.revision === intent.revision)
+        project.collapsed = foldIntent.get(project)!.confirmed;
       setWorkspaceError(errorCopy.sidebarChange);
     }
   }
@@ -616,13 +709,15 @@ function useTau() {
     if (!project) return;
     projects.splice(toIndex, 0, project);
     state.workspace = { ...workspace, projects };
+    const revision = ++orderRevision;
 
     try {
       await writeWorkspace('reorder_projects', {
         projectPaths: projects.map((candidate) => candidate.path),
       });
     } catch {
-      if (state.workspace?.projects === projects) state.workspace = workspace;
+      if (orderRevision === revision && state.workspace)
+        state.workspace.projects = workspace.projects;
       setWorkspaceError(errorCopy.projectOrder);
     }
   }
@@ -692,6 +787,11 @@ function useTau() {
       return;
     }
 
+    const intent = archiveIntent.get(session) ?? {
+      confirmed: session.archived,
+    };
+    archiveIntent.set(session, intent);
+    const revision = advanceArchiveRevision(project.path, session.id);
     session.archived = true;
     session.selected = false;
     if (controller) removeRegisteredEphemeralSession(controller);
@@ -705,12 +805,14 @@ function useTau() {
         projectPath: project.path,
         sessionId: session.id,
       });
+      intent.confirmed = true;
       const archivedViewStillSelected =
         state.activeProjectPath === project.path &&
         state.activeSessionId === session.id;
       if (!archivedViewStillSelected) releaseRuntime(controller);
     } catch {
-      session.archived = false;
+      if (archiveRevision(project.path, session.id) === revision)
+        session.archived = intent.confirmed;
       const errorController = controller ?? ensureController(project, session);
       setControllerError(errorController, errorCopy.archiveSession);
       if (!isSessionSelected(project, session)) errorController.unread = true;
@@ -722,15 +824,22 @@ function useTau() {
     session: SessionSummary,
   ): Promise<void> {
     if (projectActionsDisabled.value) return;
+    const intent = archiveIntent.get(session) ?? {
+      confirmed: session.archived,
+    };
+    archiveIntent.set(session, intent);
+    const revision = advanceArchiveRevision(project.path, session.id);
     session.archived = false;
     try {
       await writeWorkspace('unarchive_session', {
         projectPath: project.path,
         sessionId: session.id,
       });
+      intent.confirmed = false;
       // Restoring does not change the selected view.
     } catch {
-      session.archived = true;
+      if (archiveRevision(project.path, session.id) === revision)
+        session.archived = intent.confirmed;
       setWorkspaceError(errorCopy.restoreSession);
     }
   }
@@ -755,19 +864,11 @@ function useTau() {
         void persistExpandedProject(project.path, actionSpan.context);
       }
       setActiveSessionView(project, session, controller);
-      previewNavigation.set(
-        controller,
-        (previewNavigation.get(controller) ?? 0) + 1,
-      );
-      void nextTick(() => {
-        if (state.activeControllerKey === controller.key)
-          milestones.afterRender();
-        else milestones.cancel();
-      });
-      void persistProjectSelection(
-        project.path,
-        controller,
-        actionSpan.context,
+      cancelSavedPreview();
+      trackSelection(controller, milestones, project.path, session.id);
+      trackSelectionWrite(
+        persistProjectSelection(project.path, controller, actionSpan.context),
+        milestones,
       );
       releaseIdleRuntimes();
       if (
@@ -785,7 +886,6 @@ function useTau() {
           actionSpan.context,
         );
       }
-      if (controller.ready) milestones.mark('ready');
       return controller;
     } finally {
       actionSpan.end();
@@ -836,21 +936,18 @@ function useTau() {
       removeEmptyActivePhantom();
       const controller = ensureController(project, session);
       setActiveSessionView(project, session, controller);
-      previewNavigation.set(
-        controller,
-        (previewNavigation.get(controller) ?? 0) + 1,
-      );
+      if (
+        !session.path ||
+        controller.messagesLoaded ||
+        controller.messages.length
+      )
+        cancelSavedPreview();
       if (controller.remoteDisconnected) reopenRemoteFeedback(controller);
       controller.unread = false;
-      void nextTick(() => {
-        if (state.activeControllerKey === controller.key)
-          milestones.afterRender();
-        else milestones.cancel();
-      });
-      void persistProjectSelection(
-        project.path,
-        controller,
-        actionSpan.context,
+      trackSelection(controller, milestones, project.path, session.id);
+      trackSelectionWrite(
+        persistProjectSelection(project.path, controller, actionSpan.context),
+        milestones,
       );
       releaseIdleRuntimes();
 
@@ -871,7 +968,6 @@ function useTau() {
         false,
         actionSpan.context,
       );
-      if (controller.ready) milestones.mark('ready');
     } finally {
       actionSpan.end();
     }

@@ -5,6 +5,7 @@
  */
 import { invoke } from '@tauri-apps/api/core';
 
+import { archiveRevision } from '../../composables/archive-revision';
 import {
   abortAcknowledgeDelay,
   abortProbeTimers,
@@ -2738,7 +2739,7 @@ async function handleResponse(
       // the session a prompt just created, and when it answers for the
       // session an extension command left behind. Bootstraps and run-state
       // polls only re-state a session Tau already opened.
-      await registerConnectedSession(
+      const registration = registerConnectedSession(
         controller,
         undefined,
         sessionChanged ||
@@ -2746,6 +2747,14 @@ async function handleResponse(
           resolvesCommandSync ||
           resolvesMaterializationBarrier,
       );
+      if (resolvesBootstrap && !resolvesPending) {
+        // Hydration is a Pi read, not a storage write. Its dispatch must not
+        // wait for registration, while the identity check below still fences
+        // the response against a replacement.
+        void registration;
+      } else {
+        await registration;
+      }
     }
     if (!controllerIdentityMatches(controller, synchronizedIdentity)) return;
     if (materializationBarrierForCurrentSession) {
@@ -3633,9 +3642,22 @@ const sessionRegistrationFlights = new Map<
   Promise<SessionSummary | null>
 >();
 
+function registrationArchiveSnapshot(identity: ConnectedSessionIdentity): {
+  revision: number;
+  archived?: boolean;
+} {
+  return {
+    revision: archiveRevision(identity.projectPath, identity.sessionId),
+    archived: state.workspace?.projects
+      .find((project) => project.path === identity.projectPath)
+      ?.sessions.find((session) => session.id === identity.sessionId)?.archived,
+  };
+}
+
 function mergeRegisteredSession(
   projectPath: string,
   session: SessionSummary | null,
+  archivedAtDispatch?: { revision: number; archived?: boolean },
 ): boolean {
   if (!session) return false;
   const project = state.workspace?.projects.find(
@@ -3645,12 +3667,23 @@ function mergeRegisteredSession(
   const index = project.sessions.findIndex((entry) => entry.id === session.id);
   // Registration only owns this row, never the other projects, sessions or
   // selection changes that may have happened while the native call was pending.
+  const current = index < 0 ? undefined : project.sessions[index];
   const row = {
     ...session,
+    // Archive/restore may have happened while registration was in flight.
+    archived:
+      current &&
+      archivedAtDispatch &&
+      (archiveRevision(projectPath, session.id) !==
+        archivedAtDispatch.revision ||
+        (archivedAtDispatch.archived !== undefined &&
+          current.archived !== archivedAtDispatch.archived))
+        ? current.archived
+        : session.archived,
     selected: project.selected && state.activeSessionId === session.id,
   };
   if (index < 0) project.sessions.push(row);
-  else project.sessions.splice(index, 1, row);
+  else Object.assign(project.sessions[index]!, row);
   return true;
 }
 
@@ -3728,6 +3761,7 @@ async function registerMaterializedPredecessor(
   identity: ConnectedSessionIdentity,
 ): Promise<boolean> {
   const mutation = beginRegistrationMutation(identity);
+  const archivedAtDispatch = registrationArchiveSnapshot(identity);
   try {
     const session = await registerSession(identity, true);
     if (
@@ -3736,7 +3770,10 @@ async function registerMaterializedPredecessor(
     ) {
       return false;
     }
-    if (mergeRegisteredSession(identity.projectPath, session)) return true;
+    if (
+      mergeRegisteredSession(identity.projectPath, session, archivedAtDispatch)
+    )
+      return true;
     return failPredecessorRegistration(controller);
   } catch {
     return failPredecessorRegistration(controller);
@@ -3765,12 +3802,16 @@ async function registerConnectedSession(
       : connectedSessionIdentityMatches(controller, identity);
   if (!identityHolds()) return;
   const mutation = beginRegistrationMutation(identity);
+  const archivedAtDispatch = registrationArchiveSnapshot(identity);
   try {
     const session = await registerSession(identity, adopted, parentContext);
     if (!identityHolds() || !registrationMutationIsCurrent(mutation)) {
       return;
     }
-    if (!mergeRegisteredSession(identity.projectPath, session)) return;
+    if (
+      !mergeRegisteredSession(identity.projectPath, session, archivedAtDispatch)
+    )
+      return;
     removeRegisteredEphemeralSession(controller);
     if (
       !isControllerSelected(controller) ||
@@ -3783,6 +3824,7 @@ async function registerConnectedSession(
       controller,
       identity,
       mutation,
+      archivedAtDispatch,
       parentContext,
     );
   } catch (error) {
@@ -3832,6 +3874,7 @@ async function selectRegisteredSession(
   controller: SessionController,
   identity: ConnectedSessionIdentity,
   mutation: RegistrationMutation,
+  archivedAtDispatch?: { revision: number; archived?: boolean },
   parentContext?: TraceContext,
 ): Promise<void> {
   const selectionIsCurrent = (): boolean =>
@@ -3858,7 +3901,9 @@ async function selectRegisteredSession(
     }
     const session = await registerSession(identity, true, parentContext);
     if (!selectionIsCurrent()) throw staleRegistration;
-    if (!mergeRegisteredSession(identity.projectPath, session))
+    if (
+      !mergeRegisteredSession(identity.projectPath, session, archivedAtDispatch)
+    )
       throw staleRegistration;
     await select();
     if (!selectionIsCurrent()) throw staleRegistration;
@@ -3884,7 +3929,7 @@ async function persistProjectSelection(
   projectPath: string,
   controller: SessionController,
   parentContext?: TraceContext,
-): Promise<void> {
+): Promise<boolean> {
   try {
     if (!workspaceContainsSession(controller)) {
       await persistSelection(
@@ -3899,8 +3944,10 @@ async function persistProjectSelection(
         parentContext,
       );
     }
+    return true;
   } catch {
     setControllerError(controller, errorCopy.workspaceSelection);
+    return false;
   }
 }
 

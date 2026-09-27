@@ -126,6 +126,7 @@ pub fn run() {
             quit::pending_quit_request,
             quit::resolve_quit_request,
             saved_transcript::read_saved_transcript,
+            saved_transcript::cancel_saved_transcript,
             settings::read_model_scope,
             settings::read_remote_model_scope,
             ssh::list_remote_directories,
