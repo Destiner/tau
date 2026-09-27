@@ -110,6 +110,7 @@ const PERFORMANCE_BYTES: usize = 613 * 1024 * 1024 / 2;
 fn seed_performance(profile: &StorageProfile) -> Result<(), String> {
     let mut registry = ProjectRegistry::default();
     let mut written = 0usize;
+    let long_file_size = (PERFORMANCE_BYTES - 120 * 4096) / (PERFORMANCE_FILES - 120);
     for project_index in 0..7 {
         let directory = profile
             .data_dir()
@@ -148,17 +149,13 @@ fn seed_performance(profile: &StorageProfile) -> Result<(), String> {
                     "parentId":if index % 5 == 0 {"00000003"} else {"00000002"},
                     "timestamp":date,"summary":"Synthetic retained context","firstKeptEntryId":"00000001","tokensBefore":100})));
             }
-            // 120 short files; the rest are long. The last file takes the
-            // remainder to make the aggregate size exactly 306.5 MiB.
+            // Assign the division remainder to the last file for an exact total.
             let target = if index < 120 {
                 4096
             } else if index == PERFORMANCE_FILES - 1 {
-                PERFORMANCE_BYTES
-                    - 120 * 4096
-                    - (PERFORMANCE_FILES - 121)
-                        * ((PERFORMANCE_BYTES - 120 * 4096) / (PERFORMANCE_FILES - 120))
+                PERFORMANCE_BYTES - 120 * 4096 - (PERFORMANCE_FILES - 121) * long_file_size
             } else {
-                (PERFORMANCE_BYTES - 120 * 4096) / (PERFORMANCE_FILES - 120)
+                long_file_size
             };
             let pad_prefix = "{\"type\":\"custom\",\"id\":\"00000005\",\"parentId\":\"00000002\",\"timestamp\":\"2026-06-15T10:30:00.000Z\",\"customType\":\"tau-perf-padding\",\"data\":\"";
             let pad_suffix = "\"}\n";

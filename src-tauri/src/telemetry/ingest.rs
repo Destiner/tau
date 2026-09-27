@@ -898,6 +898,16 @@ mod tests {
         let log = &value["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
         assert_eq!(log["traceId"], "4bf92f3577b34da6a3ce929d0e0e4736");
         assert_eq!(log["eventName"], "action.milestone");
+        for kind in attributes::ACTION_MILESTONE_KINDS {
+            record.attributes.insert(
+                "tau.action.milestone".into(),
+                FrontendAttributeValue::Str((*kind).into()),
+            );
+            assert!(
+                validated_log_json(&record, &resource, "tau").is_some(),
+                "{kind}"
+            );
+        }
 
         record.attributes.remove("tau.action.elapsed_ms");
         assert!(validated_log_json(&record, &resource, "tau").is_none());

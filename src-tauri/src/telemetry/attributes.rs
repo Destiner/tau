@@ -642,6 +642,11 @@ pub const OPERATION_CHECKPOINT: RecordFamily = RecordFamily {
 pub const ACTION_MILESTONE_KINDS: &[&str] = &[
     "ready",
     "persisted",
+    "persistence_failed",
+    "readable_memory",
+    "readable_saved",
+    "readable_rpc",
+    "hydrated",
     "paint_opportunity",
     "paint_unavailable",
 ];

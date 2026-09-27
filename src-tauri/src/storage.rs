@@ -308,16 +308,18 @@ pub async fn set_active_session(
         if changed {
             write_json_atomic(&registry_path, &registry)?;
         }
-        write_projects_if_changed(&projects, &project_path)
+        write_projects_if_changed(&mut projects, &project_path)
     })
     .await
 }
 
-fn write_projects_if_changed(projects: &ProjectRegistry, project_path: &str) -> Result<(), String> {
+fn write_projects_if_changed(
+    projects: &mut ProjectRegistry,
+    project_path: &str,
+) -> Result<(), String> {
     if projects.active_project_path != project_path {
-        let mut projects = projects.clone();
         projects.active_project_path = project_path.to_string();
-        write_json_atomic(&project_registry_path()?, &projects)?;
+        write_json_atomic(&project_registry_path()?, projects)?;
     }
     Ok(())
 }
