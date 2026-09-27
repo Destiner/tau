@@ -731,9 +731,17 @@ fn list_project_sessions(project_path: &str) -> Result<Vec<SessionSummary>, Stri
 }
 
 pub(crate) fn list_sessions_in(session_dir: &Path) -> Result<Vec<SessionSummary>, String> {
+    list_sessions_in_with(session_dir, parse_session_file)
+}
+
+fn list_sessions_in_with(
+    session_dir: &Path,
+    mut parse: impl FnMut(&Path) -> Result<Option<ParsedSession>, String>,
+) -> Result<Vec<SessionSummary>, String> {
     let registry: TauSessionRegistry =
         read_json_or_default(&session_dir.join(SESSION_REGISTRY_FILENAME))?;
     let mut legacy = HashMap::new();
+    let mut scanned = HashMap::new();
     if registry.sessions.iter().any(|record| record.path.is_none()) && session_dir.is_dir() {
         let mut paths = fs::read_dir(session_dir)
             .map_err(|error| format!("Could not read saved Pi sessions: {error}"))?
@@ -750,14 +758,24 @@ pub(crate) fn list_sessions_in(session_dir: &Path) -> Result<Vec<SessionSummary>
             .filter(|record| record.path.is_none())
             .map(|record| record.id.as_str())
             .collect();
+        let explicit_paths: HashSet<PathBuf> = registry
+            .sessions
+            .iter()
+            .filter_map(|record| record.path.as_ref().map(PathBuf::from))
+            .collect();
         for path in paths {
             if path.extension().and_then(|value| value.to_str()) != Some("jsonl") || !path.is_file()
             {
                 continue;
             }
-            if let Some(parsed) = parse_session_file(&path)? {
-                if ids.contains(parsed.id.as_str()) {
-                    legacy.entry(parsed.id).or_insert(path);
+            if let Some(parsed) = parse(&path)? {
+                let first_legacy_match =
+                    ids.contains(parsed.id.as_str()) && !legacy.contains_key(parsed.id.as_str());
+                if first_legacy_match {
+                    legacy.insert(parsed.id.clone(), path.clone());
+                }
+                if first_legacy_match || explicit_paths.contains(&path) {
+                    scanned.insert(path, parsed);
                 }
             }
         }
@@ -774,8 +792,8 @@ pub(crate) fn list_sessions_in(session_dir: &Path) -> Result<Vec<SessionSummary>
                 PathBuf::from(path)
             }
             Some(_) => continue,
-            None => match legacy.get(&record.id) {
-                Some(path) => path.clone(),
+            None => match legacy.remove(&record.id) {
+                Some(path) => path,
                 None => continue,
             },
         };
@@ -785,7 +803,10 @@ pub(crate) fn list_sessions_in(session_dir: &Path) -> Result<Vec<SessionSummary>
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(error) => return Err(format!("Could not read a saved Pi session: {error}")),
         };
-        let Some(parsed) = parse_session_file(&path)? else {
+        let Some(parsed) = (match scanned.remove(&path) {
+            Some(parsed) => Some(parsed),
+            None => parse(&path)?,
+        }) else {
             continue;
         };
         if parsed.id != record.id {
@@ -1178,6 +1199,76 @@ mod tests {
         let rows = list_sessions_in(&project).expect("legacy rows");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].path, project.join("a.jsonl").to_string_lossy());
+    }
+
+    #[test]
+    fn mixed_registry_parses_each_transcript_once_per_snapshot() {
+        let root = tempfile::tempdir().expect("temporary directory");
+        let project = root.path().join("project");
+        fs::create_dir(&project).expect("project");
+        let external = root.path().join("external.jsonl");
+        let registry = TauSessionRegistry {
+            sessions: vec![
+                TauSessionRecord {
+                    id: "legacy".into(),
+                    path: None,
+                    name: None,
+                    archived: true,
+                },
+                TauSessionRecord {
+                    id: "explicit".into(),
+                    path: Some(external.to_string_lossy().into_owned()),
+                    name: None,
+                    archived: false,
+                },
+                TauSessionRecord {
+                    id: "local-explicit".into(),
+                    path: Some(project.join("local.jsonl").to_string_lossy().into_owned()),
+                    name: None,
+                    archived: false,
+                },
+            ],
+            ..TauSessionRegistry::default()
+        };
+        write_json_atomic(&project.join(SESSION_REGISTRY_FILENAME), &registry).expect("registry");
+        for (path, id, name) in [
+            (project.join("a.jsonl"), "legacy", "First legacy"),
+            (project.join("z.jsonl"), "legacy", "Second legacy"),
+            (project.join("explicit.jsonl"), "explicit", "Wrong location"),
+            (project.join("local.jsonl"), "local-explicit", "Local"),
+            (external.clone(), "explicit", "External"),
+        ] {
+            fs::write(
+                path,
+                format!("{{\"type\":\"session\",\"id\":\"{id}\"}}\n{{\"type\":\"session_info\",\"name\":\"{name}\"}}\n"),
+            )
+            .expect("transcript");
+        }
+        let mut calls = HashMap::<PathBuf, usize>::new();
+        let rows = list_sessions_in_with(&project, |path| {
+            *calls.entry(path.to_path_buf()).or_default() += 1;
+            parse_session_file(path)
+        })
+        .expect("sessions");
+        assert_eq!(calls.len(), 5);
+        assert!(calls.values().all(|count| *count == 1), "{calls:?}");
+        assert_eq!(rows.len(), 3);
+        let legacy = rows.iter().find(|row| row.id == "legacy").expect("legacy");
+        assert_eq!(legacy.path, project.join("a.jsonl").to_string_lossy());
+        assert_eq!(legacy.title, "First legacy");
+        assert!(legacy.archived);
+        let explicit = rows
+            .iter()
+            .find(|row| row.id == "explicit")
+            .expect("explicit");
+        assert_eq!(explicit.path, external.to_string_lossy());
+        assert_eq!(explicit.title, "External");
+        let local = rows
+            .iter()
+            .find(|row| row.id == "local-explicit")
+            .expect("local explicit");
+        assert_eq!(local.path, project.join("local.jsonl").to_string_lossy());
+        assert_eq!(local.title, "Local");
     }
 
     #[test]
