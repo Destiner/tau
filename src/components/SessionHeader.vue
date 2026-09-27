@@ -102,8 +102,6 @@ function beginSessionRename(): void {
 }
 
 function commitSessionRename(): void {
-  // Escape and a lost runtime both close the field before its blur arrives,
-  // and neither should apply the name that was left in it.
   if (!renamingSession.value) return;
   closeSessionRename();
   void renameSession(sessionNameDraft.value);
@@ -114,11 +112,6 @@ function cancelSessionRename(): void {
   closeSessionRename();
 }
 
-/**
- * Committing on blur means focus has already moved on, so the composer is only
- * refocused when the field itself still holds focus, as it does after Enter,
- * Escape, or a runtime that stopped mid-rename.
- */
 function closeSessionRename(): void {
   const focused = document.activeElement === sessionTitleInput.value?.input;
   renamingSession.value = false;
@@ -162,8 +155,6 @@ defineExpose({
 .session-heading {
   flex: 1;
   min-width: 0;
-
-  /* Offsets the padding the name carries so it lines up with the transcript. */
   margin-left: -5px;
 }
 

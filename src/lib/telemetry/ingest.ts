@@ -11,8 +11,6 @@ import { invoke } from '@tauri-apps/api/core';
 import type { BoundedQueue } from './queue';
 import type { FrontendQueueRecord } from './tracer';
 
-/** Keeps a single native call small; the queue's own bound is the real
- * backstop against unbounded growth. */
 const MAX_BATCH_SIZE = 20;
 /** Coalesces spans that finish within a short window into one native call
  * instead of one call per span. */
@@ -23,7 +21,6 @@ async function sendBatch(records: FrontendQueueRecord[]): Promise<void> {
     await invoke('ingest_telemetry', { records });
   } catch {
     // Swallowed intentionally: the frontend exporter must have no
-    // product-visible effect.
   }
 }
 

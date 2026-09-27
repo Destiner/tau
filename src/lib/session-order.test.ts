@@ -7,11 +7,14 @@ function sessions(...ids: string[]): { id: string }[] {
 }
 
 describe('applyHeldOrder', () => {
-  it('keeps the held order when activity re-sorts the list', () => {
+  it('keeps held order despite re-sorting and closes gaps', () => {
     const held = heldSessions(sessions('a', 'b', 'c'));
 
     expect(applyHeldOrder(sessions('c', 'a', 'b'), held)).toEqual(
       sessions('a', 'b', 'c'),
+    );
+    expect(applyHeldOrder(sessions('c', 'a'), held)).toEqual(
+      sessions('a', 'c'),
     );
   });
 
@@ -21,33 +24,19 @@ describe('applyHeldOrder', () => {
     );
   });
 
-  it('closes the gap a session leaving the list opens', () => {
-    const held = heldSessions(sessions('a', 'b', 'c'));
-
-    expect(applyHeldOrder(sessions('c', 'a'), held)).toEqual(
-      sessions('a', 'c'),
-    );
-  });
-
-  it('hides a session that appeared during the hold', () => {
+  it('hides new sessions during a hold, even for single or empty projects', () => {
     const held = heldSessions(sessions('a', 'b'));
 
     expect(applyHeldOrder(sessions('new', 'b', 'a'), held)).toEqual(
       sessions('a', 'b'),
     );
-  });
-
-  it('holds a single-session project stable', () => {
-    const held = heldSessions(sessions('a'));
-
-    expect(applyHeldOrder(sessions('new', 'a'), held)).toEqual(sessions('a'));
-  });
-
-  it('keeps a project that was empty on entry empty', () => {
+    expect(
+      applyHeldOrder(sessions('new', 'a'), heldSessions(sessions('a'))),
+    ).toEqual(sessions('a'));
     expect(applyHeldOrder(sessions('new'), [])).toEqual([]);
   });
 
-  it('keeps a phantom row when its id changes during materialization', () => {
+  it('retains the materialized row across an ID change and registration', () => {
     const visible = sessions('phantom', 'other');
     const held = heldSessions(visible);
     visible[0]!.id = 'materialized';
@@ -57,12 +46,6 @@ describe('applyHeldOrder', () => {
       { id: 'materialized' },
       { id: 'other', status: 'idle' },
     ]);
-  });
-
-  it('keeps a materialized row after its ephemeral object is removed', () => {
-    const visible = sessions('phantom', 'other');
-    const held = heldSessions(visible);
-    visible[0]!.id = 'materialized';
     const registered = { id: 'materialized', status: 'working' };
 
     expect(applyHeldOrder([registered, visible[1]!], held)).toEqual([

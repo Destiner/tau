@@ -26,10 +26,6 @@ interface FrontendMetricRecord {
   attributes: Record<string, string | number>;
 }
 
-/** Hard upper bound on a reported metric value (24 hours in milliseconds).
- * Neither an event-loop-lag reading nor a long-task duration can genuinely
- * reach this; it exists only to reject a corrupted or nonsensical value
- * before it crosses IPC, matching the catalog's other hard bounds. */
 const MAX_METRIC_VALUE_MS = 24 * 60 * 60 * 1000;
 
 export type { FrontendMetricRecord };

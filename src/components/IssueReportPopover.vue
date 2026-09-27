@@ -133,7 +133,6 @@ async function handleSubmit(): Promise<void> {
 </script>
 
 <style scoped>
-/* Only there to be something the tooltip can point at; it is the button. */
 .issue-report-trigger {
   display: flex;
 }

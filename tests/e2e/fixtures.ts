@@ -26,7 +26,6 @@ const test = base.extend<{ pausedClock: boolean }>({
   pausedClock: [false, { option: true }],
   page: async ({ page, pausedClock }, use) => {
     if (pausedClock) {
-      // Ordered RPC tapes advance at gates, not at the speed of UI assertions.
       const time = new Date('2026-01-02T12:00:00Z');
       await page.clock.install({ time });
       await page.clock.pauseAt(time);

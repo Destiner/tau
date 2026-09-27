@@ -25,14 +25,12 @@ const MAX_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ENTRIES: usize = 100_000;
 const MAX_LINE: usize = 8 * 1024 * 1024;
 const SSH_DEADLINE: Duration = Duration::from_secs(10);
-// A newer navigation supersedes even an SSH read already in progress.
 static READ_GENERATION: AtomicU64 = AtomicU64::new(0);
 static READ_SLOT: Mutex<()> = Mutex::new(());
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SavedTranscript {
-    /// None means use Pi RPC; Some(empty) is a verified empty session.
     messages: Option<Vec<Value>>,
 }
 
@@ -226,7 +224,6 @@ fn read_remote(connection: &str, path: &str, current: &impl Fn() -> bool) -> Opt
 }
 
 fn timestamp(entry: &Value) -> Option<i64> {
-    // Pi constructs synthetic timestamps using new Date(ISO string).getTime().
     let text = entry.get("timestamp")?.as_str()?;
     // RFC3339 UTC only; other offsets fall back to Pi rather than inventing a date.
     let (date, time) = text.split_once('T')?;
@@ -257,7 +254,6 @@ fn timestamp(entry: &Value) -> Option<i64> {
         return None;
     }
     let millis = format!("{fraction:0<3}").get(..3)?.parse::<i64>().ok()?;
-    // Civil date to Unix days, Gregorian calendar (Howard Hinnant).
     let y = year - i64::from(month <= 2);
     let era = y.div_euclid(400);
     let yoe = y - era * 400;
@@ -467,6 +463,19 @@ mod tests {
                 .copied(),
         );
         assert!(project(&legacy, "s").is_none());
+
+        {
+            assert!(project(&fixture(vec![entry("a", Some("missing"), "message")]), "s").is_none());
+            assert!(project(&fixture(vec![entry("a", None, "future")]), "s").is_none());
+            assert!(project(
+                &fixture(vec![
+                    entry("a", None, "custom"),
+                    entry("a", Some("a"), "custom")
+                ]),
+                "s"
+            )
+            .is_none());
+        }
     }
     #[test]
     fn branches_compaction_and_edits() {
@@ -492,59 +501,59 @@ mod tests {
             result[2]["content"],
             json!([{"type":"text","text":"replacement"}])
         );
+
+        {
+            let mut old = entry("old", None, "message");
+            old["message"] = json!({"role":"user","content":"discarded"});
+            let mut root = entry("root", None, "branch_summary");
+            root["summary"] = json!("other root");
+            root["fromId"] = json!("old");
+            let mut compact = entry("compact", Some("root"), "compaction");
+            compact["summary"] = json!("saved");
+            compact["tokensBefore"] = json!(12);
+            compact["firstKeptEntryId"] = Value::Null;
+            let mut tail = entry("tail", Some("compact"), "custom_message");
+            tail["customType"] = json!("note");
+            tail["content"] = json!("text");
+            tail["display"] = json!(true);
+            let result = project(&fixture(vec![old, root, compact, tail]), "s").unwrap();
+            assert_eq!(result.len(), 2);
+            assert_eq!(result[0]["role"], "compactionSummary");
+            assert_eq!(result[1]["timestamp"], 1767225600000_i64);
+            assert_eq!(result[1]["content"], "text");
+            let mut compact = entry("compact", Some("root"), "compaction");
+            compact["summary"] = json!("saved");
+            compact["tokensBefore"] = json!(12);
+            compact["firstKeptEntryId"] = json!("compact");
+            let mut old = entry("old", None, "message");
+            old["message"] = json!({"role":"user","content":"discarded"});
+            let mut root = entry("root", Some("old"), "message");
+            root["message"] = json!({"role":"user","content":"also discarded"});
+            let result = project(&fixture(vec![old, root, compact]), "s").unwrap();
+            assert_eq!(result.len(), 1);
+            assert_eq!(result[0]["summary"], "saved");
+        }
+
+        {
+            let mut first = entry("first", None, "message");
+            first["message"] = json!({"role":"system","content":"old system"});
+            let mut older = entry("older", Some("first"), "compaction");
+            older["firstKeptEntryId"] = Value::Null;
+            older["summary"] = json!("older");
+            older["tokensBefore"] = json!(1);
+            let mut user = entry("user", Some("older"), "message");
+            user["message"] = json!({"role":"user","content":"keep"});
+            let mut recent = entry("recent", Some("user"), "compaction");
+            recent["firstKeptEntryId"] = json!("older");
+            recent["summary"] = json!("recent");
+            recent["tokensBefore"] = json!(2);
+            let result = project(&fixture(vec![first, older, user, recent]), "s").unwrap();
+            assert_eq!(result.len(), 2);
+            assert_eq!(result[0]["summary"], "recent");
+            assert_eq!(result[1]["content"], "keep");
+        }
     }
-    #[test]
-    fn summaries_roots_and_retain_none() {
-        let mut old = entry("old", None, "message");
-        old["message"] = json!({"role":"user","content":"discarded"});
-        let mut root = entry("root", None, "branch_summary");
-        root["summary"] = json!("other root");
-        root["fromId"] = json!("old");
-        let mut compact = entry("compact", Some("root"), "compaction");
-        compact["summary"] = json!("saved");
-        compact["tokensBefore"] = json!(12);
-        compact["firstKeptEntryId"] = Value::Null;
-        let mut tail = entry("tail", Some("compact"), "custom_message");
-        tail["customType"] = json!("note");
-        tail["content"] = json!("text");
-        tail["display"] = json!(true);
-        let result = project(&fixture(vec![old, root, compact, tail]), "s").unwrap();
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0]["role"], "compactionSummary");
-        assert_eq!(result[1]["timestamp"], 1767225600000_i64);
-        assert_eq!(result[1]["content"], "text");
-        // Pi writes the compaction's own ID for retain-none, not null.
-        let mut compact = entry("compact", Some("root"), "compaction");
-        compact["summary"] = json!("saved");
-        compact["tokensBefore"] = json!(12);
-        compact["firstKeptEntryId"] = json!("compact");
-        let mut old = entry("old", None, "message");
-        old["message"] = json!({"role":"user","content":"discarded"});
-        let mut root = entry("root", Some("old"), "message");
-        root["message"] = json!({"role":"user","content":"also discarded"});
-        let result = project(&fixture(vec![old, root, compact]), "s").unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0]["summary"], "saved");
-    }
-    #[test]
-    fn older_compaction_inside_retained_range_does_not_emit_two_summaries() {
-        let mut first = entry("first", None, "message");
-        first["message"] = json!({"role":"system","content":"old system"});
-        let mut older = entry("older", Some("first"), "compaction");
-        older["firstKeptEntryId"] = Value::Null;
-        older["summary"] = json!("older");
-        older["tokensBefore"] = json!(1);
-        let mut user = entry("user", Some("older"), "message");
-        user["message"] = json!({"role":"user","content":"keep"});
-        let mut recent = entry("recent", Some("user"), "compaction");
-        recent["firstKeptEntryId"] = json!("older");
-        recent["summary"] = json!("recent");
-        recent["tokensBefore"] = json!(2);
-        let result = project(&fixture(vec![first, older, user, recent]), "s").unwrap();
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0]["summary"], "recent");
-        assert_eq!(result[1]["content"], "keep");
-    }
+
     #[test]
     fn bounded_local_and_simulated_ssh_agree_without_touching_source() {
         use std::os::unix::fs::PermissionsExt;
@@ -638,7 +647,6 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(2));
     }
 
-    // Opt-in real Pi canary; invoked by scripts/pi-contract.ts, not default cargo test.
     #[test]
     #[ignore]
     fn real_pi_saved_projection_parity() {
@@ -712,19 +720,5 @@ mod tests {
             response["data"]["messages"],
             json!(project(&bytes, "s").unwrap())
         );
-    }
-
-    #[test]
-    fn malformed_graph_and_unknown_semantics_fail_closed() {
-        assert!(project(&fixture(vec![entry("a", Some("missing"), "message")]), "s").is_none());
-        assert!(project(&fixture(vec![entry("a", None, "future")]), "s").is_none());
-        assert!(project(
-            &fixture(vec![
-                entry("a", None, "custom"),
-                entry("a", Some("a"), "custom")
-            ]),
-            "s"
-        )
-        .is_none());
     }
 }

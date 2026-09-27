@@ -170,7 +170,7 @@ const open = defineModel<boolean>('open', { default: false });
 const props = withDefaults(
   defineProps<{
     options: UiSelectOption[];
-    /** Shown when there is no selection to display. */
+
     placeholder?: string;
     /** Shown when the value is not among the options (a stale selection). */
     fallbackLabel?: string;
@@ -178,7 +178,7 @@ const props = withDefaults(
     ariaLabel?: string;
     optionsLabel?: string;
     maxWidth?: number;
-    /** Adds a search field and optional grouped results. */
+
     filterable?: boolean;
   }>(),
   {

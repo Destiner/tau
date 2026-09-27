@@ -11,38 +11,6 @@ test.use({ pausedClock: true });
  * rendered in the transcript and the composer stands down until it is answered:
  * one scrolling view rather than a transcript above a prompt with its own.
  */
-test('renders an extension prompt in the transcript in place of the composer', async ({
-  page,
-}) => {
-  await page.goto(scenarioUrl);
-
-  const composer = page.getByRole('textbox', { name: 'Message Pi' });
-  const transcript = page.getByLabel('Transcript');
-  const prompt = page.getByRole('dialog', {
-    name: 'Which label should the release carry?',
-  });
-
-  await expect(prompt).toBeVisible();
-  // Nothing to send while the session is waiting on an answer.
-  await expect(composer).toHaveCount(0);
-  // The prompt is inside the transcript's scroll region, not below it.
-  await expect(transcript.getByRole('dialog')).toBeVisible();
-  await expect(prompt.getByRole('option', { name: 'minor' })).toBeVisible();
-  // The turn that asked is still above the question.
-  await expect(transcript).toContainText('Working through the checklist now.');
-
-  // The first option holds focus, so the answer is a keystroke away.
-  await expect(prompt.getByRole('option', { name: 'patch' })).toBeFocused();
-
-  // Expiry, not assertion speed, determines when the composer returns.
-  await page.clock.fastForward(promptTimeout - 1);
-  await expect(prompt).toBeVisible();
-  await expect(composer).toHaveCount(0);
-  await page.clock.runFor(1);
-  await expect(prompt).toHaveCount(0);
-  await expect(composer).toBeFocused();
-});
-
 test('renders a prompt asked of a session that holds nothing yet', async ({
   page,
 }) => {
@@ -53,8 +21,6 @@ test('renders a prompt asked of a session that holds nothing yet', async ({
     name: 'Which label should the release carry?',
   });
 
-  // An empty session gives its pane to the composer, which the question takes
-  // over: the transcript is there, holding the prompt and nothing else.
   await expect(prompt).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Message Pi' })).toHaveCount(
     0,
@@ -83,25 +49,46 @@ test('Escape cancels a focused prompt through its originating runtime', async ({
   expect(verification?.ok).toBe(true);
 });
 
-test('Escape dismisses only a dismissible layer above the prompt', async ({
+test('keeps an extension question under a dismissible layer until it times out', async ({
   page,
 }) => {
-  await page.goto(scenarioUrl);
-
-  const prompt = page.getByRole('dialog', {
-    name: 'Which label should the release carry?',
+  await test.step('Escape dismisses only a dismissible layer above the prompt', async () => {
+    await page.goto(scenarioUrl);
+    const prompt = page.getByRole('dialog', {
+      name: 'Which label should the release carry?',
+    });
+    await expect(prompt).toBeVisible();
+    const trigger = page.getByRole('button', { name: 'Open Project' });
+    await trigger.click();
+    await page.getByRole('menuitem', { name: 'Open Remote Project' }).click();
+    const remoteDialog = page.getByRole('dialog', { name: 'SSH Connection' });
+    await expect(remoteDialog).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(remoteDialog).toHaveCount(0);
+    await expect(prompt).toBeVisible();
+    await expect(trigger).toBeFocused();
   });
-  await expect(prompt).toBeVisible();
 
-  const trigger = page.getByRole('button', { name: 'Open Project' });
-  await trigger.click();
-  await page.getByRole('menuitem', { name: 'Open Remote Project' }).click();
-  const remoteDialog = page.getByRole('dialog', { name: 'SSH Connection' });
-  await expect(remoteDialog).toBeVisible();
-
-  await page.keyboard.press('Escape');
-
-  await expect(remoteDialog).toHaveCount(0);
-  await expect(prompt).toBeVisible();
-  await expect(trigger).toBeFocused();
+  await test.step('renders an extension prompt in the transcript in place of the composer', async () => {
+    await page.getByRole('option', { name: 'patch' }).focus();
+    const composer = page.getByRole('textbox', { name: 'Message Pi' });
+    const transcript = page.getByLabel('Transcript');
+    const prompt = page.getByRole('dialog', {
+      name: 'Which label should the release carry?',
+    });
+    await expect(prompt).toBeVisible();
+    await expect(composer).toHaveCount(0);
+    await expect(transcript.getByRole('dialog')).toBeVisible();
+    await expect(prompt.getByRole('option', { name: 'minor' })).toBeVisible();
+    await expect(transcript).toContainText(
+      'Working through the checklist now.',
+    );
+    await expect(prompt.getByRole('option', { name: 'patch' })).toBeFocused();
+    await page.clock.fastForward(promptTimeout - 1);
+    await expect(prompt).toBeVisible();
+    await expect(composer).toHaveCount(0);
+    await page.clock.runFor(1);
+    await expect(prompt).toHaveCount(0);
+    await expect(composer).toBeFocused();
+  });
 });

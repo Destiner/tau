@@ -12,10 +12,21 @@ const ids = (result: ReturnType<typeof archivedWindow<number>>): number[] =>
   result.groups.flatMap((group) => group.items);
 
 describe('archived window', () => {
-  test.each([0, 1, 49, 50, 51, 99, 100, 101])('budget %i', (budget) => {
-    const result = archivedWindow(groups, empty, budget);
-    expect(ids(result)).toEqual(Array.from({ length: budget }, (_, i) => i));
-    expect(result.hasMore).toBe(budget < 101);
+  test('applies the global budget and suppresses headings beyond it', () => {
+    for (const budget of [0, 1, 49, 50, 51, 99, 100, 101]) {
+      const result = archivedWindow(groups, empty, budget);
+      expect(ids(result)).toEqual(Array.from({ length: budget }, (_, i) => i));
+      expect(result.hasMore).toBe(budget < 101);
+    }
+    expect(
+      archivedWindow(groups, empty, 50).groups.map((group) => group.label),
+    ).toEqual(['Today']);
+    expect(ids(archivedWindow(groups, empty, 100))).toEqual(
+      Array.from({ length: 100 }, (_, i) => i),
+    );
+    expect(ids(archivedWindow(groups, empty, 150))).toEqual(
+      Array.from({ length: 101 }, (_, i) => i),
+    );
   });
 
   test('skips collapsed rows without consuming the global budget', () => {
@@ -29,18 +40,6 @@ describe('archived window', () => {
     expect(
       archivedWindow(groups, new Set(['Today', 'Yesterday']), 50).hasMore,
     ).toBe(false);
-  });
-
-  test('does not show a heading for an expanded group beyond the budget', () => {
-    expect(
-      archivedWindow(groups, empty, 50).groups.map((group) => group.label),
-    ).toEqual(['Today']);
-    expect(ids(archivedWindow(groups, empty, 100))).toEqual(
-      Array.from({ length: 100 }, (_, i) => i),
-    );
-    expect(ids(archivedWindow(groups, empty, 150))).toEqual(
-      Array.from({ length: 101 }, (_, i) => i),
-    );
   });
 
   test('refills after removal or replacement without stale object references', () => {

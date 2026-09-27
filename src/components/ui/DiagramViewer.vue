@@ -66,13 +66,12 @@ import {
 } from '../../lib/fullscreen-viewer';
 
 const props = defineProps<{
-  /** The drawn diagram, at the natural size its width and height name. */
   svg: string;
   x: number;
   y: number;
   width: number;
   height: number;
-  /** Persistent control that receives focus after the viewer closes. */
+
   returnFocus?: () => HTMLElement | undefined;
 }>();
 
@@ -83,7 +82,6 @@ const drawing = ref<HTMLElement | null>(null);
 const panning = ref(false);
 const backgroundPosition = ref('0px 0px');
 
-/** Under this much travel a press is a click, which is how the viewer closes. */
 const CLICK_SLOP = 5;
 
 let camera: DiagramCamera = { scale: 1, tx: 0, ty: 0 };
@@ -108,11 +106,6 @@ function handleOpenChange(open: boolean): void {
   if (!open) emit('close');
 }
 
-/**
- * Reka observes Escape on window, after document's bubble phase. The app also
- * owns document keyboard handling, so close here in document's capture phase:
- * this viewer owns Escape before it can reach any whole-app handler.
- */
 function handleKeydownCapture(event: KeyboardEvent): void {
   if (
     event.key !== 'Escape' ||
@@ -141,7 +134,6 @@ function canvasSize(): Size {
   };
 }
 
-/** Writes at most once per frame even when a trackpad sends events faster. */
 function renderCamera(): void {
   renderFrame = 0;
   if (!vector) return;
@@ -298,17 +290,12 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-/* Over every panel and dialog: a diagram inside a dialog still expands on top. */
 :global(.diagram-viewer) {
   position: fixed;
   z-index: 30;
   inset: 0;
 }
 
-/*
- * The page the figure floats on. The dot grid rides the pan, which is what
- * tells the eye the surface moved rather than the figure resizing.
- */
 :global(.diagram-viewer .viewer-canvas) {
   position: absolute;
   overflow: hidden;

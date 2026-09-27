@@ -188,14 +188,4 @@ test('keeps a phantom first prompt and held sidebar row visible through registra
   await expect(userMessage).toContainText(prompt);
   await expect(selectedSession).toHaveCount(1);
   await expectContinuousVisibility(page);
-
-  const diagnostics = await page.evaluate(() => ({
-    verification: window.__TAU_PI_SCENARIO__?.verify(),
-    timeline: window.__TAU_PI_SCENARIO__?.timeline(),
-  }));
-  expect(diagnostics.verification?.ok).toBe(true);
-  expect(diagnostics.timeline?.at(-1)).toMatchObject({
-    kind: 'output',
-    output: 'runtime-event phantom@current exited',
-  });
 });

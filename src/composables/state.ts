@@ -51,13 +51,13 @@ interface SessionSummary {
   id: string;
   path: string;
   title: string;
-  /** Bounded display-only source, before compact title normalization. */
+
   titleMarkdown?: string;
-  /** The model id Pi last recorded for the session, empty when unknown. */
+
   model?: string;
   lastActive: string;
   lastUserMessageAt: number;
-  /** Latest user message, falling back to the first agent message. */
+
   sortAt: number;
   archived: boolean;
   selected: boolean;
@@ -95,7 +95,7 @@ interface ExtensionDialog {
   generation: number;
   projectName: string;
   sessionName: string;
-  /** Base for the file paths in the text; absent when the project is remote. */
+
   workingDirectory?: string;
 }
 
@@ -136,9 +136,9 @@ interface SubmittedPrompt {
   generation: number;
   message: string;
   draft: string;
-  /** Pi accepted prompt preflight, but may not have started or recorded a run. */
+
   accepted: boolean;
-  /** Correlated post-preflight probes that bound ordinary prompt admission. */
+
   admissionStateRequestId?: string;
   admissionMessagesRequestId?: string;
   optimisticId?: string;
@@ -157,9 +157,7 @@ interface PendingPrompt {
   selectedEffort: ThinkingLevel;
   settingsRequestId: string;
   settingsStep: '' | 'model' | 'effort';
-  /** The `message.send` action span this prompt started under, if any, so
-   * every RPC the pending-prompt flow later makes (across the `get_state`
-   * round trip) still nests under the action that requested it. */
+
   telemetryContext?: TraceContext;
 }
 
@@ -192,11 +190,11 @@ interface SessionController {
   ready: boolean;
   streaming: boolean;
   compacting: boolean;
-  /** A successful compaction is waiting for an authoritative message rebuild. */
+
   compactionReconciliationPending: boolean;
-  /** First stream row id reserved for output emitted after that compaction. */
+
   compactionStreamSequence: number;
-  /** Orders message hydrations within one Pi runtime generation and identity. */
+
   messagesHydrationSequence: number;
   stopping: boolean;
   starting: boolean;
@@ -204,34 +202,31 @@ interface SessionController {
   promptSubmitting: boolean;
   unread: boolean;
   lastUserMessageAt: number;
-  /** Pi has reported visible user or assistant transcript activity. */
+
   hasPiTranscript: boolean;
-  /** A post-message_end RPC barrier or settled hydration proved persistence. */
+
   materializationVerified: boolean;
-  /** Correlates the ordering barrier sent after the first assistant message_end. */
+
   materializationBarrierRequestId: string;
-  /** The current run settled, so its following hydrations may verify storage. */
+
   postSettlementHydration: boolean;
-  /** The settled UI transcript had meaningful assistant-side activity. */
+
   settledAssistantActivity: boolean;
-  /** Correlates the settled state read whose hydration may verify storage. */
+
   materializationStateRequestId: string;
-  /** Correlates the hydration currently allowed to verify materialization. */
+
   materializationMessagesRequestId: string;
   messages: TranscriptEntry[];
-  /** Whether `get_messages` has answered once, so an empty transcript can be
-   * read as a session without history rather than one that has yet to load. */
   messagesLoaded: boolean;
   savedContentLoaded?: boolean;
-  /** Raw-history layers fetched on demand from Pi's append-only entry tree. */
+
   historyLayers: HistoryLayer[];
-  /** First raw-history layer currently rendered above the compacted tail. */
+
   firstVisibleHistoryLayer: number;
-  /** Number of rendered rows that belong to the raw-history prefix. */
+
   historyPrefixLength: number;
-  /** Correlates the one full-history request this controller may have in flight. */
+
   historyRequestId: string;
-  /** Failures Pi reports as events only; its message list never carries them. */
   localErrors: LocalError[];
   draft: string;
   retry?: RetryPresentation;
@@ -259,9 +254,9 @@ interface SessionController {
   queueFeedback: string;
   queueFailedDrafts: string[];
   pendingSessionRename?: PendingSessionRename;
-  /** Advances whenever a name notification or optimistic rename invalidates older reads. */
+
   sessionNameRevision: number;
-  /** Correlates the identity-bearing read scheduled by a name notification. */
+
   sessionNameStateRequestId: string;
   sessionNameStateRevision: number;
   bootstrapStateRequestId: string;
@@ -273,9 +268,9 @@ interface SessionController {
   replacementProbeRequestId: string;
   abortProbeRequestId: string;
   connectingRemote: boolean;
-  /** An established remote runtime exited and requires an explicit reconnect. */
+
   remoteDisconnected: boolean;
-  /** The explicit reconnect action currently owns this bootstrap attempt. */
+
   reconnectingRemote: boolean;
   remoteConnectionTimedOut: boolean;
   syncing: boolean;
@@ -284,13 +279,6 @@ interface SessionController {
   streamSequence: number;
 }
 
-/** The subset of a controller's boolean flags a lifecycle transition is
- * derived from. Not every boolean on `SessionController` is lifecycle-
- * critical (`unread`, `phantom`, `disposed`, and the various request-id
- * strings are bookkeeping, not run state), and `disposed` is a one-way
- * terminal flag set immediately before a controller is spliced out of
- * `state.controllers`, so it is deliberately excluded from the derived
- * state a transition compares. */
 type ControllerLifecycleField =
   | 'ready'
   | 'streaming'
@@ -304,14 +292,6 @@ type ControllerLifecyclePatch = Partial<
   Pick<SessionController, ControllerLifecycleField>
 >;
 
-/**
- * Derives one coarse, named lifecycle state from a controller's boolean
- * flags, in priority order (most specific/blocking first). This is the
- * "state" `setControllerLifecycle` compares before and after a mutation:
- * not every boolean toggle changes it (`working` flipping while `streaming`
- * is already true never does), but a move between these seven names always
- * does, and that is exactly the kind of change worth a persisted record.
- */
 function classifyControllerLifecycle(
   controller: SessionController,
 ): ControllerLifecycleState {
@@ -324,19 +304,6 @@ function classifyControllerLifecycle(
   return 'idle';
 }
 
-/**
- * Applies `patch` to `controller`'s lifecycle-critical fields and, if doing
- * so changes the derived composite state, records one `controller.lifecycle`
- * transition naming `cause` and carrying `context` when the mutation
- * happened inside an active span (a semantic action or an RPC response).
- *
- * This replaces every lifecycle-critical direct assignment in
- * `src/lib/pi/runtime.ts` and `src/composables/useTau.ts`: calling it here
- * instead of assigning the fields directly is what makes a missing expected
- * transition visible as an absence in the persisted timeline (a response or
- * action is recorded, but no matching transition follows) rather than a
- * change nothing has any evidence for either way.
- */
 function setControllerLifecycle(
   controller: SessionController,
   patch: ControllerLifecyclePatch,
@@ -520,17 +487,12 @@ const activeController = computed(() =>
   ),
 );
 
-/** One flat row of the archived-sessions view: a session plus its project. */
 interface ArchivedSessionEntry {
   projectPath: string;
   projectName: string;
   session: SessionSummary;
 }
 
-/**
- * Archived sessions across every project, newest first. The view is not
- * per-project by design: archive review is workspace-wide.
- */
 const archivedSessionEntries = computed<ArchivedSessionEntry[]>(() => {
   const entries: ArchivedSessionEntry[] = [];
   for (const project of state.workspace?.projects ?? []) {
@@ -654,11 +616,6 @@ const canDraft = computed(() =>
   ),
 );
 
-/**
- * A saved session with no preview or cached rows is loading until Pi can
- * hydrate it. A saved transcript preview can render while the runtime is
- * still starting; it does not make the controller ready to compose.
- */
 const sessionLoading = computed(() => {
   const controller = activeController.value;
   if (!controller || controller.phantom) return false;
@@ -734,11 +691,6 @@ const settingsDisabled = computed(() => {
   );
 });
 
-/**
- * Pi keeps the name inside the session it is running, so renaming needs a live
- * runtime and a session Pi has already opened. An unsent session shows a
- * preview of its draft instead of a name, so it has nothing to rename yet.
- */
 const canRenameSession = computed(() => {
   const controller = activeController.value;
   return Boolean(

@@ -155,7 +155,6 @@ import UiSelect from './ui/UiSelect.vue';
 import UiTooltip from './ui/UiTooltip.vue';
 
 const props = defineProps<{
-  /** Resolves the session header, against which the command menu measures. */
   headerElement: () => HTMLElement | undefined;
 }>();
 
@@ -241,7 +240,7 @@ watch(retryPresentation, (retry, previous) => {
 watch([commandQuery, commands], ([query]) => {
   commandSelectedIndex.value = 0;
   // A dismissed menu stays closed until the composer leaves the command it was
-  // opened for, so Escape is not undone by the next keystroke.
+
   if (query === null) commandMenuDismissed.value = false;
 });
 

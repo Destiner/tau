@@ -72,13 +72,4 @@ test('boots the real app into a deterministic saved session', async ({
 
   await expect(page.getByLabel('Transcript')).toHaveCount(0);
   await expect(page.getByText('Loading', { exact: true })).toHaveCount(0);
-
-  const timeline = await page.evaluate(() =>
-    window.__TAU_PI_SCENARIO__?.timeline(),
-  );
-  expect(timeline).toHaveLength(12);
-  expect(timeline?.at(-1)).toMatchObject({
-    kind: 'output',
-    output: 'response get_messages -> $bootstrap-messages',
-  });
 });

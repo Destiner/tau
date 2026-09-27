@@ -172,7 +172,6 @@ function scheduleAppend(): void {
   });
 }
 
-// Recheck after each patch: an underfilled viewport needs another batch, but
 // an ordinary viewport must not consume the entire archive while idle.
 watch(windowed, () => void nextTick(scheduleAppend), { flush: 'post' });
 
@@ -255,7 +254,6 @@ function open(entry: ArchivedSessionEntry): void {
   gap: 4px;
 }
 
-/* The expanded chevron points down; collapsed it points sideways. */
 .group-head svg {
   width: 10px;
 }
@@ -313,7 +311,6 @@ function open(entry: ArchivedSessionEntry): void {
   white-space: nowrap;
 }
 
-/* The timestamp reads with the project line, not with the title above it. */
 .time {
   flex: none;
   align-self: flex-end;
@@ -322,8 +319,6 @@ function open(entry: ArchivedSessionEntry): void {
   font-size: var(--text-xs);
 }
 
-/* The reveal button overlays the row; its box and states live in
- * UiIconButton, and the timestamp yields while it is visible. */
 .unarchive {
   position: absolute;
   top: 50%;

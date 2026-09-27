@@ -353,7 +353,7 @@ function scenarioWorkspace(scenarioName: string): WorkspaceSnapshot {
   }
   if (scenarioName === 'archived-sessions-review') {
     const project = workspace.projects[0];
-    // Keep the interactive archived row beyond the first render batch.
+
     for (let index = 0; index < 60; index++) {
       project?.sessions.push({
         id: `archive-filler-${index}`,

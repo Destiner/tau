@@ -10,7 +10,6 @@ export default defineConfig(async () => ({
   // Keep Rust errors visible alongside Vite output.
   clearScreen: false,
   server: {
-    // The launcher passes Vite's actual URL to Tauri if this port is occupied.
     port: 1420,
     strictPort: false,
     host: host || false,
@@ -21,7 +20,6 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // Rust changes are handled by Tauri's watcher.
       ignored: ['**/src-tauri/**'],
     },
   },

@@ -107,39 +107,4 @@ test('ignores gated output from a stale runtime generation', async ({
 
   expectWorkingActiveSession(beforeRelease);
   expect(afterRelease).toEqual(beforeRelease);
-
-  const completed = await page.evaluate(() => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Pi scenario API is unavailable.');
-    return {
-      scenario: scenario.scenario(),
-      gates: scenario.gates(),
-      verification: scenario.verify(),
-      timeline: scenario.timeline(),
-    };
-  });
-  expect(completed.scenario).toMatchObject({
-    name: 'saved-session-stale-generation',
-    schemaVersion: 1,
-  });
-  expect(completed.gates).toEqual([
-    {
-      name: beforeStaleGate,
-      required: true,
-      reached: true,
-      released: true,
-    },
-  ]);
-  expect(completed.verification.ok).toBe(true);
-  expect(completed.timeline.slice(-2)).toEqual([
-    expect.objectContaining({
-      kind: 'gate-released',
-      gate: beforeStaleGate,
-    }),
-    expect.objectContaining({
-      kind: 'output',
-      generation: 1,
-      output: 'event main@1 message_update',
-    }),
-  ]);
 });

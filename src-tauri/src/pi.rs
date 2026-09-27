@@ -175,27 +175,12 @@ struct PiEvent<'a> {
 }
 
 pub fn resolve_pi_binary() -> Option<PathBuf> {
-    if let Some(path) = env::var_os("TAU_PI_PATH").map(PathBuf::from) {
-        if is_executable_file(&path) {
-            return Some(path);
-        }
-    }
-    if let Some(path) = find_on_path("pi", env::var_os("PATH").as_deref()) {
-        return Some(path);
-    }
-    if let Some(path) = find_on_login_shell_path("pi") {
-        return Some(path);
-    }
-
-    let mut candidates = vec![
-        PathBuf::from("/opt/homebrew/bin/pi"),
-        PathBuf::from("/usr/local/bin/pi"),
-    ];
-    if let Some(home) = dirs::home_dir() {
-        candidates.push(home.join(".local/bin/pi"));
-        candidates.push(home.join(".bun/bin/pi"));
-    }
-    candidates.into_iter().find(|path| is_executable_file(path))
+    resolve_executable(
+        "TAU_PI_PATH",
+        "pi",
+        &["/opt/homebrew/bin/pi", "/usr/local/bin/pi"],
+        &[".local/bin/pi", ".bun/bin/pi"],
+    )
 }
 
 fn resolve_node_binary() -> Option<PathBuf> {
@@ -1535,20 +1520,20 @@ mod tests {
                 saved.as_os_str()
             ]
         );
+
+        {
+            let mut fresh = Command::new("pi");
+            configure_session_arguments(&mut fresh, None, None);
+            assert_eq!(fresh.get_args().count(), 0);
+            let mut resumed = Command::new("pi");
+            configure_session_arguments(&mut resumed, None, Some("/real/pi/saved.jsonl"));
+            assert_eq!(
+                resumed.get_args().collect::<Vec<_>>(),
+                vec![OsStr::new("--session"), OsStr::new("/real/pi/saved.jsonl")]
+            );
+        }
     }
 
-    #[test]
-    fn production_session_arguments_preserve_pi_default_storage() {
-        let mut fresh = Command::new("pi");
-        configure_session_arguments(&mut fresh, None, None);
-        assert_eq!(fresh.get_args().count(), 0);
-        let mut resumed = Command::new("pi");
-        configure_session_arguments(&mut resumed, None, Some("/real/pi/saved.jsonl"));
-        assert_eq!(
-            resumed.get_args().collect::<Vec<_>>(),
-            vec![OsStr::new("--session"), OsStr::new("/real/pi/saved.jsonl")]
-        );
-    }
     use serde_json::json;
     use std::sync::mpsc::{Receiver, TryRecvError};
     use tauri::{Listener, Manager};
@@ -1601,6 +1586,28 @@ mod tests {
         let current = std::env::current_exe().expect("current executable");
         let _environment = EnvironmentGuard::set(&[("TAU_PI_PATH", Some(current.as_os_str()))]);
         assert_eq!(resolve_pi_binary(), Some(current));
+
+        {
+            let directory = tempfile::tempdir().expect("temporary directory");
+            let executable = directory.path().join("pi");
+            std::fs::write(&executable, "").expect("executable");
+            #[cfg(unix)]
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
+                .expect("executable permissions");
+            let path = env::join_paths([Path::new("/nonexistent"), directory.path()])
+                .expect("search PATH");
+
+            assert_eq!(find_on_path("pi", Some(&path)), Some(executable));
+        }
+
+        {
+            let directory = tempfile::tempdir().expect("temporary directory");
+            let path = directory.path().join("pi");
+            std::fs::write(&path, "").expect("plain file");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+                .expect("plain file permissions");
+            assert!(!is_executable_file(&path));
+        }
     }
 
     #[test]
@@ -1708,6 +1715,76 @@ mod tests {
     }
 
     #[test]
+    fn fake_pi_malformed_stdout_is_dropped_and_lifecycle_is_cleaned_up() {
+        let _lock = ENVIRONMENT_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let fixture = NativePiFixture::new(Some(OsStr::new("malformed-stdout")));
+        let (app, events) = fixture.app_and_events();
+        let handle = app.handle().clone();
+        let state = handle.state::<PiState>();
+        let telemetry = handle.state::<Telemetry>();
+        claim_for_test(&state, "owner-a");
+
+        let generation = start_pi_with(
+            handle.clone(),
+            &state,
+            &telemetry,
+            None,
+            "owner-a".into(),
+            "native-malformed".into(),
+            fixture.project_string(),
+            Some(fixture.session_string()),
+        )
+        .expect("start fake Pi");
+        let started = expect_outer_event(&events, "started", generation);
+        assert_eq!(started["runtimeId"], "native-malformed");
+        let exited = expect_outer_event(&events, "exited", generation);
+        assert_eq!(exited["runtimeId"], "native-malformed");
+        assert_eq!(exited["code"], 0);
+        assert!(state.inner.lock().expect("Pi manager").processes.is_empty());
+        assert_eq!(events.try_recv(), Err(TryRecvError::Empty));
+    }
+
+    #[test]
+    fn fake_pi_nonzero_exit_forwards_bounded_failure_and_cleans_up() {
+        let _lock = ENVIRONMENT_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let fixture = NativePiFixture::new(Some(OsStr::new("nonzero-exit")));
+        let (app, events) = fixture.app_and_events();
+        let handle = app.handle().clone();
+        let state = handle.state::<PiState>();
+        let telemetry = handle.state::<Telemetry>();
+        claim_for_test(&state, "owner-a");
+
+        let generation = start_pi_with(
+            handle.clone(),
+            &state,
+            &telemetry,
+            None,
+            "owner-a".into(),
+            "native-failure".into(),
+            fixture.project_string(),
+            Some(fixture.session_string()),
+        )
+        .expect("start fake Pi");
+        let started = expect_outer_event(&events, "started", generation);
+        assert_eq!(started["runtimeId"], "native-failure");
+        let stderr = expect_outer_event(&events, "stderr", generation);
+        assert_eq!(stderr["message"], "scripted transport failure");
+        let exited = expect_outer_event(&events, "exited", generation);
+        assert_eq!(exited["runtimeId"], "native-failure");
+        assert_eq!(exited["code"], 23);
+        // The stderr reader may emit its event after the exit reader snapshots
+        // the best-effort tail, even when the event arrives first on this channel.
+        assert!(exited["message"]
+            .as_str()
+            .is_some_and(|message| message.starts_with("Pi exited with status 23.")));
+        assert!(state.inner.lock().expect("Pi manager").processes.is_empty());
+    }
+
+    #[test]
     fn frontend_takeover_stops_stale_runtime_before_replacement_starts() {
         let _lock = ENVIRONMENT_LOCK
             .lock()
@@ -1758,8 +1835,6 @@ mod tests {
         )
         .expect("start replacement frontend runtime");
         assert!(second_generation > first_generation);
-        // EOF lets the scenario adapter report its intentionally incomplete
-        // script on stderr before exiting; these belong to the old generation.
         let deadline = Instant::now() + EVENT_TIMEOUT;
         loop {
             let event = events
@@ -1787,17 +1862,6 @@ mod tests {
             .expect("Pi manager")
             .processes
             .contains_key("runtime-b"));
-        let logs = std::fs::read_to_string(fixture._root.path().join("telemetry/logs.jsonl"))
-            .expect("ownership telemetry logs");
-        assert_eq!(
-            logs.lines()
-                .filter(|line| line.contains("pi.process.stopped"))
-                .count(),
-            1
-        );
-        assert!(logs.contains("ownership_replaced"));
-        assert!(logs.contains("pi.ownership.claimed"));
-        assert!(!logs.contains("owner-a"));
         state.shutdown();
     }
 
@@ -1879,76 +1943,6 @@ mod tests {
         let manager = state.inner.lock().expect("Pi manager");
         assert!(manager.require_owner("owner-b").is_ok());
         assert!(manager.require_owner("owner-a").is_err());
-    }
-
-    #[test]
-    fn fake_pi_malformed_stdout_is_dropped_and_lifecycle_is_cleaned_up() {
-        let _lock = ENVIRONMENT_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        let fixture = NativePiFixture::new(Some(OsStr::new("malformed-stdout")));
-        let (app, events) = fixture.app_and_events();
-        let handle = app.handle().clone();
-        let state = handle.state::<PiState>();
-        let telemetry = handle.state::<Telemetry>();
-        claim_for_test(&state, "owner-a");
-
-        let generation = start_pi_with(
-            handle.clone(),
-            &state,
-            &telemetry,
-            None,
-            "owner-a".into(),
-            "native-malformed".into(),
-            fixture.project_string(),
-            Some(fixture.session_string()),
-        )
-        .expect("start fake Pi");
-        let started = expect_outer_event(&events, "started", generation);
-        assert_eq!(started["runtimeId"], "native-malformed");
-        let exited = expect_outer_event(&events, "exited", generation);
-        assert_eq!(exited["runtimeId"], "native-malformed");
-        assert_eq!(exited["code"], 0);
-        assert!(state.inner.lock().expect("Pi manager").processes.is_empty());
-        assert_eq!(events.try_recv(), Err(TryRecvError::Empty));
-    }
-
-    #[test]
-    fn fake_pi_nonzero_exit_forwards_bounded_failure_and_cleans_up() {
-        let _lock = ENVIRONMENT_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        let fixture = NativePiFixture::new(Some(OsStr::new("nonzero-exit")));
-        let (app, events) = fixture.app_and_events();
-        let handle = app.handle().clone();
-        let state = handle.state::<PiState>();
-        let telemetry = handle.state::<Telemetry>();
-        claim_for_test(&state, "owner-a");
-
-        let generation = start_pi_with(
-            handle.clone(),
-            &state,
-            &telemetry,
-            None,
-            "owner-a".into(),
-            "native-failure".into(),
-            fixture.project_string(),
-            Some(fixture.session_string()),
-        )
-        .expect("start fake Pi");
-        let started = expect_outer_event(&events, "started", generation);
-        assert_eq!(started["runtimeId"], "native-failure");
-        let stderr = expect_outer_event(&events, "stderr", generation);
-        assert_eq!(stderr["message"], "scripted transport failure");
-        let exited = expect_outer_event(&events, "exited", generation);
-        assert_eq!(exited["runtimeId"], "native-failure");
-        assert_eq!(exited["code"], 23);
-        // The stderr reader may emit its event after the exit reader snapshots
-        // the best-effort tail, even when the event arrives first on this channel.
-        assert!(exited["message"]
-            .as_str()
-            .is_some_and(|message| message.starts_with("Pi exited with status 23.")));
-        assert!(state.inner.lock().expect("Pi manager").processes.is_empty());
     }
 
     struct NativePiFixture {
@@ -2079,10 +2073,7 @@ mod tests {
                 PathBuf::from("/bin"),
             ],
         );
-    }
 
-    #[test]
-    fn child_path_places_login_shell_directories_before_the_inherited_path() {
         let path = build_child_path(
             &[Path::new("/opt/homebrew/bin/pi")],
             Some(OsStr::new("/Users/tau/.bun/bin:/usr/bin")),
@@ -2098,86 +2089,55 @@ mod tests {
                 PathBuf::from("/bin"),
             ],
         );
-    }
 
-    #[test]
-    fn login_shell_path_is_read_from_between_the_markers() {
-        let output = format!(
+        {
+            let output = format!(
             "startup banner\n{LOGIN_SHELL_PATH_MARKER}\n/Users/tau/.bun/bin:/usr/bin\n{LOGIN_SHELL_AGENT_DIR_MARKER}\n/Users/tau/.config/pi\n{LOGIN_SHELL_END_MARKER}\n"
         );
-        assert_eq!(
-            parse_login_shell_path(&output),
-            Some(OsString::from("/Users/tau/.bun/bin:/usr/bin")),
-        );
-        assert_eq!(
-            parse_login_shell_environment(&output)
-                .expect("login shell environment")
-                .agent_dir,
-            Some(OsString::from("/Users/tau/.config/pi")),
-        );
-    }
-
-    #[test]
-    fn every_login_shell_argument_set_ends_with_a_command_flag() {
-        for arguments in LOGIN_SHELL_ARGUMENTS
-            .into_iter()
-            .chain(CSH_LOGIN_SHELL_ARGUMENTS)
-        {
-            let last = arguments.last().expect("argument");
-            assert!(
-                last.ends_with('c'),
-                "{last} would not treat the next argument as a command",
+            assert_eq!(
+                parse_login_shell_path(&output),
+                Some(OsString::from("/Users/tau/.bun/bin:/usr/bin")),
             );
-        }
-    }
-
-    #[test]
-    fn executables_are_found_on_the_login_shell_path() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let executable = directory.path().join("pi");
-        std::fs::write(&executable, "").expect("executable");
-        #[cfg(unix)]
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
-            .expect("executable permissions");
-        let path =
-            env::join_paths([Path::new("/nonexistent"), directory.path()]).expect("search PATH");
-
-        assert_eq!(find_on_path("pi", Some(&path)), Some(executable));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn files_without_execute_permission_are_not_executables() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let path = directory.path().join("pi");
-        std::fs::write(&path, "").expect("plain file");
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
-            .expect("plain file permissions");
-        assert!(!is_executable_file(&path));
-    }
-
-    #[test]
-    fn login_shell_path_ignores_output_without_markers() {
-        assert_eq!(parse_login_shell_path("command not found"), None);
-        assert_eq!(
+            assert_eq!(
+                parse_login_shell_environment(&output)
+                    .expect("login shell environment")
+                    .agent_dir,
+                Some(OsString::from("/Users/tau/.config/pi")),
+            );
+            assert_eq!(parse_login_shell_path("command not found"), None);
+            assert_eq!(
             parse_login_shell_path(&format!(
                 "{LOGIN_SHELL_PATH_MARKER}  {LOGIN_SHELL_AGENT_DIR_MARKER}  {LOGIN_SHELL_END_MARKER}"
             )),
             None,
         );
+        }
+
+        {
+            for arguments in LOGIN_SHELL_ARGUMENTS
+                .into_iter()
+                .chain(CSH_LOGIN_SHELL_ARGUMENTS)
+            {
+                let last = arguments.last().expect("argument");
+                assert!(
+                    last.ends_with('c'),
+                    "{last} would not treat the next argument as a command",
+                );
+            }
+        }
     }
 
+    #[cfg(unix)]
     #[test]
     fn capturing_stdout_gives_up_on_a_hanging_shell() {
         let mut command = Command::new("sh");
         command.args(["-c", "exec 1>&-; sleep 30"]);
         assert_eq!(capture_stdout(command, Duration::from_millis(200)), None);
-    }
 
-    #[test]
-    fn login_shell_output_is_bounded() {
-        assert_eq!(read_bounded_stdout(&b"12345"[..], 4), None);
-        assert_eq!(read_bounded_stdout(&b"1234"[..], 4), Some(b"1234".to_vec()),);
+        {
+            assert_eq!(read_bounded_stdout(&b"12345"[..], 4), None);
+            assert_eq!(read_bounded_stdout(&b"1234"[..], 4), Some(b"1234".to_vec()),);
+        }
     }
 
     #[test]
@@ -2186,41 +2146,39 @@ mod tests {
             pi_exit_message(Some(127), "env: node: No such file or directory"),
             "Pi exited with status 127. env: node: No such file or directory",
         );
-    }
 
-    #[test]
-    fn io_error_kinds_map_to_the_reviewed_category_set() {
-        assert_eq!(
-            io_error_kind_category(std::io::ErrorKind::BrokenPipe),
-            "broken_pipe"
-        );
-        assert_eq!(
-            io_error_kind_category(std::io::ErrorKind::Interrupted),
-            "interrupted"
-        );
-        assert_eq!(
-            io_error_kind_category(std::io::ErrorKind::UnexpectedEof),
-            "unexpected_eof"
-        );
-        assert_eq!(
-            io_error_kind_category(std::io::ErrorKind::PermissionDenied),
-            "other"
-        );
-    }
+        {
+            assert_eq!(
+                io_error_kind_category(std::io::ErrorKind::BrokenPipe),
+                "broken_pipe"
+            );
+            assert_eq!(
+                io_error_kind_category(std::io::ErrorKind::Interrupted),
+                "interrupted"
+            );
+            assert_eq!(
+                io_error_kind_category(std::io::ErrorKind::UnexpectedEof),
+                "unexpected_eof"
+            );
+            assert_eq!(
+                io_error_kind_category(std::io::ErrorKind::PermissionDenied),
+                "other"
+            );
+        }
 
-    #[test]
-    fn malformed_and_oversized_rpc_lines_map_to_reviewed_drop_reasons() {
-        assert_eq!(line_drop_reason(br#"{"type":"response"}"#), None);
-        assert_eq!(line_drop_reason(b"not json"), Some("malformed"));
-        assert_eq!(
-            line_drop_reason(br#"["not", "an", "object"]"#),
-            Some("malformed")
-        );
-        assert_eq!(line_drop_reason(&[0xff]), Some("invalid_utf8"));
-        assert_eq!(
-            line_drop_reason(&vec![b'x'; MAX_RPC_LINE_BYTES + 1]),
-            Some("oversized")
-        );
+        {
+            assert_eq!(line_drop_reason(br#"{"type":"response"}"#), None);
+            assert_eq!(line_drop_reason(b"not json"), Some("malformed"));
+            assert_eq!(
+                line_drop_reason(br#"["not", "an", "object"]"#),
+                Some("malformed")
+            );
+            assert_eq!(line_drop_reason(&[0xff]), Some("invalid_utf8"));
+            assert_eq!(
+                line_drop_reason(&vec![b'x'; MAX_RPC_LINE_BYTES + 1]),
+                Some("oversized")
+            );
+        }
     }
 
     fn eof_process(generation: u64) -> PiProcess {

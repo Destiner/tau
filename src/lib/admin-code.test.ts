@@ -2,8 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import { KEY_INTERVAL_MS, createAdminCodeMatcher } from './admin-code';
 
-/** Stand-ins for the real DOM nodes: the matcher only ever hands its
- * target to the editable-target predicate. */
 const EDITABLE = {} as EventTarget;
 const NOT_EDITABLE = {} as EventTarget;
 
@@ -42,21 +40,12 @@ function matcher(): ReturnType<typeof createAdminCodeMatcher> {
 }
 
 describe('createAdminCodeMatcher', () => {
-  it('unlocks on the code and only on its last keystroke', () => {
+  it('unlocks only on the final key, repeatedly and case-insensitively', () => {
     const admin = matcher();
 
     expect(typeCode(admin, 'iddq')).toBe(false);
     expect(admin.press(keyEvent('d'), 5)).toBe(true);
-  });
-
-  it('unlocks again so the same code turns admin mode back off', () => {
-    const admin = matcher();
-
-    expect(typeCode(admin, 'iddqd')).toBe(true);
     expect(typeCode(admin, 'iddqd', {}, 10)).toBe(true);
-  });
-
-  it('ignores case', () => {
     expect(typeCode(matcher(), 'IDDQD')).toBe(true);
   });
 
@@ -64,13 +53,13 @@ describe('createAdminCodeMatcher', () => {
     const admin = matcher();
 
     expect(typeCode(admin, 'iddqd', { editable: true })).toBe(false);
-    // The half typed in the composer counts for nothing: finishing it
+
     // outside one must not complete the code either.
     expect(typeCode(admin, 'idd', { editable: true }, 10)).toBe(false);
     expect(typeCode(admin, 'qd', {}, 13)).toBe(false);
   });
 
-  it('restarts the sequence on a wrong key, a modifier, or a control key', () => {
+  it('restarts on invalid keys and recognizes a fresh first letter', () => {
     const admin = matcher();
     expect(typeCode(admin, 'idxdqd')).toBe(false);
 
@@ -81,13 +70,8 @@ describe('createAdminCodeMatcher', () => {
     expect(typeCode(admin, 'id', {}, 20)).toBe(false);
     expect(admin.press(keyEvent('Shift'), 22)).toBe(false);
     expect(typeCode(admin, 'dqd', {}, 23)).toBe(false);
-  });
-
-  it('starts a fresh sequence from a wrong key that is the code’s own first letter', () => {
-    const admin = matcher();
-
-    expect(typeCode(admin, 'idi')).toBe(false);
-    expect(typeCode(admin, 'ddqd', {}, 10)).toBe(true);
+    expect(typeCode(admin, 'idi', {}, 30)).toBe(false);
+    expect(typeCode(admin, 'ddqd', {}, 33)).toBe(true);
   });
 
   it('expires a partial sequence rather than adding up keystrokes typed minutes apart', () => {

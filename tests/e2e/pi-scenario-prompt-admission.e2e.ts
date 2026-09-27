@@ -49,7 +49,6 @@ test('styles and serializes optimistic ordinary prompt admission', async ({
   await expect(confirmedRow).toHaveCSS('opacity', '1');
 
   await releaseGate(page, 'prompt-confirmed');
-  // The second prompt needs its own timestamp, before settlement probes fire.
   await page.clock.runFor(1);
   await composer.fill(absentPrompt);
   await expect(send).toBeEnabled();

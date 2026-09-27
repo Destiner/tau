@@ -288,8 +288,6 @@ const planImplementReplacement = definePiScenario({
       kind: 'response',
       request: 'plan-settled-messages',
       command: 'get_messages',
-      // Production streamed the final assistant event before persistence made
-      // it visible to the overlapping settlement hydration.
       data: {
         messages: [{ role: 'user', content: 'Write the approved plan' }],
       },

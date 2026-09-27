@@ -38,40 +38,22 @@ const THEME = {
 
 const OPTIONS = {
   ...THEME,
-  // The app's own typeface, which it bundles. The library asks for the name
-  // over the network as well; `withoutRemoteFonts` takes that request out.
+
   font: 'Inter Variable',
-  // A figure in the prose, not a block on a surface of its own.
+
   transparent: true,
-  // Room for the strokes at the diagram's own edge. The space around the
-  // figure is the block margin's to give.
+
   padding: 12,
 } as const;
 
-/**
- * Laying out a diagram is graph work, so its cost is in the nodes rather than
- * the characters: this is the length past which a source is more likely to be
- * a data file that named itself a diagram than a diagram.
- */
 const MAX_LENGTH = 8_000;
 
-/**
- * Re-mounting a virtualized row re-renders its markdown, so the same diagrams
- * are asked for over and over. Fewer entries than the highlighter holds — a
- * diagram is rarer than a fenced block, and each one costs more to keep.
- */
 const MAX_CACHED = 50;
 
-/** Fence tags that ask for a diagram to be drawn rather than for its source. */
 const TAGS = new Set(['mermaid']);
 
-/** A remote font request, which a desktop app makes for nothing. */
 const FONT_IMPORT = /^[ \t]*@import[^\n]*\n/gm;
 
-/*
- * Attributes are space-separated in the library's output, which is what tells
- * an id from the tail of another attribute's name.
- */
 const ID = / id="([^"]*)"/g;
 
 const ID_REFERENCE = /url\(#([^)]*)\)/g;
@@ -80,15 +62,8 @@ const LANGUAGE_TAG = /^\S+/;
 
 const cache = new Map<string, string>();
 
-/** Distinguishes one diagram's ids from the next one's. */
 let scopes = 0;
 
-/*
- * Rendering is synchronous once the renderer is here, and markdown is rendered
- * synchronously, so the renderer is a ref: a diagram asked for before it
- * arrives stays its own source, and reading the ref while rendering is what
- * draws it once the renderer has landed.
- */
 const renderer = shallowRef<DiagramRenderer | null>(null);
 let loading = false;
 
@@ -113,11 +88,6 @@ function isDiagram(fence: string): boolean {
   return tag !== undefined && TAGS.has(tag);
 }
 
-/**
- * Takes out the webfont the library asks the network for. The app bundles the
- * typeface it names, and a diagram in a transcript is not worth a request to
- * anyone — least of all one the reader did not ask for.
- */
 function withoutRemoteFonts(svg: string): string {
   FONT_IMPORT.lastIndex = 0;
   return svg.replace(FONT_IMPORT, '');

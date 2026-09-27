@@ -129,30 +129,23 @@ const props = defineProps<{
 
 const emit = defineEmits<{ toggle: [] }>();
 
-/**
- * The open state lives in the parent, which survives the virtualizer unmounting
- * the row; the collapsible only reflects it.
- */
 const open = computed({
   get: () => props.expanded,
   set: () => emit('toggle'),
 });
 
-/** What ran, in the name it is known by. */
 const name = computed(() => {
   if (props.entry.kind === 'thinking') return 'thinking';
   if (props.entry.kind === 'skill') return 'skill';
   return props.entry.toolName || 'tool';
 });
 
-/** What it ran on, as much of it as the line holds. */
 const argument = computed(() => {
   if (props.entry.kind === 'thinking') return '';
   if (props.entry.kind === 'skill') return props.entry.skillName ?? '';
   return props.entry.text;
 });
 
-/** A row the reader can open: one that has something beyond its summary line. */
 const expandable = computed(() => {
   const entry = props.entry;
   if (entry.kind === 'thinking' || entry.kind === 'skill') {
@@ -245,7 +238,6 @@ const expandable = computed(() => {
   width: 12px;
 }
 
-/* The chevron points at what the click does: down to open, up to close. */
 .activity-disclosure {
   flex: none;
   opacity: 0;
@@ -258,11 +250,6 @@ const expandable = computed(() => {
   opacity: 1;
 }
 
-/*
- * What was opened hangs under the row that opened it, on a rule rather than in
- * a panel: the detail belongs to that line and nothing else on the canvas is a
- * card.
- */
 .activity-details {
   display: flex;
   flex-direction: column;
@@ -320,9 +307,6 @@ const expandable = computed(() => {
   overscroll-behavior: contain;
 }
 
-/* OpenAI reasoning summaries arrive wrapped in Markdown bold. Inside thinking,
- * that wrapper is structure rather than emphasis, and separate paragraphs are
- * one compact train of thought rather than prose blocks. */
 .activity-row :deep(.markdown.activity-thinking-prose strong) {
   color: inherit;
   font-weight: inherit;

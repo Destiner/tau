@@ -91,12 +91,30 @@ async function openDocument(page: Page, remote = false): Promise<void> {
   await path.click();
 }
 
-test('renders a Markdown snapshot with headings, tasks, table, highlighted code and diagram', async ({
+test('reads a composite Markdown document, uses its controls, and follows a local link', async ({
   page,
 }) => {
-  const source = `# Preview heading
+  const first = `${localRoot}/src/components/TranscriptView.vue`;
+  const second = `${localRoot}/src/guide.md`;
+  const source = `---
+title: September release
+tags:
+  - desktop
+  - release
+authors:
+  - name: Amina
+    role: maintainer
+unsafe: <img src=x onerror=alert(1)>
+---
+# Preview heading
 
 ## Second heading
+
+# Release
+
+# Notes
+
+A paragraph of **prose**. [Next](../guide.md), [Guide](../guide.md) and [Site](https://example.com/guide).
 
 - [x] Finished
 - [ ] Pending
@@ -107,23 +125,69 @@ test('renders a Markdown snapshot with headings, tasks, table, highlighted code 
 
 \`\`\`ts
 const preview = true;
+const value = 42;
 \`\`\`
 
 \`\`\`mermaid
 flowchart LR
   A[Start] --> B[End]
 \`\`\`
+
+![Relative picture](./private.png)
+
+<img src="./hostile.png" onerror="window.__TAU_MARKDOWN_IMAGE_EXECUTED__ = true">
+
+<script>window.__TAU_MARKDOWN_IMAGE_EXECUTED__ = true</script>
 `;
   await openFixture(page, {
-    [transcriptPath]: {
-      filename: 'README.md',
-      sourcePath: `${localRoot}/README.md`,
-      source,
+    [transcriptPath]: { filename: 'README.md', sourcePath: first, source },
+    [second]: {
+      filename: 'guide.md',
+      sourcePath: second,
+      source: '# Guide opened\n',
     },
   });
   await openDocument(page);
   const dialog = page.getByRole('dialog', { name: 'README.md' });
   const document = dialog.locator('.file-viewer-document');
+  const sheet = dialog.locator('.file-viewer-frontmatter');
+  await expect(sheet).toBeVisible();
+  await expect(sheet.locator('dt')).toHaveText([
+    'title',
+    'tags',
+    'authors',
+    'unsafe',
+  ]);
+  await expect(sheet.locator('dd')).toHaveText([
+    'September release',
+    'desktop, release',
+    'name · Amina, role · maintainer',
+    '<img src=x onerror=alert(1)>',
+  ]);
+  await expect(sheet.locator('img')).toHaveCount(0);
+  const key = sheet.locator('dt').first();
+  const textBounds = await key.evaluate((element) => {
+    const range = globalThis.document.createRange();
+    range.selectNodeContents(element);
+    const { x, y, width, height } = range.getBoundingClientRect();
+    return { x, y, width, height };
+  });
+  await page.mouse.move(textBounds.x + 1, textBounds.y + textBounds.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    textBounds.x + textBounds.width + 2,
+    textBounds.y + textBounds.height / 2,
+    { steps: 8 },
+  );
+  await page.mouse.up();
+  expect(await page.evaluate(() => window.getSelection()?.toString())).toBe(
+    'title',
+  );
+  await expect(dialog.getByText('Frontmatter', { exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('heading', { name: 'Release' })).toBeVisible();
+  await expect(dialog.getByRole('link', { name: 'Next' })).toBeVisible();
+  await expect(dialog.locator('.markdown hr')).toHaveCount(0);
+
   await expect(
     document.getByRole('heading', { name: 'Preview heading', level: 1 }),
   ).toBeVisible();
@@ -146,103 +210,54 @@ flowchart LR
     timeout: 20_000,
   });
   await expect(dialog.locator('.file-viewer-code')).toHaveCount(0);
-});
+  await expect(document).toContainText('Relative picture');
+  await expect(document.locator('img')).toHaveCount(0);
+  await expect(document.locator('script')).toHaveCount(0);
+  expect(
+    await page.evaluate(() => window.__TAU_MARKDOWN_IMAGE_EXECUTED__),
+  ).not.toBe(true);
 
-test('renders YAML frontmatter as a compact metadata sheet above the Markdown body', async ({
-  page,
-}) => {
-  await openFixture(page, {
-    [transcriptPath]: {
-      filename: 'notes.md',
-      sourcePath: `${localRoot}/docs/notes.md`,
-      source:
-        '---\ntitle: September release\ntags:\n  - desktop\n  - release\nauthors:\n  - name: Amina\n    role: maintainer\nunsafe: <img src=x onerror=alert(1)>\n---\n# Release\n\n[Next](./next.md)\n',
-    },
-  });
-  await openDocument(page);
-  const dialog = page.getByRole('dialog', { name: 'notes.md' });
-  const sheet = dialog.locator('.file-viewer-frontmatter');
-  await expect(sheet).toBeVisible();
-  await expect(sheet.locator('dt')).toHaveText([
-    'title',
-    'tags',
-    'authors',
-    'unsafe',
-  ]);
-  await expect(sheet.locator('dd')).toHaveText([
-    'September release',
-    'desktop, release',
-    'name · Amina, role · maintainer',
-    '<img src=x onerror=alert(1)>',
-  ]);
-  await expect(sheet.locator('img')).toHaveCount(0);
-  const key = sheet.locator('dt').first();
-  const textBounds = await key.evaluate((element) => {
-    const range = document.createRange();
-    range.selectNodeContents(element);
-    const { x, y, width, height } = range.getBoundingClientRect();
-    return { x, y, width, height };
-  });
-  await page.mouse.move(textBounds.x + 1, textBounds.y + textBounds.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(
-    textBounds.x + textBounds.width + 2,
-    textBounds.y + textBounds.height / 2,
-    { steps: 8 },
-  );
-  await page.mouse.up();
-  expect(await page.evaluate(() => window.getSelection()?.toString())).toBe(
-    'title',
-  );
-  await expect(dialog.getByText('Frontmatter', { exact: true })).toHaveCount(0);
-  await expect(dialog.getByRole('heading', { name: 'Release' })).toBeVisible();
-  await expect(dialog.getByRole('link', { name: 'Next' })).toBeVisible();
-  await expect(dialog.locator('.markdown hr')).toHaveCount(0);
-});
-
-test('does not strip incomplete or invalid frontmatter from a file preview', async ({
-  page,
-}) => {
-  await openFixture(page, {
-    [transcriptPath]: {
-      filename: 'draft.md',
-      sourcePath: `${localRoot}/draft.md`,
-      source: '---\ntitle: [invalid\n---\n# Draft\n',
-    },
-  });
-  await openDocument(page);
-  const dialog = page.getByRole('dialog', { name: 'draft.md' });
-  await expect(dialog.locator('.file-viewer-frontmatter')).toHaveCount(0);
-  await expect(dialog.locator('.markdown')).toContainText('title: [invalid');
+  const expand = dialog.locator('.diagram-expand');
+  await expect(expand).toHaveCount(1, { timeout: 20_000 });
+  await expand.click();
+  await expect(page.getByRole('dialog', { name: 'Diagram' })).toBeVisible();
+  await page.keyboard.press('Escape');
   await expect(
-    dialog.getByRole('heading', { name: 'Draft', exact: true }),
-  ).toBeVisible();
-});
+    page.getByRole('dialog', { name: 'Diagram', exact: true }),
+  ).toHaveCount(0);
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('link', { name: 'Site' }).click({ button: 'right' });
+  await expect(page.getByRole('menuitem', { name: 'Copy URL' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menuitem', { name: 'Copy URL' })).toHaveCount(0);
+  await expect(dialog).toBeVisible();
 
-test('replaces a local document through relative links while retaining the original transcript trigger', async ({
-  page,
-}) => {
-  const first = `${localRoot}/src/components/TranscriptView.vue`;
-  const second = `${localRoot}/src/guide.md`;
-  await openFixture(page, {
-    [transcriptPath]: {
-      filename: 'notes.markdown',
-      sourcePath: first,
-      source: '[Guide](../guide.md) and [Site](https://example.com/guide)\n',
-    },
-    [second]: {
-      filename: 'guide.md',
-      sourcePath: second,
-      source: '# Guide opened\n',
-    },
-  });
-  await openDocument(page);
-  const original = page.getByRole('dialog', { name: 'notes.markdown' });
-  await original.getByRole('link', { name: 'Site' }).click();
+  await page.setViewportSize({ width: 1200, height: 700 });
+  expect((await document.boundingBox())?.width).toBe(800);
+  await page.setViewportSize({ width: 520, height: 700 });
+  expect((await document.boundingBox())?.width).toBe(520);
+  await dialog.getByRole('button', { name: 'Copy Code' }).click();
+  await expect(dialog.locator('.code-copy')).toHaveAttribute(
+    'data-copied',
+    'true',
+  );
+  await dialog.getByRole('button', { name: 'Close Preview' }).focus();
+  await page.keyboard.press('Meta+A');
+  const selection = await page.evaluate(() =>
+    window.getSelection()?.toString(),
+  );
+  expect(selection).toContain('Notes');
+  expect(selection).toContain('const value = 42;');
+  expect(selection).not.toContain('README.md');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(dialog).toHaveCSS('background-color', 'rgb(0, 0, 0)');
+
+  await dialog.getByRole('heading', { name: 'Notes' }).click();
+  await dialog.getByRole('link', { name: 'Site' }).click();
   await expect
     .poll(() => page.evaluate(() => window.__TAU_MARKDOWN_URLS__))
     .toEqual(['https://example.com/guide']);
-  await original.getByRole('link', { name: 'Guide' }).click();
+  await dialog.getByRole('link', { name: 'Guide' }).click();
   const replacement = page.getByRole('dialog', { name: 'guide.md' });
   await expect(
     replacement.getByRole('heading', { name: 'Guide opened' }),
@@ -345,132 +360,28 @@ test('resolves remote document links on the same project identity, without local
     ]);
 });
 
-test('keeps reading width, code copy, and Select All inside the document', async ({
+test('moves from a bounded snapshot through malformed frontmatter to an empty document', async ({
   page,
 }) => {
-  await openFixture(page, {
-    [transcriptPath]: {
-      filename: 'notes.md',
-      sourcePath: `${localRoot}/docs/notes.md`,
-      source:
-        '# Notes\n\nA paragraph of **prose**.\n\n```ts\nconst value = 42;\n```\n',
-    },
-  });
-  await openDocument(page);
-  const dialog = page.getByRole('dialog', { name: 'notes.md' });
-  const document = dialog.locator('.file-viewer-document');
-  await expect(document).toBeVisible();
-  await page.setViewportSize({ width: 1200, height: 700 });
-  expect((await document.boundingBox())?.width).toBe(800);
-  await page.setViewportSize({ width: 520, height: 700 });
-  expect((await document.boundingBox())?.width).toBe(520);
-  await dialog.getByRole('button', { name: 'Copy Code' }).click();
-  await expect(dialog.locator('.code-copy')).toHaveAttribute(
-    'data-copied',
-    'true',
-  );
-  await dialog.getByRole('button', { name: 'Close Preview' }).focus();
-  await page.keyboard.press('Meta+A');
-  const selection = await page.evaluate(() =>
-    window.getSelection()?.toString(),
-  );
-  expect(selection).toContain('Notes');
-  expect(selection).toContain('const value = 42;');
-  expect(selection).not.toContain('notes.md');
-  await page.emulateMedia({ colorScheme: 'dark' });
-  await expect(dialog).toHaveCSS('background-color', 'rgb(0, 0, 0)');
-});
-
-test('suppresses document-relative images and sanitizes hostile HTML', async ({
-  page,
-}) => {
-  await openFixture(page, {
-    [transcriptPath]: {
-      filename: 'safety.md',
-      sourcePath: `${localRoot}/safety.md`,
-      source:
-        '![Relative picture](./private.png)\n\n<img src="./hostile.png" onerror="window.__TAU_MARKDOWN_IMAGE_EXECUTED__ = true">\n\n<script>window.__TAU_MARKDOWN_IMAGE_EXECUTED__ = true</script>\n',
-    },
-  });
-  await openDocument(page);
-  const document = page
-    .getByRole('dialog', { name: 'safety.md' })
-    .locator('.file-viewer-document');
-  await expect(document).toContainText('Relative picture');
-  await expect(document.locator('img')).toHaveCount(0);
-  await expect(document.locator('script')).toHaveCount(0);
-  expect(
-    await page.evaluate(() => window.__TAU_MARKDOWN_IMAGE_EXECUTED__),
-  ).not.toBe(true);
-});
-
-test('Escape closes the topmost diagram before the document', async ({
-  page,
-}) => {
-  await openFixture(page, {
-    [transcriptPath]: {
-      filename: 'diagram.md',
-      sourcePath: `${localRoot}/diagram.md`,
-      source:
-        '[Site](https://example.com)\n\n```mermaid\nflowchart LR\n A[One] --> B[Two]\n```\n',
-    },
-  });
-  await openDocument(page);
-  const dialog = page.getByRole('dialog', { name: 'diagram.md' });
-  const expand = dialog.locator('.diagram-expand');
-  await expect(expand).toHaveCount(1, { timeout: 20_000 });
-  await expand.click();
-  await expect(page.getByRole('dialog', { name: 'Diagram' })).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(
-    page.getByRole('dialog', { name: 'Diagram', exact: true }),
-  ).toHaveCount(0);
-  await expect(dialog).toBeVisible();
-});
-
-test('Escape closes a Markdown link menu before the document', async ({
-  page,
-}) => {
-  await openFixture(page, {
-    [transcriptPath]: {
-      filename: 'menu.md',
-      sourcePath: `${localRoot}/menu.md`,
-      source: '[Site](https://example.com)\n',
-    },
-  });
-  await openDocument(page);
-  const dialog = page.getByRole('dialog', { name: 'menu.md' });
-  await dialog.getByRole('link', { name: 'Site' }).click({ button: 'right' });
-  await expect(page.getByRole('menuitem', { name: 'Copy URL' })).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('menuitem', { name: 'Copy URL' })).toHaveCount(0);
-  await expect(dialog).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(dialog).toHaveCount(0);
-});
-
-test('shows an empty Markdown document', async ({ page }) => {
-  await openFixture(page, {
-    [transcriptPath]: {
-      filename: 'empty.md',
-      sourcePath: `${localRoot}/empty.md`,
-      source: '',
-      byteLength: 0,
-    },
-  });
-  await openDocument(page);
-  const empty = page.getByRole('dialog', { name: 'empty.md' });
-  await expect(empty.getByText('Empty document')).toBeVisible();
-  await expect(empty.locator('.markdown')).toHaveCount(0);
-});
-
-test('bounds a truncated Markdown snapshot', async ({ page }) => {
-  const oversized = `# First heading\n\n${'a'.repeat(512 * 1024)}\n# Beyond limit\n`;
+  const draft = `${localRoot}/draft.md`;
+  const empty = `${localRoot}/empty.md`;
+  const oversized = `# First heading\n\n[Draft](./draft.md)\n\n${'a'.repeat(512 * 1024)}\n# Beyond limit\n`;
   await openFixture(page, {
     [transcriptPath]: {
       filename: 'long.md',
       sourcePath: `${localRoot}/long.md`,
       source: oversized,
+    },
+    [draft]: {
+      filename: 'draft.md',
+      sourcePath: draft,
+      source: '---\ntitle: [invalid\n---\n# Draft\n\n[Empty](./empty.md)\n',
+    },
+    [empty]: {
+      filename: 'empty.md',
+      sourcePath: empty,
+      source: '',
+      byteLength: 0,
     },
   });
   await openDocument(page);
@@ -482,6 +393,17 @@ test('bounds a truncated Markdown snapshot', async ({ page }) => {
     0,
   );
   await expect(long.getByText('Showing first 512 KiB')).toBeVisible();
+  await long.getByRole('link', { name: 'Draft' }).click();
+  const dialog = page.getByRole('dialog', { name: 'draft.md' });
+  await expect(dialog.locator('.file-viewer-frontmatter')).toHaveCount(0);
+  await expect(dialog.locator('.markdown')).toContainText('title: [invalid');
+  await expect(
+    dialog.getByRole('heading', { name: 'Draft', exact: true }),
+  ).toBeVisible();
+  await dialog.getByRole('link', { name: 'Empty' }).click();
+  const blank = page.getByRole('dialog', { name: 'empty.md' });
+  await expect(blank.getByText('Empty document')).toBeVisible();
+  await expect(blank.locator('.markdown')).toHaveCount(0);
 });
 
 test('keeps MDX as highlighted source rather than running components', async ({

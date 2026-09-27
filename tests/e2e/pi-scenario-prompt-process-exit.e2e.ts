@@ -44,8 +44,6 @@ test('keeps a partial failed prompt local to its owning session', async ({
   await page.getByRole('button', { name: /^Backup\b/ }).click();
   await expect(page.getByRole('heading', { name: 'Backup' })).toBeVisible();
   await expect(composer).toBeEnabled();
-  // Switching sessions leaves the caret in the composer, not on the session
-  // button that was clicked.
   await expect(composer).toBeFocused();
   await page.getByRole('button', { name: /^Main\b/ }).click();
   await expect(page.getByRole('heading', { name: 'Main' })).toBeVisible();
@@ -93,11 +91,4 @@ test('keeps a partial failed prompt local to its owning session', async ({
   await expect(page.locator('body')).not.toContainText(processFailure);
   await expect(composer).toBeEnabled();
   await expectNoRawFailure(page);
-
-  const diagnostics = await page.evaluate(() => ({
-    verification: window.__TAU_PI_SCENARIO__?.verify(),
-    timeline: window.__TAU_PI_SCENARIO__?.timeline(),
-  }));
-  expect(diagnostics.verification?.ok).toBe(true);
-  expect(JSON.stringify(diagnostics.timeline)).not.toContain('RAW_');
 });

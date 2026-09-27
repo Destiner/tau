@@ -300,7 +300,6 @@ function readSavedSession(
         return;
       controller.messages = hydrateTranscript(messages, controller.messages);
       controller.savedContentLoaded = true;
-      // A verified empty file is not proof that the Pi runtime is ready.
     })
     .catch(() => undefined);
 }
@@ -317,8 +316,6 @@ function controllerTelemetryScope(
   };
 }
 
-// The composable returns its own surface: about sixty refs and handlers whose
-// types are all inferred, so spelling the shape out would only duplicate them.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function useTau() {
   function initialize(): Promise<void> {
@@ -836,7 +833,6 @@ function useTau() {
         sessionId: session.id,
       });
       intent.confirmed = false;
-      // Restoring does not change the selected view.
     } catch {
       if (archiveRevision(project.path, session.id) === revision)
         session.archived = intent.confirmed;

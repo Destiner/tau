@@ -34,7 +34,6 @@ withDefaults(
   gap: 1px;
 }
 
-/* Square cells: pixels marching, not a spinner in a hurry. */
 .spinner-dot {
   width: 2px;
   height: 2px;

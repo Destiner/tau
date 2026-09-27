@@ -52,11 +52,10 @@ const title = [
   '```',
 ].join('\n');
 
-/** Long enough, and wide enough, to overflow the pane on any window. */
 const message = [
   '| Label | Meaning | Used by |',
   '| --- | --- | --- |',
-  // An unbreakable value is what makes a table wider than the prompt holding it.
+
   `| label-wide | ${'0123456789abcdef'.repeat(8)} | team-wide |`,
   ...Array.from(
     { length: 40 },

@@ -7,17 +7,12 @@ import {
   rememberScroll,
 } from './transcript-scroll';
 
-/*
- * The store is a module-level map by design — it outlives every transcript it
- * serves — so each test works under keys of its own rather than resetting it.
- */
-
 function measurements(size: number): VirtualItem[] {
   return [{ index: 0, key: 'row-0', start: 0, size, end: size, lane: 0 }];
 }
 
 describe('transcript scroll positions', () => {
-  it('gives a session back the position it was left at', () => {
+  it('recalls only keyed, remembered sessions and replaces older positions', () => {
     rememberScroll('recall', {
       offset: 1280,
       following: false,
@@ -29,13 +24,7 @@ describe('transcript scroll positions', () => {
       following: false,
       measurements: measurements(64),
     });
-  });
-
-  it('has nothing for a session that has not been read', () => {
     expect(recallScroll('unread')).toBeUndefined();
-  });
-
-  it('keeps the latest position for a session', () => {
     rememberScroll('latest', {
       offset: 10,
       following: false,
@@ -49,9 +38,6 @@ describe('transcript scroll positions', () => {
 
     expect(recallScroll('latest')?.offset).toBe(20);
     expect(recallScroll('latest')?.following).toBe(true);
-  });
-
-  it('keeps no position for a session without a key', () => {
     rememberScroll('', { offset: 40, following: false, measurements: [] });
 
     expect(recallScroll('')).toBeUndefined();

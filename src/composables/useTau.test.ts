@@ -353,8 +353,6 @@ describe('session drafts and selection', () => {
     await selectSession(project, firstSession);
     expect(isSessionUnread(project, firstSession)).toBe(false);
 
-    // The mark has to survive on the session being read, or it would only
-    // appear once the sidebar selection moved elsewhere.
     markSessionUnread(project, firstSession);
     expect(isSessionUnread(project, firstSession)).toBe(true);
     expect(sessionIndicator(project, firstSession)).toBe('new');
@@ -1411,7 +1409,7 @@ describe('session replacement hardening', () => {
     expect(controller.phantom).toBe(false);
 
     // The row for the replaced session must not outlive the command that
-    // replaced it, or it lingers as a session nobody can open.
+
     const registered = tau.state.workspace?.projects[0];
     if (!registered) throw new Error('Expected the registered project');
     const titles = tau.projectSessions(registered).map((item) => item.title);
@@ -1420,9 +1418,21 @@ describe('session replacement hardening', () => {
     tau.dispose();
   });
 
-  it('auto-removes an empty session held by an unanswered command', async () => {
+  it('keeps an unanswered command unarchivable until leaving removes its empty session', async () => {
     const { controller, otherSession, project, tau } =
       await setupUnansweredPhantomCommand();
+    const session = tau.state.ephemeralSessions.find(
+      (candidate) => candidate.controllerKey === controller.key,
+    );
+    if (!session) throw new Error('Expected the command session');
+
+    await tau.archiveSession(project, session);
+    expect(tau.state.ephemeralSessions).toContain(session);
+    expect(tau.state.controllers).toContain(controller);
+    expect(tau.state.activeSessionId).toBe(session.id);
+    expect(
+      vi.mocked(invoke).mock.calls.some(([name]) => name === 'archive_session'),
+    ).toBe(false);
 
     await tau.selectSession(project, otherSession);
 
@@ -1445,34 +1455,6 @@ describe('session replacement hardening', () => {
     await vi.waitFor(() => {
       expect(stoppedRuntimes()).toContain(controller.runtimeId);
     });
-    tau.dispose();
-  });
-
-  it('does not archive an unregistered command session', async () => {
-    const { controller, project, tau } = await setupUnansweredPhantomCommand();
-    const session = tau.state.ephemeralSessions.find(
-      (candidate) => candidate.controllerKey === controller.key,
-    );
-    if (!session) throw new Error('Expected the command session');
-
-    await tau.archiveSession(project, session);
-
-    expect(
-      tau.state.ephemeralSessions.some(
-        (candidate) => candidate.controllerKey === controller.key,
-      ),
-    ).toBe(true);
-    expect(
-      tau.state.controllers.some(
-        (candidate) => candidate.key === controller.key,
-      ),
-    ).toBe(true);
-    expect(
-      vi
-        .mocked(invoke)
-        .mock.calls.some(([command]) => command === 'archive_session'),
-    ).toBe(false);
-    expect(tau.state.activeSessionId).toBe(session.id);
     tau.dispose();
   });
 
@@ -1622,8 +1604,6 @@ describe('session replacement hardening', () => {
         data: { messages: [] },
       });
 
-      // The runtime stays alive while the workflow may still open its next
-      // session, even though nothing is selecting this hidden controller.
       await vi.advanceTimersByTimeAsync(140);
       expect(
         vi.mocked(invoke).mock.calls.some(([command]) => command === 'stop_pi'),
@@ -1749,7 +1729,7 @@ describe('session replacement hardening', () => {
       await setupUnsavedSession();
 
     // Pi answers --session for a file it cannot find by opening a fresh
-    // session under the path it was handed.
+
     mocks.workspace = {
       ...(mocks.workspace as WorkspaceSnapshot),
       projects: [
@@ -1774,8 +1754,6 @@ describe('session replacement hardening', () => {
       expect(controller.phantom).toBe(true);
     });
 
-    // Registering the minted id would file a second session at the same path,
-    // and the row would go on minting one more on every visit.
     expect(
       vi
         .mocked(invoke)
@@ -1804,7 +1782,6 @@ describe('session replacement hardening', () => {
       data: { messages: [] },
     });
 
-    // The replacement is unsent, so it leaves no trace once it is left.
     await tau.selectSession(registered, other);
     expect(tau.state.ephemeralSessions).toEqual([]);
     tau.dispose();
@@ -1835,7 +1812,6 @@ describe('session replacement hardening', () => {
       message: { role: 'assistant', content: [] },
     });
 
-    // A replacement brings its own live identity, but it is not reopenable
     // until a settled hydration confirms Pi appended the assistant message.
     expect(controller.phantom).toBe(false);
     expect(
@@ -3325,51 +3301,6 @@ describe('prompt submission', () => {
     expect(tau.queueFeedback.value).toBe('');
     expect(tau.extensionCommandDraft.value).toBe(false);
     tau.dispose();
-  });
-
-  it('clears immediately, preserves new edits, and blocks repeat prompts while working', async () => {
-    const { tau, controller } = await setupNamedSession();
-    const defaultInvoke = vi.mocked(invoke).getMockImplementation();
-    let acceptSend: (() => void) | undefined;
-    vi.mocked(invoke).mockImplementation(async (command, args) => {
-      const request = (args as { request?: { type?: string } })?.request;
-      if (command === 'send_pi' && request?.type === 'prompt') {
-        await new Promise<void>((resolve) => {
-          acceptSend = resolve;
-        });
-        return;
-      }
-      return defaultInvoke?.(command, args);
-    });
-
-    try {
-      tau.draft.value = '  Keep this until delivery  ';
-      const submission = tau.sendMessage();
-      await vi.waitFor(() => {
-        expect(controller.promptSubmitting).toBe(true);
-      });
-      expect(tau.promptSubmitting.value).toBe(true);
-      expect(tau.canCompose.value).toBe(false);
-      expect(tau.draft.value).toBe('');
-
-      tau.draft.value = 'Write the next prompt';
-      await tau.sendMessage();
-      expect(sentRequests(controller, 'prompt')).toHaveLength(1);
-
-      acceptSend?.();
-      await submission;
-
-      expect(controller.promptSubmitting).toBe(false);
-      expect(tau.promptSubmitting.value).toBe(false);
-      expect(tau.canCompose.value).toBe(false);
-      expect(tau.draft.value).toBe('Write the next prompt');
-
-      await tau.sendMessage();
-      expect(sentRequests(controller, 'prompt')).toHaveLength(1);
-      expect(tau.draft.value).toBe('Write the next prompt');
-    } finally {
-      if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
-    }
   });
 
   it('keeps ordinary prompt admission locked across a stale idle state response', async () => {

@@ -13,24 +13,24 @@ const bounds = { x: 0, y: 0, width: 1_200, height: 600 };
 const viewport = { width: 1_000, height: 700 };
 
 describe('diagram viewport', () => {
-  it('fits at the drawing natural scale or smaller and centres it', () => {
+  it('fits and centres drawings including nonzero coordinate origins', () => {
     const camera = fitDiagram(bounds, viewport);
     const box = cameraViewBox(camera, viewport);
 
     expect(camera.scale).toBeCloseTo(904 / 1_200);
     expect(-box.x).toBeCloseTo(box.x + box.width - bounds.width);
     expect(-box.y).toBeCloseTo(box.y + box.height - bounds.height);
-  });
-
-  it('centres bounds whose coordinate origin is not zero', () => {
     const offsetBounds = { x: -400, y: 250, width: 1_200, height: 600 };
-    const box = cameraViewBox(fitDiagram(offsetBounds, viewport), viewport);
-
-    expect(offsetBounds.x - box.x).toBeCloseTo(
-      box.x + box.width - offsetBounds.x - offsetBounds.width,
+    const offsetBox = cameraViewBox(
+      fitDiagram(offsetBounds, viewport),
+      viewport,
     );
-    expect(offsetBounds.y - box.y).toBeCloseTo(
-      box.y + box.height - offsetBounds.y - offsetBounds.height,
+
+    expect(offsetBounds.x - offsetBox.x).toBeCloseTo(
+      offsetBox.x + offsetBox.width - offsetBounds.x - offsetBounds.width,
+    );
+    expect(offsetBounds.y - offsetBox.y).toBeCloseTo(
+      offsetBox.y + offsetBox.height - offsetBounds.y - offsetBounds.height,
     );
   });
 
@@ -68,7 +68,7 @@ describe('diagram viewport', () => {
     );
   });
 
-  it('keeps the world point at the viewport centre fixed while resizing', () => {
+  it('keeps the world centre fixed on resize and moves the viewBox on pan', () => {
     const camera = fitDiagram(bounds, viewport);
     const next = { width: 1_300, height: 500 };
     const resized = resizeDiagram(camera, viewport, next);
@@ -80,16 +80,11 @@ describe('diagram viewport', () => {
       before.y + before.height / 2,
     );
     expect(resized.scale).toBe(camera.scale);
-  });
+    const panned = cameraViewBox(panDiagram(camera, -40, -60), viewport);
 
-  it('pans by moving the SVG viewBox in the opposite direction', () => {
-    const camera = fitDiagram(bounds, viewport);
-    const before = cameraViewBox(camera, viewport);
-    const after = cameraViewBox(panDiagram(camera, -40, -60), viewport);
-
-    expect(after.x).toBeGreaterThan(before.x);
-    expect(after.y).toBeGreaterThan(before.y);
-    expect(after.width).toBe(before.width);
-    expect(after.height).toBe(before.height);
+    expect(panned.x).toBeGreaterThan(before.x);
+    expect(panned.y).toBeGreaterThan(before.y);
+    expect(panned.width).toBe(before.width);
+    expect(panned.height).toBe(before.height);
   });
 });

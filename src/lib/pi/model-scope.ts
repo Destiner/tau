@@ -89,7 +89,6 @@ function matchReference(
     : matchReference(models, pattern.slice(0, colon));
 }
 
-/** Matches `provider/id` or a bare id, rejecting references shared by providers. */
 function matchExactReference(
   models: ModelOption[],
   reference: string,
@@ -141,7 +140,6 @@ function isAlias(id: string): boolean {
   return id.endsWith('-latest') || !datedVersion.test(id);
 }
 
-/** `*` and `?` stop at provider boundaries, `**` crosses them, as in Pi. */
 function globExpression(pattern: string): RegExp {
   let source = '';
   for (let index = 0; index < pattern.length; index += 1) {

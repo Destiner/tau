@@ -8,7 +8,7 @@ function adapted(source: string): string | null {
 }
 
 describe('adapting Mermaid source for the renderer', () => {
-  it('translates physical newlines inside complete flowchart node labels', () => {
+  it('translates multiline node labels across all supported delimiters', () => {
     const source = `flowchart LR
   E[Planner] --> F{Route exists
 for both sides?}
@@ -21,44 +21,40 @@ for both sides?}
   E[Planner] --> F{Route exists\\nfor both sides?}
   F --> G[Decline]
   E --> I{Delivery only\\n+ dynamic preview\\n+ no result?}`);
+    for (const [opener, closer] of [
+      ['(((', ')))'],
+      ['([', '])'],
+      ['((', '))'],
+      ['[[', ']]'],
+      ['[(', ')]'],
+      ['[/', '\\]'],
+      ['[\\', '/]'],
+      ['>', ']'],
+      ['{{', '}}'],
+      ['[', ']'],
+      ['(', ')'],
+      ['{', '}'],
+    ]) {
+      const source = `graph TD\n  A${opener}first\nsecond${closer}`;
+      expect(adapted(source)).toBe(
+        `graph TD\n  A${opener}first\\nsecond${closer}`,
+      );
+    }
   });
 
-  it.each([
-    ['double circle', '(((', ')))'],
-    ['stadium', '([', '])'],
-    ['circle', '((', '))'],
-    ['subroutine', '[[', ']]'],
-    ['cylinder', '[(', ')]'],
-    ['trapezoid', '[/', '\\]'],
-    ['inverse trapezoid', '[\\', '/]'],
-    ['asymmetric', '>', ']'],
-    ['hexagon', '{{', '}}'],
-    ['rectangle', '[', ']'],
-    ['rounded', '(', ')'],
-    ['diamond', '{', '}'],
-  ])('supports multiline %s labels', (_name, opener, closer) => {
-    const source = `graph TD\n  A${opener}first\nsecond${closer}`;
-    expect(adapted(source)).toBe(
-      `graph TD\n  A${opener}first\\nsecond${closer}`,
-    );
-  });
-
-  it('supports quoted labels, CRLF, blank lines, and same-line edges', () => {
+  it('supports quoted labels, internal closers, CRLF, blank lines and same-line edges', () => {
     const source =
       'graph LR\r\n  A["first\r\n  second\r\n\r\nfourth"] --> B[Done]\r\n';
 
     expect(adapted(source)).toBe(
       'graph LR\r\n  A["first\\n  second\\n\\nfourth"] --> B[Done]\r\n',
     );
-  });
-
-  it('keeps interior closers in quoted multiline labels', () => {
     expect(adapted('graph TD\r\n  A["first ] and []\r\nsecond"] --> B')).toBe(
       'graph TD\r\n  A["first ] and []\\nsecond"] --> B',
     );
   });
 
-  it('adapts multiple multiline nodes in one statement', () => {
+  it('adapts multiple nodes and immediate class shorthand', () => {
     const source = `graph LR
   A[first
 
@@ -68,18 +64,14 @@ node)`;
 
     expect(adapted(source)).toBe(`graph LR
   A[first\\n\\ncustomer's second line] --> B{third\\nfourth} & C(round\\nnode)`);
-  });
-
-  it('preserves valid immediate class shorthand after a multiline node', () => {
-    const source = `graph TD
+    const classified = `graph TD
   A[first
 second]:::hot --> B`;
-
-    expect(adapted(source)).toBe(`graph TD
+    expect(adapted(classified)).toBe(`graph TD
   A[first\\nsecond]:::hot --> B`);
   });
 
-  it('leaves existing multiline forms and normal statements unchanged', () => {
+  it('preserves existing multiline forms, comments and non-flowchart statements', () => {
     const source = String.raw`%% heading
 
 flowchart TD
@@ -92,9 +84,7 @@ flowchart TD
   class A quiet`;
 
     expect(adapted(source)).toBe(source);
-  });
 
-  it('ignores comments, non-node statements, and non-flowchart diagrams', () => {
     const flowchart = `graph TD
   %% unmatched [ " {
   subgraph Group [line
@@ -111,7 +101,7 @@ text]| B`;
     expect(adapted(state)).toBe(state);
   });
 
-  it('does not confuse statement keywords with node IDs', () => {
+  it('recognizes keyword node IDs and headers following blank or comment lines', () => {
     const source = `graph TD
   style[first
 second] --> class{third
@@ -119,48 +109,42 @@ fourth}`;
 
     expect(adapted(source)).toBe(`graph TD
   style[first\\nsecond] --> class{third\\nfourth}`);
-  });
-
-  it('allows leading blank and comment lines before a flowchart header', () => {
-    const source = `
+    const prefixed = `
 %% generated
 flowchart TB
   A[one
 two]`;
-    expect(adapted(source)).toBe(`
+    expect(adapted(prefixed)).toBe(`
 %% generated
 flowchart TB
   A[one\\ntwo]`);
   });
 
-  it.each([
-    `graph TD
+  it('declines ambiguous or unterminated multiline labels', () => {
+    for (const source of [
+      `graph TD
   A[unfinished
   B --> C`,
-    `graph TD
+      `graph TD
   A{"unfinished
 second}`,
-    `graph TD
+      `graph TD
   A[first
 second"still]`,
-    `graph TD
+      `graph TD
   A[first
 second] trailing text`,
-    `graph TD
+      `graph TD
   A[first
 second] :::hot --> B`,
-    `graph TD
+      `graph TD
   A[first
 second]::: --> B`,
-  ])('declines ambiguous or unterminated multiline labels', (source) => {
-    expect(adaptMermaidSource(source)).toEqual({ kind: 'unsafe' });
-  });
-
-  it('does not reinterpret a more specific unterminated delimiter', () => {
-    expect(
-      adaptMermaidSource(`graph TD
+      `graph TD
   A(((first
-second))`),
-    ).toEqual({ kind: 'unsafe' });
+second))`,
+    ]) {
+      expect(adaptMermaidSource(source)).toEqual({ kind: 'unsafe' });
+    }
   });
 });

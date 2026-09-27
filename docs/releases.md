@@ -1,6 +1,6 @@
 # macOS releases
 
-Tau's distribution DMG supports Apple Silicon Macs running macOS 15 or later. A public download must be signed with a Developer ID Application certificate, notarized by Apple, and stapled before upload. An ordinary `bun tauri build` is only suitable for local testing. On macOS it builds only the `.app`, so routine validation does not run the DMG packager's Finder-customization AppleScript or disturb the desktop. Use `bun tauri build --bundles app,dmg` only when intentionally testing installer packaging; `bun run release:macos` already requests both bundles explicitly.
+The Apple Silicon DMG supports macOS 15+. Public downloads require Developer ID Application signing, notarization, and stapling. Routine `bun tauri build` produces only an unsigned `.app`, avoiding the DMG packager's Finder AppleScript; use `bun tauri build --bundles app,dmg` to test packaging or `bun run release:macos` for distribution.
 
 Tau enables Tauri's `macos-private-api` feature so WKWebView can suppress its default white background before first paint. This uses a private WebKit API and is not compatible with Mac App Store submission; the app targets direct DMG distribution.
 
@@ -58,7 +58,7 @@ In the repository's **Settings → Environments**, create an environment named *
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password for that updater key, if it has one. Leave this secret unset for an unencrypted key.                           |
 | `TAU_UPDATER_PUBLIC_KEY`             | Complete encoded `.pub` content generated with the updater private key. This is compiled into release builds.           |
 
-To export the signing certificate, open **Keychain Access → My Certificates**, find the Developer ID Application identity described above, and confirm it expands to show a private key. Export the identity as `.p12` and set a strong export password. A `.cer` alone is insufficient. If the private key is missing, export from the Mac that created the certificate or create a new certificate. Copy the base64 export to the clipboard with:
+In **Keychain Access → My Certificates**, export the Developer ID Application identity **with its private key** as password-protected `.p12`; `.cer` alone is insufficient. If the key is absent, export from the originating Mac or create a new certificate. Copy the base64 export:
 
 ```sh
 base64 -i /path/to/DeveloperID.p12 | pbcopy
@@ -68,13 +68,13 @@ Paste into `APPLE_CERTIFICATE`, then clear the clipboard. Store the export secur
 
 For notarization, an Account Holder or Admin can create a **team API key** in [App Store Connect → Users and Access → Integrations → App Store Connect API](https://appstoreconnect.apple.com/access/integrations/api). Request API access first if prompted. Create a key with the Developer role for notarization, record its Key ID and Issuer ID, and download the `.p8` file. Apple allows downloading the private key only once. Use a team key, not an individual key, for this issuer-based setup. See [Apple's API key instructions](https://developer.apple.com/help/app-store-connect/get-started/app-store-connect-api).
 
-Generate the updater keypair once, store the private key and optional password as release-environment secrets, and store the generated `.pub` file's complete encoded contents as `TAU_UPDATER_PUBLIC_KEY`:
+Generate the updater keypair once; store its private key, optional password, and complete encoded `.pub` content in release-environment secrets:
 
 ```sh
 bunx tauri signer generate -w ~/.tauri/tau-updater.key
 ```
 
-Keep both key files backed up securely. Losing or rotating the private key prevents installed versions that trust the corresponding public key from accepting future updates. The public key is not a credential, but the environment secret ensures the intended key is supplied explicitly as compile-time app configuration.
+Back up both files securely: losing or rotating the private key prevents existing installations from trusting updates. The public key is not secret; its environment setting makes the compile-time trust root explicit.
 
 The authorized production public key is pinned by its lowercase SHA-256 fingerprint in `scripts/updater-public-key.sha256`. Verify a restored public key against it with:
 
@@ -84,9 +84,9 @@ printf '%s' "$(cat ~/.tauri/tau-updater.key.pub)" \
   | shasum -a 256
 ```
 
-Every release compares `TAU_UPDATER_PUBLIC_KEY` with this checked-in trust root before building or verifying artifacts. Rotating it is a security migration: first ship an authorized transition that existing installations can trust; changing the fingerprint and release secret alone strands existing clients.
+Each release verifies `TAU_UPDATER_PUBLIC_KEY` against this pinned trust root. Rotation requires an authorized transition shipped to existing installations first; changing only the fingerprint and secret strands clients.
 
-No personal GitHub token is needed: the workflow's built-in `GITHUB_TOKEN` has `contents: write` for draft discovery, tag creation, and asset uploads. Repository/organization Actions policies must permit the workflow's actions and this permission. The workflow imports the certificate into a temporary keychain and removes it and the notarization key in an always-run cleanup step; signing secrets are exposed only to the steps that need them.
+The built-in `GITHUB_TOKEN` uses `contents: write` for draft discovery, tagging, and uploads; no personal token is needed. Actions policy must allow this permission. Signing secrets reach only necessary steps; an always-run cleanup removes the temporary certificate keychain and notarization key.
 
 ### Creating a release
 
@@ -103,7 +103,7 @@ No personal GitHub token is needed: the workflow's built-in `GITHUB_TOKEN` has `
    cargo test --manifest-path src-tauri/Cargo.toml
    ```
 
-   The release workflow does not enforce these as separate quality gates. It also runs a fresh `bun run build`, including frontend typechecking, before any updater or Apple secret is placed in the job environment, as defense in depth. `release:macos` is self-contained and builds the frontend again with a sanitized environment before its credentialed Tauri build.
+   The workflow does not enforce these as separate gates. It runs `bun run build` before secrets enter the job; `release:macos` rebuilds the frontend in a sanitized environment before credentialed Tauri build.
 
 3. Open **Actions → Release → Run workflow**, select `main`, and run it. Approve the `release` environment deployment if configured.
 4. The workflow checks version and release availability, then builds, signs, notarizes, staples, and verifies with `bun run release:macos`.
@@ -123,11 +123,9 @@ No personal GitHub token is needed: the workflow's built-in `GITHUB_TOKEN` has `
 
 8. Update the Download link in `README.md` to the published version's immutable DMG URL, verify it is reachable, and commit the link change as `docs: update download link to v<version>` after the repository's pre-commit checks. Push normally to `main`; leave the release tag on the original release commit.
 
-The concurrency group prevents an active release from being cancelled, but it is not a FIFO queue: GitHub may replace an older pending run when another is dispatched. An existing release (including a draft) or an existing exact version tag stops the workflow; API failures also stop it. The workflow rechecks before signing and before creating the tag, never moves tags itself, and never replaces existing assets.
+Concurrency protects active runs but is not FIFO: a newly dispatched run can replace a pending one. Existing exact-version tags/releases (including drafts) and API failures stop the workflow. It rechecks before signing and tagging, never moves tags or replaces assets, and creates a lightweight tag at the captured SHA immediately before the draft. `GITHUB_TOKEN`-pushed tags do not trigger tag/push workflows. `--verify-tag` checks existence, not SHA identity; use tag protection if downstream automation requires immutable tags.
 
-The workflow creates a lightweight tag at the captured SHA immediately before creating the draft. It refuses an existing tag or release and `gh release create` is used without overwrite/clobber behavior. Tags pushed with `GITHUB_TOKEN` do not trigger subsequent tag or push workflows. The `--verify-tag` release option checks that the tag exists, not that it still targets the captured SHA; use tag protection or another provenance mechanism if downstream automation requires immutable tags.
-
-If a run fails before tag creation, fix the cause and rerun. If tag creation succeeds but draft creation or asset upload fails, the verified runner artifact is not retained. Inspect the tag and any partial draft, then normally remove the incomplete draft and tag deliberately before rerunning. Only finish the draft manually when the exact verified artifacts were already uploaded or retained independently. Do not delete or retarget a published release to reuse its version: bump the version instead. Notarization service delays can also require a retry.
+If failure precedes tagging, fix and rerun. After tagging, runner artifacts are not retained: inspect the tag/partial draft, normally remove both deliberately, then rerun. Finish manually only if the exact verified assets were uploaded or independently retained. Never delete or retarget a published release to reuse a version; bump it instead. Notarization delays may require retry.
 
 ## Build and verify
 
@@ -154,7 +152,7 @@ Or replace the API variables with `APPLE_ID`, `APPLE_PASSWORD`, and `APPLE_TEAM_
 
 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` is optional and may be omitted for an unencrypted updater key. `release:macos` builds and typechecks the frontend itself before invoking Tauri. That frontend subprocess receives an environment with every `APPLE_*` variable, `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, and `TAU_UPDATER_PUBLIC_KEY` removed; the subsequent Tauri build receives the normal release environment. An ordinary `bun tauri build` remains credential-free: updater artifacts are enabled only by `src-tauri/tauri.release.conf.json`, and the release script injects the required public key into a temporary build configuration.
 
-The release command explicitly builds the Apple Silicon `app` and `dmg` bundles, notarizes and staples the app before packaging through Tauri, then signs, notarizes, and staples the DMG. It atomically stages deterministic versioned assets in `src-tauri/target/release-assets/<version>` and refuses to overwrite an existing destination. This preserves prior verified artifacts. CI is rerunnable because every run starts with a clean checkout/target; locally, preserve or explicitly remove the existing version directory before rebuilding. It checks:
+The release command builds Apple Silicon `app` and `dmg` bundles, notarizes and staples the app before packaging, then signs, notarizes, and staples the DMG. It atomically stages assets under `src-tauri/target/release-assets/<version>` without overwriting. CI starts from a clean checkout/target; locally, preserve or explicitly remove an existing version directory before rebuilding. Verification checks:
 
 - the exact four-file release asset set and exact `latest.json` schema;
 - manifest URL, signature content, version, platform, and artifact correspondence;

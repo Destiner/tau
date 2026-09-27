@@ -77,7 +77,6 @@ test('holds every existing row while new sessions and activity arrive', async ({
   const initialRows = await rowTops(rows);
   const initialProjects = await projectTops(page);
 
-  // Enter through a nested title, as a real pointer does when aiming at a row.
   await page.getByText('Alpha older', { exact: true }).hover();
   await mutateWhileHeld(page);
 

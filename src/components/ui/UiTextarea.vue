@@ -29,7 +29,6 @@ function handleInput(event: Event): void {
   modelValue.value = (event.target as HTMLTextAreaElement).value;
 }
 
-/** The underlying element, for the imperative focus/select callers need. */
 defineExpose({
   get input() {
     return textarea.value;
@@ -62,11 +61,6 @@ defineExpose({
   resize: vertical;
 }
 
-/*
- * `bare` is a body of text with no chrome of its own — the composer, which is
- * the field the app is mostly used through. It gains no border, no hover and no
- * focus ring: the surface around it already says where typing goes.
- */
 .ui-textarea[data-variant='bare'] {
   border: 0;
   background: transparent;

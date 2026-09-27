@@ -13,7 +13,6 @@ interface DiagramBounds extends Size {
   y: number;
 }
 
-/** Screen-space placement of the diagram's natural coordinate system. */
 interface DiagramCamera {
   scale: number;
   tx: number;
@@ -43,7 +42,6 @@ function fitDiagram(bounds: DiagramBounds, viewport: Size): DiagramCamera {
   };
 }
 
-/** Rescales around a fixed screen point, keeping the world point beneath it fixed. */
 function zoomDiagram(
   camera: DiagramCamera,
   point: Point,
@@ -71,7 +69,6 @@ function panDiagram(
   };
 }
 
-/** Keeps the world point at the viewport centre fixed while it changes size. */
 function resizeDiagram(
   camera: DiagramCamera,
   previous: Size,
@@ -84,11 +81,6 @@ function resizeDiagram(
   );
 }
 
-/**
- * Expresses the camera as an SVG viewport. Changing viewBox makes the browser
- * lay out and paint vectors at the requested resolution; unlike a CSS transform,
- * it does not ask the compositor to enlarge a cached layer.
- */
 function cameraViewBox(camera: DiagramCamera, viewport: Size): ViewBox {
   return {
     x: -camera.tx / camera.scale,

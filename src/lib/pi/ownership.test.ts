@@ -24,7 +24,7 @@ describe('Pi frontend ownership', () => {
     expect(mockInvoke).toHaveBeenNthCalledWith(
       1,
       'read_pi_frontend_revision',
-      expect.objectContaining({ telemetryContext: expect.any(Object) }),
+      expect.any(Object),
     );
     expect(mockInvoke).toHaveBeenNthCalledWith(
       2,

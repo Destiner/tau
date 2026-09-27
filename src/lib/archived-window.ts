@@ -1,6 +1,5 @@
 import type { ArchivedGroup } from './archived-groups';
 
-/** A global row budget across expanded groups; collapsed groups cost nothing. */
 function archivedWindow<T>(
   groups: readonly ArchivedGroup<T>[],
   closed: ReadonlySet<string>,

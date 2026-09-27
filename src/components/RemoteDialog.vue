@@ -214,8 +214,6 @@ function scrollSelected(): void {
   gap: 6px;
 }
 
-/* The dialog body is the flex column that spaces these two; this wrapper only
- * groups them for the v-else. */
 .remote-directory-dialog {
   display: contents;
 }

@@ -204,7 +204,6 @@ import UiIconButton from './UiIconButton.vue';
 
 const props = defineProps<
   FilePreviewDescriptor & {
-    /** Persistent control that receives focus after the viewer closes. */
     returnFocus?: () => HTMLElement | undefined;
   }
 >();
@@ -436,7 +435,6 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-/* Over every panel and dialog, matching the fullscreen diagram viewer. */
 :global(.file-viewer) {
   position: fixed;
   z-index: 30;

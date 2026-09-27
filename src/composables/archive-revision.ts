@@ -1,4 +1,3 @@
-// Archive intent is shared by explicit sidebar actions and asynchronous Pi registration.
 const revisions = new Map<string, number>();
 
 function archiveRevision(projectPath: string, sessionId: string): number {

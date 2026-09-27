@@ -17,9 +17,6 @@ const PREFERENCES_FILE: &str = "preferences.json";
 const WRITE_ERROR: &str = "Preferences could not be saved.";
 const MAX_DISMISSED_VERSION_LEN: usize = 128;
 
-/// Tau's persisted preferences. `default` on both the container and its
-/// fields keeps an older or hand-edited file readable: anything missing or
-/// unparsable simply leaves admin mode off, which is the safe direction.
 #[derive(Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 struct Preferences {
@@ -27,9 +24,6 @@ struct Preferences {
     dismissed_update_version: Option<String>,
 }
 
-/// Reads the persisted setting straight from disk. Called before the Tauri
-/// builder exists, so a run starts already knowing whether telemetry may
-/// record anything at all.
 pub fn admin_mode_enabled() -> bool {
     read_admin_mode_in(&resolve_preferences_dir())
 }
@@ -140,47 +134,45 @@ mod tests {
 
         write_admin_mode_in(directory.path(), false).expect("disable admin mode");
         assert!(!read_admin_mode_in(directory.path()));
-    }
 
-    #[test]
-    fn preference_updates_preserve_the_other_setting() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        write_preferences_in(
-            directory.path(),
-            &Preferences {
-                admin_mode: true,
-                dismissed_update_version: Some("2.0.0".into()),
-            },
-        )
-        .expect("write preferences");
+        {
+            let directory = tempfile::tempdir().expect("temporary directory");
+            let path = directory.path().join(PREFERENCES_FILE);
 
-        write_admin_mode_in(directory.path(), false).expect("disable admin mode");
-        let preferences = read_preferences_in(directory.path());
-        assert!(!preferences.admin_mode);
-        assert_eq!(
-            preferences.dismissed_update_version.as_deref(),
-            Some("2.0.0")
-        );
+            fs::write(&path, "{").expect("truncated preferences");
+            assert!(!read_admin_mode_in(directory.path()));
 
-        let mut preferences = read_preferences_in(directory.path());
-        preferences.dismissed_update_version = Some("2.1.0".into());
-        write_preferences_in(directory.path(), &preferences).expect("dismiss update");
-        assert!(!read_admin_mode_in(directory.path()));
-    }
+            fs::write(&path, r#"{"theme":"dark"}"#).expect("unrelated preferences");
+            assert!(!read_admin_mode_in(directory.path()));
 
-    #[test]
-    fn an_unreadable_or_unexpected_preferences_file_leaves_admin_mode_off() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let path = directory.path().join(PREFERENCES_FILE);
+            fs::write(&path, r#"{"adminMode":"yes"}"#).expect("mistyped preferences");
+            assert!(!read_admin_mode_in(directory.path()));
+        }
 
-        fs::write(&path, "{").expect("truncated preferences");
-        assert!(!read_admin_mode_in(directory.path()));
+        {
+            let directory = tempfile::tempdir().expect("temporary directory");
+            write_preferences_in(
+                directory.path(),
+                &Preferences {
+                    admin_mode: true,
+                    dismissed_update_version: Some("2.0.0".into()),
+                },
+            )
+            .expect("write preferences");
 
-        fs::write(&path, r#"{"theme":"dark"}"#).expect("unrelated preferences");
-        assert!(!read_admin_mode_in(directory.path()));
+            write_admin_mode_in(directory.path(), false).expect("disable admin mode");
+            let preferences = read_preferences_in(directory.path());
+            assert!(!preferences.admin_mode);
+            assert_eq!(
+                preferences.dismissed_update_version.as_deref(),
+                Some("2.0.0")
+            );
 
-        fs::write(&path, r#"{"adminMode":"yes"}"#).expect("mistyped preferences");
-        assert!(!read_admin_mode_in(directory.path()));
+            let mut preferences = read_preferences_in(directory.path());
+            preferences.dismissed_update_version = Some("2.1.0".into());
+            write_preferences_in(directory.path(), &preferences).expect("dismiss update");
+            assert!(!read_admin_mode_in(directory.path()));
+        }
     }
 
     #[test]
@@ -189,22 +181,21 @@ mod tests {
             resolve_preferences_dir(),
             profile::current().unwrap().data_dir()
         );
-    }
 
-    #[cfg(unix)]
-    #[test]
-    fn the_preferences_file_is_owner_only() {
-        use std::os::unix::fs::PermissionsExt;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
 
-        let parent = tempfile::tempdir().expect("temporary directory");
-        let directory = parent.path().join("tau");
-        write_admin_mode_in(&directory, true).expect("enable admin mode");
+            let parent = tempfile::tempdir().expect("temporary directory");
+            let directory = parent.path().join("tau");
+            write_admin_mode_in(&directory, true).expect("enable admin mode");
 
-        let mode = fs::metadata(directory.join(PREFERENCES_FILE))
-            .expect("preferences file")
-            .permissions()
-            .mode()
-            & 0o777;
-        assert_eq!(mode, 0o600);
+            let mode = fs::metadata(directory.join(PREFERENCES_FILE))
+                .expect("preferences file")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600);
+        }
     }
 }

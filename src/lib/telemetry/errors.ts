@@ -38,8 +38,6 @@ function locationFromStack(stack: string): string {
   return sanitizeSourceLocation(file ?? '', Number(line), Number(column));
 }
 
-/** Sanitized source location for an unknown thrown/rejected value, or an
- * empty string when none is available. Only ever reads `.stack`. */
 function locationFromValue(value: unknown): string {
   if (value instanceof Error && typeof value.stack === 'string') {
     return locationFromStack(value.stack);

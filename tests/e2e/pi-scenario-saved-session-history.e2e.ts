@@ -35,8 +35,6 @@ test('opens a session that already holds a transcript at its end', async ({
   const transcript = page.getByLabel('Transcript');
   await expect(transcript).toContainText('Reply 11.');
 
-  // The reader arrives at the end of the transcript, on rendered content: a
-  // window drawn from anywhere else leaves blank canvas above its first row.
   expect(await gapAboveFirstRow(page)).toBeLessThanOrEqual(0);
   await expect(
     page.getByText('History prompt 11', { exact: true }),

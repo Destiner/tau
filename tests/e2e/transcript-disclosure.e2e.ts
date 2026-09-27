@@ -125,45 +125,41 @@ test('scrolls an expanded tool call as one payload', async ({ page }) => {
     .toMatch(/RESULT_TAIL_SENTINEL$/);
 });
 
-test('keeps early rows mounted when an underfilled tool run is expanded', async ({
+test('expands an underfilled tool run and restores its geometry after a session switch', async ({
   page,
 }) => {
-  await openCompactTranscript(page);
-  const header = page.locator(`${finalTool} .activity-header`);
+  await test.step('keeps early rows mounted when an underfilled tool run is expanded', async () => {
+    await openCompactTranscript(page);
+    const header = page.locator(`${finalTool} .activity-header`);
+    await header.click();
+    await expect(header).toHaveAttribute('aria-expanded', 'true');
+    await expectWholeTranscript(page);
+    await header.click();
+    await expect(header).toHaveAttribute('aria-expanded', 'false');
+    await expectWholeTranscript(page);
+    await header.click();
+    await expect(header).toHaveAttribute('aria-expanded', 'true');
+    await expectWholeTranscript(page);
+  });
 
-  await header.click();
-  await expect(header).toHaveAttribute('aria-expanded', 'true');
-  await expectWholeTranscript(page);
-
-  await header.click();
-  await expect(header).toHaveAttribute('aria-expanded', 'false');
-  await expectWholeTranscript(page);
-
-  await header.click();
-  await expect(header).toHaveAttribute('aria-expanded', 'true');
-  await expectWholeTranscript(page);
-});
-
-test('does not restore a poisoned offset after switching sessions', async ({
-  page,
-}) => {
-  await openCompactTranscript(page);
-  const header = page.locator(`${finalTool} .activity-header`);
-  await header.click();
-  await expect(header).toHaveAttribute('aria-expanded', 'true');
-
-  await page.evaluate(() =>
-    window.__TAU_TRANSCRIPT_FIXTURE__?.switchSession('elsewhere'),
-  );
-  await expect(page.getByTestId('fixture-session')).toHaveText('elsewhere');
-  await page.evaluate(() =>
-    window.__TAU_TRANSCRIPT_FIXTURE__?.switchSession('main'),
-  );
-  await expect(page.getByTestId('fixture-session')).toHaveText('main');
-
-  await expectWholeTranscript(page);
-  const restoredHeader = page.locator(`${finalTool} .activity-header`);
-  await restoredHeader.click();
-  await expect(restoredHeader).toHaveAttribute('aria-expanded', 'true');
-  await expectWholeTranscript(page);
+  await test.step('does not restore a poisoned offset after switching sessions', async () => {
+    const header = page.locator(`${finalTool} .activity-header`);
+    await header.click();
+    await expect(header).toHaveAttribute('aria-expanded', 'false');
+    await header.click();
+    await expect(header).toHaveAttribute('aria-expanded', 'true');
+    await page.evaluate(() =>
+      window.__TAU_TRANSCRIPT_FIXTURE__?.switchSession('elsewhere'),
+    );
+    await expect(page.getByTestId('fixture-session')).toHaveText('elsewhere');
+    await page.evaluate(() =>
+      window.__TAU_TRANSCRIPT_FIXTURE__?.switchSession('main'),
+    );
+    await expect(page.getByTestId('fixture-session')).toHaveText('main');
+    await expectWholeTranscript(page);
+    const restoredHeader = page.locator(`${finalTool} .activity-header`);
+    await restoredHeader.click();
+    await expect(restoredHeader).toHaveAttribute('aria-expanded', 'true');
+    await expectWholeTranscript(page);
+  });
 });

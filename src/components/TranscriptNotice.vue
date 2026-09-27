@@ -70,10 +70,6 @@ const label = computed(
   --notice-tone: var(--danger);
 }
 
-/*
- * The tone already says what kind of notice this is, so there is no icon: the
- * glyph was a second, smaller voice saying the same word as the label.
- */
 .notice-label {
   overflow: hidden;
   color: var(--notice-tone);

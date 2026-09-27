@@ -84,12 +84,6 @@ Local directory: \`src/components/\`.
 
 ![An image wider than the message column](data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%271200%27%20height%3D%27160%27%3E%3Crect%20width%3D%271200%27%20height%3D%27160%27%20fill%3D%27%236e757f%27%2F%3E%3C%2Fsvg%3E)`;
 
-/*
- * Fenced blocks in the languages the highlighter holds a grammar for, plus the
- * two cases it does not highlight: a language it has no grammar for, and a
- * fence that named none. The label a block wears is the tag as written, which
- * is why one of these is fenced `console` rather than `bash`.
- */
 const codeShowcase = `\`\`\`ts
 export async function load(id: string): Promise<Session | null> {
   // A comment, italic in both schemes

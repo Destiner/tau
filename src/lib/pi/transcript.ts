@@ -15,23 +15,20 @@ interface TranscriptEntry {
     | 'notice'
     | 'compaction';
   text: string;
-  /** Tau rendered this row before Pi confirmed it as session content. */
+
   pending?: boolean;
-  /** Why this row is waiting for its matching live user start event. */
+
   pendingUserEvent?: 'optimistic' | 'hydration';
-  /** Whether activating this compaction boundary can reveal an older layer. */
+
   historyAvailable?: boolean;
-  /** The older layer behind this boundary is currently being requested. */
+
   historyLoading?: boolean;
-  /** Reviewed label for a plain-language error entry. */
+
   errorLabel?: string;
-  /**
-   * Set on the entries Tau owns rather than Pi: how many Pi-owned rows preceded
-   * the entry when it arrived, so a rebuilt transcript can restore it there.
-   */
+
   anchor?: number;
   noticeType?: TranscriptNoticeType;
-  /** Base for file paths in extension notices; absent for remote projects. */
+
   basePath?: string;
   toolCallId?: string;
   toolName?: string;
@@ -43,16 +40,13 @@ interface TranscriptEntry {
   skillPrompt?: string;
 }
 
-/** A failure Pi reported as an event, held with the spot it belongs in. */
 interface LocalError {
-  /** Names the row across rebuilds, and stays unique as runs come and go. */
   key: number;
   label: string;
   text: string;
   anchor?: number;
 }
 
-/** The id a failure keeps whether it is streamed in or merged back. */
 function localErrorId(key: number): string {
   return `local-error-${key}`;
 }
@@ -537,7 +531,6 @@ function parseSkillBlock(text: string): ParsedSkillBlock | undefined {
   };
 }
 
-/** The single line a collapsed tool row shows: whichever argument names the call. */
 function toolSummary(args: unknown): string {
   const record = asRecord(args);
   return (

@@ -496,9 +496,9 @@ function createUpdateService(
       .catch(() => undefined);
 
     const initializationGeneration = operation;
-    // Local state is read asynchronously, but before the network check, so an
+
     // unsupported or dismissed update never briefly appears as a failure or
-    // as available.
+
     void Promise.all([
       dependencies
         .invoke<string | null>('get_dismissed_update_version')
@@ -570,7 +570,7 @@ function createUpdateService(
         version,
       });
     } catch {
-      // Optimistically suppress this run. A later launch may offer it again.
+      // Dismissal is best-effort.
     }
   }
 

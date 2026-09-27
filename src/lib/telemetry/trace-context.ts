@@ -6,12 +6,9 @@
  * src-tauri/src/telemetry/trace_context.rs.
  */
 
-/** A decoded W3C `traceparent` (https://www.w3.org/TR/trace-context/).
- * `tracestate` is out of scope: Tau does not need vendor-specific state. */
 interface TraceContext {
-  /** 32 lowercase hex characters, not all zero. */
   traceId: string;
-  /** 16 lowercase hex characters, not all zero. */
+
   spanId: string;
   sampled: boolean;
 }
@@ -33,7 +30,6 @@ function isNonZeroLowerHex(value: string, expectedLength: number): boolean {
   );
 }
 
-/** Parses a `version-traceId-spanId-flags` traceparent header value. */
 function parseTraceContext(traceparent: string): TraceContextResult {
   const parts = traceparent.split('-');
   if (parts.length !== 4) return { ok: false, error: 'format' };
@@ -59,7 +55,6 @@ function parseTraceContext(traceparent: string): TraceContextResult {
   return { ok: true, context: { traceId, spanId, sampled } };
 }
 
-/** Formats a trace context back into a `traceparent` header value. */
 function formatTraceContext(context: TraceContext): string {
   const flags = context.sampled ? '01' : '00';
   return `00-${context.traceId}-${context.spanId}-${flags}`;

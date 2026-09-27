@@ -10,15 +10,6 @@ import type {
 } from './state';
 import useTau from './useTau';
 
-/*
- * A workflow extension resumes a phase by switching Pi's runtime onto a
- * session that already exists, which Tau may have archived in the meantime.
- * The native double below mirrors `storage.rs`: registration upserts the row
- * and clears `archived` only when Tau adopts the session Pi handed it, and
- * selection rejects a missing or archived row. `revives` turns the native
- * revive off, standing in for a registry that keeps the row archived.
- */
-
 interface SessionRecord {
   id: string;
   path: string;
@@ -283,8 +274,7 @@ describe('a workflow phase Pi hands back', () => {
 
     tau.draft.value = '/implement RHI-6034';
     await tau.sendMessage();
-    // Pi answers with the identity it gave the new session, before the
-    // command switches the runtime onto the phase session.
+
     emitRpc(controller, {
       id: controller.pendingPrompt?.stateRequestId,
       type: 'response',
@@ -340,8 +330,7 @@ describe('a workflow phase Pi hands back', () => {
         'This session could not be saved. Continue here, then try reopening it.',
       );
     });
-    // The registry still hides the row from the project list, but the
-    // archived list now carries the record, so the session stays reachable
+
     // without an emergency ephemeral row.
     expect(visibleSessions(tau).map((session) => session.id)).not.toContain(
       PHASE_SESSION.id,

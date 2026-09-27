@@ -34,10 +34,6 @@ async function pasteField(
   if (text) replaceFieldRange(field, start, end, text);
 }
 
-/**
- * Fields are bound with v-model, so the edit is announced with an input event
- * rather than written to the reactive state each field happens to use.
- */
 function replaceFieldRange(
   field: TextField,
   start: number,
@@ -51,11 +47,6 @@ function replaceFieldRange(
   field.setSelectionRange(caret, caret);
 }
 
-/**
- * The cut/copy/paste menu a text field carries, replacing the webview's. The
- * range is read when the menu opens, while the field still holds it: the menu
- * takes focus next, and the items hand that range back on the way out.
- */
 function textFieldItems(field: () => TextField | undefined): UiMenuItem[] {
   const element = field();
   const start = element?.selectionStart ?? 0;

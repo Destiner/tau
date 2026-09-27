@@ -30,11 +30,8 @@ describe('slash command completion', () => {
     expect(slashCommandQuery('/session\n')).toBeNull();
   });
 
-  it("keeps Pi's command order until a query is entered", () => {
+  it('preserves Pi order until fuzzy filtering ranks matching names', () => {
     expect(filterCommands(commands, '')).toEqual(commands);
-  });
-
-  it('fuzzy matches command names and ranks tighter matches first', () => {
     expect(filterCommands(commands, 'ssn').map(({ name }) => name)).toEqual([
       'session-name',
     ]);
@@ -46,18 +43,12 @@ describe('slash command completion', () => {
     ]);
   });
 
-  it('formats a command for immediate invocation', () => {
+  it('formats and selects commands for completion or submission', () => {
     expect(commandInvocation(commands[0]!)).toBe('/session-name');
-  });
-
-  it('uses Tab to complete any command without submitting', () => {
     expect(commandSelection(commands[0]!, true)).toEqual({
       draft: '/session-name ',
       submit: false,
     });
-  });
-
-  it('immediately invokes selected commands, including skills', () => {
     expect(commandSelection(commands[0]!)).toEqual({
       draft: '/session-name',
       submit: true,
@@ -70,7 +61,6 @@ describe('slash command completion', () => {
 });
 
 describe('command menu placement', () => {
-  // A composer docked at the bottom of a 800px tall window.
   const docked: CommandMenuGeometry = {
     contentHeight: 200,
     composerTop: 660,
@@ -80,15 +70,11 @@ describe('command menu placement', () => {
     bottomBoundary: 800,
   };
 
-  it('opens above the composer when the content fits there', () => {
+  it('places the menu above or below based on available space', () => {
     expect(commandMenuLayout(docked)).toMatchObject({
       placement: 'above',
       maxHeight: 200,
     });
-  });
-
-  it('opens below the draft text when the space above is smaller', () => {
-    // An empty session composer filling the pane below the header.
     const layout = commandMenuLayout({
       ...docked,
       composerTop: 40,
@@ -100,11 +86,11 @@ describe('command menu placement', () => {
     expect(layout.offset).toBe(41);
   });
 
-  it('caps the height at the space it was given', () => {
+  it('caps height and retains a usable minimum in constrained space', () => {
     expect(commandMenuLayout({ ...docked, contentHeight: 900 }).maxHeight).toBe(
       300,
     );
-    // The same composer in a 320px tall window: still above, but shorter.
+
     expect(
       commandMenuLayout({
         ...docked,
@@ -114,9 +100,6 @@ describe('command menu placement', () => {
         bottomBoundary: 320,
       }),
     ).toMatchObject({ placement: 'above', maxHeight: 135 });
-  });
-
-  it('keeps a usable height when neither side has room', () => {
     expect(
       commandMenuLayout({
         ...docked,
