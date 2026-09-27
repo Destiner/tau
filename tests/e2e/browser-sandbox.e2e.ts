@@ -2,23 +2,6 @@ import { expect, test } from './fixtures';
 
 const sandboxUrl = '/';
 
-test('starts the browser sandbox with two projects and five sessions', async ({
-  page,
-}) => {
-  await page.goto(sandboxUrl);
-
-  await expect(page.locator('.project-group')).toHaveCount(2);
-  await expect(page.locator('.session-row')).toHaveCount(5);
-  await expect(
-    page
-      .locator('.session-row', { hasText: 'Workspace overview' })
-      .locator('.session-select'),
-  ).toHaveAttribute('aria-current', 'page');
-  await expect(
-    page.getByText('Give me a quick overview of the Atlas workspace.'),
-  ).toBeVisible();
-});
-
 test('keeps sandbox sidebar widths isolated from browser storage and tabs', async ({
   context,
   page,
@@ -61,6 +44,17 @@ test('replies locally and restores the browser sandbox seed on reload', async ({
   const prompt = 'Confirm browser sandbox reset';
 
   await page.goto(sandboxUrl);
+  await expect(page.locator('.project-group')).toHaveCount(2);
+  await expect(page.locator('.session-row')).toHaveCount(5);
+  await expect(
+    page
+      .locator('.session-row', { hasText: 'Workspace overview' })
+      .locator('.session-select'),
+  ).toHaveAttribute('aria-current', 'page');
+  await expect(
+    page.getByText('Give me a quick overview of the Atlas workspace.'),
+  ).toBeVisible();
+
   const composer = page.getByRole('textbox', { name: 'Message Pi' });
   await expect(composer).toBeEnabled();
   await composer.fill(prompt);
