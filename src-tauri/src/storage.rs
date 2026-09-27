@@ -873,14 +873,6 @@ fn parse_session_file(path: &Path) -> Result<Option<ParsedSession>, String> {
         File::open(path).map_err(|error| format!("Could not read a saved Pi session: {error}"))?;
     let mut reader = BufReader::new(file);
     let mut bytes = Vec::new();
-    let mut parsed = ParsedSession {
-        id: String::new(),
-        name: String::new(),
-        model: String::new(),
-        first_message: String::new(),
-        first_agent_message_at: 0,
-        last_user_message_at: 0,
-    };
     let count = reader
         .read_until(b'\n', &mut bytes)
         .map_err(|error| format!("Could not read a saved Pi session: {error}"))?;
@@ -900,7 +892,14 @@ fn parse_session_file(path: &Path) -> Result<Option<ParsedSession>, String> {
     else {
         return Ok(None);
     };
-    parsed.id = id.to_string();
+    let mut parsed = ParsedSession {
+        id: id.to_string(),
+        name: String::new(),
+        model: String::new(),
+        first_message: String::new(),
+        first_agent_message_at: 0,
+        last_user_message_at: 0,
+    };
     loop {
         bytes.clear();
         let count = reader
