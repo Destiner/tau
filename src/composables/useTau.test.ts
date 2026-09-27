@@ -33,18 +33,51 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(async (command: string) => {
-    if (command === 'read_pi_frontend_revision') return 0;
-    if (command === 'claim_pi_frontend') return undefined;
-    if (command.startsWith('start_pi')) {
-      mocks.generation += 1;
-      return mocks.generation;
-    }
-    if (command.endsWith('model_scope')) {
-      return mocks.modelScope;
-    }
-    return mocks.workspace;
-  }),
+  invoke: vi.fn(
+    async (
+      command: string,
+      args?: { sessionId?: string; projectPath?: string; path?: string },
+    ) => {
+      if (command === 'read_pi_frontend_revision') return 0;
+      if (command === 'claim_pi_frontend') return undefined;
+      if (command.startsWith('start_pi')) {
+        mocks.generation += 1;
+        return mocks.generation;
+      }
+      if (command.endsWith('model_scope')) {
+        return mocks.modelScope;
+      }
+      if (command === 'import_project' || command === 'import_remote_project') {
+        return (
+          mocks.workspace?.projects.find(
+            (project) => project.path === args?.path,
+          ) ?? mocks.workspace?.projects[0]
+        );
+      }
+      if (command === 'register_session') {
+        return (
+          mocks.workspace?.projects
+            .find((project) => project.path === args?.projectPath)
+            ?.sessions.find((session) => session.id === args?.sessionId) ?? null
+        );
+      }
+      if (command === 'archive_session' || command === 'unarchive_session') {
+        const project = mocks.workspace?.projects.find(
+          (project) => project.path === args?.projectPath,
+        );
+        const session = project?.sessions.find(
+          (session) => session.id === args?.sessionId,
+        );
+        if (session) session.archived = command === 'archive_session';
+        return {
+          sessionId: args?.sessionId,
+          archived: command === 'archive_session',
+          activeSessionId: '',
+        };
+      }
+      return mocks.workspace;
+    },
+  ),
 }));
 
 vi.mock('@tauri-apps/api/event', () => ({

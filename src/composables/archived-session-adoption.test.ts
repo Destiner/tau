@@ -95,12 +95,16 @@ vi.mock('@tauri-apps/api/core', () => ({
           name: name || 'New Session',
           archived: false,
         });
-        return snapshot();
+        return snapshot().projects[0]?.sessions.find(
+          (session) => session.id === id,
+        );
       }
       record.path = args?.sessionPath as string;
       if (name) record.name = name;
       if (args?.adopted === true && mocks.revives) record.archived = false;
-      return snapshot();
+      return snapshot().projects[0]?.sessions.find(
+        (session) => session.id === id,
+      );
     }
     if (command === 'set_active_session') {
       const id = args?.sessionId as string;

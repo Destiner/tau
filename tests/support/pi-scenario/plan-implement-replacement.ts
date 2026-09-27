@@ -84,6 +84,12 @@ const planImplementReplacement = definePiScenario({
     {
       kind: 'request',
       runtime,
+      capture: 'bootstrap-messages',
+      match: { type: 'get_messages' },
+    },
+    {
+      kind: 'request',
+      runtime,
       capture: 'bootstrap-efforts',
       match: { type: 'get_available_thinking_levels' },
     },
@@ -92,12 +98,6 @@ const planImplementReplacement = definePiScenario({
       request: 'bootstrap-efforts',
       command: 'get_available_thinking_levels',
       data: { levels: fixtureThinkingLevels },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'bootstrap-messages',
-      match: { type: 'get_messages' },
     },
     {
       kind: 'response',
@@ -124,6 +124,12 @@ const planImplementReplacement = definePiScenario({
       request: 'plan-identity',
       command: 'get_state',
       data: { ...planState, isStreaming: true },
+    },
+    {
+      kind: 'request',
+      runtime,
+      capture: 'plan-messages',
+      match: { type: 'get_messages' },
     },
     {
       kind: 'request',
@@ -160,12 +166,6 @@ const planImplementReplacement = definePiScenario({
       request: 'plan-efforts',
       command: 'get_available_thinking_levels',
       data: { levels: fixtureThinkingLevels },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'plan-messages',
-      match: { type: 'get_messages' },
     },
     { kind: 'event', runtime, event: { type: 'agent_start' } },
     {
@@ -263,6 +263,12 @@ const planImplementReplacement = definePiScenario({
     {
       kind: 'request',
       runtime,
+      capture: 'plan-settled-messages',
+      match: { type: 'get_messages' },
+    },
+    {
+      kind: 'request',
+      runtime,
       capture: 'plan-settled-efforts',
       match: { type: 'get_available_thinking_levels' },
     },
@@ -271,12 +277,6 @@ const planImplementReplacement = definePiScenario({
       request: 'plan-settled-efforts',
       command: 'get_available_thinking_levels',
       data: { levels: fixtureThinkingLevels },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'plan-settled-messages',
-      match: { type: 'get_messages' },
     },
     {
       kind: 'request',
@@ -319,6 +319,12 @@ const planImplementReplacement = definePiScenario({
     {
       kind: 'request',
       runtime,
+      capture: 'implement-messages',
+      match: { type: 'get_messages' },
+    },
+    {
+      kind: 'request',
+      runtime,
       capture: 'implement-models',
       match: { type: 'get_available_models' },
     },
@@ -351,12 +357,6 @@ const planImplementReplacement = definePiScenario({
       request: 'implement-efforts',
       command: 'get_available_thinking_levels',
       data: { levels: fixtureThinkingLevels },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'implement-messages',
-      match: { type: 'get_messages' },
     },
     {
       kind: 'response',
@@ -420,6 +420,12 @@ const planImplementReplacement = definePiScenario({
     {
       kind: 'request',
       runtime: 'reopened-plan',
+      capture: 'reopened-plan-messages',
+      match: { type: 'get_messages' },
+    },
+    {
+      kind: 'request',
+      runtime: 'reopened-plan',
       capture: 'reopened-plan-efforts',
       match: { type: 'get_available_thinking_levels' },
     },
@@ -428,12 +434,6 @@ const planImplementReplacement = definePiScenario({
       request: 'reopened-plan-efforts',
       command: 'get_available_thinking_levels',
       data: { levels: fixtureThinkingLevels },
-    },
-    {
-      kind: 'request',
-      runtime: 'reopened-plan',
-      capture: 'reopened-plan-messages',
-      match: { type: 'get_messages' },
     },
     {
       kind: 'response',

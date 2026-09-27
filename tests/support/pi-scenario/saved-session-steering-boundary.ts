@@ -213,6 +213,12 @@ const savedSessionSteeringBoundary = definePiScenario({
     {
       kind: 'request',
       runtime,
+      capture: 'first-follow-up-messages',
+      match: { type: 'get_messages' },
+    },
+    {
+      kind: 'request',
+      runtime,
       capture: 'first-follow-up-efforts',
       match: { type: 'get_available_thinking_levels' },
     },
@@ -221,12 +227,6 @@ const savedSessionSteeringBoundary = definePiScenario({
       request: 'first-follow-up-efforts',
       command: 'get_available_thinking_levels',
       data: { levels: fixtureThinkingLevels },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'first-follow-up-messages',
-      match: { type: 'get_messages' },
     },
     {
       kind: 'response',
@@ -293,6 +293,12 @@ const savedSessionSteeringBoundary = definePiScenario({
     {
       kind: 'request',
       runtime,
+      capture: 'second-follow-up-messages',
+      match: { type: 'get_messages' },
+    },
+    {
+      kind: 'request',
+      runtime,
       capture: 'second-follow-up-efforts',
       match: { type: 'get_available_thinking_levels' },
     },
@@ -301,12 +307,6 @@ const savedSessionSteeringBoundary = definePiScenario({
       request: 'second-follow-up-efforts',
       command: 'get_available_thinking_levels',
       data: { levels: fixtureThinkingLevels },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'second-follow-up-messages',
-      match: { type: 'get_messages' },
     },
     {
       kind: 'response',

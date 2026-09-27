@@ -81,16 +81,16 @@ const phantomCommandOnly = definePiScenario({
       match: { type: 'get_available_thinking_levels' },
     },
     {
-      kind: 'response',
-      request: 'phantom-efforts',
-      command: 'get_available_thinking_levels',
-      data: { levels: fixtureThinkingLevels },
-    },
-    {
       kind: 'request',
       runtime: 'phantom',
       capture: 'phantom-messages',
       match: { type: 'get_messages' },
+    },
+    {
+      kind: 'response',
+      request: 'phantom-efforts',
+      command: 'get_available_thinking_levels',
+      data: { levels: fixtureThinkingLevels },
     },
     {
       kind: 'response',
@@ -131,6 +131,12 @@ const phantomCommandOnly = definePiScenario({
     {
       kind: 'request',
       runtime: 'phantom',
+      capture: 'command-messages',
+      match: { type: 'get_messages' },
+    },
+    {
+      kind: 'request',
+      runtime: 'phantom',
       capture: 'command-efforts',
       match: { type: 'get_available_thinking_levels' },
     },
@@ -139,12 +145,6 @@ const phantomCommandOnly = definePiScenario({
       request: 'command-efforts',
       command: 'get_available_thinking_levels',
       data: { levels: fixtureThinkingLevels },
-    },
-    {
-      kind: 'request',
-      runtime: 'phantom',
-      capture: 'command-messages',
-      match: { type: 'get_messages' },
     },
     {
       kind: 'response',

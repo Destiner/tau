@@ -77,6 +77,12 @@ const savedSessionUnacknowledgedAbort = definePiScenario({
     {
       kind: 'request',
       runtime,
+      capture: 'abort-messages',
+      match: { type: 'get_messages' },
+    },
+    {
+      kind: 'request',
+      runtime,
       capture: 'abort-efforts',
       match: { type: 'get_available_thinking_levels' },
     },
@@ -85,12 +91,6 @@ const savedSessionUnacknowledgedAbort = definePiScenario({
       request: 'abort-efforts',
       command: 'get_available_thinking_levels',
       data: { levels: fixtureThinkingLevels },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'abort-messages',
-      match: { type: 'get_messages' },
     },
     {
       kind: 'response',

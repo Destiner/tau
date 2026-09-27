@@ -42,8 +42,8 @@ import {
   type ExtensionDialog,
   type ExtensionDialogMethod,
   type ProjectSummary,
+  type SessionSummary,
   type SessionController,
-  type WorkspaceSnapshot,
 } from '../../composables/state';
 import type { CommandOption } from '../commands';
 import { errorCopy, rpcFailureCopy } from '../error-copy';
@@ -2777,6 +2777,19 @@ async function handleResponse(
     // probe only reports on it. A run that did stop falls through and syncs.
     if (resolvesAbortProbe && controller.streaming && !sessionChanged) return;
 
+    const messagesRequestId = nextRequestId('messages');
+    if (controller.postSettlementHydration && !nowStreaming) {
+      controller.materializationMessagesRequestId = messagesRequestId;
+    }
+    if (resolvesAdmissionState && controller.submittedPrompt) {
+      controller.submittedPrompt.admissionMessagesRequestId = messagesRequestId;
+    }
+    if (resolvesBootstrap) {
+      controller.startMessagesRequestId = messagesRequestId;
+      controller.bootstrapStateRequestId = '';
+    }
+    await rpc(controller, { id: messagesRequestId, type: 'get_messages' });
+    if (!controllerIdentityMatches(controller, synchronizedIdentity)) return;
     if (sessionChanged) {
       await rpc(controller, {
         id: nextRequestId('replacement-models'),
@@ -2789,24 +2802,10 @@ async function handleResponse(
       });
       if (!controllerIdentityMatches(controller, synchronizedIdentity)) return;
     }
-
-    const messagesRequestId = nextRequestId('messages');
-    if (controller.postSettlementHydration && !nowStreaming) {
-      controller.materializationMessagesRequestId = messagesRequestId;
-    }
-    if (resolvesAdmissionState && controller.submittedPrompt) {
-      controller.submittedPrompt.admissionMessagesRequestId = messagesRequestId;
-    }
-    if (resolvesBootstrap) {
-      controller.startMessagesRequestId = messagesRequestId;
-      controller.bootstrapStateRequestId = '';
-    }
     await rpc(controller, {
       id: nextRequestId('efforts'),
       type: 'get_available_thinking_levels',
     });
-    if (!controllerIdentityMatches(controller, synchronizedIdentity)) return;
-    await rpc(controller, { id: messagesRequestId, type: 'get_messages' });
     return;
   }
 
@@ -3631,8 +3630,45 @@ interface RegistrationMutation {
 const latestSessionRegistrationMutations = new Map<string, symbol>();
 const sessionRegistrationFlights = new Map<
   string,
-  Promise<WorkspaceSnapshot>
+  Promise<SessionSummary | null>
 >();
+
+function mergeRegisteredSession(
+  projectPath: string,
+  session: SessionSummary | null,
+): boolean {
+  if (!session) return false;
+  const project = state.workspace?.projects.find(
+    (entry) => entry.path === projectPath,
+  );
+  if (!project) return false;
+  const index = project.sessions.findIndex((entry) => entry.id === session.id);
+  // Registration only owns this row, never the other projects, sessions or
+  // selection changes that may have happened while the native call was pending.
+  const row = {
+    ...session,
+    selected: project.selected && state.activeSessionId === session.id,
+  };
+  if (index < 0) project.sessions.push(row);
+  else project.sessions.splice(index, 1, row);
+  return true;
+}
+
+let selectionWrite: Promise<void> = Promise.resolve();
+function persistSelection(
+  command: 'set_active_project' | 'set_active_session',
+  args: { path: string } | { projectPath: string; sessionId: string },
+  parentContext?: TraceContext,
+  current: () => boolean = () => true,
+): Promise<void> {
+  const write = selectionWrite
+    .catch(() => undefined)
+    .then(async () => {
+      if (current()) await invokeTraced<void>(command, args, parentContext);
+    });
+  selectionWrite = write.catch(() => undefined);
+  return write;
+}
 
 function registrationIdentityKey(identity: ConnectedSessionIdentity): string {
   return [
@@ -3693,15 +3729,14 @@ async function registerMaterializedPredecessor(
 ): Promise<boolean> {
   const mutation = beginRegistrationMutation(identity);
   try {
-    const workspace = await registerSession(identity, true);
+    const session = await registerSession(identity, true);
     if (
       !controllerIdentityMatches(controller, identity) ||
       !registrationMutationIsCurrent(mutation)
     ) {
       return false;
     }
-    state.workspace = workspace;
-    if (workspaceContainsSession(controller)) return true;
+    if (mergeRegisteredSession(identity.projectPath, session)) return true;
     return failPredecessorRegistration(controller);
   } catch {
     return failPredecessorRegistration(controller);
@@ -3718,8 +3753,8 @@ async function registerConnectedSession(
   // reachable, even when Tau had archived it before Pi handed it back.
   adopted = false,
   // Set when the caller holds no materialization proof and is using the
-  // registration itself as the probe. Pi's snapshot lists the session only
-  // when a session file backs it, so the answer comes back either way.
+  // registration itself as the probe. Local Pi returns a row only when a
+  // session file backs it, so the answer comes back either way.
   probeMaterialization = false,
 ): Promise<void> {
   if (!probeMaterialization && !canRegisterConnectedSession(controller)) return;
@@ -3731,27 +3766,25 @@ async function registerConnectedSession(
   if (!identityHolds()) return;
   const mutation = beginRegistrationMutation(identity);
   try {
-    const workspace = await registerSession(identity, adopted, parentContext);
+    const session = await registerSession(identity, adopted, parentContext);
     if (!identityHolds() || !registrationMutationIsCurrent(mutation)) {
       return;
     }
-    state.workspace = workspace;
-    if (workspaceContainsSession(controller)) {
-      removeRegisteredEphemeralSession(controller);
-    }
-    if (!isControllerSelected(controller)) return;
+    if (!mergeRegisteredSession(identity.projectPath, session)) return;
+    removeRegisteredEphemeralSession(controller);
+    if (
+      !isControllerSelected(controller) ||
+      (session?.selected && state.activeProjectPath === identity.projectPath)
+    )
+      return;
     state.activeSessionId = identity.sessionId;
     state.activeSessionPath = identity.sessionPath;
-    const selectedWorkspace = await selectRegisteredSession(
+    await selectRegisteredSession(
       controller,
       identity,
       mutation,
       parentContext,
     );
-    if (!identityHolds() || !registrationMutationIsCurrent(mutation)) {
-      return;
-    }
-    state.workspace = selectedWorkspace;
   } catch (error) {
     if (error === staleRegistration) return;
     setControllerError(controller, errorCopy.sessionRegistration);
@@ -3764,12 +3797,12 @@ function registerSession(
   identity: ConnectedSessionIdentity,
   adopted: boolean,
   parentContext?: TraceContext,
-): Promise<WorkspaceSnapshot> {
+): Promise<SessionSummary | null> {
   const key = registrationFlightKey(identity, adopted);
   const existing = sessionRegistrationFlights.get(key);
   if (existing) return existing;
 
-  const registration = invokeTraced<WorkspaceSnapshot>(
+  const registration = invokeTraced<SessionSummary | null>(
     'register_session',
     {
       projectPath: identity.projectPath,
@@ -3800,37 +3833,35 @@ async function selectRegisteredSession(
   identity: ConnectedSessionIdentity,
   mutation: RegistrationMutation,
   parentContext?: TraceContext,
-): Promise<WorkspaceSnapshot> {
+): Promise<void> {
   const selectionIsCurrent = (): boolean =>
     connectedSessionIdentityMatches(controller, identity) &&
+    isControllerSelected(controller) &&
     registrationMutationIsCurrent(mutation);
-  const select = (): Promise<WorkspaceSnapshot> => {
+  const select = (): Promise<void> => {
     if (!selectionIsCurrent()) {
       throw staleRegistration;
     }
-    return invokeTraced<WorkspaceSnapshot>(
+    return persistSelection(
       'set_active_session',
-      {
-        projectPath: identity.projectPath,
-        sessionId: identity.sessionId,
-      },
+      { projectPath: identity.projectPath, sessionId: identity.sessionId },
       parentContext,
+      selectionIsCurrent,
     );
   };
   try {
-    const workspace = await select();
+    await select();
     if (!selectionIsCurrent()) throw staleRegistration;
-    return workspace;
   } catch (error) {
     if (error === staleRegistration || !selectionIsCurrent()) {
       throw staleRegistration;
     }
-    const workspace = await registerSession(identity, true, parentContext);
+    const session = await registerSession(identity, true, parentContext);
     if (!selectionIsCurrent()) throw staleRegistration;
-    state.workspace = workspace;
-    const selectedWorkspace = await select();
+    if (!mergeRegisteredSession(identity.projectPath, session))
+      throw staleRegistration;
+    await select();
     if (!selectionIsCurrent()) throw staleRegistration;
-    return selectedWorkspace;
   }
 }
 
@@ -3839,7 +3870,7 @@ async function persistExpandedProject(
   parentContext?: TraceContext,
 ): Promise<void> {
   try {
-    state.workspace = await invokeTraced<WorkspaceSnapshot>(
+    await invokeTraced<void>(
       'set_project_collapsed',
       { path: projectPath, collapsed: false },
       parentContext,
@@ -3856,13 +3887,13 @@ async function persistProjectSelection(
 ): Promise<void> {
   try {
     if (!workspaceContainsSession(controller)) {
-      state.workspace = await invokeTraced<WorkspaceSnapshot>(
+      await persistSelection(
         'set_active_project',
         { path: projectPath },
         parentContext,
       );
     } else {
-      state.workspace = await invokeTraced<WorkspaceSnapshot>(
+      await persistSelection(
         'set_active_session',
         { projectPath, sessionId: controller.sessionId },
         parentContext,
@@ -4140,10 +4171,28 @@ async function retireUnsavedSession(
   const staleSessionId = controller.sessionId;
   if (workspaceContainsSession(controller)) {
     try {
-      state.workspace = await invokeTraced<WorkspaceSnapshot>(
-        'archive_session',
-        { projectPath: controller.projectPath, sessionId: staleSessionId },
+      const result = await invokeTraced<{
+        sessionId: string;
+        archived: boolean;
+        activeSessionId: string;
+      }>('archive_session', {
+        projectPath: controller.projectPath,
+        sessionId: staleSessionId,
+      });
+      const project = state.workspace?.projects.find(
+        (entry) => entry.path === controller.projectPath,
       );
+      const row = project?.sessions.find(
+        (entry) => entry.id === staleSessionId,
+      );
+      if (row && result.sessionId === staleSessionId) {
+        row.archived = result.archived;
+      }
+      if (project) {
+        for (const entry of project.sessions) {
+          entry.selected = entry.id === result.activeSessionId;
+        }
+      }
     } catch {
       // A row Tau cannot retire is still worth replacing with a session that
       // works, and the message below says why it is there.
@@ -4310,8 +4359,8 @@ async function discardReleasedEmptySession(
   // Tau losing its runtime before it could verify materialization is not
   // evidence that Pi has no file for this session: a run that streamed for an
   // hour without settling never verifies. Register to find out, because the
-  // snapshot that comes back lists the session only when a file backs it, so a
-  // real session is adopted here and an unwritten one still falls through.
+  // returned row exists only when a file backs it, so a real session is
+  // adopted here and an unwritten one still falls through.
   if (
     controller.sessionId &&
     controller.sessionPath &&

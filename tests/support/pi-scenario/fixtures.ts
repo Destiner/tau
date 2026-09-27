@@ -75,6 +75,12 @@ function successfulBootstrapSteps(
     {
       kind: 'request',
       runtime,
+      capture: `${capturePrefix}-messages`,
+      match: { type: 'get_messages' },
+    },
+    {
+      kind: 'request',
+      runtime,
       capture: `${capturePrefix}-efforts`,
       match: { type: 'get_available_thinking_levels' },
     },
@@ -83,12 +89,6 @@ function successfulBootstrapSteps(
       request: `${capturePrefix}-efforts`,
       command: 'get_available_thinking_levels',
       data: { levels: fixtureThinkingLevels },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: `${capturePrefix}-messages`,
-      match: { type: 'get_messages' },
     },
     {
       kind: 'response',

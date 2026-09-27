@@ -99,11 +99,6 @@ const PLAN_SESSION = {
   path: `${PROJECT_PATH}/session-plan.jsonl`,
   name: 'docs · RHI-6267 · Plan',
 };
-const IMPLEMENT_SESSION = {
-  id: 'session-implement',
-  path: `${PROJECT_PATH}/session-implement.jsonl`,
-  name: 'docs · RHI-6267 · Implement',
-};
 const COMMAND_SESSION = {
   id: 'session-mcp',
   path: `${PROJECT_PATH}/session-mcp.jsonl`,
@@ -525,6 +520,11 @@ function installPiScenarioAdapter(scenarioName: string): void {
         requireBoundRuntime(runtimeId, boundRuntimeIds, command);
         return null;
       }
+      if (command === 'read_saved_transcript') {
+        // Scenario fixtures exercise RPC hydration unless they explicitly
+        // provide a saved-content transport.
+        return { messages: null };
+      }
       if (command === 'register_session') {
         const invocation = count(command);
         const expected =
@@ -554,7 +554,12 @@ function installPiScenarioAdapter(scenarioName: string): void {
         } else if (expected.id === FIRST_PROMPT_SESSION.id) {
           workspace = upsertSessionWorkspace(workspace, FIRST_PROMPT_SESSION);
         }
-        return structuredClone(workspace);
+        return structuredClone(
+          workspace.projects
+            .find((project) => project.path === value.projectPath)
+            ?.sessions.find((session) => session.id === value.sessionId) ??
+            null,
+        );
       }
       if (command === 'set_active_project') {
         count(command);
@@ -564,46 +569,32 @@ function installPiScenarioAdapter(scenarioName: string): void {
           'set_active_project.path',
         );
         selectWorkspaceSession(workspace, '');
-        return structuredClone(workspace);
+        return null;
       }
       if (command === 'set_active_session') {
-        const invocation = count(command);
-        let expected: NativeSessionIdentity;
-        if (
-          scenarioName === 'phantom-command-registration' ||
-          scenarioName === 'phantom-first-prompt-registration'
-        ) {
-          expected =
-            [MAIN_SESSION, COMMAND_SESSION, FIRST_PROMPT_SESSION].find(
-              (session) => session.id === args.sessionId,
-            ) ?? MAIN_SESSION;
-        } else if (
-          scenarioName === 'saved-session-command-replacement' ||
-          scenarioName === 'plan-implement-replacement'
-        ) {
-          const requested = [
-            MAIN_SESSION,
-            BACKUP_SESSION,
-            REPLACEMENT_SESSION,
-            PLAN_SESSION,
-            IMPLEMENT_SESSION,
-          ].find((session) => session.id === args.sessionId);
-          if (!requested) {
-            throw new Error('set_active_session used an unknown session.');
-          }
-          expected = requested;
-        } else {
-          expected = expectedNativeSession(scenarioName, command, invocation);
+        count(command);
+        // Optimistic navigation coalesces superseded selections and no longer
+        // reselects every registration. Validate the selected identity against
+        // the current registry instead of a historical call index.
+        const requested = workspace.projects
+          .flatMap((project) => project.sessions)
+          .find((session) => session.id === args.sessionId);
+        if (!requested) {
+          throw new Error('set_active_session used an unknown session.');
         }
-        const value = setActiveSessionArgs(args, expected);
+        const value = setActiveSessionArgs(args, {
+          id: requested.id,
+          path: requested.path,
+          name: requested.title,
+        });
         const registered = workspace.projects
           .find((project) => project.path === value.projectPath)
           ?.sessions.some((session) => session.id === value.sessionId);
         if (!registered) {
           throw new Error('set_active_session used an unknown session.');
         }
-        selectWorkspaceSession(workspace, expected.id);
-        return structuredClone(workspace);
+        selectWorkspaceSession(workspace, value.sessionId);
+        return null;
       }
       if (command === 'unarchive_session') {
         count(command);
@@ -615,7 +606,14 @@ function installPiScenarioAdapter(scenarioName: string): void {
           throw new Error(`Unarchived unknown session ${sessionId}.`);
         }
         session.archived = false;
-        return structuredClone(workspace);
+        return {
+          sessionId,
+          archived: false,
+          activeSessionId:
+            workspace.projects
+              .find((project) => project.path === PROJECT_PATH)
+              ?.sessions.find((candidate) => candidate.selected)?.id ?? '',
+        };
       }
       // Admin mode has no scenario state: a scenario always starts in the
       // default off, and a test that types the cheat code drives the
@@ -677,7 +675,12 @@ function installPiScenarioAdapter(scenarioName: string): void {
         ],
       )) {
         const actual = nativeCounts.get(command) ?? 0;
-        if (actual !== expected) {
+        // Selection is persisted on navigation and registration only when it
+        // changes; older scenarios counted redundant reselections as well.
+        if (
+          (command === 'set_active_session' && actual > expected) ||
+          (command !== 'set_active_session' && actual !== expected)
+        ) {
           throw new Error(
             `${command} invocation count: expected ${expected}, received ${actual}.`,
           );

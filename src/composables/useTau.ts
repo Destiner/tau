@@ -1,6 +1,7 @@
+import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
-import { computed } from 'vue';
+import { computed, nextTick } from 'vue';
 
 import { errorCopy } from '../lib/error-copy';
 import type { PiBridgeEvent } from '../lib/pi/bridge';
@@ -40,9 +41,11 @@ import {
   watchAbort,
   watchSettingRequest,
 } from '../lib/pi/runtime';
+import { hydrateTranscript } from '../lib/pi/transcript';
 import {
   invokeTraced,
   startActionSpan,
+  startActionMilestones,
   type TelemetryScope,
 } from '../lib/telemetry';
 
@@ -140,6 +143,86 @@ interface InitializationOperation {
 let unlisten: UnlistenFn | undefined;
 let initialization: InitializationOperation | undefined;
 let lifecycle = 0;
+
+// Serialize workspace writes without making navigation wait for disk I/O.
+let workspaceWrite: Promise<void> = Promise.resolve();
+function mergeImportedProject(project: ProjectSummary): void {
+  const workspace = state.workspace;
+  if (!workspace) return;
+  const index = workspace.projects.findIndex(
+    (item) => item.path === project.path,
+  );
+  if (index < 0) workspace.projects.push(project);
+  else workspace.projects.splice(index, 1, project);
+  if (project.selected) {
+    workspace.activeProjectPath = project.path;
+    for (const item of workspace.projects)
+      item.selected = item.path === project.path;
+  }
+}
+
+function writeWorkspace(
+  command:
+    | 'set_project_collapsed'
+    | 'reorder_projects'
+    | 'remove_project'
+    | 'archive_session'
+    | 'unarchive_session',
+  args: Record<string, unknown>,
+): Promise<void> {
+  const write = workspaceWrite
+    .catch(() => undefined)
+    .then(() => invokeTraced<void>(command, args));
+  workspaceWrite = write.catch(() => undefined);
+  return write;
+}
+
+interface SavedTranscript {
+  messages: unknown[] | null;
+}
+
+const previewNavigation = new WeakMap<SessionController, number>();
+function readSavedSession(
+  project: ProjectSummary,
+  session: SessionSummary,
+  controller: SessionController,
+): void {
+  if (!session.path || controller.messagesLoaded || controller.messages.length)
+    return;
+  const navigation = lifecycle;
+  const activation = (previewNavigation.get(controller) ?? 0) + 1;
+  previewNavigation.set(controller, activation);
+  const generation = controller.generation;
+  const streamSequence = controller.streamSequence;
+  const hydrationSequence = controller.messagesHydrationSequence;
+  void invoke<SavedTranscript>('read_saved_transcript', {
+    projectPath: project.path,
+    sessionId: session.id,
+    sessionPath: session.path,
+  })
+    .then(({ messages }) => {
+      if (
+        !Array.isArray(messages) ||
+        navigation !== lifecycle ||
+        previewNavigation.get(controller) !== activation ||
+        controller.disposed ||
+        (generation !== 0 && controller.generation !== generation) ||
+        controller.streamSequence !== streamSequence ||
+        controller.messagesHydrationSequence !== hydrationSequence ||
+        controller.messagesLoaded ||
+        controller.messages.length > 0 ||
+        controller.streaming ||
+        state.activeControllerKey !== controller.key ||
+        state.activeSessionId !== session.id ||
+        state.activeProjectPath !== project.path
+      )
+        return;
+      controller.messages = hydrateTranscript(messages, controller.messages);
+      controller.savedContentLoaded = true;
+      // A verified empty file is not proof that the Pi runtime is ready.
+    })
+    .catch(() => undefined);
+}
 
 function controllerTelemetryScope(
   controller: SessionController | undefined,
@@ -264,6 +347,7 @@ function useTau() {
           setControllerError(controller, errorCopy.piNotFound);
           return;
         }
+        readSavedSession(selectedProject, selectedSession, controller);
         await startController(
           controller,
           selectedProject,
@@ -330,15 +414,21 @@ function useTau() {
     }
     if (!selection) return;
     try {
-      state.workspace = await invokeTraced<WorkspaceSnapshot>(
-        'import_project',
-        { path: selection },
+      mergeImportedProject(
+        await invokeTraced<ProjectSummary>('import_project', {
+          path: selection,
+        }),
       );
+      if (state.workspace && !state.workspace.piPath) {
+        state.workspace.piPath = (
+          await invokeTraced<WorkspaceSnapshot>('load_workspace', {})
+        ).piPath;
+      }
       if (!state.activeProjectPath) {
-        state.activeProjectPath = state.workspace.activeProjectPath;
+        state.activeProjectPath = state.workspace?.activeProjectPath ?? '';
       }
       if (!state.activeSessionId) {
-        const selectedProject = state.workspace.projects.find(
+        const selectedProject = state.workspace?.projects.find(
           (project) => project.selected,
         );
         if (selectedProject) {
@@ -427,16 +517,15 @@ function useTau() {
     state.remoteConnectionError = '';
     try {
       if (choice === 'select') {
-        state.workspace = await invokeTraced<WorkspaceSnapshot>(
-          'import_remote_project',
-          {
+        mergeImportedProject(
+          await invokeTraced<ProjectSummary>('import_remote_project', {
             connectionString: state.remoteConnectionString,
             workingDirectory: state.remoteWorkingDirectory,
             host: state.remoteDirectoryHost,
-          },
+          }),
         );
         if (!state.activeProjectPath) {
-          state.activeProjectPath = state.workspace.activeProjectPath;
+          state.activeProjectPath = state.workspace?.activeProjectPath ?? '';
         }
         state.remoteDialogOpen = false;
         clearRemoteDirectoryBrowser();
@@ -492,12 +581,15 @@ function useTau() {
 
   async function toggleProject(project: ProjectSummary): Promise<void> {
     if (projectActionsDisabled.value) return;
+    const collapsed = !project.collapsed;
+    project.collapsed = collapsed;
     try {
-      state.workspace = await invokeTraced<WorkspaceSnapshot>(
-        'set_project_collapsed',
-        { path: project.path, collapsed: !project.collapsed },
-      );
+      await writeWorkspace('set_project_collapsed', {
+        path: project.path,
+        collapsed,
+      });
     } catch {
+      if (project.collapsed === collapsed) project.collapsed = !collapsed;
       setWorkspaceError(errorCopy.sidebarChange);
     }
   }
@@ -526,12 +618,11 @@ function useTau() {
     state.workspace = { ...workspace, projects };
 
     try {
-      state.workspace = await invokeTraced<WorkspaceSnapshot>(
-        'reorder_projects',
-        { projectPaths: projects.map((candidate) => candidate.path) },
-      );
+      await writeWorkspace('reorder_projects', {
+        projectPaths: projects.map((candidate) => candidate.path),
+      });
     } catch {
-      state.workspace = workspace;
+      if (state.workspace?.projects === projects) state.workspace = workspace;
       setWorkspaceError(errorCopy.projectOrder);
     }
   }
@@ -545,16 +636,20 @@ function useTau() {
 
     try {
       const removingActiveView = project.path === state.activeProjectPath;
-      const workspace = await invokeTraced<WorkspaceSnapshot>(
-        'remove_project',
-        { path: project.path },
-      );
-      state.workspace = workspace;
+      await writeWorkspace('remove_project', { path: project.path });
+      const currentWorkspace = state.workspace;
+      if (currentWorkspace) {
+        currentWorkspace.projects = currentWorkspace.projects.filter(
+          (candidate) => candidate.path !== project.path,
+        );
+        if (currentWorkspace.activeProjectPath === project.path)
+          currentWorkspace.activeProjectPath = '';
+      }
       if (removingActiveView && state.activeProjectPath === project.path) {
         clearActiveSession();
       }
       if (!state.activeProjectPath) {
-        state.activeProjectPath = state.workspace.activeProjectPath;
+        state.activeProjectPath = currentWorkspace?.activeProjectPath ?? '';
       }
       for (const controller of projectControllers) controller.disposed = true;
       await Promise.all(
@@ -597,32 +692,25 @@ function useTau() {
       return;
     }
 
+    session.archived = true;
+    session.selected = false;
+    if (controller) removeRegisteredEphemeralSession(controller);
+    if (discardedViewWasSelected) {
+      const nextSession = projectSessions(project)[0];
+      if (nextSession) void selectSession(project, nextSession);
+      else void newSession(project);
+    }
     try {
-      state.workspace = await invokeTraced<WorkspaceSnapshot>(
-        'archive_session',
-        { projectPath: project.path, sessionId: session.id },
-      );
-      if (controller) removeRegisteredEphemeralSession(controller);
-
+      await writeWorkspace('archive_session', {
+        projectPath: project.path,
+        sessionId: session.id,
+      });
       const archivedViewStillSelected =
         state.activeProjectPath === project.path &&
         state.activeSessionId === session.id;
-      if (!archivedViewStillSelected) {
-        releaseRuntime(controller);
-        return;
-      }
-
-      const updatedProject = state.workspace.projects.find(
-        (candidate) => candidate.path === project.path,
-      );
-      if (!updatedProject) {
-        clearActiveSession();
-        return;
-      }
-      const nextSession = projectSessions(updatedProject)[0];
-      if (nextSession) await selectSession(updatedProject, nextSession);
-      else await newSession(updatedProject);
+      if (!archivedViewStillSelected) releaseRuntime(controller);
     } catch {
+      session.archived = false;
       const errorController = controller ?? ensureController(project, session);
       setControllerError(errorController, errorCopy.archiveSession);
       if (!isSessionSelected(project, session)) errorController.unread = true;
@@ -634,14 +722,15 @@ function useTau() {
     session: SessionSummary,
   ): Promise<void> {
     if (projectActionsDisabled.value) return;
+    session.archived = false;
     try {
-      state.workspace = await invokeTraced<WorkspaceSnapshot>(
-        'unarchive_session',
-        { projectPath: project.path, sessionId: session.id },
-      );
-      // The record is reachable again, but nothing selects it here: the
-      // archived list is a review surface, not a session switcher.
+      await writeWorkspace('unarchive_session', {
+        projectPath: project.path,
+        sessionId: session.id,
+      });
+      // Restoring does not change the selected view.
     } catch {
+      session.archived = true;
       setWorkspaceError(errorCopy.restoreSession);
     }
   }
@@ -651,7 +740,8 @@ function useTau() {
     bootstrap = false,
   ): Promise<SessionController | undefined> {
     if (!bootstrap && projectActionsDisabled.value) return;
-    const actionSpan = startActionSpan('session.new');
+    const milestones = startActionMilestones('session.new');
+    const actionSpan = milestones.span;
     try {
       const previous = activeController.value;
       removeEmptyActivePhantom();
@@ -665,7 +755,16 @@ function useTau() {
         void persistExpandedProject(project.path, actionSpan.context);
       }
       setActiveSessionView(project, session, controller);
-      await persistProjectSelection(
+      previewNavigation.set(
+        controller,
+        (previewNavigation.get(controller) ?? 0) + 1,
+      );
+      void nextTick(() => {
+        if (state.activeControllerKey === controller.key)
+          milestones.afterRender();
+        else milestones.cancel();
+      });
+      void persistProjectSelection(
         project.path,
         controller,
         actionSpan.context,
@@ -686,6 +785,7 @@ function useTau() {
           actionSpan.context,
         );
       }
+      if (controller.ready) milestones.mark('ready');
       return controller;
     } finally {
       actionSpan.end();
@@ -697,13 +797,14 @@ function useTau() {
     session: SessionSummary,
   ): Promise<void> {
     if (projectActionsDisabled.value) return;
-    const actionSpan = startActionSpan(
+    const milestones = startActionMilestones(
       'session.select',
       controllerTelemetryScope(
         controllerForSession(project.path, session.id),
         session.id,
       ),
     );
+    const actionSpan = milestones.span;
     try {
       const alreadySelected =
         project.path === state.activeProjectPath &&
@@ -719,6 +820,7 @@ function useTau() {
             !controller.starting &&
             !controller.remoteDisconnected
           ) {
+            readSavedSession(project, session, controller);
             await startController(
               controller,
               project,
@@ -734,15 +836,26 @@ function useTau() {
       removeEmptyActivePhantom();
       const controller = ensureController(project, session);
       setActiveSessionView(project, session, controller);
+      previewNavigation.set(
+        controller,
+        (previewNavigation.get(controller) ?? 0) + 1,
+      );
       if (controller.remoteDisconnected) reopenRemoteFeedback(controller);
       controller.unread = false;
-      await persistProjectSelection(
+      void nextTick(() => {
+        if (state.activeControllerKey === controller.key)
+          milestones.afterRender();
+        else milestones.cancel();
+      });
+      void persistProjectSelection(
         project.path,
         controller,
         actionSpan.context,
       );
       releaseIdleRuntimes();
 
+      if (controller.ready && !controller.messagesLoaded)
+        readSavedSession(project, session, controller);
       if (
         controller.phantom ||
         controller.ready ||
@@ -750,6 +863,7 @@ function useTau() {
         controller.remoteDisconnected
       )
         return;
+      readSavedSession(project, session, controller);
       await startController(
         controller,
         project,
@@ -757,6 +871,7 @@ function useTau() {
         false,
         actionSpan.context,
       );
+      if (controller.ready) milestones.mark('ready');
     } finally {
       actionSpan.end();
     }
@@ -879,7 +994,7 @@ function useTau() {
           (candidate) => candidate.id === controller.sessionId,
         );
         if (project && sessionRecord?.archived) {
-          await unarchiveSession(project, sessionRecord);
+          void unarchiveSession(project, sessionRecord);
         }
         await rpc(
           controller,

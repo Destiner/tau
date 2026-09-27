@@ -72,6 +72,12 @@ const scenario = definePiScenario({
     {
       kind: 'request',
       runtime,
+      capture: 'confirmed-messages',
+      match: { type: 'get_messages' },
+    },
+    {
+      kind: 'request',
+      runtime,
       capture: 'confirmed-efforts',
       match: { type: 'get_available_thinking_levels' },
     },
@@ -80,12 +86,6 @@ const scenario = definePiScenario({
       request: 'confirmed-efforts',
       command: 'get_available_thinking_levels',
       data: { levels: fixtureThinkingLevels },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'confirmed-messages',
-      match: { type: 'get_messages' },
     },
     {
       kind: 'response',
@@ -124,6 +124,12 @@ const scenario = definePiScenario({
     {
       kind: 'request',
       runtime,
+      capture: 'admission-messages',
+      match: { type: 'get_messages' },
+    },
+    {
+      kind: 'request',
+      runtime,
       capture: 'admission-efforts',
       match: { type: 'get_available_thinking_levels' },
     },
@@ -132,12 +138,6 @@ const scenario = definePiScenario({
       request: 'admission-efforts',
       command: 'get_available_thinking_levels',
       data: { levels: fixtureThinkingLevels },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'admission-messages',
-      match: { type: 'get_messages' },
     },
     { kind: 'gate', name: 'stale-idle-admission', required: true },
     {

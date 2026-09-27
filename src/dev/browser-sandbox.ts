@@ -2,7 +2,11 @@ import type { InvokeArgs } from '@tauri-apps/api/core';
 import { emit } from '@tauri-apps/api/event';
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 
-import type { SessionSummary, WorkspaceSnapshot } from '../composables/state';
+import type {
+  ProjectSummary,
+  SessionSummary,
+  WorkspaceSnapshot,
+} from '../composables/state';
 import type { PiBridgeEvent } from '../lib/pi/bridge';
 import {
   setSidebarWidthStorage,
@@ -695,42 +699,44 @@ function createBrowserSandboxHandler(
     }
     if (command === 'set_active_project') {
       select(requiredString(args, 'path'));
-      return cloneWorkspace();
+      return null;
     }
     if (command === 'set_active_session') {
       select(
         requiredString(args, 'projectPath'),
         requiredString(args, 'sessionId'),
       );
-      return cloneWorkspace();
+      return null;
     }
     if (command === 'set_project_collapsed') {
       const project = workspace.projects.find(
         (candidate) => candidate.path === requiredString(args, 'path'),
       );
       if (project) project.collapsed = args.collapsed === true;
-      return cloneWorkspace();
+      return null;
     }
     if (command === 'reorder_projects') {
       const paths = Array.isArray(args.projectPaths) ? args.projectPaths : [];
       workspace.projects.sort(
         (a, b) => paths.indexOf(a.path) - paths.indexOf(b.path),
       );
-      return cloneWorkspace();
+      return null;
     }
     if (command === 'import_project') {
       const path = requiredString(args, 'path');
-      if (!workspace.projects.some((project) => project.path === path)) {
-        workspace.projects.push({
+      let project = workspace.projects.find((item) => item.path === path);
+      if (!project) {
+        project = {
           path,
           name: path.split('/').at(-1) || 'project',
           workingDirectory: path,
           collapsed: false,
           selected: false,
           sessions: [],
-        });
+        };
+        workspace.projects.push(project);
       }
-      return cloneWorkspace();
+      return structuredClone(project) satisfies ProjectSummary;
     }
     if (command === 'remove_project') {
       const path = requiredString(args, 'path');
@@ -742,48 +748,59 @@ function createBrowserSandboxHandler(
         if (next) select(next.path, next.sessions[0]?.id);
         else workspace.activeProjectPath = '';
       }
-      return cloneWorkspace();
+      return null;
     }
     if (command === 'register_session') {
       const projectPath = requiredString(args, 'projectPath');
       const project = workspace.projects.find(
         (candidate) => candidate.path === projectPath,
       );
-      if (project) {
-        const id = requiredString(args, 'sessionId');
-        const existing = project.sessions.find(
-          (candidate) => candidate.id === id,
-        );
-        if (!existing) {
-          project.sessions.push({
-            id,
-            path: requiredString(args, 'sessionPath'),
-            title: requiredString(args, 'sessionName'),
-            model: 'tau-dev',
-            lastActive: 'now',
-            lastUserMessageAt:
-              typeof args.lastUserMessageAt === 'number'
-                ? args.lastUserMessageAt
-                : Date.now(),
-            sortAt: Date.now(),
-            archived: false,
-            selected: false,
-          });
-        } else {
-          existing.title = requiredString(args, 'sessionName');
-          existing.archived = false;
-        }
+      if (!project) return null;
+      const id = requiredString(args, 'sessionId');
+      let registered = project.sessions.find(
+        (candidate) => candidate.id === id,
+      );
+      if (!registered) {
+        registered = {
+          id,
+          path: requiredString(args, 'sessionPath'),
+          title: requiredString(args, 'sessionName'),
+          model: 'tau-dev',
+          lastActive: 'now',
+          lastUserMessageAt:
+            typeof args.lastUserMessageAt === 'number'
+              ? args.lastUserMessageAt
+              : Date.now(),
+          sortAt: Date.now(),
+          archived: false,
+          selected: false,
+        };
+        project.sessions.push(registered);
+      } else {
+        registered.title = requiredString(args, 'sessionName');
+        registered.archived = false;
       }
-      return cloneWorkspace();
+      return structuredClone(registered) satisfies SessionSummary;
     }
     if (command === 'archive_session' || command === 'unarchive_session') {
+      const project = workspace.projects.find(
+        (candidate) => candidate.path === requiredString(args, 'projectPath'),
+      );
       const sessionId = requiredString(args, 'sessionId');
-      const candidate = workspace.projects
-        .flatMap((project) => project.sessions)
-        .find((item) => item.id === sessionId);
-      if (candidate) candidate.archived = command === 'archive_session';
-      return cloneWorkspace();
+      const candidate = project?.sessions.find((item) => item.id === sessionId);
+      const archived = command === 'archive_session';
+      if (candidate) {
+        candidate.archived = archived;
+        if (archived && candidate.selected) select(project!.path);
+      }
+      return {
+        sessionId,
+        archived,
+        activeSessionId:
+          project?.sessions.find((session) => session.selected)?.id ?? '',
+      };
     }
+    if (command === 'read_saved_transcript') return { messages: null };
     throw new Error(
       `Unsupported browser sandbox command ${JSON.stringify(command)}.`,
     );
