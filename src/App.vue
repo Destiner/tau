@@ -529,6 +529,22 @@ watch(sessionLoading, (loading) => {
   });
 });
 
+watch(canDraft, (enabled) => {
+  if (!enabled) return;
+  void nextTick(() => {
+    if (
+      document.activeElement === document.body &&
+      !sessionLoading.value &&
+      !state.remoteDialogOpen &&
+      !activeExtensionDialog.value &&
+      !activeFeedback.value &&
+      !fullscreenViewerOpen.value
+    ) {
+      composerBar.value?.focus();
+    }
+  });
+});
+
 watch(promptSubmitting, () => {
   void nextTick(() => {
     if (

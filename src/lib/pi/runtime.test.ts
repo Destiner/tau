@@ -13,6 +13,7 @@ import {
   nextRequestId,
   state,
   type SessionController,
+  type SessionSummary,
 } from '../../composables/state';
 import { FORBIDDEN_CONTENT_CANARIES } from '../telemetry/privacy';
 
@@ -73,6 +74,12 @@ async function dispatchRequest(
   const id = nextRequestId(prefix);
   await rpc(controller, { id, type });
   return id;
+}
+
+function registrationRow(
+  workspace: NonNullable<typeof state.workspace>,
+): SessionSummary | null {
+  return workspace.projects[0]?.sessions[0] ?? null;
 }
 
 function feedbackMessage(controller: SessionController): string {
@@ -189,7 +196,8 @@ beforeEach(async () => {
   vi.mocked(telemetry.recordControllerTransition).mockClear();
   vi.mocked(telemetry.recordRpcResponseAnomaly).mockClear();
   vi.mocked(telemetry.recordStreamAggregate).mockClear();
-  vi.mocked(telemetry.invokeTraced).mockClear();
+  vi.mocked(telemetry.invokeTraced).mockReset();
+  vi.mocked(telemetry.invokeTraced).mockResolvedValue(undefined);
   vi.mocked(telemetry.startRpcSpan).mockClear();
 });
 
@@ -364,6 +372,84 @@ describe('command-created session durability', () => {
     };
   }
 
+  it('hydrates bootstrap without waiting for registration persistence', async () => {
+    const telemetry = await import('../telemetry');
+    const { handleResponse, rpc } = await import('./runtime');
+    const controller = makeController({ materializationVerified: true });
+    addEphemeral(controller);
+    state.workspace = registeredWorkspace(controller, 'Before');
+    let finishRegistration!: (value: SessionSummary | null) => void;
+    const registration = new Promise<SessionSummary | null>((resolve) => {
+      finishRegistration = resolve;
+    });
+    vi.mocked(telemetry.invokeTraced).mockImplementation(async (command) =>
+      command === 'register_session' ? registration : undefined,
+    );
+    const requestId = nextRequestId('bootstrap-state');
+    controller.bootstrapStateRequestId = requestId;
+    await rpc(controller, { id: requestId, type: 'get_state' });
+    await handleResponse(controller, {
+      id: requestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: controller.sessionId,
+        sessionFile: controller.sessionPath,
+        isStreaming: false,
+      },
+    });
+    expect(controller.startMessagesRequestId).toBeTruthy();
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'send_pi',
+      expect.objectContaining({
+        request: expect.objectContaining({ type: 'get_messages' }),
+      }),
+    );
+    finishRegistration(
+      registrationRow(registeredWorkspace(controller, 'After')),
+    );
+    await vi.waitFor(() => {
+      expect(state.workspace?.projects[0]?.sessions[0]?.title).toBe('After');
+    });
+  });
+
+  it('keeps a newer archive when an older registration resolves', async () => {
+    const telemetry = await import('../telemetry');
+    const { handleResponse, rpc } = await import('./runtime');
+    const controller = makeController({ materializationVerified: true });
+    addEphemeral(controller);
+    state.workspace = registeredWorkspace(controller, 'Before');
+    let finishRegistration!: (value: SessionSummary | null) => void;
+    vi.mocked(telemetry.invokeTraced).mockImplementation(async (command) =>
+      command === 'register_session'
+        ? new Promise<SessionSummary | null>((resolve) => {
+            finishRegistration = resolve;
+          })
+        : undefined,
+    );
+    const requestId = nextRequestId('bootstrap-state');
+    controller.bootstrapStateRequestId = requestId;
+    await rpc(controller, { id: requestId, type: 'get_state' });
+    await handleResponse(controller, {
+      id: requestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: controller.sessionId,
+        sessionFile: controller.sessionPath,
+      },
+    });
+    await vi.waitFor(() => expect(finishRegistration).toBeTypeOf('function'));
+    state.workspace.projects[0]!.sessions[0]!.archived = true;
+    finishRegistration(
+      registrationRow(registeredWorkspace(controller, 'After')),
+    );
+    await vi.waitFor(() => {
+      expect(state.workspace?.projects[0]?.sessions[0]?.title).toBe('After');
+    });
+    expect(state.workspace?.projects[0]?.sessions[0]?.archived).toBe(true);
+  });
+
   it('does not register an identity reported by command sync alone', async () => {
     const telemetry = await import('../telemetry');
     const { handleResponse, rpc } = await import('./runtime');
@@ -461,7 +547,7 @@ describe('command-created session durability', () => {
       // Pi's file exists, so the probe's snapshot lists the session.
       const adopted = registeredWorkspace(controller, 'Materialized');
       vi.mocked(telemetry.invokeTraced).mockImplementation(async (command) =>
-        command === 'register_session' ? adopted : state.workspace,
+        command === 'register_session' ? registrationRow(adopted) : undefined,
       );
 
       await handleRpc(controller, {
@@ -637,9 +723,8 @@ describe('command-created session durability', () => {
         working: true,
       });
       addEphemeral(controller, connectionString);
-      // Pi wrote no session file, so the snapshot the probe gets back lists
-      // nothing and the row stays disposable.
-      vi.mocked(telemetry.invokeTraced).mockResolvedValue(state.workspace!);
+      // Pi wrote no session file, so registration returns no row.
+      vi.mocked(telemetry.invokeTraced).mockResolvedValue(null);
 
       await handleRpc(controller, {
         type: 'message_start',
@@ -688,9 +773,12 @@ describe('command-created session durability', () => {
       const registrationHeld = new Promise<void>((resolve) => {
         releaseRegistration = resolve;
       });
-      vi.mocked(telemetry.invokeTraced).mockImplementation(async () => {
-        await registrationHeld;
-        return workspace;
+      vi.mocked(telemetry.invokeTraced).mockImplementation(async (command) => {
+        if (command === 'register_session') {
+          await registrationHeld;
+          return registrationRow(workspace);
+        }
+        return undefined;
       });
 
       await handleRpc(controller, {
@@ -803,8 +891,10 @@ describe('command-created session durability', () => {
       working: true,
     });
     addEphemeral(controller);
-    vi.mocked(telemetry.invokeTraced).mockResolvedValue(
-      registeredWorkspace(controller, 'Completed work'),
+    vi.mocked(telemetry.invokeTraced).mockImplementation(async (command) =>
+      command === 'register_session'
+        ? registrationRow(registeredWorkspace(controller, 'Completed work'))
+        : undefined,
     );
 
     await handleRpc(controller, {
@@ -860,8 +950,10 @@ describe('command-created session durability', () => {
       working: true,
     });
     addEphemeral(controller);
-    vi.mocked(telemetry.invokeTraced).mockResolvedValue(
-      registeredWorkspace(controller, 'Completed work'),
+    vi.mocked(telemetry.invokeTraced).mockImplementation(async (command) =>
+      command === 'register_session'
+        ? registrationRow(registeredWorkspace(controller, 'Completed work'))
+        : undefined,
     );
 
     await handleRpc(controller, {
@@ -1055,7 +1147,9 @@ describe('command-created session durability', () => {
             adopted: true,
           });
         }
-        return registeredWorkspace;
+        return command === 'register_session'
+          ? registrationRow(registeredWorkspace)
+          : undefined;
       },
     );
     const verificationRequestId = nextRequestId('settled-state');
@@ -1128,7 +1222,11 @@ describe('command-created session durability', () => {
         },
       ],
     };
-    vi.mocked(telemetry.invokeTraced).mockResolvedValue(registeredWorkspace);
+    vi.mocked(telemetry.invokeTraced).mockImplementation(async (command) =>
+      command === 'register_session'
+        ? registrationRow(registeredWorkspace)
+        : undefined,
+    );
 
     await handleRpc(controller, { type: 'agent_start' });
     const runStateRequestId = controller.runStateRequestId;
@@ -1219,7 +1317,11 @@ describe('command-created session durability', () => {
         },
       ],
     };
-    vi.mocked(telemetry.invokeTraced).mockResolvedValue(registeredWorkspace);
+    vi.mocked(telemetry.invokeTraced).mockImplementation(async (command) =>
+      command === 'register_session'
+        ? registrationRow(registeredWorkspace)
+        : undefined,
+    );
     const probeRequestId = await dispatchRequest(
       controller,
       'get_state',
@@ -1592,7 +1694,9 @@ describe('command-created session durability', () => {
       },
     );
     vi.mocked(telemetry.invokeTraced).mockImplementation(async (command) =>
-      command === 'register_session' ? await registration : state.workspace,
+      command === 'register_session'
+        ? registrationRow(await registration)
+        : undefined,
     );
     const verificationRequestId = nextRequestId('messages');
     controller.materializationMessagesRequestId = verificationRequestId;
@@ -1683,6 +1787,117 @@ describe('command-created session durability', () => {
     expect(state.ephemeralSessions[0]?.id).toBe('unverified-b');
   });
 
+  it('merges only the registered row after unrelated workspace edits', async () => {
+    const telemetry = await import('../telemetry');
+    const { registerConnectedSession } = await import('./runtime');
+    const controller = makeController();
+    state.controllers.push(controller);
+    state.workspace = registeredWorkspace(controller, 'Old title');
+    let resolveRegistration!: (row: SessionSummary | null) => void;
+    const registration = new Promise<SessionSummary | null>((resolve) => {
+      resolveRegistration = resolve;
+    });
+    vi.mocked(telemetry.invokeTraced).mockReturnValueOnce(registration);
+
+    const pending = registerConnectedSession(controller);
+    await vi.waitFor(() =>
+      expect(telemetry.invokeTraced).toHaveBeenCalledTimes(1),
+    );
+    state.workspace.projects.push({
+      path: '/other',
+      name: 'Other',
+      workingDirectory: '/other',
+      collapsed: false,
+      selected: true,
+      sessions: [],
+    });
+    state.workspace.projects[0]!.collapsed = true;
+    state.workspace.activeProjectPath = '/other';
+    resolveRegistration({
+      ...registrationRow(registeredWorkspace(controller, 'New title'))!,
+      title: 'New title',
+    });
+    await pending;
+
+    expect(state.workspace.projects.map((project) => project.path)).toEqual([
+      controller.projectPath,
+      '/other',
+    ]);
+    expect(state.workspace.projects[0]).toMatchObject({ collapsed: true });
+    expect(state.workspace.activeProjectPath).toBe('/other');
+    expect(state.workspace.projects[0]?.sessions[0]?.title).toBe('New title');
+  });
+
+  it('does not rewrite selection when registration reports it already selected', async () => {
+    const telemetry = await import('../telemetry');
+    const { registerConnectedSession } = await import('./runtime');
+    const controller = makeController();
+    state.controllers.push(controller);
+    state.workspace = registeredWorkspace(controller, 'Old title');
+    state.activeProjectPath = controller.projectPath;
+    state.activeSessionId = controller.sessionId;
+    state.activeControllerKey = controller.key;
+    vi.mocked(telemetry.invokeTraced).mockResolvedValueOnce({
+      ...registrationRow(registeredWorkspace(controller, 'New title'))!,
+      selected: true,
+    });
+
+    await registerConnectedSession(controller);
+
+    expect(state.workspace.projects[0]?.sessions[0]?.title).toBe('New title');
+    expect(telemetry.invokeTraced).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps an unmaterialized registration null without replacing the workspace', async () => {
+    const telemetry = await import('../telemetry');
+    const { registerConnectedSession } = await import('./runtime');
+    const controller = makeController({ materializationVerified: true });
+    addEphemeral(controller);
+    const workspace = state.workspace;
+    vi.mocked(telemetry.invokeTraced).mockResolvedValueOnce(null);
+
+    await registerConnectedSession(controller);
+
+    expect(state.workspace).toBe(workspace);
+    expect(state.ephemeralSessions[0]?.id).toBe(controller.sessionId);
+    expect(telemetry.invokeTraced).not.toHaveBeenCalledWith(
+      'set_active_session',
+      expect.anything(),
+      undefined,
+    );
+  });
+
+  it('retiring an unsaved registered row applies only the archive mutation', async () => {
+    const telemetry = await import('../telemetry');
+    const { retireUnsavedSession } = await import('./runtime');
+    const controller = makeController();
+    state.controllers.push(controller);
+    state.workspace = registeredWorkspace(controller, 'Stale');
+    const unrelated = {
+      ...state.workspace.projects[0]!.sessions[0]!,
+      id: 'other',
+      title: 'Other',
+    };
+    state.workspace.projects[0]!.sessions.push(unrelated);
+    vi.mocked(telemetry.invokeTraced).mockResolvedValueOnce({
+      sessionId: 'session-1',
+      archived: true,
+      activeSessionId: 'other',
+    });
+
+    await retireUnsavedSession(controller);
+
+    expect(state.workspace.projects[0]?.sessions).toMatchObject([
+      { id: 'session-1', archived: true, selected: false },
+      { id: 'other', title: 'Other', selected: true },
+    ]);
+    expect(controller.phantom).toBe(true);
+    expect(telemetry.invokeTraced).toHaveBeenCalledWith('archive_session', {
+      projectPath: controller.projectPath,
+      sessionId: 'session-1',
+    });
+  });
+
   it('projects only the latest title from overlapping registrations', async () => {
     const telemetry = await import('../telemetry');
     const { persistSessionName } = await import('./runtime');
@@ -1709,8 +1924,8 @@ describe('command-created session durability', () => {
       },
     );
     vi.mocked(telemetry.invokeTraced)
-      .mockReturnValueOnce(firstRegistration)
-      .mockReturnValueOnce(secondRegistration);
+      .mockReturnValueOnce(firstRegistration.then(registrationRow))
+      .mockReturnValueOnce(secondRegistration.then(registrationRow));
 
     const first = persistSessionName(controller);
     await vi.waitFor(() => {
@@ -1752,7 +1967,7 @@ describe('command-created session durability', () => {
       materializationVerified: true,
     });
     addEphemeral(controller);
-    vi.mocked(telemetry.invokeTraced).mockResolvedValueOnce(state.workspace);
+    vi.mocked(telemetry.invokeTraced).mockResolvedValueOnce(null);
     await registerConnectedSession(controller);
     expect(state.ephemeralSessions).toHaveLength(1);
     expect(
@@ -1763,7 +1978,7 @@ describe('command-created session durability', () => {
     ).toBe(false);
 
     vi.mocked(telemetry.invokeTraced).mockResolvedValueOnce(
-      registeredWorkspace(controller, 'Mission'),
+      registrationRow(registeredWorkspace(controller, 'Mission')),
     );
     await registerConnectedSession(controller);
     expect(telemetry.invokeTraced).toHaveBeenCalledWith(
@@ -1811,8 +2026,8 @@ describe('command-created session durability', () => {
       resolveAdoption = resolve;
     });
     vi.mocked(telemetry.invokeTraced)
-      .mockReturnValueOnce(ordinaryRegistration)
-      .mockReturnValueOnce(adoptionRegistration);
+      .mockReturnValueOnce(ordinaryRegistration.then(registrationRow))
+      .mockReturnValueOnce(adoptionRegistration.then(registrationRow));
 
     const ordinary = registerConnectedSession(controller);
     await vi.waitFor(() => {
@@ -1873,7 +2088,9 @@ describe('command-created session durability', () => {
       resolveSelection = resolve;
     });
     vi.mocked(telemetry.invokeTraced).mockImplementation(async (command) =>
-      command === 'set_active_session' ? await selection : registeredWorkspace,
+      command === 'set_active_session'
+        ? await selection.then(() => undefined)
+        : registrationRow(registeredWorkspace),
     );
     const verificationRequestId = nextRequestId('messages');
     controller.materializationMessagesRequestId = verificationRequestId;
@@ -1966,9 +2183,10 @@ describe('command-created session durability', () => {
       }
       if (command === 'register_session') {
         registrationCount += 1;
-        if (registrationCount === 2) return await adoption;
+        if (registrationCount === 2) return registrationRow(await adoption);
+        return registrationRow(registeredWorkspace);
       }
-      return registeredWorkspace;
+      return undefined;
     });
     const verificationRequestId = nextRequestId('messages');
     controller.materializationMessagesRequestId = verificationRequestId;

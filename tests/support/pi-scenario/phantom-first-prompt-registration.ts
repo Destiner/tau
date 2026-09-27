@@ -83,16 +83,16 @@ const scenario = definePiScenario({
       match: { type: 'get_available_thinking_levels' },
     },
     {
-      kind: 'response',
-      request: 'phantom-efforts',
-      command: 'get_available_thinking_levels',
-      data: { levels: fixtureThinkingLevels },
-    },
-    {
       kind: 'request',
       runtime: 'phantom',
       capture: 'phantom-messages',
       match: { type: 'get_messages' },
+    },
+    {
+      kind: 'response',
+      request: 'phantom-efforts',
+      command: 'get_available_thinking_levels',
+      data: { levels: fixtureThinkingLevels },
     },
     {
       kind: 'response',
@@ -176,6 +176,12 @@ const scenario = definePiScenario({
     {
       kind: 'request',
       runtime: 'phantom',
+      capture: 'replacement-messages',
+      match: { type: 'get_messages' },
+    },
+    {
+      kind: 'request',
+      runtime: 'phantom',
       capture: 'replacement-models',
       match: { type: 'get_available_models' },
     },
@@ -208,12 +214,6 @@ const scenario = definePiScenario({
       request: 'replacement-efforts',
       command: 'get_available_thinking_levels',
       data: { levels: fixtureThinkingLevels },
-    },
-    {
-      kind: 'request',
-      runtime: 'phantom',
-      capture: 'replacement-messages',
-      match: { type: 'get_messages' },
     },
     { kind: 'gate', name: 'before-replacement-hydration', required: true },
     {
@@ -295,6 +295,12 @@ const scenario = definePiScenario({
     {
       kind: 'request',
       runtime: 'phantom',
+      capture: 'settled-messages',
+      match: { type: 'get_messages' },
+    },
+    {
+      kind: 'request',
+      runtime: 'phantom',
       capture: 'settled-efforts',
       match: { type: 'get_available_thinking_levels' },
     },
@@ -303,12 +309,6 @@ const scenario = definePiScenario({
       request: 'settled-efforts',
       command: 'get_available_thinking_levels',
       data: { levels: fixtureThinkingLevels },
-    },
-    {
-      kind: 'request',
-      runtime: 'phantom',
-      capture: 'settled-messages',
-      match: { type: 'get_messages' },
     },
     {
       kind: 'response',

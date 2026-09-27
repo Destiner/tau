@@ -1634,8 +1634,8 @@ mod tests {
             ("models", "get_available_models"),
             ("commands", "get_commands"),
             ("state", "get_state"),
-            ("efforts", "get_available_thinking_levels"),
             ("messages", "get_messages"),
+            ("efforts", "get_available_thinking_levels"),
         ] {
             send_pi_to_state(
                 &state,
@@ -1647,7 +1647,12 @@ mod tests {
                 }),
             )
             .expect("send bootstrap request");
-            expect_rpc(&events, generation, "response", Some(id));
+            if id == "efforts" {
+                expect_rpc(&events, generation, "response", Some("efforts"));
+                expect_rpc(&events, generation, "response", Some("messages"));
+            } else if id != "messages" {
+                expect_rpc(&events, generation, "response", Some(id));
+            }
         }
 
         send_pi_to_state(
@@ -1674,8 +1679,8 @@ mod tests {
 
         for (id, request_type) in [
             ("settled-state", "get_state"),
-            ("settled-efforts", "get_available_thinking_levels"),
             ("settled-messages", "get_messages"),
+            ("settled-efforts", "get_available_thinking_levels"),
         ] {
             send_pi_to_state(
                 &state,
@@ -1687,7 +1692,12 @@ mod tests {
                 }),
             )
             .expect("send settlement request");
-            expect_rpc(&events, generation, "response", Some(id));
+            if id == "settled-efforts" {
+                expect_rpc(&events, generation, "response", Some(id));
+                expect_rpc(&events, generation, "response", Some("settled-messages"));
+            } else if id != "settled-messages" {
+                expect_rpc(&events, generation, "response", Some(id));
+            }
         }
 
         let exited = expect_outer_event(&events, "exited", generation);

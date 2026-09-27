@@ -6,6 +6,7 @@ import {
   rawBridgeError,
   rawExitMessage,
   rawStderr,
+  remotePhantomPromptProcessExit,
   savedSessionBootstrapProcessExit,
 } from './saved-session-process-failures';
 import savedSessionStreamThenStaleGeneration, {
@@ -66,13 +67,14 @@ describe('PiScenarioEngine', () => {
       ['models', 'get_available_models'],
       ['commands', 'get_commands'],
       ['state', 'get_state'],
-      ['efforts', 'get_available_thinking_levels'],
       ['messages', 'get_messages'],
+      ['efforts', 'get_available_thinking_levels'],
     ] as const) {
       consumeRequest(engine, id, type);
-      takeRequiredOutput(engine);
+      if (type !== 'get_messages') takeRequiredOutput(engine);
     }
 
+    takeRequiredOutput(engine);
     expect(engine.takeOutput()).toBeUndefined();
     expect(engine.isComplete()).toBe(true);
     expect(() => engine.verifyComplete()).not.toThrow();
@@ -121,11 +123,11 @@ describe('PiScenarioEngine', () => {
       ['models', 'get_available_models'],
       ['commands', 'get_commands'],
       ['state', 'get_state'],
-      ['efforts', 'get_available_thinking_levels'],
       ['messages', 'get_messages'],
+      ['efforts', 'get_available_thinking_levels'],
     ] as const) {
       consumeRequest(engine, id, type);
-      takeRequiredOutput(engine);
+      if (type !== 'get_messages') takeRequiredOutput(engine);
     }
 
     expect(engine.timeline()).toEqual(
@@ -141,6 +143,7 @@ describe('PiScenarioEngine', () => {
       ]),
     );
     expect(JSON.stringify(engine.timeline())).not.toContain('RAW_');
+    takeRequiredOutput(engine);
     expect(() => engine.verifyComplete()).not.toThrow();
   });
 
@@ -152,13 +155,14 @@ describe('PiScenarioEngine', () => {
       ['models', 'get_available_models'],
       ['commands', 'get_commands'],
       ['state', 'get_state'],
-      ['efforts', 'get_available_thinking_levels'],
       ['messages', 'get_messages'],
+      ['efforts', 'get_available_thinking_levels'],
     ] as const) {
       consumeRequest(engine, id, type);
-      takeRequiredOutput(engine);
+      if (type !== 'get_messages') takeRequiredOutput(engine);
     }
 
+    takeRequiredOutput(engine);
     engine.bindRuntime('phantom', 'runtime-dynamic-82');
     takeRequiredOutput(engine);
     for (const [id, type] of [
@@ -169,8 +173,9 @@ describe('PiScenarioEngine', () => {
       ['phantom-messages', 'get_messages'],
     ] as const) {
       engine.consumeRequest('runtime-dynamic-82', { id, type });
-      takeRequiredOutput(engine);
+      if (type !== 'get_available_thinking_levels') takeRequiredOutput(engine);
     }
+    takeRequiredOutput(engine);
     engine.consumeRequest('runtime-dynamic-82', {
       id: 'command',
       type: 'prompt',
@@ -241,17 +246,33 @@ describe('PiScenarioEngine', () => {
     });
     for (const [id, type] of [
       ['settled-state', 'get_state'],
-      ['settled-efforts', 'get_available_thinking_levels'],
       ['settled-messages', 'get_messages'],
+      ['settled-efforts', 'get_available_thinking_levels'],
     ] as const) {
       engine.consumeRequest('runtime-dynamic-82', { id, type });
-      takeRequiredOutput(engine);
+      if (type !== 'get_messages') takeRequiredOutput(engine);
     }
+    takeRequiredOutput(engine);
     expect(takeRequiredOutput(engine)).toMatchObject({
       kind: 'runtime-event',
       value: { kind: 'exited' },
     });
     expect(() => engine.verifyComplete()).not.toThrow();
+  });
+
+  it('keeps remote phantom bootstrap requests in Pi order', () => {
+    const requests = remotePhantomPromptProcessExit.steps.filter(
+      (step): step is Extract<typeof step, { kind: 'request' }> =>
+        step.kind === 'request' && step.runtime === 'recovered-phantom',
+    );
+
+    expect(requests.map((step) => step.match.type)).toEqual([
+      'get_available_models',
+      'get_commands',
+      'get_state',
+      'get_messages',
+      'get_available_thinking_levels',
+    ]);
   });
 
   it('holds a command replacement identity until its immediate probe is gated', () => {
@@ -263,26 +284,28 @@ describe('PiScenarioEngine', () => {
       ['models', 'get_available_models'],
       ['commands', 'get_commands'],
       ['state', 'get_state'],
-      ['efforts', 'get_available_thinking_levels'],
       ['messages', 'get_messages'],
+      ['efforts', 'get_available_thinking_levels'],
     ] as const) {
       consumeRequest(engine, id, type);
-      takeRequiredOutput(engine);
+      if (type !== 'get_messages') takeRequiredOutput(engine);
     }
 
+    takeRequiredOutput(engine);
     engine.bindRuntime('backup', 'runtime-dynamic-backup');
     takeRequiredOutput(engine);
     for (const [id, type] of [
       ['backup-models', 'get_available_models'],
       ['backup-commands', 'get_commands'],
       ['backup-state', 'get_state'],
-      ['backup-efforts', 'get_available_thinking_levels'],
       ['backup-messages', 'get_messages'],
+      ['backup-efforts', 'get_available_thinking_levels'],
     ] as const) {
       engine.consumeRequest('runtime-dynamic-backup', { id, type });
-      takeRequiredOutput(engine);
+      if (type !== 'get_messages') takeRequiredOutput(engine);
     }
 
+    takeRequiredOutput(engine);
     consumeRequest(engine, 'command', 'prompt', { message: '/mock 42' });
     expect(takeRequiredOutput(engine)).toMatchObject({
       value: { id: 'command', command: 'prompt' },
@@ -328,6 +351,8 @@ describe('PiScenarioEngine', () => {
         },
       },
     });
+    consumeRequest(engine, 'replacement-messages', 'get_messages');
+    expect(engine.takeOutput()).toBeUndefined();
     for (const [id, type] of [
       ['replacement-models', 'get_available_models'],
       ['replacement-commands', 'get_commands'],
@@ -336,7 +361,6 @@ describe('PiScenarioEngine', () => {
       consumeRequest(engine, id, type);
       takeRequiredOutput(engine);
     }
-    consumeRequest(engine, 'replacement-messages', 'get_messages');
     expect(takeRequiredOutput(engine)).toMatchObject({
       value: { type: 'agent_start' },
     });
@@ -395,12 +419,13 @@ describe('PiScenarioEngine', () => {
     });
     for (const [id, type] of [
       ['settled-state', 'get_state'],
-      ['settled-efforts', 'get_available_thinking_levels'],
       ['settled-messages', 'get_messages'],
+      ['settled-efforts', 'get_available_thinking_levels'],
     ] as const) {
       consumeRequest(engine, id, type);
-      takeRequiredOutput(engine);
+      if (type !== 'get_messages') takeRequiredOutput(engine);
     }
+    takeRequiredOutput(engine);
     expect(engine.takeOutput()).toBeUndefined();
     engine.releaseGate('after-settled-hydration');
     expect(takeRequiredOutput(engine)).toMatchObject({
@@ -420,13 +445,14 @@ describe('PiScenarioEngine', () => {
       ['models', 'get_available_models'],
       ['commands', 'get_commands'],
       ['state', 'get_state'],
-      ['efforts', 'get_available_thinking_levels'],
       ['messages', 'get_messages'],
+      ['efforts', 'get_available_thinking_levels'],
     ] as const) {
       consumeRequest(engine, id, type);
-      takeRequiredOutput(engine);
+      if (type !== 'get_messages') takeRequiredOutput(engine);
     }
 
+    takeRequiredOutput(engine);
     consumeRequest(engine, 'prompt', 'prompt', {
       message: 'Stop this fixture',
     });
@@ -465,9 +491,10 @@ describe('PiScenarioEngine', () => {
     expect(takeRequiredOutput(engine)).toMatchObject({
       value: { id: 'abort-probe', data: { isStreaming: false } },
     });
+    consumeRequest(engine, 'abort-messages', 'get_messages');
+    expect(engine.takeOutput()).toBeUndefined();
     consumeRequest(engine, 'abort-efforts', 'get_available_thinking_levels');
     takeRequiredOutput(engine);
-    consumeRequest(engine, 'abort-messages', 'get_messages');
     expect(takeRequiredOutput(engine)).toMatchObject({
       value: {
         data: {
@@ -568,9 +595,10 @@ describe('PiScenarioEngine', () => {
     takeRequiredOutput(engine);
     consumeRequest(engine, 'state-843', 'get_state');
     takeRequiredOutput(engine);
+    consumeRequest(engine, 'messages-625', 'get_messages');
+    expect(engine.takeOutput()).toBeUndefined();
     consumeRequest(engine, 'efforts-177', 'get_available_thinking_levels');
     takeRequiredOutput(engine);
-    consumeRequest(engine, 'messages-625', 'get_messages');
     takeRequiredOutput(engine);
 
     consumeRequest(engine, 'prompt-518', 'prompt', {
@@ -650,13 +678,14 @@ describe('PiScenarioEngine', () => {
 
     consumeRequest(engine, 'settled-state-736', 'get_state');
     takeRequiredOutput(engine);
+    consumeRequest(engine, 'settled-messages-110', 'get_messages');
+    expect(engine.takeOutput()).toBeUndefined();
     consumeRequest(
       engine,
       'settled-efforts-429',
       'get_available_thinking_levels',
     );
     takeRequiredOutput(engine);
-    consumeRequest(engine, 'settled-messages-110', 'get_messages');
     expect(takeRequiredOutput(engine)).toMatchObject({
       kind: 'response',
       value: {

@@ -315,6 +315,8 @@ fn fixed_log_metadata(family: &str) -> Option<(&'static str, Severity)> {
         Some(("controller.state_transition", Severity::Info))
     } else if family == attributes::OPERATION_CHECKPOINT.name {
         Some(("operation.checkpoint", Severity::Info))
+    } else if family == attributes::ACTION_MILESTONE.name {
+        Some(("action.milestone", Severity::Info))
     } else if family == attributes::FRONTEND_HEARTBEAT.name {
         Some(("frontend.heartbeat", Severity::Info))
     } else if family == attributes::FRONTEND_STATE_SUMMARY.name {
@@ -344,6 +346,7 @@ fn validated_log_json(
         (Some(trace_id), Some(span_id)) => {
             if record.family != attributes::CONTROLLER_LIFECYCLE.name
                 && record.family != attributes::OPERATION_CHECKPOINT.name
+                && record.family != attributes::ACTION_MILESTONE.name
             {
                 return None;
             }
@@ -433,6 +436,12 @@ fn required_attributes(family: &str) -> Option<&'static [&'static str]> {
         ])
     } else if family == attributes::OPERATION_CHECKPOINT.name {
         Some(&["tau.operation.family", "tau.operation.name"])
+    } else if family == attributes::ACTION_MILESTONE.name {
+        Some(&[
+            "tau.action.name",
+            "tau.action.milestone",
+            "tau.action.elapsed_ms",
+        ])
     } else if family == attributes::FRONTEND_HEARTBEAT.name {
         Some(&[
             "tau.heartbeat.visibility",
@@ -872,6 +881,54 @@ mod tests {
             trace_id: None,
             span_id: None,
         }
+    }
+
+    #[test]
+    fn action_milestone_requires_reviewed_fields_and_accepts_trace_link() {
+        let resource = json!({ "attributes": [] });
+        let attributes = HashMap::from([
+            string_attribute("tau.action.name", "session.select"),
+            string_attribute("tau.action.milestone", "paint_opportunity"),
+            int_attribute("tau.action.elapsed_ms", 42),
+        ]);
+        let mut record = log_record("action.milestone", attributes);
+        record.trace_id = Some("4bf92f3577b34da6a3ce929d0e0e4736".into());
+        record.span_id = Some("00f067aa0ba902b7".into());
+        let value = validated_log_json(&record, &resource, "tau").expect("linked milestone");
+        let log = &value["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+        assert_eq!(log["traceId"], "4bf92f3577b34da6a3ce929d0e0e4736");
+        assert_eq!(log["eventName"], "action.milestone");
+        for kind in attributes::ACTION_MILESTONE_KINDS {
+            record.attributes.insert(
+                "tau.action.milestone".into(),
+                FrontendAttributeValue::Str((*kind).into()),
+            );
+            assert!(
+                validated_log_json(&record, &resource, "tau").is_some(),
+                "{kind}"
+            );
+        }
+
+        record.attributes.remove("tau.action.elapsed_ms");
+        assert!(validated_log_json(&record, &resource, "tau").is_none());
+        record.attributes.insert(
+            "tau.action.elapsed_ms".into(),
+            FrontendAttributeValue::Int(42),
+        );
+        record.attributes.insert(
+            "tau.action.milestone".into(),
+            FrontendAttributeValue::Str("draft text".into()),
+        );
+        assert!(validated_log_json(&record, &resource, "tau").is_none());
+        record.attributes.insert(
+            "tau.action.milestone".into(),
+            FrontendAttributeValue::Str("ready".into()),
+        );
+        record.attributes.insert(
+            "tau.action.elapsed_ms".into(),
+            FrontendAttributeValue::Int(86_400_001),
+        );
+        assert!(validated_log_json(&record, &resource, "tau").is_none());
     }
 
     fn frontend_error_attributes(

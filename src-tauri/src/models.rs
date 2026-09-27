@@ -121,6 +121,14 @@ pub struct SessionSummary {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SessionMutationResult {
+    pub session_id: String,
+    pub archived: bool,
+    pub active_session_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TauSessionRegistry {
     #[serde(default = "registry_version")]
     pub version: u8,

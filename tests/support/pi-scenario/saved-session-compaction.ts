@@ -40,6 +40,12 @@ const settlement = (
     {
       kind: 'request',
       runtime,
+      capture: `${prefix}-messages`,
+      match: { type: 'get_messages' },
+    },
+    {
+      kind: 'request',
+      runtime,
       capture: `${prefix}-efforts`,
       match: { type: 'get_available_thinking_levels' },
     },
@@ -48,12 +54,6 @@ const settlement = (
       request: `${prefix}-efforts`,
       command: 'get_available_thinking_levels',
       data: { levels: fixtureThinkingLevels },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: `${prefix}-messages`,
-      match: { type: 'get_messages' },
     },
     {
       kind: 'response',

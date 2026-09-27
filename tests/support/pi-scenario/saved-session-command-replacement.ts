@@ -78,6 +78,12 @@ const savedSessionCommandReplacement = definePiScenario({
     {
       kind: 'request',
       runtime,
+      capture: 'bootstrap-messages',
+      match: { type: 'get_messages' },
+    },
+    {
+      kind: 'request',
+      runtime,
       capture: 'bootstrap-efforts',
       match: { type: 'get_available_thinking_levels' },
     },
@@ -86,12 +92,6 @@ const savedSessionCommandReplacement = definePiScenario({
       request: 'bootstrap-efforts',
       command: 'get_available_thinking_levels',
       data: { levels: fixtureThinkingLevels },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'bootstrap-messages',
-      match: { type: 'get_messages' },
     },
     {
       kind: 'response',
@@ -123,6 +123,12 @@ const savedSessionCommandReplacement = definePiScenario({
       request: 'command-identity-probe',
       command: 'get_state',
       data: { ...replacementState, isStreaming: false },
+    },
+    {
+      kind: 'request',
+      runtime,
+      capture: 'replacement-messages',
+      match: { type: 'get_messages' },
     },
     {
       kind: 'request',
@@ -159,12 +165,6 @@ const savedSessionCommandReplacement = definePiScenario({
       request: 'replacement-efforts',
       command: 'get_available_thinking_levels',
       data: { levels: fixtureThinkingLevels },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'replacement-messages',
-      match: { type: 'get_messages' },
     },
     { kind: 'event', runtime, event: { type: 'agent_start' } },
     {
@@ -283,6 +283,12 @@ const savedSessionCommandReplacement = definePiScenario({
     {
       kind: 'request',
       runtime,
+      capture: 'settled-messages',
+      match: { type: 'get_messages' },
+    },
+    {
+      kind: 'request',
+      runtime,
       capture: 'settled-efforts',
       match: { type: 'get_available_thinking_levels' },
     },
@@ -291,12 +297,6 @@ const savedSessionCommandReplacement = definePiScenario({
       request: 'settled-efforts',
       command: 'get_available_thinking_levels',
       data: { levels: fixtureThinkingLevels },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'settled-messages',
-      match: { type: 'get_messages' },
     },
     {
       kind: 'response',

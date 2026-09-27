@@ -222,6 +222,7 @@ interface SessionController {
   /** Whether `get_messages` has answered once, so an empty transcript can be
    * read as a session without history rather than one that has yet to load. */
   messagesLoaded: boolean;
+  savedContentLoaded?: boolean;
   /** Raw-history layers fetched on demand from Pi's append-only entry tree. */
   historyLayers: HistoryLayer[];
   /** First raw-history layer currently rendered above the compacted tail. */
@@ -654,14 +655,15 @@ const canDraft = computed(() =>
 );
 
 /**
- * A saved session has nothing to show until its runtime hydrates the
- * transcript, so the pane reports loading instead of rendering the empty
- * session composer over a session that already holds messages.
+ * A saved session with no preview or cached rows is loading until Pi can
+ * hydrate it. A saved transcript preview can render while the runtime is
+ * still starting; it does not make the controller ready to compose.
  */
 const sessionLoading = computed(() => {
   const controller = activeController.value;
   if (!controller || controller.phantom) return false;
   if (
+    controller.savedContentLoaded ||
     controller.messages.length > 0 ||
     controller.feedback.some((incident) => !incident.acknowledged)
   )
@@ -1092,6 +1094,7 @@ function createController(
     materializationMessagesRequestId: '',
     messages: [],
     messagesLoaded: false,
+    savedContentLoaded: false,
     historyLayers: [],
     firstVisibleHistoryLayer: 0,
     historyPrefixLength: 0,

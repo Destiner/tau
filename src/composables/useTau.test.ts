@@ -33,18 +33,51 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(async (command: string) => {
-    if (command === 'read_pi_frontend_revision') return 0;
-    if (command === 'claim_pi_frontend') return undefined;
-    if (command.startsWith('start_pi')) {
-      mocks.generation += 1;
-      return mocks.generation;
-    }
-    if (command.endsWith('model_scope')) {
-      return mocks.modelScope;
-    }
-    return mocks.workspace;
-  }),
+  invoke: vi.fn(
+    async (
+      command: string,
+      args?: { sessionId?: string; projectPath?: string; path?: string },
+    ) => {
+      if (command === 'read_pi_frontend_revision') return 0;
+      if (command === 'claim_pi_frontend') return undefined;
+      if (command.startsWith('start_pi')) {
+        mocks.generation += 1;
+        return mocks.generation;
+      }
+      if (command.endsWith('model_scope')) {
+        return mocks.modelScope;
+      }
+      if (command === 'import_project' || command === 'import_remote_project') {
+        return (
+          mocks.workspace?.projects.find(
+            (project) => project.path === args?.path,
+          ) ?? mocks.workspace?.projects[0]
+        );
+      }
+      if (command === 'register_session') {
+        return (
+          mocks.workspace?.projects
+            .find((project) => project.path === args?.projectPath)
+            ?.sessions.find((session) => session.id === args?.sessionId) ?? null
+        );
+      }
+      if (command === 'archive_session' || command === 'unarchive_session') {
+        const project = mocks.workspace?.projects.find(
+          (project) => project.path === args?.projectPath,
+        );
+        const session = project?.sessions.find(
+          (session) => session.id === args?.sessionId,
+        );
+        if (session) session.archived = command === 'archive_session';
+        return {
+          sessionId: args?.sessionId,
+          archived: command === 'archive_session',
+          activeSessionId: '',
+        };
+      }
+      return mocks.workspace;
+    },
+  ),
 }));
 
 vi.mock('@tauri-apps/api/event', () => ({
@@ -2292,6 +2325,37 @@ describe('extension UI protocol', () => {
 });
 
 describe('project ordering', () => {
+  it('restores the persisted order when its write fails', async () => {
+    const projects = ['alpha', 'beta'].map((name): ProjectSummary => ({
+      path: `/tmp/${name}`,
+      name,
+      workingDirectory: `/tmp/${name}`,
+      collapsed: false,
+      selected: name === 'alpha',
+      sessions: [],
+    }));
+    const tau = useTau();
+    tau.state.workspace = {
+      activeProjectPath: projects[0]!.path,
+      piPath: '/usr/bin/pi',
+      projects,
+    };
+    const original = vi.mocked(invoke).getMockImplementation();
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === 'reorder_projects') throw new Error('disk failure');
+      return original?.(command, args);
+    });
+    try {
+      await tau.reorderProjects(0, 1);
+      expect(
+        tau.state.workspace?.projects.map((project) => project.name),
+      ).toEqual(['alpha', 'beta']);
+    } finally {
+      if (original) vi.mocked(invoke).mockImplementation(original);
+      tau.dispose();
+    }
+  });
+
   it('persists the complete reordered project path list', async () => {
     const projects = ['alpha', 'beta', 'gamma'].map(
       (name, index): ProjectSummary => ({
@@ -4301,6 +4365,51 @@ describe('workspace failure copy', () => {
 });
 
 describe('workspace action status', () => {
+  it('does not roll back a newer repeated fold intent after an older failure', async () => {
+    const { tau, project } = await setupNamedSession();
+    const original = vi.mocked(invoke).getMockImplementation();
+    let rejectFirst: ((reason: Error) => void) | undefined;
+    let writes = 0;
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === 'set_project_collapsed' && writes++ === 0)
+        return await new Promise((_resolve, reject) => {
+          rejectFirst = reject;
+        });
+      return original?.(command, args);
+    });
+    try {
+      const first = tau.toggleProject(project);
+      const second = tau.toggleProject(project);
+      const third = tau.toggleProject(project);
+      expect(project.collapsed).toBe(true);
+      await vi.waitFor(() => expect(rejectFirst).toBeDefined());
+      rejectFirst!(new Error('failed'));
+      await Promise.all([first, second, third]);
+      expect(project.collapsed).toBe(true);
+      expect(writes).toBe(3);
+    } finally {
+      if (original) vi.mocked(invoke).mockImplementation(original);
+      tau.dispose();
+    }
+  });
+  it('restores the last confirmed value after consecutive failed folds', async () => {
+    const { tau, project } = await setupNamedSession();
+    const original = vi.mocked(invoke).getMockImplementation();
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === 'set_project_collapsed') throw new Error('failed');
+      return original?.(command, args);
+    });
+    try {
+      const first = tau.toggleProject(project);
+      const second = tau.toggleProject(project);
+      await Promise.all([first, second]);
+      expect(project.collapsed).toBe(false);
+    } finally {
+      if (original) vi.mocked(invoke).mockImplementation(original);
+      tau.dispose();
+    }
+  });
+
   it('clears a stale action error when the action is retried', async () => {
     const { tau, project, controller } = await setupNamedSession();
     const defaultInvoke = vi.mocked(invoke).getMockImplementation();
@@ -4333,6 +4442,32 @@ describe('workspace action status', () => {
 });
 
 describe('archive failure locality', () => {
+  it('preserves newer restore intent when an older archive fails', async () => {
+    const { tau, project, session, controller } = await setupNamedSession();
+    controller.ready = true;
+    controller.starting = false;
+    const original = vi.mocked(invoke).getMockImplementation();
+    let rejectArchive: ((error: Error) => void) | undefined;
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === 'archive_session')
+        return await new Promise((_resolve, reject) => {
+          rejectArchive = reject;
+        });
+      return original?.(command, args);
+    });
+    try {
+      const archive = tau.archiveSession(project, session);
+      const restore = tau.unarchiveSession(project, session);
+      await vi.waitFor(() => expect(rejectArchive).toBeDefined());
+      rejectArchive!(new Error('failed'));
+      await Promise.all([archive, restore]);
+      expect(session.archived).toBe(false);
+    } finally {
+      if (original) vi.mocked(invoke).mockImplementation(original);
+      tau.dispose();
+    }
+  });
+
   it('keeps a delayed archive failure local until the action is retried', async () => {
     const {
       tau,

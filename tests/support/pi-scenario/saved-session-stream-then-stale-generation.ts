@@ -85,6 +85,12 @@ const settledConversationSteps = [
   {
     kind: 'request',
     runtime,
+    capture: 'settled-messages',
+    match: { type: 'get_messages' },
+  },
+  {
+    kind: 'request',
+    runtime,
     capture: 'settled-efforts',
     match: { type: 'get_available_thinking_levels' },
   },
@@ -93,12 +99,6 @@ const settledConversationSteps = [
     request: 'settled-efforts',
     command: 'get_available_thinking_levels',
     data: { levels: fixtureThinkingLevels },
-  },
-  {
-    kind: 'request',
-    runtime,
-    capture: 'settled-messages',
-    match: { type: 'get_messages' },
   },
   {
     kind: 'response',

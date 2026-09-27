@@ -42,6 +42,35 @@ a transcript outside the profile can leave the session directory too; Tau does
 not replace Pi's session runtime or intercept extension execution. Use the sample
 projects or browser mocks for disposable experimentation.
 
+## Opt-in native performance fixture
+
+Set `TAU_DEV_FIXTURE=performance` when launching **native development** to replace
+Atlas/Notes for that process only. This is an invented, deterministic filesystem
+fixture inside the same disposable profile: seven local projects, one **simulated
+remote metadata** project (`tau-perf.invalid`, not a reachable SSH host), 589
+local v3 JSONL files totaling exactly 306.5 MiB, 434 registered local sessions
+(423 archived, 155 unregistered files), and 2,389 remote metadata sessions
+(2,388 archived). The first 120 local files are 4 KiB; the others contain
+larger non-context padding entries. Every fifth file includes an abandoned
+branch, every eleventh a compaction. These proportions approximate a storage
+workload; padding and invented text are not real transcript history. The
+fixture never reads production Pi transcripts. Plain `bun tauri dev` continues
+to seed Atlas/Notes. Production builds cannot invoke this seed.
+
+Run `scripts/bench-native-storage.sh` for an explicit, ignored native Rust
+filesystem microbenchmark. It verifies fixture counts and measures 30 sequential
+warm-file-cache iterations each of full local-session discovery (the legacy
+snapshot phase) and a narrow project-registry write. It prints individual
+samples, median and nearest-rank p95 in milliseconds. The script identifies
+the baseline storage source with `git show` without changing either checkout.
+It **does not** build or execute that baseline binary: these are
+baseline-equivalent/current-style _phases_, not paired end-to-end app runs or
+input-to-paint times. No claim about remote-network latency, Pi startup,
+readable content, runtime readiness, or visual acknowledgement follows from
+these samples. Use the real dev window and admin diagnostics for those
+milestones, recording actual sample counts and environment separately; do not
+combine these phase percentiles into an overall latency.
+
 ## Browser development
 
 Plain browser development installs a small mock IPC adapter with in-memory

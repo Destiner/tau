@@ -181,7 +181,7 @@ test('keeps a phantom first prompt and held sidebar row visible through registra
     await page.evaluate(() =>
       window.__TAU_PI_SCENARIO__?.nativeInvocationCount('set_active_session'),
     ),
-  ).toBe(2);
+  ).toBe(0);
 
   await releaseGate(page, 'after-first-prompt-registration');
   await expect(userMessage).toHaveCount(1);

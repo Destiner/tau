@@ -191,6 +191,14 @@ watch(
   },
 );
 
+watch(
+  () => props.disabled,
+  (disabled, wasDisabled) => {
+    if (!disabled && wasDisabled && document.activeElement === document.body)
+      void nextTick(focusDialog);
+  },
+);
+
 function focusDialog(): void {
   if (props.method === 'select') {
     document
