@@ -27,12 +27,15 @@
   font-synthesis: none;
 
   /*
-   * Three scales, documented in docs/design-tokens.md. Radius follows what a
-   * thing is rather than how tall it is: a mark takes --radius-xs, a control
-   * --radius-sm, a row or menu item --radius-md, and anything that floats over
-   * the app --radius-lg. Components use the tokens rather than the pixel
-   * values; the only bare lengths left are icon glyph sizes and one-off layout
-   * geometry.
+   * Control height follows density, not importance (use tone for that): xs
+   * inline affordances, sm dense chrome, md default controls, lg dialog fields.
+   * Type runs from xs metadata through sm UI text and md titles to lg prose;
+   * notice-label alone is quieter metadata inside an already labelled message.
+   * Tight leading suits short labels; ui leading suits sentences.
+   * Radius follows role, not height: xs marks, sm controls (also tooltips),
+   * md rows/inline blocks, lg floating surfaces. Use tokens for new control
+   * heights, type, radii, and colors; bare lengths are for icon glyph sizes
+   * and one-off layout geometry, not additional scale rungs.
    */
   --control-xs: 16px;
   --control-sm: 22px;
@@ -49,15 +52,27 @@
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
+
+  /* Surfaces encode depth: sunk wells, canvas/fields, attached panel chrome,
+     then floating panel-raised. Preview-canvas and user are dedicated surfaces.
+     Scrim dims behind dialogs; only floating surfaces receive shadows. */
   --canvas: #fcfcfc;
   --preview-canvas: #fff;
   --panel: #f8f9fa;
   --panel-raised: #fff;
   --sunk: #ebeef0;
+
+  /* Hover is actionable traversal, not selection. Selected/inactive preserve
+     the current row as focus moves; selection is reserved for global text. */
   --hover: rgb(107 125 143 / 10%);
   --selected: rgb(107 125 143 / 20%);
   --selected-inactive: rgb(107 125 143 / 11%);
   --border: rgb(107 125 143 / 24%);
+
+  /* Text is content/action labels; muted is secondary chrome; faint is
+     placeholder/absent content. Accent means attention, link a destination,
+     danger failure/destruction, border a boundary—not decoration. On-accent
+     stays dark in both schemes for contrast on accent fills. */
   --text: #5c6166;
   --muted: #6e757f;
   --faint: #a1a8b2;

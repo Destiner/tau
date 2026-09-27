@@ -41,9 +41,10 @@ Install Playwright once with `bun x playwright install chromium webkit`.
 
 ## Documentation
 
-- `docs/design-tokens.md` - Token semantics and the control height, type, and radius scales.
-- `docs/extensions.md` - Extension support matrix, runtime lifetime, and session replacement behavior.
+- `docs/ci-testing.md` - CI gates, browser test execution, and reproducible timing.
+- `docs/development-storage.md` - Isolated development profiles, browser sandbox, and performance fixtures.
+- `docs/pi.md` - Pi extension compatibility, runtime lifetime, and session replacement behavior.
 - `docs/observability.md` - Telemetry storage, privacy limits, issue reports, and optional OTLP export.
 - `docs/quality.md` - Product principles and the verification rubric for all UI work.
-- `docs/releases.md` - macOS signing, notarization, and artifact verification.
-- `docs/reproduction-scenarios.md` - Scenario authoring, interactive controls, regression workflow, and Pi canary scope.
+- `docs/releases.md` - Signing infrastructure, updater trust, local verification, and release recovery; publication uses `.agents/skills/release/SKILL.md`.
+- `docs/reproduction.md` - Scenarios, manual fixtures, regression authoring, and the explicit Pi canary.

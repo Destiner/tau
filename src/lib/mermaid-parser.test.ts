@@ -40,6 +40,15 @@ function edges(source: string): [string, string, string | undefined][] {
   ]);
 }
 
+/*
+ * Patch rationale: https://github.com/lukilabs/beautiful-mermaid/issues/125.
+ * Bun loads src/index.ts; ESM/Vite loads dist/index.js. Keep both patched
+ * parsers equivalent; regenerate with `bun patch --commit` and check a frozen
+ * install. Verify parseMermaid with both Bun and Node, these regressions plus
+ * mermaid-source/mermaid tests, and transcript browser tests. Remove the patch
+ * only when an upstream release passes all of them; this is a supported
+ * flowchart subset, not the full Mermaid grammar.
+ */
 describe('patched beautiful-mermaid flowchart parser', () => {
   it('preserves ordered topology, code-like labels and forward definitions', () => {
     expect(nodes(codeLabels)).toEqual([

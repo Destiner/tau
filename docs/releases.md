@@ -1,82 +1,43 @@
-# macOS releases
+# macOS release infrastructure
 
-The Apple Silicon DMG supports macOS 15+. Public downloads require Developer ID Application signing, notarization, and stapling. Routine `bun tauri build` produces only an unsigned `.app`, avoiding the DMG packager's Finder AppleScript; use `bun tauri build --bundles app,dmg` to test packaging or `bun run release:macos` for distribution.
+For versioning, checks, workflow dispatch, draft notes, publication approval, and post-publication verification, use the [release skill](../.agents/skills/release/SKILL.md). This document covers infrastructure setup, local builds, and recovery—not a second release procedure. The implementation lives in `.github/workflows/release.yml`, `scripts/release-preflight.sh`, `scripts/release-macos.ts`, and `scripts/updater-release.ts`.
 
-Tau enables Tauri's `macos-private-api` feature so WKWebView can suppress its default white background before first paint. This uses a private WebKit API and is not compatible with Mac App Store submission; the app targets direct DMG distribution.
+Tau distributes an Apple Silicon DMG for macOS 15+, signed with Developer ID, notarized, and stapled. Its `macos-private-api` feature suppresses WKWebView's white first paint; this private API rules out Mac App Store submission. Routine `bun tauri build` produces only an unsigned `.app`, avoiding the DMG packager's Finder AppleScript. Use `bun tauri build --bundles app,dmg` only to test packaging, or `bun run release:macos` for distribution.
 
 ## Apple setup
 
-Direct distribution outside the Mac App Store requires paid [Apple Developer Program](https://developer.apple.com/programs/enroll/) membership. Only the team's Account Holder can create a Developer ID certificate.
+Paid [Apple Developer Program](https://developer.apple.com/programs/enroll/) membership is required. The team's Account Holder creates a **Developer ID Application** certificate using **G2 Sub-CA** in [Certificates, Identifiers & Profiles](https://developer.apple.com/account/resources/certificates/list). Follow [Apple's CSR and certificate instructions](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/), install the certificate in the login keychain, and confirm `security find-identity -v -p codesigning` lists the identity.
 
-Create and install the certificate:
+For CI, export the identity **with its private key** from Keychain Access → My Certificates as a password-protected `.p12`. A `.cer` alone is insufficient; a missing private key must come from the originating Mac or a new certificate. Encode the export with `base64 -i /path/to/DeveloperID.p12 | pbcopy`, store it in the secret below, then clear the clipboard. Keep all credentials and certificate exports outside the repository and chat.
 
-1. Open [Certificates, Identifiers & Profiles](https://developer.apple.com/account/resources/certificates/list).
-2. Add a certificate and select **Developer ID** under Software.
-3. Select **Developer ID Application**, then choose **G2 Sub-CA**. The previous intermediary exists only for software signed with Xcode releases earlier than 11.4.1 and is unnecessary for Tau.
-4. Create and upload the requested certificate signing request.
-5. Download the `.cer` file and double-click it to install it in the login keychain.
-6. Confirm that `security find-identity -v -p codesigning` lists `Developer ID Application`.
+For notarization, an Account Holder or Admin creates a **team API key** with Developer role in [App Store Connect → Users and Access → Integrations](https://appstoreconnect.apple.com/access/integrations/api). Request API access if prompted. Record the Key ID and Issuer ID; Apple permits downloading the `.p8` private key only once. An individual API key does not fit this issuer-based setup. See [Apple's API key instructions](https://developer.apple.com/help/app-store-connect/get-started/app-store-connect-api).
 
-Apple's detailed process is in [Create Developer ID certificates](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/).
+## GitHub environment
 
-Notarization also needs one of:
+Create the **release** environment in repository Settings → Environments. Restrict deployments to selected branch **main**, not tags; optionally require reviewers. Configure these environment secrets:
 
-- An App Store Connect API key: `APPLE_API_KEY`, `APPLE_API_ISSUER`, and `APPLE_API_KEY_PATH`.
-- An Apple Account with an app-specific password: `APPLE_ID`, `APPLE_PASSWORD`, and `APPLE_TEAM_ID`.
+| Secret                               | Source                                                                        |
+| ------------------------------------ | ----------------------------------------------------------------------------- |
+| `APPLE_CERTIFICATE`                  | Base64 `.p12` containing Developer ID Application certificate and private key |
+| `APPLE_CERTIFICATE_PASSWORD`         | `.p12` export password                                                        |
+| `APPLE_API_PRIVATE_KEY`              | Entire downloaded `.p8`, including BEGIN/END lines                            |
+| `APPLE_API_KEY`                      | App Store Connect Key ID                                                      |
+| `APPLE_API_ISSUER`                   | Team API key Issuer ID                                                        |
+| `TAURI_SIGNING_PRIVATE_KEY`          | Complete encoded updater private key                                          |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Updater-key password; unset for an unencrypted key                            |
+| `TAU_UPDATER_PUBLIC_KEY`             | Complete encoded updater `.pub` content, compiled into release builds         |
 
-Keep certificate exports, private keys, and passwords outside the repository.
+Actions policy must allow the built-in `GITHUB_TOKEN` to use `contents: write`; no personal token is needed. The workflow captures `main`'s HEAD for both checkout and tagging, creates a lightweight version tag and a draft, and removes temporary signing credentials in an always-run cleanup step. Draft assets remain unavailable to installed clients until publication as the latest stable release.
 
-## GitHub Actions releases
+## Updater trust and recovery
 
-`.github/workflows/release.yml` is manually dispatched and accepts only `main`. When dispatched with `main` selected, it captures that branch's HEAD SHA and uses the same SHA for checkout and tag creation, even if the branch advances later. It reads the stable `major.minor.patch` version from `package.json`, checks the Tauri and Cargo versions agree, and creates lightweight tag `v<version>` and a **draft** release titled `Tau <version>`.
-
-The draft contains exactly four assets:
-
-- `tau-<version>-apple-silicon.dmg`
-- `tau-<version>-darwin-aarch64.tar.gz`
-- `tau-<version>-darwin-aarch64.tar.gz.sig`
-- `latest.json`
-
-The updater manifest points to the archive through the immutable `v<version>` release URL. Tau checks the stable public endpoint `https://github.com/Destiner/tau/releases/latest/download/latest.json`; draft assets are unavailable to clients until the GitHub Release is published. The repository is public, so publishing the draft makes the DMG and updater assets publicly downloadable.
-
-### One-time GitHub setup
-
-In the repository's **Settings → Environments**, create an environment named **release**:
-
-- Restrict deployment branches to **Selected branches and tags → branch `main`** (do not allow tags).
-- Optionally require reviewer approval if your GitHub plan supports it.
-- Add the following **environment secrets**. Do not paste credentials into issues, chat, or the repository.
-
-| Secret                               | Value and source                                                                                                        |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| `APPLE_CERTIFICATE`                  | Base64-encoded `.p12` export of your **Developer ID Application** certificate **and private key** from Keychain Access. |
-| `APPLE_CERTIFICATE_PASSWORD`         | Password you choose when exporting that `.p12`.                                                                         |
-| `APPLE_API_PRIVATE_KEY`              | Entire contents of the downloaded `AuthKey_<key-id>.p8`, including its BEGIN/END lines.                                 |
-| `APPLE_API_KEY`                      | The API key's **Key ID** from App Store Connect.                                                                        |
-| `APPLE_API_ISSUER`                   | The **Issuer ID** shown with the team API keys in App Store Connect.                                                    |
-| `TAURI_SIGNING_PRIVATE_KEY`          | Complete encoded private key generated by `bunx tauri signer generate`; never commit it.                                |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password for that updater key, if it has one. Leave this secret unset for an unencrypted key.                           |
-| `TAU_UPDATER_PUBLIC_KEY`             | Complete encoded `.pub` content generated with the updater private key. This is compiled into release builds.           |
-
-In **Keychain Access → My Certificates**, export the Developer ID Application identity **with its private key** as password-protected `.p12`; `.cer` alone is insufficient. If the key is absent, export from the originating Mac or create a new certificate. Copy the base64 export:
-
-```sh
-base64 -i /path/to/DeveloperID.p12 | pbcopy
-```
-
-Paste into `APPLE_CERTIFICATE`, then clear the clipboard. Store the export securely outside the repository.
-
-For notarization, an Account Holder or Admin can create a **team API key** in [App Store Connect → Users and Access → Integrations → App Store Connect API](https://appstoreconnect.apple.com/access/integrations/api). Request API access first if prompted. Create a key with the Developer role for notarization, record its Key ID and Issuer ID, and download the `.p8` file. Apple allows downloading the private key only once. Use a team key, not an individual key, for this issuer-based setup. See [Apple's API key instructions](https://developer.apple.com/help/app-store-connect/get-started/app-store-connect-api).
-
-Generate the updater keypair once; store its private key, optional password, and complete encoded `.pub` content in release-environment secrets:
+Generate the updater keypair **once**, not for each release:
 
 ```sh
 bunx tauri signer generate -w ~/.tauri/tau-updater.key
 ```
 
-Back up both files securely: losing or rotating the private key prevents existing installations from trusting updates. The public key is not secret; its environment setting makes the compile-time trust root explicit.
-
-The authorized production public key is pinned by its lowercase SHA-256 fingerprint in `scripts/updater-public-key.sha256`. Verify a restored public key against it with:
+Back up both files and the password securely. Losing or rotating the private key prevents existing installations from trusting updates. The public key is not secret; its lowercase SHA-256 fingerprint is pinned in `scripts/updater-public-key.sha256`. Verify a restored public key before configuring CI:
 
 ```sh
 printf '%s' "$(cat ~/.tauri/tau-updater.key.pub)" \
@@ -84,58 +45,11 @@ printf '%s' "$(cat ~/.tauri/tau-updater.key.pub)" \
   | shasum -a 256
 ```
 
-Each release verifies `TAU_UPDATER_PUBLIC_KEY` against this pinned trust root. Rotation requires an authorized transition shipped to existing installations first; changing only the fingerprint and secret strands clients.
+Each release verifies the configured public key against that fingerprint. Rotation requires an authorized transition shipped to existing installations first; changing only the fingerprint and secret strands clients.
 
-The built-in `GITHUB_TOKEN` uses `contents: write` for draft discovery, tagging, and uploads; no personal token is needed. Actions policy must allow this permission. Signing secrets reach only necessary steps; an always-run cleanup removes the temporary certificate keychain and notarization key.
+## Local build and verification
 
-### Creating a release
-
-1. Bump `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml` together. Refresh `src-tauri/Cargo.lock` with Cargo after changing its package version, and commit the version changes to `main`.
-2. Before dispatch, run the repository quality checks on the commit that will be `main`'s HEAD:
-
-   ```sh
-   bun run lint
-   bun run build
-   bun run test
-   bun run test:e2e
-   cargo fmt --check --manifest-path src-tauri/Cargo.toml
-   cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-   cargo test --manifest-path src-tauri/Cargo.toml
-   ```
-
-   The workflow does not enforce these as separate gates. It runs `bun run build` before secrets enter the job; `release:macos` rebuilds the frontend in a sanitized environment before credentialed Tauri build.
-
-3. Open **Actions → Release → Run workflow**, select `main`, and run it. Approve the `release` environment deployment if configured.
-4. The workflow checks version and release availability, then builds, signs, notarizes, staples, and verifies with `bun run release:macos`.
-5. Open the resulting draft under **Releases** and write the features/fixes description. The distribution smoke test below is optional, not a publication requirement.
-6. Publish it as a normal release, not a pre-release, with **Set as the latest release** enabled. Confirm GitHub shows the **Latest** badge; clients resolve `latest.json` through that designation.
-7. After publication, verify the public manifest is the exact staged file and its immutable archive URL is reachable:
-
-   ```sh
-   assets="src-tauri/target/release-assets/$(node -p "require('./package.json').version")"
-   curl -fsSL https://github.com/Destiner/tau/releases/latest/download/latest.json \
-     -o /tmp/tau-latest.json
-   cmp "$assets/latest.json" /tmp/tau-latest.json
-   curl -fIL "$(python3 -c 'import json; print(json.load(open("/tmp/tau-latest.json"))["platforms"]["darwin-aarch64"]["url"])')"
-   ```
-
-   Do not announce the release until these checks pass.
-
-8. Update the Download link in `README.md` to the published version's immutable DMG URL, verify it is reachable, and commit the link change as `docs: update download link to v<version>` after the repository's pre-commit checks. Push normally to `main`; leave the release tag on the original release commit.
-
-Concurrency protects active runs but is not FIFO: a newly dispatched run can replace a pending one. Existing exact-version tags/releases (including drafts) and API failures stop the workflow. It rechecks before signing and tagging, never moves tags or replaces assets, and creates a lightweight tag at the captured SHA immediately before the draft. `GITHUB_TOKEN`-pushed tags do not trigger tag/push workflows. `--verify-tag` checks existence, not SHA identity; use tag protection if downstream automation requires immutable tags.
-
-If failure precedes tagging, fix and rerun. After tagging, runner artifacts are not retained: inspect the tag/partial draft, normally remove both deliberately, then rerun. Finish manually only if the exact verified assets were uploaded or independently retained. Never delete or retarget a published release to reuse a version; bump it instead. Notarization delays may require retry.
-
-## Build and verify
-
-Install the Apple Silicon Rust target in the active rustup toolchain:
-
-```sh
-rustup target add aarch64-apple-darwin
-```
-
-Invoke the self-contained release script with App Store Connect API credentials:
+Install the target with `rustup target add aarch64-apple-darwin`, then provide the installed signing identity, notarization credentials, and updater key:
 
 ```sh
 APPLE_API_KEY=... \
@@ -148,45 +62,27 @@ TAU_UPDATER_PUBLIC_KEY="$(cat ~/.tauri/tau-updater.key.pub)" \
 bun run release:macos
 ```
 
-Or replace the API variables with `APPLE_ID`, `APPLE_PASSWORD`, and `APPLE_TEAM_ID`. A CI build can instead provide `APPLE_CERTIFICATE` and `APPLE_CERTIFICATE_PASSWORD` for certificate import.
+Alternatively, notarize with `APPLE_ID`, app-specific `APPLE_PASSWORD`, and `APPLE_TEAM_ID` instead of the API variables. CI can import the identity using `APPLE_CERTIFICATE` and `APPLE_CERTIFICATE_PASSWORD`. Omit the updater password for an unencrypted key.
 
-`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` is optional and may be omitted for an unencrypted updater key. `release:macos` builds and typechecks the frontend itself before invoking Tauri. That frontend subprocess receives an environment with every `APPLE_*` variable, `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, and `TAU_UPDATER_PUBLIC_KEY` removed; the subsequent Tauri build receives the normal release environment. An ordinary `bun tauri build` remains credential-free: updater artifacts are enabled only by `src-tauri/tauri.release.conf.json`, and the release script injects the required public key into a temporary build configuration.
+The script builds/typechecks the frontend without signing variables, then runs the credentialed native build. Updater artifacts are enabled only by `src-tauri/tauri.release.conf.json`; the public key is injected through a temporary configuration. Assets are staged atomically under `src-tauri/target/release-assets/<version>` without overwriting. Preserve or explicitly remove an existing local version directory before rebuilding.
 
-The release command builds Apple Silicon `app` and `dmg` bundles, notarizes and staples the app before packaging, then signs, notarizes, and staples the DMG. It atomically stages assets under `src-tauri/target/release-assets/<version>` without overwriting. CI starts from a clean checkout/target; locally, preserve or explicitly remove an existing version directory before rebuilding. Verification checks:
-
-- the exact four-file release asset set and exact `latest.json` schema;
-- manifest URL, signature content, version, platform, and artifact correspondence;
-- the updater signature cryptographically against the checked-in public-key fingerprint and `TAU_UPDATER_PUBLIC_KEY`;
-- archive entry paths and types before extraction, allowing only directories and regular files (never links, devices, or FIFOs);
-- the extracted updater app's signature, architecture, minimum OS, Gatekeeper result, and stapled ticket;
-- equality of the finalized updater app and the app inside the DMG;
-- exact `arm64`-only architecture coverage and compiled deployment target;
-- app and DMG signatures, hardened runtime, Gatekeeper assessment, and notarization tickets;
-- system-only dynamic library linkage and complete DMG/app file allowlists;
-- synchronized package versions.
-
-It prints SHA-256 checksums for all four assets after verification.
-
-Re-run the checks without rebuilding (verification still requires the pinned public key):
+The verifier checks the exact four assets (DMG, updater archive, signature, `latest.json`), manifest correspondence, cryptographic updater signature, safe archive entries, app/DMG equality, arm64 architecture, minimum OS, signing, notarization, Gatekeeper, system-only linkage, file allowlists, and synchronized versions. It prints SHA-256 checksums. Reverify without rebuilding:
 
 ```sh
 TAU_UPDATER_PUBLIC_KEY="$(cat ~/.tauri/tau-updater.key.pub)" \
   bun run verify:macos-release
 ```
 
-Pass a specific four-asset directory after `--` when needed:
+Append `-- /path/to/release-assets/<version>` to verify a specific asset directory. For published releases, use the release skill's unauthenticated public-manifest comparison and immutable archive URL check against retained, checksum-verified draft assets—not a guessed local build directory.
 
-```sh
-TAU_UPDATER_PUBLIC_KEY="$(cat ~/.tauri/tau-updater.key.pub)" \
-  bun run verify:macos-release -- /path/to/release-assets/<version>
-```
+## Failed or partial releases
+
+Concurrency is not FIFO: a new dispatch can replace a pending run. Inspect existing runs before retrying. Existing tags/releases (including drafts) and API errors stop preflight; never move tags or overwrite assets. `--verify-tag` proves existence, not commit identity; verify the exact SHA, and use tag protection for downstream immutability. Tags pushed by `GITHUB_TOKEN` do not trigger tag/push workflows.
+
+Before tagging, fix the failure and rerun. After tagging, runner artifacts are not retained: inspect the tag and partial draft, and obtain explicit permission before deleting either. Complete manually only with the exact verified assets already uploaded or independently retained. Never delete or retarget a published release to reuse its version; bump instead. Notarization delays may require retry.
 
 ## Optional distribution smoke test
 
-This manual check is optional and does not block publication. When performed, test the exact verified DMG through a normal browser download. Upload it unchanged to an HTTPS host, download it in Safari on a clean test Mac, confirm its printed SHA-256 checksum, drag Tau into Applications, and open it without using `xattr`, `chmod`, or Gatekeeper overrides. Confirm the installed app independently:
+This is optional, not a publication gate. Download the exact verified DMG over HTTPS in Safari on a clean test Mac, compare its SHA-256, drag Tau into Applications, and open it without `xattr`, `chmod`, or Gatekeeper overrides. Run `spctl --assess --type execute --verbose=4 /Applications/Tau.app`; expect `accepted` and `source=Notarized Developer ID`.
 
-```sh
-spctl --assess --type execute --verbose=4 /Applications/Tau.app
-```
-
-The assessment must report `accepted` and `source=Notarized Developer ID`. Do not use Telegram to test distribution: it can attach App Sandbox quarantine metadata that makes an otherwise valid app fail with `File created by an AppSandbox, exec/open not allowed`.
+Do not use Telegram for this check: its App Sandbox quarantine metadata can cause `File created by an AppSandbox, exec/open not allowed` even for a valid app.
