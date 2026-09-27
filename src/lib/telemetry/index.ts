@@ -1,9 +1,3 @@
-/*
- * Tau's frontend telemetry adapter: the only surface product code should
- * use. It owns the bounded queue, the tracer, and the flush scheduler, so
- * nothing else in the app imports `@opentelemetry/api`/`sdk-trace` or the
- * Tauri ingest command directly.
- */
 import {
   ROOT_CONTEXT,
   TraceFlags,
@@ -58,7 +52,6 @@ import {
   type FrontendQueueRecord,
 } from './tracer';
 
-/** Bounds both the pre-init and batch buffer; see `./queue`. */
 const MAX_QUEUE_SIZE = 200;
 
 interface AdapterState {
@@ -69,9 +62,7 @@ interface AdapterState {
 }
 
 let state: AdapterState | undefined;
-/** The queue's own `dropped` count as of the last time it was reported via
- * a `telemetry.health` log, so overflow is reported once per new drop
- * rather than on every flush. */
+
 let lastReportedDroppedCount = 0;
 /** Telemetry records nothing until admin mode says it may (see
  * `src/lib/admin-mode.ts`). Off is the starting state, not a fallback: a
@@ -79,10 +70,6 @@ let lastReportedDroppedCount = 0;
 let enabled = false;
 let telemetryEpoch = 0;
 
-/** Turns recording on or off. Every span, log, and metric record already
- * passes through the queue, so gating the queue's `push` is enough to stop
- * all three at once; turning it off also discards whatever was still
- * waiting to be flushed. */
 function setTelemetryEnabled(next: boolean): void {
   if (enabled === next) return;
   enabled = next;
@@ -91,14 +78,10 @@ function setTelemetryEnabled(next: boolean): void {
   state.queue.drain(Number.MAX_SAFE_INTEGER);
 }
 
-/** Builds the queue, tracer, and flush scheduler on first use, so a span
- * created before `initTelemetry` runs is still captured rather than lost. */
 function ensureState(): AdapterState {
   if (!state) {
     const rawQueue = createBoundedQueue<FrontendQueueRecord>(MAX_QUEUE_SIZE);
-    // Dropping at the queue rather than at the flush keeps a disabled
-    // adapter from holding records it will never send: nothing recorded
-    // while telemetry is off can be flushed by enabling it later.
+
     const queue: BoundedQueue<FrontendQueueRecord> = {
       push(record) {
         if (!enabled) return;
@@ -115,9 +98,7 @@ function ensureState(): AdapterState {
     const tracer = createTracer(queue);
     const { scheduleFlush: rawScheduleFlush, flushNow } =
       createFlushScheduler(queue);
-    // Every call site below already calls `scheduleFlush` once its span or
-    // log is queued, so piggybacking the overflow check here reports a new
-    // drop promptly without threading a callback through `tracer.ts`.
+
     function scheduleFlush(): void {
       if (!enabled) return;
       reportQueueOverflowIfChanged(queue);
@@ -128,11 +109,6 @@ function ensureState(): AdapterState {
   return state;
 }
 
-/** Queues one `telemetry.health` log reporting the queue's current
- * `dropped` count, but only once per new drop — not on every flush — so
- * reporting overflow cannot itself contribute to more of it. Pushed
- * directly into the queue it is reporting on, never through a second
- * `ensureState()`/tracer round trip. */
 function reportQueueOverflowIfChanged(
   queue: BoundedQueue<FrontendQueueRecord>,
 ): void {
@@ -153,10 +129,7 @@ function reportQueueOverflowIfChanged(
     record.attributes['tau.telemetry.dropped_count'] = droppedCount;
   }
   queue.push(record);
-  // Re-read after pushing: if the queue was already at capacity, this push
-  // may have evicted another record and incremented `dropped` again. Using
-  // the post-push value here means that increment is never mistaken for a
-  // fresh drop on a later, unrelated call.
+
   lastReportedDroppedCount = queue.dropped;
 }
 
@@ -168,19 +141,10 @@ interface TelemetryScope {
 }
 
 interface CommandSpanHandle {
-  /** Passed to the corresponding Tauri command as `telemetryContext`, so the
-   * native span it starts becomes a child of this one. */
   readonly context?: TraceContext;
   end: (outcome?: TauriInvokeOutcome) => void;
 }
 
-/** Starts a span in `family`, carrying one attribute, as a child of
- * `parentContext` when given and a root span otherwise. `parentContext` is
- * always an explicit argument, never read from ambient/global state, so
- * concurrent action → invoke chains across sessions and controllers cannot
- * leak context into each other. Shared by `startActionSpan` and
- * `startCommandSpan`; Pi RPC spans use `startRpcSpan` instead, since they
- * need more than one attribute and end asynchronously. */
 function setScopeAttributes(
   span: Span,
   family: string,
@@ -219,14 +183,7 @@ function logScopeAttributes(
   return attributes;
 }
 
-/**
- * Records one linked `operation.checkpoint` log the moment `context`'s span
- * starts, so the operation it names stays visible in the persisted timeline
- * even if that span never ends — a hang, a crash, or an abandoned request
- * all leave an OTel span exporter nothing to write. Carries the span's own
- * `traceId`/`spanId`, never a parent's, so the checkpoint links to exactly
- * the operation it is standing in for.
- */
+// Open spans are not exported after a hang or crash; persist their start separately.
 function recordOperationCheckpoint(
   operationFamily: OperationCheckpointFamily,
   operationName: string,
@@ -263,7 +220,7 @@ function recordOperationCheckpoint(
     scheduleFlush();
     void flushNow();
   } catch {
-    // Telemetry completion must not affect the operation it is checkpointing.
+    // Diagnostics must not interrupt product work.
   }
 }
 
@@ -313,7 +270,7 @@ function startFamilySpan(
           span.end();
           scheduleFlush();
         } catch {
-          // Telemetry completion must not affect the wrapped operation.
+          // Diagnostics must not interrupt product work.
         }
       },
     };
@@ -322,13 +279,6 @@ function startFamilySpan(
   }
 }
 
-/**
- * Starts a `ui.action` root span for a semantic user action (session
- * selection, message send, stop, rename, model/effort selection, extension
- * dialog responses). `useTau.ts` passes the returned context down through
- * the invoke wrapper and Pi RPC calls the action makes, so a reconstructed
- * trace shows the whole action → invoke → RPC timeline.
- */
 function startActionSpan(
   action: UiActionName,
   scope?: TelemetryScope,
@@ -347,9 +297,9 @@ const PAINT_WAIT_MS = 5_000;
 interface ActionMilestones {
   readonly span: CommandSpanHandle;
   mark: (kind: ActionMilestoneKind) => void;
-  /** Call after the visible state mutation; does not wait for or prove paint. */
+
   afterRender: () => void;
-  /** Cancel pending frames/timeouts on replacement, failure, or unmount. */
+
   cancel: () => void;
 }
 
@@ -415,7 +365,7 @@ function startActionMilestones(
       });
       scheduleFlush();
     } catch {
-      // Instrumentation must never affect the user action.
+      // Diagnostics must not interrupt product work.
     }
   }
 
@@ -459,10 +409,6 @@ function startActionMilestones(
   return { span, mark, afterRender, cancel };
 }
 
-/**
- * Starts a `tauri.invoke` span for one ordinary Tauri command call, either
- * as a root span or as a child of an enclosing action's context.
- */
 function startCommandSpan(
   command: TauriInvokeCommand,
   parentContext?: TraceContext,
@@ -475,24 +421,8 @@ function startCommandSpan(
   );
 }
 
-/**
- * The one Tau-owned wrapper for ordinary Tauri invokes: starts a
- * `tauri.invoke` span, passes its context to the command as
- * `telemetryContext`, and ends the span once the call settles either way.
- * `command` is drawn from the reviewed `TauriInvokeCommand` allowlist, which
- * deliberately excludes `send_pi` (covered by Pi RPC spans instead) and
- * `ingest_telemetry` (which must never trace itself). `args` is only ever
- * used to make the real invoke call — it is never read into telemetry, so
- * this wrapper never serializes a command's arguments.
- *
- * Deliberately not an `async function`: returning the exact promise
- * `invoke` produces (rather than a promise from an `await`-wrapping
- * function body) keeps callers' continuations exactly as many microtask
- * ticks away from resolution as an unwrapped `invoke` call, so telemetry
- * never shifts the relative ordering product code or tests observe.
- * Ending the span is attached as an independent `.then()` on that same
- * promise rather than chained into the return value, for the same reason.
- */
+// Return invoke's original promise: wrapping it in async or chaining the returned
+// promise shifts caller continuations relative to uninstrumented invokes.
 function invokeTraced<T>(
   command: TauriInvokeCommand,
   args?: Record<string, unknown>,
@@ -521,15 +451,6 @@ interface RpcSpanHandle {
   end: (outcome: PiRpcOutcome) => void;
 }
 
-/**
- * Starts a `pi.rpc` span at the moment Tau creates a Pi RPC request (before
- * `send_pi` even writes it), carrying the method, request id, and the
- * runtime/generation the request belongs to. `runtime.ts` keeps the
- * returned handle in a pending map keyed by runtime + generation + request
- * id and calls `end` on the exact matching response, a timeout, or explicit
- * abandonment (process exit, generation change, controller disposal or
- * replacement, stop paths) — never through ambient state.
- */
 function startRpcSpan(
   method: PiRpcMethod,
   requestId: string,
@@ -584,7 +505,7 @@ function startRpcSpan(
           span.end();
           scheduleFlush();
         } catch {
-          // Telemetry completion must not affect Pi RPC handling.
+          // Diagnostics must not interrupt product work.
         }
       },
     };
@@ -593,13 +514,6 @@ function startRpcSpan(
   }
 }
 
-/**
- * Records one `pi.stream` aggregate span for a Pi run's streaming deltas:
- * a bounded count and total character count, never one record per delta or
- * token. `startTime`/`endTime` are epoch milliseconds spanning the run's
- * first delta through the moment `runtime.ts` flushes the aggregate (settle,
- * abandonment, or stop).
- */
 function recordStreamAggregate(
   runtimeId: string,
   generation: number,
@@ -627,7 +541,7 @@ function recordStreamAggregate(
     span.end(endTime);
     scheduleFlush();
   } catch {
-    // Telemetry completion must not affect streaming.
+    // Diagnostics must not interrupt product work.
   }
 }
 
@@ -657,18 +571,10 @@ function recordRpcResponseAnomaly(
     scheduleFlush();
     void flushNow();
   } catch {
-    // Telemetry failure must not affect response handling.
+    // Diagnostics must not interrupt product work.
   }
 }
 
-/**
- * Records one `controller.lifecycle` transition: a named composite-state
- * change with its cause, plus session/controller/runtime context and, when
- * the mutation happened inside an active span, that span's own trace
- * context. Called only from `composables/state.ts`'s
- * `setControllerLifecycle`, never at every raw boolean assignment site —
- * see that function for why.
- */
 function recordControllerTransition(
   before: ControllerLifecycleState,
   after: ControllerLifecycleState,
@@ -701,21 +607,14 @@ function recordControllerTransition(
     queue.push(record);
     scheduleFlush();
   } catch {
-    // Telemetry completion must not affect controller lifecycle handling.
+    // Diagnostics must not interrupt product work.
   }
 }
 
-/**
- * Records one `frontend.error` log for a captured `window.error`,
- * `unhandledrejection`, Vue error, or `console.error` call. Never the
- * thrown value's message or a serialized object — only its bounded
- * `kind`/`source` category and a sanitized source location, each dropped
- * (not persisted) individually if it somehow fails validation, so a
- * classification bug can never smuggle an unreviewed value through.
- */
 let inConsoleErrorCapture = false;
 let frontendErrorCaptureInstalled = false;
 
+// Only validated categories and sanitized locations may enter telemetry.
 function recordFrontendError(
   source: FrontendErrorSource,
   kind: string,
@@ -742,7 +641,7 @@ function recordFrontendError(
     scheduleFlush();
     void flushNow();
   } catch {
-    // Telemetry completion must not affect error handling itself.
+    // Diagnostics must not interrupt product work.
   }
 }
 
@@ -767,19 +666,6 @@ function vueErrorHandler(err: unknown): void {
   }
 }
 
-/** Guards `console.error` wrapping against recording its own re-entry: if
- * sanitizing/recording somehow calls `console.error` again on the same
- * thread (a bug in this module, not expected), the nested call is still
- * forwarded to the real `console.error` but is not itself recorded. */
-
-/**
- * Installs `window.error`/`unhandledrejection` listeners and wraps
- * `console.error`. Each installation is independently guarded so a
- * DOM-less environment (a unit test) can still exercise the parts that do
- * not need `window`. Safe to call once at startup, before Vue mounts:
- * every listener/wrapper here is synchronous and does no I/O, so nothing
- * delays window reveal or mounting.
- */
 function installFrontendErrorCapture(): void {
   if (frontendErrorCaptureInstalled) return;
   frontendErrorCaptureInstalled = true;
@@ -793,7 +679,7 @@ function installFrontendErrorCapture(): void {
       );
     });
   } catch {
-    // No `window` (e.g. a non-browser test environment): skip this listener.
+    // Window may be absent outside the webview.
   }
 
   try {
@@ -805,7 +691,7 @@ function installFrontendErrorCapture(): void {
       );
     });
   } catch {
-    // No `window`: skip this listener too.
+    // Window may be absent outside the webview.
   }
 
   try {
@@ -831,8 +717,6 @@ function installFrontendErrorCapture(): void {
   }
 }
 
-/** Constructs the adapter eagerly so a span created immediately at startup
- * is captured from the start. Call before Vue mounts. */
 function initTelemetry(): void {
   try {
     ensureState();
@@ -841,8 +725,6 @@ function initTelemetry(): void {
   }
 }
 
-/** Drains any queued spans immediately, bypassing the flush delay. Exposed
- * for callers (and tests) that need queued telemetry sent without waiting. */
 function flushTelemetry(): Promise<void> {
   try {
     return ensureState().flushNow();
@@ -851,10 +733,6 @@ function flushTelemetry(): Promise<void> {
   }
 }
 
-/** The bounded queue's current length: how many spans/logs/metric records
- * are waiting for the next flush. Read only by `./heartbeat` for the
- * periodic heartbeat's `tau.heartbeat.queue_length` gauge — never exposes
- * the queue itself. */
 function telemetryQueueLength(): number {
   try {
     return ensureState().queue.length;
@@ -873,15 +751,6 @@ interface HeartbeatInput {
   queueLength: number;
 }
 
-/**
- * Records one low-frequency `frontend.heartbeat` log: liveness plus
- * visibility/focus state and coarse, content-free counts. Called on a timer
- * from `./heartbeat`, never from product code directly. A gap between
- * heartbeats — or the absence of the next one — is itself the diagnostic
- * signal for a slow or stuck frontend; visibility/focus travel alongside so
- * a gap while hidden (background timer throttling) is not mistaken for one
- * while the window was actually active.
- */
 function recordHeartbeat(input: HeartbeatInput): void {
   try {
     const { queue, scheduleFlush } = ensureState();
@@ -908,19 +777,10 @@ function recordHeartbeat(input: HeartbeatInput): void {
     queue.push(record);
     scheduleFlush();
   } catch {
-    // Telemetry completion must not affect the heartbeat timer.
+    // Diagnostics must not interrupt product work.
   }
 }
 
-/**
- * Shared implementation behind `recordEventLoopLag`/`recordLongTask`: the
- * two raw measurements with no native span/log counterpart to derive a
- * metric from, so they cross IPC as a dedicated `FrontendMetricRecord`
- * instead of being derived natively the way every other Stage 5 metric is.
- * `value` is hard-bounded and must be a finite, non-negative number; every
- * attribute is still revalidated against the family's own catalog entry
- * before being attached.
- */
 function recordMetric(
   family: string,
   value: number,
@@ -945,18 +805,10 @@ function recordMetric(
     queue.push(record);
     scheduleFlush();
   } catch {
-    // Telemetry completion must not affect whatever is being measured.
+    // Diagnostics must not interrupt product work.
   }
 }
 
-/**
- * Records one raw `frontend.event_loop_lag` measurement (scheduled versus
- * actual delay between heartbeat ticks) as a native OTel histogram.
- * `visibility`/`focused` travel as bounded dimensions so a large reading
- * while hidden (expected background-timer throttling) is distinguishable
- * from one while the window was active, without this function itself
- * deciding what counts as a failure.
- */
 function recordEventLoopLag(
   lagMs: number,
   visibility: HeartbeatVisibility,
@@ -968,9 +820,6 @@ function recordEventLoopLag(
   });
 }
 
-/** Records one `PerformanceObserver` `longtask` entry's duration as a
- * native OTel histogram. No dimensions: a long task carries no reviewed
- * attribution. */
 function recordLongTask(durationMs: number): void {
   recordMetric(FRONTEND_LONG_TASK.name, durationMs, {});
 }
@@ -995,13 +844,6 @@ interface StateSummaryInput {
   scope?: TelemetryScope;
 }
 
-/**
- * Records one periodic `frontend.state_summary` log: shape and counts only,
- * never transcript or draft text. Called on a timer from `./heartbeat`.
- * Active project/session/controller identifiers, when `scope` names them,
- * are attached as ordinary context attributes — the same mechanism spans
- * and other logs already use — not new family-specific attributes.
- */
 function recordStateSummary(input: StateSummaryInput): void {
   try {
     const { queue, scheduleFlush } = ensureState();
@@ -1036,7 +878,7 @@ function recordStateSummary(input: StateSummaryInput): void {
     queue.push(record);
     scheduleFlush();
   } catch {
-    // Telemetry completion must not affect the state-summary timer.
+    // Diagnostics must not interrupt product work.
   }
 }
 

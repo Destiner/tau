@@ -27,7 +27,7 @@ function memoryStorage(initial?: string): {
 afterEach(() => setSidebarWidthStorage());
 
 describe('sidebar width storage', () => {
-  it('can use isolated storage without touching browser persistence', () => {
+  it('isolates storage and clamps loaded widths', () => {
     const first = memoryStorage();
     const second = memoryStorage();
 
@@ -39,9 +39,6 @@ describe('sidebar width storage', () => {
     setSidebarWidthStorage(second.storage);
     expect(loadSidebarWidth()).toBe(DEFAULT_SIDEBAR_WIDTH);
     expect(second.value()).toBeNull();
-  });
-
-  it('clamps values loaded through the storage seam', () => {
     setSidebarWidthStorage(memoryStorage('999').storage);
     expect(loadSidebarWidth()).toBe(480);
   });

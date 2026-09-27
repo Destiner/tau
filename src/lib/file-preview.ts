@@ -8,11 +8,11 @@ interface FilePreviewDescriptor {
   filename: string;
   directory: string;
   byteLength: number;
-  /** Original document path, used to resolve document-relative links. */
+
   sourcePath?: string;
-  /** Root used when a document path itself is relative. */
+
   projectRoot?: string;
-  /** Opaque identity of the remote project that owns this document. */
+
   remoteIdentity?: string;
 }
 
@@ -34,7 +34,7 @@ interface TextFilePreviewType {
 
 interface MediaFilePreviewType {
   kind: Exclude<FilePreviewKind, 'text'>;
-  /** Kept optional so existing callers can inspect the common preview shape. */
+
   language?: string;
   mediaType: string;
 }
@@ -245,7 +245,6 @@ function resolveFilePreviewContextPath(
   return normalizePreviewPath(`${directory}/${path}`);
 }
 
-/** Labels a file's parent, relative only when the file is inside the project. */
 function filePreviewDirectoryForPath(
   filePath: string,
   projectDirectory?: string,
@@ -272,7 +271,6 @@ function isBrowserPreviewUrl(value: string): boolean {
   }
 }
 
-/** Converts snapshots for Tauri while keeping deterministic browser fixtures usable. */
 function filePreviewAssetUrl(assetPath: string): string {
   return isBrowserPreviewUrl(assetPath) ? assetPath : convertFileSrc(assetPath);
 }
@@ -291,7 +289,6 @@ interface TextPreview {
   truncated: boolean;
 }
 
-/** Reads at most one preview window even when an asset server ignores Range. */
 async function fetchTextPreview(
   url: string,
   byteLength: number,

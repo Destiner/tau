@@ -25,7 +25,6 @@ withDefaults(
 
 const button = ref<HTMLButtonElement>();
 
-/** The underlying element, for the imperative focus callers need. */
 defineExpose({
   get button() {
     return button.value;
@@ -36,11 +35,6 @@ defineExpose({
 <style scoped>
 /* stylelint-disable no-descending-specificity -- state rules are ordered by which should win: hover, then focus. */
 
-/*
- * A button is as wide as its label. The old 54px floor is what made "No" look
- * like a form submit, and hover is an explicit color rather than a brightness
- * filter, which inverted its own meaning between the light and dark schemes.
- */
 .ui-button {
   display: inline-flex;
   align-items: center;
@@ -98,10 +92,6 @@ defineExpose({
   background: color-mix(in srgb, var(--accent) 88%, var(--on-accent));
 }
 
-/*
- * Focus is visible. `outline: 0` with nothing in its place left a keyboard
- * user with no cursor at all in a dialog whose buttons are the only controls.
- */
 .ui-button:focus-visible {
   border-color: var(--accent);
   outline: 0;

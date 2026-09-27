@@ -705,8 +705,6 @@ fn swap_app_bundles_atomic(installed: &Path, staged: &Path) -> std::io::Result<(
         .map_err(|_| Error::new(ErrorKind::InvalidInput, "installed app path contains NUL"))?;
     let staged = CString::new(staged.as_os_str().as_bytes())
         .map_err(|_| Error::new(ErrorKind::InvalidInput, "staged app path contains NUL"))?;
-    // SAFETY: both C strings live for the duration of the call and point to
-    // existing paths. RENAME_SWAP leaves both paths present on success.
     let result = unsafe {
         libc::renameatx_np(
             libc::AT_FDCWD,
@@ -856,8 +854,6 @@ fn ensure_available() -> Result<(), UpdateError> {
     if !cfg!(all(target_os = "macos", not(any(dev, test)))) {
         return Err(UpdateError::unsupported());
     }
-    // Tauri's executable_dir is the user's executable directory and is
-    // unsupported on macOS; it is not the directory of this process.
     preflight_app_path(&installed_app_path()?)
 }
 
@@ -999,6 +995,25 @@ mod tests {
         assert_eq!(coordinator.phase, Phase::Checking(check));
         coordinator.finish_check(check, None);
         assert_eq!(coordinator.phase, Phase::UpToDate);
+
+        {
+            let mut coordinator = UpdateCoordinator {
+                phase: Phase::Installing(7),
+                verified_bytes: Some(vec![1, 2, 3]),
+                ..Default::default()
+            };
+
+            coordinator.finish_install(7);
+
+            assert_eq!(coordinator.phase, Phase::RestartNeeded(7));
+            assert!(coordinator.verified_bytes.is_none());
+            assert_eq!(coordinator.validate_restart_needed(7), Ok(()));
+            assert!(coordinator.validate_restart_needed(8).is_err());
+            assert_eq!(
+                coordinator.status_snapshot(7).status,
+                UpdateStatus::RestartNeeded
+            );
+        }
     }
 
     #[test]
@@ -1053,82 +1068,60 @@ mod tests {
                 error_category: Some(UpdateErrorCategory::DownloadFailed),
             }
         );
-    }
 
-    #[test]
-    fn completed_install_is_restartable_without_installing_again() {
-        let mut coordinator = UpdateCoordinator {
-            phase: Phase::Installing(7),
-            verified_bytes: Some(vec![1, 2, 3]),
-            ..Default::default()
-        };
+        {
+            let mut coordinator = UpdateCoordinator::default();
+            let operation_id = coordinator.begin_check(false).unwrap();
+            coordinator.finish_check(operation_id, None);
 
-        coordinator.finish_install(7);
+            assert_eq!(
+                coordinator.status_snapshot(operation_id),
+                UpdateStatusSnapshot {
+                    supported: true,
+                    status: UpdateStatus::UpToDate,
+                    operation_id,
+                    manual: false,
+                    candidate: None,
+                    error_category: None,
+                }
+            );
+        }
 
-        assert_eq!(coordinator.phase, Phase::RestartNeeded(7));
-        assert!(coordinator.verified_bytes.is_none());
-        assert_eq!(coordinator.validate_restart_needed(7), Ok(()));
-        assert!(coordinator.validate_restart_needed(8).is_err());
-        assert_eq!(
-            coordinator.status_snapshot(7).status,
-            UpdateStatus::RestartNeeded
-        );
-    }
+        {
+            let app = tauri::test::mock_builder()
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .expect("mock Tauri app");
+            let (sender, receiver) = mpsc::channel();
+            app.listen(UPDATE_STATUS_EVENT, move |event| {
+                let payload: serde_json::Value =
+                    serde_json::from_str(event.payload()).expect("status payload");
+                sender.send(payload).expect("status receiver");
+            });
 
-    #[test]
-    fn status_event_payload_is_bounded_and_content_free() {
-        let app = tauri::test::mock_builder()
-            .build(tauri::test::mock_context(tauri::test::noop_assets()))
-            .expect("mock Tauri app");
-        let (sender, receiver) = mpsc::channel();
-        app.listen(UPDATE_STATUS_EVENT, move |event| {
-            let payload: serde_json::Value =
-                serde_json::from_str(event.payload()).expect("status payload");
-            sender.send(payload).expect("status receiver");
-        });
+            emit_status(
+                app.handle(),
+                UpdateStatusSnapshot {
+                    supported: true,
+                    status: UpdateStatus::Prepared,
+                    operation_id: 9,
+                    manual: false,
+                    candidate: None,
+                    error_category: Some(UpdateErrorCategory::InstallFailed),
+                },
+            );
 
-        emit_status(
-            app.handle(),
-            UpdateStatusSnapshot {
-                supported: true,
-                status: UpdateStatus::Prepared,
-                operation_id: 9,
-                manual: false,
-                candidate: None,
-                error_category: Some(UpdateErrorCategory::InstallFailed),
-            },
-        );
-
-        assert_eq!(
-            receiver.recv_timeout(Duration::from_secs(1)).unwrap(),
-            serde_json::json!({
-                "supported": true,
-                "status": "prepared",
-                "operationId": 9,
-                "manual": false,
-                "candidate": null,
-                "errorCategory": "installFailed",
-            })
-        );
-    }
-
-    #[test]
-    fn completed_check_has_a_terminal_status_snapshot() {
-        let mut coordinator = UpdateCoordinator::default();
-        let operation_id = coordinator.begin_check(false).unwrap();
-        coordinator.finish_check(operation_id, None);
-
-        assert_eq!(
-            coordinator.status_snapshot(operation_id),
-            UpdateStatusSnapshot {
-                supported: true,
-                status: UpdateStatus::UpToDate,
-                operation_id,
-                manual: false,
-                candidate: None,
-                error_category: None,
-            }
-        );
+            assert_eq!(
+                receiver.recv_timeout(Duration::from_secs(1)).unwrap(),
+                serde_json::json!({
+                    "supported": true,
+                    "status": "prepared",
+                    "operationId": 9,
+                    "manual": false,
+                    "candidate": null,
+                    "errorCategory": "installFailed",
+                })
+            );
+        }
     }
 
     #[test]
@@ -1143,14 +1136,13 @@ mod tests {
             "The update could not be downloaded. Try again."
         );
         assert!(!error.message.contains("secret"));
-    }
 
-    #[test]
-    fn signature_errors_have_a_distinct_safe_category() {
-        let source = tauri_plugin_updater::Error::SignatureUtf8("private response".into());
-        let error = map_download_error(source);
-        assert_eq!(error.category, UpdateErrorCategory::VerificationFailed);
-        assert!(!error.message.contains("private response"));
+        {
+            let source = tauri_plugin_updater::Error::SignatureUtf8("private response".into());
+            let error = map_download_error(source);
+            assert_eq!(error.category, UpdateErrorCategory::VerificationFailed);
+            assert!(!error.message.contains("private response"));
+        }
     }
 
     #[test]
@@ -1163,6 +1155,7 @@ mod tests {
         assert!(installed_app_path_from_executable(Path::new("/tmp/tau")).is_err());
     }
 
+    #[cfg(unix)]
     #[test]
     fn preflight_rejects_apps_on_mounted_images() {
         let error = preflight_app_path(Path::new("/Volumes/Tau/Tau.app")).unwrap_err();
@@ -1171,34 +1164,31 @@ mod tests {
             error.message,
             "Move Tau to Applications before installing an update."
         );
-    }
 
-    #[cfg(unix)]
-    #[test]
-    fn preflight_rejects_a_non_writable_parent() {
-        use std::os::unix::fs::PermissionsExt;
+        {
+            use std::os::unix::fs::PermissionsExt;
 
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let parent = directory.path().join("Applications");
-        fs::create_dir(&parent).expect("applications directory");
-        let app = parent.join("Tau.app");
-        fs::create_dir(&app).expect("app bundle");
-        fs::set_permissions(&parent, fs::Permissions::from_mode(0o555)).expect("permissions");
+            let directory = tempfile::tempdir().expect("temporary directory");
+            let parent = directory.path().join("Applications");
+            fs::create_dir(&parent).expect("applications directory");
+            let app = parent.join("Tau.app");
+            fs::create_dir(&app).expect("app bundle");
+            fs::set_permissions(&parent, fs::Permissions::from_mode(0o555)).expect("permissions");
 
-        let error = preflight_app_path(&app).unwrap_err();
-        assert_eq!(error.category, UpdateErrorCategory::PreflightFailed);
-        assert_eq!(
-            error.message,
-            "Tau's installation location is not writable."
-        );
-    }
+            let error = preflight_app_path(&app).unwrap_err();
+            assert_eq!(error.category, UpdateErrorCategory::PreflightFailed);
+            assert_eq!(
+                error.message,
+                "Tau's installation location is not writable."
+            );
+        }
 
-    #[test]
-    fn preflight_accepts_a_writable_parent() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let app = directory.path().join("Tau.app");
-        fs::create_dir(&app).expect("app bundle");
-        assert_eq!(preflight_app_path(&app), Ok(()));
+        {
+            let directory = tempfile::tempdir().expect("temporary directory");
+            let app = directory.path().join("Tau.app");
+            fs::create_dir(&app).expect("app bundle");
+            assert_eq!(preflight_app_path(&app), Ok(()));
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -1260,20 +1250,18 @@ mod tests {
         assert_eq!(arguments[5], staged.as_os_str());
         assert!(PRIVILEGED_SWAP_SCRIPT.contains("quoted form of installedPath"));
         assert!(!PRIVILEGED_SWAP_SCRIPT.contains("touch injected"));
-    }
 
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn atomic_exchange_handles_shell_metacharacters_as_plain_path_data() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let sentinel = directory.path().join("injected");
-        let app = directory.path().join("Tau '$(touch injected)' ;.app");
-        fs::create_dir(&app).expect("installed app");
-        fs::write(app.join("version"), b"old").expect("old marker");
+        {
+            let directory = tempfile::tempdir().expect("temporary directory");
+            let sentinel = directory.path().join("injected");
+            let app = directory.path().join("Tau '$(touch injected)' ;.app");
+            fs::create_dir(&app).expect("installed app");
+            fs::write(app.join("version"), b"old").expect("old marker");
 
-        install_macos_update(&updater_archive(b"new"), &app).expect("atomic exchange");
+            install_macos_update(&updater_archive(b"new"), &app).expect("atomic exchange");
 
-        assert_eq!(fs::read(app.join("version")).unwrap(), b"new");
-        assert!(!sentinel.exists());
+            assert_eq!(fs::read(app.join("version")).unwrap(), b"new");
+            assert!(!sentinel.exists());
+        }
     }
 }

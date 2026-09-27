@@ -19,14 +19,9 @@ import { ref } from 'vue';
 
 withDefaults(
   defineProps<{
-    /**
-     * Aria-label; an icon button has no readable text of its own. A pointer
-     * gets the same label from a `UiTooltip` around the button — the native
-     * `title` is not used, so that one hover layer answers for the whole app.
-     */
     label: string;
     disabled?: boolean;
-    /** Box size: 28, 22, 20, or 16 px. */
+
     size?: 'lg' | 'md' | 'sm' | 'xs';
     /**
      * How the button behaves under the pointer: `fade` dims until hovered,

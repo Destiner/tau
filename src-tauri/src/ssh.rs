@@ -463,65 +463,68 @@ mod tests {
             let parsed = SshConnection::parse(connection).expect("attached option value");
             assert_eq!(parsed.arguments.last().unwrap(), "user@example");
         }
-    }
 
-    #[test]
-    fn remote_pi_connections_enforce_keepalives_and_disable_sharing() {
-        let connection = SshConnection::parse(
-            "ssh -o ServerAliveInterval=0 -o ServerAliveCountMax=9 -S /tmp/shared.sock -J jump -p 2222 user@example",
-        )
-        .expect("remote Pi connection");
-        let arguments = connection
-            .pi_command("remote-pi")
-            .get_args()
-            .map(|argument| argument.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
+        {
+            let error = SshConnection::parse("ssh build-box uptime")
+                .err()
+                .expect("remote command rejection");
+            assert!(error.contains("remote command"));
+        }
 
-        assert_eq!(
-            &arguments[..4],
-            [
-                "-o",
-                "ServerAliveInterval=15",
-                "-o",
-                "ServerAliveCountMax=3",
-            ]
-        );
-        let supplied_socket = arguments
-            .windows(2)
-            .position(|pair| pair == ["-S", "/tmp/shared.sock"])
-            .expect("supplied control socket");
-        let disabled_socket = arguments
-            .windows(2)
-            .position(|pair| pair == ["-S", "none"])
-            .expect("disabled control socket");
-        assert!(disabled_socket > supplied_socket);
-        assert_eq!(arguments.last().map(String::as_str), Some("remote-pi"));
-        assert_eq!(
-            arguments.get(arguments.len() - 2).map(String::as_str),
-            Some("user@example")
-        );
-        assert!(arguments.windows(2).any(|pair| pair == ["-J", "jump"]));
-        assert!(arguments.windows(2).any(|pair| pair == ["-p", "2222"]));
-    }
+        {
+            let connection = SshConnection::parse(
+                "ssh -o ServerAliveInterval=0 -o ServerAliveCountMax=9 -S /tmp/shared.sock -J jump -p 2222 user@example",
+            )
+            .expect("remote Pi connection");
+            let arguments = connection
+                .pi_command("remote-pi")
+                .get_args()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
 
-    #[test]
-    fn short_lived_connections_do_not_use_remote_pi_lifetime_options() {
-        let connection =
-            SshConnection::parse("ssh -p 2222 user@example").expect("short-lived connection");
-        let arguments = connection
-            .command("true")
-            .get_args()
-            .map(|argument| argument.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
+            assert_eq!(
+                &arguments[..4],
+                [
+                    "-o",
+                    "ServerAliveInterval=15",
+                    "-o",
+                    "ServerAliveCountMax=3",
+                ]
+            );
+            let supplied_socket = arguments
+                .windows(2)
+                .position(|pair| pair == ["-S", "/tmp/shared.sock"])
+                .expect("supplied control socket");
+            let disabled_socket = arguments
+                .windows(2)
+                .position(|pair| pair == ["-S", "none"])
+                .expect("disabled control socket");
+            assert!(disabled_socket > supplied_socket);
+            assert_eq!(arguments.last().map(String::as_str), Some("remote-pi"));
+            assert_eq!(
+                arguments.get(arguments.len() - 2).map(String::as_str),
+                Some("user@example")
+            );
+            assert!(arguments.windows(2).any(|pair| pair == ["-J", "jump"]));
+            assert!(arguments.windows(2).any(|pair| pair == ["-p", "2222"]));
 
-        assert!(!arguments
-            .iter()
-            .any(|argument| argument == "ServerAliveInterval=15"));
-        assert!(!arguments
-            .iter()
-            .any(|argument| argument == "ServerAliveCountMax=3"));
-        assert!(!arguments.windows(2).any(|pair| pair == ["-S", "none"]));
-        assert_eq!(&arguments[..2], ["-p", "2222"]);
+            let connection =
+                SshConnection::parse("ssh -p 2222 user@example").expect("short-lived connection");
+            let arguments = connection
+                .command("true")
+                .get_args()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+
+            assert!(!arguments
+                .iter()
+                .any(|argument| argument == "ServerAliveInterval=15"));
+            assert!(!arguments
+                .iter()
+                .any(|argument| argument == "ServerAliveCountMax=3"));
+            assert!(!arguments.windows(2).any(|pair| pair == ["-S", "none"]));
+            assert_eq!(&arguments[..2], ["-p", "2222"]);
+        }
     }
 
     #[test]
@@ -534,6 +537,14 @@ mod tests {
         assert!(command.contains("session"));
         assert!(command.contains("pi --mode rpc"));
         assert!(command.contains("/bin/sh -c"));
+
+        {
+            let command = remote_directory_command(Some("/home/timur/Project files"));
+            assert!(command.contains("/bin/sh -c"));
+            assert!(command.contains("Project files"));
+            assert!(command.contains("TAU_REMOTE_DIRECTORY"));
+            assert!(command.contains("TAU_REMOTE_END_DIRECTORY"));
+        }
     }
 
     #[test]
@@ -552,47 +563,29 @@ mod tests {
             .expect("csh remote shell fixture");
         assert!(output.status.success());
         assert_eq!(output.stdout, b"tau-remote-shell-ok");
-    }
 
-    #[test]
-    fn rejects_remote_commands_in_connection_strings() {
-        let error = SshConnection::parse("ssh build-box uptime")
-            .err()
-            .expect("remote command rejection");
-        assert!(error.contains("remote command"));
-    }
-
-    #[test]
-    fn quotes_directories_when_browsing() {
-        let command = remote_directory_command(Some("/home/timur/Project files"));
-        assert!(command.contains("/bin/sh -c"));
-        assert!(command.contains("Project files"));
-        assert!(command.contains("TAU_REMOTE_DIRECTORY"));
-        assert!(command.contains("TAU_REMOTE_END_DIRECTORY"));
-    }
-
-    #[test]
-    fn browses_directories_through_a_csh_remote_environment() {
-        let shell = Path::new("/bin/csh");
-        if !shell.is_file() {
-            return;
+        {
+            let shell = Path::new("/bin/csh");
+            if !shell.is_file() {
+                return;
+            }
+            let directory = tempfile::tempdir().expect("remote directory fixture");
+            std::fs::create_dir(directory.path().join("Alpha Project")).expect("remote child");
+            let output = Command::new(shell)
+                .args([
+                    "-c",
+                    &remote_directory_command(Some(
+                        directory.path().to_str().expect("UTF-8 fixture path"),
+                    )),
+                ])
+                .output()
+                .expect("csh remote directory fixture");
+            assert!(output.status.success());
+            let listing = parse_directory_listing("ssh build-box", &output.stdout)
+                .expect("remote directory listing");
+            assert_eq!(listing.directories.len(), 1);
+            assert_eq!(listing.directories[0].name, "Alpha Project");
         }
-        let directory = tempfile::tempdir().expect("remote directory fixture");
-        std::fs::create_dir(directory.path().join("Alpha Project")).expect("remote child");
-        let output = Command::new(shell)
-            .args([
-                "-c",
-                &remote_directory_command(Some(
-                    directory.path().to_str().expect("UTF-8 fixture path"),
-                )),
-            ])
-            .output()
-            .expect("csh remote directory fixture");
-        assert!(output.status.success());
-        let listing = parse_directory_listing("ssh build-box", &output.stdout)
-            .expect("remote directory listing");
-        assert_eq!(listing.directories.len(), 1);
-        assert_eq!(listing.directories[0].name, "Alpha Project");
     }
 
     #[test]

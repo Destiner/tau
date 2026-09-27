@@ -579,7 +579,7 @@ describe('update service', () => {
     });
   });
 
-  it('preserves reviewed native error categories without exposing messages', async () => {
+  it('preserves reviewed native error categories and operation-specific copy without exposing messages', async () => {
     const test = harness();
     test.respond('update_snapshot', {
       supported: true,
@@ -599,9 +599,7 @@ describe('update service', () => {
     expect(
       updateFailureDescription(test.service.state.failureCategory),
     ).not.toContain('private');
-  });
 
-  it('uses operation-specific reviewed failure copy', () => {
     expect(updateFailureDescription('checkFailed')).toContain(
       'check for updates',
     );

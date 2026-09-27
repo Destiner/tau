@@ -6,7 +6,7 @@
 /// telemetry must never record, then scan persisted output for. Kept in one
 /// place so a test that forgets a category shows up as a missing entry here,
 /// not as a silently-absent assertion in a test body.
-// Stage 4+ privacy tests scan persisted/ingested output for these.
+// privacy tests scan persisted/ingested output for these.
 #[allow(dead_code)]
 pub const FORBIDDEN_CONTENT_CANARIES: &[(&str, &str)] = &[
     ("prompt", "tau-canary-prompt-3f1c9a"),
@@ -63,8 +63,6 @@ pub fn sanitize_source_location(file: &str, line: Option<u32>, column: Option<u3
     }
 }
 
-/// The hard per-attribute size ceiling every catalog entry in `attributes`
-/// uses, so nothing accidentally inherits an unbounded length.
 pub const DEFAULT_MAX_ATTRIBUTE_LEN: usize = 128;
 
 /// Truncates `value` to at most `max_len` bytes without splitting a UTF-8
@@ -90,10 +88,7 @@ mod tests {
         let haystack = format!("unrelated text {prompt_canary} more text");
         assert!(contains_forbidden_content(&haystack));
         assert_eq!(matched_canaries(&haystack), vec!["prompt"]);
-    }
 
-    #[test]
-    fn ordinary_content_does_not_trip_the_canaries() {
         assert!(!contains_forbidden_content(
             "session started; rpc get_state ok"
         ));
@@ -110,10 +105,7 @@ mod tests {
         let sanitized = sanitize_source_location(&file, Some(10), Some(4));
         assert_eq!(sanitized, "index.ts:10:4");
         assert!(!contains_forbidden_content(&sanitized));
-    }
 
-    #[test]
-    fn source_locations_without_a_column_omit_it() {
         assert_eq!(
             sanitize_source_location("lib.rs", Some(42), None),
             "lib.rs:42"
@@ -129,10 +121,7 @@ mod tests {
     #[test]
     fn truncation_keeps_short_values_untouched() {
         assert_eq!(truncate_to_limit("short", 128), "short");
-    }
 
-    #[test]
-    fn truncation_never_splits_a_multibyte_character() {
         let value = "a".repeat(127) + "é";
         let truncated = truncate_to_limit(&value, 128);
         assert!(truncated.is_char_boundary(truncated.len()));

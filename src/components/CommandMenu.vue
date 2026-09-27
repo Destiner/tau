@@ -132,7 +132,6 @@ defineExpose({
   line-height: var(--leading-ui);
 }
 
-/* The source sits on the description's line, not on the command's. */
 .command-source {
   flex: none;
   align-self: flex-end;

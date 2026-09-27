@@ -41,15 +41,20 @@ beforeEach(() => {
 });
 
 describe('Tauri launcher', () => {
-  it.each([['build'], ['info'], ['--help'], ['dev', '--help'], ['dev', '-V']])(
-    'passes %j through without starting Vite',
-    async (...args) => {
+  it('passes non-dev commands and help through without starting Vite', async () => {
+    for (const args of [
+      ['build'],
+      ['info'],
+      ['--help'],
+      ['dev', '--help'],
+      ['dev', '-V'],
+    ]) {
       const invoke = vi.fn().mockResolvedValue(undefined);
       await runTauri(args, invoke);
       expect(invoke).toHaveBeenCalledWith(args);
       expect(createServerMock).not.toHaveBeenCalled();
-    },
-  );
+    }
+  });
 
   it('passes the listening URL to Tauri and keeps the server alive until it exits', async () => {
     const server = fakeServer();
@@ -97,9 +102,9 @@ describe('Tauri launcher', () => {
     });
   });
 
-  it.each(['listen', 'invoke', 'url'])(
-    'closes Vite on a %s failure',
-    async (failure) => {
+  it('closes Vite on listen, invoke and URL failures', async () => {
+    for (const failure of ['listen', 'invoke', 'url']) {
+      vi.resetAllMocks();
       const server = fakeServer();
       const invoke = vi.fn().mockResolvedValue(undefined);
       if (failure === 'listen')
@@ -113,8 +118,8 @@ describe('Tauri launcher', () => {
       await expect(runTauri(['dev'], invoke)).rejects.toThrow();
       expect(server.close).toHaveBeenCalledOnce();
       if (failure !== 'invoke') expect(invoke).not.toHaveBeenCalled();
-    },
-  );
+    }
+  });
 
   it('runs two real Vite servers concurrently with distinct reachable URLs', async () => {
     const vite = await vi.importActual<typeof import('vite')>('vite');
@@ -129,7 +134,6 @@ describe('Tauri launcher', () => {
     const urls: string[] = [];
     await runTauri(['dev'], async (firstArgs) => {
       const firstUrl = overrideFrom(firstArgs).build.devUrl;
-      // Force a collision with our own server, not a developer's port 1420.
       port = Number(new URL(firstUrl).port);
       urls.push(firstUrl);
       await runTauri(['dev'], async (secondArgs) => {

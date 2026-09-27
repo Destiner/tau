@@ -1,125 +1,76 @@
 # Deterministic reproduction scenarios
 
+Checked-in Pi scenarios run the real Tau app against development-only mocked Tauri IPC and events. Playwright and the interactive runner share the same typed tapes and browser adapter; production bundles exclude both. For test strategy and CI timing, see [CI and test execution](ci-testing.md).
+
 ## File previews
 
-Activating a regular local or remote file opens the same fullscreen preview inside Tau. `.md`, `.markdown`, and extensionless `README` render as Markdown, including headings, tasks, tables, highlighted code, and supported Mermaid diagrams. `.mdx` remains highlighted source: Tau does not execute MDX components. Other code and text use Tau's existing Ayu syntax highlighting; common images, PDFs, video, and audio use the webview's safe media elements. Unknown binary formats keep the preview open and report that no rendering is available. Escape or the top-right close control dismisses it and restores focus to the path that opened it.
+Regular local and remote files open in Tau's fullscreen viewer. `.md`, `.markdown`, and extensionless `README` render as Markdown (including supported Mermaid diagrams); `.mdx` is highlighted source, not executable MDX. Other code/text uses Ayu highlighting, common images/PDFs/video/audio use safe webview media elements, and unknown binaries show an unavailable-rendering state. Escape or close returns focus to the originating path.
 
-Tau copies every regular file into a private, read-only snapshot before exposing only that snapshot through Tauri's dynamically scoped asset protocol. Remote snapshots travel over the project's registered SSH connection. One preparation runs at a time, every snapshot has a 64 MiB limit, and SSH preparation has a 30-second timeout. Text rendering reads at most the first 512 KiB, including Markdown; truncated documents display a limit notice, and empty ones display an empty-document state. Closing or replacing a preview revokes and removes its snapshot; force-quitting can still leave a private temporary directory.
+Every regular file is copied into a private read-only snapshot; only that snapshot is exposed through Tauri's dynamically scoped asset protocol. Remote snapshots use the project's registered SSH connection. Preparation is serialized, limited to 64 MiB per snapshot and 30 seconds over SSH. Text/Markdown reads at most 512 KiB and shows truncation or empty-document feedback. Closing or replacing revokes and removes the snapshot; force-quit may leave a private temporary directory. Preview never writes the original.
 
-Links inside a Markdown preview use the document's directory: relative file links resolve against its original path, with local and remote replacements staying in the same project context. Web links open externally. Previewing a linked file replaces the current snapshot; closing the viewer returns focus to the original transcript path. Document-relative images are deferred rather than loaded from Tau's webview origin; HTTP(S) and inline data images can still render. Untrusted HTML is sanitized before display. Markdown preview is a reader, not an editor or an MDX runtime.
+Relative Markdown file links resolve against the original document directory in the same local/remote project; web links open externally. Linked files replace the snapshot, and closing returns focus to the original transcript path. Document-relative images are deferred rather than fetched from Tau's webview origin; HTTP(S) and inline data images can render. Untrusted HTML is sanitized. This is a reader, not an editor. Local directories open in the OS; remote directories copy their path and show **Path Copied**. SSH requires ordinary non-interactive connections and quiet stdout (no banners or special modes).
 
-Directories keep their existing behavior: local directories open through the operating system, while remote directories copy the written path and report **Path Copied**. Previewing never writes to an original local or remote file. The SSH path supports ordinary, non-interactive connections and quiet remote shells; it does not handle shell banners on stdout or special SSH modes.
+For an interactive check, preview short/long/wide code, image, PDF, Markdown links, local and remote directories; check both scrolling axes, directory labels, Escape/close focus, generic missing-file failure copy, and cleanup.
 
-For an interactive check, preview short and long code files, a wide one-line file, an image, a PDF, a local directory, and a remote directory. Verify vertical and horizontal scrolling, the relative-versus-absolute directory label, Escape and close-button focus restoration, generic failure copy for a missing file, and cleanup when the preview closes.
+## Archive fixture
 
-Checked-in Pi scenarios run the real Tau app against development-only mocked Tauri IPC and events. The same scenario source and browser adapter are used by Playwright and by the interactive runner; neither is included in production builds.
+Open `/?fixture=archive` in Vite for a synthetic 2,500-session archive across three projects. **Show Archived Sessions** appends batches of 50 on scroll; reopening resets the window. No real transcripts or production metadata are used. `archive-window.e2e.ts` runs in Chromium/WebKit; `archive-performance.e2e.ts` runs in the isolated Chromium performance phase.
 
-## Large archive fixture
-
-Open `/?fixture=archive` in the Vite development app to inspect a synthetic
-2,500-session archive across three projects and multiple calendar groups. Click
-**Show Archived Sessions** and scroll to the bottom to reveal batches of 50
-without a button. Close and reopen to reset the window. This fixture contains
-no real Pi transcripts or production metadata. Chromium and WebKit exercise
-it in `archive-window.e2e.ts`; the isolated Chromium performance phase measures
-opening and appending in `archive-performance.e2e.ts`.
-
-## Run a scenario
-
-List the available names and their purposes:
+## Run and control
 
 ```sh
 bun run repro -- --list
-```
-
-Open one in the Vite development app:
-
-```sh
 bun run repro -- saved-session-stale-generation
 ```
 
-The command validates the name before starting Vite and opens the selected `test-scenario` URL. Stop the server with Ctrl-C. Ordinary `bun run dev` does not select or install a scenario; in a plain browser it installs a generic in-memory sandbox instead. That sandbox starts with the `atlas` and `notes` sample projects and resets on every page load.
+The runner validates the name, opens the `test-scenario` URL in Vite, and stops with Ctrl-C. Plain `bun run dev` selects no scenario: its generic in-memory sandbox has sample `atlas`/`notes` projects and resets on reload. Playwright navigates directly to `?test-scenario=<name>`.
 
-The `empty-workspace` scenario opens the real app shell with no projects or sessions, so the first-run experience can be reviewed without changing the workspace used by either the production or development app. In `archived-sessions-review`, open the archive and scroll beyond the first 50 rows to find **Older archived work**; opening it browses read-only, while its Unarchive action restores it to the project list.
-
-The stale-generation scenario starts in the saved `Main` session. Submit exactly `Explain the fixture` in the composer. It streams `Deterministic reply.` and pauses before delivering the stale output. Inspect the working state, then release its one gate and confirm the visible working state is unchanged.
-
-The `saved-session-command-replacement` scenario makes `/mock 42` available in the real composer. Submitting it pauses after Tau sends its immediate command identity probe. Release `before-command-replacement-identity` to return the replacement identity and an empty initial hydration. Pi then emits its real turn sequence and pauses at `before-replacement-assistant`: the extension-injected `Run phase 42` user row must already be visible and remain stable across session switching. Release that gate to stream assistant/tool activity and settle into exactly one hydrated user row plus the assistant reply. `42 • plan` becomes registered and selected after settlement; the command itself does not enter the transcript.
-
-The `phantom-command-registration` scenario starts from the visible `New Session` action. Submit `/mcp`, then release `before-streaming-command-sync`. The command-created `MCP workflow` session stays ephemeral through the identity response and pauses at `before-assistant-settlement` with visible partial output. Release that gate to emit assistant `message_end`; Tau waits for the following Pi RPC barrier, registers the session, starts a long tool, and pauses at `after-message-end-registration`. The session is durable there but still has no archive action because the agent is working. Release the final gate to settle, after which archive becomes available. The command itself never appears as a transcript message. Its synthetic transcript path is outside the project's default session directory.
-
-The `phantom-first-prompt-registration` scenario holds the pointer over a new session while its ordinary first prompt starts. Its gates expose the optimistic row before temporary identity adoption, after Pi returns an empty preflight transcript, around extension dialog activity, and before and after a prompt-triggered replacement identity hydrates. The assistant `message_end` barrier then registers and selects the durable replacement. The user message and selected sidebar row remain continuously visible through every transition.
-
-The `plan-implement-replacement` scenario submits `/mock-workflow`, completes `docs · RHI-6267 · Plan`, then holds Plan's settlement hydration until the delayed replacement probe is also outstanding. After `plan-hydration-lagged`, Pi emits Implement's name-only notification and pauses at `before-implement-identity`; Plan must remain current and correctly named because the successor identity is not confirmed yet. Release that gate and the probe reports `docs · RHI-6267 · Implement`. At `implement-active`, Implement is current and selected while Plan is already listed above the older sessions. Release the gate, switch through `Backup`, and reopen Plan to verify its durable transcript before returning to the still-live Implement phase.
-
-The `phantom-command-only` scenario submits `/usage` from a new session and emits only an extension notification. `Usage only` remains an unarchivable ephemeral row while its runtime is alive, then disappears when `Main` is selected; Tau never registers it.
-
-The `saved-session-unacknowledged-abort` scenario accepts `Stop this fixture`, streams `Partial reply.`, and pauses at `abort-request-consumed` after Stop sends one abort. Release that gate to await Tau's bounded state probe, then release `before-abort-timeout-probe-response` to report Pi idle and hydrate the preserved partial turn. The abort and prompt themselves are never acknowledged.
-
-The `saved-session-compaction` scenario first pauses at `compaction-started` after Pi's start event, then settles into one permanent compacted-history boundary. Submit the draft `Miss the compaction start` that was preserved while compacting to pause again at `missed-start-reconciled`; this time Tau learns compaction only from `get_state.isCompacting`. In both pauses the transcript shows `Compacting…`, the composer remains editable, and Stop is disabled.
-
-The `saved-session-compaction-notifications` scenario pauses at `before-successful-compaction` with info, warning, and error notices plus a local compaction failure visible. Release it to inspect `compacted-hydration-pending`: the old local feedback is gone immediately, while a fresh warning remains between two continued output rows. Releasing that gate hydrates the permanent boundary and pauses at `compacted-notifications-reconciled`, where the same fresh warning must remain unique and in place.
-
-The `saved-session-prompt-admission` scenario pauses while `Confirm this fixture prompt` is optimistic, then after `agent_start` confirms it. Its second prompt, `Reconcile this fixture prompt`, pauses at `before-admission-acknowledgement` before the successful preflight response. Release it to let the delayed admission probe report an idle state before hydration proves Pi did not record the prompt. While paused, the composer accepts the next draft but Send remains disabled; releasing the gate removes the absent optimistic row.
-
-The history scenarios open a saved session whose transcript arrives already complete, as one created elsewhere does — by a workflow extension, or on another machine. `saved-session-short-history` holds one turn and cannot scroll, `saved-session-history` fills the viewport, and `saved-session-long-history` is read back through rows that were only ever estimated. Nothing is submitted in any of them: the whole point is the first render.
-
-The `saved-session-extension-prompt` scenario opens a saved session and has its extension ask a question. The prompt renders at the end of the transcript and the composer is gone while it stands; it carries its own short Pi timeout, so the composer comes back a second and a half later without an answer being sent. Nothing is submitted.
-
-The process-failure scenarios expose each transport transition without exposing its raw payload in the product UI. `saved-session-bootstrap-process-exit` pauses before failure, after the bridge error, and after exit; close the updated fallback dialog after the final gate, then select `Main` to exercise the product's real reconnect path and complete a clean bootstrap. `saved-session-prompt-process-exit` first bootstraps `Main` and `Backup`; select `Backup`, return to `Main`, submit `Fail this fixture`, then use its three gates to inspect partial-output preservation, fallback-dialog coalescing, and failure isolation. `remote-phantom-prompt-process-exit` starts a new remote session, fails its first submitted prompt during bootstrap, and verifies that the draft is restored and the dedicated SSH retry dialog remains available after both the bridge error and process exit. After retry succeeds, clear the restored draft and select `Main`; the unused remote session row must disappear without leaving a working indicator. `remote-saved-session-process-exit` bootstraps a saved remote session, exits its established bridge, and verifies that only the composer-replacing Reconnect status starts a second runtime with the same session path.
-
-The `saved-session-auto-retry` scenario pauses before automatic retry, while the selected plain amber `Retrying…` label is visible beside Stop, and after Pi ends the retry. It verifies the reviewed reason tooltip, raw-payload privacy, and stable composer/control geometry.
-
-The `saved-session-message-queue` scenario starts a held saved-session run. Submit a steering message with Enter and a follow-up with Cmd+Enter; the rail above the composer reflects Pi's queue snapshots and the messages do not appear in the transcript prematurely. Release `queue-rendered`, choose Clear All, and verify that the current run was not aborted. Submit another steering message, then Stop: no clear request is sent and the queued item remains visible. The fixture uses Pi's streaming behavior, mode setters, queue snapshots, and correlated clear response rather than a Tau-side scheduler.
-
-The `saved-session-queue-rejection` scenario pauses after a queued prompt request but before Pi rejects it. Type a new composer draft, then release `submission-requested`: the new text stays intact and the unsent message appears under Review Unsent. Restore Draft is disabled until the composer is empty; restoring the old text then focuses the composer. Release `submission-rejected` to finish.
-
-The `saved-session-steering-boundary` scenario holds a tool turn while three steering messages enter the queue. Release `steering-queued` to deliver them at one boundary as distinct transcript rows. After `steering-boundary-delivered`, queue two follow-ups with Cmd+Enter; release `follow-ups-queued` and `first-follow-up-hydrated` in turn to verify one-at-a-time delivery and exactly-once hydration. This simulates Pi's scheduling events; Tau never dispatches follow-ups itself.
-
-## Inspect and control a paused scenario
-
-The browser console exposes `window.__TAU_PI_SCENARIO__` only while a scenario is selected. Its methods are:
+A selected scenario exposes `window.__TAU_PI_SCENARIO__` in the browser console:
 
 ```js
 const repro = window.__TAU_PI_SCENARIO__;
-repro.scenario(); // stable metadata for the selected scenario
-repro.gates(); // gate names and reached/released state
-repro.timeline(); // ordered requests, outputs, and gate transitions
-repro.nativeInvocationCount('register_session'); // current mocked native count
-repro.hasRegisteredSession('session-id'); // whether registry adoption occurred
+repro.scenario(); // metadata
+repro.gates(); // reached/released state
+repro.timeline(); // ordered requests, outputs, transitions
+repro.nativeInvocationCount('register_session');
+repro.hasRegisteredSession('session-id');
 await repro.waitForGate('before-stale-generation-output');
 await repro.releaseGate('before-stale-generation-output');
-repro.verify(); // completion result plus the current timeline
+repro.verify(); // completion result and timeline
 ```
 
-Releasing `before-stale-generation-output` delivers the old-generation delta and ends the minimized race, so `verify()` succeeds immediately. The UI intentionally remains in its unchanged working state: this scenario emits no prompt response or `agent_settled`, which avoids starting replacement-probe timers while a person inspects it. Normal settlement is covered separately by `saved-session-conversation`.
+`verify()` reports incomplete until all required requests, outputs, and gates finish. In `saved-session-stale-generation`, submit exactly `Explain the fixture`, wait for `Deterministic reply.`, then release its gate. The stale delta must not change the working UI. This minimized race intentionally has no prompt response or `agent_settled`; use `saved-session-conversation` for normal settlement.
 
-`verify()` intentionally reports an incomplete scenario while required requests, outputs, or gates remain.
+### Scenario index
 
-## Scenario anatomy
+Use `--list` for the authoritative catalogue and gate names. The following journeys identify the behavior to inspect:
 
-Scenario source lives in `tests/support/pi-scenario/`. Each typed scenario has stable metadata, fixed runtime generations, and one ordered tape of expected requests, scripted outputs, and required gates. Request matchers specify only meaningful fields; generated request and runtime IDs are captured by the engine. Responses correlate to those captures. Required gates stop output until explicitly released, and every transition enters the diagnostic timeline.
+- `empty-workspace` shows the first-run shell without changing real storage. `archived-sessions-review` scrolls past the first 50 archived rows to **Older archived work**: opening browses read-only; Unarchive restores the project row.
+- `saved-session-command-replacement`: submit `/mock 42`; release `before-command-replacement-identity`, then `before-replacement-assistant`. The injected `Run phase 42` row remains visible through switching and hydration, settles exactly once with assistant/tool output, and selects `42 • plan`; the command never enters the transcript.
+- `phantom-command-registration`: submit `/mcp` in New Session. Release `before-streaming-command-sync`, `before-assistant-settlement`, and `after-message-end-registration` in order. `MCP workflow` remains ephemeral until assistant `message_end` plus Pi RPC barrier; it is registered while a tool still runs, becomes archivable only after settlement, and its transcript path is outside the default project session directory. The command is not a transcript row.
+- `phantom-first-prompt-registration`: hold the pointer over a new session during its first ordinary prompt. Gates expose optimistic admission, empty preflight hydration, extension dialog, replacement, and durable registration; the user row and selected sidebar row must never disappear.
+- `plan-implement-replacement`: submit `/mock-workflow`; at `plan-hydration-lagged`, Plan remains named/current until `before-implement-identity` confirms the successor. At `implement-active`, Plan appears above older sessions and Implement is selected; switch through Backup and reopen Plan to check its persisted transcript.
+- `phantom-command-only`: `/usage` creates a notification-only ephemeral row, never archived or registered, which disappears when Main is selected.
+- `saved-session-unacknowledged-abort`: submit `Stop this fixture`, Stop once, then release `abort-request-consumed` and `before-abort-timeout-probe-response`. The idle probe must preserve the partial reply even without prompt/abort acknowledgements.
+- `saved-session-compaction`: inspect `compaction-started`, then submit the preserved draft `Miss the compaction start` and inspect `missed-start-reconciled` (state discovered through `get_state.isCompacting`). Both pauses show `Compacting…`, editable composer and disabled Stop. `saved-session-compaction-notifications` uses `before-successful-compaction`, `compacted-hydration-pending`, and `compacted-notifications-reconciled` to check old feedback removal and unique, in-order new notices.
+- `saved-session-prompt-admission`: first prompt becomes confirmed on `agent_start`; the second pauses at `before-admission-acknowledgement` and is removed after idle probe plus hydration prove it absent. Draft input remains available while Send is disabled.
+- `saved-session-short-history`, `saved-session-history`, and `saved-session-long-history` test first render of already-complete saved histories (no submission), from no scrolling to estimated offscreen rows. `saved-session-extension-prompt` hides the composer until the extension's short timeout expires, with no answer sent.
+- `saved-session-bootstrap-process-exit` tests bridge error, exit, fallback dialog and clean reconnect on selecting Main. `saved-session-prompt-process-exit` checks partial output, coalesced fallback, and isolation from Backup. `remote-phantom-prompt-process-exit` restores the first-prompt draft and offers SSH retry; after retry, clearing the draft and switching to Main removes the unused row. `remote-saved-session-process-exit` offers composer-replacing Reconnect for an established bridge and restarts with the same path only on explicit action. No raw transport payload appears in product UI.
+- `saved-session-auto-retry` shows the amber `Retrying…` label beside Stop, reviewed reason tooltip, no raw payload, and stable geometry.
+- `saved-session-message-queue`: Enter steers and Cmd+Enter follows up while work is held. The rail reflects Pi snapshots, not premature transcript rows. **Clear All** does not abort the run; **Stop** does not clear the queue. `saved-session-queue-rejection` preserves a newer draft and offers Review Unsent/Restore Draft only when the composer is empty. `saved-session-steering-boundary` delivers three steering rows together, then follow-ups one at a time, each hydrated once; Pi, not Tau, schedules them.
 
-`catalogue.ts` is the single browser-scenario catalogue. Add a scenario there once; the interactive command's validation/list and the browser adapter both read it. Native command fixtures remain in `src/dev/pi-scenario-adapter.ts`, outside the Pi protocol engine.
+## Authoring a regression
 
-Playwright selects scenarios directly with `?test-scenario=<name>`, so headless tests do not use the interactive wrapper. Full-app scenario tests must import the shared fixture from `tests/e2e/fixtures.ts` to verify scenario completion and fail on browser errors.
+Scenario source is `tests/support/pi-scenario/`: stable metadata, fixed runtime generations, and an ordered tape of expected requests, outputs, and required gates. Match only meaningful request fields; the engine captures generated request/runtime IDs and correlates responses. Each transition enters the timeline. Register new scenarios once in `catalogue.ts`; interactive listing and browser adapter both use it. Native command fixtures live in `src/dev/pi-scenario-adapter.ts`, outside the protocol engine.
 
-For event- and gate-driven tapes, opt into `test.use({ pausedClock: true })` before navigation. Real-time replacement and prompt-admission probes can otherwise overtake slow browser assertions and send an unexpected `get_state` between scripted steps. Advance `page.clock` explicitly when testing a timer: the prompt-admission test releases `before-admission-acknowledgement`, then runs 150 ms to trigger its reconciliation probe. Advance time between separate prompts as well so their timestamps remain distinct. Keep timer-driven scenarios, such as extension-prompt expiry and delayed workflow replacement, on their own explicit clock policy; do not ignore unexpected requests in the adapter.
+Full-app tests import `tests/e2e/fixtures.ts` for completion and browser-error checks. For gate/event-driven tapes, opt into `test.use({ pausedClock: true })` before navigation; otherwise real-time probes can overtake assertions and send unexpected `get_state`. Advance `page.clock` explicitly for timer behavior and between separate prompts so timestamps differ. Extension-prompt expiry and delayed replacement need their own explicit clock policy. Do not silently ignore unexpected requests.
 
-## From a failure report to a regression
-
-For a future failure, inspect the journal context first without copying private content into fixtures or diagnostics. Minimize the causal RPC exchange into one typed scenario, reproduce it interactively with `bun run repro`, and add assertions against visible product behavior rather than controller internals. Keep the minimized scenario in the catalogue as the regression once it fails before the fix and passes afterward.
-
-Use the browser fake for real-App orchestration and visible behavior, and the fake stdio executable only for native spawn, JSONL, event-tagging, and process-lifecycle coverage. Use the separate real-Pi canary only to detect drift in the installed Pi's safe read-only contract; it is not a deterministic reproduction runner and does not replace either fake-based layer.
+From a failure report, inspect journal context without copying private content to fixtures/diagnostics. Minimize the causal RPC exchange into a typed scenario, reproduce with `bun run repro`, then assert visible behavior, not controller internals. Keep the scenario after it fails before the fix and passes afterward. Use browser fakes for real-app orchestration, fake stdio for native spawn/JSONL/event-tagging/process lifecycle, and the explicit real-Pi canary solely for installed-Pi contract drift.
 
 ## Real Pi compatibility canary
-
-The scenarios above and the native bridge tests use scripted fakes and run in the deterministic default suites. A separate, explicit canary checks the small read-only RPC surface against an installed Pi executable:
 
 ```sh
 bun run test:pi-contract
 ```
 
-Pi must be available on `PATH`, or `TAU_PI_PATH` must point to its executable. The canary reports the Pi version it exercised and fails clearly when Pi is missing or incompatible. It runs Pi in an isolated temporary working/config/session directory with offline mode enabled and tools, extensions, skills, prompt templates, themes, context files, and project approval disabled. The child receives no provider credentials. It sends only `get_available_models`, `get_commands`, `get_state`, `get_available_thinking_levels`, and `get_messages`; it never sends a prompt or invokes a command, model, provider, SSH host, or external service.
-
-The checks cover JSONL/process usability, dynamic response IDs, and only fields Tau consumes. They deliberately do not snapshot catalogue contents, provider names, paths, optional fields, or ordering. This command is not part of `bun run test`, Playwright, Cargo, or any other default suite.
+Pi must be on `PATH` or set by `TAU_PI_PATH`. The explicit canary reports its version and fails if missing/incompatible; it is not in default Bun, Playwright, or Cargo suites. It uses isolated temporary working/config/session directories, offline mode, and disables tools, extensions, skills, prompt templates, themes, context files, and project approval. The child receives no provider credentials. It sends only `get_available_models`, `get_commands`, `get_state`, `get_available_thinking_levels`, and `get_messages`: never prompts, commands, models, providers, SSH hosts, or external services. Checks cover process/JSONL usability, dynamic response IDs, and fields Tau consumes, not catalogue contents, provider names, paths, optional fields, or ordering.

@@ -1,11 +1,6 @@
 import type { HighlighterCore } from 'shiki/core';
 import { shallowRef } from 'vue';
 
-/**
- * Ayu's two schemes, as Shiki names the ones the engine module loads. Neither
- * scheme's own editor background is used: a code block sits on Tau's sunk
- * surface, wherever that surface happens to be.
- */
 const THEMES = { light: 'ayu-light', dark: 'ayu-dark' } as const;
 
 /*
@@ -15,11 +10,6 @@ const THEMES = { light: 'ayu-light', dark: 'ayu-dark' } as const;
  */
 const VARIABLE_PREFIX = '--tau-code-';
 
-/**
- * Fence tags that name a language we have, under a name Shiki does not know it
- * by. A grammar's own aliases are registered with it, so these are only the
- * ones Shiki has no opinion about.
- */
 const ALIASES = new Map([
   ['console', 'bash'],
   ['jsx', 'tsx'],
@@ -44,19 +34,13 @@ const MAX_CACHED = 200;
 const LANGUAGE_TAG = /^\S+/;
 
 interface FenceLanguage {
-  /** The language as the fence named it, which is what a reader is shown. */
   tag: string;
-  /** The grammar that tag resolves to, which is what Shiki is asked for. */
+
   language: string;
 }
 
 const cache = new Map<string, string>();
 
-/*
- * Loading the grammars and the engine is asynchronous and rendering markdown is
- * not, so the highlighter is a ref: blocks rendered before it arrives are
- * plain, and reading it while rendering is what re-renders them once it has.
- */
 const highlighter = shallowRef<HighlighterCore | null>(null);
 
 void load()
@@ -73,7 +57,6 @@ async function load(): Promise<HighlighterCore> {
   return loadHighlighter();
 }
 
-/** The grammar a fence's info string asks for, if we have it. */
 function resolveLanguage(
   core: HighlighterCore,
   fence: string,

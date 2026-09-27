@@ -59,10 +59,6 @@ const props = withDefaults(
   },
 );
 
-/**
- * A function items source is evaluated at render time, so a menu that opens
- * over a changing surface (a text field's selection, say) reads it fresh.
- */
 function resolveItems(): UiMenuItem[] {
   return typeof props.items === 'function' ? props.items() : props.items;
 }

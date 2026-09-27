@@ -23,7 +23,7 @@ async function loadTelemetry(): Promise<typeof import('./index')> {
 }
 
 describe('startCommandSpan', () => {
-  it('returns a context that round-trips as a valid W3C traceparent', async () => {
+  it('returns independent valid W3C trace contexts for concurrent commands', async () => {
     const { startCommandSpan } = await loadTelemetry();
     const span = startCommandSpan('load_workspace');
 
@@ -32,20 +32,13 @@ describe('startCommandSpan', () => {
     const traceparent = `00-${context.traceId}-${context.spanId}-01`;
     const parsed = parseTraceContext(traceparent);
     expect(parsed).toEqual({ ok: true, context });
-  });
-
-  it('gives concurrent spans independent trace context', async () => {
-    const { startCommandSpan } = await loadTelemetry();
-    const first = startCommandSpan('load_workspace');
     const second = startCommandSpan('load_workspace');
-
-    expect(first.context).toBeDefined();
     expect(second.context).toBeDefined();
-    expect(first.context?.traceId).not.toBe(second.context?.traceId);
-    expect(first.context?.spanId).not.toBe(second.context?.spanId);
+    expect(span.context?.traceId).not.toBe(second.context?.traceId);
+    expect(span.context?.spanId).not.toBe(second.context?.spanId);
   });
 
-  it('flushes the ended span to the native ingest command', async () => {
+  it('flushes the command once and never traces its own ingest', async () => {
     const { startCommandSpan, flushTelemetry } = await loadTelemetry();
     const span = startCommandSpan('load_workspace');
     span.end();
@@ -65,26 +58,9 @@ describe('startCommandSpan', () => {
         ],
       }),
     );
-  });
-
-  it('never asks the ingest command to trace itself', async () => {
-    const { startCommandSpan, flushTelemetry } = await loadTelemetry();
-    startCommandSpan('load_workspace').end();
-    await flushTelemetry();
     mockInvoke.mockClear();
-
     await flushTelemetry();
-
     expect(mockInvoke).not.toHaveBeenCalled();
-  });
-
-  it('nests under an explicit parent action context without ambient state', async () => {
-    const { startActionSpan, startCommandSpan } = await loadTelemetry();
-    const action = startActionSpan('session.select');
-    const invokeSpan = startCommandSpan('set_active_session', action.context);
-
-    expect(invokeSpan.context?.traceId).toBe(action.context?.traceId);
-    expect(invokeSpan.context?.spanId).not.toBe(action.context?.spanId);
   });
 
   it('persists an action with invoke and RPC children in one trace', async () => {
@@ -136,6 +112,9 @@ describe('startCommandSpan', () => {
         (record) => record.parentSpanId === actionRecord?.spanId,
       ),
     ).toBe(true);
+    expect(
+      spanChildren.every((record) => record.spanId !== actionRecord?.spanId),
+    ).toBe(true);
   });
 });
 
@@ -176,9 +155,18 @@ describe('startActionSpan', () => {
 });
 
 describe('invokeTraced', () => {
-  it('never serializes the command arguments into the span attributes', async () => {
+  it('passes arguments and span context to invoke but excludes arguments from telemetry', async () => {
     const { invokeTraced, flushTelemetry } = await loadTelemetry();
     await invokeTraced('import_project', { path: '/tmp/tau-canary-project' });
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'import_project',
+      expect.objectContaining({
+        path: '/tmp/tau-canary-project',
+        telemetryContext: expect.objectContaining({
+          traceId: expect.any(String),
+        }),
+      }),
+    );
 
     await flushTelemetry();
 
@@ -199,21 +187,6 @@ describe('invokeTraced', () => {
         },
       }),
     ]);
-  });
-
-  it('passes the invoke call its own span context alongside the real arguments', async () => {
-    const { invokeTraced } = await loadTelemetry();
-    await invokeTraced('import_project', { path: '/tmp/tau-canary-project' });
-
-    expect(mockInvoke).toHaveBeenCalledWith(
-      'import_project',
-      expect.objectContaining({
-        path: '/tmp/tau-canary-project',
-        telemetryContext: expect.objectContaining({
-          traceId: expect.any(String),
-        }),
-      }),
-    );
   });
 
   it('ends the span even when the underlying invoke rejects', async () => {
@@ -244,7 +217,7 @@ describe('invokeTraced', () => {
 });
 
 describe('startRpcSpan', () => {
-  it('flushes with method, request id, runtime, and generation, but no outcome until ended', async () => {
+  it('records scoped RPC attributes and drops an unreviewed outcome', async () => {
     const { startRpcSpan, flushTelemetry } = await loadTelemetry();
     const span = startRpcSpan(
       'prompt',
@@ -255,6 +228,13 @@ describe('startRpcSpan', () => {
       { sessionId: 'session-1', controllerId: 'controller-1' },
     );
     span.end('success');
+    const invalid = startRpcSpan(
+      'prompt',
+      'tau-prompt-invalid',
+      'runtime-1',
+      3,
+    );
+    invalid.end('not-a-real-outcome' as never);
 
     await flushTelemetry();
 
@@ -277,122 +257,52 @@ describe('startRpcSpan', () => {
         ]),
       }),
     );
-  });
-
-  it('drops an unreviewed outcome without failing to end the span', async () => {
-    const { startRpcSpan, flushTelemetry } = await loadTelemetry();
-    const span = startRpcSpan('prompt', 'tau-prompt-1', 'runtime-1', 3);
-    span.end('not-a-real-outcome' as never);
-
-    await flushTelemetry();
-
-    const ingestCall = mockInvoke.mock.calls.find(
-      ([command]) => command === 'ingest_telemetry',
+    const invalidRecord = flushedRecords().find(
+      (record) =>
+        record.family === 'pi.rpc' &&
+        record.attributes['pi.rpc.request_id'] === 'tau-prompt-invalid',
     );
-    const records = (
-      ingestCall?.[1] as {
-        records: Array<{ family: string; attributes: Record<string, unknown> }>;
-      }
-    ).records;
-    const rpcRecord = records.find((record) => record.family === 'pi.rpc');
-    expect(rpcRecord?.attributes['pi.rpc.outcome']).toBeUndefined();
-  });
-
-  it('nests under an explicit parent action context', async () => {
-    const { startActionSpan, startRpcSpan } = await loadTelemetry();
-    const action = startActionSpan('message.send');
-    const rpc = startRpcSpan(
-      'prompt',
-      'tau-prompt-1',
-      'runtime-1',
-      3,
-      action.context,
-    );
-
-    expect(rpc.context?.traceId).toBe(action.context?.traceId);
+    expect(invalidRecord).toBeDefined();
+    expect(invalidRecord?.attributes['pi.rpc.outcome']).toBeUndefined();
   });
 });
 
 describe('operation checkpoints', () => {
-  it('records a ui.action checkpoint immediately, even if the span never ends', async () => {
-    const { startActionSpan, flushTelemetry } = await loadTelemetry();
-    const action = startActionSpan('message.send');
+  it('checkpoints unfinished actions and RPCs immediately, but not invokes', async () => {
+    const { startActionSpan, startRpcSpan, startCommandSpan, flushTelemetry } =
+      await loadTelemetry();
+    startCommandSpan('load_workspace');
+    await flushTelemetry();
+    expect(flushedRecords()).toEqual([]);
 
+    const action = startActionSpan('message.send');
+    const rpc = startRpcSpan('prompt', 'tau-prompt-1', 'runtime-1', 1);
     await flushTelemetry();
 
-    const ingestCall = mockInvoke.mock.calls.find(
-      ([name]) => name === 'ingest_telemetry',
-    );
-    const records = (
-      ingestCall?.[1] as {
-        records: Array<{
-          family: string;
-          traceId: string;
-          spanId: string;
-          attributes: Record<string, unknown>;
-        }>;
-      }
-    ).records;
-    const checkpoint = records.find(
+    const records = flushedRecords();
+    const checkpoints = records.filter(
       (record) => record.family === 'operation.checkpoint',
     );
-    expect(checkpoint).toBeDefined();
-    expect(checkpoint?.attributes).toEqual({
+    expect(checkpoints).toHaveLength(2);
+    expect(checkpoints[0]?.attributes).toEqual({
       'tau.operation.family': 'ui.action',
       'tau.operation.name': 'message.send',
     });
-    expect(checkpoint?.traceId).toBe(action.context?.traceId);
-    expect(checkpoint?.spanId).toBe(action.context?.spanId);
-    // The action's own span is never ended in this test: only the linked
-    // checkpoint log proves the operation began.
-    expect(records.some((record) => record.family === 'ui.action')).toBe(false);
-  });
-
-  it('records a pi.rpc checkpoint immediately, even if the span never ends', async () => {
-    const { startRpcSpan, flushTelemetry } = await loadTelemetry();
-    const rpc = startRpcSpan('prompt', 'tau-prompt-1', 'runtime-1', 1);
-
-    await flushTelemetry();
-
-    const ingestCall = mockInvoke.mock.calls.find(
-      ([name]) => name === 'ingest_telemetry',
-    );
-    const records = (
-      ingestCall?.[1] as {
-        records: Array<{
-          family: string;
-          traceId: string;
-          spanId: string;
-          attributes: Record<string, unknown>;
-        }>;
-      }
-    ).records;
-    const checkpoint = records.find(
-      (record) => record.family === 'operation.checkpoint',
-    );
-    expect(checkpoint).toBeDefined();
-    expect(checkpoint?.attributes).toEqual({
+    expect(checkpoints[0]?.traceId).toBe(action.context?.traceId);
+    expect(checkpoints[0]?.spanId).toBe(action.context?.spanId);
+    expect(checkpoints[1]?.attributes).toEqual({
       'tau.operation.family': 'pi.rpc',
       'tau.operation.name': 'prompt',
       'pi.rpc.request_id': 'tau-prompt-1',
       'tau.runtime.id': 'runtime-1',
       'pi.generation': 1,
     });
-    expect(checkpoint?.traceId).toBe(rpc.context?.traceId);
-    expect(checkpoint?.spanId).toBe(rpc.context?.spanId);
-    expect(records.some((record) => record.family === 'pi.rpc')).toBe(false);
-  });
-
-  it('does not checkpoint an ordinary tauri.invoke span', async () => {
-    const { startCommandSpan, flushTelemetry } = await loadTelemetry();
-    startCommandSpan('load_workspace');
-
-    await flushTelemetry();
-
-    const ingestCall = mockInvoke.mock.calls.find(
-      ([name]) => name === 'ingest_telemetry',
-    );
-    expect(ingestCall).toBeUndefined();
+    expect(checkpoints[1]?.traceId).toBe(rpc.context?.traceId);
+    expect(checkpoints[1]?.spanId).toBe(rpc.context?.spanId);
+    // Neither operation span has ended; only the linked checkpoints exist.
+    expect(
+      records.every((record) => record.family === 'operation.checkpoint'),
+    ).toBe(true);
   });
 });
 
@@ -466,15 +376,23 @@ describe('recordRpcResponseAnomaly', () => {
 });
 
 describe('recordControllerTransition', () => {
-  it('records state before/after, cause, and session/controller/runtime context', async () => {
-    const { recordControllerTransition, flushTelemetry } =
+  it('records transition attributes and links explicitly to an action span', async () => {
+    const { recordControllerTransition, startActionSpan, flushTelemetry } =
       await loadTelemetry();
+    const action = startActionSpan('message.send');
     recordControllerTransition('idle', 'starting', 'controller_start', {
       sessionId: 'session-1',
       controllerId: 'controller-1',
       runtimeId: 'runtime-1',
       generation: 2,
     });
+    recordControllerTransition(
+      'idle',
+      'working',
+      'message_send',
+      { controllerId: 'controller-1' },
+      action.context,
+    );
 
     await flushTelemetry();
 
@@ -490,35 +408,25 @@ describe('recordControllerTransition', () => {
       'tau.runtime.id': 'runtime-1',
       'pi.generation': 2,
     });
-  });
-
-  it('carries the active span context when given one', async () => {
-    const { recordControllerTransition, startActionSpan, flushTelemetry } =
-      await loadTelemetry();
-    const action = startActionSpan('message.send');
-
-    recordControllerTransition(
-      'idle',
-      'working',
-      'message_send',
-      { controllerId: 'controller-1' },
-      action.context,
+    const linked = flushedRecords().find(
+      (record) =>
+        record.family === 'controller.lifecycle' &&
+        record.attributes['tau.controller.transition.cause'] === 'message_send',
     );
-
-    await flushTelemetry();
-
-    const transition = flushedRecords().find(
-      (record) => record.family === 'controller.lifecycle',
-    );
-    expect(transition?.traceId).toBe(action.context?.traceId);
-    expect(transition?.spanId).toBe(action.context?.spanId);
+    expect(linked?.traceId).toBe(action.context?.traceId);
+    expect(linked?.spanId).toBe(action.context?.spanId);
   });
 });
 
 describe('recordEventLoopLag', () => {
-  it('records a bounded lag value with visibility/focus dimensions', async () => {
+  it('records bounded lag with visibility/focus and rejects invalid durations', async () => {
     const { recordEventLoopLag, flushTelemetry } = await loadTelemetry();
+    const { MAX_METRIC_VALUE_MS } = await import('./metric');
     recordEventLoopLag(42, 'visible', true);
+    recordEventLoopLag(-1, 'visible', true);
+    recordEventLoopLag(Number.POSITIVE_INFINITY, 'visible', true);
+    recordEventLoopLag(Number.NaN, 'visible', true);
+    recordEventLoopLag(MAX_METRIC_VALUE_MS + 1, 'visible', true);
 
     await flushTelemetry();
 
@@ -537,23 +445,6 @@ describe('recordEventLoopLag', () => {
         ],
       }),
     );
-  });
-
-  it('drops a negative, non-finite, or out-of-bounds value rather than sending it', async () => {
-    const { recordEventLoopLag, flushTelemetry } = await loadTelemetry();
-    const { MAX_METRIC_VALUE_MS } = await import('./metric');
-    recordEventLoopLag(-1, 'visible', true);
-    recordEventLoopLag(Number.POSITIVE_INFINITY, 'visible', true);
-    recordEventLoopLag(Number.NaN, 'visible', true);
-    recordEventLoopLag(MAX_METRIC_VALUE_MS + 1, 'visible', true);
-
-    await flushTelemetry();
-
-    expect(
-      flushedRecords().some(
-        (record) => record.family === 'frontend.event_loop_lag',
-      ),
-    ).toBe(false);
   });
 });
 
@@ -668,7 +559,7 @@ describe('recordStateSummary', () => {
 });
 
 describe('vueErrorHandler', () => {
-  it('records the bounded error kind and a sanitized location, never the message', async () => {
+  it('records bounded Error and non-Error kinds without messages', async () => {
     const consoleError = vi
       .spyOn(console, 'error')
       .mockImplementation(() => {});
@@ -678,6 +569,7 @@ describe('vueErrorHandler', () => {
       'TypeError: tau-canary-vue-error-message\n    at run (/tmp/project/src/app.ts:5:2)';
 
     vueErrorHandler(error);
+    vueErrorHandler('a plain string reason');
 
     await flushTelemetry();
 
@@ -696,28 +588,17 @@ describe('vueErrorHandler', () => {
     expect(JSON.stringify(record)).not.toContain(
       'tau-canary-vue-error-message',
     );
-    expect(consoleError).toHaveBeenCalledWith(error);
-    consoleError.mockRestore();
-  });
-
-  it('still records a bounded record for a non-Error thrown value', async () => {
-    const consoleError = vi
-      .spyOn(console, 'error')
-      .mockImplementation(() => {});
-    const { vueErrorHandler, flushTelemetry } = await loadTelemetry();
-
-    vueErrorHandler('a plain string reason');
-
-    await flushTelemetry();
-
-    const record = flushedRecords().find(
-      (candidate) => candidate.family === 'frontend.error',
+    const otherRecord = flushedRecords().find(
+      (candidate) =>
+        candidate.family === 'frontend.error' &&
+        candidate.attributes['tau.error.kind'] === 'other',
     );
-    expect(record?.attributes).toEqual({
+    expect(otherRecord?.attributes).toEqual({
       'tau.error.source': 'vue_error',
       'tau.error.kind': 'other',
       'tau.error.location': '',
     });
+    expect(consoleError).toHaveBeenCalledWith(error);
     expect(consoleError).toHaveBeenCalledWith('a plain string reason');
     consoleError.mockRestore();
   });
@@ -832,7 +713,7 @@ describe('installFrontendErrorCapture', () => {
 });
 
 describe('queue overflow reporting', () => {
-  it('reports a telemetry.health log once the bounded queue starts dropping records', async () => {
+  it('reports queue overflow once per drop count, never repeating it', async () => {
     const { startCommandSpan, flushTelemetry } = await loadTelemetry();
 
     for (let index = 0; index < 205; index += 1) {
@@ -851,15 +732,6 @@ describe('queue overflow reporting', () => {
     expect(
       healthRecord?.attributes['tau.telemetry.dropped_count'] as number,
     ).toBeGreaterThan(0);
-  });
-
-  it('does not report the same drop count twice', async () => {
-    const { startCommandSpan, flushTelemetry } = await loadTelemetry();
-
-    for (let index = 0; index < 201; index += 1) {
-      startCommandSpan('load_workspace').end();
-    }
-    await flushTelemetry();
     mockInvoke.mockClear();
 
     startCommandSpan('load_workspace').end();

@@ -25,9 +25,6 @@ use tauri_plugin_window_state::StateFlags;
 const NEW_SESSION_MENU_ID: &str = "tau-new-session";
 const NEW_SESSION_EVENT: &str = "tau://new-session";
 
-/// The window paints its own background before the webview has anything to show
-/// and in the gaps a live resize opens up, so it has to carry the canvas colour
-/// of the theme it is being drawn in.
 const LIGHT_CANVAS: Color = Color(252, 252, 252, 255);
 const DARK_CANVAS: Color = Color(16, 20, 28, 255);
 
@@ -35,7 +32,6 @@ pub fn update_swap_helper_exit_code() -> Option<i32> {
     update::swap_helper_exit_code()
 }
 
-/// How long the window stays hidden waiting for the frontend to show it.
 const REVEAL_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -64,9 +60,6 @@ pub fn run() {
     #[cfg(not(dev))]
     let builder = builder.plugin(
         tauri_plugin_window_state::Builder::default()
-            // The window is created hidden and shown once the frontend has
-            // mounted. Restoring visibility would show it while it is empty,
-            // and restoring decorations would undo the overlay title bar.
             .with_state_flags(
                 StateFlags::SIZE
                     | StateFlags::POSITION

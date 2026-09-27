@@ -41,7 +41,7 @@ function edges(source: string): [string, string, string | undefined][] {
 }
 
 describe('patched beautiful-mermaid flowchart parser', () => {
-  it('preserves complete code-like labels and ordered topology', () => {
+  it('preserves ordered topology, code-like labels and forward definitions', () => {
     expect(nodes(codeLabels)).toEqual([
       ['A', 'metadata.calls = request.tasks ?? []', 'rectangle'],
       ['B', 'execute([bundle])', 'rectangle'],
@@ -53,9 +53,7 @@ describe('patched beautiful-mermaid flowchart parser', () => {
       ['B', 'C', undefined],
       ['C', 'D', undefined],
     ]);
-  });
 
-  it('lets later explicit definitions replace forward references without moving nodes', () => {
     expect(nodes(forwardDefinitions)).toEqual([
       ['D1', 'D1', 'rectangle'],
       ['E', 'final authority', 'diamond'],
@@ -72,29 +70,28 @@ describe('patched beautiful-mermaid flowchart parser', () => {
     ]);
   });
 
-  it.each([
-    ['doublecircle', '(((', ')))'],
-    ['stadium', '([', '])'],
-    ['circle', '((', '))'],
-    ['subroutine', '[[', ']]'],
-    ['cylinder', '[(', ')]'],
-    ['trapezoid', '[/', '\\]'],
-    ['trapezoid-alt', '[\\', '/]'],
-    ['asymmetric', '>', ']'],
-    ['hexagon', '{{', '}}'],
-    ['rectangle', '[', ']'],
-    ['rounded', '(', ')'],
-    ['diamond', '{', '}'],
-  ])(
-    'consumes quoted %s labels across internal closers',
-    (shape, open, close) => {
+  it('consumes quoted labels across internal closers for every node shape', () => {
+    for (const [shape, open, close] of [
+      ['doublecircle', '(((', ')))'],
+      ['stadium', '([', '])'],
+      ['circle', '((', '))'],
+      ['subroutine', '[[', ']]'],
+      ['cylinder', '[(', ')]'],
+      ['trapezoid', '[/', '\\]'],
+      ['trapezoid-alt', '[\\', '/]'],
+      ['asymmetric', '>', ']'],
+      ['hexagon', '{{', '}}'],
+      ['rectangle', '[', ']'],
+      ['rounded', '(', ')'],
+      ['diamond', '{', '}'],
+    ]) {
       expect(
         nodes(
           `graph TD\n A${open}"inner ${close} --> {[]()} & café's &amp;"${close}`,
         ),
       ).toEqual([['A', `inner ${close} --> {[]()} & café's &amp;`, shape]]);
-    },
-  );
+    }
+  });
 
   it('keeps edge styles, classes, link styles, and ownership independent of definitions', () => {
     const source = `graph LR
@@ -124,21 +121,26 @@ describe('patched beautiful-mermaid flowchart parser', () => {
     ]);
   });
 
-  it.each([
-    'A["unterminated]',
-    'A(((unfinished))',
-    'A[unfinished',
-    'A[valid] leftover',
-    'A[valid]::: --> B',
-    'A[valid]:::hot! --> B',
-    'A -->',
-    'A &',
-    'A --> B &',
-    'A --> B garbage',
-    'A["quoted" garbage]',
-    'A["ambiguous \\" quote"]',
-  ])('rejects malformed statements rather than partial graphs: %s', (line) => {
-    expect(() => graph(`graph TD\n ${line}`)).toThrow();
+  it('rejects malformed statements and conflicting ownership rather than partial graphs', () => {
+    for (const line of [
+      'A["unterminated]',
+      'A(((unfinished))',
+      'A[unfinished',
+      'A[valid] leftover',
+      'A[valid]::: --> B',
+      'A[valid]:::hot! --> B',
+      'A -->',
+      'A &',
+      'A --> B &',
+      'A --> B garbage',
+      'A["quoted" garbage]',
+      'A["ambiguous \\" quote"]',
+    ]) {
+      expect(() => graph(`graph TD\n ${line}`)).toThrow();
+    }
+    expect(() =>
+      graph(`graph TD\n subgraph one\n A[x]\n end\n subgraph two\n A[y]\n end`),
+    ).toThrow();
   });
 
   it('preserves nested subgraph ownership when updating a node', () => {
@@ -164,12 +166,6 @@ describe('patched beautiful-mermaid flowchart parser', () => {
       ['B', 'B', 'rectangle'],
     ]);
     expect(edges(source)).toEqual([['A', 'B', undefined]]);
-  });
-
-  it('rejects conflicting subgraph ownership', () => {
-    expect(() =>
-      graph(`graph TD\n subgraph one\n A[x]\n end\n subgraph two\n A[y]\n end`),
-    ).toThrow();
   });
 });
 

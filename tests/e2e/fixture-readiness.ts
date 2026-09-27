@@ -5,7 +5,6 @@ import { expect } from './fixtures';
 export default async function waitForShowcaseRendering(
   page: Page,
 ): Promise<void> {
-  // Async Markdown replacement can remove a hovered or focused control.
   const showcase = page.locator(
     '[data-message-id="fixture-markdown-showcase"]',
   );

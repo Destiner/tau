@@ -1,19 +1,9 @@
-/**
- * The session list sorts by activity, so a session working in the background
- * can move a row out from under the pointer between the user aiming and
- * clicking — at worst archiving the wrong session. While the pointer is over
- * the list, the rows visible on entry are held, and the current sort resumes
- * as soon as the pointer leaves.
- */
-
 interface HeldSession<T> {
-  /** Identity shown when the pointer entered the list. */
   id: string;
-  /** Follows an ephemeral row through its first Pi materialization. */
+
   source: T;
 }
 
-/** Sessions a project listed when the pointer entered the list. */
 function heldSessions<T extends { id: string }>(
   sessions: readonly T[],
 ): HeldSession<T>[] {

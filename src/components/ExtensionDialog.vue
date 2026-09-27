@@ -154,7 +154,7 @@ const props = defineProps<{
   submitting: boolean;
   disabled?: boolean;
   error: string;
-  /** Base for relative paths; remote paths use app-managed activation. */
+
   workingDirectory?: string;
   copyPaths?: boolean;
   remoteProjectPath?: string;
@@ -276,11 +276,6 @@ function handleSelectKeydown(event: KeyboardEvent): void {
 </script>
 
 <style scoped>
-/*
- * The prompt is a row of the transcript, so it has no height of its own to
- * bound and no scrolling region: the transcript scrolls, and a question longer
- * than the pane is read the way a long message is.
- */
 .extension-prompt {
   display: flex;
   flex-direction: column;
@@ -291,7 +286,6 @@ function handleSelectKeydown(event: KeyboardEvent): void {
   gap: 8px;
 }
 
-/* The protocol's title may be a Markdown document rather than one sentence. */
 .extension-prompt-title {
   color: var(--text);
   font-size: var(--text-sm);
@@ -308,11 +302,6 @@ function handleSelectKeydown(event: KeyboardEvent): void {
   min-height: 32px;
 }
 
-/*
- * One row for the question's answers, on the app's pick-row rules: hover says
- * the pointer is here, the cursor says the keyboard is. The option is focused
- * as the arrows move, so focus takes the cursor's mark rather than a third one.
- */
 .extension-prompt-option {
   display: block;
   width: 100%;

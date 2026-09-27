@@ -116,7 +116,7 @@ describe('ordinary user event projection', () => {
     ]);
   });
 
-  it('keeps a pending optimistic row through startup hydration', () => {
+  it('keeps pending optimistic and projected rows only during live hydration', () => {
     const optimistic: TranscriptEntry[] = [
       {
         id: 'optimistic-user-1',
@@ -126,11 +126,6 @@ describe('ordinary user event projection', () => {
       },
     ];
 
-    expect(hydrateTranscript([], optimistic, true)).toEqual(optimistic);
-    expect(hydrateTranscript([], optimistic, false)).toEqual([]);
-  });
-
-  it('keeps a projected user row through early streaming hydration', () => {
     const projected: TranscriptEntry[] = [
       {
         id: 'stream-user-1',
@@ -140,8 +135,9 @@ describe('ordinary user event projection', () => {
       },
     ];
 
-    expect(hydrateTranscript([], projected, true)).toEqual(projected);
-    expect(hydrateTranscript([], projected, false)).toEqual([]);
+    const local = [...optimistic, ...projected];
+    expect(hydrateTranscript([], local, true)).toEqual(local);
+    expect(hydrateTranscript([], local, false)).toEqual([]);
   });
 
   it('lets settled hydration adopt repeated event rows without duplication', () => {
@@ -210,7 +206,7 @@ describe('hydrateTranscript', () => {
     });
   });
 
-  it('marks an unmatched tool call in an aborted turn as errored', () => {
+  it('settles tool calls according to terminal, recovered and running turn outcomes', () => {
     const result = hydrateTranscript([
       {
         role: 'assistant',
@@ -224,16 +220,6 @@ describe('hydrateTranscript', () => {
           },
         ],
       },
-    ]);
-
-    expect(result[0]).toMatchObject({
-      toolRunning: false,
-      toolErrored: true,
-    });
-  });
-
-  it('marks an unmatched tool call in an errored turn as errored', () => {
-    const result = hydrateTranscript([
       {
         role: 'assistant',
         stopReason: 'error',
@@ -246,16 +232,6 @@ describe('hydrateTranscript', () => {
           },
         ],
       },
-    ]);
-
-    expect(result[0]).toMatchObject({
-      toolRunning: false,
-      toolErrored: true,
-    });
-  });
-
-  it('lets a later successful tool result override a terminal turn failure', () => {
-    const result = hydrateTranscript([
       {
         role: 'assistant',
         stopReason: 'error',
@@ -274,17 +250,6 @@ describe('hydrateTranscript', () => {
         isError: false,
         content: [{ type: 'text', text: 'done' }],
       },
-    ]);
-
-    expect(result[0]).toMatchObject({
-      toolRunning: false,
-      toolErrored: false,
-      toolResult: 'done',
-    });
-  });
-
-  it('keeps an unmatched tool call running in a nonterminal turn', () => {
-    const result = hydrateTranscript([
       {
         role: 'assistant',
         content: [
@@ -298,10 +263,14 @@ describe('hydrateTranscript', () => {
       },
     ]);
 
-    expect(result[0]).toMatchObject({
-      toolRunning: true,
+    expect(result[0]).toMatchObject({ toolRunning: false, toolErrored: true });
+    expect(result[1]).toMatchObject({ toolRunning: false, toolErrored: true });
+    expect(result[2]).toMatchObject({
+      toolRunning: false,
       toolErrored: false,
+      toolResult: 'done',
     });
+    expect(result[3]).toMatchObject({ toolRunning: true, toolErrored: false });
   });
 
   it("carries a bash execution's own output", () => {
@@ -578,7 +547,6 @@ Full instructions
     expect(settled[0]?.id).not.toBe('stream-tool-0');
   });
 
-  /** The shape Pi records when a provider rejects the request outright. */
   it('stands a failed turn in for the reply it replaced', () => {
     const errorMessage = `402: {"message":"Out of credits","code":402}`;
     const result = hydrateTranscript([
@@ -599,7 +567,7 @@ Full instructions
     expect(result[1]?.text).not.toContain(errorMessage);
   });
 
-  it('keeps the text of a turn that failed part way through', () => {
+  it('retains partial text on failure but does not invent an abort failure', () => {
     const result = hydrateTranscript([
       {
         role: 'assistant',
@@ -607,14 +575,6 @@ Full instructions
         stopReason: 'error',
         errorMessage: 'terminated',
       },
-    ]);
-
-    expect(result.map((entry) => entry.kind)).toEqual(['assistant', 'error']);
-    expect(result[0]?.text).toBe('Halfway through');
-  });
-
-  it('leaves an aborted turn alone, since the reader stopped it', () => {
-    const result = hydrateTranscript([
       {
         role: 'assistant',
         content: [{ type: 'text', text: 'Half a reply' }],
@@ -623,7 +583,12 @@ Full instructions
       },
     ]);
 
-    expect(result.map((entry) => entry.kind)).toEqual(['assistant']);
+    expect(result.map((entry) => entry.kind)).toEqual([
+      'assistant',
+      'error',
+      'assistant',
+    ]);
+    expect(result[0]?.text).toBe('Halfway through');
   });
 
   it('carries a streamed error row into the settled turn', () => {
@@ -1028,7 +993,7 @@ describe('toolSummary', () => {
 });
 
 describe('messageFailure', () => {
-  it('reports an errored assistant turn', () => {
+  it('reports only errored assistant turns as failures', () => {
     expect(
       messageFailure({
         role: 'assistant',
@@ -1041,9 +1006,6 @@ describe('messageFailure', () => {
       message:
         'The account has no available credit for this request. Add credit or choose another model, then try again.',
     });
-  });
-
-  it('ignores anything that is not a failed assistant turn', () => {
     expect(messageFailure({ role: 'user', content: 'hello' })).toBeUndefined();
     expect(
       messageFailure({

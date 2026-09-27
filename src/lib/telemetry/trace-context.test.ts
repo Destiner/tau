@@ -5,7 +5,7 @@ import { formatTraceContext, parseTraceContext } from './trace-context';
 const VALID = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
 
 describe('parseTraceContext', () => {
-  it('parses a valid traceparent', () => {
+  it('parses valid context and rejects invalid identifiers and syntax', () => {
     const result = parseTraceContext(VALID);
     expect(result).toEqual({
       ok: true,
@@ -15,19 +15,22 @@ describe('parseTraceContext', () => {
         sampled: true,
       },
     });
-  });
-
-  it('rejects an all-zero trace id', () => {
-    const value = '00-00000000000000000000000000000000-00f067aa0ba902b7-01';
-    expect(parseTraceContext(value)).toEqual({ ok: false, error: 'trace-id' });
-  });
-
-  it('rejects an all-zero span id', () => {
-    const value = '00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01';
-    expect(parseTraceContext(value)).toEqual({ ok: false, error: 'span-id' });
-  });
-
-  it('rejects the wrong number of segments', () => {
+    expect(
+      parseTraceContext(
+        '00-00000000000000000000000000000000-00f067aa0ba902b7-01',
+      ),
+    ).toEqual({
+      ok: false,
+      error: 'trace-id',
+    });
+    expect(
+      parseTraceContext(
+        '00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01',
+      ),
+    ).toEqual({
+      ok: false,
+      error: 'span-id',
+    });
     expect(
       parseTraceContext('00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7'),
     ).toEqual({ ok: false, error: 'format' });
@@ -35,31 +38,34 @@ describe('parseTraceContext', () => {
       ok: false,
       error: 'format',
     });
-  });
-
-  it('rejects an unsupported version', () => {
-    const value = 'ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
-    expect(parseTraceContext(value)).toEqual({ ok: false, error: 'version' });
-  });
-
-  it('rejects uppercase hex', () => {
-    const value = '00-4BF92F3577B34DA6A3CE929D0E0E4736-00f067aa0ba902b7-01';
-    expect(parseTraceContext(value)).toEqual({ ok: false, error: 'trace-id' });
+    expect(
+      parseTraceContext(
+        'ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+      ),
+    ).toEqual({
+      ok: false,
+      error: 'version',
+    });
+    expect(
+      parseTraceContext(
+        '00-4BF92F3577B34DA6A3CE929D0E0E4736-00f067aa0ba902b7-01',
+      ),
+    ).toEqual({
+      ok: false,
+      error: 'trace-id',
+    });
   });
 });
 
 describe('formatTraceContext', () => {
-  it('round-trips a parsed context', () => {
+  it('round-trips sampled and unsampled flags', () => {
     const result = parseTraceContext(VALID);
     if (!result.ok) throw new Error('expected a valid traceparent');
     expect(formatTraceContext(result.context)).toBe(VALID);
-  });
-
-  it('round-trips the unsampled flag', () => {
     const unsampled = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00';
-    const result = parseTraceContext(unsampled);
-    if (!result.ok) throw new Error('expected a valid traceparent');
-    expect(result.context.sampled).toBe(false);
-    expect(formatTraceContext(result.context)).toBe(unsampled);
+    const unsampledResult = parseTraceContext(unsampled);
+    if (!unsampledResult.ok) throw new Error('expected a valid traceparent');
+    expect(unsampledResult.context.sampled).toBe(false);
+    expect(formatTraceContext(unsampledResult.context)).toBe(unsampled);
   });
 });

@@ -12,55 +12,147 @@ interface VisibleConversationState {
   working: boolean;
 }
 
-test('wraps an unbroken link without widening the composer', async ({
+test('wraps a long draft, then streams and settles the submitted conversation', async ({
   page,
 }) => {
-  await page.goto(scenarioUrl);
+  await test.step('wraps an unbroken link without widening the composer', async () => {
+    await page.goto(scenarioUrl);
+    const composer = page.getByRole('textbox', { name: 'Message Pi' });
+    await composer.fill(`https://example.com/${'a'.repeat(10_000)}`);
+    const draftIndicator = page.locator(
+      '.session-row .ui-status-dot[aria-label="Draft"]',
+    );
+    await expect(draftIndicator).toHaveCSS('width', '6px');
+    await expect(draftIndicator).toHaveCSS('height', '6px');
+    await expect(draftIndicator).toHaveCSS(
+      'background-color',
+      'rgb(110, 117, 127)',
+    );
+    await expect(draftIndicator).toHaveCSS('opacity', '0.3');
+    await expect(draftIndicator).toHaveCSS(
+      'transform',
+      'matrix(1, 0, 0, 1, 0, -0.75)',
+    );
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const input = document.querySelector<HTMLTextAreaElement>(
+            'textarea[aria-label="Message Pi"]',
+          );
+          if (!input) return false;
+          return (
+            document.body.scrollWidth === window.innerWidth &&
+            input.scrollWidth === input.clientWidth &&
+            input.scrollHeight > input.clientHeight
+          );
+        }),
+      )
+      .toBe(true);
+  });
 
-  const composer = page.getByRole('textbox', { name: 'Message Pi' });
-  await composer.fill(`https://example.com/${'a'.repeat(10_000)}`);
-
-  const draftIndicator = page.locator(
-    '.session-row .ui-status-dot[aria-label="Draft"]',
-  );
-  await expect(draftIndicator).toHaveCSS('width', '6px');
-  await expect(draftIndicator).toHaveCSS('height', '6px');
-  await expect(draftIndicator).toHaveCSS(
-    'background-color',
-    'rgb(110, 117, 127)',
-  );
-  await expect(draftIndicator).toHaveCSS('opacity', '0.3');
-  // Lifted three quarters of a pixel off the title's baseline, and by a
-  // transform: margin cannot move a baseline-aligned empty flex item, and a
-  // relative offset rounds the sub-pixel away differently per engine.
-  await expect(draftIndicator).toHaveCSS(
-    'transform',
-    'matrix(1, 0, 0, 1, 0, -0.75)',
-  );
-
-  await expect
-    .poll(() =>
-      page.evaluate(() => {
-        const input = document.querySelector<HTMLTextAreaElement>(
-          'textarea[aria-label="Message Pi"]',
+  await test.step('submits and settles a deterministic streamed conversation', async () => {
+    const composer = page.getByRole('textbox', { name: 'Message Pi' });
+    await expect(composer).toBeEnabled();
+    await page.evaluate(() => {
+      const states: VisibleConversationState[] = [];
+      const record = (): void => {
+        const transcript =
+          document.querySelector('[aria-label="Transcript"]')?.textContent ??
+          '';
+        const working = Boolean(
+          document.querySelector(
+            '[aria-label="Working"], [aria-label="Stopping"], [aria-label="Stop Pi"]',
+          ),
         );
-        if (!input) return false;
-        return (
-          document.body.scrollWidth === window.innerWidth &&
-          input.scrollWidth === input.clientWidth &&
-          input.scrollHeight > input.clientHeight
-        );
+        const next = { transcript, working };
+        const previous = states.at(-1);
+        if (
+          previous?.transcript !== next.transcript ||
+          previous.working !== next.working
+        ) {
+          states.push(next);
+        }
+      };
+      new MutationObserver(record).observe(document.body, {
+        attributes: true,
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+      (
+        window as Window & {
+          __TAU_VISIBLE_CONVERSATION_STATES__?: VisibleConversationState[];
+        }
+      ).__TAU_VISIBLE_CONVERSATION_STATES__ = states;
+      record();
+    });
+    await composer.fill(prompt);
+    await page.getByRole('button', { name: 'Send Message' }).click();
+    await expect(page.getByText(prompt, { exact: true })).toBeVisible();
+    await expect(page.getByText(completeReply, { exact: true })).toBeVisible();
+    await expect(composer).toHaveValue('');
+    await expect(composer).toBeEnabled();
+    await expect(
+      page.getByRole('button', { name: 'Send Message' }),
+    ).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Stop Pi' })).toHaveCount(0);
+    await expect(page.getByRole('status', { name: 'Working' })).toHaveCount(0);
+    await expect(page.getByRole('img', { name: 'Working' })).toHaveCount(0);
+    await expect(
+      page.getByText('STALE_GENERATION_SENTINEL', { exact: true }),
+    ).toHaveCount(0);
+    const visibleStates = await page.evaluate(
+      () =>
+        (
+          window as Window & {
+            __TAU_VISIBLE_CONVERSATION_STATES__?: VisibleConversationState[];
+          }
+        ).__TAU_VISIBLE_CONVERSATION_STATES__ ?? [],
+    );
+    expect(
+      visibleStates.some(
+        (state) =>
+          state.working &&
+          state.transcript.includes(prompt) &&
+          !state.transcript.includes(firstDelta),
+      ),
+      'the optimistic user message should render while Pi is visibly working',
+    ).toBe(true);
+    expect(
+      visibleStates.some(
+        (state) =>
+          state.transcript.includes(prompt) &&
+          state.transcript.includes(firstDelta) &&
+          !state.transcript.includes('reply.'),
+      ),
+      'the first assistant delta should be visible before the second delta',
+    ).toBe(true);
+    expect(
+      visibleStates.some(
+        (state) =>
+          state.transcript.includes(prompt) &&
+          state.transcript.includes(completeReply),
+      ),
+      'the assistant row should preserve and concatenate both deltas',
+    ).toBe(true);
+    const timeline = await page.evaluate(() =>
+      window.__TAU_PI_SCENARIO__?.timeline(),
+    );
+    expect(timeline).toHaveLength(26);
+    expect(timeline).toContainEqual(
+      expect.objectContaining({
+        kind: 'request',
+        request: { type: 'prompt', message: prompt },
       }),
-    )
-    .toBe(true);
-
-  // The final delta is visible before settlement hydration has finished.
-  await composer.fill(prompt);
-  await composer.press('Enter');
-  await expect(page.getByText(completeReply, { exact: true })).toBeVisible();
-  await expect
-    .poll(() => page.evaluate(() => window.__TAU_PI_SCENARIO__?.verify().ok))
-    .toBe(true);
+    );
+    expect(timeline?.at(-1)).toMatchObject({
+      kind: 'output',
+      output: 'response get_messages -> $settled-messages',
+    });
+    await expect
+      .poll(() => page.evaluate(() => window.__TAU_PI_SCENARIO__?.verify().ok))
+      .toBe(true);
+  });
 });
 
 test('keeps the composer editable but blocks repeat sends during delivery', async ({
@@ -217,113 +309,4 @@ test('restores an immediately cleared composer when delivery fails', async ({
   await send.click();
   await expect(page.getByText(completeReply, { exact: true })).toBeVisible();
   await expect(composer).toHaveValue('');
-});
-
-test('submits and settles a deterministic streamed conversation', async ({
-  page,
-}) => {
-  await page.goto(scenarioUrl);
-
-  const composer = page.getByRole('textbox', { name: 'Message Pi' });
-  await expect(composer).toBeEnabled();
-
-  await page.evaluate(() => {
-    const states: VisibleConversationState[] = [];
-    const record = (): void => {
-      const transcript =
-        document.querySelector('[aria-label="Transcript"]')?.textContent ?? '';
-      const working = Boolean(
-        document.querySelector(
-          '[aria-label="Working"], [aria-label="Stopping"], [aria-label="Stop Pi"]',
-        ),
-      );
-      const next = { transcript, working };
-      const previous = states.at(-1);
-      if (
-        previous?.transcript !== next.transcript ||
-        previous.working !== next.working
-      ) {
-        states.push(next);
-      }
-    };
-    new MutationObserver(record).observe(document.body, {
-      attributes: true,
-      childList: true,
-      characterData: true,
-      subtree: true,
-    });
-    (
-      window as Window & {
-        __TAU_VISIBLE_CONVERSATION_STATES__?: VisibleConversationState[];
-      }
-    ).__TAU_VISIBLE_CONVERSATION_STATES__ = states;
-    record();
-  });
-
-  await composer.fill(prompt);
-  await page.getByRole('button', { name: 'Send Message' }).click();
-
-  await expect(page.getByText(prompt, { exact: true })).toBeVisible();
-  await expect(page.getByText(completeReply, { exact: true })).toBeVisible();
-  await expect(composer).toHaveValue('');
-  await expect(composer).toBeEnabled();
-  await expect(
-    page.getByRole('button', { name: 'Send Message' }),
-  ).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Stop Pi' })).toHaveCount(0);
-  await expect(page.getByRole('status', { name: 'Working' })).toHaveCount(0);
-  await expect(page.getByRole('img', { name: 'Working' })).toHaveCount(0);
-  await expect(
-    page.getByText('STALE_GENERATION_SENTINEL', { exact: true }),
-  ).toHaveCount(0);
-
-  const visibleStates = await page.evaluate(
-    () =>
-      (
-        window as Window & {
-          __TAU_VISIBLE_CONVERSATION_STATES__?: VisibleConversationState[];
-        }
-      ).__TAU_VISIBLE_CONVERSATION_STATES__ ?? [],
-  );
-  expect(
-    visibleStates.some(
-      (state) =>
-        state.working &&
-        state.transcript.includes(prompt) &&
-        !state.transcript.includes(firstDelta),
-    ),
-    'the optimistic user message should render while Pi is visibly working',
-  ).toBe(true);
-  expect(
-    visibleStates.some(
-      (state) =>
-        state.transcript.includes(prompt) &&
-        state.transcript.includes(firstDelta) &&
-        !state.transcript.includes('reply.'),
-    ),
-    'the first assistant delta should be visible before the second delta',
-  ).toBe(true);
-  expect(
-    visibleStates.some(
-      (state) =>
-        state.transcript.includes(prompt) &&
-        state.transcript.includes(completeReply),
-    ),
-    'the assistant row should preserve and concatenate both deltas',
-  ).toBe(true);
-
-  const timeline = await page.evaluate(() =>
-    window.__TAU_PI_SCENARIO__?.timeline(),
-  );
-  expect(timeline).toHaveLength(26);
-  expect(timeline).toContainEqual(
-    expect.objectContaining({
-      kind: 'request',
-      request: { type: 'prompt', message: prompt },
-    }),
-  );
-  expect(timeline?.at(-1)).toMatchObject({
-    kind: 'output',
-    output: 'response get_messages -> $settled-messages',
-  });
 });

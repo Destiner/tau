@@ -17,7 +17,6 @@ const modelValue = defineModel<string>({ default: '' });
 
 withDefaults(
   defineProps<{
-    /** `bordered` field, `mono` connection field, or borderless inline text. */
     variant?: 'bordered' | 'mono' | 'bare';
     error?: boolean;
   }>(),
@@ -32,7 +31,6 @@ function handleInput(event: Event): void {
   modelValue.value = (event.target as HTMLInputElement).value;
 }
 
-/** The underlying element, for the imperative focus/select callers need. */
 defineExpose({
   get input() {
     return input.value;
@@ -75,11 +73,6 @@ defineExpose({
   font-size: var(--text-sm);
 }
 
-/*
- * `bare` is inline text that happens to be editable — an inline-renamed
- * session title. It gains no border, no hover and no focus ring: the caret is
- * the only thing that should say it is being edited.
- */
 .ui-input[data-variant='bare'] {
   display: block;
   width: 100%;
@@ -113,12 +106,6 @@ defineExpose({
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
-/*
- * A rejected value outranks both the pointer and the caret, and it has to be
- * declared after the variants: those set the `border` shorthand, which used to
- * overwrite the danger color and left `error` doing nothing on a bordered or
- * mono field — the connection field being the one place it matters most.
- */
 .ui-input[data-error] {
   border-color: var(--danger);
 }

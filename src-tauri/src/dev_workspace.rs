@@ -1,5 +1,3 @@
-//! The native playground uses real Pi files, not a second session runtime.
-
 use crate::models::{
     ProjectRecord, ProjectRegistry, RemoteProjectRecord, RemoteSessionRecord, TauSessionRecord,
     TauSessionRegistry,
@@ -150,7 +148,6 @@ fn seed_performance(profile: &StorageProfile) -> Result<(), String> {
                     "parentId":if index % 5 == 0 {"00000003"} else {"00000002"},
                     "timestamp":date,"summary":"Synthetic retained context","firstKeptEntryId":"00000001","tokensBefore":100})));
             }
-            // Assign the division remainder to the last file for an exact total.
             let target = if index < 120 {
                 4096
             } else if index == PERFORMANCE_FILES - 1 {

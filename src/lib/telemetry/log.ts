@@ -1,12 +1,3 @@
-/*
- * The frontend log transport: a Stage 4 addition alongside the span
- * transport `tracer.ts` already provides. Logs need no trace/span
- * identity — they are point-in-time events with a fixed, native-assigned
- * event name and severity per family (see `fixedLogMetadata` in
- * `src-tauri/src/telemetry/ingest.rs`) — so this file only defines the wire
- * shape and a timestamp encoder, not an OTel SDK integration.
- */
-
 /** The wire shape a frontend log record is sent to Rust as, mirroring
  * `src-tauri/src/telemetry/ingest.rs`'s `FrontendLogRecord`. No event name
  * or severity: native code assigns both from `family` alone, so an

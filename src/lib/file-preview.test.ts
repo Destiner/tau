@@ -13,7 +13,7 @@ import {
 } from './file-preview';
 
 describe('file preview classification', () => {
-  it('maps text names and extensions to available Shiki languages', () => {
+  it('classifies text, prose, media and unknown file names', () => {
     expect(classifyFilePreview('service.TS')).toMatchObject({
       kind: 'text',
       language: 'typescript',
@@ -28,9 +28,6 @@ describe('file preview classification', () => {
       kind: 'text',
       presentation: 'source',
     });
-  });
-
-  it('presents Markdown documents as prose and MDX as source', () => {
     expect(classifyFilePreview('guide.MD')).toMatchObject({
       kind: 'text',
       presentation: 'markdown',
@@ -47,9 +44,6 @@ describe('file preview classification', () => {
       kind: 'text',
       presentation: 'source',
     });
-  });
-
-  it('classifies safe browser media and leaves unknown files as objects', () => {
     expect(classifyFilePreview('diagram.svg')).toEqual({
       kind: 'image',
       mediaType: 'image/svg+xml',

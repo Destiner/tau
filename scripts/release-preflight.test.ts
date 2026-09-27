@@ -119,31 +119,26 @@ describe('release preflight', () => {
     expect(result.stderr).toContain('Releases must be dispatched from main.');
   });
 
-  it('rejects prerelease versions', () => {
+  it('rejects prerelease and inconsistent manifest versions', () => {
     const result = createFixture({ packageVersion: '1.2.3-rc.1' }).run();
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('stable major.minor.patch');
+    const mismatch = createFixture({ tauriVersion: '1.2.4' }).run();
+    expect(mismatch.status).not.toBe(0);
+    expect(mismatch.stderr).toContain('Release versions disagree.');
   });
 
-  it('rejects disagreeing package, Tauri, and Cargo versions', () => {
-    const result = createFixture({ tauriVersion: '1.2.4' }).run();
+  it('rejects existing releases and exact tags, not matching prefixes', () => {
+    for (const releases of [
+      '[[],[{"tag_name":"v1.2.3","draft":false}]]',
+      '[[],[{"tag_name":"v1.2.3","draft":true}]]',
+    ]) {
+      const result = createFixture({ releases }).run();
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('Release v1.2.3 already exists');
+    }
 
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain('Release versions disagree.');
-  });
-
-  it.each([
-    ['published', '[[],[{"tag_name":"v1.2.3","draft":false}]]'],
-    ['draft', '[[],[{"tag_name":"v1.2.3","draft":true}]]'],
-  ])('rejects a %s release found on any API page', (_kind, releases) => {
-    const result = createFixture({ releases }).run();
-
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('Release v1.2.3 already exists');
-  });
-
-  it('rejects an exact existing tag but ignores a matching prefix', () => {
     const existing = createFixture({
       refs: '[{"ref":"refs/tags/v1.2.3"}]',
     }).run();
@@ -156,15 +151,16 @@ describe('release preflight', () => {
     expect(prefix.status).toBe(0);
   });
 
-  it.each([
-    ['release listing', { failReleases: true }],
-    ['tag lookup', { failRefs: true }],
-  ])('fails closed when the %s API call fails', (_operation, options) => {
-    const fixture = createFixture(options);
-    const result = fixture.run();
-
-    expect(result.status).toBe('failReleases' in options ? 42 : 43);
-    expect(readFileSync(fixture.output, 'utf8')).toBe('');
+  it('fails closed when either release API call fails', () => {
+    for (const [options, status] of [
+      [{ failReleases: true }, 42],
+      [{ failRefs: true }, 43],
+    ] as const) {
+      const fixture = createFixture(options);
+      const result = fixture.run();
+      expect(result.status).toBe(status);
+      expect(readFileSync(fixture.output, 'utf8')).toBe('');
+    }
   });
 
   it('writes the validated version and tag to the GitHub output', () => {

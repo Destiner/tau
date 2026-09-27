@@ -7,19 +7,14 @@ import renderDiagram from './mermaid';
 marked.use({ gfm: true, breaks: true, renderer: { code: renderCode } });
 
 interface MarkdownOptions {
-  /**
-   * Renders a single run of text: emphasis, code, and links, but no headings,
-   * lists, or quotes. A prompt's title is a sentence rather than a document.
-   */
   inline?: boolean;
-  /** Directory that relative file paths are resolved against. */
+
   basePath?: string;
   /** Remote paths use button semantics because activation is app-managed. */
   copyPaths?: boolean;
 }
 
 interface FileReference {
-  /** The part of the candidate that forms the reference, line suffix included. */
   text: string;
   /** The path itself, as written, without a numeric line marker. */
   path: string;
@@ -33,22 +28,17 @@ interface PathOpenGesture {
   ctrlKey?: boolean;
 }
 
-/** Marks the anchors this module writes, and the only ones a click opens. */
 const FILE_PATH_ATTRIBUTE = 'data-tau-path';
 
-/** Marks the copy buttons this module writes, and the only ones a click copies. */
 const CODE_COPY_ATTRIBUTE = 'data-tau-copy';
 
-/** Marks the expand buttons this module writes, and the only ones a click expands. */
 const DIAGRAM_EXPAND_ATTRIBUTE = 'data-tau-expand';
 
-/** Names a wrapped block's language for the label its stylesheet draws. */
 const CODE_LANGUAGE_ATTRIBUTE = 'data-tau-lang';
 
 /** A fenced block, whose end is unambiguous because `pre` cannot nest. */
 const CODE_BLOCK = /<pre\b[^>]*>[\s\S]*?<\/pre>/g;
 
-/** The language a block was fenced with, as marked and Shiki both write it. */
 const CODE_LANGUAGE = /<code[^>]*\bclass="(?:[^"]*\s)?language-([^"\s]+)/;
 
 /*
@@ -72,14 +62,8 @@ const EXPAND_ICON =
  */
 const DIAGRAM_BLOCK = /<div class="diagram"><svg[\s\S]*?<\/svg><\/div>/g;
 
-/**
- * A path embedded in prose, possibly with a numeric line marker. Whitespace ends these
- * candidates; a rooted path that fills its rendered line is handled separately
- * so its spaces and punctuation are unambiguous.
- */
 const PATH_CANDIDATE = /[A-Za-z0-9~._/][A-Za-z0-9~._+@:/-]*(?:–\d+)?/g;
 
-/** Existing links and diagrams are left exactly as written. */
 const OPAQUE_ELEMENTS = new Set(['a', 'pre', 'svg']);
 
 const APPLE_PLATFORM = /^(?:Mac|iPhone|iPad|iPod)/;
@@ -104,10 +88,8 @@ const ROUTE_TEMPLATE_PUNCTUATION = /[{}*[\]:]/;
 
 const PARAMETER_SEGMENT = /^[:*]/;
 
-/** A fence's closing run, which the source of an unfinished block has not reached. */
 const CLOSING_FENCE = /(?:^|\n)[ \t]*(?:`{3,}|~{3,})$/;
 
-/** A GFM table has one header row; only a row with no rendered cell content is omitted. */
 const EMPTY_TABLE_HEADER =
   /^\s*<tr\b[^>]*>(?:\s*<th\b[^>]*>\s*<\/th>\s*)+<\/tr>\s*$/;
 
@@ -115,10 +97,9 @@ function renderMarkdown(source: string, options: MarkdownOptions = {}): string {
   const parsed = options.inline
     ? marked.parseInline(source, { async: false })
     : marked.parse(source, { async: false });
-  // These attributes belong to this module: text that arrives already carrying
+
   // one cannot pass itself off as something the app wrote about it.
-  // DOMPurify rejects file: URLs by default. Protect only validated local
-  // file links with one-use HTTPS placeholders, then restore them afterward.
+
   const protectedLinks = protectLocalFileHrefs(parsed as string);
   let html = purify.sanitize(protectedLinks.html, {
     FORBID_ATTR: [
@@ -208,7 +189,6 @@ function renderCode(token: Tokens.Code): string | false {
   return highlightCode(code, token.lang) ?? false;
 }
 
-/** Whether a fenced block's source reached its closing fence. */
 function isClosedFence(raw: string): boolean {
   return CLOSING_FENCE.test(raw.trimEnd());
 }
@@ -284,7 +264,7 @@ function parseFileReference(candidate: string): FileReference | null {
 
   const rooted = ROOTED_PATH.test(path);
   const explicitRelative = path.startsWith('./') || path.startsWith('../');
-  // Segment-edge spaces are legal on disk but much more likely to be prose.
+
   const body = rooted ? path.replace(ROOTED_PATH, '') : path;
   const segments = body.split('/').filter(Boolean);
   if (
@@ -297,10 +277,9 @@ function parseFileReference(candidate: string): FileReference | null {
   const directory = path.endsWith('/');
   const namedFile = NAMED_FILE.test(path);
   if (!rooted && !directory && !namedFile) return null;
-  // An implicit one-word directory is more often a count, label, or prose.
+
   if (!rooted && directory && segments.length < 2) return null;
-  // A lone absolute or home-rooted word can be a slash command or markup tag.
-  // Dot-relative syntax is explicit enough to name an extensionless directory.
+
   if (
     rooted &&
     !explicitRelative &&
@@ -309,7 +288,7 @@ function parseFileReference(candidate: string): FileReference | null {
     !namedFile
   )
     return null;
-  // Route parameters and brace alternatives describe URL shapes, not one file.
+
   if (
     ROUTE_TEMPLATE_PUNCTUATION.test(path) ||
     segments.some((segment) => PARAMETER_SEGMENT.test(segment))
@@ -320,7 +299,6 @@ function parseFileReference(candidate: string): FileReference | null {
   return { text, path };
 }
 
-/** Resolves a written path against the session's directory and the home one. */
 function resolveFilePath(
   basePath: string,
   path: string,
@@ -367,7 +345,6 @@ function parseMarkdownFileDestination(value: string): string | null {
   }
 }
 
-/** Ordinary primary click and Enter activate paths; Control-click remains a menu gesture. */
 function isPathOpenGesture(event: PathOpenGesture, platform: string): boolean {
   if (event.type === 'keydown') return event.key === 'Enter';
   if (event.type !== 'click' || event.button !== 0) return false;
@@ -396,7 +373,7 @@ function linkTextLine(text: string, copyPaths: boolean): string {
 
     const reference = parseFileReference(candidate);
     if (!reference) return candidate;
-    // Keep the marker and sentence punctuation visible but outside the link.
+
     const trailing = candidate.slice(reference.path.length);
     return fileLink(reference.path, reference.path, copyPaths) + trailing;
   });
@@ -409,7 +386,6 @@ function hasControlCharacter(value: string): boolean {
   });
 }
 
-/** A template marker outside the candidate still belongs to the route shape. */
 function touchesRouteTemplate(
   text: string,
   offset: number,
@@ -421,7 +397,6 @@ function touchesRouteTemplate(
   );
 }
 
-/** Encoded markup punctuation does not turn the text beside it into a path. */
 function touchesHtmlEntity(
   text: string,
   offset: number,
@@ -433,7 +408,6 @@ function touchesHtmlEntity(
   );
 }
 
-/** A whole rooted path has a clear end even when its name contains spaces. */
 function linkStandaloneRootedPath(
   text: string,
   copyPaths: boolean,

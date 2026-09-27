@@ -464,72 +464,70 @@ mod tests {
                 0o400
             );
         }
-    }
 
-    #[test]
-    fn local_directories_and_invalid_or_oversized_files_do_not_snapshot() {
-        let source = tempfile::tempdir().unwrap();
-        fs::create_dir(source.path().join("folder")).unwrap();
-        assert!(matches!(
-            prepare_local(source.path().to_str().unwrap(), "folder").unwrap(),
-            PreparedPath::Directory
-        ));
-        assert!(prepare_local(source.path().to_str().unwrap(), "missing").is_err());
-        assert!(prepare_local(source.path().to_str().unwrap(), "bad\npath").is_err());
+        {
+            let source = tempfile::tempdir().unwrap();
+            fs::create_dir(source.path().join("folder")).unwrap();
+            assert!(matches!(
+                prepare_local(source.path().to_str().unwrap(), "folder").unwrap(),
+                PreparedPath::Directory
+            ));
+            assert!(prepare_local(source.path().to_str().unwrap(), "missing").is_err());
+            assert!(prepare_local(source.path().to_str().unwrap(), "bad\npath").is_err());
 
-        File::create(source.path().join("large.bin"))
-            .unwrap()
-            .set_len(MAX_FILE_BYTES + 1)
-            .unwrap();
-        assert!(prepare_local(source.path().to_str().unwrap(), "large.bin").is_err());
-    }
+            File::create(source.path().join("large.bin"))
+                .unwrap()
+                .set_len(MAX_FILE_BYTES + 1)
+                .unwrap();
+            assert!(prepare_local(source.path().to_str().unwrap(), "large.bin").is_err());
+        }
 
-    #[test]
-    fn prepares_fake_ssh_files_and_recognizes_directories() {
-        let remote = tempfile::tempdir().unwrap();
-        let bytes = b"remote\0payload\xff";
-        let name = "quoted ' file.bin";
-        fs::write(remote.path().join(name), bytes).unwrap();
-        fs::create_dir(remote.path().join("folder")).unwrap();
-        let (_ssh, connection) = fake_ssh();
-        let cwd = remote.path().to_str().unwrap();
+        {
+            let remote = tempfile::tempdir().unwrap();
+            let bytes = b"remote\0payload\xff";
+            let name = "quoted ' file.bin";
+            fs::write(remote.path().join(name), bytes).unwrap();
+            fs::create_dir(remote.path().join("folder")).unwrap();
+            let (_ssh, connection) = fake_ssh();
+            let cwd = remote.path().to_str().unwrap();
 
-        let snapshot = snapshot(prepare_remote(&connection, cwd, name).expect("remote preview"));
-        assert_eq!(fs::read(&snapshot.path).unwrap(), bytes);
-        assert_eq!(snapshot.filename, name);
-        assert_eq!(
-            snapshot.source_path,
-            remote.path().join(name).to_string_lossy()
-        );
-        assert_eq!(snapshot.byte_length, bytes.len() as u64);
-        assert_eq!(
-            fs::metadata(&snapshot.path).unwrap().permissions().mode() & 0o777,
-            0o400
-        );
-        assert!(matches!(
-            prepare_remote(&connection, cwd, "folder").unwrap(),
-            PreparedPath::Directory
-        ));
-    }
+            let snapshot =
+                snapshot(prepare_remote(&connection, cwd, name).expect("remote preview"));
+            assert_eq!(fs::read(&snapshot.path).unwrap(), bytes);
+            assert_eq!(snapshot.filename, name);
+            assert_eq!(
+                snapshot.source_path,
+                remote.path().join(name).to_string_lossy()
+            );
+            assert_eq!(snapshot.byte_length, bytes.len() as u64);
+            assert_eq!(
+                fs::metadata(&snapshot.path).unwrap().permissions().mode() & 0o777,
+                0o400
+            );
+            assert!(matches!(
+                prepare_remote(&connection, cwd, "folder").unwrap(),
+                PreparedPath::Directory
+            ));
 
-    #[test]
-    fn fake_ssh_rejects_oversized_and_unreadable_files() {
-        let remote = tempfile::tempdir().unwrap();
-        File::create(remote.path().join("large.bin"))
-            .unwrap()
-            .set_len(MAX_FILE_BYTES + 1)
-            .unwrap();
-        let unreadable = remote.path().join("unreadable.bin");
-        fs::write(&unreadable, b"secret").unwrap();
-        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
-        let (_ssh, connection) = fake_ssh();
-        let cwd = remote.path().to_str().unwrap();
+            {
+                let remote = tempfile::tempdir().unwrap();
+                File::create(remote.path().join("large.bin"))
+                    .unwrap()
+                    .set_len(MAX_FILE_BYTES + 1)
+                    .unwrap();
+                let unreadable = remote.path().join("unreadable.bin");
+                fs::write(&unreadable, b"secret").unwrap();
+                fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
+                let (_ssh, connection) = fake_ssh();
+                let cwd = remote.path().to_str().unwrap();
 
-        assert!(prepare_remote(&connection, cwd, "large.bin").is_err());
-        // Root can still read mode-000 fixtures, so only assert this where the
-        // process is subject to ordinary Unix file permissions.
-        if fs::read(&unreadable).is_err() {
-            assert!(prepare_remote(&connection, cwd, "unreadable.bin").is_err());
+                assert!(prepare_remote(&connection, cwd, "large.bin").is_err());
+                // Root can still read mode-000 fixtures, so only assert this where the
+                // process is subject to ordinary Unix file permissions.
+                if fs::read(&unreadable).is_err() {
+                    assert!(prepare_remote(&connection, cwd, "unreadable.bin").is_err());
+                }
+            }
         }
     }
 

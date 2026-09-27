@@ -1,0 +1,2662 @@
+{
+  "vitest": [
+    {
+      "from": [
+        "scripts/release-layout.test.ts > release DMG layout > accepts headless packaging without Finder metadata",
+        "scripts/release-layout.test.ts > release DMG layout > accepts interactive packaging with Finder metadata"
+      ],
+      "to": [
+        "scripts/release-layout.test.ts > release DMG layout > accepts headless and interactive packaging"
+      ],
+      "reason": "Both accepted packaging layouts share the same volume-entry contract."
+    },
+    {
+      "from": [
+        "scripts/release-layout.test.ts > release DMG layout > rejects unexpected files"
+      ],
+      "to": [
+        "scripts/release-layout.test.ts > release DMG layout > rejects missing or unexpected entries"
+      ],
+      "reason": "Missing and extra volume entries share the rejection boundary."
+    },
+    {
+      "from": [
+        "scripts/release-layout.test.ts > release DMG layout > still requires .VolumeIcon.icns",
+        "scripts/release-layout.test.ts > release DMG layout > still requires Applications",
+        "scripts/release-layout.test.ts > release DMG layout > still requires Tau.app"
+      ],
+      "to": [
+        "scripts/release-layout.test.ts > release DMG layout > rejects missing or unexpected entries"
+      ],
+      "reason": "Same function contract and original inputs/assertions retained as examples within a cohesive test; separate discovery provided no distinct behavior.; Missing and extra volume entries share the rejection boundary."
+    },
+    {
+      "from": [
+        "scripts/release-preflight.test.ts > release preflight > fails closed when the release listing API call fails",
+        "scripts/release-preflight.test.ts > release preflight > fails closed when the tag lookup API call fails"
+      ],
+      "to": [
+        "scripts/release-preflight.test.ts > release preflight > fails closed when either release API call fails"
+      ],
+      "reason": "Same function contract and original inputs/assertions retained as examples within a cohesive test; separate discovery provided no distinct behavior."
+    },
+    {
+      "from": [
+        "scripts/release-preflight.test.ts > release preflight > rejects a draft release found on any API page",
+        "scripts/release-preflight.test.ts > release preflight > rejects a published release found on any API page"
+      ],
+      "to": [
+        "scripts/release-preflight.test.ts > release preflight > rejects existing releases and exact tags, not matching prefixes"
+      ],
+      "reason": "Same function contract and original inputs/assertions retained as examples within a cohesive test; separate discovery provided no distinct behavior.; Existing release and exact-tag checks share the duplicate-release boundary; prefix remains accepted."
+    },
+    {
+      "from": [
+        "scripts/release-preflight.test.ts > release preflight > rejects an exact existing tag but ignores a matching prefix"
+      ],
+      "to": [
+        "scripts/release-preflight.test.ts > release preflight > rejects existing releases and exact tags, not matching prefixes"
+      ],
+      "reason": "Existing release and exact-tag checks share the duplicate-release boundary; prefix remains accepted."
+    },
+    {
+      "from": [
+        "scripts/release-preflight.test.ts > release preflight > rejects disagreeing package, Tauri, and Cargo versions",
+        "scripts/release-preflight.test.ts > release preflight > rejects prerelease versions"
+      ],
+      "to": [
+        "scripts/release-preflight.test.ts > release preflight > rejects prerelease and inconsistent manifest versions"
+      ],
+      "reason": "Both manifest-version validation failures retain their distinct messages."
+    },
+    {
+      "from": [
+        "scripts/tauri-command.test.ts > Tauri launcher > closes Vite on a invoke failure",
+        "scripts/tauri-command.test.ts > Tauri launcher > closes Vite on a listen failure",
+        "scripts/tauri-command.test.ts > Tauri launcher > closes Vite on a url failure"
+      ],
+      "to": [
+        "scripts/tauri-command.test.ts > Tauri launcher > closes Vite on listen, invoke and URL failures"
+      ],
+      "reason": "Same function contract and original inputs/assertions retained as examples within a cohesive test; separate discovery provided no distinct behavior."
+    },
+    {
+      "from": [
+        "scripts/tauri-command.test.ts > Tauri launcher > passes \"--help\" through without starting Vite",
+        "scripts/tauri-command.test.ts > Tauri launcher > passes \"build\" through without starting Vite",
+        "scripts/tauri-command.test.ts > Tauri launcher > passes \"dev\" through without starting Vite",
+        "scripts/tauri-command.test.ts > Tauri launcher > passes \"dev\" through without starting Vite",
+        "scripts/tauri-command.test.ts > Tauri launcher > passes \"info\" through without starting Vite"
+      ],
+      "to": [
+        "scripts/tauri-command.test.ts > Tauri launcher > passes non-dev commands and help through without starting Vite"
+      ],
+      "reason": "Same function contract and original inputs/assertions retained as examples within a cohesive test; separate discovery provided no distinct behavior."
+    },
+    {
+      "from": [
+        "scripts/updater-release.test.ts > updater release artifacts > cryptographically verifies Tauri signer output",
+        "scripts/updater-release.test.ts > updater release artifacts > fingerprints the canonical decoded public key"
+      ],
+      "to": [
+        "scripts/updater-release.test.ts > updater release artifacts > fingerprints the canonical key and verifies signer output against tampering"
+      ],
+      "reason": "Canonical public-key fingerprint and cryptographic signature tampering are one signing boundary."
+    },
+    {
+      "from": [
+        "scripts/updater-release.test.ts > updater release configuration > avoids Finder-driven DMG packaging for default macOS builds",
+        "scripts/updater-release.test.ts > updater release configuration > keeps updater signing release-only and configures the public endpoint"
+      ],
+      "to": [
+        "scripts/updater-release.test.ts > updater release configuration > keeps updater signing release-only, the public endpoint and macOS bundles scoped"
+      ],
+      "reason": "Base and release bundle configuration share the release-only macOS contract."
+    },
+    {
+      "from": [
+        "scripts/updater-release.test.ts > updater release configuration > builds the frontend before the credentialed Tauri build",
+        "scripts/updater-release.test.ts > updater release configuration > requires updater secrets and uploads all assets without clobbering"
+      ],
+      "to": [
+        "scripts/updater-release.test.ts > updater release configuration > isolates release credentials, builds first and uploads assets without clobbering"
+      ],
+      "reason": "Credential isolation, ordered frontend build, and non-clobbering uploads share a release pipeline contract."
+    },
+    {
+      "from": [
+        "src/composables/state.test.ts > buildStateSnapshot > buckets a 0-character draft as empty, never the draft text itself",
+        "src/composables/state.test.ts > buildStateSnapshot > buckets a 1-character draft as short, never the draft text itself",
+        "src/composables/state.test.ts > buildStateSnapshot > buckets a 50-character draft as short, never the draft text itself",
+        "src/composables/state.test.ts > buildStateSnapshot > buckets a 500-character draft as medium, never the draft text itself",
+        "src/composables/state.test.ts > buildStateSnapshot > buckets a 501-character draft as long, never the draft text itself",
+        "src/composables/state.test.ts > buildStateSnapshot > buckets a 51-character draft as medium, never the draft text itself"
+      ],
+      "to": [
+        "src/composables/state.test.ts > buildStateSnapshot > buckets drafts at every length boundary without exposing their text"
+      ],
+      "reason": "Same function contract and original inputs/assertions retained as examples within a cohesive test; separate discovery provided no distinct behavior."
+    },
+    {
+      "from": [
+        "src/composables/state.test.ts > canArchiveSession > rejects a registered connecting controller",
+        "src/composables/state.test.ts > canArchiveSession > rejects a registered starting controller",
+        "src/composables/state.test.ts > canArchiveSession > rejects a registered stopping controller",
+        "src/composables/state.test.ts > canArchiveSession > rejects a registered streaming controller",
+        "src/composables/state.test.ts > canArchiveSession > rejects a registered syncing controller",
+        "src/composables/state.test.ts > canArchiveSession > rejects a registered working controller"
+      ],
+      "to": [
+        "src/composables/state.test.ts > canArchiveSession > allows registered sessions only when their controller is idle or ready"
+      ],
+      "reason": "Same function contract and original inputs/assertions retained as examples within a cohesive test; separate discovery provided no distinct behavior.; Following the idle and ready assertions, the same registered session is tested against every previously asserted active flag."
+    },
+    {
+      "from": [
+        "src/composables/state.test.ts > classifyControllerLifecycle > prioritizes connecting over everything else",
+        "src/composables/state.test.ts > classifyControllerLifecycle > prioritizes starting over stopping/syncing/working/ready",
+        "src/composables/state.test.ts > classifyControllerLifecycle > prioritizes stopping over syncing/working/ready",
+        "src/composables/state.test.ts > classifyControllerLifecycle > prioritizes syncing over working/ready",
+        "src/composables/state.test.ts > classifyControllerLifecycle > returns idle when no lifecycle flag is set",
+        "src/composables/state.test.ts > classifyControllerLifecycle > returns ready when only ready is set",
+        "src/composables/state.test.ts > classifyControllerLifecycle > treats streaming as working even when working itself is false"
+      ],
+      "to": [
+        "src/composables/state.test.ts > classifyControllerLifecycle > classifies idle, ready, streaming and precedence of active states"
+      ],
+      "reason": "Same function contract and original inputs/assertions retained as examples within a cohesive test; separate discovery provided no distinct behavior."
+    },
+    {
+      "from": [
+        "src/composables/state.test.ts > expandedRelativeTime > expands 1d to 1 day ago",
+        "src/composables/state.test.ts > expandedRelativeTime > expands 1h to 1 hour ago",
+        "src/composables/state.test.ts > expandedRelativeTime > expands 1m to 1 minute ago",
+        "src/composables/state.test.ts > expandedRelativeTime > expands 1w to 1 week ago",
+        "src/composables/state.test.ts > expandedRelativeTime > expands 1y to 1 year ago",
+        "src/composables/state.test.ts > expandedRelativeTime > expands 2d to 2 days ago",
+        "src/composables/state.test.ts > expandedRelativeTime > expands 2h to 2 hours ago",
+        "src/composables/state.test.ts > expandedRelativeTime > expands 2m to 2 minutes ago",
+        "src/composables/state.test.ts > expandedRelativeTime > expands 2y to 2 years ago",
+        "src/composables/state.test.ts > expandedRelativeTime > expands 3w to 3 weeks ago",
+        "src/composables/state.test.ts > expandedRelativeTime > expands now to just now",
+        "src/composables/state.test.ts > expandedRelativeTime > preserves an empty value"
+      ],
+      "to": [
+        "src/composables/state.test.ts > expandedRelativeTime > expands supported relative times and preserves unknown empty input"
+      ],
+      "reason": "Same function contract and original inputs/assertions retained as examples within a cohesive test; separate discovery provided no distinct behavior."
+    },
+    {
+      "from": [
+        "src/composables/state.test.ts > sessionTooltipStatus > falls back to Idle without creating or changing a missing controller"
+      ],
+      "to": [
+        "src/composables/state.test.ts > sessionTooltipStatus > prioritizes extension input and archived status, then falls back without a controller"
+      ],
+      "reason": "After checking an active controller, the same workflow removes the controller and retains the Idle and nonmutation assertions."
+    },
+    {
+      "from": [
+        "src/composables/state.test.ts > sessionTooltipStatus > puts a pending extension dialog before working and draft"
+      ],
+      "to": [
+        "src/composables/state.test.ts > sessionTooltipStatus > prioritizes extension input and archived status, then falls back without a controller"
+      ],
+      "reason": "The original dialog setup and Unread assertion remain intact in the renamed workflow."
+    },
+    {
+      "from": [
+        "src/composables/state.test.ts > sessionTooltipStatus > treats a whitespace-only draft as Idle"
+      ],
+      "to": [
+        "src/composables/state.test.ts > sessionTooltipStatus > prioritizes existing session indicator statuses"
+      ],
+      "reason": "The same status-priority test now moves from populated draft indicators to a whitespace-only draft and asserts Idle."
+    },
+    {
+      "from": [
+        "src/composables/state.test.ts > sessionTooltipStatus > uses Archived as an override even when the controller has an indicator"
+      ],
+      "to": [
+        "src/composables/state.test.ts > sessionTooltipStatus > prioritizes extension input and archived status, then falls back without a controller"
+      ],
+      "reason": "The pending dialog with working and draft indicators now asserts Archived overrides them all."
+    },
+    {
+      "from": [
+        "src/composables/state.test.ts > sessionTooltipStatus > uses the existing draft session indicator status before lower-priority states",
+        "src/composables/state.test.ts > sessionTooltipStatus > uses the existing unread session indicator status before lower-priority states",
+        "src/composables/state.test.ts > sessionTooltipStatus > uses the existing working session indicator status before lower-priority states"
+      ],
+      "to": [
+        "src/composables/state.test.ts > sessionTooltipStatus > prioritizes existing session indicator statuses"
+      ],
+      "reason": "Same function contract and original inputs/assertions retained as examples within a cohesive test; separate discovery provided no distinct behavior."
+    },
+    {
+      "from": [
+        "src/composables/state.test.ts > sessionWorkInProgress > counts a controller that is compacting",
+        "src/composables/state.test.ts > sessionWorkInProgress > counts a controller that is connecting",
+        "src/composables/state.test.ts > sessionWorkInProgress > counts a controller that is reconciling compaction",
+        "src/composables/state.test.ts > sessionWorkInProgress > counts a controller that is starting",
+        "src/composables/state.test.ts > sessionWorkInProgress > counts a controller that is stopping",
+        "src/composables/state.test.ts > sessionWorkInProgress > counts a controller that is streaming",
+        "src/composables/state.test.ts > sessionWorkInProgress > counts a controller that is submitting a prompt",
+        "src/composables/state.test.ts > sessionWorkInProgress > counts a controller that is syncing",
+        "src/composables/state.test.ts > sessionWorkInProgress > counts a controller that is working"
+      ],
+      "to": [
+        "src/composables/state.test.ts > sessionWorkInProgress > counts each active lifecycle flag as work"
+      ],
+      "reason": "Same function contract and original inputs/assertions retained as examples within a cohesive test; separate discovery provided no distinct behavior."
+    },
+    {
+      "from": [
+        "src/composables/state.test.ts > setControllerLifecycle > does not record anything when the derived state does not change"
+      ],
+      "to": [
+        "src/composables/state.test.ts > setControllerLifecycle > applies the patch and records a transition when the derived state changes"
+      ],
+      "reason": "A second lifecycle patch preserves the derived starting state; the retained test asserts only one transition is ingested after both patches."
+    },
+    {
+      "from": [
+        "src/composables/useTau.test.ts > prompt submission > clears immediately, preserves new edits, and blocks repeat prompts while working"
+      ],
+      "to": [
+        "tests/e2e/pi-scenario-conversation.e2e.ts > keeps the composer editable but blocks repeat sends during delivery"
+      ],
+      "reason": "The browser scenario holds send_pi during delivery, asserts immediate composer clearing, accepts the next draft, attempts a repeat Enter without a second prompt request, releases delivery, then checks the next draft survives and Send becomes enabled. Runtime prompt-admission tests retain stale state and delivery-race edge cases."
+    },
+    {
+      "from": [
+        "src/composables/useTau.test.ts > session replacement hardening > auto-removes an empty session held by an unanswered command"
+      ],
+      "to": [
+        "src/composables/useTau.test.ts > session replacement hardening > keeps an unanswered command unarchivable until leaving removes its empty session"
+      ],
+      "reason": "The same select-away operation retains all assertions for ephemeral cleanup, controller disposal, selection, no native archive, and runtime stop."
+    },
+    {
+      "from": [
+        "src/composables/useTau.test.ts > session replacement hardening > does not archive an unregistered command session"
+      ],
+      "to": [
+        "src/composables/useTau.test.ts > session replacement hardening > keeps an unanswered command unarchivable until leaving removes its empty session"
+      ],
+      "reason": "Before leaving the command-only session the combined workflow attempts archive, checks the row and controller remain, selection is unchanged, and no native archive call occurred."
+    },
+    {
+      "from": [
+        "src/dev/long-transcript.test.ts > showcase transcript > keeps the default long transcript at 5000 entries",
+        "src/dev/long-transcript.test.ts > showcase transcript > matches the original thirteen tail entries exactly, including IDs"
+      ],
+      "to": [
+        "src/dev/long-transcript.test.ts > showcase transcript > matches the original thirteen tail entries and default transcript length"
+      ],
+      "reason": "Tail fixture identity and total default transcript length share the showcase fixture contract."
+    },
+    {
+      "from": [
+        "src/dev/long-transcript.test.ts > showcase transcript > returns independent entries on every call",
+        "src/dev/long-transcript.test.ts > showcase transcript > returns independent preview entries on every call"
+      ],
+      "to": [
+        "src/dev/long-transcript.test.ts > showcase transcript > returns independent showcase and preview entries on every call"
+      ],
+      "reason": "Independent objects are checked for both showcase and preview factories."
+    },
+    {
+      "from": [
+        "src/lib/admin-code.test.ts > createAdminCodeMatcher > ignores case",
+        "src/lib/admin-code.test.ts > createAdminCodeMatcher > unlocks again so the same code turns admin mode back off",
+        "src/lib/admin-code.test.ts > createAdminCodeMatcher > unlocks on the code and only on its last keystroke"
+      ],
+      "to": [
+        "src/lib/admin-code.test.ts > createAdminCodeMatcher > unlocks only on the final key, repeatedly and case-insensitively"
+      ],
+      "reason": "Correct code entry retains final-key, repeated activation and case-insensitive assertions."
+    },
+    {
+      "from": [
+        "src/lib/admin-code.test.ts > createAdminCodeMatcher > restarts the sequence on a wrong key, a modifier, or a control key",
+        "src/lib/admin-code.test.ts > createAdminCodeMatcher > starts a fresh sequence from a wrong key that is the code’s own first letter"
+      ],
+      "to": [
+        "src/lib/admin-code.test.ts > createAdminCodeMatcher > restarts on invalid keys and recognizes a fresh first letter"
+      ],
+      "reason": "Invalid-key resets and overlapping first-key recovery exercise the same matcher transition."
+    },
+    {
+      "from": [
+        "src/lib/admin-mode.test.ts > admin mode > holds the switch for this run even when it cannot be persisted",
+        "src/lib/admin-mode.test.ts > admin mode > toggles this run and persists the new setting"
+      ],
+      "to": [
+        "src/lib/admin-mode.test.ts > admin mode > toggles this run, persisting when possible but holding the switch on failure"
+      ],
+      "reason": "The same admin-mode toggle remains active after persistence succeeds or fails."
+    },
+    {
+      "from": [
+        "src/lib/admin-mode.test.ts > admin mode > is off before anything has read the setting, and records no telemetry",
+        "src/lib/admin-mode.test.ts > admin mode > stays off when the persisted setting is off",
+        "src/lib/admin-mode.test.ts > admin mode > stays off when the setting cannot be read at all"
+      ],
+      "to": [
+        "src/lib/admin-mode.test.ts > admin mode > remains off without a persisted admin setting or if reading it fails"
+      ],
+      "reason": "All default, persisted-off and read-error boundaries keep admin mode off; telemetry remains suppressed."
+    },
+    {
+      "from": [
+        "src/lib/archived-groups.test.ts > archivedGroupLabelFor > buckets by Monday-based calendar week",
+        "src/lib/archived-groups.test.ts > archivedGroupLabelFor > buckets by calendar day for today and yesterday",
+        "src/lib/archived-groups.test.ts > archivedGroupLabelFor > folds everything older than last week into Older",
+        "src/lib/archived-groups.test.ts > archivedGroupLabelFor > sends unknown timestamps to Older"
+      ],
+      "to": [
+        "src/lib/archived-groups.test.ts > archivedGroupLabelFor > buckets by calendar day and Monday-based week, with unknown dates older"
+      ],
+      "reason": "Calendar-day, week and unknown-date boundaries share the archived timestamp classifier."
+    },
+    {
+      "from": [
+        "src/lib/archived-groups.test.ts > groupArchivedByTime > exposes every label for callers that need the full order",
+        "src/lib/archived-groups.test.ts > groupArchivedByTime > keeps the fixed label order and drops empty groups",
+        "src/lib/archived-groups.test.ts > groupArchivedByTime > preserves incoming order within a group"
+      ],
+      "to": [
+        "src/lib/archived-groups.test.ts > groupArchivedByTime > orders nonempty groups and preserves incoming item order"
+      ],
+      "reason": "Group order, empty-group removal, label export and within-group stability share one grouping operation."
+    },
+    {
+      "from": [
+        "src/lib/archived-window.test.ts > archived window > budget 0",
+        "src/lib/archived-window.test.ts > archived window > budget 1",
+        "src/lib/archived-window.test.ts > archived window > budget 100",
+        "src/lib/archived-window.test.ts > archived window > budget 101",
+        "src/lib/archived-window.test.ts > archived window > budget 49",
+        "src/lib/archived-window.test.ts > archived window > budget 50",
+        "src/lib/archived-window.test.ts > archived window > budget 51",
+        "src/lib/archived-window.test.ts > archived window > budget 99"
+      ],
+      "to": [
+        "src/lib/archived-window.test.ts > archived window > applies the global budget and suppresses headings beyond it"
+      ],
+      "reason": "Same function contract and original inputs/assertions retained as examples within a cohesive test; separate discovery provided no distinct behavior.; Global row budget and heading suppression share the same window boundary."
+    },
+    {
+      "from": [
+        "src/lib/archived-window.test.ts > archived window > does not show a heading for an expanded group beyond the budget"
+      ],
+      "to": [
+        "src/lib/archived-window.test.ts > archived window > applies the global budget and suppresses headings beyond it"
+      ],
+      "reason": "Global row budget and heading suppression share the same window boundary."
+    },
+    {
+      "from": [
+        "src/lib/commands.test.ts > command menu placement > caps the height at the space it was given",
+        "src/lib/commands.test.ts > command menu placement > keeps a usable height when neither side has room"
+      ],
+      "to": [
+        "src/lib/commands.test.ts > command menu placement > caps height and retains a usable minimum in constrained space"
+      ],
+      "reason": "Grouped complementary inputs and outcomes for command menu placement; retained their distinguishing assertions without duplicate setup."
+    },
+    {
+      "from": [
+        "src/lib/commands.test.ts > command menu placement > opens above the composer when the content fits there",
+        "src/lib/commands.test.ts > command menu placement > opens below the draft text when the space above is smaller"
+      ],
+      "to": [
+        "src/lib/commands.test.ts > command menu placement > places the menu above or below based on available space"
+      ],
+      "reason": "Grouped complementary inputs and outcomes for command menu placement; retained their distinguishing assertions without duplicate setup."
+    },
+    {
+      "from": [
+        "src/lib/commands.test.ts > slash command completion > formats a command for immediate invocation",
+        "src/lib/commands.test.ts > slash command completion > immediately invokes selected commands, including skills",
+        "src/lib/commands.test.ts > slash command completion > uses Tab to complete any command without submitting"
+      ],
+      "to": [
+        "src/lib/commands.test.ts > slash command completion > formats and selects commands for completion or submission"
+      ],
+      "reason": "Grouped complementary inputs and outcomes for slash command completion; retained their distinguishing assertions without duplicate setup."
+    },
+    {
+      "from": [
+        "src/lib/commands.test.ts > slash command completion > fuzzy matches command names and ranks tighter matches first",
+        "src/lib/commands.test.ts > slash command completion > keeps Pi's command order until a query is entered"
+      ],
+      "to": [
+        "src/lib/commands.test.ts > slash command completion > preserves Pi order until fuzzy filtering ranks matching names"
+      ],
+      "reason": "Grouped complementary inputs and outcomes for slash command completion; retained their distinguishing assertions without duplicate setup."
+    },
+    {
+      "from": [
+        "src/lib/diagram-viewport.test.ts > diagram viewport > centres bounds whose coordinate origin is not zero",
+        "src/lib/diagram-viewport.test.ts > diagram viewport > fits at the drawing natural scale or smaller and centres it"
+      ],
+      "to": [
+        "src/lib/diagram-viewport.test.ts > diagram viewport > fits and centres drawings including nonzero coordinate origins"
+      ],
+      "reason": "Grouped complementary inputs and outcomes for diagram viewport; retained their distinguishing assertions without duplicate setup."
+    },
+    {
+      "from": [
+        "src/lib/diagram-viewport.test.ts > diagram viewport > keeps the world point at the viewport centre fixed while resizing",
+        "src/lib/diagram-viewport.test.ts > diagram viewport > pans by moving the SVG viewBox in the opposite direction"
+      ],
+      "to": [
+        "src/lib/diagram-viewport.test.ts > diagram viewport > keeps the world centre fixed on resize and moves the viewBox on pan"
+      ],
+      "reason": "Grouped complementary inputs and outcomes for diagram viewport; retained their distinguishing assertions without duplicate setup."
+    },
+    {
+      "from": [
+        "src/lib/error-copy.test.ts > operational error copy > does not expose an unknown command or rejection payload",
+        "src/lib/error-copy.test.ts > operational error copy > maps RPC failures to the operation the user attempted"
+      ],
+      "to": [
+        "src/lib/error-copy.test.ts > operational error copy > maps known RPC failures and redacts unknown command payloads"
+      ],
+      "reason": "Known command copy and unknown payload redaction are the RPC failure-copy boundary."
+    },
+    {
+      "from": [
+        "src/lib/file-preview.test.ts > file preview classification > classifies safe browser media and leaves unknown files as objects",
+        "src/lib/file-preview.test.ts > file preview classification > maps text names and extensions to available Shiki languages",
+        "src/lib/file-preview.test.ts > file preview classification > presents Markdown documents as prose and MDX as source"
+      ],
+      "to": [
+        "src/lib/file-preview.test.ts > file preview classification > classifies text, prose, media and unknown file names"
+      ],
+      "reason": "Grouped complementary inputs and outcomes for file preview classification; retained their distinguishing assertions without duplicate setup."
+    },
+    {
+      "from": [
+        "src/lib/highlight.test.ts > highlighting a fenced block > leaves the transcript its own tab order",
+        "src/lib/highlight.test.ts > highlighting a fenced block > marks up a language it holds a grammar for",
+        "src/lib/highlight.test.ts > highlighting a fenced block > names the language as the fence did, in the class marked would write"
+      ],
+      "to": [
+        "src/lib/highlight.test.ts > highlighting a fenced block > highlights known fences with theme styles and safe markup"
+      ],
+      "reason": "Grouped complementary inputs and outcomes for highlighting a fenced block; retained their distinguishing assertions without duplicate setup."
+    },
+    {
+      "from": [
+        "src/lib/markdown-frontmatter.test.ts > file preview frontmatter > leaves unsupported or incomplete input unchanged",
+        "src/lib/markdown-frontmatter.test.ts > file preview frontmatter > leaves unsupported or incomplete input unchanged",
+        "src/lib/markdown-frontmatter.test.ts > file preview frontmatter > leaves unsupported or incomplete input unchanged",
+        "src/lib/markdown-frontmatter.test.ts > file preview frontmatter > leaves unsupported or incomplete input unchanged",
+        "src/lib/markdown-frontmatter.test.ts > file preview frontmatter > leaves unsupported or incomplete input unchanged"
+      ],
+      "to": [
+        "src/lib/markdown-frontmatter.test.ts > file preview frontmatter > leaves unsupported or incomplete input unchanged"
+      ],
+      "reason": "Previously identically named parameter rows now exercise the same rejection contract together; all original input examples and assertions remain."
+    },
+    {
+      "from": [
+        "src/lib/markdown-frontmatter.test.ts > file preview frontmatter > separates a valid YAML mapping and preserves field order",
+        "src/lib/markdown-frontmatter.test.ts > file preview frontmatter > shows nested and multiline values in the metadata sheet"
+      ],
+      "to": [
+        "src/lib/markdown-frontmatter.test.ts > file preview frontmatter > separates YAML mappings, preserving field order and nested values"
+      ],
+      "reason": "Scalar, nested and multiline YAML mapping fields share metadata extraction."
+    },
+    {
+      "from": [
+        "src/lib/markdown-frontmatter.test.ts > file preview frontmatter > strips empty frontmatter without adding an empty sheet",
+        "src/lib/markdown-frontmatter.test.ts > file preview frontmatter > supports a BOM, CRLF and YAML document end marker"
+      ],
+      "to": [
+        "src/lib/markdown-frontmatter.test.ts > file preview frontmatter > handles empty frontmatter, BOM, CRLF and document end markers"
+      ],
+      "reason": "Empty sheets and BOM/CRLF end markers share frontmatter boundary handling."
+    },
+    {
+      "from": [
+        "src/lib/markdown.test.ts > closed fences > reads a block that is still arriving",
+        "src/lib/markdown.test.ts > closed fences > reads a block that reached its closing fence"
+      ],
+      "to": [
+        "src/lib/markdown.test.ts > closed fences > recognizes closed fences without treating partial streamed fences as closed"
+      ],
+      "reason": "Grouped complementary path parsing, linking or markup boundaries by the operation under test; original positive/negative and security assertions remain."
+    },
+    {
+      "from": [
+        "src/lib/markdown.test.ts > code copy buttons > carries the fenced language out to the wrapper the label is drawn on",
+        "src/lib/markdown.test.ts > code copy buttons > keeps a block that writes its own closing tag whole",
+        "src/lib/markdown.test.ts > code copy buttons > wraps every fenced block, and only those"
+      ],
+      "to": [
+        "src/lib/markdown.test.ts > code copy buttons > wraps only fenced blocks, preserving literal closers and language labels"
+      ],
+      "reason": "Grouped complementary path parsing, linking or markup boundaries by the operation under test; original positive/negative and security assertions remain."
+    },
+    {
+      "from": [
+        "src/lib/markdown.test.ts > diagram expand buttons > gives each of several diagrams its own button",
+        "src/lib/markdown.test.ts > diagram expand buttons > marks every drawn diagram, and only those"
+      ],
+      "to": [
+        "src/lib/markdown.test.ts > diagram expand buttons > marks only drawn diagrams and gives each its own expand button"
+      ],
+      "reason": "Grouped complementary path parsing, linking or markup boundaries by the operation under test; original positive/negative and security assertions remain."
+    },
+    {
+      "from": [
+        "src/lib/markdown.test.ts > explicit Markdown file destinations > accepts bare names and decodes escaped path characters once",
+        "src/lib/markdown.test.ts > explicit Markdown file destinations > accepts local file URLs and rejects unsafe destinations",
+        "src/lib/markdown.test.ts > explicit Markdown file destinations > removes line suffixes after decoding"
+      ],
+      "to": [
+        "src/lib/markdown.test.ts > explicit Markdown file destinations > decodes explicit local destinations once, strips line suffixes and rejects unsafe URLs"
+      ],
+      "reason": "Grouped complementary path parsing, linking or markup boundaries by the operation under test; original positive/negative and security assertions remain."
+    },
+    {
+      "from": [
+        "src/lib/markdown.test.ts > file references > keeps numeric markers in the reference and out of the path",
+        "src/lib/markdown.test.ts > file references > leaves sentence punctuation outside the reference"
+      ],
+      "to": [
+        "src/lib/markdown.test.ts > file references > separates line and column markers and sentence punctuation from paths"
+      ],
+      "reason": "Grouped complementary path parsing, linking or markup boundaries by the operation under test; original positive/negative and security assertions remain."
+    },
+    {
+      "from": [
+        "src/lib/markdown.test.ts > file references > keeps spaces and shell punctuation in a rooted path",
+        "src/lib/markdown.test.ts > file references > reads rooted, relative, and home paths"
+      ],
+      "to": [
+        "src/lib/markdown.test.ts > file references > reads rooted, relative and home paths with spaces and punctuation"
+      ],
+      "reason": "Grouped complementary path parsing, linking or markup boundaries by the operation under test; original positive/negative and security assertions remain."
+    },
+    {
+      "from": [
+        "src/lib/markdown.test.ts > file references > rejects API route templates",
+        "src/lib/markdown.test.ts > file references > rejects URLs and paths with nothing in them",
+        "src/lib/markdown.test.ts > file references > rejects ambiguous single-word roots and segment-edge spaces",
+        "src/lib/markdown.test.ts > file references > rejects prose that merely contains a separator"
+      ],
+      "to": [
+        "src/lib/markdown.test.ts > file references > rejects prose, ambiguous roots and API route templates"
+      ],
+      "reason": "Grouped complementary path parsing, linking or markup boundaries by the operation under test; original positive/negative and security assertions remain."
+    },
+    {
+      "from": [
+        "src/lib/markdown.test.ts > linking file paths in markup > detects absolute paths with hidden directories",
+        "src/lib/markdown.test.ts > linking file paths in markup > links standalone rooted paths containing spaces and punctuation"
+      ],
+      "to": [
+        "src/lib/markdown.test.ts > linking file paths in markup > links standalone rooted paths with hidden directories, spaces and punctuation"
+      ],
+      "reason": "Grouped complementary path parsing, linking or markup boundaries by the operation under test; original positive/negative and security assertions remain."
+    },
+    {
+      "from": [
+        "src/lib/markdown.test.ts > linking file paths in markup > does not link API route templates or ambiguous directory labels",
+        "src/lib/markdown.test.ts > linking file paths in markup > does not link slash commands or encoded markup as paths"
+      ],
+      "to": [
+        "src/lib/markdown.test.ts > linking file paths in markup > leaves ambiguous routes, slash commands and encoded markup unlinked"
+      ],
+      "reason": "Grouped complementary path parsing, linking or markup boundaries by the operation under test; original positive/negative and security assertions remain."
+    },
+    {
+      "from": [
+        "src/lib/markdown.test.ts > linking file paths in markup > does not read attributes as text",
+        "src/lib/markdown.test.ts > linking file paths in markup > links paths written as code"
+      ],
+      "to": [
+        "src/lib/markdown.test.ts > linking file paths in markup > links paths in code but not HTML attributes"
+      ],
+      "reason": "Grouped complementary path parsing, linking or markup boundaries by the operation under test; original positive/negative and security assertions remain."
+    },
+    {
+      "from": [
+        "src/lib/markdown.test.ts > linking file paths in markup > leaves existing links and fenced code blocks alone",
+        "src/lib/markdown.test.ts > linking file paths in markup > resumes after the element it skipped"
+      ],
+      "to": [
+        "src/lib/markdown.test.ts > linking file paths in markup > skips existing links and fenced code, then resumes linking after a skipped element"
+      ],
+      "reason": "Grouped complementary path parsing, linking or markup boundaries by the operation under test; original positive/negative and security assertions remain."
+    },
+    {
+      "from": [
+        "src/lib/markdown.test.ts > linking file paths in markup > leaves markers outside links in prose and inline code without losing text",
+        "src/lib/markdown.test.ts > linking file paths in markup > links a path and leaves the surrounding text alone"
+      ],
+      "to": [
+        "src/lib/markdown.test.ts > linking file paths in markup > links paths in prose and code while keeping line markers outside links"
+      ],
+      "reason": "Grouped complementary path parsing, linking or markup boundaries by the operation under test; original positive/negative and security assertions remain."
+    },
+    {
+      "from": [
+        "src/lib/markdown.test.ts > path opening gesture > leaves macOS Control-click for the context menu",
+        "src/lib/markdown.test.ts > path opening gesture > uses ordinary primary click and Enter"
+      ],
+      "to": [
+        "src/lib/markdown.test.ts > path opening gesture > opens on primary click or Enter except macOS Control-click and middle click"
+      ],
+      "reason": "Grouped complementary path parsing, linking or markup boundaries by the operation under test; original positive/negative and security assertions remain."
+    },
+    {
+      "from": [
+        "src/lib/markdown.test.ts > path resolution > collapses redundant separators and steps",
+        "src/lib/markdown.test.ts > path resolution > resolves relative paths against the session directory"
+      ],
+      "to": [
+        "src/lib/markdown.test.ts > path resolution > normalizes relative paths and redundant separators against the session directory"
+      ],
+      "reason": "Grouped complementary path parsing, linking or markup boundaries by the operation under test; original positive/negative and security assertions remain."
+    },
+    {
+      "from": [
+        "src/lib/markdown.test.ts > table headers > keeps partially populated and non-empty headers unchanged",
+        "src/lib/markdown.test.ts > table headers > removes a header section only when every rendered header cell is empty"
+      ],
+      "to": [
+        "src/lib/markdown.test.ts > table headers > removes only entirely empty table headers"
+      ],
+      "reason": "Grouped complementary path parsing, linking or markup boundaries by the operation under test; original positive/negative and security assertions remain."
+    },
+    {
+      "from": [
+        "src/lib/markdown.test.ts > web URLs > accepts HTTP and HTTPS links",
+        "src/lib/markdown.test.ts > web URLs > rejects non-web and relative links"
+      ],
+      "to": [
+        "src/lib/markdown.test.ts > web URLs > accepts HTTP(S) and rejects other destinations"
+      ],
+      "reason": "Grouped complementary path parsing, linking or markup boundaries by the operation under test; original positive/negative and security assertions remain."
+    },
+    {
+      "from": [
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > consumes quoted asymmetric labels across internal closers",
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > consumes quoted circle labels across internal closers",
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > consumes quoted cylinder labels across internal closers",
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > consumes quoted diamond labels across internal closers",
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > consumes quoted doublecircle labels across internal closers",
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > consumes quoted hexagon labels across internal closers",
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > consumes quoted rectangle labels across internal closers",
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > consumes quoted rounded labels across internal closers",
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > consumes quoted stadium labels across internal closers",
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > consumes quoted subroutine labels across internal closers",
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > consumes quoted trapezoid labels across internal closers",
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > consumes quoted trapezoid-alt labels across internal closers"
+      ],
+      "to": [
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > consumes quoted labels across internal closers for every node shape"
+      ],
+      "reason": "Same function contract and original inputs/assertions retained as examples within a cohesive test; separate discovery provided no distinct behavior."
+    },
+    {
+      "from": [
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > lets later explicit definitions replace forward references without moving nodes",
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > preserves complete code-like labels and ordered topology"
+      ],
+      "to": [
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > preserves ordered topology, code-like labels and forward definitions"
+      ],
+      "reason": "Code-like labels, edge order and later forward definitions preserve parsed topology."
+    },
+    {
+      "from": [
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > rejects conflicting subgraph ownership"
+      ],
+      "to": [
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > rejects malformed statements and conflicting ownership rather than partial graphs"
+      ],
+      "reason": "Malformed statements and conflicting ownership both reject partial graphs."
+    },
+    {
+      "from": [
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > rejects malformed statements rather than partial graphs: A &",
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > rejects malformed statements rather than partial graphs: A -->",
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > rejects malformed statements rather than partial graphs: A --> B &",
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > rejects malformed statements rather than partial graphs: A --> B garbage",
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > rejects malformed statements rather than partial graphs: A(((unfinished))",
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > rejects malformed statements rather than partial graphs: A[\"ambiguous \\\" quote\"]",
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > rejects malformed statements rather than partial graphs: A[\"quoted\" garbage]",
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > rejects malformed statements rather than partial graphs: A[\"unterminated]",
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > rejects malformed statements rather than partial graphs: A[unfinished",
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > rejects malformed statements rather than partial graphs: A[valid] leftover",
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > rejects malformed statements rather than partial graphs: A[valid]::: --> B",
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > rejects malformed statements rather than partial graphs: A[valid]:::hot! --> B"
+      ],
+      "to": [
+        "src/lib/mermaid-parser.test.ts > patched beautiful-mermaid flowchart parser > rejects malformed statements and conflicting ownership rather than partial graphs"
+      ],
+      "reason": "Same function contract and original inputs/assertions retained as examples within a cohesive test; separate discovery provided no distinct behavior.; Malformed statements and conflicting ownership both reject partial graphs."
+    },
+    {
+      "from": [
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > adapts multiple multiline nodes in one statement",
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > preserves valid immediate class shorthand after a multiline node"
+      ],
+      "to": [
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > adapts multiple nodes and immediate class shorthand"
+      ],
+      "reason": "Multiple node labels and immediate class shorthand share the statement adaptation boundary."
+    },
+    {
+      "from": [
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > allows leading blank and comment lines before a flowchart header",
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > does not confuse statement keywords with node IDs"
+      ],
+      "to": [
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > recognizes keyword node IDs and headers following blank or comment lines"
+      ],
+      "reason": "Keyword-like node IDs and pre-header comments exercise statement recognition."
+    },
+    {
+      "from": [
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > declines ambiguous or unterminated multiline labels",
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > declines ambiguous or unterminated multiline labels",
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > declines ambiguous or unterminated multiline labels",
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > declines ambiguous or unterminated multiline labels",
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > declines ambiguous or unterminated multiline labels"
+      ],
+      "to": [
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > declines ambiguous or unterminated multiline labels"
+      ],
+      "reason": "Previously identically named parameter rows now exercise the same rejection contract together; all original input examples and assertions remain."
+    },
+    {
+      "from": [
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > does not reinterpret a more specific unterminated delimiter"
+      ],
+      "to": [
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > declines ambiguous or unterminated multiline labels"
+      ],
+      "reason": "Both ambiguous labels and specific unterminated delimiters remain unsafe."
+    },
+    {
+      "from": [
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > ignores comments, non-node statements, and non-flowchart diagrams",
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > leaves existing multiline forms and normal statements unchanged"
+      ],
+      "to": [
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > preserves existing multiline forms, comments and non-flowchart statements"
+      ],
+      "reason": "Already valid and non-node/non-flowchart input must remain unchanged."
+    },
+    {
+      "from": [
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > keeps interior closers in quoted multiline labels",
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > supports quoted labels, CRLF, blank lines, and same-line edges"
+      ],
+      "to": [
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > supports quoted labels, internal closers, CRLF, blank lines and same-line edges"
+      ],
+      "reason": "Quoted CRLF labels preserve internal closers as part of the same parsing boundary."
+    },
+    {
+      "from": [
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > supports multiline asymmetric labels",
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > supports multiline circle labels",
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > supports multiline cylinder labels",
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > supports multiline diamond labels",
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > supports multiline double circle labels",
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > supports multiline hexagon labels",
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > supports multiline inverse trapezoid labels",
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > supports multiline rectangle labels",
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > supports multiline rounded labels",
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > supports multiline stadium labels",
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > supports multiline subroutine labels",
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > supports multiline trapezoid labels"
+      ],
+      "to": [
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > translates multiline node labels across all supported delimiters"
+      ],
+      "reason": "Same function contract and original inputs/assertions retained as examples within a cohesive test; separate discovery provided no distinct behavior.; Physical newline conversion and all delimiter forms share the multiline-node contract."
+    },
+    {
+      "from": [
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > translates physical newlines inside complete flowchart node labels"
+      ],
+      "to": [
+        "src/lib/mermaid-source.test.ts > adapting Mermaid source for the renderer > translates multiline node labels across all supported delimiters"
+      ],
+      "reason": "Physical newline conversion and all delimiter forms share the multiline-node contract."
+    },
+    {
+      "from": [
+        "src/lib/mermaid.test.ts > drawing a fenced diagram > does not render partially parsed flowcharts",
+        "src/lib/mermaid.test.ts > drawing a fenced diagram > reports a fence it will not draw"
+      ],
+      "to": [
+        "src/lib/mermaid.test.ts > drawing a fenced diagram > rejects unsupported, malformed, incomplete and oversized fences"
+      ],
+      "reason": "Grouped complementary inputs and outcomes for drawing a fenced diagram; retained their distinguishing assertions without duplicate setup."
+    },
+    {
+      "from": [
+        "src/lib/pi/error.test.ts > Pi error copy > maps 400: invalid request to reviewed copy",
+        "src/lib/pi/error.test.ts > Pi error copy > maps 401: {\"message\":\"Incorrect API key provided.\"} to reviewed copy",
+        "src/lib/pi/error.test.ts > Pi error copy > maps 402: {\"message\":\"This request requires more credits.\"} to reviewed copy",
+        "src/lib/pi/error.test.ts > Pi error copy > maps 429: rate limit quota exceeded to reviewed copy",
+        "src/lib/pi/error.test.ts > Pi error copy > maps 429: {\"error\":{\"code\":\"insufficient_quota\"}} to reviewed copy",
+        "src/lib/pi/error.test.ts > Pi error copy > maps 529 {\"error\":{\"message\":\"Overloaded\"}} to reviewed copy",
+        "src/lib/pi/error.test.ts > Pi error copy > maps Maximum context length exceeded to reviewed copy",
+        "src/lib/pi/error.test.ts > Pi error copy > maps The selected model is not available for this account to reviewed copy",
+        "src/lib/pi/error.test.ts > Pi error copy > maps TypeError: fetch failed to reviewed copy"
+      ],
+      "to": [
+        "src/lib/pi/error.test.ts > Pi error copy > maps provider errors to reviewed copy"
+      ],
+      "reason": "Same function contract and original inputs/assertions retained as examples within a cohesive test; separate discovery provided no distinct behavior."
+    },
+    {
+      "from": [
+        "src/lib/pi/runtime.test.ts > Pi RPC span lifecycle > ends extension UI response spans after the write without tracking a Pi response"
+      ],
+      "to": [
+        "src/lib/pi/runtime.test.ts > Pi RPC span lifecycle > settles extension UI response spans on write success and failure without tracking a Pi response"
+      ],
+      "reason": "Successful extension response and no-pending assertions remain; process stop confirms its span remains ended."
+    },
+    {
+      "from": [
+        "src/lib/pi/runtime.test.ts > Pi RPC span lifecycle > ends with an error outcome for a failed response"
+      ],
+      "to": [
+        "src/lib/pi/runtime.test.ts > Pi RPC span lifecycle > starts a span at request creation and ends it on the exact matching response"
+      ],
+      "reason": "The same controller next sends a failed abort; its span is explicitly checked for the error outcome."
+    },
+    {
+      "from": [
+        "src/lib/pi/runtime.test.ts > Pi RPC span lifecycle > leaves other pending spans untouched by an unmatched response"
+      ],
+      "to": [
+        "src/lib/pi/runtime.test.ts > Pi RPC span lifecycle > leaves pending spans untouched by unmatched responses and detects duplicates after settlement"
+      ],
+      "reason": "Unmatched response leaves the pending span intact and records anomaly; the same span is settled before testing duplicate responses."
+    },
+    {
+      "from": [
+        "src/lib/pi/runtime.test.ts > Pi RPC span lifecycle > records a duplicate response without double-ending the span"
+      ],
+      "to": [
+        "src/lib/pi/runtime.test.ts > Pi RPC span lifecycle > leaves pending spans untouched by unmatched responses and detects duplicates after settlement"
+      ],
+      "reason": "The matching response ends the pending span once; a repeat with the same id is reported anomalous and does not end it again."
+    },
+    {
+      "from": [
+        "src/lib/pi/runtime.test.ts > Pi RPC span lifecycle > records a failed extension UI response write without leaving it pending"
+      ],
+      "to": [
+        "src/lib/pi/runtime.test.ts > Pi RPC span lifecycle > settles extension UI response spans on write success and failure without tracking a Pi response"
+      ],
+      "reason": "After a successful extension response, another write rejects and the exact error outcome and unchanged pending count are asserted before process stop."
+    },
+    {
+      "from": [
+        "src/lib/pi/transcript.test.ts > hydrateTranscript > keeps an unmatched tool call running in a nonterminal turn",
+        "src/lib/pi/transcript.test.ts > hydrateTranscript > lets a later successful tool result override a terminal turn failure",
+        "src/lib/pi/transcript.test.ts > hydrateTranscript > marks an unmatched tool call in an aborted turn as errored",
+        "src/lib/pi/transcript.test.ts > hydrateTranscript > marks an unmatched tool call in an errored turn as errored"
+      ],
+      "to": [
+        "src/lib/pi/transcript.test.ts > hydrateTranscript > settles tool calls according to terminal, recovered and running turn outcomes"
+      ],
+      "reason": "Grouped adjacent hydration or failure outcomes under the same projection contract; kept distinct rows, identities and terminal-state assertions."
+    },
+    {
+      "from": [
+        "src/lib/pi/transcript.test.ts > hydrateTranscript > keeps the text of a turn that failed part way through",
+        "src/lib/pi/transcript.test.ts > hydrateTranscript > leaves an aborted turn alone, since the reader stopped it"
+      ],
+      "to": [
+        "src/lib/pi/transcript.test.ts > hydrateTranscript > retains partial text on failure but does not invent an abort failure"
+      ],
+      "reason": "Grouped adjacent hydration or failure outcomes under the same projection contract; kept distinct rows, identities and terminal-state assertions."
+    },
+    {
+      "from": [
+        "src/lib/pi/transcript.test.ts > messageFailure > ignores anything that is not a failed assistant turn",
+        "src/lib/pi/transcript.test.ts > messageFailure > reports an errored assistant turn"
+      ],
+      "to": [
+        "src/lib/pi/transcript.test.ts > messageFailure > reports only errored assistant turns as failures"
+      ],
+      "reason": "Grouped adjacent hydration or failure outcomes under the same projection contract; kept distinct rows, identities and terminal-state assertions."
+    },
+    {
+      "from": [
+        "src/lib/pi/transcript.test.ts > ordinary user event projection > keeps a pending optimistic row through startup hydration",
+        "src/lib/pi/transcript.test.ts > ordinary user event projection > keeps a projected user row through early streaming hydration"
+      ],
+      "to": [
+        "src/lib/pi/transcript.test.ts > ordinary user event projection > keeps pending optimistic and projected rows only during live hydration"
+      ],
+      "reason": "Grouped adjacent hydration or failure outcomes under the same projection contract; kept distinct rows, identities and terminal-state assertions."
+    },
+    {
+      "from": [
+        "src/lib/session-order.test.ts > applyHeldOrder > closes the gap a session leaving the list opens",
+        "src/lib/session-order.test.ts > applyHeldOrder > keeps the held order when activity re-sorts the list"
+      ],
+      "to": [
+        "src/lib/session-order.test.ts > applyHeldOrder > keeps held order despite re-sorting and closes gaps"
+      ],
+      "reason": "Holding order and closing departed-row gaps share a held-order boundary."
+    },
+    {
+      "from": [
+        "src/lib/session-order.test.ts > applyHeldOrder > hides a session that appeared during the hold",
+        "src/lib/session-order.test.ts > applyHeldOrder > holds a single-session project stable",
+        "src/lib/session-order.test.ts > applyHeldOrder > keeps a project that was empty on entry empty"
+      ],
+      "to": [
+        "src/lib/session-order.test.ts > applyHeldOrder > hides new sessions during a hold, even for single or empty projects"
+      ],
+      "reason": "New rows remain hidden for multi-row, single-row and empty entry snapshots."
+    },
+    {
+      "from": [
+        "src/lib/session-order.test.ts > applyHeldOrder > keeps a materialized row after its ephemeral object is removed",
+        "src/lib/session-order.test.ts > applyHeldOrder > keeps a phantom row when its id changes during materialization"
+      ],
+      "to": [
+        "src/lib/session-order.test.ts > applyHeldOrder > retains the materialized row across an ID change and registration"
+      ],
+      "reason": "The held row survives both identity mutation and replacement by the registered object."
+    },
+    {
+      "from": [
+        "src/lib/sidebar-width.test.ts > sidebar width storage > can use isolated storage without touching browser persistence",
+        "src/lib/sidebar-width.test.ts > sidebar width storage > clamps values loaded through the storage seam"
+      ],
+      "to": [
+        "src/lib/sidebar-width.test.ts > sidebar width storage > isolates storage and clamps loaded widths"
+      ],
+      "reason": "Storage isolation and clamp are both boundaries of the injected storage seam."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/attributes.test.ts > attribute catalog > never marks a context identifier metric-safe"
+      ],
+      "to": [
+        "src/lib/telemetry/attributes.test.ts > attribute catalog > gives every string spec a max length and every int spec none"
+      ],
+      "reason": "Combined catalog validation boundaries by attribute family or value kind without dropping the reviewed-value and privacy canaries."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/attributes.test.ts > attribute catalog > rejects an unknown family or key",
+        "src/lib/telemetry/attributes.test.ts > attribute catalog > resolves family attributes by name",
+        "src/lib/telemetry/attributes.test.ts > attribute catalog > resolves shared context attributes from every family"
+      ],
+      "to": [
+        "src/lib/telemetry/attributes.test.ts > attribute catalog > resolves reviewed family and shared attributes, but not unknown keys"
+      ],
+      "reason": "Combined catalog validation boundaries by attribute family or value kind without dropping the reviewed-value and privacy canaries."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/attributes.test.ts > validateAttribute > accepts a well-formed attribute",
+        "src/lib/telemetry/attributes.test.ts > validateAttribute > rejects a type mismatch",
+        "src/lib/telemetry/attributes.test.ts > validateAttribute > rejects an unknown attribute",
+        "src/lib/telemetry/attributes.test.ts > validateAttribute > rejects an unreviewed categorical value"
+      ],
+      "to": [
+        "src/lib/telemetry/attributes.test.ts > validateAttribute > accepts well-formed attributes and rejects unknown keys and types"
+      ],
+      "reason": "Combined catalog validation boundaries by attribute family or value kind without dropping the reviewed-value and privacy canaries."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/attributes.test.ts > validateAttribute > accepts every reviewed action name",
+        "src/lib/telemetry/attributes.test.ts > validateAttribute > rejects an unreviewed action name"
+      ],
+      "to": [
+        "src/lib/telemetry/attributes.test.ts > validateAttribute > allows exactly the reviewed action names"
+      ],
+      "reason": "Combined catalog validation boundaries by attribute family or value kind without dropping the reviewed-value and privacy canaries."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/attributes.test.ts > validateAttribute > accepts every reviewed frontend error source and kind",
+        "src/lib/telemetry/attributes.test.ts > validateAttribute > rejects an unreviewed frontend error source or kind"
+      ],
+      "to": [
+        "src/lib/telemetry/attributes.test.ts > validateAttribute > allows only reviewed frontend error sources and kinds"
+      ],
+      "reason": "Combined catalog validation boundaries by attribute family or value kind without dropping the reviewed-value and privacy canaries."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/attributes.test.ts > validateAttribute > accepts every reviewed rpc method and outcome",
+        "src/lib/telemetry/attributes.test.ts > validateAttribute > rejects an unreviewed rpc outcome"
+      ],
+      "to": [
+        "src/lib/telemetry/attributes.test.ts > validateAttribute > allows reviewed RPC methods and outcomes but not unreviewed outcomes"
+      ],
+      "reason": "Combined catalog validation boundaries by attribute family or value kind without dropping the reviewed-value and privacy canaries."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/attributes.test.ts > validateAttribute > rejects a non-integer or unsafe number for an int attribute",
+        "src/lib/telemetry/attributes.test.ts > validateAttribute > rejects a string oversized in UTF-8 bytes",
+        "src/lib/telemetry/attributes.test.ts > validateAttribute > rejects negative or absurd collection counts"
+      ],
+      "to": [
+        "src/lib/telemetry/attributes.test.ts > validateAttribute > bounds numeric and UTF-8 attribute values"
+      ],
+      "reason": "Combined catalog validation boundaries by attribute family or value kind without dropping the reviewed-value and privacy canaries."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/errors.test.ts > classifyErrorKind > falls back to other for a non-Error thrown/rejected value",
+        "src/lib/telemetry/errors.test.ts > classifyErrorKind > falls back to other for a subclassed or unrecognized error name",
+        "src/lib/telemetry/errors.test.ts > classifyErrorKind > never reflects the error message into the kind",
+        "src/lib/telemetry/errors.test.ts > classifyErrorKind > recognizes every built-in error constructor by name",
+        "src/lib/telemetry/errors.test.ts > classifyErrorKind > reports none when there is no value at all"
+      ],
+      "to": [
+        "src/lib/telemetry/errors.test.ts > classifyErrorKind > classifies built-in and unknown thrown values without leaking messages"
+      ],
+      "reason": "Grouped complementary inputs and outcomes for classifyErrorKind; retained their distinguishing assertions without duplicate setup."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/errors.test.ts > locationFromErrorEvent > falls back to the error value when filename is unavailable",
+        "src/lib/telemetry/errors.test.ts > locationFromErrorEvent > is empty when neither a filename nor an error value is available",
+        "src/lib/telemetry/errors.test.ts > locationFromErrorEvent > prefers the structured filename/lineno/colno over the stack"
+      ],
+      "to": [
+        "src/lib/telemetry/errors.test.ts > locationFromErrorEvent > prefers structured coordinates, falls back to stacks, and fails closed"
+      ],
+      "reason": "Grouped complementary inputs and outcomes for locationFromErrorEvent; retained their distinguishing assertions without duplicate setup."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/errors.test.ts > locationFromStack > extracts and sanitizes the first frame of a V8-style stack",
+        "src/lib/telemetry/errors.test.ts > locationFromStack > never leaks a directory component from the stack",
+        "src/lib/telemetry/errors.test.ts > locationFromStack > returns an empty string for an unfamiliar stack shape"
+      ],
+      "to": [
+        "src/lib/telemetry/errors.test.ts > locationFromStack > extracts a V8 frame, fails closed on unknown shapes and removes paths"
+      ],
+      "reason": "Grouped complementary inputs and outcomes for locationFromStack; retained their distinguishing assertions without duplicate setup."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/errors.test.ts > locationFromValue > is empty for a non-Error value",
+        "src/lib/telemetry/errors.test.ts > locationFromValue > reads the location from an Error value"
+      ],
+      "to": [
+        "src/lib/telemetry/errors.test.ts > locationFromValue > reads Error stacks but not other values"
+      ],
+      "reason": "Grouped complementary inputs and outcomes for locationFromValue; retained their distinguishing assertions without duplicate setup."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/heartbeat.test.ts > installLongTaskObserver > does nothing when PerformanceObserver does not exist at all",
+        "src/lib/telemetry/heartbeat.test.ts > installLongTaskObserver > does nothing when the webview does not support longtask entries"
+      ],
+      "to": [
+        "src/lib/telemetry/heartbeat.test.ts > installLongTaskObserver > does nothing when longtask observation is unsupported or unavailable"
+      ],
+      "reason": "Grouped complementary inputs and outcomes for installLongTaskObserver; retained their distinguishing assertions without duplicate setup."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/heartbeat.test.ts > startHeartbeat > is a no-op the second time it is called while already running",
+        "src/lib/telemetry/heartbeat.test.ts > startHeartbeat > reschedules and ticks again after stopping and restarting"
+      ],
+      "to": [
+        "src/lib/telemetry/heartbeat.test.ts > startHeartbeat > does not double schedule and can stop then restart"
+      ],
+      "reason": "Grouped complementary inputs and outcomes for startHeartbeat; retained their distinguishing assertions without duplicate setup."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/index.test.ts > invokeTraced > never serializes the command arguments into the span attributes",
+        "src/lib/telemetry/index.test.ts > invokeTraced > passes the invoke call its own span context alongside the real arguments"
+      ],
+      "to": [
+        "src/lib/telemetry/index.test.ts > invokeTraced > passes arguments and span context to invoke but excludes arguments from telemetry"
+      ],
+      "reason": "Combined positive and negative outcomes of the same telemetry operation; kept trace, transport and privacy assertions."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/index.test.ts > operation checkpoints > does not checkpoint an ordinary tauri.invoke span",
+        "src/lib/telemetry/index.test.ts > operation checkpoints > records a pi.rpc checkpoint immediately, even if the span never ends",
+        "src/lib/telemetry/index.test.ts > operation checkpoints > records a ui.action checkpoint immediately, even if the span never ends"
+      ],
+      "to": [
+        "src/lib/telemetry/index.test.ts > operation checkpoints > checkpoints unfinished actions and RPCs immediately, but not invokes"
+      ],
+      "reason": "Combined positive and negative outcomes of the same telemetry operation; kept trace, transport and privacy assertions."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/index.test.ts > queue overflow reporting > does not report the same drop count twice",
+        "src/lib/telemetry/index.test.ts > queue overflow reporting > reports a telemetry.health log once the bounded queue starts dropping records"
+      ],
+      "to": [
+        "src/lib/telemetry/index.test.ts > queue overflow reporting > reports queue overflow once per drop count, never repeating it"
+      ],
+      "reason": "Combined positive and negative outcomes of the same telemetry operation; kept trace, transport and privacy assertions."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/index.test.ts > recordControllerTransition > carries the active span context when given one",
+        "src/lib/telemetry/index.test.ts > recordControllerTransition > records state before/after, cause, and session/controller/runtime context"
+      ],
+      "to": [
+        "src/lib/telemetry/index.test.ts > recordControllerTransition > records transition attributes and links explicitly to an action span"
+      ],
+      "reason": "Combined positive and negative outcomes of the same telemetry operation; kept trace, transport and privacy assertions."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/index.test.ts > recordEventLoopLag > drops a negative, non-finite, or out-of-bounds value rather than sending it",
+        "src/lib/telemetry/index.test.ts > recordEventLoopLag > records a bounded lag value with visibility/focus dimensions"
+      ],
+      "to": [
+        "src/lib/telemetry/index.test.ts > recordEventLoopLag > records bounded lag with visibility/focus and rejects invalid durations"
+      ],
+      "reason": "Combined positive and negative outcomes of the same telemetry operation; kept trace, transport and privacy assertions."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/index.test.ts > startCommandSpan > flushes the ended span to the native ingest command",
+        "src/lib/telemetry/index.test.ts > startCommandSpan > never asks the ingest command to trace itself"
+      ],
+      "to": [
+        "src/lib/telemetry/index.test.ts > startCommandSpan > flushes the command once and never traces its own ingest"
+      ],
+      "reason": "Combined positive and negative outcomes of the same telemetry operation; kept trace, transport and privacy assertions."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/index.test.ts > startCommandSpan > gives concurrent spans independent trace context",
+        "src/lib/telemetry/index.test.ts > startCommandSpan > returns a context that round-trips as a valid W3C traceparent"
+      ],
+      "to": [
+        "src/lib/telemetry/index.test.ts > startCommandSpan > returns independent valid W3C trace contexts for concurrent commands"
+      ],
+      "reason": "Combined positive and negative outcomes of the same telemetry operation; kept trace, transport and privacy assertions."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/index.test.ts > startCommandSpan > nests under an explicit parent action context without ambient state",
+        "src/lib/telemetry/index.test.ts > startRpcSpan > nests under an explicit parent action context"
+      ],
+      "to": [
+        "src/lib/telemetry/index.test.ts > startCommandSpan > persists an action with invoke and RPC children in one trace"
+      ],
+      "reason": "The persisted action-with-invoke-and-RPC scenario checks both children share the action trace and parent span; it supersedes the isolated context-only checks. Also asserts child span IDs differ."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/index.test.ts > startRpcSpan > drops an unreviewed outcome without failing to end the span",
+        "src/lib/telemetry/index.test.ts > startRpcSpan > flushes with method, request id, runtime, and generation, but no outcome until ended"
+      ],
+      "to": [
+        "src/lib/telemetry/index.test.ts > startRpcSpan > records scoped RPC attributes and drops an unreviewed outcome"
+      ],
+      "reason": "Combined positive and negative outcomes of the same telemetry operation; kept trace, transport and privacy assertions."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/index.test.ts > vueErrorHandler > records the bounded error kind and a sanitized location, never the message",
+        "src/lib/telemetry/index.test.ts > vueErrorHandler > still records a bounded record for a non-Error thrown value"
+      ],
+      "to": [
+        "src/lib/telemetry/index.test.ts > vueErrorHandler > records bounded Error and non-Error kinds without messages"
+      ],
+      "reason": "Combined positive and negative outcomes of the same telemetry operation; kept trace, transport and privacy assertions."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/ingest.test.ts > flushNow > does nothing when the queue is empty",
+        "src/lib/telemetry/ingest.test.ts > flushNow > never enqueues anything about sending the batch itself",
+        "src/lib/telemetry/ingest.test.ts > flushNow > sends everything queued, split into batches no larger than the configured max"
+      ],
+      "to": [
+        "src/lib/telemetry/ingest.test.ts > flushNow > ignores an empty queue and drains records in bounded batches without feedback"
+      ],
+      "reason": "Empty and populated flush use one scheduler, retaining empty no-op, bounded batches, and no-feedback assertions."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/privacy.test.ts > forbidden content canaries > detects a canary present in a larger string",
+        "src/lib/telemetry/privacy.test.ts > forbidden content canaries > does not trip on ordinary content"
+      ],
+      "to": [
+        "src/lib/telemetry/privacy.test.ts > forbidden content canaries > detects embedded canaries without false positives"
+      ],
+      "reason": "Grouped complementary inputs and outcomes for forbidden content canaries; retained their distinguishing assertions without duplicate setup."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/privacy.test.ts > sanitizeSourceLocation > drops directory components, including a canary path",
+        "src/lib/telemetry/privacy.test.ts > sanitizeSourceLocation > omits the column and fails closed for incomplete paths"
+      ],
+      "to": [
+        "src/lib/telemetry/privacy.test.ts > sanitizeSourceLocation > removes directory content and handles partial locations"
+      ],
+      "reason": "Grouped complementary inputs and outcomes for sanitizeSourceLocation; retained their distinguishing assertions without duplicate setup."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/privacy.test.ts > truncateToLimit > leaves short values untouched",
+        "src/lib/telemetry/privacy.test.ts > truncateToLimit > uses UTF-8 bytes and never splits a codepoint"
+      ],
+      "to": [
+        "src/lib/telemetry/privacy.test.ts > truncateToLimit > preserves short values and truncates on UTF-8 boundaries"
+      ],
+      "reason": "Grouped complementary inputs and outcomes for truncateToLimit; retained their distinguishing assertions without duplicate setup."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/queue.test.ts > createBoundedQueue > drains at most the requested amount, leaving the rest queued",
+        "src/lib/telemetry/queue.test.ts > createBoundedQueue > drains items in the order they were pushed"
+      ],
+      "to": [
+        "src/lib/telemetry/queue.test.ts > createBoundedQueue > drains in FIFO order up to the requested amount"
+      ],
+      "reason": "Grouped complementary inputs and outcomes for createBoundedQueue; retained their distinguishing assertions without duplicate setup."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/queue.test.ts > createBoundedQueue > drops the oldest item and counts it once the bound is exceeded",
+        "src/lib/telemetry/queue.test.ts > createBoundedQueue > keeps counting drops as the bound keeps being exceeded"
+      ],
+      "to": [
+        "src/lib/telemetry/queue.test.ts > createBoundedQueue > evicts the oldest entries and counts every overflow"
+      ],
+      "reason": "Grouped complementary inputs and outcomes for createBoundedQueue; retained their distinguishing assertions without duplicate setup."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/trace-context.test.ts > formatTraceContext > round-trips a parsed context",
+        "src/lib/telemetry/trace-context.test.ts > formatTraceContext > round-trips the unsampled flag"
+      ],
+      "to": [
+        "src/lib/telemetry/trace-context.test.ts > formatTraceContext > round-trips sampled and unsampled flags"
+      ],
+      "reason": "Grouped complementary inputs and outcomes for formatTraceContext; retained their distinguishing assertions without duplicate setup."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/trace-context.test.ts > parseTraceContext > parses a valid traceparent",
+        "src/lib/telemetry/trace-context.test.ts > parseTraceContext > rejects an all-zero span id",
+        "src/lib/telemetry/trace-context.test.ts > parseTraceContext > rejects an all-zero trace id",
+        "src/lib/telemetry/trace-context.test.ts > parseTraceContext > rejects an unsupported version",
+        "src/lib/telemetry/trace-context.test.ts > parseTraceContext > rejects the wrong number of segments",
+        "src/lib/telemetry/trace-context.test.ts > parseTraceContext > rejects uppercase hex"
+      ],
+      "to": [
+        "src/lib/telemetry/trace-context.test.ts > parseTraceContext > parses valid context and rejects invalid identifiers and syntax"
+      ],
+      "reason": "Grouped complementary inputs and outcomes for parseTraceContext; retained their distinguishing assertions without duplicate setup."
+    },
+    {
+      "from": [
+        "src/lib/telemetry/tracer.test.ts > createTracer > drops an attribute the catalog does not allow for the span family",
+        "src/lib/telemetry/tracer.test.ts > createTracer > exports a well-formed record for a root span"
+      ],
+      "to": [
+        "src/lib/telemetry/tracer.test.ts > createTracer > exports a root span with only catalog-approved attributes"
+      ],
+      "reason": "Unknown attribute was already covered by the approved-attributes equality on the same root span; removed the duplicate fixture."
+    },
+    {
+      "from": [
+        "src/lib/transcript-scroll.test.ts > transcript scroll positions > gives a session back the position it was left at",
+        "src/lib/transcript-scroll.test.ts > transcript scroll positions > has nothing for a session that has not been read",
+        "src/lib/transcript-scroll.test.ts > transcript scroll positions > keeps no position for a session without a key",
+        "src/lib/transcript-scroll.test.ts > transcript scroll positions > keeps the latest position for a session"
+      ],
+      "to": [
+        "src/lib/transcript-scroll.test.ts > transcript scroll positions > recalls only keyed, remembered sessions and replaces older positions"
+      ],
+      "reason": "Grouped complementary inputs and outcomes for transcript scroll positions; retained their distinguishing assertions without duplicate setup."
+    },
+    {
+      "from": [
+        "src/lib/update.test.ts > update service > preserves reviewed native error categories without exposing messages",
+        "src/lib/update.test.ts > update service > uses operation-specific reviewed failure copy"
+      ],
+      "to": [
+        "src/lib/update.test.ts > update service > preserves reviewed native error categories and operation-specific copy without exposing messages"
+      ],
+      "reason": "The native failure category selects reviewed copy without leaking the native error message."
+    },
+    {
+      "from": [
+        "tests/playwright-config.test.ts > Archive E2E error guard > archive-performance uses the shared browser-error fixture",
+        "tests/playwright-config.test.ts > Archive E2E error guard > archive-window uses the shared browser-error fixture"
+      ],
+      "to": [
+        "tests/playwright-config.test.ts > Archive E2E error guard > archive suites use the shared browser-error fixture"
+      ],
+      "reason": "Same function contract and original inputs/assertions retained as examples within a cohesive test; separate discovery provided no distinct behavior."
+    },
+    {
+      "from": [
+        "tests/playwright-config.test.ts > Playwright scheduling > provides a dependency-free isolated performance command",
+        "tests/playwright-config.test.ts > Playwright scheduling > runs both benchmarks in an isolated Chromium phase",
+        "tests/playwright-config.test.ts > Playwright scheduling > runs functional browsers at the configured capacity"
+      ],
+      "to": [
+        "tests/playwright-config.test.ts > Playwright scheduling > schedules functional browsers and isolates Chromium benchmarks"
+      ],
+      "reason": "Functional workers, benchmark dependencies and isolated performance command share scheduling configuration."
+    },
+    {
+      "from": [
+        "tests/playwright-config.test.ts > Playwright scheduling > selects tracing for CI=\"\" without changing retries",
+        "tests/playwright-config.test.ts > Playwright scheduling > selects tracing for CI=\"1\" without changing retries"
+      ],
+      "to": [
+        "tests/playwright-config.test.ts > Playwright scheduling > selects tracing for both CI modes without changing retries"
+      ],
+      "reason": "Same function contract and original inputs/assertions retained as examples within a cohesive test; separate discovery provided no distinct behavior."
+    },
+    {
+      "from": [
+        "tests/support/pi-scenario/index.test.ts > PiScenarioEngine > keeps the bootstrap and complete conversation checkpoints unchanged by the stale interleaving",
+        "tests/support/pi-scenario/index.test.ts > PiScenarioEngine > keeps the browser stale-generation regression minimal and unsettled"
+      ],
+      "to": [
+        "tests/support/pi-scenario/index.test.ts > PiScenarioEngine > derives bootstrap, conversation and minimal stale-generation checkpoints"
+      ],
+      "reason": "Related bootstrap, conversation and stale-generation fixtures retain their exact prefix, gate and unsettled-response assertions."
+    }
+  ],
+  "native": [
+    {
+      "from": [
+        "admin::tests::an_unreadable_or_unexpected_preferences_file_leaves_admin_mode_off",
+        "admin::tests::preference_updates_preserve_the_other_setting"
+      ],
+      "to": ["admin::tests::admin_mode_is_off_until_it_has_been_written"],
+      "reason": "Complementary inputs and assertions for the admin mode is off until it has been written contract are retained together."
+    },
+    {
+      "from": ["admin::tests::the_preferences_file_is_owner_only"],
+      "to": [
+        "admin::tests::preferences_live_beside_the_telemetry_and_feedback_directories"
+      ],
+      "reason": "Complementary inputs and assertions for the preferences live beside the telemetry and feedback directories contract are retained together."
+    },
+    {
+      "from": ["feedback::tests::report_directory_and_file_are_owner_only"],
+      "to": [
+        "feedback::tests::appends_reports_as_json_lines_with_optional_session_context"
+      ],
+      "reason": "Complementary inputs and assertions for the appends reports as json lines with optional session context contract are retained together."
+    },
+    {
+      "from": [
+        "file_preview::tests::fake_ssh_rejects_oversized_and_unreadable_files"
+      ],
+      "to": [
+        "file_preview::tests::prepares_local_relative_and_absolute_files_as_private_read_only_snapshots"
+      ],
+      "reason": "Complementary inputs and assertions for the prepares fake ssh files and recognizes directories contract are retained together."
+    },
+    {
+      "from": [
+        "file_preview::tests::local_directories_and_invalid_or_oversized_files_do_not_snapshot",
+        "file_preview::tests::prepares_fake_ssh_files_and_recognizes_directories"
+      ],
+      "to": [
+        "file_preview::tests::prepares_local_relative_and_absolute_files_as_private_read_only_snapshots"
+      ],
+      "reason": "Complementary inputs and assertions for the prepares local relative and absolute files as private read only snapshots contract are retained together."
+    },
+    {
+      "from": [
+        "pi::tests::child_path_places_login_shell_directories_before_the_inherited_path"
+      ],
+      "to": [
+        "pi::tests::child_path_prepends_and_deduplicates_executable_directories"
+      ],
+      "reason": "Assertions retained in the child path prepends and deduplicates executable directories contract, including the original input and expected outcome."
+    },
+    {
+      "from": [
+        "pi::tests::every_login_shell_argument_set_ends_with_a_command_flag",
+        "pi::tests::login_shell_path_is_read_from_between_the_markers"
+      ],
+      "to": [
+        "pi::tests::child_path_prepends_and_deduplicates_executable_directories"
+      ],
+      "reason": "Complementary inputs and assertions for the child path prepends and deduplicates executable directories contract are retained together."
+    },
+    {
+      "from": [
+        "pi::tests::executables_are_found_on_the_login_shell_path",
+        "pi::tests::files_without_execute_permission_are_not_executables"
+      ],
+      "to": ["pi::tests::configured_pi_path_takes_priority"],
+      "reason": "Complementary inputs and assertions for the configured pi path takes priority contract are retained together."
+    },
+    {
+      "from": [
+        "pi::tests::io_error_kinds_map_to_the_reviewed_category_set",
+        "pi::tests::malformed_and_oversized_rpc_lines_map_to_reviewed_drop_reasons"
+      ],
+      "to": ["pi::tests::exit_message_includes_status_and_stderr"],
+      "reason": "Complementary inputs and assertions for the exit message includes status and stderr contract are retained together."
+    },
+    {
+      "from": ["pi::tests::login_shell_output_is_bounded"],
+      "to": ["pi::tests::capturing_stdout_gives_up_on_a_hanging_shell"],
+      "reason": "Complementary inputs and assertions for the capturing stdout gives up on a hanging shell contract are retained together."
+    },
+    {
+      "from": ["pi::tests::login_shell_path_ignores_output_without_markers"],
+      "to": [
+        "pi::tests::child_path_prepends_and_deduplicates_executable_directories"
+      ],
+      "reason": "Assertions retained in the login shell path is read from between the markers contract, including the original input and expected outcome.; Complementary inputs and assertions for the child path prepends and deduplicates executable directories contract are retained together."
+    },
+    {
+      "from": [
+        "pi::tests::production_session_arguments_preserve_pi_default_storage"
+      ],
+      "to": [
+        "pi::tests::dev_session_arguments_keep_new_and_resumed_sessions_in_the_profile"
+      ],
+      "reason": "Complementary inputs and assertions for the dev session arguments keep new and resumed sessions in the profile contract are retained together."
+    },
+    {
+      "from": [
+        "quit::tests::authorized_update_request_survives_reload_and_confirmation_replay",
+        "quit::tests::failed_update_install_releases_the_coordinator",
+        "quit::tests::recovered_update_authorization_can_be_cancelled"
+      ],
+      "to": [
+        "quit::tests::update_authorization_is_bound_to_both_ids_and_consumed_once"
+      ],
+      "reason": "Complementary inputs and assertions for the update authorization is bound to both ids and consumed once contract are retained together."
+    },
+    {
+      "from": [
+        "quit::tests::cancellation_returns_to_idle_and_the_next_request_is_new",
+        "quit::tests::ordinary_confirmation_authorizes_exit_once"
+      ],
+      "to": ["quit::tests::reuses_one_pending_request_until_it_is_resolved"],
+      "reason": "Complementary inputs and assertions for the reuses one pending request until it is resolved contract are retained together."
+    },
+    {
+      "from": [
+        "saved_transcript::tests::malformed_graph_and_unknown_semantics_fail_closed"
+      ],
+      "to": ["saved_transcript::tests::empty_and_invalid_sources"],
+      "reason": "Complementary inputs and assertions for the empty and invalid sources contract are retained together."
+    },
+    {
+      "from": [
+        "saved_transcript::tests::older_compaction_inside_retained_range_does_not_emit_two_summaries",
+        "saved_transcript::tests::summaries_roots_and_retain_none"
+      ],
+      "to": ["saved_transcript::tests::branches_compaction_and_edits"],
+      "reason": "Complementary inputs and assertions for the branches compaction and edits contract are retained together."
+    },
+    {
+      "from": [
+        "settings::tests::ignores_remote_shell_output_outside_the_settings_markers"
+      ],
+      "to": [
+        "settings::tests::the_remote_command_bounds_settings_between_markers"
+      ],
+      "reason": "Assertions retained in the the remote command bounds settings between markers contract, including the original input and expected outcome."
+    },
+    {
+      "from": [
+        "settings::tests::reads_settings_through_a_csh_remote_environment"
+      ],
+      "to": [
+        "settings::tests::the_remote_command_bounds_settings_between_markers"
+      ],
+      "reason": "Complementary inputs and assertions for the the remote command bounds settings between markers contract are retained together."
+    },
+    {
+      "from": [
+        "settings::tests::treats_missing_or_invalid_settings_as_unscoped"
+      ],
+      "to": ["settings::tests::reads_the_configured_model_scope"],
+      "reason": "Assertions retained in the reads the configured model scope contract, including the original input and expected outcome."
+    },
+    {
+      "from": [
+        "ssh::tests::browses_directories_through_a_csh_remote_environment"
+      ],
+      "to": ["ssh::tests::supports_csh_remote_login_environments"],
+      "reason": "Complementary inputs and assertions for the supports csh remote login environments contract are retained together."
+    },
+    {
+      "from": ["ssh::tests::quotes_directories_when_browsing"],
+      "to": ["ssh::tests::quotes_remote_paths_and_sessions"],
+      "reason": "Complementary inputs and assertions for the quotes remote paths and sessions contract are retained together."
+    },
+    {
+      "from": [
+        "ssh::tests::rejects_remote_commands_in_connection_strings",
+        "ssh::tests::remote_pi_connections_enforce_keepalives_and_disable_sharing"
+      ],
+      "to": ["ssh::tests::parses_full_and_destination_only_connections"],
+      "reason": "Complementary inputs and assertions for the parses full and destination only connections contract are retained together."
+    },
+    {
+      "from": [
+        "ssh::tests::short_lived_connections_do_not_use_remote_pi_lifetime_options"
+      ],
+      "to": ["ssh::tests::parses_full_and_destination_only_connections"],
+      "reason": "Assertions retained in the remote pi connections enforce keepalives and disable sharing contract, including the original input and expected outcome.; Complementary inputs and assertions for the parses full and destination only connections contract are retained together."
+    },
+    {
+      "from": [
+        "storage::tests::accepts_legacy_null_session_names",
+        "storage::tests::local_title_markdown_uses_the_same_winning_source_as_the_compact_title",
+        "storage::tests::remote_title_markdown_preserves_whitespace_and_unicode_at_the_scalar_limit"
+      ],
+      "to": ["storage::tests::session_titles_prefer_the_name_pi_recorded"],
+      "reason": "Complementary inputs and assertions for the session titles prefer the name pi recorded contract are retained together."
+    },
+    {
+      "from": [
+        "storage::tests::adopting_a_session_pi_handed_back_restores_its_row"
+      ],
+      "to": [
+        "storage::tests::archive_intent_fences_older_registration_adoption"
+      ],
+      "reason": "Complementary inputs and assertions for the archive intent fences older registration adoption contract are retained together."
+    },
+    {
+      "from": [
+        "storage::tests::archiving_sessions_preserves_the_record_and_clears_selection"
+      ],
+      "to": [
+        "storage::tests::unarchiving_sessions_preserves_the_record_and_keeps_selection"
+      ],
+      "reason": "Complementary inputs and assertions for the unarchiving sessions preserves the record and keeps selection contract are retained together."
+    },
+    {
+      "from": [
+        "storage::tests::configured_agent_directory_prefers_the_inherited_environment"
+      ],
+      "to": ["storage::tests::default_session_path_matches_pi_encoding"],
+      "reason": "Complementary inputs and assertions for the default session path matches pi encoding contract are retained together."
+    },
+    {
+      "from": [
+        "storage::tests::explicit_paths_reject_invalid_files_and_do_not_cross_project_registries",
+        "storage::tests::external_paths_preserve_archive_state_and_never_fall_back",
+        "storage::tests::legacy_duplicates_choose_first_path_and_ignore_unregistered_files",
+        "storage::tests::mixed_registry_parses_each_transcript_once_per_snapshot"
+      ],
+      "to": [
+        "storage::tests::external_registered_transcript_is_discovered_after_reload"
+      ],
+      "reason": "Complementary inputs and assertions for the external registered transcript is discovered after reload contract are retained together."
+    },
+    {
+      "from": [
+        "storage::tests::local_registration_returns_only_the_verified_row_and_skips_missing_files"
+      ],
+      "to": [
+        "storage::tests::registration_checks_only_the_candidate_file_and_its_identity"
+      ],
+      "reason": "Complementary inputs and assertions for the registration checks only the candidate file and its identity contract are retained together."
+    },
+    {
+      "from": [
+        "storage::tests::new_registries_start_at_version_one",
+        "storage::tests::project_order_requires_every_project_exactly_once",
+        "storage::tests::registration_of_session_outside_project_directory_is_listed_from_project_registry",
+        "storage::tests::unknown_sessions_stay_unselectable"
+      ],
+      "to": [
+        "storage::tests::local_sessions_register_into_the_registry_the_project_lists"
+      ],
+      "reason": "Complementary inputs and assertions for the local sessions register into the registry the project lists contract are retained together."
+    },
+    {
+      "from": ["storage::tests::parses_the_last_recorded_model_change"],
+      "to": ["storage::tests::parses_session_identity_and_title"],
+      "reason": "Complementary inputs and assertions for the parses session identity and title contract are retained together."
+    },
+    {
+      "from": [
+        "storage::tests::remote_project_identity_includes_the_working_directory",
+        "storage::tests::remote_project_name_uses_the_selected_directory"
+      ],
+      "to": ["storage::tests::legacy_local_projects_remain_local"],
+      "reason": "Complementary inputs and assertions for the legacy local projects remain local contract are retained together."
+    },
+    {
+      "from": [
+        "storage::tests::remote_sessions_are_sorted_by_last_user_message",
+        "storage::tests::remote_userless_sessions_sort_by_registration_time"
+      ],
+      "to": [
+        "storage::tests::userless_sessions_sort_by_the_first_agent_message"
+      ],
+      "reason": "Complementary inputs and assertions for the userless sessions sort by the first agent message contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::attributes::tests::context_attributes_are_reachable_from_every_family",
+        "telemetry::attributes::tests::unknown_family_or_key_is_rejected"
+      ],
+      "to": ["telemetry::attributes::tests::catalog_specs_are_well_formed"],
+      "reason": "Assertions retained in the family attributes are reachable by name contract, including the original input and expected outcome.; Complementary inputs and assertions for the catalog specs are well formed contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::attributes::tests::context_identifiers_are_never_metric_safe"
+      ],
+      "to": ["telemetry::attributes::tests::catalog_specs_are_well_formed"],
+      "reason": "Assertions retained in the catalog specs are well formed contract, including the original input and expected outcome."
+    },
+    {
+      "from": [
+        "telemetry::attributes::tests::family_attributes_are_reachable_by_name",
+        "telemetry::attributes::tests::metric_safety_matches_the_catalog"
+      ],
+      "to": ["telemetry::attributes::tests::catalog_specs_are_well_formed"],
+      "reason": "Complementary inputs and assertions for the catalog specs are well formed contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::attributes::tests::frontend_metric_families_accept_their_declared_attributes",
+        "telemetry::attributes::tests::validate_accepts_every_reviewed_heartbeat_and_state_summary_value",
+        "telemetry::attributes::tests::validate_accepts_every_reviewed_operation_checkpoint_value"
+      ],
+      "to": [
+        "telemetry::attributes::tests::validate_accepts_every_reviewed_controller_lifecycle_value"
+      ],
+      "reason": "Complementary inputs and assertions for the validate accepts every reviewed controller lifecycle value contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::attributes::tests::no_forbidden_content_canary_is_ever_a_reviewed_categorical_value",
+        "telemetry::attributes::tests::validate_accepts_stream_aggregate_counts"
+      ],
+      "to": [
+        "telemetry::attributes::tests::validate_accepts_a_well_formed_attribute"
+      ],
+      "reason": "Complementary inputs and assertions for the validate accepts a well formed attribute contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::attributes::tests::pi_rpc_span_can_carry_runtime_and_generation_context",
+        "telemetry::attributes::tests::validate_accepts_every_reviewed_process_stop_reason_and_resolution"
+      ],
+      "to": [
+        "telemetry::attributes::tests::validate_accepts_reviewed_ownership_attributes"
+      ],
+      "reason": "Complementary inputs and assertions for the validate accepts reviewed ownership attributes contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::attributes::tests::telemetry_health_and_rust_panic_accept_their_declared_attributes"
+      ],
+      "to": [
+        "telemetry::attributes::tests::validate_accepts_every_reviewed_reader_and_frontend_error_value"
+      ],
+      "reason": "Complementary inputs and assertions for the validate accepts every reviewed reader and frontend error value contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::attributes::tests::validate_accepts_every_reviewed_invoke_command_and_outcome",
+        "telemetry::attributes::tests::validate_accepts_every_reviewed_rpc_method_and_outcome"
+      ],
+      "to": [
+        "telemetry::attributes::tests::validate_accepts_every_reviewed_action_name"
+      ],
+      "reason": "Complementary inputs and assertions for the validate accepts every reviewed action name contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::attributes::tests::validate_rejects_a_type_mismatch",
+        "telemetry::attributes::tests::validate_rejects_an_oversized_string",
+        "telemetry::attributes::tests::validate_rejects_an_unknown_attribute",
+        "telemetry::attributes::tests::validate_rejects_an_unreviewed_categorical_value",
+        "telemetry::attributes::tests::validate_rejects_negative_or_absurd_collection_counts"
+      ],
+      "to": [
+        "telemetry::attributes::tests::validate_accepts_a_well_formed_attribute"
+      ],
+      "reason": "Assertions retained in the validate accepts a well formed attribute contract, including the original input and expected outcome."
+    },
+    {
+      "from": [
+        "telemetry::attributes::tests::validate_rejects_an_unreviewed_action_name"
+      ],
+      "to": [
+        "telemetry::attributes::tests::validate_accepts_every_reviewed_action_name"
+      ],
+      "reason": "Assertions retained in the validate accepts every reviewed action name contract, including the original input and expected outcome."
+    },
+    {
+      "from": [
+        "telemetry::attributes::tests::validate_rejects_an_unreviewed_controller_lifecycle_state"
+      ],
+      "to": [
+        "telemetry::attributes::tests::validate_accepts_every_reviewed_controller_lifecycle_value"
+      ],
+      "reason": "Assertions retained in the validate accepts every reviewed controller lifecycle value contract, including the original input and expected outcome."
+    },
+    {
+      "from": [
+        "telemetry::attributes::tests::validate_rejects_an_unreviewed_reader_drop_reason"
+      ],
+      "to": [
+        "telemetry::attributes::tests::validate_accepts_every_reviewed_reader_and_frontend_error_value"
+      ],
+      "reason": "Assertions retained in the validate accepts every reviewed reader and frontend error value contract, including the original input and expected outcome."
+    },
+    {
+      "from": [
+        "telemetry::attributes::tests::validate_rejects_an_unreviewed_rpc_outcome"
+      ],
+      "to": [
+        "telemetry::attributes::tests::validate_accepts_every_reviewed_action_name"
+      ],
+      "reason": "Assertions retained in the validate accepts every reviewed rpc method and outcome contract, including the original input and expected outcome.; Complementary inputs and assertions for the validate accepts every reviewed action name contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::exporter::tests::any_value_kinds_map_to_the_otlp_json_shape"
+      ],
+      "to": [
+        "telemetry::exporter::tests::otel_value_kinds_map_to_the_otlp_json_shape"
+      ],
+      "reason": "Assertions retained in the otel value kinds map to the otlp json shape contract, including the original input and expected outcome."
+    },
+    {
+      "from": [
+        "telemetry::exporter::tests::span_conversion_omits_parent_span_id_for_a_root_span"
+      ],
+      "to": [
+        "telemetry::exporter::tests::span_conversion_produces_the_otlp_trace_json_shape"
+      ],
+      "reason": "Assertions retained in the span conversion produces the otlp trace json shape contract, including the original input and expected outcome."
+    },
+    {
+      "from": [
+        "telemetry::exporter::tests::span_kind_and_status_map_to_otlp_integer_codes"
+      ],
+      "to": [
+        "telemetry::exporter::tests::span_conversion_produces_the_otlp_trace_json_shape"
+      ],
+      "reason": "Complementary inputs and assertions for the span conversion produces the otlp trace json shape contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::exporter::tests::unsupported_values_fail_closed_without_rendering_content"
+      ],
+      "to": [
+        "telemetry::exporter::tests::otel_value_kinds_map_to_the_otlp_json_shape"
+      ],
+      "reason": "Complementary inputs and assertions for the otel value kinds map to the otlp json shape contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::ingest::tests::accepts_a_frontend_queue_overflow_health_record",
+        "telemetry::ingest::tests::rejects_a_log_shaped_record_for_a_family_the_frontend_does_not_own_as_a_log",
+        "telemetry::ingest::tests::rejects_an_unreviewed_frontend_error_source"
+      ],
+      "to": [
+        "telemetry::ingest::tests::accepts_a_well_formed_frontend_error_record"
+      ],
+      "reason": "Complementary inputs and assertions for the accepts a well formed frontend error record contract are retained together."
+    },
+    {
+      "from": ["telemetry::ingest::tests::accepts_a_reviewed_invoke_outcome"],
+      "to": ["telemetry::ingest::tests::accepts_a_well_formed_record"],
+      "reason": "Assertions retained in the accepts a well formed record contract, including the original input and expected outcome."
+    },
+    {
+      "from": [
+        "telemetry::ingest::tests::accepts_a_well_formed_pi_stream_aggregate_record",
+        "telemetry::ingest::tests::action_milestone_requires_reviewed_fields_and_accepts_trace_link"
+      ],
+      "to": ["telemetry::ingest::tests::accepts_a_well_formed_pi_rpc_record"],
+      "reason": "Complementary inputs and assertions for the accepts a well formed pi rpc record contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::ingest::tests::accepts_a_well_formed_ui_action_record",
+        "telemetry::ingest::tests::rejects_an_attribute_outside_the_family_allowlist",
+        "telemetry::ingest::tests::rejects_an_unknown_family",
+        "telemetry::ingest::tests::rejects_malformed_or_reversed_timestamps"
+      ],
+      "to": ["telemetry::ingest::tests::accepts_a_well_formed_record"],
+      "reason": "Complementary inputs and assertions for the accepts a well formed record contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::ingest::tests::accepts_reviewed_context_identifiers_on_a_frontend_record"
+      ],
+      "to": ["telemetry::ingest::tests::accepts_a_well_formed_record"],
+      "reason": "Assertions retained in the accepts a well formed ui action record contract, including the original input and expected outcome.; Complementary inputs and assertions for the accepts a well formed record contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::ingest::tests::frontend_state_summary_serializes_to_a_small_bounded_size_regardless_of_counts",
+        "telemetry::ingest::tests::ingest_persists_a_frontend_state_summary_log"
+      ],
+      "to": [
+        "telemetry::ingest::tests::ingest_persists_a_frontend_heartbeat_log_and_its_native_gauges"
+      ],
+      "reason": "Complementary inputs and assertions for the ingest persists a frontend heartbeat log and its native gauges contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::ingest::tests::ingest_dispatches_spans_and_logs_in_the_same_batch",
+        "telemetry::ingest::tests::ingesting_does_not_record_a_span_about_itself"
+      ],
+      "to": [
+        "telemetry::ingest::tests::ingest_persists_a_frontend_error_log_record"
+      ],
+      "reason": "Complementary inputs and assertions for the ingest persists a frontend error log record contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::ingest::tests::ingest_links_a_controller_lifecycle_log_to_the_given_trace_and_span"
+      ],
+      "to": [
+        "telemetry::ingest::tests::ingest_persists_a_controller_lifecycle_transition_log"
+      ],
+      "reason": "Complementary inputs and assertions for the ingest persists a controller lifecycle transition log contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::ingest::tests::ingest_persists_a_long_task_metric_with_no_attributes",
+        "telemetry::ingest::tests::ingest_rejects_a_metric_value_beyond_the_hard_bound"
+      ],
+      "to": [
+        "telemetry::ingest::tests::ingest_persists_an_event_loop_lag_metric_never_a_log"
+      ],
+      "reason": "Complementary inputs and assertions for the ingest persists an event loop lag metric never a log contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::ingest::tests::ingest_rejects_a_controller_lifecycle_record_missing_a_required_attribute"
+      ],
+      "to": [
+        "telemetry::ingest::tests::ingest_persists_a_controller_lifecycle_transition_log"
+      ],
+      "reason": "Assertions retained in the ingest persists a controller lifecycle transition log contract, including the original input and expected outcome."
+    },
+    {
+      "from": [
+        "telemetry::ingest::tests::ingest_rejects_a_log_with_only_a_trace_id_and_no_span_id",
+        "telemetry::ingest::tests::ingest_rejects_trace_linkage_on_an_unlinked_log_family"
+      ],
+      "to": [
+        "telemetry::ingest::tests::ingest_persists_a_controller_lifecycle_transition_log"
+      ],
+      "reason": "Assertions retained in the ingest links a controller lifecycle log to the given trace and span contract, including the original input and expected outcome.; Complementary inputs and assertions for the ingest persists a controller lifecycle transition log contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::ingest::tests::ingest_rejects_a_negative_or_non_finite_metric_value"
+      ],
+      "to": [
+        "telemetry::ingest::tests::ingest_persists_an_event_loop_lag_metric_never_a_log"
+      ],
+      "reason": "Assertions retained in the ingest rejects a metric value beyond the hard bound contract, including the original input and expected outcome.; Complementary inputs and assertions for the ingest persists an event loop lag metric never a log contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::ingest::tests::ingest_rejects_an_event_loop_lag_record_missing_its_required_dimensions",
+        "telemetry::ingest::tests::ingest_rejects_high_cardinality_context_on_a_metric_record"
+      ],
+      "to": [
+        "telemetry::ingest::tests::ingest_persists_an_event_loop_lag_metric_never_a_log"
+      ],
+      "reason": "Assertions retained in the ingest rejects invalid metric dimensions contract, including the original input and expected outcome.; Complementary inputs and assertions for the ingest rejects a metric value beyond the hard bound contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::ingest::tests::ingest_rejects_an_unrecognized_field_without_rejecting_the_rest_of_the_batch",
+        "telemetry::ingest::tests::ingest_rejects_batches_beyond_the_per_call_bound"
+      ],
+      "to": [
+        "telemetry::ingest::tests::ingest_persists_only_the_valid_records_in_a_mixed_batch"
+      ],
+      "reason": "Complementary inputs and assertions for the ingest persists only the valid records in a mixed batch contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::ingest::tests::record_span_metrics_counts_a_non_success_pi_rpc_outcome_as_a_failure"
+      ],
+      "to": [
+        "telemetry::ingest::tests::record_span_metrics_derives_a_duration_histogram_from_an_ingested_span"
+      ],
+      "reason": "Complementary inputs and assertions for the record span metrics derives a duration histogram from an ingested span contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::ingest::tests::record_span_metrics_counts_abandoned_requests_separately"
+      ],
+      "to": [
+        "telemetry::ingest::tests::record_span_metrics_derives_a_duration_histogram_from_an_ingested_span"
+      ],
+      "reason": "Assertions retained in the record span metrics counts a non success pi rpc outcome as a failure contract, including the original input and expected outcome.; Complementary inputs and assertions for the record span metrics derives a duration histogram from an ingested span contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::ingest::tests::rejects_a_cataloged_family_not_owned_by_the_frontend_transport"
+      ],
+      "to": ["telemetry::ingest::tests::accepts_a_well_formed_record"],
+      "reason": "Assertions retained in the rejects an unknown family contract, including the original input and expected outcome.; Complementary inputs and assertions for the accepts a well formed record contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::ingest::tests::rejects_a_forbidden_content_canary_disguised_as_a_frontend_error_kind",
+        "telemetry::ingest::tests::rejects_a_frontend_error_record_missing_a_required_attribute"
+      ],
+      "to": [
+        "telemetry::ingest::tests::accepts_a_well_formed_frontend_error_record"
+      ],
+      "reason": "Assertions retained in the rejects an unreviewed frontend error source contract, including the original input and expected outcome.; Complementary inputs and assertions for the accepts a well formed frontend error record contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::ingest::tests::rejects_a_forbidden_content_canary_disguised_as_an_action_name"
+      ],
+      "to": ["telemetry::ingest::tests::accepts_a_well_formed_record"],
+      "reason": "Assertions retained in the rejects an unreviewed action name contract, including the original input and expected outcome.; Complementary inputs and assertions for the accepts a well formed ui action record contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::ingest::tests::rejects_a_malformed_parent_span_id",
+        "telemetry::ingest::tests::rejects_a_malformed_trace_id",
+        "telemetry::ingest::tests::rejects_a_record_without_the_required_command_attribute"
+      ],
+      "to": ["telemetry::ingest::tests::accepts_a_well_formed_record"],
+      "reason": "Assertions retained in the rejects malformed or reversed timestamps contract, including the original input and expected outcome.; Complementary inputs and assertions for the accepts a well formed record contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::ingest::tests::rejects_a_pi_rpc_record_missing_a_required_attribute",
+        "telemetry::ingest::tests::rejects_an_unreviewed_rpc_outcome"
+      ],
+      "to": ["telemetry::ingest::tests::accepts_a_well_formed_pi_rpc_record"],
+      "reason": "Assertions retained in the accepts a well formed pi rpc record contract, including the original input and expected outcome."
+    },
+    {
+      "from": [
+        "telemetry::ingest::tests::rejects_a_pi_stream_record_with_an_extra_attribute"
+      ],
+      "to": ["telemetry::ingest::tests::accepts_a_well_formed_pi_rpc_record"],
+      "reason": "Assertions retained in the accepts a well formed pi stream aggregate record contract, including the original input and expected outcome.; Complementary inputs and assertions for the accepts a well formed pi rpc record contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::ingest::tests::rejects_an_oversized_attribute_value",
+        "telemetry::ingest::tests::rejects_unreviewed_command_values_even_when_the_type_and_length_are_valid"
+      ],
+      "to": ["telemetry::ingest::tests::accepts_a_well_formed_record"],
+      "reason": "Assertions retained in the rejects an attribute outside the family allowlist contract, including the original input and expected outcome.; Complementary inputs and assertions for the accepts a well formed record contract are retained together."
+    },
+    {
+      "from": ["telemetry::ingest::tests::rejects_an_unreviewed_action_name"],
+      "to": ["telemetry::ingest::tests::accepts_a_well_formed_record"],
+      "reason": "Complementary inputs and assertions for the accepts a well formed ui action record contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::ingest::tests::rejects_the_native_writer_failure_counter_from_frontend_health"
+      ],
+      "to": [
+        "telemetry::ingest::tests::accepts_a_well_formed_frontend_error_record"
+      ],
+      "reason": "Assertions retained in the accepts a frontend queue overflow health record contract, including the original input and expected outcome.; Complementary inputs and assertions for the accepts a well formed frontend error record contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::otlp_export::tests::appends_the_signal_default_path_to_a_generic_base_endpoint",
+        "telemetry::otlp_export::tests::returns_none_for_an_https_endpoint",
+        "telemetry::otlp_export::tests::returns_none_for_an_unsupported_protocol"
+      ],
+      "to": [
+        "telemetry::otlp_export::tests::returns_none_when_no_endpoint_is_configured"
+      ],
+      "reason": "Complementary inputs and assertions for the returns none when no endpoint is configured contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::otlp_export::tests::defaults_to_port_80_when_none_is_given",
+        "telemetry::otlp_export::tests::uses_a_signal_specific_endpoint_exactly_as_given"
+      ],
+      "to": [
+        "telemetry::otlp_export::tests::returns_none_when_no_endpoint_is_configured"
+      ],
+      "reason": "Assertions retained in the appends the signal default path to a generic base endpoint contract, including the original input and expected outcome.; Complementary inputs and assertions for the returns none when no endpoint is configured contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::otlp_export::tests::send_never_panics_when_nothing_is_listening"
+      ],
+      "to": [
+        "telemetry::otlp_export::tests::sends_a_well_formed_http_post_with_the_json_body"
+      ],
+      "reason": "Complementary inputs and assertions for the sends a well formed http post with the json body contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::privacy::tests::ordinary_content_does_not_trip_the_canaries"
+      ],
+      "to": [
+        "telemetry::privacy::tests::detects_a_canary_present_in_a_larger_string"
+      ],
+      "reason": "Assertions retained in the detects a canary present in a larger string contract, including the original input and expected outcome."
+    },
+    {
+      "from": [
+        "telemetry::privacy::tests::source_locations_without_a_column_omit_it"
+      ],
+      "to": [
+        "telemetry::privacy::tests::source_locations_drop_directory_components"
+      ],
+      "reason": "Assertions retained in the source locations drop directory components contract, including the original input and expected outcome."
+    },
+    {
+      "from": [
+        "telemetry::privacy::tests::truncation_never_splits_a_multibyte_character"
+      ],
+      "to": [
+        "telemetry::privacy::tests::truncation_keeps_short_values_untouched"
+      ],
+      "reason": "Assertions retained in the truncation keeps short values untouched contract, including the original input and expected outcome."
+    },
+    {
+      "from": [
+        "telemetry::store::tests::concurrent_appends_survive_rotation_and_remain_ordered_and_unique"
+      ],
+      "to": [
+        "telemetry::store::tests::concurrent_appends_keep_disk_order_and_unique_sequences"
+      ],
+      "reason": "Complementary inputs and assertions for the concurrent appends keep disk order and unique sequences contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::store::tests::preserves_a_complete_final_record_that_only_lacks_a_newline"
+      ],
+      "to": [
+        "telemetry::store::tests::recovers_earlier_records_despite_a_malformed_final_line"
+      ],
+      "reason": "Complementary inputs and assertions for the recovers earlier records despite a malformed final line contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::store::tests::retention_deletes_the_oldest_rotated_segments_first_by_age"
+      ],
+      "to": [
+        "telemetry::store::tests::rotation_moves_the_active_segment_once_it_exceeds_the_configured_size"
+      ],
+      "reason": "Complementary inputs and assertions for the rotation moves the active segment once it exceeds the configured size contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::store::tests::retention_deletes_the_oldest_rotated_segments_first_by_size"
+      ],
+      "to": [
+        "telemetry::store::tests::rotation_moves_the_active_segment_once_it_exceeds_the_configured_size"
+      ],
+      "reason": "Complementary inputs and assertions for the retention deletes the oldest rotated segments first by age contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::store::tests::sequence_continues_after_store_reopens",
+        "telemetry::store::tests::signals_are_stored_in_separate_segments",
+        "telemetry::store::tests::store_writes_to_its_configured_directory"
+      ],
+      "to": ["telemetry::store::tests::appends_are_ordered_and_sequenced"],
+      "reason": "Complementary inputs and assertions for the appends are ordered and sequenced contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::store::tests::try_append_never_blocks_when_the_lock_is_already_held"
+      ],
+      "to": [
+        "telemetry::store::tests::try_append_persists_like_append_when_the_lock_is_free"
+      ],
+      "reason": "Complementary inputs and assertions for the try append persists like append when the lock is free contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::tests::a_clean_exit_clears_the_marker_so_the_next_run_is_not_flagged"
+      ],
+      "to": [
+        "telemetry::tests::detects_an_unclean_previous_run_and_records_it_at_the_next_start"
+      ],
+      "reason": "Complementary inputs and assertions for the detects an unclean previous run and records it at the next start contract are retained together."
+    },
+    {
+      "from": ["telemetry::tests::command_span_rejects_a_malformed_context"],
+      "to": [
+        "telemetry::tests::command_span_persists_a_native_child_of_the_given_context"
+      ],
+      "reason": "Complementary inputs and assertions for the command span persists a native child of the given context contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::tests::enabling_a_disabled_run_starts_recording_and_disabling_stops_it"
+      ],
+      "to": [
+        "telemetry::tests::a_disabled_run_writes_no_telemetry_and_leaves_no_directory"
+      ],
+      "reason": "Complementary inputs and assertions for the a disabled run writes no telemetry and leaves no directory contract are retained together."
+    },
+    {
+      "from": ["telemetry::tests::host_arch_uses_the_otel_enum_values"],
+      "to": ["telemetry::tests::os_type_uses_the_darwin_enum_value_on_macos"],
+      "reason": "Assertions retained in the os type uses the darwin enum value on macos contract, including the original input and expected outcome."
+    },
+    {
+      "from": [
+        "telemetry::tests::malformed_reader_events_increment_their_counter",
+        "telemetry::tests::reader_event_drops_an_unreviewed_error_kind_without_failing"
+      ],
+      "to": [
+        "telemetry::tests::reader_event_persists_runtime_context_like_process_lifecycle"
+      ],
+      "reason": "Complementary inputs and assertions for the reader event persists runtime context like process lifecycle contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::tests::no_metric_ever_carries_a_forbidden_high_cardinality_dimension",
+        "telemetry::tests::record_long_task_duration_persists_a_dimensionless_histogram"
+      ],
+      "to": [
+        "telemetry::tests::record_event_loop_lag_carries_only_the_two_reviewed_dimensions"
+      ],
+      "reason": "Complementary inputs and assertions for the record event loop lag carries only the two reviewed dimensions contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::tests::process_lifecycle_drops_a_forbidden_content_canary_disguised_as_a_stop_reason"
+      ],
+      "to": [
+        "telemetry::tests::process_lifecycle_persists_runtime_and_optional_generation"
+      ],
+      "reason": "Assertions retained in the process lifecycle drops an unreviewed stop reason without failing contract, including the original input and expected outcome.; Complementary inputs and assertions for the process lifecycle persists runtime and optional generation contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::tests::process_lifecycle_drops_an_unreviewed_stop_reason_without_failing",
+        "telemetry::tests::process_lifecycle_exit_code_supports_a_canary_free_fail_closed_conversion",
+        "telemetry::tests::process_lifecycle_links_to_the_active_command_span"
+      ],
+      "to": [
+        "telemetry::tests::process_lifecycle_persists_runtime_and_optional_generation"
+      ],
+      "reason": "Complementary inputs and assertions for the process lifecycle persists runtime and optional generation contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::tests::record_app_exited_force_flushes_so_the_marker_is_durable"
+      ],
+      "to": [
+        "telemetry::tests::record_app_started_persists_a_valid_log_record"
+      ],
+      "reason": "Complementary inputs and assertions for the record app started persists a valid log record contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::tests::resource_string_attributes_are_truncated_to_the_shared_limit"
+      ],
+      "to": [
+        "telemetry::tests::resource_carries_exactly_the_stage_0_resource_attributes"
+      ],
+      "reason": "Complementary inputs and assertions for the resource carries exactly the stage 0 resource attributes contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::tests::writer_health_is_recorded_at_exit_once_writes_start_succeeding_again"
+      ],
+      "to": [
+        "telemetry::tests::writer_health_records_the_failed_write_gauge_even_when_zero"
+      ],
+      "reason": "Complementary inputs and assertions for the writer health records the failed write gauge even when zero contract are retained together."
+    },
+    {
+      "from": ["telemetry::trace_context::tests::rejects_an_all_zero_span_id"],
+      "to": ["telemetry::trace_context::tests::parses_a_valid_traceparent"],
+      "reason": "Assertions retained in the rejects an all zero trace id contract, including the original input and expected outcome.; Complementary inputs and assertions for the parses a valid traceparent contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::trace_context::tests::rejects_an_all_zero_trace_id",
+        "telemetry::trace_context::tests::rejects_an_unsupported_version",
+        "telemetry::trace_context::tests::rejects_the_wrong_number_of_segments",
+        "telemetry::trace_context::tests::rejects_uppercase_hex"
+      ],
+      "to": ["telemetry::trace_context::tests::parses_a_valid_traceparent"],
+      "reason": "Complementary inputs and assertions for the parses a valid traceparent contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::trace_context::tests::rejects_wrong_length_identifiers"
+      ],
+      "to": ["telemetry::trace_context::tests::parses_a_valid_traceparent"],
+      "reason": "Assertions retained in the rejects uppercase hex contract, including the original input and expected outcome.; Complementary inputs and assertions for the parses a valid traceparent contract are retained together."
+    },
+    {
+      "from": [
+        "telemetry::trace_context::tests::round_trips_through_formatting",
+        "telemetry::trace_context::tests::unsampled_flag_round_trips"
+      ],
+      "to": ["telemetry::trace_context::tests::parses_a_valid_traceparent"],
+      "reason": "Assertions retained in the parses a valid traceparent contract, including the original input and expected outcome."
+    },
+    {
+      "from": [
+        "update::tests::atomic_exchange_handles_shell_metacharacters_as_plain_path_data"
+      ],
+      "to": [
+        "update::tests::privileged_exchange_passes_shell_metacharacters_as_arguments"
+      ],
+      "reason": "Complementary inputs and assertions for the privileged exchange passes shell metacharacters as arguments contract are retained together."
+    },
+    {
+      "from": [
+        "update::tests::completed_check_has_a_terminal_status_snapshot",
+        "update::tests::status_event_payload_is_bounded_and_content_free"
+      ],
+      "to": [
+        "update::tests::terminal_transitions_produce_reconcilable_status_snapshots"
+      ],
+      "reason": "Complementary inputs and assertions for the terminal transitions produce reconcilable status snapshots contract are retained together."
+    },
+    {
+      "from": [
+        "update::tests::completed_install_is_restartable_without_installing_again"
+      ],
+      "to": [
+        "update::tests::coordinator_enforces_single_flight_and_stale_operation_ids"
+      ],
+      "reason": "Complementary inputs and assertions for the coordinator enforces single flight and stale operation ids contract are retained together."
+    },
+    {
+      "from": [
+        "update::tests::preflight_accepts_a_writable_parent",
+        "update::tests::preflight_rejects_a_non_writable_parent"
+      ],
+      "to": ["update::tests::preflight_rejects_apps_on_mounted_images"],
+      "reason": "Complementary inputs and assertions for the preflight rejects apps on mounted images contract are retained together."
+    },
+    {
+      "from": ["update::tests::signature_errors_have_a_distinct_safe_category"],
+      "to": ["update::tests::errors_expose_only_reviewed_copy"],
+      "reason": "Complementary inputs and assertions for the errors expose only reviewed copy contract are retained together."
+    }
+  ],
+  "e2e": [
+    {
+      "from": [
+        "tests/e2e/admin-mode.e2e.ts > ignores the code typed into the composer",
+        "tests/e2e/admin-mode.e2e.ts > keeps diagnostics out of an ordinary run until the code unlocks them"
+      ],
+      "to": [
+        "tests/e2e/admin-mode.e2e.ts > keeps diagnostics locked in the composer, toggles them through the sidebar code and stops telemetry again"
+      ],
+      "reason": "One ordinary workspace run attempts the code in the composer, then unlocks and relocks admin mode from the sidebar."
+    },
+    {
+      "from": [
+        "tests/e2e/archived-sessions.e2e.ts > opens the sidebar actions from empty project-list space",
+        "tests/e2e/archived-sessions.e2e.ts > reviews, opens, and unarchives an archived session"
+      ],
+      "to": [
+        "tests/e2e/archived-sessions.e2e.ts > finds archived work from the sidebar menu, reviews and restores it"
+      ],
+      "reason": "One workspace journey opens the archive from empty sidebar space, selects an older row, checks its read-only context, then unarchives it."
+    },
+    {
+      "from": [
+        "tests/e2e/browser-sandbox.e2e.ts > keeps sandbox sidebar widths isolated from browser storage and tabs",
+        "tests/e2e/browser-sandbox.e2e.ts > replies locally and restores the browser sandbox seed on reload"
+      ],
+      "to": [
+        "tests/e2e/browser-sandbox.e2e.ts > isolates sidebar width across browser tabs and resets local replies on reload"
+      ],
+      "reason": "One browser sandbox visit checks independent tab geometry and unrelated storage, then sends a local reply and reloads the seed in its original tab."
+    },
+    {
+      "from": [
+        "tests/e2e/extension-dialog.e2e.ts > opens the transcript at a question larger than the pane",
+        "tests/e2e/extension-dialog.e2e.ts > preserves block markdown carried in the dialog title",
+        "tests/e2e/extension-dialog.e2e.ts > reaches an option below the fold and reports the choice",
+        "tests/e2e/extension-dialog.e2e.ts > renders a table in the question as a table",
+        "tests/e2e/extension-dialog.e2e.ts > scrolls a table wider than the question inside itself",
+        "tests/e2e/extension-dialog.e2e.ts > scrolls the question, its options, and the transcript as one region"
+      ],
+      "to": [
+        "tests/e2e/extension-dialog.e2e.ts > reads a long extension question, inspects Markdown and chooses an option"
+      ],
+      "reason": "One question stays open while reader inspects overflow, block Markdown and table, then selects the below-fold option."
+    },
+    {
+      "from": [
+        "tests/e2e/first-run.e2e.ts > offers project actions across the empty workspace",
+        "tests/e2e/first-run.e2e.ts > shows preparation feedback while ownership is pending"
+      ],
+      "to": [
+        "tests/e2e/first-run.e2e.ts > prepares Pi then offers and navigates both project actions in the empty workspace"
+      ],
+      "reason": "One first-run journey waits for ownership and then inspects and operates the project actions without a second launch."
+    },
+    {
+      "from": [
+        "tests/e2e/issue-report.e2e.ts > keeps the description available after dismissal or failure",
+        "tests/e2e/issue-report.e2e.ts > submits an issue with optional session context"
+      ],
+      "to": [
+        "tests/e2e/issue-report.e2e.ts > keeps an issue draft through dismissal and failure, then submits with and without session context"
+      ],
+      "reason": "One reporting journey recovers a draft after Escape and a failed submit, then submits both anonymous and session-linked reports."
+    },
+    {
+      "from": [
+        "tests/e2e/markdown-preview.e2e.ts > Escape closes a Markdown link menu before the document",
+        "tests/e2e/markdown-preview.e2e.ts > Escape closes the topmost diagram before the document",
+        "tests/e2e/markdown-preview.e2e.ts > keeps reading width, code copy, and Select All inside the document",
+        "tests/e2e/markdown-preview.e2e.ts > renders YAML frontmatter as a compact metadata sheet above the Markdown body",
+        "tests/e2e/markdown-preview.e2e.ts > renders a Markdown snapshot with headings, tasks, table, highlighted code and diagram",
+        "tests/e2e/markdown-preview.e2e.ts > replaces a local document through relative links while retaining the original transcript trigger",
+        "tests/e2e/markdown-preview.e2e.ts > suppresses document-relative images and sanitizes hostile HTML"
+      ],
+      "to": [
+        "tests/e2e/markdown-preview.e2e.ts > reads a composite Markdown document, uses its controls, and follows a local link"
+      ],
+      "reason": "One composite document carries metadata, prose, code, diagram, hostile markup, and links; reading, selection, layered dismissal and local navigation occur in one uninterrupted preview journey."
+    },
+    {
+      "from": [
+        "tests/e2e/markdown-preview.e2e.ts > bounds a truncated Markdown snapshot",
+        "tests/e2e/markdown-preview.e2e.ts > does not strip incomplete or invalid frontmatter from a file preview",
+        "tests/e2e/markdown-preview.e2e.ts > shows an empty Markdown document"
+      ],
+      "to": [
+        "tests/e2e/markdown-preview.e2e.ts > moves from a bounded snapshot through malformed frontmatter to an empty document"
+      ],
+      "reason": "The reader follows visible relative links from a truncated document to a malformed draft and its empty target without resetting the fixture."
+    },
+    {
+      "from": [
+        "tests/e2e/pi-scenario-conversation.e2e.ts > submits and settles a deterministic streamed conversation",
+        "tests/e2e/pi-scenario-conversation.e2e.ts > wraps an unbroken link without widening the composer"
+      ],
+      "to": [
+        "tests/e2e/pi-scenario-conversation.e2e.ts > wraps a long draft, then streams and settles the submitted conversation"
+      ],
+      "reason": "One composer journey first checks a long unsent draft and then submits the fixture prompt, observing streamed and settled transcript phases."
+    },
+    {
+      "from": [
+        "tests/e2e/pi-scenario-extension-prompt.e2e.ts > Escape dismisses only a dismissible layer above the prompt",
+        "tests/e2e/pi-scenario-extension-prompt.e2e.ts > renders an extension prompt in the transcript in place of the composer"
+      ],
+      "to": [
+        "tests/e2e/pi-scenario-extension-prompt.e2e.ts > keeps an extension question under a dismissible layer until it times out"
+      ],
+      "reason": "One prompt remains in the transcript while a remote dialog takes Escape, then the unanswered question times out and returns composer focus."
+    },
+    {
+      "from": [
+        "tests/e2e/project-order.e2e.ts > keeps project dragging after returning from archived sessions",
+        "tests/e2e/sidebar-resize.e2e.ts > fades the resize highlight after a pointer drag"
+      ],
+      "to": [
+        "tests/e2e/project-order.e2e.ts > returns from the archive, drags a project and resizes the sidebar"
+      ],
+      "reason": "One sidebar interaction begins by returning from archived review, verifies dragging still works, then resizes the same sidebar with highlight and fade assertions."
+    },
+    {
+      "from": [
+        "tests/e2e/session-tooltip.e2e.ts > keeps the end of tall active and archived previews reachable",
+        "tests/e2e/session-tooltip.e2e.ts > uses the same structured tooltip while reviewing archived sessions"
+      ],
+      "to": [
+        "tests/e2e/session-tooltip.e2e.ts > reviews archived tooltip content and scrolls tall active and archived previews to their dates"
+      ],
+      "reason": "One review visit first inspects the structured archived preview, returns to sessions, then checks both tall preview scroll bounds."
+    },
+    {
+      "from": [
+        "tests/e2e/session-tooltip.e2e.ts > keeps tooltip contents reactive without exposing fixture session IDs",
+        "tests/e2e/session-tooltip.e2e.ts > sanitizes unsafe Markdown and bounds truncated multiline previews",
+        "tests/e2e/session-tooltip.e2e.ts > shows a complete, app-drawn tooltip for an ellipsized session title"
+      ],
+      "to": [
+        "tests/e2e/session-tooltip.e2e.ts > reads and updates a session tooltip while keeping hostile long content safe and bounded"
+      ],
+      "reason": "One session tooltip stays in the workspace while its status, title and Markdown change; finishes at a narrow viewport without reloading."
+    },
+    {
+      "from": [
+        "tests/e2e/tooltip.e2e.ts > names icon-only controls on hover without native titles",
+        "tests/e2e/tooltip.e2e.ts > reveals a project path below the row, not in a native title",
+        "tests/e2e/tooltip.e2e.ts > shows the tooltip to a keyboard, not only to a pointer"
+      ],
+      "to": [
+        "tests/e2e/tooltip.e2e.ts > reveals project and control tooltips by pointer and keyboard without breaking anchored menus"
+      ],
+      "reason": "A single workspace accessibility journey moves from project path to keyboard tooltip, then icon controls and anchored menus without reloading."
+    },
+    {
+      "from": [
+        "tests/e2e/transcript-disclosure.e2e.ts > does not restore a poisoned offset after switching sessions",
+        "tests/e2e/transcript-disclosure.e2e.ts > keeps early rows mounted when an underfilled tool run is expanded"
+      ],
+      "to": [
+        "tests/e2e/transcript-disclosure.e2e.ts > expands an underfilled tool run and restores its geometry after a session switch"
+      ],
+      "reason": "Same compact transcript: disclose and collapse the final tool while keeping early rows, then switch away and back and re-expand it."
+    },
+    {
+      "from": [
+        "tests/e2e/transcript-hydration.e2e.ts > lands on rendered content in a session that shrank while away",
+        "tests/e2e/transcript-hydration.e2e.ts > renders a transcript that arrives under the working indicator"
+      ],
+      "to": [
+        "tests/e2e/transcript-hydration.e2e.ts > hydrates a working transcript and reconciles a history that shrinks while the reader is away"
+      ],
+      "reason": "One transcript progresses from empty to working and hydrated history, then grows, is parked and compacts while the reader is in another session."
+    },
+    {
+      "from": [
+        "tests/e2e/transcript-preview.e2e.ts > copies a code block from a button the block reveals on hover",
+        "tests/e2e/transcript-preview.e2e.ts > previews local files and keeps URL and path copy actions"
+      ],
+      "to": [
+        "tests/e2e/transcript-preview.e2e.ts > previews and copies local transcript paths, links and revealed code"
+      ],
+      "reason": "One transcript reader inspects URL/path actions and file viewer, returns to the transcript and copies a fenced code block using its hover control."
+    },
+    {
+      "from": [
+        "tests/e2e/transcript-preview.e2e.ts > copies remote directories and previews regular files",
+        "tests/e2e/transcript-preview.e2e.ts > decodes explicit file destinations and keeps invalid ones inert"
+      ],
+      "to": [
+        "tests/e2e/transcript-preview.e2e.ts > copies a remote directory, previews an encoded file and leaves invalid destinations inert"
+      ],
+      "reason": "One remote transcript reader copies a directory, opens an encoded file, then reopens the same destination explicitly before checking an invalid destination without reloading."
+    },
+    {
+      "from": [
+        "tests/e2e/transcript-preview.e2e.ts > ignores duplicate remote activation while showing delayed loading",
+        "tests/e2e/transcript-preview.e2e.ts > releases a preview prepared after its transcript unmounts"
+      ],
+      "to": [
+        "tests/e2e/transcript-preview.e2e.ts > deduplicates a pending remote preview then releases a second preview after the transcript unmounts"
+      ],
+      "reason": "One remote transcript reader waits for a delayed preview, verifies duplicate activation is ignored, then requests another and switches sessions before its late result arrives."
+    },
+    {
+      "from": [
+        "tests/e2e/transcript-preview.e2e.ts > leaves remote paths in fenced transcript markdown as code",
+        "tests/e2e/transcript-preview.e2e.ts > previews remote range references and keeps explicit copy actions"
+      ],
+      "to": [
+        "tests/e2e/transcript-preview.e2e.ts > previews a remote range and copies inline paths while leaving fenced paths as code"
+      ],
+      "reason": "One remote transcript reader inspects a range preview and explicit copy actions, returns to the transcript and checks inline path copy versus literal fenced Markdown."
+    },
+    {
+      "from": [
+        "tests/e2e/transcript-preview.e2e.ts > shows generic remote preview failure copy",
+        "tests/e2e/transcript-preview.e2e.ts > shows remote preview busy copy"
+      ],
+      "to": [
+        "tests/e2e/transcript-preview.e2e.ts > reports a remote preview failure then busy feedback on retry"
+      ],
+      "reason": "One remote path preview attempt fails, then a retry reports the distinct busy state on the same transcript without reloading."
+    },
+    {
+      "from": [
+        "tests/e2e/transcript-rendering.e2e.ts > aligns table columns and preserves empty and user-bubble headers",
+        "tests/e2e/transcript-rendering.e2e.ts > marks a task list with its checkbox alone, at full strength",
+        "tests/e2e/transcript-rendering.e2e.ts > sizes user message surfaces to their content up to 90%"
+      ],
+      "to": [
+        "tests/e2e/transcript-rendering.e2e.ts > renders the showcase activity, Markdown and code contract"
+      ],
+      "reason": "Showcase message layout and structured Markdown geometry on the shared immutable fixture.; Single static transcript showcase inspection of activity, typography, media and highlighted code without reloading."
+    },
+    {
+      "from": [
+        "tests/e2e/transcript-rendering.e2e.ts > draws a fenced diagram in the scheme around it",
+        "tests/e2e/transcript-rendering.e2e.ts > expands a drawn diagram into a fullscreen pan-and-zoom viewer"
+      ],
+      "to": [
+        "tests/e2e/transcript-rendering.e2e.ts > draws a themed diagram and opens its pan-and-zoom viewer"
+      ],
+      "reason": "The fullscreen interaction follows inspection of the same drawn diagram."
+    },
+    {
+      "from": [
+        "tests/e2e/transcript-rendering.e2e.ts > highlights a fenced block in both schemes at once",
+        "tests/e2e/transcript-rendering.e2e.ts > names a block the language it was fenced with"
+      ],
+      "to": [
+        "tests/e2e/transcript-rendering.e2e.ts > renders the showcase activity, Markdown and code contract"
+      ],
+      "reason": "Both code-fence checks target the same block; retains light/dark token colors and hover label checks.; Single static transcript showcase inspection of activity, typography, media and highlighted code without reloading."
+    },
+    {
+      "from": [
+        "tests/e2e/transcript-rendering.e2e.ts > holds a wide image inside the message column",
+        "tests/e2e/transcript-rendering.e2e.ts > keeps notices compact while preserving the restored type scale"
+      ],
+      "to": [
+        "tests/e2e/transcript-rendering.e2e.ts > renders the showcase activity, Markdown and code contract"
+      ],
+      "reason": "Read-only size and containment assertions on the same transcript fixture.; Single static transcript showcase inspection of activity, typography, media and highlighted code without reloading."
+    },
+    {
+      "from": [
+        "tests/e2e/transcript-rendering.e2e.ts > keeps a key and a rule through sanitizing",
+        "tests/e2e/transcript-rendering.e2e.ts > keeps prose narrower than wide blocks and tightens code leading",
+        "tests/e2e/transcript-rendering.e2e.ts > uses the real italic face and quieter emphasis weights"
+      ],
+      "to": [
+        "tests/e2e/transcript-rendering.e2e.ts > renders the showcase activity, Markdown and code contract"
+      ],
+      "reason": "Read-only Markdown typography and block geometry on one rendered showcase.; Single static transcript showcase inspection of activity, typography, media and highlighted code without reloading."
+    },
+    {
+      "from": [
+        "tests/e2e/transcript-rendering.e2e.ts > keeps a thought behind its label until it is opened",
+        "tests/e2e/transcript-rendering.e2e.ts > marks running and failed calls and names the failed result as an error",
+        "tests/e2e/transcript-rendering.e2e.ts > normalizes provider-formatted thinking sections",
+        "tests/e2e/transcript-rendering.e2e.ts > shows skill use as a collapsed expandable row"
+      ],
+      "to": [
+        "tests/e2e/transcript-rendering.e2e.ts > renders the showcase activity, Markdown and code contract"
+      ],
+      "reason": "Activity-row assertions against the same showcase fixture, with each independent row still asserted.; Single static transcript showcase inspection of activity, typography, media and highlighted code without reloading."
+    },
+    {
+      "from": [
+        "tests/e2e/transcript.e2e.ts > does not move a reader in history when output changes"
+      ],
+      "to": [
+        "tests/e2e/transcript.e2e.ts > reads virtual history, holds its anchor through output and restores it after a session switch"
+      ],
+      "reason": "One continuous long-history reading journey: virtual bounds, expanded state and incoming output anchor. One reader scrolls a bounded transcript, keeps an expanded row and history anchor during output, then switches away and returns to both saved history and the growing end."
+    },
+    {
+      "from": [
+        "tests/e2e/transcript.e2e.ts > follows a row appended while the working indicator is shown",
+        "tests/e2e/transcript.e2e.ts > follows the reply that replaces the working indicator"
+      ],
+      "to": [
+        "tests/e2e/transcript.e2e.ts > follows live output at the end but respects scrolling back and viewport changes"
+      ],
+      "reason": "Continues one working-indicator-to-tool-to-reply streaming journey, preserving counts and end anchoring after each step.; One reader follows output, scrolls back, resumes at the end, and resizes the viewport; no new page."
+    },
+    {
+      "from": [
+        "tests/e2e/transcript.e2e.ts > follows output again after the reader sends",
+        "tests/e2e/transcript.e2e.ts > follows output again once the reader returns to the end",
+        "tests/e2e/transcript.e2e.ts > keeps streaming output pinned to the end",
+        "tests/e2e/transcript.e2e.ts > keeps the reader at the end when the viewport shrinks under them",
+        "tests/e2e/transcript.e2e.ts > leaves a reader in history where they are when the viewport shrinks",
+        "tests/e2e/transcript.e2e.ts > stops following output once the reader scrolls back"
+      ],
+      "to": [
+        "tests/e2e/transcript.e2e.ts > follows live output at the end but respects scrolling back and viewport changes"
+      ],
+      "reason": "One reader follows output, scrolls back, resumes at the end, and resizes the viewport; no new page."
+    },
+    {
+      "from": [
+        "tests/e2e/transcript.e2e.ts > keeps the reader at the end when a row grows after it was measured",
+        "tests/e2e/transcript.e2e.ts > opens a tool call in place and keeps it open across virtualization",
+        "tests/e2e/transcript.e2e.ts > renders a long transcript without pagination controls or an oversized DOM"
+      ],
+      "to": [
+        "tests/e2e/transcript.e2e.ts > reads virtual history, holds its anchor through output and restores it after a session switch"
+      ],
+      "reason": "Checks initial end anchoring after image decoding, bounded mounting at top, and the same long fixture's tool expansion after scrolling through the virtualized list.; One continuous long-history reading journey: virtual bounds, expanded state and incoming output anchor. One reader scrolls a bounded transcript, keeps an expanded row and history anchor during output, then switches away and returns to both saved history and the growing end."
+    },
+    {
+      "from": [
+        "tests/e2e/transcript.e2e.ts > returns a session left at the end to the end it has grown",
+        "tests/e2e/transcript.e2e.ts > returns a session to the place in history it was left"
+      ],
+      "to": [
+        "tests/e2e/transcript.e2e.ts > reads virtual history, holds its anchor through output and restores it after a session switch"
+      ],
+      "reason": "Two successive session switches exercise history restoration and resumed end-following on the same fixture.; One continuous long-history reading journey: virtual bounds, expanded state and incoming output anchor. One reader scrolls a bounded transcript, keeps an expanded row and history anchor during output, then switches away and returns to both saved history and the growing end."
+    }
+  ]
+}

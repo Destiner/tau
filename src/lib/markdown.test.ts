@@ -17,12 +17,9 @@ import {
 } from './markdown';
 
 describe('web URLs', () => {
-  it('accepts HTTP and HTTPS links', () => {
+  it('accepts HTTP(S) and rejects other destinations', () => {
     expect(isWebUrl('https://example.com/docs')).toBe(true);
     expect(isWebUrl('http://localhost:3000')).toBe(true);
-  });
-
-  it('rejects non-web and relative links', () => {
     expect(isWebUrl('mailto:hello@example.com')).toBe(false);
     expect(isWebUrl('/docs/getting-started')).toBe(false);
     expect(isWebUrl('not a URL')).toBe(false);
@@ -30,7 +27,7 @@ describe('web URLs', () => {
 });
 
 describe('file references', () => {
-  it('reads rooted, relative, and home paths', () => {
+  it('reads rooted, relative and home paths with spaces and punctuation', () => {
     expect(parseFileReference('/Users/tim/notes.md')?.path).toBe(
       '/Users/tim/notes.md',
     );
@@ -46,9 +43,12 @@ describe('file references', () => {
     expect(parseFileReference('src/lib/markdown.ts')?.path).toBe(
       'src/lib/markdown.ts',
     );
+    expect(
+      parseFileReference('~/Documents/file with spaces & (parens).txt')?.path,
+    ).toBe('~/Documents/file with spaces & (parens).txt');
   });
 
-  it('keeps numeric markers in the reference and out of the path', () => {
+  it('separates line and column markers and sentence punctuation from paths', () => {
     for (const marker of [':42', ':42:10', ':21-31', ':21–31']) {
       expect(parseFileReference(`src/App.vue${marker}`)).toEqual({
         text: `src/App.vue${marker}`,
@@ -56,9 +56,6 @@ describe('file references', () => {
       });
     }
     expect(parseFileReference('src/App.vue:abc')).toBeNull();
-  });
-
-  it('leaves sentence punctuation outside the reference', () => {
     expect(parseFileReference('src/App.vue.')).toEqual({
       text: 'src/App.vue',
       path: 'src/App.vue',
@@ -78,20 +75,11 @@ describe('file references', () => {
     expect(parseFileReference('build/')).toBeNull();
   });
 
-  it('keeps spaces and shell punctuation in a rooted path', () => {
-    expect(
-      parseFileReference('~/Documents/file with spaces & (parens).txt')?.path,
-    ).toBe('~/Documents/file with spaces & (parens).txt');
-  });
-
-  it('rejects prose that merely contains a separator', () => {
+  it('rejects prose, ambiguous roots and API route templates', () => {
     expect(parseFileReference('and/or')).toBeNull();
     expect(parseFileReference('24/7')).toBeNull();
     expect(parseFileReference('TypeScript/JavaScript')).toBeNull();
     expect(parseFileReference('2026/08/14')).toBeNull();
-  });
-
-  it('rejects ambiguous single-word roots and segment-edge spaces', () => {
     for (const candidate of [
       '/pre',
       '/usage',
@@ -105,9 +93,6 @@ describe('file references', () => {
     expect(parseFileReference('/README.md')?.path).toBe('/README.md');
     expect(parseFileReference('/tmp/')?.path).toBe('/tmp/');
     expect(parseFileReference('/etc/hosts')?.path).toBe('/etc/hosts');
-  });
-
-  it('rejects API route templates', () => {
     for (const candidate of [
       '/users/internal/orgs/:orgId/billing',
       '/billing/{events,suspend,resume}',
@@ -120,9 +105,6 @@ describe('file references', () => {
     expect(parseFileReference('/Users/tim/orgs/billing')?.path).toBe(
       '/Users/tim/orgs/billing',
     );
-  });
-
-  it('rejects URLs and paths with nothing in them', () => {
     expect(parseFileReference('https://example.com/docs/guide.md')).toBeNull();
     expect(parseFileReference('//shared/report.md')).toBeNull();
     expect(parseFileReference('/')).toBeNull();
@@ -132,7 +114,7 @@ describe('file references', () => {
 });
 
 describe('path opening gesture', () => {
-  it('uses ordinary primary click and Enter', () => {
+  it('opens on primary click or Enter except macOS Control-click and middle click', () => {
     for (const platform of ['MacIntel', 'Win32', 'Linux x86_64']) {
       expect(isPathOpenGesture({ type: 'click', button: 0 }, platform)).toBe(
         true,
@@ -141,9 +123,6 @@ describe('path opening gesture', () => {
     expect(
       isPathOpenGesture({ type: 'keydown', key: 'Enter' }, 'MacIntel'),
     ).toBe(true);
-  });
-
-  it('leaves macOS Control-click for the context menu', () => {
     expect(
       isPathOpenGesture(
         { type: 'click', button: 0, ctrlKey: true },
@@ -157,7 +136,7 @@ describe('path opening gesture', () => {
 });
 
 describe('explicit Markdown file destinations', () => {
-  it('accepts bare names and decodes escaped path characters once', () => {
+  it('decodes explicit local destinations once, strips line suffixes and rejects unsafe URLs', () => {
     expect(parseMarkdownFileDestination('README')).toBe('README');
     expect(parseMarkdownFileDestination('docs/My%20File.md')).toBe(
       'docs/My File.md',
@@ -165,9 +144,6 @@ describe('explicit Markdown file destinations', () => {
     expect(parseMarkdownFileDestination('literal%2520name')).toBe(
       'literal%20name',
     );
-  });
-
-  it('accepts local file URLs and rejects unsafe destinations', () => {
     expect(parseMarkdownFileDestination('file:///tmp/My%20File.txt')).toBe(
       '/tmp/My File.txt',
     );
@@ -179,9 +155,6 @@ describe('explicit Markdown file destinations', () => {
     expect(parseMarkdownFileDestination('%zz')).toBeNull();
     expect(parseMarkdownFileDestination('bad%0Aname')).toBeNull();
     expect(parseMarkdownFileDestination('#section')).toBeNull();
-  });
-
-  it('removes line suffixes after decoding', () => {
     expect(parseMarkdownFileDestination('src/App.vue:42')).toBe('src/App.vue');
     expect(parseMarkdownFileDestination('src/My%20App.vue:42:10')).toBe(
       'src/My App.vue',
@@ -217,7 +190,7 @@ describe('explicit Markdown file destinations', () => {
 });
 
 describe('path resolution', () => {
-  it('resolves relative paths against the session directory', () => {
+  it('normalizes relative paths and redundant separators against the session directory', () => {
     expect(resolveFilePath('/work/tau', 'src/App.vue')).toBe(
       '/work/tau/src/App.vue',
     );
@@ -236,9 +209,6 @@ describe('path resolution', () => {
       '/Users/tim/notes.md',
     );
     expect(resolveFilePath('/work/tau', '~/notes.md')).toBe('~/notes.md');
-  });
-
-  it('collapses redundant separators and steps', () => {
     expect(resolveFilePath('/work/tau/', 'docs//extensions.md')).toBe(
       '/work/tau/docs/extensions.md',
     );
@@ -249,13 +219,10 @@ describe('path resolution', () => {
 });
 
 describe('linking file paths in markup', () => {
-  it('links a path and leaves the surrounding text alone', () => {
+  it('links paths in prose and code while keeping line markers outside links', () => {
     expect(linkFilePaths('<p>Wrote src/App.vue:42, and stopped.</p>')).toBe(
       '<p>Wrote <a class="file-link" role="link" tabindex="0" data-tau-path="src/App.vue">src/App.vue</a>:42, and stopped.</p>',
     );
-  });
-
-  it('leaves markers outside links in prose and inline code without losing text', () => {
     const examples = [
       ['src/components/ProjectSidebar.vue', ':922'],
       ['tests/playwright-config.test.ts', ':21–31'],
@@ -279,16 +246,18 @@ describe('linking file paths in markup', () => {
     );
   });
 
-  it('links paths written as code', () => {
+  it('links paths in code but not HTML attributes', () => {
     expect(linkFilePaths('<p><code>docs/extensions.md</code></p>')).toBe(
       '<p><code><a class="file-link" role="link" tabindex="0" data-tau-path="docs/extensions.md">docs/extensions.md</a></code></p>',
     );
     expect(linkFilePaths('<p><code>../notes</code></p>')).toBe(
       '<p><code><a class="file-link" role="link" tabindex="0" data-tau-path="../notes">../notes</a></code></p>',
     );
+    const image = '<p><img src="pictures/shot.png" alt="a/b.png"></p>';
+    expect(linkFilePaths(image)).toBe(image);
   });
 
-  it('does not link slash commands or encoded markup as paths', () => {
+  it('leaves ambiguous routes, slash commands and encoded markup unlinked', () => {
     for (const html of [
       '<p><code>/usage</code></p>',
       '<p><code>/ expanded </code></p>',
@@ -297,9 +266,6 @@ describe('linking file paths in markup', () => {
     ]) {
       expect(linkFilePaths(html)).toBe(html);
     }
-  });
-
-  it('does not link API route templates or ambiguous directory labels', () => {
     for (const html of [
       '<p><code>/users/internal/orgs/:orgId/billing</code></p>',
       '<p>Call <code>/billing/{events,suspend,resume}</code>.</p>',
@@ -310,12 +276,17 @@ describe('linking file paths in markup', () => {
     }
   });
 
-  it('leaves existing links and fenced code blocks alone', () => {
+  it('skips existing links and fenced code, then resumes linking after a skipped element', () => {
     const link = '<p><a href="https://example.com/a/b.md">a/b.md</a></p>';
     expect(linkFilePaths(link)).toBe(link);
 
     const block = '<pre><code>/home/agent/rhinestone/sdk\n</code></pre>';
     expect(linkFilePaths(block)).toBe(block);
+    expect(
+      linkFilePaths('<p><a href="https://x.dev">x</a> holds src/App.vue</p>'),
+    ).toBe(
+      '<p><a href="https://x.dev">x</a> holds <a class="file-link" role="link" tabindex="0" data-tau-path="src/App.vue">src/App.vue</a></p>',
+    );
   });
 
   it('leaves fenced paths unlinked when remote paths use buttons', () => {
@@ -330,15 +301,7 @@ describe('linking file paths in markup', () => {
     );
   });
 
-  it('resumes after the element it skipped', () => {
-    expect(
-      linkFilePaths('<p><a href="https://x.dev">x</a> holds src/App.vue</p>'),
-    ).toBe(
-      '<p><a href="https://x.dev">x</a> holds <a class="file-link" role="link" tabindex="0" data-tau-path="src/App.vue">src/App.vue</a></p>',
-    );
-  });
-
-  it('detects absolute paths with hidden directories', () => {
+  it('links standalone rooted paths with hidden directories, spaces and punctuation', () => {
     expect(
       linkFilePaths(
         '<p><code>/home/agent/.pi/workflows/implement/RHI-5900/implementation-plan.md</code></p>',
@@ -346,9 +309,6 @@ describe('linking file paths in markup', () => {
     ).toContain(
       'data-tau-path="/home/agent/.pi/workflows/implement/RHI-5900/implementation-plan.md"',
     );
-  });
-
-  it('links standalone rooted paths containing spaces and punctuation', () => {
     expect(
       linkFilePaths('<p>/Users/example/Library/Application Support</p>'),
     ).toBe(
@@ -383,15 +343,10 @@ describe('linking file paths in markup', () => {
       );
     }
   });
-
-  it('does not read attributes as text', () => {
-    const image = '<p><img src="pictures/shot.png" alt="a/b.png"></p>';
-    expect(linkFilePaths(image)).toBe(image);
-  });
 });
 
 describe('table headers', () => {
-  it('removes a header section only when every rendered header cell is empty', () => {
+  it('removes only entirely empty table headers', () => {
     expect(
       removeEmptyTableHeaders(
         '<table>\n<thead>\n<tr>\n<th align="left"></th>\n<th align="right"></th>\n</tr>\n</thead>\n<tbody><tr><td align="left">one</td><td align="right">two</td></tr></tbody>\n</table>',
@@ -399,9 +354,6 @@ describe('table headers', () => {
     ).toBe(
       '<table>\n\n<tbody><tr><td align="left">one</td><td align="right">two</td></tr></tbody>\n</table>',
     );
-  });
-
-  it('keeps partially populated and non-empty headers unchanged', () => {
     const headers = [
       '<thead><tr><th></th><th>Kept</th></tr></thead>',
       '<thead><tr><th><img src="heading.png" alt=""></th></tr></thead>',
@@ -416,15 +368,10 @@ describe('table headers', () => {
 });
 
 describe('closed fences', () => {
-  it('reads a block that reached its closing fence', () => {
+  it('recognizes closed fences without treating partial streamed fences as closed', () => {
     expect(isClosedFence('```mermaid\ngraph TD\n  A --> B\n```')).toBe(true);
     expect(isClosedFence('~~~\nplain\n~~~\n')).toBe(true);
     expect(isClosedFence('```mermaid\n```')).toBe(true);
-  });
-
-  it('reads a block that is still arriving', () => {
-    // What every delta of a streamed answer ends in, and the case a diagram is
-    // not drawn for: half of one is not a diagram.
     expect(isClosedFence('```mermaid\ngraph TD\n  A --> B\n')).toBe(false);
     expect(isClosedFence('```mermaid\ngraph TD\n  A --> ``')).toBe(false);
     expect(isClosedFence('```mermaid')).toBe(false);
@@ -432,7 +379,7 @@ describe('closed fences', () => {
 });
 
 describe('code copy buttons', () => {
-  it('wraps every fenced block, and only those', () => {
+  it('wraps only fenced blocks, preserving literal closers and language labels', () => {
     const html = addCodeCopyButtons(
       '<p>prose with <code>inline</code></p><pre><code>const a = 1;\n</code></pre><p>more</p><pre>plain\n</pre>',
     );
@@ -441,17 +388,9 @@ describe('code copy buttons', () => {
       '<div class="code-block"><pre><code>const a = 1;\n</code></pre><button type="button" class="code-copy" data-tau-copy aria-label="Copy Code">',
     );
     expect(html).toContain('<p>prose with <code>inline</code></p>');
-  });
-
-  it('keeps a block that writes its own closing tag whole', () => {
     const block = '<pre><code>echo "&lt;/pre&gt;"\n</code></pre>';
-    const html = addCodeCopyButtons(block);
-    expect(html).toContain(block);
-    expect(html.match(/data-tau-copy/g)).toHaveLength(1);
-  });
-
-  it('carries the fenced language out to the wrapper the label is drawn on', () => {
-    // The class is what marked writes, and what a highlighted block keeps.
+    const literal = addCodeCopyButtons(block);
+    expect(literal).toContain(block);
     expect(
       addCodeCopyButtons(
         '<pre><code class="language-rust">fn main() {}\n</code></pre>',
@@ -471,7 +410,7 @@ describe('code copy buttons', () => {
 });
 
 describe('diagram expand buttons', () => {
-  it('marks every drawn diagram, and only those', () => {
+  it('marks only drawn diagrams and gives each its own expand button', () => {
     const html = addDiagramExpandButtons(
       '<div class="diagram"><svg width="10" height="5"><g></g></svg></div>' +
         '<p>prose</p>' +
@@ -487,14 +426,13 @@ describe('diagram expand buttons', () => {
     // A wrapper holding anything but a drawn svg is not a figure to expand.
     expect(html).toContain('<div class="diagram">not a drawing</div>');
     expect(html).toContain('<pre><code>graph TD\n</code></pre>');
-  });
-
-  it('gives each of several diagrams its own button', () => {
     const figure =
       '<div class="diagram"><svg width="2" height="1"></svg></div>';
-    const html = addDiagramExpandButtons(`${figure}<p>between</p>${figure}`);
+    const multiple = addDiagramExpandButtons(
+      `${figure}<p>between</p>${figure}`,
+    );
 
-    expect(html.match(/data-tau-expand/g)).toHaveLength(2);
-    expect(html).toContain('<p>between</p>');
+    expect(multiple.match(/data-tau-expand/g)).toHaveLength(2);
+    expect(multiple).toContain('<p>between</p>');
   });
 });

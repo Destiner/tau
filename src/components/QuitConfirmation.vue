@@ -122,7 +122,6 @@ function confirm(): void {
 </script>
 
 <style scoped>
-/* The dialog is portaled to body, outside this component's scoped subtree. */
 :global(.quit-confirmation-overlay) {
   position: fixed;
   z-index: 30;

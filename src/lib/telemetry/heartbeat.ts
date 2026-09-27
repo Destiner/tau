@@ -21,16 +21,10 @@ import {
   telemetryQueueLength,
 } from './index';
 
-/** How often the heartbeat/state-summary tick runs. "Low-frequency" per the
- * design: frequent enough that a gap is noticed within a reasonable window,
- * rare enough not to be a telemetry source of its own volume. */
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
 let heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
 
-/** `document.visibilityState`, mapped to the bounded two-value catalog.
- * Defaults to `'visible'` if `document` is unavailable (a non-browser test
- * environment) rather than failing the tick. */
 function currentVisibility(): HeartbeatVisibility {
   try {
     return document.visibilityState === 'hidden' ? 'hidden' : 'visible';
@@ -39,8 +33,6 @@ function currentVisibility(): HeartbeatVisibility {
   }
 }
 
-/** `document.hasFocus()`, defaulting to focused if `document` is
- * unavailable, for the same reason as `currentVisibility`. */
 function currentlyFocused(): boolean {
   try {
     return document.hasFocus();
@@ -49,14 +41,6 @@ function currentlyFocused(): boolean {
   }
 }
 
-/**
- * One heartbeat/state-summary tick. `expectedAt` is the epoch millisecond
- * this tick was scheduled for; the gap between that and `Date.now()` now is
- * exactly the event-loop-lag reading — including the browser's own
- * background-timer throttling while hidden, which is why visibility/focus
- * travel alongside it rather than this function trying to classify the gap
- * itself.
- */
 function tick(expectedAt: number): void {
   try {
     const lagMs = Math.max(0, Date.now() - expectedAt);
@@ -97,15 +81,11 @@ function scheduleNext(): void {
   heartbeatTimer = setTimeout(() => tick(expectedAt), HEARTBEAT_INTERVAL_MS);
 }
 
-/** Starts the heartbeat/state-summary timer. Safe to call more than once:
- * a second call while one is already running is a no-op. */
 function startHeartbeat(): void {
   if (heartbeatTimer) return;
   scheduleNext();
 }
 
-/** Stops the heartbeat/state-summary timer. Exposed for tests; product code
- * has no reason to call this during a normal run. */
 function stopHeartbeat(): void {
   if (heartbeatTimer) clearTimeout(heartbeatTimer);
   heartbeatTimer = undefined;
@@ -140,7 +120,6 @@ function installLongTaskObserver(): void {
   }
 }
 
-/** Stops the long-task observer. Exposed for tests only. */
 function stopLongTaskObserver(): void {
   longTaskObserver?.disconnect();
   longTaskObserver = undefined;

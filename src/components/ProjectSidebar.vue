@@ -358,7 +358,7 @@ const openProjectButton = ref<InstanceType<typeof UiIconButton>>();
 const projectMenuOpen = ref(false);
 const resizeHandlePointerFocused = ref(false);
 const resizeHighlightSuppressed = ref(false);
-/** Whether the sidebar body shows the workspace-wide archived list. */
+
 const showingArchived = ref(false);
 
 function showArchivedSessions(): void {
@@ -376,7 +376,6 @@ function toggleArchivedView(): void {
   showArchivedSessions();
 }
 
-/** Session snapshots by project path, empty whenever the list is not hovered. */
 const heldOrder = ref(new Map<string, HeldSession<SessionSummary>[]>());
 let heldOrderElement: HTMLElement | undefined;
 let projectSortable: Sortable | undefined;
@@ -417,7 +416,6 @@ function releaseSessionOrder(): void {
   if (heldOrder.value.size > 0) heldOrder.value = new Map();
 }
 
-/** Pointer leave is not guaranteed when the webview loses its pointer. */
 function releaseSessionOrderOutsideList(event: PointerEvent): void {
   if (
     event.pointerType === 'mouse' &&
@@ -432,7 +430,6 @@ function releaseSessionOrderWhenHidden(): void {
   if (document.visibilityState === 'hidden') releaseSessionOrder();
 }
 
-/** Where a project lives: its directory, prefixed by the host when remote. */
 function projectLocation(project: ProjectSummary): string {
   return project.connectionString
     ? `${project.connectionString} · ${project.workingDirectory}`
@@ -720,7 +717,6 @@ defineExpose({
   gap: 2px;
 }
 
-/* Only there to be something the tooltip can point at; it is the button. */
 .project-menu-trigger {
   display: flex;
 }
@@ -751,8 +747,6 @@ defineExpose({
   left: 3px;
   width: 25px;
   height: 29px;
-
-  /* Centered on the row, then nudged onto the label's optical center. */
   transform: translateY(calc(-50% + 1px));
   color: var(--muted);
   touch-action: none;
@@ -843,7 +837,6 @@ defineExpose({
   box-shadow: 0 15px 30px var(--shadow-strong);
 }
 
-/* A row-hovered action steps out of its row; its box and states live in UiIconButton. */
 .project-row:hover :deep(.row-action),
 .project-row:focus-within :deep(.row-action) {
   opacity: 0.65;
@@ -875,8 +868,6 @@ defineExpose({
   background: var(--selected);
 }
 
-/* Baseline, so the status indicator sits on the session title's baseline
- * rather than in the middle of the row. */
 .session-select {
   display: flex;
   align-items: baseline;
@@ -888,7 +879,6 @@ defineExpose({
   gap: 7px;
 }
 
-/* The archive action floats over its row; its box and states live in UiIconButton. */
 .session-archive {
   position: absolute;
   top: 50%;

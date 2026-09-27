@@ -206,37 +206,35 @@ mod tests {
 
         assert_eq!(first, repeated);
         assert_eq!(coordinator.pending(), Some(first));
-    }
 
-    #[test]
-    fn cancellation_returns_to_idle_and_the_next_request_is_new() {
-        let mut coordinator = QuitCoordinator::default();
-        let first = coordinator.request(QuitIntent::Ordinary, None).unwrap();
+        {
+            let mut coordinator = QuitCoordinator::default();
+            let first = coordinator.request(QuitIntent::Ordinary, None).unwrap();
 
-        assert_eq!(
-            coordinator.resolve(first.request_id, false),
-            QuitResolution::Cancelled
-        );
-        assert_eq!(coordinator.status, QuitStatus::Idle);
+            assert_eq!(
+                coordinator.resolve(first.request_id, false),
+                QuitResolution::Cancelled
+            );
+            assert_eq!(coordinator.status, QuitStatus::Idle);
 
-        let next = coordinator.request(QuitIntent::Ordinary, None).unwrap();
-        assert_ne!(next, first);
-    }
+            let next = coordinator.request(QuitIntent::Ordinary, None).unwrap();
+            assert_ne!(next, first);
+        }
 
-    #[test]
-    fn ordinary_confirmation_authorizes_exit_once() {
-        let mut coordinator = QuitCoordinator::default();
-        let request = coordinator.request(QuitIntent::Ordinary, None).unwrap();
+        {
+            let mut coordinator = QuitCoordinator::default();
+            let request = coordinator.request(QuitIntent::Ordinary, None).unwrap();
 
-        assert_eq!(
-            coordinator.resolve(request.request_id, true),
-            QuitResolution::OrdinaryConfirmed
-        );
-        assert_eq!(coordinator.status, QuitStatus::Exiting);
-        assert_eq!(
-            coordinator.resolve(request.request_id, true),
-            QuitResolution::Ignored
-        );
+            assert_eq!(
+                coordinator.resolve(request.request_id, true),
+                QuitResolution::OrdinaryConfirmed
+            );
+            assert_eq!(coordinator.status, QuitStatus::Exiting);
+            assert_eq!(
+                coordinator.resolve(request.request_id, true),
+                QuitResolution::Ignored
+            );
+        }
     }
 
     #[test]
@@ -254,55 +252,52 @@ mod tests {
         assert!(!coordinator.consume_update_authorization(request.request_id, 41));
         assert!(coordinator.consume_update_authorization(request.request_id, 42));
         assert!(!coordinator.consume_update_authorization(request.request_id, 42));
-    }
 
-    #[test]
-    fn authorized_update_request_survives_reload_and_confirmation_replay() {
-        let mut coordinator = QuitCoordinator::default();
-        let request = coordinator
-            .request(QuitIntent::UpdateRestart, Some(42))
-            .unwrap();
+        {
+            let mut coordinator = QuitCoordinator::default();
+            let request = coordinator
+                .request(QuitIntent::UpdateRestart, Some(42))
+                .unwrap();
 
-        assert_eq!(
-            coordinator.resolve(request.request_id, true),
-            QuitResolution::UpdateAuthorized
-        );
-        assert_eq!(coordinator.pending(), Some(request));
-        assert_eq!(
-            coordinator.resolve(request.request_id, true),
-            QuitResolution::UpdateAuthorized
-        );
-        assert!(coordinator.consume_update_authorization(request.request_id, 42));
-    }
+            assert_eq!(
+                coordinator.resolve(request.request_id, true),
+                QuitResolution::UpdateAuthorized
+            );
+            assert_eq!(coordinator.pending(), Some(request));
+            assert_eq!(
+                coordinator.resolve(request.request_id, true),
+                QuitResolution::UpdateAuthorized
+            );
+            assert!(coordinator.consume_update_authorization(request.request_id, 42));
+        }
 
-    #[test]
-    fn recovered_update_authorization_can_be_cancelled() {
-        let mut coordinator = QuitCoordinator::default();
-        let request = coordinator
-            .request(QuitIntent::UpdateRestart, Some(42))
-            .unwrap();
-        coordinator.resolve(request.request_id, true);
+        {
+            let mut coordinator = QuitCoordinator::default();
+            let request = coordinator
+                .request(QuitIntent::UpdateRestart, Some(42))
+                .unwrap();
+            coordinator.resolve(request.request_id, true);
 
-        assert_eq!(
-            coordinator.resolve(request.request_id, false),
-            QuitResolution::Cancelled
-        );
-        assert_eq!(coordinator.pending(), None);
-        assert!(coordinator.request(QuitIntent::Ordinary, None).is_some());
-    }
+            assert_eq!(
+                coordinator.resolve(request.request_id, false),
+                QuitResolution::Cancelled
+            );
+            assert_eq!(coordinator.pending(), None);
+            assert!(coordinator.request(QuitIntent::Ordinary, None).is_some());
+        }
 
-    #[test]
-    fn failed_update_install_releases_the_coordinator() {
-        let mut coordinator = QuitCoordinator::default();
-        let request = coordinator
-            .request(QuitIntent::UpdateRestart, Some(7))
-            .unwrap();
-        coordinator.resolve(request.request_id, true);
-        assert!(coordinator.consume_update_authorization(request.request_id, 7));
+        {
+            let mut coordinator = QuitCoordinator::default();
+            let request = coordinator
+                .request(QuitIntent::UpdateRestart, Some(7))
+                .unwrap();
+            coordinator.resolve(request.request_id, true);
+            assert!(coordinator.consume_update_authorization(request.request_id, 7));
 
-        coordinator.release_update_install(request.request_id, 7);
-        assert_eq!(coordinator.status, QuitStatus::Idle);
-        assert!(coordinator.request(QuitIntent::Ordinary, None).is_some());
+            coordinator.release_update_install(request.request_id, 7);
+            assert_eq!(coordinator.status, QuitStatus::Idle);
+            assert!(coordinator.request(QuitIntent::Ordinary, None).is_some());
+        }
     }
 
     #[test]

@@ -1,14 +1,7 @@
-/*
- * Focused tests for Stage 3's Pi RPC span lifecycle (exact matching,
- * unmatched/duplicate responses, timeout, abandonment, and generation
- * separation) and per-run streaming aggregation. Telemetry primitives
- * (`startRpcSpan`, `recordStreamAggregate`, `invokeTraced`) are mocked so
- * these tests assert on runtime.ts's own bookkeeping, not on the OTel SDK
- * already covered by src/lib/telemetry/index.test.ts.
- */
 import { invoke } from '@tauri-apps/api/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import sessionControllerFixture from '../../../tests/support/session-controller';
 import {
   nextRequestId,
   state,
@@ -93,86 +86,12 @@ function feedbackMessage(controller: SessionController): string {
 function makeController(
   overrides: Partial<SessionController> = {},
 ): SessionController {
-  return {
-    key: 'controller-1',
-    runtimeId: 'runtime-1',
-    projectPath: '/tmp/project',
-    sessionId: 'session-1',
+  return sessionControllerFixture({
     sessionPath: '/tmp/project/session.jsonl',
-    sessionName: '',
-    phantom: false,
     generation: 1,
     ready: true,
-    streaming: false,
-    compacting: false,
-    compactionReconciliationPending: false,
-    compactionStreamSequence: 0,
-    messagesHydrationSequence: 0,
-    stopping: false,
-    starting: false,
-    working: false,
-    promptSubmitting: false,
-    unread: false,
-    lastUserMessageAt: 0,
-    hasPiTranscript: false,
-    materializationVerified: false,
-    materializationBarrierRequestId: '',
-    postSettlementHydration: false,
-    settledAssistantActivity: false,
-    materializationStateRequestId: '',
-    materializationMessagesRequestId: '',
-    messages: [],
-    messagesLoaded: false,
-    historyLayers: [],
-    firstVisibleHistoryLayer: 0,
-    historyPrefixLength: 0,
-    historyRequestId: '',
-    localErrors: [],
-    draft: '',
-    retry: undefined,
-    feedback: [],
-    currentModelProvider: '',
-    currentModelId: '',
-    currentModelName: '',
-    currentEffort: 'off',
-    pendingEffort: '',
-    pendingSettingRequestId: '',
-    models: [],
-    modelScope: [],
-    efforts: [],
-    commands: [],
-    commandsLoaded: false,
-    pendingPrompt: undefined,
-    queue: { steering: [], followUp: [] },
-    queueVersion: 0,
-    queueSubmissions: [],
-    queueSteeringMode: '',
-    queueFollowUpMode: '',
-    queuePreparing: false,
-    queueClearing: false,
-    queueFeedback: '',
-    queueFailedDrafts: [],
-    sessionNameRevision: 0,
-    sessionNameStateRequestId: '',
-    sessionNameStateRevision: 0,
-    bootstrapStateRequestId: '',
-    bootstrapSessionPath: '',
-    runStateRequestId: '',
-    startMessagesRequestId: '',
-    commandPromptRequestId: '',
-    commandSyncRequestId: '',
-    replacementProbeRequestId: '',
-    abortProbeRequestId: '',
-    connectingRemote: false,
-    remoteDisconnected: false,
-    reconnectingRemote: false,
-    remoteConnectionTimedOut: false,
-    syncing: false,
-    lastActiveSequence: 0,
-    disposed: false,
-    streamSequence: 0,
     ...overrides,
-  };
+  });
 }
 
 beforeEach(async () => {
@@ -723,7 +642,7 @@ describe('command-created session durability', () => {
         working: true,
       });
       addEphemeral(controller, connectionString);
-      // Pi wrote no session file, so registration returns no row.
+
       vi.mocked(telemetry.invokeTraced).mockResolvedValue(null);
 
       await handleRpc(controller, {
@@ -4558,9 +4477,18 @@ describe('Pi RPC span lifecycle', () => {
     });
 
     expect(end).toHaveBeenCalledWith('success');
+
+    await rpc(controller, { id: 'req-2', type: 'abort' });
+    const failedEnd = endSpyFor('runtime-1', 1, 'req-2');
+    await handleResponse(controller, {
+      id: 'req-2',
+      command: 'abort',
+      success: false,
+    });
+    expect(failedEnd).toHaveBeenCalledWith('error');
   });
 
-  it('ends extension UI response spans after the write without tracking a Pi response', async () => {
+  it('settles extension UI response spans on write success and failure without tracking a Pi response', async () => {
     const { pendingRpcCount, rpc, stopControllerProcess } =
       await import('./runtime');
     const controller = makeController();
@@ -4577,15 +4505,6 @@ describe('Pi RPC span lifecycle', () => {
     expect(end).toHaveBeenCalledWith('success');
     expect(pendingRpcCount()).toBe(pendingBefore);
 
-    await stopControllerProcess(controller);
-
-    expect(end).toHaveBeenCalledTimes(1);
-  });
-
-  it('records a failed extension UI response write without leaving it pending', async () => {
-    const { pendingRpcCount, rpc } = await import('./runtime');
-    const controller = makeController();
-    const pendingBefore = pendingRpcCount();
     mockInvoke.mockRejectedValueOnce(new Error('transport rejected'));
 
     await expect(
@@ -4596,10 +4515,14 @@ describe('Pi RPC span lifecycle', () => {
       }),
     ).rejects.toThrow('transport rejected');
 
-    const end = endSpyFor('runtime-1', 1, 'extension-response-2');
-    expect(end).toHaveBeenCalledTimes(1);
-    expect(end).toHaveBeenCalledWith('error');
+    const failedEnd = endSpyFor('runtime-1', 1, 'extension-response-2');
+    expect(failedEnd).toHaveBeenCalledTimes(1);
+    expect(failedEnd).toHaveBeenCalledWith('error');
     expect(pendingRpcCount()).toBe(pendingBefore);
+
+    await stopControllerProcess(controller);
+    expect(end).toHaveBeenCalledTimes(1);
+    expect(failedEnd).toHaveBeenCalledTimes(1);
   });
 
   it('links response-driven state transitions to the matching RPC span', async () => {
@@ -4660,22 +4583,7 @@ describe('Pi RPC span lifecycle', () => {
     expect(controller.syncing).toBe(true);
   });
 
-  it('ends with an error outcome for a failed response', async () => {
-    const { rpc, handleResponse } = await import('./runtime');
-    const controller = makeController();
-
-    await rpc(controller, { id: 'req-2', type: 'abort' });
-    const end = endSpyFor('runtime-1', 1, 'req-2');
-    await handleResponse(controller, {
-      id: 'req-2',
-      command: 'abort',
-      success: false,
-    });
-
-    expect(end).toHaveBeenCalledWith('error');
-  });
-
-  it('leaves other pending spans untouched by an unmatched response', async () => {
+  it('leaves pending spans untouched by unmatched responses and detects duplicates after settlement', async () => {
     const telemetry = await import('../telemetry');
     const { rpc, handleResponse } = await import('./runtime');
     const controller = makeController();
@@ -4700,32 +4608,16 @@ describe('Pi RPC span lifecycle', () => {
       command: 'get_state',
       success: true,
     });
-  });
-
-  it('records a duplicate response without double-ending the span', async () => {
-    const telemetry = await import('../telemetry');
-    const { rpc, handleResponse } = await import('./runtime');
-    const controller = makeController();
-
-    await rpc(controller, { id: 'req-4', type: 'get_state' });
-    const end = endSpyFor('runtime-1', 1, 'req-4');
-
-    await handleResponse(controller, {
-      id: 'req-4',
-      command: 'get_state',
-      success: true,
-    });
     expect(end).toHaveBeenCalledTimes(1);
-
     await handleResponse(controller, {
-      id: 'req-4',
+      id: 'req-3',
       command: 'get_state',
       success: true,
     });
     expect(end).toHaveBeenCalledTimes(1);
     expect(telemetry.recordRpcResponseAnomaly).toHaveBeenCalledWith(
       'unmatched_or_duplicate',
-      'req-4',
+      'req-3',
       expect.objectContaining({ runtimeId: 'runtime-1' }),
     );
   });

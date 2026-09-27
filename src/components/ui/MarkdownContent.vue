@@ -79,12 +79,12 @@ const props = defineProps<{
   source: string;
   inline?: boolean;
   basePath?: string;
-  /** Remote file paths preview rather than opening on this machine. */
+
   copyPaths?: boolean;
   remoteProjectPath?: string;
   /** An owner must handle file-preview and release its preview id. */
   previewFiles?: boolean;
-  /** Document previews resolve link targets before invoking the native command. */
+
   resolvePreviewPath?: (path: string) => string;
   /** Never resolve adjacent document images against the app origin. */
   restrictImages?: boolean;
@@ -113,7 +113,6 @@ const rendered = computed(() => {
   return template.innerHTML;
 });
 
-/** How long a copied block keeps saying so before the icon returns. */
 const COPIED_FEEDBACK_MS = 1_200;
 
 let homePath: Promise<string> | null = null;
@@ -133,7 +132,6 @@ interface PathFeedback {
 const pathFeedback = ref<PathFeedback | null>(null);
 const feedbackElement = ref<HTMLElement | null>(null);
 
-/** Asked for once, and asked for again if it ever fails. */
 function homeDirectory(): Promise<string> {
   if (!homePath) {
     homePath = homeDir().catch((error: unknown) => {
@@ -623,14 +621,10 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-/* Keep the component's status region out of layout while forwarding callers'
- * classes to the markdown surface they have always styled. */
 .markdown-shell {
   display: contents;
 }
 
-/* The rendered HTML carries no scoped attributes, so its descendants are
- * reached with :deep; the class itself is Tau's only markdown surface. */
 .markdown {
   color: var(--text);
   line-height: 1.62;
@@ -679,11 +673,6 @@ onBeforeUnmount(() => {
   margin: 0.7em 0;
 }
 
-/*
- * Browser defaults indent a list about 40px, which is far wider than the
- * 0.7em rhythm the blocks around it keep; the marker column only has to be
- * wide enough to hold a marker.
- */
 .markdown :deep(ul),
 .markdown :deep(ol) {
   padding-left: 1.4em;
@@ -693,7 +682,6 @@ onBeforeUnmount(() => {
   margin: 0.28em 0;
 }
 
-/* The text carries the list; the marker only has to say where an item starts. */
 .markdown :deep(li::marker) {
   color: var(--faint);
 }
@@ -720,16 +708,10 @@ onBeforeUnmount(() => {
   margin-bottom: 0;
 }
 
-/*
- * A task item is marked by its checkbox, so the list marker would be a second
- * one. The box hangs into the marker column it replaces rather than pushing
- * the item across, which keeps task and plain items on one text column.
- */
 .markdown :deep(li:has(> input[type='checkbox'])) {
   list-style: none;
 }
 
-/* A checked box is content, not a disabled control: the global fade is not it. */
 .markdown :deep(li > input[type='checkbox']) {
   width: 0.95em;
   height: 0.95em;
@@ -798,26 +780,22 @@ onBeforeUnmount(() => {
   margin-top: 0.6em;
 }
 
-/* A rule between sections, not the browser's inset 3D groove. */
 .markdown :deep(hr) {
   margin: 1.2em 0;
   border: 0;
   border-top: 1px solid var(--border);
 }
 
-/* An image is held to the message column rather than widening it. */
 .markdown :deep(img) {
   max-width: 100%;
   height: auto;
   border-radius: 6px;
 }
 
-/* Struck text has been withdrawn, so it recedes rather than only wearing a line. */
 .markdown :deep(del) {
   color: var(--muted);
 }
 
-/* A key is a thing to press: agent output names shortcuts often enough. */
 .markdown :deep(kbd) {
   padding: 0.1em 0.35em;
   border: 1px solid var(--border);
@@ -846,12 +824,6 @@ onBeforeUnmount(() => {
   tab-size: 2;
 }
 
-/*
- * A highlighted block carries both schemes at once, as a custom property per
- * token, and the scheme in use is chosen here rather than by re-rendering the
- * markdown. Shiki's own backgrounds are left unused: the block keeps the sunk
- * surface it has on whichever surface it sits.
- */
 .markdown :deep(.shiki),
 .markdown :deep(.shiki span) {
   color: var(--tau-code-light);
@@ -870,13 +842,6 @@ onBeforeUnmount(() => {
   }
 }
 
-/*
- * A drawn diagram is ruled like the block its source would have been, but not
- * filled like one: the rule says where the figure begins and ends, and the
- * page it is drawn on is the one the message is on. Its colours are the app's
- * own tokens, passed to the renderer as references, so the scheme it is in is
- * the one around it.
- */
 .markdown :deep(.diagram) {
   position: relative;
   width: 100%;
@@ -897,17 +862,10 @@ onBeforeUnmount(() => {
   margin: 0 auto;
 }
 
-/* The button is placed against the wrapper, not the block, so that scrolling a
- * wide block sideways leaves it where it is. */
 .markdown :deep(.code-block) {
   position: relative;
 }
 
-/*
- * The expand button keeps the copy button's terms: revealed by pointing at
- * the figure, bright under the pointer. It backs itself with the canvas the
- * diagram is drawn on, so it stays legible over the figure's own strokes.
- */
 .markdown :deep(.diagram-expand) {
   display: grid;
   position: absolute;
@@ -929,8 +887,6 @@ onBeforeUnmount(() => {
   opacity: 0.45;
 }
 
-/* Each carries the figure as well, for the same reason the copy button does:
- * the hover reveal above is the more specific selector. */
 .markdown :deep(.diagram .diagram-expand:focus-visible),
 .markdown :deep(.diagram:hover .diagram-expand:hover) {
   outline: 0;
@@ -944,11 +900,6 @@ onBeforeUnmount(() => {
   fill: currentcolor;
 }
 
-/*
- * The language the block was fenced with, kept beside the copy button and shown
- * on the same terms: what the block is written in is worth a glance, not a
- * permanent badge over its first line.
- */
 .markdown :deep(.code-block[data-tau-lang]::before) {
   content: attr(data-tau-lang);
   position: absolute;
@@ -1027,10 +978,6 @@ onBeforeUnmount(() => {
   color: var(--muted);
 }
 
-/*
- * A quote inside a quote is another rule beside the first, so it keeps the
- * spacing of the block it sits in rather than the full block margin.
- */
 .markdown :deep(blockquote blockquote) {
   margin: 0.4em 0;
 }
@@ -1061,10 +1008,6 @@ onBeforeUnmount(() => {
   padding: 6px 12px;
 }
 
-/*
- * Only the rows are ruled: vertical lines would draw a grid around content
- * the columns already separate.
- */
 .markdown :deep(thead th) {
   border-bottom: 1px solid var(--border);
 }
@@ -1078,7 +1021,6 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
-/* The radius is on the table, so the header has to leave its corners alone. */
 .markdown :deep(thead th:first-child) {
   border-top-left-radius: 8px;
 }
@@ -1087,17 +1029,11 @@ onBeforeUnmount(() => {
   border-top-right-radius: 8px;
 }
 
-/*
- * A column's alignment is written in markdown and arrives as an `align`
- * attribute, which any rule of ours would outrank: left is the default for a
- * column that did not ask for one, not something imposed on every column.
- */
 .markdown :deep(th:not([align])),
 .markdown :deep(td:not([align])) {
   text-align: left;
 }
 
-/* The hand belongs to links, and these are the only ones: they leave the app. */
 .markdown :deep(a) {
   color: var(--link);
   cursor: pointer;
@@ -1105,10 +1041,6 @@ onBeforeUnmount(() => {
   text-underline-offset: 2px;
 }
 
-/*
- * A path is a link to a file the system opens, so it carries a link's colour
- * but keeps the underline for the pointer rather than wearing one in prose.
- */
 .markdown :deep(.file-link) {
   text-decoration: none;
 }
@@ -1141,7 +1073,6 @@ onBeforeUnmount(() => {
   color: var(--danger);
 }
 
-/* Dragging content out of the transcript is a browser gesture, not an app one. */
 .markdown :deep(a),
 .markdown :deep(img) {
   -webkit-user-drag: none;

@@ -28,11 +28,6 @@ import type { FrontendMetricRecord } from './metric';
 import type { BoundedQueue } from './queue';
 import type { TraceContext } from './trace-context';
 
-/** The wire shape a frontend span is sent to Rust as, mirroring
- * src-tauri/src/telemetry/ingest.rs's `FrontendSpanRecord`. Only string and
- * integer attribute values are allowed, matching the Stage 0 catalog; Rust
- * revalidates every field before persisting it, so nothing here needs to be
- * trusted on its own. */
 interface FrontendSpanRecord {
   family: string;
   traceId: string;
@@ -44,12 +39,6 @@ interface FrontendSpanRecord {
   attributes: Record<string, string | number>;
 }
 
-/** Everything that can sit in the shared bounded queue: spans (this file),
- * logs (`./log`), and the two raw metric values (`./metric`) that have no
- * native span/log counterpart to derive a metric from. One queue serves
- * every signal type so they share the same capacity and drop-count
- * accounting; `index.ts` owns the queue and pushes all three kinds into
- * it. */
 type FrontendQueueRecord =
   FrontendSpanRecord | FrontendLogRecord | FrontendMetricRecord;
 

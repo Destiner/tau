@@ -21,7 +21,7 @@ withDefaults(
      * reserves its slot.
      */
     tone?: 'new' | 'draft' | 'working';
-    /** Meaning announced to assistive tech. */
+
     label?: string;
   }>(),
   { label: undefined, tone: undefined },

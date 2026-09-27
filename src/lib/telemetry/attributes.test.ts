@@ -44,25 +44,16 @@ describe('attribute catalog', () => {
         expect(spec.maxLen).toBeNull();
       }
     }
-  });
-
-  it('never marks a context identifier metric-safe', () => {
     for (const spec of CONTEXT_ATTRIBUTES) {
       expect(spec.metricSafe).toBe(false);
     }
   });
 
-  it('resolves family attributes by name', () => {
+  it('resolves reviewed family and shared attributes, but not unknown keys', () => {
     const spec = allowedAttribute('pi.rpc', 'pi.rpc.method');
     expect(spec?.kind).toBe('string');
-  });
-
-  it('resolves shared context attributes from every family', () => {
-    const spec = allowedAttribute('ui.action', 'tau.session.id');
-    expect(spec?.metricSafe).toBe(false);
-  });
-
-  it('rejects an unknown family or key', () => {
+    const contextSpec = allowedAttribute('ui.action', 'tau.session.id');
+    expect(contextSpec?.metricSafe).toBe(false);
     expect(
       allowedAttribute('does.not.exist', 'tau.session.id'),
     ).toBeUndefined();
@@ -71,29 +62,20 @@ describe('attribute catalog', () => {
 });
 
 describe('validateAttribute', () => {
-  it('accepts a well-formed attribute', () => {
+  it('accepts well-formed attributes and rejects unknown keys and types', () => {
     expect(validateAttribute('pi.rpc', 'pi.rpc.method', 'get_state')).toEqual({
       valid: true,
     });
     expect(
       validateAttribute('pi.process.lifecycle', 'tau.process.exit_code', 0),
     ).toEqual({ valid: true });
-  });
-
-  it('rejects an unknown attribute', () => {
     expect(validateAttribute('pi.rpc', 'pi.rpc.transcript', 'hello')).toEqual({
       valid: false,
       error: 'unknown-attribute',
     });
-  });
-
-  it('rejects an unreviewed categorical value', () => {
     expect(
       validateAttribute('tauri.invoke', 'tau.invoke.command', 'user content'),
     ).toEqual({ valid: false, error: 'unknown-value' });
-  });
-
-  it('rejects a type mismatch', () => {
     expect(validateAttribute('pi.rpc', 'pi.rpc.method', 1)).toEqual({
       valid: false,
       error: 'wrong-type',
@@ -107,7 +89,7 @@ describe('validateAttribute', () => {
     ).toEqual({ valid: false, error: 'wrong-type' });
   });
 
-  it('rejects a non-integer or unsafe number for an int attribute', () => {
+  it('bounds numeric and UTF-8 attribute values', () => {
     for (const value of [1.5, Number.MAX_SAFE_INTEGER + 1]) {
       expect(
         validateAttribute(
@@ -117,9 +99,6 @@ describe('validateAttribute', () => {
         ),
       ).toEqual({ valid: false, error: 'wrong-type' });
     }
-  });
-
-  it('rejects negative or absurd collection counts', () => {
     for (const value of [-1, 1_000_000_001]) {
       expect(
         validateAttribute(
@@ -133,9 +112,6 @@ describe('validateAttribute', () => {
       valid: false,
       error: 'out-of-range',
     });
-  });
-
-  it('rejects a string oversized in UTF-8 bytes', () => {
     const ascii = 'x'.repeat(DEFAULT_MAX_ATTRIBUTE_LEN + 1);
     const multibyte = 'é'.repeat(DEFAULT_MAX_ATTRIBUTE_LEN / 2 + 1);
     for (const oversized of [ascii, multibyte]) {
@@ -146,15 +122,12 @@ describe('validateAttribute', () => {
     }
   });
 
-  it('accepts every reviewed action name', () => {
+  it('allows exactly the reviewed action names', () => {
     for (const name of UI_ACTION_NAMES) {
       expect(validateAttribute('ui.action', 'tau.action.name', name)).toEqual({
         valid: true,
       });
     }
-  });
-
-  it('rejects an unreviewed action name', () => {
     expect(
       validateAttribute('ui.action', 'tau.action.name', 'not.a.real.action'),
     ).toEqual({ valid: false, error: 'unknown-value' });
@@ -184,7 +157,7 @@ describe('validateAttribute', () => {
     }
   });
 
-  it('accepts every reviewed rpc method and outcome', () => {
+  it('allows reviewed RPC methods and outcomes but not unreviewed outcomes', () => {
     for (const method of PI_RPC_METHODS) {
       expect(validateAttribute('pi.rpc', 'pi.rpc.method', method)).toEqual({
         valid: true,
@@ -200,9 +173,6 @@ describe('validateAttribute', () => {
         validateAttribute('pi.rpc.anomaly', 'pi.rpc.anomaly.kind', kind),
       ).toEqual({ valid: true });
     }
-  });
-
-  it('rejects an unreviewed rpc outcome', () => {
     expect(
       validateAttribute('pi.rpc', 'pi.rpc.outcome', 'not-a-real-outcome'),
     ).toEqual({ valid: false, error: 'unknown-value' });
@@ -266,7 +236,7 @@ describe('validateAttribute', () => {
     ).toEqual({ valid: true });
   });
 
-  it('accepts every reviewed frontend error source and kind', () => {
+  it('allows only reviewed frontend error sources and kinds', () => {
     for (const source of FRONTEND_ERROR_SOURCES) {
       expect(
         validateAttribute('frontend.error', 'tau.error.source', source),
@@ -277,9 +247,6 @@ describe('validateAttribute', () => {
         validateAttribute('frontend.error', 'tau.error.kind', kind),
       ).toEqual({ valid: true });
     }
-  });
-
-  it('rejects an unreviewed frontend error source or kind', () => {
     expect(
       validateAttribute('frontend.error', 'tau.error.source', 'not-a-source'),
     ).toEqual({ valid: false, error: 'unknown-value' });

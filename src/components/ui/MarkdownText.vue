@@ -33,7 +33,7 @@ defineProps<{
   source: string;
   inline?: boolean;
   basePath?: string;
-  /** Remote file paths preview rather than opening on this machine. */
+
   copyPaths?: boolean;
   remoteProjectPath?: string;
 }>();
@@ -81,7 +81,6 @@ onBeforeUnmount(closeFileViewer);
 </script>
 
 <style scoped>
-/* Preserve the rendered surface as the element seen by transcript callers. */
 .markdown-shell {
   display: contents;
 }

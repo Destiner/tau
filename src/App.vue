@@ -219,7 +219,7 @@ import { useUpdate } from './lib/update';
 const NEW_SESSION_EVENT = 'tau://new-session';
 const QUIT_REQUEST_EVENT = 'tau://quit-requested';
 const FULLSCREEN_VIEWER_STATE_EVENT = 'tau:fullscreen-viewer-state';
-/** How long a session may hydrate before it is worth reporting as loading. */
+
 const LOADING_INDICATOR_DELAY_MS = 200;
 const PREPARATION_INDICATOR_DELAY_MS = 200;
 const EDITABLE_SELECTOR = 'input, textarea, select';
@@ -840,7 +840,6 @@ function isTitlebarControl(target: EventTarget | null): boolean {
   background: var(--canvas);
 }
 
-/* Native chrome dims its selection while its window sits in the background. */
 .app-shell.window-inactive {
   --selected: var(--selected-inactive);
 }

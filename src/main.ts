@@ -19,18 +19,16 @@ import './styles.css';
 import './components/ui/surface.css';
 
 // All four are synchronous, do no I/O, and never throw, so none delays
-// window reveal or mounting below. `startHeartbeat`/`installLongTaskObserver`
-// only arm a timer/observer here; the first tick and any long task are still
-// asynchronous.
+
 initTelemetry();
 installFrontendErrorCapture();
 startHeartbeat();
 installLongTaskObserver();
 
 // Telemetry records nothing until this resolves and says the run is in
-// admin mode. Started here rather than from a mounted component so the
+
 // answer arrives as early as it can, and never awaited: nothing on screen
-// waits on a setting that only decides whether the app observes itself.
+
 void loadAdminMode();
 
 async function mountApp(): Promise<void> {
@@ -140,17 +138,11 @@ async function mountApp(): Promise<void> {
  */
 function revealWindow(): void {
   try {
-    // `getCurrentWindow()` itself throws synchronously (not a rejected
-    // promise) outside a real Tauri webview — a plain browser (a Playwright
-    // test, `vite dev` in a tab) has no `window.__TAURI_INTERNALS__` for it
-    // to read. The whole call is wrapped, not just `.show()`'s rejection, so
     // that case degrades the same way: log and move on, never an uncaught
-    // page error.
+
     getCurrentWindow()
       .show()
       .catch((error: unknown) => {
-        // Expected in a plain browser, which has no window to show. Anything else
-        // left the window hidden, which is worth seeing in the console.
         console.debug('Could not show the window', error);
       });
   } catch (error) {

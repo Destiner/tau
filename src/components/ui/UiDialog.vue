@@ -50,16 +50,15 @@ const open = defineModel<boolean>('open', { default: false });
 
 const props = withDefaults(
   defineProps<{
-    /** Shown as the panel's heading, and announced on open. */
     title: string;
-    /** One line under the title, when the panel needs to explain itself. */
+
     description?: string;
-    /** Panel width: 440px for a connection, 480px for a directory browser. */
+
     width?: 'sm' | 'md';
     busy?: boolean;
-    /** Whether Escape, the scrim, or a close request may dismiss the dialog. */
+
     dismissible?: boolean;
-    /** Persistent control that receives focus after this dialog closes. */
+
     returnFocus?: () => HTMLElement | undefined;
   }>(),
   {
@@ -84,9 +83,6 @@ function handleCloseAutoFocus(event: Event): void {
 </script>
 
 <style scoped>
-/* reka portals the overlay and panel to the body, where the scoped
- * attribute does not reach them, so they are styled with :global on
- * their namespaced classes. */
 :global(.ui-dialog-overlay) {
   position: fixed;
   z-index: 20;
@@ -94,12 +90,6 @@ function handleCloseAutoFocus(event: Event): void {
   inset: 0;
 }
 
-/*
- * The panel is a sibling of the overlay, not a child, so it positions itself:
- * top-centered, clear of the title bar. It does not animate in — an animation
- * that touches `transform` drops the centring translate for its first frame,
- * which reads as the panel sliding in from the right.
- */
 :global(.ui-dialog-content) {
   display: flex;
   position: fixed;
@@ -121,11 +111,6 @@ function handleCloseAutoFocus(event: Event): void {
   width: min(480px, calc(100% - 36px));
 }
 
-/*
- * Head, body and foot are parts, so a dialog stops re-rolling its own padding.
- * Every margin is set explicitly: the title renders as an h2 and the
- * description as a p, whose default margins are what spread the header out.
- */
 :global(.ui-dialog-head) {
   display: flex;
   flex-direction: column;

@@ -120,12 +120,11 @@ Plan /home/agent/.pi/workflows/implement/RHI-6092/implementation-plan.md
   });
 }
 const working = ref(false);
-/** Mirrors the app: a session change arrives as a keyed remount. */
+
 const sessionKey = ref('main');
 const transcriptView = ref<InstanceType<typeof TranscriptView>>();
 let sequence = messages.value.length;
 
-/** Mirrors the app: the indicator stands in for a reply that has yet to arrive. */
 const showWorkingIndicator = computed(
   () =>
     working.value &&

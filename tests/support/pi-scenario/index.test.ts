@@ -517,7 +517,7 @@ describe('PiScenarioEngine', () => {
     expect(() => engine.verifyComplete()).not.toThrow();
   });
 
-  it('keeps the bootstrap and complete conversation checkpoints unchanged by the stale interleaving', () => {
+  it('derives bootstrap, conversation and minimal stale-generation checkpoints', () => {
     const sharedConversationSteps =
       savedSessionStreamThenStaleGeneration.steps.filter(
         (step) =>
@@ -543,9 +543,7 @@ describe('PiScenarioEngine', () => {
     expect(JSON.stringify(savedSessionConversation)).not.toContain(
       'STALE_GENERATION_SENTINEL',
     );
-  });
 
-  it('keeps the browser stale-generation regression minimal and unsettled', () => {
     const afterStaleGateIndex =
       savedSessionStreamThenStaleGeneration.steps.findIndex(
         (step) =>

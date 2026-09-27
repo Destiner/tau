@@ -13,8 +13,6 @@ beforeEach(() => {
   vi.resetModules();
 });
 
-/** Loads both halves of the switch from one module registry, so the admin
- * module under test is the one the telemetry adapter is wired to. */
 async function loadAdmin(): Promise<{
   admin: typeof import('./admin-mode');
   telemetry: typeof import('./telemetry');
@@ -30,7 +28,7 @@ function ingestCalls(): unknown[] {
 }
 
 describe('admin mode', () => {
-  it('is off before anything has read the setting, and records no telemetry', async () => {
+  it('remains off without a persisted admin setting or if reading it fails', async () => {
     const { admin, telemetry } = await loadAdmin();
 
     expect(admin.adminMode.value).toBe(false);
@@ -38,11 +36,7 @@ describe('admin mode', () => {
     await telemetry.flushTelemetry();
 
     expect(ingestCalls()).toHaveLength(0);
-  });
-
-  it('stays off when the persisted setting is off', async () => {
     mockInvoke.mockResolvedValue(false);
-    const { admin, telemetry } = await loadAdmin();
 
     await admin.loadAdminMode();
 
@@ -51,6 +45,9 @@ describe('admin mode', () => {
     telemetry.startCommandSpan('load_workspace').end();
     await telemetry.flushTelemetry();
     expect(ingestCalls()).toHaveLength(0);
+    mockInvoke.mockRejectedValue(new Error('no tauri here'));
+    await admin.loadAdminMode();
+    expect(admin.adminMode.value).toBe(false);
   });
 
   it('starts recording once the persisted setting says the run is an admin one', async () => {
@@ -65,16 +62,7 @@ describe('admin mode', () => {
     expect(ingestCalls()).toHaveLength(1);
   });
 
-  it('stays off when the setting cannot be read at all', async () => {
-    mockInvoke.mockRejectedValue(new Error('no tauri here'));
-    const { admin } = await loadAdmin();
-
-    await admin.loadAdminMode();
-
-    expect(admin.adminMode.value).toBe(false);
-  });
-
-  it('toggles this run and persists the new setting', async () => {
+  it('toggles this run, persisting when possible but holding the switch on failure', async () => {
     const { admin, telemetry } = await loadAdmin();
 
     await admin.toggleAdminMode();
@@ -94,14 +82,8 @@ describe('admin mode', () => {
       'set_admin_mode',
       expect.objectContaining({ enabled: false }),
     );
-  });
-
-  it('holds the switch for this run even when it cannot be persisted', async () => {
     mockInvoke.mockRejectedValue(new Error('read-only disk'));
-    const { admin } = await loadAdmin();
-
     await admin.setAdminMode(true);
-
     expect(admin.adminMode.value).toBe(true);
   });
 

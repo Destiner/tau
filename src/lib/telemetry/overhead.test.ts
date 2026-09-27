@@ -21,8 +21,6 @@ beforeEach(() => {
   vi.resetModules();
 });
 
-/** These measure the cost of telemetry that is actually recording, so each
- * one enables it the way admin mode does. */
 async function loadTelemetry(): Promise<typeof import('./index')> {
   const telemetry = await import('./index');
   telemetry.setTelemetryEnabled(true);
@@ -39,9 +37,6 @@ describe('frontend instrumentation overhead', () => {
     }
     const elapsedMs = performance.now() - start;
 
-    // Measured ~0.01ms/span on ordinary hardware; 0.25ms/span leaves a
-    // large margin before this could be mistaken for "perceptible" at
-    // keystroke rate (well under a single frame budget per operation).
     expect(elapsedMs).toBeLessThan(500);
   });
 
@@ -84,10 +79,6 @@ describe('frontend instrumentation overhead', () => {
   it('accumulating 10000 streaming deltas (recordStreamDelta never itself calls into telemetry) stays well under budget', async () => {
     const { recordStreamAggregate } = await loadTelemetry();
 
-    // Streaming deltas are aggregated in `runtime.ts` (not exported from
-    // `index.ts`) and only ever produce one `recordStreamAggregate` call per
-    // run; this measures that one bounded call's own cost, confirming it is
-    // negligible regardless of how many deltas it summarizes.
     const start = performance.now();
     for (let index = 0; index < 200; index += 1) {
       recordStreamAggregate('runtime-1', 1, 10000, 480_000, 1_000, 60_000);
@@ -106,15 +97,11 @@ describe('IPC batch frequency and queue size under a burst', () => {
     for (let index = 0; index < 500; index += 1) {
       startCommandSpan('load_workspace').end();
     }
-    // Every `.end()` already called `scheduleFlush()`; nothing has actually
-    // been sent yet since the debounce window has not elapsed.
+
     expect(mockInvoke).not.toHaveBeenCalled();
 
     await flushTelemetry();
 
-    // MAX_QUEUE_SIZE (200) bounds how much of a 500-record burst is ever
-    // held at once; MAX_BATCH_SIZE (20) bounds how large a single native
-    // call is, so 200 queued records cost exactly 10 IPC calls, not 500.
     expect(mockInvoke).toHaveBeenCalledTimes(10);
     for (const call of mockInvoke.mock.calls) {
       const records = (call[1] as { records: unknown[] }).records;

@@ -73,10 +73,21 @@ describe('updater release artifacts', () => {
     );
   });
 
-  it('fingerprints the canonical decoded public key', () => {
+  it('fingerprints the canonical key and verifies signer output against tampering', () => {
     expect(updaterPublicKeyFingerprint(fixturePublicKey)).toBe(
       '71787717524340b7fb401032843ea678cdd9991747043fee5c20fc873c1788f1',
     );
+    const directory = temporaryDirectory();
+    const archive = join(directory, 'archive');
+    writeFileSync(archive, 'tau updater fixture\n');
+    expect(() =>
+      verifyUpdaterSignature(archive, fixtureSignature, fixturePublicKey),
+    ).not.toThrow();
+
+    writeFileSync(archive, 'tampered\n');
+    expect(() =>
+      verifyUpdaterSignature(archive, fixtureSignature, fixturePublicKey),
+    ).toThrow('invalid updater signature');
   });
 
   it('rejects links and special archive entries before extraction', () => {
@@ -96,26 +107,12 @@ describe('updater release artifacts', () => {
       ).toThrow('links or special entries');
     }
   });
-
-  it('cryptographically verifies Tauri signer output', () => {
-    const directory = temporaryDirectory();
-    const archive = join(directory, 'archive');
-    writeFileSync(archive, 'tau updater fixture\n');
-    expect(() =>
-      verifyUpdaterSignature(archive, fixtureSignature, fixturePublicKey),
-    ).not.toThrow();
-
-    writeFileSync(archive, 'tampered\n');
-    expect(() =>
-      verifyUpdaterSignature(archive, fixtureSignature, fixturePublicKey),
-    ).toThrow('invalid updater signature');
-  });
 });
 
 describe('updater release configuration', () => {
   const root = resolve(import.meta.dirname, '..');
 
-  it('keeps updater signing release-only and configures the public endpoint', () => {
+  it('keeps updater signing release-only, the public endpoint and macOS bundles scoped', () => {
     const base = JSON.parse(
       readFileSync(join(root, 'src-tauri/tauri.conf.json'), 'utf8'),
     ) as {
@@ -145,22 +142,16 @@ describe('updater release configuration', () => {
     );
     expect(releaseScript).toContain("'app,dmg'");
     expect(releaseScript).toContain('TAU_UPDATER_PUBLIC_KEY');
-  });
 
-  it('avoids Finder-driven DMG packaging for default macOS builds', () => {
     const macos = JSON.parse(
       readFileSync(join(root, 'src-tauri/tauri.macos.conf.json'), 'utf8'),
     ) as { bundle: { targets: string[] } };
 
     expect(macos.bundle.targets).toEqual(['app']);
-    const releaseScript = readFileSync(
-      join(root, 'scripts/release-macos.ts'),
-      'utf8',
-    );
     expect(releaseScript).toMatch(/'--bundles',\s*'app,dmg'/);
   });
 
-  it('requires updater secrets and uploads all assets without clobbering', () => {
+  it('isolates release credentials, builds first and uploads assets without clobbering', () => {
     const workflow = readFileSync(
       join(root, '.github/workflows/release.yml'),
       'utf8',
@@ -191,13 +182,6 @@ describe('updater release configuration', () => {
       "key !== 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD'",
     );
     expect(releaseScript).toContain("key !== 'TAU_UPDATER_PUBLIC_KEY'");
-  });
-
-  it('builds the frontend before the credentialed Tauri build', () => {
-    const releaseScript = readFileSync(
-      join(root, 'scripts/release-macos.ts'),
-      'utf8',
-    );
     expect(
       releaseScript.indexOf("command('bun', ['run', 'build']"),
     ).toBeLessThan(

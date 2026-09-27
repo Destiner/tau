@@ -16,7 +16,6 @@ for both sides?}
 + no result?}
   I -->|Yes| J[Use fallback]`;
 
-/** The renderer is loaded asynchronously, so nothing is drawn on the first tick. */
 async function ready(): Promise<void> {
   await vi.waitFor(
     () => {
@@ -26,7 +25,6 @@ async function ready(): Promise<void> {
   );
 }
 
-/** Every id the diagram gives an element of its own. */
 function ids(svg: string): string[] {
   return [...svg.matchAll(/ id="([^"]*)"/g)].map(([, id]) => id ?? '');
 }
@@ -134,18 +132,6 @@ describe('drawing a fenced diagram', () => {
     ).toBeNull();
   });
 
-  it('does not render partially parsed flowcharts', async () => {
-    await ready();
-    for (const source of [
-      'A["broken]',
-      'A --> B garbage',
-      'A -->',
-      'A[ok]:::',
-    ]) {
-      expect(renderDiagram(`graph TD\n ${source}`, 'mermaid')).toBeNull();
-    }
-  });
-
   it('carries the app’s own colours rather than a palette of its own', async () => {
     await ready();
     const svg = renderDiagram(FLOWCHART, 'mermaid') ?? '';
@@ -192,8 +178,16 @@ describe('drawing a fenced diagram', () => {
     }
   });
 
-  it('reports a fence it will not draw', async () => {
+  it('rejects unsupported, malformed, incomplete and oversized fences', async () => {
     await ready();
+    for (const source of [
+      'A["broken]',
+      'A --> B garbage',
+      'A -->',
+      'A[ok]:::',
+    ]) {
+      expect(renderDiagram(`graph TD\n ${source}`, 'mermaid')).toBeNull();
+    }
 
     expect(renderDiagram(FLOWCHART, 'ts')).toBeNull();
     expect(renderDiagram(FLOWCHART, '')).toBeNull();

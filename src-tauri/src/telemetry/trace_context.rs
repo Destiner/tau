@@ -9,9 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TraceContext {
-    /// 32 lowercase hex characters, not all zero.
     pub trace_id: String,
-    /// 16 lowercase hex characters, not all zero.
     pub span_id: String,
     pub sampled: bool,
 }
@@ -28,7 +26,6 @@ const TRACE_ID_LEN: usize = 32;
 pub(super) const SPAN_ID_LEN: usize = 16;
 
 impl TraceContext {
-    /// Parses a `version-traceId-spanId-flags` traceparent header value.
     pub fn parse(traceparent: &str) -> Result<Self, TraceContextError> {
         let mut parts = traceparent.split('-');
         let version = parts.next().ok_or(TraceContextError::Format)?;
@@ -58,7 +55,6 @@ impl TraceContext {
         })
     }
 
-    /// Formats this context back into a `traceparent` header value.
     pub fn to_traceparent(&self) -> String {
         let flags = if self.sampled { "01" } else { "00" };
         format!("00-{}-{}-{flags}", self.trace_id, self.span_id)
@@ -88,67 +84,49 @@ mod tests {
         assert_eq!(context.trace_id, "4bf92f3577b34da6a3ce929d0e0e4736");
         assert_eq!(context.span_id, "00f067aa0ba902b7");
         assert!(context.sampled);
-    }
-
-    #[test]
-    fn round_trips_through_formatting() {
-        let context = TraceContext::parse(VALID).expect("valid traceparent");
         assert_eq!(context.to_traceparent(), VALID);
-    }
 
-    #[test]
-    fn unsampled_flag_round_trips() {
         let unsampled = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00";
         let context = TraceContext::parse(unsampled).expect("valid traceparent");
         assert!(!context.sampled);
         assert_eq!(context.to_traceparent(), unsampled);
-    }
 
-    #[test]
-    fn rejects_an_all_zero_trace_id() {
-        let value = "00-00000000000000000000000000000000-00f067aa0ba902b7-01";
-        assert_eq!(TraceContext::parse(value), Err(TraceContextError::TraceId));
-    }
+        {
+            let value = "00-00000000000000000000000000000000-00f067aa0ba902b7-01";
+            assert_eq!(TraceContext::parse(value), Err(TraceContextError::TraceId));
 
-    #[test]
-    fn rejects_an_all_zero_span_id() {
-        let value = "00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01";
-        assert_eq!(TraceContext::parse(value), Err(TraceContextError::SpanId));
-    }
+            let value = "00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01";
+            assert_eq!(TraceContext::parse(value), Err(TraceContextError::SpanId));
+        }
 
-    #[test]
-    fn rejects_the_wrong_number_of_segments() {
-        assert_eq!(
-            TraceContext::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7"),
-            Err(TraceContextError::Format)
-        );
-        assert_eq!(
-            TraceContext::parse(&format!("{VALID}-extra")),
-            Err(TraceContextError::Format)
-        );
-    }
+        {
+            assert_eq!(
+                TraceContext::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7"),
+                Err(TraceContextError::Format)
+            );
+            assert_eq!(
+                TraceContext::parse(&format!("{VALID}-extra")),
+                Err(TraceContextError::Format)
+            );
+        }
 
-    #[test]
-    fn rejects_an_unsupported_version() {
-        assert_eq!(
-            TraceContext::parse("ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
-            Err(TraceContextError::Version)
-        );
-    }
+        {
+            assert_eq!(
+                TraceContext::parse("ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
+                Err(TraceContextError::Version)
+            );
+        }
 
-    #[test]
-    fn rejects_uppercase_hex() {
-        assert_eq!(
-            TraceContext::parse("00-4BF92F3577B34DA6A3CE929D0E0E4736-00f067aa0ba902b7-01"),
-            Err(TraceContextError::TraceId)
-        );
-    }
+        {
+            assert_eq!(
+                TraceContext::parse("00-4BF92F3577B34DA6A3CE929D0E0E4736-00f067aa0ba902b7-01"),
+                Err(TraceContextError::TraceId)
+            );
 
-    #[test]
-    fn rejects_wrong_length_identifiers() {
-        assert_eq!(
-            TraceContext::parse("00-4bf92f3577b34da6a3ce929d0e0e47-00f067aa0ba902b7-01"),
-            Err(TraceContextError::TraceId)
-        );
+            assert_eq!(
+                TraceContext::parse("00-4bf92f3577b34da6a3ce929d0e0e47-00f067aa0ba902b7-01"),
+                Err(TraceContextError::TraceId)
+            );
+        }
     }
 }

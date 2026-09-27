@@ -10,7 +10,7 @@ interface QueueSubmission {
   text: string;
   draft: string;
   kind: QueueKind;
-  /** Snapshot version when dispatched; a newer snapshot may precede its RPC reply. */
+
   version: number;
   baselineCount: number;
 }

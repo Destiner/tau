@@ -22,7 +22,7 @@ type CommandMenuPlacement = 'above' | 'below';
 type CommandMenuLayout = {
   placement: CommandMenuPlacement;
   maxHeight: number;
-  /** Distance from the composer top, used by the "below" placement. */
+
   offset: number;
 };
 
@@ -32,17 +32,16 @@ type CommandSelection = {
 };
 
 type CommandMenuGeometry = {
-  /** Height the menu wants, including its own border and padding. */
   contentHeight: number;
-  /** Viewport offset of the box the menu is positioned against. */
+
   composerTop: number;
-  /** Viewport offset of the first line of draft text. */
+
   textTop: number;
-  /** Height of one line of draft text. */
+
   textLineHeight: number;
-  /** Lowest viewport offset the menu may cover, i.e. the header bottom. */
+
   topBoundary: number;
-  /** Highest viewport offset the menu may cover, i.e. the window bottom. */
+
   bottomBoundary: number;
 };
 

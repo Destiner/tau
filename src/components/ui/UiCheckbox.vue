@@ -35,12 +35,6 @@ withDefaults(defineProps<{ disabled?: boolean }>(), { disabled: false });
 <style scoped>
 /* stylelint-disable no-descending-specificity -- state rules are ordered by which should win: hover, then focus. */
 
-/*
- * Drawn by the app rather than by the platform. The OS box ignores the palette,
- * takes the global accent-color as its fill, and its radius is the one thing on
- * screen that looks like a web form. The tick is a stroked path, not a font
- * glyph, so it stays crisp at 13px.
- */
 .ui-checkbox {
   display: inline-flex;
   align-items: center;

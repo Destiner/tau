@@ -151,31 +151,31 @@ mod tests {
         assert!(reports[0].get("sessionId").is_none());
         assert_eq!(reports[1]["timeUnixNano"], "84");
         assert_eq!(reports[1]["sessionId"], "session-1");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let parent = tempfile::tempdir().expect("temporary directory");
+            let directory = parent.path().join("feedback");
+            append_issue_report(&directory, "A report", None, UNIX_EPOCH).expect("issue report");
+
+            let dir_mode = fs::metadata(&directory)
+                .expect("feedback directory")
+                .permissions()
+                .mode()
+                & 0o777;
+            let file_mode = fs::metadata(directory.join(ISSUE_REPORT_FILE))
+                .expect("issue report file")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(dir_mode, 0o700);
+            assert_eq!(file_mode, 0o600);
+        }
     }
 
     #[cfg(unix)]
-    #[test]
-    fn report_directory_and_file_are_owner_only() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let parent = tempfile::tempdir().expect("temporary directory");
-        let directory = parent.path().join("feedback");
-        append_issue_report(&directory, "A report", None, UNIX_EPOCH).expect("issue report");
-
-        let dir_mode = fs::metadata(&directory)
-            .expect("feedback directory")
-            .permissions()
-            .mode()
-            & 0o777;
-        let file_mode = fs::metadata(directory.join(ISSUE_REPORT_FILE))
-            .expect("issue report file")
-            .permissions()
-            .mode()
-            & 0o777;
-        assert_eq!(dir_mode, 0o700);
-        assert_eq!(file_mode, 0o600);
-    }
-
     #[test]
     fn feedback_path_is_next_to_the_telemetry_directory() {
         assert_eq!(

@@ -51,7 +51,6 @@ import { errorCopy, rpcFailureCopy } from '../error-copy';
 import {
   invokeTraced,
   recordRpcResponseAnomaly,
-  recordStreamAggregate,
   startRpcSpan,
 } from '../telemetry';
 import type { PiRpcMethod, PiRpcOutcome } from '../telemetry/attributes';
@@ -68,6 +67,18 @@ import {
   type QueueKind,
   type QueueSubmission,
 } from './queue';
+import {
+  rpcSpanKey,
+  registerPendingRpcSpan,
+  pendingRpcCount,
+  oldestPendingRpcAgeMs,
+  endPendingRpcSpan,
+  abandonPendingRpcSpans,
+  resetStreamAggregate,
+  recordStreamDelta,
+  flushStreamAggregate,
+  type RpcDispatchSnapshot,
+} from './rpc-bookkeeping';
 import {
   asRecord,
   contentText,
@@ -596,215 +607,7 @@ async function requestBootstrap(
   );
 }
 
-/**
- * Bounds how long a Pi RPC span can stay pending before it is closed out as
- * timed out. Pi RPCs can legitimately run for a long time (a prompt with
- * tool use), so this is generous — it exists only so an RPC that never gets
- * a response (and is never otherwise abandoned) does not pin a span open
- * forever, not to police ordinary latency.
- */
-const RPC_SPAN_TIMEOUT_MS = 10 * 60 * 1000;
-
-interface PendingRpcSpan {
-  end: (outcome: PiRpcOutcome) => void;
-  context?: TraceContext;
-  dispatchSnapshot: RpcDispatchSnapshot;
-  method: string;
-  timeoutHandle: ReturnType<typeof setTimeout>;
-  /** When this request was registered, in epoch milliseconds. Used only to
-   * derive `oldestPendingRpcAgeMs` for the periodic state summary — never
-   * sent as its own record, never per-request. */
-  startedAt: number;
-}
-
-/**
- * Pi RPC spans in flight, keyed by runtime + generation + request id — the
- * exact key the plan calls for, and the same shape `send_pi`'s responses
- * carry. This is explicit request bookkeeping, not ambient "current span"
- * state: entries are looked up and removed by their own key, so concurrent
- * runtimes and generations cannot collide or leak into each other.
- */
-const pendingRpcSpans = new Map<string, PendingRpcSpan>();
 const confirmedAdmissionRequestIds = new Set<string>();
-
-function rpcSpanKey(
-  runtimeId: string,
-  generation: number,
-  requestId: string,
-): string {
-  return `${runtimeId}:${generation}:${requestId}`;
-}
-
-function registerPendingRpcSpan(
-  key: string,
-  end: (outcome: PiRpcOutcome) => void,
-  dispatchSnapshot: RpcDispatchSnapshot,
-  method: string,
-  context?: TraceContext,
-): void {
-  const previous = pendingRpcSpans.get(key);
-  if (previous) {
-    pendingRpcSpans.delete(key);
-    clearTimeout(previous.timeoutHandle);
-    previous.end('abandoned_duplicate_request');
-  }
-  const timeoutHandle = setTimeout(() => {
-    pendingRpcSpans.delete(key);
-    end('timeout');
-  }, RPC_SPAN_TIMEOUT_MS);
-  pendingRpcSpans.set(key, {
-    end,
-    context,
-    dispatchSnapshot,
-    method,
-    timeoutHandle,
-    startedAt: Date.now(),
-  });
-}
-
-/** The number of Pi RPC spans currently pending a matching response,
- * timeout, or explicit abandonment. Read by `./telemetry/heartbeat` for the
- * periodic heartbeat/state-summary gauges; never exposes the map itself. */
-function pendingRpcCount(): number {
-  return pendingRpcSpans.size;
-}
-
-/** The age, in milliseconds, of the longest-pending RPC span, or `0` when
- * none are pending. One of the "ages of pending operations" the periodic
- * state summary records. */
-function oldestPendingRpcAgeMs(): number {
-  const now = Date.now();
-  let oldest = 0;
-  for (const pending of pendingRpcSpans.values()) {
-    const age = now - pending.startedAt;
-    if (age > oldest) oldest = age;
-  }
-  return oldest;
-}
-
-/** Ends the pending span for `key` with `outcome`, if one is still pending.
- * A key with nothing pending — an unmatched or duplicate response — is a
- * deliberate no-op: there is nothing to end, and the caller's own response
- * handling continues regardless. */
-interface EndPendingRpcResult {
-  matched: boolean;
-  context?: TraceContext;
-  dispatchSnapshot?: RpcDispatchSnapshot;
-  method?: string;
-}
-
-function endPendingRpcSpan(
-  key: string,
-  outcome: PiRpcOutcome,
-): EndPendingRpcResult {
-  const pending = pendingRpcSpans.get(key);
-  if (!pending) return { matched: false };
-  pendingRpcSpans.delete(key);
-  clearTimeout(pending.timeoutHandle);
-  pending.end(outcome);
-  return {
-    matched: true,
-    context: pending.context,
-    dispatchSnapshot: pending.dispatchSnapshot,
-    method: pending.method,
-  };
-}
-
-/** Abandons every span pending for `runtimeId`/`generation` with `outcome`:
- * process exit, a generation change, a controller disposal or replacement,
- * or a stop path. Never touches spans for other runtimes or generations. */
-function abandonPendingRpcSpans(
-  runtimeId: string,
-  generation: number,
-  outcome: PiRpcOutcome,
-): void {
-  const prefix = `${runtimeId}:${generation}:`;
-  for (const [key, pending] of pendingRpcSpans) {
-    if (!key.startsWith(prefix)) continue;
-    pendingRpcSpans.delete(key);
-    clearTimeout(pending.timeoutHandle);
-    pending.end(outcome);
-  }
-}
-
-interface StreamAggregate {
-  deltaCount: number;
-  characterCount: number;
-  startedAt: number;
-  sessionId: string;
-  controllerId: string;
-}
-
-/** Per-run streaming aggregates, keyed the same way as pending RPC spans.
- * Accumulates locally and is recorded as one bounded `pi.stream` span per
- * run — never one record per delta or token — when the run settles, is
- * abandoned, or the runtime stops. */
-const streamAggregates = new Map<string, StreamAggregate>();
-
-function streamAggregateKey(runtimeId: string, generation: number): string {
-  return `${runtimeId}:${generation}`;
-}
-
-function resetStreamAggregate(runtimeId: string, generation: number): void {
-  streamAggregates.delete(streamAggregateKey(runtimeId, generation));
-}
-
-function recordStreamDelta(controller: SessionController, delta: string): void {
-  if (!delta) return;
-  const key = streamAggregateKey(controller.runtimeId, controller.generation);
-  const aggregate =
-    streamAggregates.get(key) ??
-    ({
-      deltaCount: 0,
-      characterCount: 0,
-      startedAt: Date.now(),
-      sessionId: controller.sessionId,
-      controllerId: controller.key,
-    } satisfies StreamAggregate);
-  aggregate.deltaCount += 1;
-  aggregate.characterCount += delta.length;
-  streamAggregates.set(key, aggregate);
-}
-
-function flushStreamAggregate(runtimeId: string, generation: number): void {
-  const key = streamAggregateKey(runtimeId, generation);
-  const aggregate = streamAggregates.get(key);
-  if (!aggregate) return;
-  streamAggregates.delete(key);
-  if (aggregate.deltaCount === 0) return;
-  recordStreamAggregate(
-    runtimeId,
-    generation,
-    aggregate.deltaCount,
-    aggregate.characterCount,
-    aggregate.startedAt,
-    Date.now(),
-    {
-      sessionId: aggregate.sessionId,
-      controllerId: aggregate.controllerId,
-    },
-  );
-}
-
-/**
- * Sends one Pi RPC request. The `pi.rpc` span starts here, the moment Tau
- * creates the request — not once `send_pi` finishes writing it — and ends
- * later on the exact matching response (`handleResponse`), a timeout, or
- * explicit abandonment. `parentContext` nests the span under an enclosing
- * `ui.action` span when this call is part of a traced user action.
- */
-interface RpcDispatchSnapshot {
-  generation: number;
-  sessionId: string;
-  sessionPath: string;
-  messagesHydrationSequence: number;
-  sessionNameRevision: number;
-  materializationBarrierRequestId: string;
-  materializationStateRequestId: string;
-  materializationMessagesRequestId: string;
-  pendingPrompt: SessionController['pendingPrompt'];
-  submittedPrompt: SessionController['submittedPrompt'];
-}
 
 function captureRpcDispatchSnapshot(
   controller: SessionController,
@@ -1300,8 +1103,6 @@ const remoteConnectionTimeoutMessage =
 const remoteConnectionTimeoutMs = 10_000;
 const settingRequestTimeoutMs = 10_000;
 const sessionNameRefreshTimeoutMs = 10_000;
-/** Pi normally emits `agent_start` immediately after prompt preflight succeeds.
- * Wait for that direct confirmation before falling back to state hydration. */
 const promptAdmissionReconcileDelay = 150;
 const remoteConnectionTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const settingRequestTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -1930,7 +1731,6 @@ function setHistoryLoading(
   if (marker) marker.historyLoading = loading;
 }
 
-/** Replaces only the compacted tail; loaded raw history remains above it. */
 function applyHistoryTail(
   controller: SessionController,
   tail: ReturnType<typeof hydrateTranscript>,
@@ -1987,8 +1787,6 @@ function sameLiveRow(
   return hydrated.text === live.text;
 }
 
-/** Keeps output emitted after a message request when Pi answered an earlier
- * snapshot of the still-running turn. The authoritative prefix always wins. */
 function liveStreamSuffix(
   previous: TranscriptEntry[],
   dispatchStreamSequence: number,
@@ -2040,8 +1838,6 @@ function mergeLiveStreamSuffix(
   return [...hydrated, ...live];
 }
 
-/** Re-bases feedback raised after compaction onto the compacted Pi prefix while
- * retaining the live-output gap in which each row was observed. */
 function reanchorCompactionLocalEntries(
   reconciled: TranscriptEntry[],
   previous: TranscriptEntry[],
@@ -3428,8 +3224,6 @@ function clearAbortWatch(controller: SessionController): void {
   clearTimeout(timer);
 }
 
-/** Pi only answers abort after its agent is idle. Re-probe in case its settle
- * event was lost, but leave the visible lifecycle to that authoritative read. */
 async function reconcileAcknowledgedAbort(
   controller: SessionController,
 ): Promise<void> {

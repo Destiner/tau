@@ -1,10 +1,3 @@
-/*
- * Time bucketing for the flat archived-sessions list. Buckets follow calendar
- * boundaries where the name promises one (days, Monday-based weeks); anything
- * older than last week is "Older", regardless of month or year. Pure and
- * injectable with `now` so it can be tested deterministically.
- */
-
 const ARCHIVED_GROUP_LABELS = [
   'Today',
   'Yesterday',
@@ -27,7 +20,6 @@ function startOfDay(timestamp: number): number {
   ).getTime();
 }
 
-/** Monday-based start of the week containing `timestamp`. */
 function startOfWeek(timestamp: number): number {
   const date = new Date(startOfDay(timestamp));
   date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
@@ -55,10 +47,6 @@ interface ArchivedGroup<T> {
   items: T[];
 }
 
-/**
- * Groups `items` into the fixed label order by `timestamp`, dropping empty
- * groups. Items inside a group keep their incoming (newest-first) order.
- */
 function groupArchivedByTime<T>(
   items: readonly T[],
   timestamp: (item: T) => number,

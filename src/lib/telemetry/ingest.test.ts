@@ -29,15 +29,18 @@ beforeEach(() => {
 });
 
 describe('flushNow', () => {
-  it('sends everything queued, split into batches no larger than the configured max', async () => {
+  it('ignores an empty queue and drains records in bounded batches without feedback', async () => {
     const queue = createBoundedQueue<FrontendSpanRecord>(200);
+    const { flushNow } = createFlushScheduler(queue);
+    await flushNow();
+    expect(mockInvoke).not.toHaveBeenCalled();
     for (let index = 0; index < MAX_BATCH_SIZE + 5; index += 1)
       queue.push(sampleRecord(index));
-    const { flushNow } = createFlushScheduler(queue);
 
     await flushNow();
 
     expect(queue.length).toBe(0);
+    expect(queue.dropped).toBe(0);
     expect(mockInvoke).toHaveBeenCalledTimes(2);
     expect(mockInvoke.mock.calls[0]?.[1]).toMatchObject({
       records: expect.arrayContaining([expect.any(Object)]),
@@ -71,24 +74,6 @@ describe('flushNow', () => {
     release?.();
     await first;
     expect(mockInvoke).toHaveBeenCalledTimes(2);
-  });
-
-  it('does nothing when the queue is empty', async () => {
-    const queue = createBoundedQueue<FrontendSpanRecord>(200);
-    const { flushNow } = createFlushScheduler(queue);
-    await flushNow();
-    expect(mockInvoke).not.toHaveBeenCalled();
-  });
-
-  it('never enqueues anything about sending the batch itself', async () => {
-    const queue = createBoundedQueue<FrontendSpanRecord>(200);
-    queue.push(sampleRecord(0));
-    const { flushNow } = createFlushScheduler(queue);
-
-    await flushNow();
-
-    expect(queue.length).toBe(0);
-    expect(queue.dropped).toBe(0);
   });
 
   it('swallows a rejected invoke call so it never surfaces to the caller', async () => {

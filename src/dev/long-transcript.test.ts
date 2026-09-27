@@ -6,10 +6,11 @@ import createLongTranscript, {
 } from './long-transcript';
 
 describe('showcase transcript', () => {
-  it('matches the original thirteen tail entries exactly, including IDs', () => {
+  it('matches the original thirteen tail entries and default transcript length', () => {
     const originalTail = createLongTranscript().slice(4_987);
     const showcase = createShowcaseTranscript();
 
+    expect(createLongTranscript()).toHaveLength(5_000);
     expect(showcase).toHaveLength(13);
     expect(showcase).toEqual(originalTail);
     expect(showcase.map(({ id }) => id)).toEqual([
@@ -29,13 +30,20 @@ describe('showcase transcript', () => {
     ]);
   });
 
-  it('returns independent entries on every call', () => {
+  it('returns independent showcase and preview entries on every call', () => {
     const first = createShowcaseTranscript();
     const second = createShowcaseTranscript();
     expect(first).not.toBe(second);
     expect(first[0]).not.toBe(second[0]);
     first[0]!.text = 'changed';
     expect(second).toEqual(createLongTranscript().slice(4_987));
+
+    const firstPreview = createPreviewTranscript();
+    const secondPreview = createPreviewTranscript();
+    expect(firstPreview).not.toBe(secondPreview);
+    expect(firstPreview[0]).not.toBe(secondPreview[0]);
+    firstPreview[0]!.text = 'changed';
+    expect(secondPreview).toEqual(createShowcaseTranscript().slice(10, 11));
   });
 
   it('uses the original assistant showcase entry for preview', () => {
@@ -44,18 +52,5 @@ describe('showcase transcript', () => {
     expect(preview).toEqual(createShowcaseTranscript().slice(10, 11));
     expect(preview[0]).toEqual(createLongTranscript()[4_997]);
     expect(preview[0]?.id).toBe('fixture-markdown-showcase');
-  });
-
-  it('returns independent preview entries on every call', () => {
-    const first = createPreviewTranscript();
-    const second = createPreviewTranscript();
-    expect(first).not.toBe(second);
-    expect(first[0]).not.toBe(second[0]);
-    first[0]!.text = 'changed';
-    expect(second).toEqual(createShowcaseTranscript().slice(10, 11));
-  });
-
-  it('keeps the default long transcript at 5000 entries', () => {
-    expect(createLongTranscript()).toHaveLength(5_000);
   });
 });

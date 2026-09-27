@@ -1,14 +1,6 @@
-//! Native telemetry: OTel `LoggerProvider`/`TracerProvider`s backed by the
-//! bounded segmented JSON store in `store.rs`, exported through
-//! `exporter.rs`. This module owns provider initialization, the app
-//! lifecycle events (`app.started`, `app.exited`), the shared
-//! `start_command_span` every ordinary Tauri command now uses to link its
-//! native work into the frontend action that requested it (Stage 2 proved it
-//! on one call site; Stage 3 applies it broadly), `record_process_lifecycle`/
-//! `record_reader_event`, the native Pi process/reader log families `pi.rs`
-//! uses, the durable start/clean-exit marker that detects an unclean
-//! previous run, and the recursion-safe panic hook (see
-//! `OBSERVABILITY_PLAN.md`).
+//! Native telemetry providers, bounded local storage, and lifecycle diagnostics.
+//! Command spans link native work to its frontend request; the panic hook
+//! records only sanitized locations without recursing into the writer.
 
 pub mod attributes;
 mod exporter;
@@ -47,61 +39,35 @@ use crate::profile::{self, ENVIRONMENT_NAME};
 use privacy::{sanitize_source_location, truncate_to_limit, DEFAULT_MAX_ATTRIBUTE_LEN};
 use trace_context::TraceContext;
 
-/// The durable start marker's file name, kept in the same telemetry
-/// directory as the segments so it shares that directory's owner-only
-/// permissions. Its mere presence at the *next* launch means this run never
-/// reached a clean exit.
+/// Start marker shares the segments’ owner-only directory; presence on the next launch means no
+/// clean exit.
 const RUN_MARKER_FILE: &str = "run.marker";
 
-// Guards against a panic occurring while the installed hook is already
-// handling a previous panic on the same thread (for example, a bug in the
-// hook's own sanitization code panicking). The previous hook still runs
-// either way; only telemetry recording is skipped on re-entry, since
-// recursing into it risks panicking again.
+// Skip telemetry on panic-hook re-entry to avoid recursion; still invoke the previous hook.
 thread_local! {
     static IN_PANIC_HOOK: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Directory holding telemetry segments, relative to Tau's per-profile
-/// application-data directory (see `profile::app_data_dir`).
 pub const TELEMETRY_DIR_NAME: &str = "telemetry";
 
-/// One newline-delimited OTLP JSON segment file per signal.
 pub const TRACE_SEGMENT_FILE: &str = "traces.jsonl";
 pub const LOG_SEGMENT_FILE: &str = "logs.jsonl";
 pub const METRIC_SEGMENT_FILE: &str = "metrics.jsonl";
 
 const SCOPE_NAME: &str = "tau";
 
-/// How often the metric `PeriodicReader` collects and exports. Short, per
-/// the design principles' "use a short export interval so a crash loses
-/// little completed telemetry" — the same reasoning Stage 1 gave for the
-/// log/span writer being synchronous rather than batched.
+/// Collect frequently so a crash loses little completed metric telemetry.
 const METRIC_EXPORT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
 
-/// Every OTel metric instrument this module records into, built once from
-/// one `Meter` in `Telemetry::new`. Grouped in its own struct so
-/// `Telemetry`'s own fields stay about providers/storage, not individual
-/// instruments.
 struct Metrics {
-    /// `tauri.invoke`/`ui.action`/`pi.rpc` span durations, derived from an
-    /// already-ingested frontend span's own start/end timestamps — see
-    /// `record_operation_duration`. One shared instrument per family
-    /// selected by name, not three separate call sites duplicating the
-    /// same recording logic.
     invoke_duration: Histogram<f64>,
     ui_action_duration: Histogram<f64>,
     pi_rpc_duration: Histogram<f64>,
     controller_start_duration: Histogram<f64>,
-    /// The two raw frontend measurements with no native span/log
-    /// counterpart to derive a metric from; see `ingest.rs`'s
-    /// `FrontendMetricRecord`.
     event_loop_lag: Histogram<f64>,
     long_task_duration: Histogram<f64>,
     pi_process_starts: Counter<u64>,
     pi_process_exits: Counter<u64>,
-    /// Incremented whenever an ingested `pi.rpc` span's own
-    /// `pi.rpc.outcome` attribute is present and not `"success"`.
     pi_rpc_failures: Counter<u64>,
     pi_rpc_abandoned: Counter<u64>,
     pi_rpc_unmatched: Counter<u64>,
@@ -167,38 +133,24 @@ impl Metrics {
     }
 }
 
-/// The native telemetry pipeline for one app launch. Construction never
-/// fails: a directory or writer problem degrades to the store's in-memory
-/// fallback instead of stopping app startup.
-///
-/// A launch outside admin mode (see `admin.rs`) builds the same pipeline
-/// disabled: providers exist so no call site needs an `Option`, but the
-/// store drops every record and touches no file until `set_enabled(true)`.
+/// Per-launch pipeline. Store failures fall back to bounded memory, never blocking startup.
+/// Outside admin mode providers exist but remain disabled.
 pub struct Telemetry {
     logger_provider: SdkLoggerProvider,
     tracer_provider: SdkTracerProvider,
     meter_provider: SdkMeterProvider,
     metrics: Metrics,
     store: Arc<store::Store>,
-    /// Precomputed once so `ingest.rs` does not rebuild it per frontend
-    /// record; see `exporter::resource_to_json`.
     resource_json: serde_json::Value,
     /// Where the run marker lives, so `record_app_exited` can clear it.
     telemetry_dir: PathBuf,
-    /// Whether the *previous* run's marker was still present when this run
-    /// started, i.e. that run never reached a clean exit. Computed once in
-    /// `new`, before this run's own marker is written.
+    /// Capture the previous run’s marker before writing this run’s marker.
     previous_run_unclean: bool,
-    /// Mirrors the store's own gate so the marker and lifecycle events —
-    /// the parts of the pipeline that do not pass through the store — can
-    /// be skipped while telemetry is off.
+    /// Gate marker/lifecycle events separately; they bypass the store gate.
     enabled: std::sync::atomic::AtomicBool,
 }
 
 impl Telemetry {
-    /// Initializes telemetry using the real clock and Tau's per-profile
-    /// application-data directory. Call this before constructing the Tauri
-    /// builder so setup-time work is covered too.
     pub fn init() -> Self {
         Telemetry::new(
             resolve_telemetry_dir(),
@@ -240,8 +192,6 @@ impl Telemetry {
             .with_reader(metric_reader)
             .build();
         let metrics = Metrics::new(&meter_provider.meter(SCOPE_NAME));
-        // Do not sample: the design principles call for recording all of
-        // this deliberately low-volume telemetry.
         let tracer_provider = SdkTracerProvider::builder()
             .with_resource(resource)
             .with_sampler(Sampler::AlwaysOn)
@@ -264,12 +214,8 @@ impl Telemetry {
         self.enabled.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Starts or stops recording mid-run, which is what admin mode toggles.
-    /// Enabling picks the run up where a launch in admin mode would have
-    /// begun it — marker written, `app.started` recorded — so the run still
-    /// reads as a whole one; disabling flushes what was already recorded
-    /// and clears the marker, since no clean exit will be recorded for a
-    /// run that stops observing itself.
+    /// On admin enable, start a run marker and lifecycle; on disable, flush and clear it so
+    /// toggling does not imply a crash.
     pub fn set_enabled(&self, enabled: bool) {
         if self
             .enabled
@@ -292,10 +238,7 @@ impl Telemetry {
         clear_run_marker(&self.telemetry_dir);
     }
 
-    /// Records this run's start marker and, if the *previous* run's own
-    /// marker was still present (it never reached `record_app_exited`),
-    /// also records and force-flushes an `app.unclean_exit_detected` log so
-    /// that evidence survives even if this run also crashes.
+    /// Flush the prior unclean-exit event in case this launch also crashes.
     pub fn record_app_started(&self) {
         self.emit_lifecycle_log("app.started");
         if self.previous_run_unclean {
@@ -304,12 +247,8 @@ impl Telemetry {
         }
     }
 
-    /// Records the clean-exit marker, records writer-health telemetry if
-    /// any writes failed this run, force-flushes both, and clears this
-    /// run's start marker so the *next* launch does not see it as unclean.
-    /// Callers must invoke this from a `RunEvent::Exit` handler: `App::run`
-    /// calls `std::process::exit` internally once it returns, which skips
-    /// `Drop`, so nothing here can rely on destructors running.
+    /// Flush exit and writer-health events before clearing the marker; call from
+    /// `RunEvent::Exit`.
     pub fn record_app_exited(&self) {
         if !self.is_enabled() {
             return;
@@ -327,18 +266,14 @@ impl Telemetry {
         let _ = self.meter_provider.shutdown();
     }
 
-    /// Force-flushes the metric provider. Used by tests (the `PeriodicReader`
-    /// otherwise only collects on its own interval) and available for the
-    /// same "flush aggressively" call sites logs already force-flush.
+    /// Force collection for tests and explicit flush points; otherwise the periodic reader
+    /// waits.
     pub fn force_flush_metrics(&self) {
         let _ = self.meter_provider.force_flush();
     }
 
-    /// Force-flushes the log provider. A no-op for correctness today, since
-    /// the `SimpleLogProcessor` this module builds already writes and syncs
-    /// synchronously on every `emit`, but called explicitly at every point
-    /// the plan names (process exit, reader failure, failed event emission)
-    /// so the intent stays correct if the exporter ever becomes batched.
+    /// The simple processor syncs each emit already; explicit flush preserves exit/failure
+    /// boundaries.
     pub fn force_flush_logs(&self) {
         let _ = self.logger_provider.force_flush();
     }
@@ -353,10 +288,7 @@ impl Telemetry {
         logger.emit(record);
     }
 
-    /// Records `telemetry.health`'s writer-failure count if any write to
-    /// disk failed this run. Reads `Store::failed_writes`, which is always
-    /// available regardless of whether the failed records themselves were
-    /// retained in the bounded fallback or evicted from it.
+    /// Count failed writes even when fallback records have since been evicted.
     fn record_writer_health(&self) {
         let failed_writes = self.store.failed_writes();
         self.metrics
@@ -378,10 +310,7 @@ impl Telemetry {
         );
     }
 
-    /// Records one duration observation into whichever histogram `family`
-    /// selects (`tauri.invoke`/`ui.action`/`pi.rpc`). Any other family is a
-    /// silent no-op: forward-compatible with a new span family this module
-    /// has no matching instrument for yet, rather than a hard error.
+    /// Unknown families are no-ops so new span families cannot break ingestion.
     pub(super) fn record_operation_duration(&self, family: &str, duration_ms: f64) {
         let histogram = if family == attributes::TAURI_INVOKE.name {
             &self.metrics.invoke_duration
@@ -416,17 +345,11 @@ impl Telemetry {
         self.metrics.pi_rpc_unmatched.add(1, &[]);
     }
 
-    /// Records one `tau.pi_process.starts` count. Called from `pi.rs` at the
-    /// same point `record_process_lifecycle("pi.process.started", ...)` is.
     pub fn record_pi_process_start(&self) {
         self.metrics.pi_process_starts.add(1, &[]);
     }
 
-    /// Records one `tau.pi_process.exits` count, with a bounded
-    /// `tau.process.exit_outcome` dimension (`"clean"`/`"unexpected"`) — two
-    /// hardcoded, compile-time values, not accepted from any untrusted
-    /// input, so this does not need to go through the attribute catalog
-    /// `ingest.rs` revalidates frontend-submitted values against.
+    /// Only two hardcoded exit outcomes; no untrusted metric dimension enters here.
     pub fn record_pi_process_exit(&self, clean: bool) {
         let outcome = if clean { "clean" } else { "unexpected" };
         self.metrics
@@ -434,9 +357,6 @@ impl Telemetry {
             .add(1, &[KeyValue::new("tau.process.exit_outcome", outcome)]);
     }
 
-    /// Records the frontend's own periodic gauge values (already validated
-    /// as a `frontend.heartbeat` log by the time this is called) into the
-    /// matching native `Gauge` instruments.
     pub(super) fn record_heartbeat_gauges(
         &self,
         pending_rpc_count: u64,
@@ -466,30 +386,17 @@ impl Telemetry {
             .record(dropped_count, &[]);
     }
 
-    /// Records one raw frontend-measured event-loop-lag reading (no native
-    /// span/log counterpart exists to derive this from) into the histogram,
-    /// with the caller's already-validated `visibility`/`focused` dimensions.
     pub(super) fn record_event_loop_lag(&self, lag_ms: f64, dimensions: &[KeyValue]) {
         self.metrics.event_loop_lag.record(lag_ms, dimensions);
     }
 
-    /// Records one raw frontend-measured `PerformanceObserver` `longtask`
-    /// duration (no native span/log counterpart exists to derive this
-    /// from) into the histogram. No dimensions.
     pub(super) fn record_long_task_duration(&self, duration_ms: f64) {
         self.metrics.long_task_duration.record(duration_ms, &[]);
     }
 
-    /// Starts a native span in the `tauri.invoke` family as a child of the
-    /// frontend-originated `context`, so the frontend span that requested
-    /// `command` and this native work share one trace. `context` is passed
-    /// explicitly by the caller on every invocation — never read from an
-    /// ambient/global "current span" — so concurrent calls cannot leak trace
-    /// context into each other.
-    ///
-    /// Returns `None` if `context` is not a well-formed trace/span id or the
-    /// command name fails catalog validation; telemetry failure never fails
-    /// the command it is attached to.
+    /// Links native work to the frontend trace via explicit context, never ambient
+    /// state: concurrent invocations must not share trace context. Invalid IDs
+    /// or catalog names skip telemetry without failing the command.
     pub fn start_command_span(
         &self,
         context: &TraceContext,
@@ -523,14 +430,14 @@ impl Telemetry {
 
     /// Persists an already-validated OTLP trace JSON record. Used only by
     /// `ingest.rs`, after it has revalidated a frontend record against the
-    /// Stage 0 catalog.
+    /// attribute catalog.
     pub(super) fn record_trace(&self, value: serde_json::Value) -> bool {
         self.store.append(store::Signal::Trace, value)
     }
 
     /// Persists an already-validated OTLP log JSON record. Used only by
     /// `ingest.rs`, for frontend-originated logs (`frontend.error`) after
-    /// it has revalidated the record against the Stage 0 catalog.
+    /// it has revalidated the record against the attribute catalog.
     pub(super) fn record_log(&self, value: serde_json::Value) -> bool {
         self.store.append(store::Signal::Log, value)
     }
@@ -570,12 +477,7 @@ impl Telemetry {
         self.force_flush_logs();
     }
 
-    /// Records one `pi.process.lifecycle` log: resolution, start, stop, or
-    /// exit. `generation` is included only when known (resolution happens
-    /// before a runtime's first process has one). Every attribute is
-    /// revalidated against the catalog before being attached, so a caller
-    /// mistake drops the attribute rather than persisting an unreviewed one;
-    /// telemetry failure never affects Pi process management itself.
+    /// Resolution lacks a generation; validate all lifecycle attributes before emission.
     pub fn record_process_lifecycle(
         &self,
         event_name: &'static str,
@@ -594,10 +496,7 @@ impl Telemetry {
         );
     }
 
-    /// Records one `pi.reader` log: a dropped oversized/malformed line, a
-    /// reader thread failure, or a failed `pi-event` emission. All native
-    /// diagnostics about `pi.rs`'s own reading/forwarding machinery, never
-    /// about Pi's own process lifecycle (see `record_process_lifecycle`).
+    /// Reader/forwarding diagnostics only, not Pi process lifecycle events.
     pub fn record_reader_event(
         &self,
         event_name: &'static str,
@@ -628,11 +527,7 @@ impl Telemetry {
         self.force_flush_logs();
     }
 
-    /// Shared implementation behind every "validate attributes against
-    /// `family`, optionally attach runtime/generation context and an active
-    /// span, emit an Info-severity log" helper above. Kept as named
-    /// wrappers rather than one public generic method so call sites read as
-    /// what they are recording, not as a bare family string.
+    /// Named wrappers constrain call-site event names; revalidate context and attributes here.
     fn emit_family_log(
         &self,
         family: &str,
@@ -683,18 +578,8 @@ impl Telemetry {
         logger.emit(record);
     }
 
-    /// Installs a panic hook that first calls whatever hook was previously
-    /// registered (Rust's own default hook prints the panic to stderr; a
-    /// test harness might install its own), preserving existing behavior
-    /// completely, then attempts to record one sanitized `rust.panic` log.
-    /// Only a sanitized `basename:line:column` location is ever recorded —
-    /// never the panic message or payload, which can contain arbitrary
-    /// content. Re-entering this hook on the same thread (this closure's
-    /// own code panicking) is guarded by a thread-local flag: the previous
-    /// hook still runs, but recording is skipped rather than risking
-    /// another recursive panic. The closure captures only cheap clones
-    /// (`Arc<Store>`, a small `resource_json` value), never a borrow of
-    /// `self`, since the hook must be `'static` and outlives this call.
+    /// Preserves the previous panic hook, then records only a sanitized location,
+    /// never the payload. A thread-local guard prevents recursive recording.
     pub fn install_panic_hook(&self) {
         let store = Arc::clone(&self.store);
         let resource_json = self.resource_json.clone();
@@ -719,12 +604,7 @@ impl Telemetry {
     }
 }
 
-/// Runs `record` unless this thread is already inside a panic-hook
-/// invocation — i.e. this same closure's own code is panicking again —
-/// toggling the re-entrancy guard around it. Extracted from the hook
-/// closure so this exact guard behavior can be unit tested without
-/// triggering a genuinely re-entrant panic, which risks aborting the whole
-/// process if mishandled.
+/// Test the same thread-local panic re-entry guard used by the hook.
 fn guarded_panic_record(record: impl FnOnce()) {
     let already_in_hook = IN_PANIC_HOOK.with(|flag| flag.replace(true));
     if !already_in_hook {
@@ -733,17 +613,9 @@ fn guarded_panic_record(record: impl FnOnce()) {
     IN_PANIC_HOOK.with(|flag| flag.set(already_in_hook));
 }
 
-/// Builds a `rust.panic` log record and persists it through
-/// `Store::try_append`, bypassing the OTel `Logger`/`LoggerProvider`
-/// entirely (which always blocks on the same writer lock `append` uses).
-/// This is the one telemetry path in the whole module that does not go
-/// through `emit_family_log`, specifically so the panic hook can call it
-/// without ever risking a deadlock on a lock this same thread might already
-/// hold. `location` must already be sanitized; only the reviewed
-/// `tau.error.location` attribute is attached, and only if it validates. A
-/// free function, not a `Telemetry` method, so the panic hook's closure
-/// needs to capture only `Arc<Store>` and the resource JSON, not a
-/// `Telemetry` reference it cannot safely hold across a `'static` hook.
+/// Uses nonblocking `try_append` instead of the OTel logger: a panic may
+/// occur while this thread holds the writer lock. Only the sanitized location
+/// is attached; neither the panic payload nor arbitrary attributes are stored.
 fn record_panic_to(store: &store::Store, resource_json: &serde_json::Value, location: &str) {
     let family = attributes::RUST_PANIC.name;
     let location_value =
@@ -788,17 +660,12 @@ fn record_panic_to(store: &store::Store, resource_json: &serde_json::Value, loca
     let _ = store.try_append(store::Signal::Log, wrapped);
 }
 
-/// Returns `true` if the *previous* launch's run marker was still present,
-/// meaning that run never reached `record_app_exited` (a crash, a force
-/// quit, or an OS-level kill). Must be called before `write_run_marker`
-/// writes this run's own marker.
+/// Check before writing this run’s marker to identify the previous unclean exit.
 fn previous_run_was_unclean(dir: &Path) -> bool {
     dir.join(RUN_MARKER_FILE).is_file()
 }
 
-/// Writes and syncs this run's start marker. Left in place until
-/// `clear_run_marker` removes it at a clean exit, so a marker still present
-/// at the *next* launch means this run itself never reached that point.
+/// Sync the marker until clean exit so the next launch can detect an interruption.
 fn write_run_marker(dir: &Path) {
     let _ = fs::create_dir_all(dir);
     set_owner_only_marker_dir_permissions(dir);
@@ -840,9 +707,7 @@ fn set_owner_only_marker_file_permissions(path: &Path) {
 #[cfg(not(unix))]
 fn set_owner_only_marker_file_permissions(_path: &Path) {}
 
-/// Ends the wrapped native span when dropped, so it is recorded whether the
-/// guarded scope returns normally or via `?`. Concurrent callers each own
-/// their own `CommandSpan`; nothing here is shared mutable state.
+/// Drop ends the span even on early return; each invocation owns its context.
 pub struct CommandSpan {
     span: opentelemetry_sdk::trace::Span,
 }
@@ -859,9 +724,7 @@ impl Drop for CommandSpan {
     }
 }
 
-/// Builds the per-launch resource from exactly the six attributes Stage 0
-/// cataloged: no SDK-provided extras, so the resource never carries more
-/// than the reviewed allowlist.
+/// Build the resource from the reviewed six attributes, without SDK extras.
 fn build_resource() -> Resource {
     let instance_id = truncate_to_limit(&generate_instance_id(), DEFAULT_MAX_ATTRIBUTE_LEN);
     let version = truncate_to_limit(env!("CARGO_PKG_VERSION"), DEFAULT_MAX_ATTRIBUTE_LEN);
@@ -881,10 +744,7 @@ fn generate_instance_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-/// Converts a validated `opentelemetry::Value` to the log API's `AnyValue`.
-/// Fails closed like `exporter::any_value_json`/`otel_value_json`: an
-/// unsupported variant renders as a fixed marker, never `Debug` output that
-/// could leak an unexpected value's content.
+/// Unsupported values become a fixed marker, never potentially sensitive `Debug` output.
 fn otel_value_to_any_value(value: &opentelemetry::Value) -> AnyValue {
     match value {
         opentelemetry::Value::String(value) => AnyValue::String(value.as_str().to_string().into()),
@@ -904,7 +764,6 @@ fn os_type_value() -> &'static str {
     }
 }
 
-/// Maps Rust's `std::env::consts::ARCH` to the OTel `host.arch` enum values.
 fn host_arch_value() -> &'static str {
     match std::env::consts::ARCH {
         "x86_64" => "amd64",
@@ -936,10 +795,7 @@ mod tests {
         if cfg!(target_os = "macos") {
             assert_eq!(os_type_value(), "darwin");
         }
-    }
 
-    #[test]
-    fn host_arch_uses_the_otel_enum_values() {
         assert_eq!(
             host_arch_value(),
             match std::env::consts::ARCH {
@@ -962,13 +818,12 @@ mod tests {
         expected.sort_unstable();
         actual.sort_unstable();
         assert_eq!(actual, expected);
-    }
 
-    #[test]
-    fn resource_string_attributes_are_truncated_to_the_shared_limit() {
-        let long_id = "x".repeat(DEFAULT_MAX_ATTRIBUTE_LEN * 2);
-        let truncated = truncate_to_limit(&long_id, DEFAULT_MAX_ATTRIBUTE_LEN);
-        assert_eq!(truncated.len(), DEFAULT_MAX_ATTRIBUTE_LEN);
+        {
+            let long_id = "x".repeat(DEFAULT_MAX_ATTRIBUTE_LEN * 2);
+            let truncated = truncate_to_limit(&long_id, DEFAULT_MAX_ATTRIBUTE_LEN);
+            assert_eq!(truncated.len(), DEFAULT_MAX_ATTRIBUTE_LEN);
+        }
     }
 
     #[test]
@@ -1017,23 +872,22 @@ mod tests {
             .iter()
             .any(|attribute| attribute["key"] == "service.name"
                 && attribute["value"]["stringValue"] == "tau"));
-    }
 
-    #[test]
-    fn record_app_exited_force_flushes_so_the_marker_is_durable() {
-        let directory = tempfile::tempdir().expect("temp dir");
-        let clock: Arc<dyn store::Clock> = Arc::new(store::SystemClock);
-        let telemetry = Telemetry::new(directory.path().to_path_buf(), clock, true);
+        {
+            let directory = tempfile::tempdir().expect("temp dir");
+            let clock: Arc<dyn store::Clock> = Arc::new(store::SystemClock);
+            let telemetry = Telemetry::new(directory.path().to_path_buf(), clock, true);
 
-        telemetry.record_app_exited();
-        telemetry.shutdown();
+            telemetry.record_app_exited();
+            telemetry.shutdown();
 
-        let contents = std::fs::read_to_string(directory.path().join(LOG_SEGMENT_FILE))
-            .expect("log segment should exist");
-        let line = contents.lines().next().expect("one log line");
-        let value: serde_json::Value = serde_json::from_str(line).expect("valid json");
-        let log_record = &value["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
-        assert_eq!(log_record["eventName"], "app.exited");
+            let contents = std::fs::read_to_string(directory.path().join(LOG_SEGMENT_FILE))
+                .expect("log segment should exist");
+            let line = contents.lines().next().expect("one log line");
+            let value: serde_json::Value = serde_json::from_str(line).expect("valid json");
+            let log_record = &value["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+            assert_eq!(log_record["eventName"], "app.exited");
+        }
     }
 
     #[test]
@@ -1052,36 +906,35 @@ mod tests {
             !dir.exists(),
             "a disabled run must not create its own directory"
         );
-    }
 
-    #[test]
-    fn enabling_a_disabled_run_starts_recording_and_disabling_stops_it() {
-        let parent = tempfile::tempdir().expect("temp dir");
-        let dir = parent.path().join("telemetry");
-        let telemetry = Telemetry::new(dir.clone(), Arc::new(store::SystemClock), false);
-        telemetry.record_app_started();
+        {
+            let parent = tempfile::tempdir().expect("temp dir");
+            let dir = parent.path().join("telemetry");
+            let telemetry = Telemetry::new(dir.clone(), Arc::new(store::SystemClock), false);
+            telemetry.record_app_started();
 
-        telemetry.set_enabled(true);
-        assert!(dir.join(RUN_MARKER_FILE).is_file());
-        let after_enabling = read_event_names(&dir);
-        assert_eq!(after_enabling, vec!["app.started".to_string()]);
+            telemetry.set_enabled(true);
+            assert!(dir.join(RUN_MARKER_FILE).is_file());
+            let after_enabling = read_event_names(&dir);
+            assert_eq!(after_enabling, vec!["app.started".to_string()]);
 
-        telemetry.set_enabled(false);
-        assert!(
-            !dir.join(RUN_MARKER_FILE).exists(),
-            "a run that stops observing itself records no clean exit to detect"
-        );
-        let after_disabling = read_event_names(&dir);
-        assert_eq!(
-            after_disabling,
-            vec![
-                "app.started".to_string(),
-                "app.telemetry_disabled".to_string()
-            ]
-        );
+            telemetry.set_enabled(false);
+            assert!(
+                !dir.join(RUN_MARKER_FILE).exists(),
+                "a run that stops observing itself records no clean exit to detect"
+            );
+            let after_disabling = read_event_names(&dir);
+            assert_eq!(
+                after_disabling,
+                vec![
+                    "app.started".to_string(),
+                    "app.telemetry_disabled".to_string()
+                ]
+            );
 
-        telemetry.record_app_exited();
-        assert_eq!(read_event_names(&dir), after_disabling);
+            telemetry.record_app_exited();
+            assert_eq!(read_event_names(&dir), after_disabling);
+        }
     }
 
     fn read_event_names(dir: &Path) -> Vec<String> {
@@ -1137,24 +990,23 @@ mod tests {
             "load_workspace"
         );
         assert_ne!(span["spanId"], context.span_id);
-    }
 
-    #[test]
-    fn command_span_rejects_a_malformed_context() {
-        let (telemetry, _directory) = test_telemetry();
-        for malformed in [
-            sample_context("not-hex", "00f067aa0ba902b7"),
-            sample_context("00000000000000000000000000000000", "00f067aa0ba902b7"),
-            sample_context("4BF92F3577B34DA6A3CE929D0E0E4736", "00f067aa0ba902b7"),
-        ] {
+        {
+            let (telemetry, _directory) = test_telemetry();
+            for malformed in [
+                sample_context("not-hex", "00f067aa0ba902b7"),
+                sample_context("00000000000000000000000000000000", "00f067aa0ba902b7"),
+                sample_context("4BF92F3577B34DA6A3CE929D0E0E4736", "00f067aa0ba902b7"),
+            ] {
+                assert!(telemetry
+                    .start_command_span(&malformed, "load_workspace")
+                    .is_none());
+            }
             assert!(telemetry
-                .start_command_span(&malformed, "load_workspace")
-                .is_none());
+                .store
+                .read_records(store::Signal::Trace)
+                .is_empty());
         }
-        assert!(telemetry
-            .store
-            .read_records(store::Signal::Trace)
-            .is_empty());
     }
 
     #[test]
@@ -1230,7 +1082,6 @@ mod tests {
         telemetry.record_operation_duration(attributes::UI_ACTION.name, 40.0);
         telemetry.record_operation_duration(attributes::PI_RPC.name, 250.0);
         telemetry.record_controller_start_duration(500.0);
-        // An unrecognized family is a silent no-op, not a new instrument.
         telemetry.record_operation_duration("not.a.real.family", 999.0);
 
         let records = process_metric_records(&telemetry);
@@ -1349,6 +1200,37 @@ mod tests {
         let point = &metric["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["gauge"]
             ["dataPoints"][0];
         assert_eq!(point["asInt"], "0");
+
+        {
+            let directory = tempfile::tempdir().expect("temp dir");
+            let blocked_path = directory.path().join("telemetry");
+            std::fs::write(&blocked_path, b"file").expect("blocking file");
+            let telemetry =
+                Telemetry::new(blocked_path.clone(), Arc::new(store::SystemClock), true);
+
+            // Fails: `blocked_path` is a file, not a directory, so this lands in
+            // the store's bounded in-memory fallback instead of on disk.
+            telemetry.record_app_started();
+            assert!(telemetry.store.failed_writes() > 0);
+
+            std::fs::remove_file(&blocked_path).expect("remove blocking file");
+
+            telemetry.record_app_exited();
+
+            let records = process_log_records(&telemetry);
+            assert!(records.iter().any(|record| {
+                let log_record = &record["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+                log_record["eventName"] == "telemetry.writer_failure"
+                    && log_record["attributes"]
+                        .as_array()
+                        .is_some_and(|attributes| {
+                            attributes.iter().any(|attribute| {
+                                attribute["key"] == "tau.telemetry.failed_write_count"
+                                    && attribute["value"]["intValue"] == "1"
+                            })
+                        })
+            }));
+        }
     }
 
     #[test]
@@ -1379,67 +1261,61 @@ mod tests {
             attribute_keys,
             vec!["tau.heartbeat.focused", "tau.heartbeat.visibility"]
         );
-    }
 
-    #[test]
-    fn record_long_task_duration_persists_a_dimensionless_histogram() {
-        let (telemetry, _directory) = test_telemetry();
+        {
+            let (telemetry, _directory) = test_telemetry();
 
-        telemetry.record_long_task_duration(88.0);
+            telemetry.record_long_task_duration(88.0);
 
-        let records = process_metric_records(&telemetry);
-        let metric =
-            find_metric(&records, "tau.frontend.long_task.duration").expect("long task histogram");
-        let point = &metric["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["histogram"]
-            ["dataPoints"][0];
-        assert_eq!(point["sum"], 88.0);
-        assert!(point["attributes"]
-            .as_array()
-            .expect("attributes")
-            .is_empty());
-    }
+            let records = process_metric_records(&telemetry);
+            let metric = find_metric(&records, "tau.frontend.long_task.duration")
+                .expect("long task histogram");
+            let point = &metric["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["histogram"]
+                ["dataPoints"][0];
+            assert_eq!(point["sum"], 88.0);
+            assert!(point["attributes"]
+                .as_array()
+                .expect("attributes")
+                .is_empty());
+        }
 
-    /// The exit check itself: every metric this module records carries no
-    /// project, session, controller, runtime, request, or trace dimension.
-    /// Exercises every recording method with attributes at least once, then
-    /// sweeps every persisted metric's data points for a forbidden key.
-    #[test]
-    fn no_metric_ever_carries_a_forbidden_high_cardinality_dimension() {
-        let (telemetry, _directory) = test_telemetry();
+        {
+            let (telemetry, _directory) = test_telemetry();
 
-        telemetry.record_operation_duration(attributes::PI_RPC.name, 10.0);
-        telemetry.record_rpc_failure();
-        telemetry.record_pi_process_start();
-        telemetry.record_pi_process_exit(true);
-        telemetry.record_heartbeat_gauges(1, 2, 3, 4, 5);
-        telemetry.record_telemetry_dropped_gauge(6);
-        telemetry.record_event_loop_lag(
-            1.0,
-            &[
-                KeyValue::new("tau.heartbeat.visibility", "visible"),
-                KeyValue::new("tau.heartbeat.focused", "true"),
-            ],
-        );
-        telemetry.record_long_task_duration(2.0);
+            telemetry.record_operation_duration(attributes::PI_RPC.name, 10.0);
+            telemetry.record_rpc_failure();
+            telemetry.record_pi_process_start();
+            telemetry.record_pi_process_exit(true);
+            telemetry.record_heartbeat_gauges(1, 2, 3, 4, 5);
+            telemetry.record_telemetry_dropped_gauge(6);
+            telemetry.record_event_loop_lag(
+                1.0,
+                &[
+                    KeyValue::new("tau.heartbeat.visibility", "visible"),
+                    KeyValue::new("tau.heartbeat.focused", "true"),
+                ],
+            );
+            telemetry.record_long_task_duration(2.0);
 
-        let records = process_metric_records(&telemetry);
-        let forbidden = [
-            "tau.project.id",
-            "tau.session.id",
-            "tau.controller.id",
-            "tau.runtime.id",
-            "pi.generation",
-            "pi.rpc.request_id",
-            "traceId",
-            "spanId",
-        ];
-        for record in &records {
-            let encoded = record.to_string();
-            for key in forbidden {
-                assert!(
-                    !encoded.contains(key),
-                    "a metric record contained the forbidden dimension {key}: {encoded}"
-                );
+            let records = process_metric_records(&telemetry);
+            let forbidden = [
+                "tau.project.id",
+                "tau.session.id",
+                "tau.controller.id",
+                "tau.runtime.id",
+                "pi.generation",
+                "pi.rpc.request_id",
+                "traceId",
+                "spanId",
+            ];
+            for record in &records {
+                let encoded = record.to_string();
+                for key in forbidden {
+                    assert!(
+                        !encoded.contains(key),
+                        "a metric record contained the forbidden dimension {key}: {encoded}"
+                    );
+                }
             }
         }
     }
@@ -1485,104 +1361,98 @@ mod tests {
             .iter()
             .any(|attribute| attribute["key"] == "pi.generation"
                 && attribute["value"]["intValue"] == "3"));
-    }
 
-    #[test]
-    fn process_lifecycle_links_to_the_active_command_span() {
-        let (telemetry, _directory) = test_telemetry();
-        let parent = sample_context("4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7");
-        let command = telemetry
-            .start_command_span(&parent, "start_pi")
-            .expect("command span");
-        let context = command.span_context();
+        {
+            let (telemetry, _directory) = test_telemetry();
 
-        telemetry.record_process_lifecycle(
-            "pi.process.started",
-            "runtime-1",
-            Some(1),
-            Some(&context),
-            &[],
-        );
+            telemetry.record_process_lifecycle(
+                "pi.process.stopped",
+                "runtime-1",
+                Some(1),
+                None,
+                &[(
+                    "tau.process.stop_reason",
+                    opentelemetry::Value::String("not-a-real-reason".into()),
+                )],
+            );
 
-        let records = process_log_records(&telemetry);
-        let log_record = &records[0]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
-        assert_eq!(log_record["traceId"], context.trace_id().to_string());
-        assert_eq!(log_record["spanId"], context.span_id().to_string());
-        assert_eq!(log_record["flags"], context.trace_flags().to_u8());
-    }
+            let records = process_log_records(&telemetry);
+            assert_eq!(records.len(), 1);
+            let log_record = &records[0]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+            assert!(!log_record["attributes"]
+                .as_array()
+                .expect("attributes")
+                .iter()
+                .any(|attribute| attribute["key"] == "tau.process.stop_reason"));
 
-    #[test]
-    fn process_lifecycle_drops_an_unreviewed_stop_reason_without_failing() {
-        let (telemetry, _directory) = test_telemetry();
+            let (telemetry, _directory) = test_telemetry();
+            let canary = privacy::FORBIDDEN_CONTENT_CANARIES[0].1;
 
-        telemetry.record_process_lifecycle(
-            "pi.process.stopped",
-            "runtime-1",
-            Some(1),
-            None,
-            &[(
-                "tau.process.stop_reason",
-                opentelemetry::Value::String("not-a-real-reason".into()),
-            )],
-        );
+            telemetry.record_process_lifecycle(
+                "pi.process.stopped",
+                "runtime-1",
+                Some(1),
+                None,
+                &[(
+                    "tau.process.stop_reason",
+                    opentelemetry::Value::String(canary.into()),
+                )],
+            );
 
-        let records = process_log_records(&telemetry);
-        assert_eq!(records.len(), 1);
-        let log_record = &records[0]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
-        assert!(!log_record["attributes"]
-            .as_array()
-            .expect("attributes")
-            .iter()
-            .any(|attribute| attribute["key"] == "tau.process.stop_reason"));
-    }
+            let records = process_log_records(&telemetry);
+            let log_record = &records[0]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+            let encoded = log_record.to_string();
+            assert!(!encoded.contains(canary));
+            assert!(!log_record["attributes"]
+                .as_array()
+                .expect("attributes")
+                .iter()
+                .any(|attribute| attribute["key"] == "tau.process.stop_reason"));
+        }
 
-    #[test]
-    fn process_lifecycle_drops_a_forbidden_content_canary_disguised_as_a_stop_reason() {
-        let (telemetry, _directory) = test_telemetry();
-        let canary = privacy::FORBIDDEN_CONTENT_CANARIES[0].1;
+        {
+            let (telemetry, _directory) = test_telemetry();
 
-        telemetry.record_process_lifecycle(
-            "pi.process.stopped",
-            "runtime-1",
-            Some(1),
-            None,
-            &[(
-                "tau.process.stop_reason",
-                opentelemetry::Value::String(canary.into()),
-            )],
-        );
+            telemetry.record_process_lifecycle(
+                "pi.process.exited",
+                "runtime-1",
+                Some(1),
+                None,
+                &[("tau.process.exit_code", opentelemetry::Value::I64(127))],
+            );
 
-        let records = process_log_records(&telemetry);
-        let log_record = &records[0]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
-        let encoded = log_record.to_string();
-        assert!(!encoded.contains(canary));
-        assert!(!log_record["attributes"]
-            .as_array()
-            .expect("attributes")
-            .iter()
-            .any(|attribute| attribute["key"] == "tau.process.stop_reason"));
-    }
+            let records = process_log_records(&telemetry);
+            let log_record = &records[0]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+            assert!(log_record["attributes"]
+                .as_array()
+                .expect("attributes")
+                .iter()
+                .any(|attribute| attribute["key"] == "tau.process.exit_code"
+                    && attribute["value"]["intValue"] == "127"));
+        }
 
-    #[test]
-    fn process_lifecycle_exit_code_supports_a_canary_free_fail_closed_conversion() {
-        let (telemetry, _directory) = test_telemetry();
+        {
+            let (telemetry, _directory) = test_telemetry();
+            let parent = sample_context("4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7");
+            let command = telemetry
+                .start_command_span(&parent, "start_pi")
+                .expect("command span");
+            let context = command.span_context();
 
-        telemetry.record_process_lifecycle(
-            "pi.process.exited",
-            "runtime-1",
-            Some(1),
-            None,
-            &[("tau.process.exit_code", opentelemetry::Value::I64(127))],
-        );
+            telemetry.record_process_lifecycle(
+                "pi.process.started",
+                "runtime-1",
+                Some(1),
+                Some(&context),
+                &[],
+            );
 
-        let records = process_log_records(&telemetry);
-        let log_record = &records[0]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
-        assert!(log_record["attributes"]
-            .as_array()
-            .expect("attributes")
-            .iter()
-            .any(|attribute| attribute["key"] == "tau.process.exit_code"
-                && attribute["value"]["intValue"] == "127"));
+            let records = process_log_records(&telemetry);
+            let log_record = &records[0]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+            assert_eq!(log_record["traceId"], context.trace_id().to_string());
+            assert_eq!(log_record["spanId"], context.span_id().to_string());
+            assert_eq!(log_record["flags"], context.trace_flags().to_u8());
+        }
     }
 
     #[test]
@@ -1615,54 +1485,52 @@ mod tests {
             .iter()
             .any(|attribute| attribute["key"] == "pi.generation"
                 && attribute["value"]["intValue"] == "2"));
-    }
 
-    #[test]
-    fn malformed_reader_events_increment_their_counter() {
-        let (telemetry, _directory) = test_telemetry();
+        {
+            let (telemetry, _directory) = test_telemetry();
 
-        telemetry.record_reader_event(
-            "pi.reader.line_dropped",
-            "runtime-1",
-            Some(2),
-            &[(
-                "tau.reader.drop_reason",
-                opentelemetry::Value::String("malformed".into()),
-            )],
-        );
+            telemetry.record_reader_event(
+                "pi.reader.line_dropped",
+                "runtime-1",
+                Some(2),
+                &[(
+                    "tau.reader.drop_reason",
+                    opentelemetry::Value::String("malformed".into()),
+                )],
+            );
 
-        let records = process_metric_records(&telemetry);
-        let metric =
-            find_metric(&records, "tau.pi_reader.malformed_lines").expect("malformed line counter");
-        assert_eq!(
-            metric["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["sum"]["dataPoints"][0]
-                ["asInt"],
-            "1"
-        );
-    }
+            let records = process_metric_records(&telemetry);
+            let metric = find_metric(&records, "tau.pi_reader.malformed_lines")
+                .expect("malformed line counter");
+            assert_eq!(
+                metric["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["sum"]["dataPoints"]
+                    [0]["asInt"],
+                "1"
+            );
+        }
 
-    #[test]
-    fn reader_event_drops_an_unreviewed_error_kind_without_failing() {
-        let (telemetry, _directory) = test_telemetry();
+        {
+            let (telemetry, _directory) = test_telemetry();
 
-        telemetry.record_reader_event(
-            "pi.reader.failed",
-            "runtime-1",
-            None,
-            &[(
-                "tau.reader.error_kind",
-                opentelemetry::Value::String("not-a-real-kind".into()),
-            )],
-        );
+            telemetry.record_reader_event(
+                "pi.reader.failed",
+                "runtime-1",
+                None,
+                &[(
+                    "tau.reader.error_kind",
+                    opentelemetry::Value::String("not-a-real-kind".into()),
+                )],
+            );
 
-        let records = process_log_records(&telemetry);
-        assert_eq!(records.len(), 1);
-        let log_record = &records[0]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
-        assert!(!log_record["attributes"]
-            .as_array()
-            .expect("attributes")
-            .iter()
-            .any(|attribute| attribute["key"] == "tau.reader.error_kind"));
+            let records = process_log_records(&telemetry);
+            assert_eq!(records.len(), 1);
+            let log_record = &records[0]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+            assert!(!log_record["attributes"]
+                .as_array()
+                .expect("attributes")
+                .iter()
+                .any(|attribute| attribute["key"] == "tau.reader.error_kind"));
+        }
     }
 
     #[test]
@@ -1684,6 +1552,17 @@ mod tests {
             record["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["eventName"]
                 == "app.unclean_exit_detected"
         }));
+
+        {
+            let directory = tempfile::tempdir().expect("temp dir");
+            let dir = directory.path().to_path_buf();
+
+            let first = Telemetry::new(dir.clone(), Arc::new(store::SystemClock), true);
+            first.record_app_exited();
+
+            let second = Telemetry::new(dir.clone(), Arc::new(store::SystemClock), true);
+            assert!(!second.previous_run_unclean);
+        }
     }
 
     #[test]
@@ -1706,51 +1585,6 @@ mod tests {
             & 0o777;
         assert_eq!(dir_mode, 0o700);
         assert_eq!(marker_mode, 0o600);
-    }
-
-    #[test]
-    fn a_clean_exit_clears_the_marker_so_the_next_run_is_not_flagged() {
-        let directory = tempfile::tempdir().expect("temp dir");
-        let dir = directory.path().to_path_buf();
-
-        let first = Telemetry::new(dir.clone(), Arc::new(store::SystemClock), true);
-        first.record_app_exited();
-
-        let second = Telemetry::new(dir.clone(), Arc::new(store::SystemClock), true);
-        assert!(!second.previous_run_unclean);
-    }
-
-    #[test]
-    fn writer_health_is_recorded_at_exit_once_writes_start_succeeding_again() {
-        let directory = tempfile::tempdir().expect("temp dir");
-        let blocked_path = directory.path().join("telemetry");
-        std::fs::write(&blocked_path, b"file").expect("blocking file");
-        let telemetry = Telemetry::new(blocked_path.clone(), Arc::new(store::SystemClock), true);
-
-        // Fails: `blocked_path` is a file, not a directory, so this lands in
-        // the store's bounded in-memory fallback instead of on disk.
-        telemetry.record_app_started();
-        assert!(telemetry.store.failed_writes() > 0);
-
-        // The store re-checks the directory on every write, so repairing it
-        // here is enough for the next append to succeed.
-        std::fs::remove_file(&blocked_path).expect("remove blocking file");
-
-        telemetry.record_app_exited();
-
-        let records = process_log_records(&telemetry);
-        assert!(records.iter().any(|record| {
-            let log_record = &record["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
-            log_record["eventName"] == "telemetry.writer_failure"
-                && log_record["attributes"]
-                    .as_array()
-                    .is_some_and(|attributes| {
-                        attributes.iter().any(|attribute| {
-                            attribute["key"] == "tau.telemetry.failed_write_count"
-                                && attribute["value"]["intValue"] == "1"
-                        })
-                    })
-        }));
     }
 
     #[test]
@@ -1825,11 +1659,6 @@ mod tests {
             .starts_with("mod.rs"));
     }
 
-    /// Stage 6's comprehensive failure-path privacy sweep: a real panic
-    /// carrying *every* forbidden-content canary as its message, one after
-    /// another under the same installed hook, proves the panic-payload leak
-    /// path is closed for the whole reviewed catalog — not just the one
-    /// hardcoded message the test above uses.
     #[test]
     fn panic_hook_never_persists_any_forbidden_content_canary_as_the_panic_message() {
         use privacy::FORBIDDEN_CONTENT_CANARIES;
@@ -1878,15 +1707,7 @@ mod tests {
         }
     }
 
-    /// Stage 6's disk-volume measurement: appends a representative mix of
-    /// 100 log/span records (Pi process lifecycle logs and native
-    /// `tauri.invoke` command spans, the two most frequent native record
-    /// shapes) and asserts the *measured* average bytes per record — not a
-    /// hand-waved estimate — stays under a bound generous enough to allow
-    /// normal growth but tight enough to catch an accidental unbounded
-    /// payload (e.g. a bug that starts embedding message text). Measured
-    /// ~880 bytes/log and ~600 bytes/span on this codebase today; the 2000
-    /// byte bound leaves more than 2x headroom.
+    /// Exercise every forbidden-content canary in panic payloads; none may reach telemetry.
     #[test]
     fn disk_write_volume_per_record_stays_within_a_generous_bound() {
         let (telemetry, directory) = test_telemetry();
@@ -1929,19 +1750,8 @@ mod tests {
         );
     }
 
-    /// Stage 6's OTel-SDK-memory proxy: SDK memory for a metrics pipeline is
-    /// driven by the number of distinct time series (attribute-set
-    /// combinations) an instrument accumulates, not by how many times it is
-    /// recorded into — a `Histogram`/`Counter`/`Gauge` aggregates in place.
-    /// This records every instrument hundreds of times across every reviewed
-    /// dimension value, then asserts the exported series count matches
-    /// exactly the bounded, reviewed dimension combinations (2 visibility ×
-    /// 2 focused = 4 for the lag histogram; 2 outcomes for process exits;
-    /// none for everything else), never growing with call volume. Combined
-    /// with `no_metric_ever_carries_a_forbidden_high_cardinality_dimension`,
-    /// this is the reproducible check standing in for a literal heap-byte
-    /// measurement, which the design's own metric families make unnecessary:
-    /// series count, not call count, is what could make memory unbounded.
+    /// Checks bounded series cardinality rather than heap bytes: metric memory
+    /// depends on attribute combinations, not recording frequency.
     #[test]
     fn metric_series_count_stays_fixed_regardless_of_recording_volume() {
         let (telemetry, _directory) = test_telemetry();
@@ -1987,11 +1797,7 @@ mod tests {
                 .count()
         };
 
-        // Every instrument name appears at most once per collection (one
-        // record per instrument, not per call), and each instrument's own
-        // data-point count matches exactly its bounded dimension
-        // combinations — 500 recordings each still produce a fixed series
-        // count, proving memory does not grow with usage.
+        // Collection count depends on bounded dimension combinations, not recording frequency.
         assert_eq!(data_point_count("tau.invoke.duration"), 1);
         assert_eq!(data_point_count("tau.ui_action.duration"), 1);
         assert_eq!(data_point_count("tau.pi_rpc.duration"), 1);

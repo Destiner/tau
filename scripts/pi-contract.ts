@@ -582,7 +582,6 @@ async function main(): Promise<void> {
     validateEntries(await rpc.request('get_entries'));
     await rpc.close();
 
-    // Exercise the on-disk Rust projection against the same installed Pi, not a mock.
     try {
       await promisify(execFile)(
         'cargo',

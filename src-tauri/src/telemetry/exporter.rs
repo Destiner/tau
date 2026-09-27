@@ -1,9 +1,5 @@
-//! Converts emitted OTel log and span records into the OTLP JSON mapping
-//! (<https://opentelemetry.io/docs/specs/otel/protocol/file-exporter/>) and
-//! hands the resulting line to the `Store`. This is the only place that
-//! understands both the OTel SDK's record types and the on-disk JSON shape;
-//! `ingest.rs` reuses its value/envelope helpers for frontend-originated
-//! spans so both sources produce identically shaped output.
+//! Convert SDK logs/spans and frontend spans to the same OTLP JSONL mapping:
+//! <https://opentelemetry.io/docs/specs/otel/protocol/file-exporter/>.
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -24,10 +20,8 @@ use super::store::{Signal, Store};
 pub struct JsonFileLogExporter {
     store: Arc<Store>,
     resource_json: Value,
-    /// The optional development-only OTLP/HTTP export target, resolved once
-    /// at construction. Always `None` when the `otlp_export` feature is not
-    /// compiled in or no endpoint is configured, so `export` below never
-    /// attempts a network call in an ordinary build.
+    /// Optional development target; absent without the feature or endpoint, so ordinary builds
+    /// never send.
     #[cfg(feature = "otlp_export")]
     otlp: Option<Arc<super::otlp_export::OtlpTarget>>,
 }
@@ -40,10 +34,7 @@ impl std::fmt::Debug for JsonFileLogExporter {
 }
 
 impl JsonFileLogExporter {
-    /// `resource` is captured once at construction rather than through
-    /// `LogExporter::set_resource`, since Tau builds its resource before the
-    /// provider exists and passing it directly avoids depending on the SDK
-    /// calling that hook.
+    /// Capture resource at construction rather than depending on the SDK’s `set_resource` hook.
     pub fn new(store: Arc<Store>, resource: &Resource) -> Self {
         JsonFileLogExporter {
             store,
@@ -60,9 +51,8 @@ impl JsonFileLogExporter {
 
 impl LogExporter for JsonFileLogExporter {
     async fn export(&self, batch: LogBatch<'_>) -> OTelSdkResult {
-        // Checked here as well as in the store: the optional OTLP target is
-        // sent to before the record is persisted, so a disabled store alone
-        // would still let a development build export off the machine.
+        // Gate before optional network export as well as disk persistence; disabling the store
+        // alone is insufficient.
         if !self.store.is_enabled() {
             return Ok(());
         }
@@ -93,8 +83,6 @@ impl std::fmt::Debug for JsonFileSpanExporter {
 }
 
 impl JsonFileSpanExporter {
-    /// See `JsonFileLogExporter::new`: the resource is captured once here for
-    /// the same reason.
     pub fn new(store: Arc<Store>, resource: &Resource) -> Self {
         JsonFileSpanExporter {
             store,
@@ -126,12 +114,7 @@ impl SpanExporter for JsonFileSpanExporter {
     }
 }
 
-/// Writes OTLP-shaped metric points to `metrics.jsonl`, one JSON line per
-/// instrument per collection — the same "one self-contained line per record"
-/// shape traces and logs already use, rather than one line per whole
-/// collection batch. Driven by a `PeriodicReader` (see `mod.rs`), which
-/// calls `export` on its own background thread at a short, fixed interval;
-/// nothing here schedules collection itself.
+/// One self-contained OTLP JSONL record per metric instrument per periodic collection.
 pub struct JsonFileMetricExporter {
     store: Arc<Store>,
     resource_json: Value,
@@ -147,8 +130,6 @@ impl std::fmt::Debug for JsonFileMetricExporter {
 }
 
 impl JsonFileMetricExporter {
-    /// See `JsonFileLogExporter::new`: the resource is captured once here
-    /// for the same reason.
     pub fn new(store: Arc<Store>, resource: &Resource) -> Self {
         JsonFileMetricExporter {
             store,
@@ -190,11 +171,7 @@ impl PushMetricExporter for JsonFileMetricExporter {
         Ok(())
     }
 
-    /// Cumulative: every collection reports the running total/aggregate
-    /// since the instrument was created, not just the delta since the last
-    /// collection. Simpler for a local, append-only JSONL file: each line
-    /// is independently meaningful without replaying every prior line to
-    /// reconstruct a running total.
+    /// Cumulative points keep each append-only line meaningful without replaying history.
     fn temporality(&self) -> Temporality {
         Temporality::Cumulative
     }
@@ -222,13 +199,8 @@ fn histogram_data_points_json(histogram: &Histogram<f64>) -> Vec<Value> {
         .collect()
 }
 
-/// Converts one collected `Metric` (one instrument's aggregated data points)
-/// to the OTLP JSON metric mapping, wrapped in the same `resourceMetrics`
-/// envelope every line carries. Only the three data shapes this module's
-/// instruments actually use (`f64` histograms, `u64` monotonic sums, `u64`
-/// gauges) are handled; any other combination is intentionally unreachable
-/// given the instruments `mod.rs` creates, but still degrades to a bare
-/// name/unit object rather than panicking.
+/// Wrap supported histogram/sum/gauge data in `resourceMetrics`; unknown shapes degrade without
+/// panicking.
 fn metric_to_otlp_json(resource_json: &Value, scope_name: &str, metric: &data::Metric) -> Value {
     let shape = match metric.data() {
         data::AggregatedMetrics::F64(data::MetricData::Histogram(histogram)) => json!({
@@ -374,10 +346,6 @@ fn log_record_to_otlp_json(
     wrap_log_json(resource_json, scope_name, Value::Object(log_record))
 }
 
-/// Wraps one already-built OTLP log record object in the `resourceLogs`
-/// envelope. Shared by native logs (above) and `ingest.rs`'s
-/// frontend-originated logs, so both sources produce identically shaped
-/// `logs.jsonl` lines — the same relationship `wrap_span_json` has to spans.
 pub(super) fn wrap_log_json(resource_json: &Value, scope_name: &str, log_record: Value) -> Value {
     json!({
         "resourceLogs": [{
@@ -390,9 +358,6 @@ pub(super) fn wrap_log_json(resource_json: &Value, scope_name: &str, log_record:
     })
 }
 
-/// Wraps one already-built OTLP span object in the `resourceSpans` envelope.
-/// Shared by native spans (below) and `ingest.rs`'s frontend-originated
-/// spans, so both sources produce identically shaped `traces.jsonl` lines.
 pub(super) fn wrap_span_json(resource_json: &Value, scope_name: &str, span_object: Value) -> Value {
     json!({
         "resourceSpans": [{
@@ -498,8 +463,6 @@ mod tests {
         record.set_body(AnyValue::String("app.started".into()));
 
         let resource_json = json!({ "attributes": [] });
-        // `record` here is the trait object created by `create_log_record`,
-        // which for `SdkLogger` is concretely `SdkLogRecord`.
         let sdk_record: SdkLogRecord = record;
         let value = log_record_to_otlp_json(&resource_json, "tau", &sdk_record);
 
@@ -528,10 +491,7 @@ mod tests {
             otel_value_json(&opentelemetry::Value::String("x".into())),
             json!({ "stringValue": "x" })
         );
-    }
 
-    #[test]
-    fn any_value_kinds_map_to_the_otlp_json_shape() {
         assert_eq!(
             any_value_json(&AnyValue::Int(7)),
             json!({ "intValue": "7" })
@@ -544,18 +504,17 @@ mod tests {
             any_value_json(&AnyValue::String("x".into())),
             json!({ "stringValue": "x" })
         );
-    }
 
-    #[test]
-    fn unsupported_values_fail_closed_without_rendering_content() {
-        let canary = super::super::privacy::FORBIDDEN_CONTENT_CANARIES[0].1;
-        let value = AnyValue::ListAny(Box::new(vec![AnyValue::String(canary.into())]));
-        let encoded = any_value_json(&value).to_string();
-        assert_eq!(
-            encoded,
-            r#"{"stringValue":"[unsupported telemetry value]"}"#
-        );
-        assert!(!encoded.contains(canary));
+        {
+            let canary = super::super::privacy::FORBIDDEN_CONTENT_CANARIES[0].1;
+            let value = AnyValue::ListAny(Box::new(vec![AnyValue::String(canary.into())]));
+            let encoded = any_value_json(&value).to_string();
+            assert_eq!(
+                encoded,
+                r#"{"stringValue":"[unsupported telemetry value]"}"#
+            );
+            assert!(!encoded.contains(canary));
+        }
     }
 
     fn sample_span_data(parent_span_id: opentelemetry::SpanId) -> SpanData {
@@ -608,23 +567,19 @@ mod tests {
             value["resourceSpans"][0]["scopeSpans"][0]["scope"]["name"],
             "tau"
         );
-    }
 
-    #[test]
-    fn span_conversion_omits_parent_span_id_for_a_root_span() {
         let span = sample_span_data(SpanId::INVALID);
         let resource_json = json!({ "attributes": [] });
         let value = span_data_to_otlp_json(&resource_json, &span);
         let span_object = &value["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
         assert!(span_object.get("parentSpanId").is_none());
-    }
 
-    #[test]
-    fn span_kind_and_status_map_to_otlp_integer_codes() {
-        assert_eq!(span_kind_code(&SpanKind::Internal), 1);
-        assert_eq!(span_kind_code(&SpanKind::Server), 2);
-        assert_eq!(status_code(&Status::Unset), 0);
-        assert_eq!(status_code(&Status::Ok), 1);
-        assert_eq!(status_code(&Status::error("unused description")), 2);
+        {
+            assert_eq!(span_kind_code(&SpanKind::Internal), 1);
+            assert_eq!(span_kind_code(&SpanKind::Server), 2);
+            assert_eq!(status_code(&Status::Unset), 0);
+            assert_eq!(status_code(&Status::Ok), 1);
+            assert_eq!(status_code(&Status::error("unused description")), 2);
+        }
     }
 }

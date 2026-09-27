@@ -8,14 +8,16 @@ for (const scheme of ['light', 'dark'] as const) {
   }) => {
     await page.emulateMedia({ colorScheme: scheme });
     await page.goto(fixtureUrl);
-
     const transcript = page.locator('.transcript');
     await transcript.evaluate((element) => {
       element.scrollTop = 0;
     });
+    await expect(
+      page.locator('[data-message-id="current-fixture-assistant-1"] pre.shiki'),
+    ).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
     const button = page.getByRole('button', { name: 'Load earlier messages' });
     await expect(button).toHaveText('compacted');
-    await page.evaluate(() => document.fonts.ready);
     await button.scrollIntoViewIfNeeded();
     await expect(button).toBeInViewport();
     const before = await button.boundingBox();

@@ -7,7 +7,7 @@ Vue 3 and TypeScript UI for Tau. Root guidance and the quality rubric still appl
 - `components/` - Product surfaces; `components/ui/` contains reusable primitives.
 - `composables/state.ts` - Reactive workspace, session, controller, and draft state.
 - `composables/useTau.ts` - User actions and orchestration exposed to the component tree.
-- `lib/pi/` - Pi RPC lifecycle, model scope, transcript hydration, and error presentation.
+- `lib/pi/` - Pi RPC lifecycle, model scope, transcript hydration, and error presentation; `rpc-bookkeeping.ts` owns request spans/timeouts and streaming aggregates.
 - `lib/telemetry/` - Content-free tracing, metrics, logging, privacy, and bounded ingestion.
 - `lib/admin-mode.ts` / `lib/admin-code.ts` - The switch that gates telemetry and the issue reporter, and the cheat code that flips it.
 - `dev/` - Development-only fixtures and the browser Pi scenario adapter.

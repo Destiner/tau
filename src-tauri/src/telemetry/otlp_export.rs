@@ -1,20 +1,7 @@
-//! Optional, development-only OTLP export over plain HTTP/JSON, honoring the
-//! standard `OTEL_EXPORTER_OTLP_*` environment variables
-//! (<https://opentelemetry.io/docs/specs/otel/protocol/exporter/>). Compiled
-//! only behind the `otlp_export` Cargo feature — off by default, so an
-//! ordinary build never links this module, and never depends on it at
-//! runtime — and inert even when compiled in unless an endpoint is actually
-//! configured: nothing here ever attempts a network connection on its own.
-//!
-//! Reuses the exact OTLP JSON `exporter.rs` already builds for local
-//! storage, so there is no second payload format to maintain. Uses a raw
-//! `std::net::TcpStream` HTTP/1.1 client rather than a new HTTP crate
-//! dependency: `POST`ing one already-built JSON body to a local development
-//! Collector does not need a full HTTP stack, TLS, redirects, or connection
-//! pooling, and adding one would be exactly the kind of dependency this
-//! feature must not become. `https://` endpoints are therefore not
-//! supported; a local Collector's default OTLP/HTTP endpoint is plain HTTP
-//! (`http://localhost:4318`).
+//! Development-only OTLP HTTP/JSON export
+//! (<https://opentelemetry.io/docs/specs/otel/protocol/exporter/>). Feature-gated and inert
+//! without an endpoint; ordinary builds never connect. Reuses local OTLP JSON. Plain HTTP only,
+//! for a local Collector; no TLS, redirects, or extra HTTP dependency.
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::mpsc::{sync_channel, SyncSender};
@@ -24,10 +11,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
 const IO_TIMEOUT: Duration = Duration::from_millis(1000);
 const EXPORT_QUEUE_CAPACITY: usize = 64;
 
-/// One resolved OTLP/HTTP export target: host, port, request path, and any
-/// configured headers. Never holds an open connection — `send` connects,
-/// writes, and closes per call, since export happens at most once per
-/// metrics collection interval or log/span batch, not per record.
+/// Resolved target without a persistent connection; each send connects and closes.
 #[derive(Debug, Clone)]
 pub struct OtlpTarget {
     host: String,
@@ -49,14 +33,8 @@ impl PartialEq for OtlpTarget {
 impl Eq for OtlpTarget {}
 
 impl OtlpTarget {
-    /// Resolves the target for one signal from `signal_env_var` (e.g.
-    /// `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`) or the generic
-    /// `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, and
-    /// `OTEL_EXPORTER_OTLP_HEADERS`. Returns `None` — never sending anything
-    /// — unless an endpoint is configured and the protocol is exactly
-    /// `http/json`, the only protocol this minimal client implements;
-    /// `grpc`/protobuf (the more common OTLP defaults) are deliberately
-    /// unsupported rather than half-implemented.
+    /// Use signal-specific or generic `OTEL_EXPORTER_OTLP_*` settings. Require an endpoint and
+    /// `http/json`; never half-implement gRPC/protobuf.
     pub fn from_env(signal_env_var: &str, default_path: &str) -> Option<Self> {
         let signal_protocol_var = signal_env_var.replace("_ENDPOINT", "_PROTOCOL");
         let protocol = std::env::var(signal_protocol_var)
@@ -86,9 +64,6 @@ impl OtlpTarget {
             return None;
         }
         let port = port_str.and_then(|value| value.parse().ok()).unwrap_or(80);
-        // A signal-specific endpoint is used exactly as given (per spec, it
-        // already names a full signal path); the generic base endpoint gets
-        // the signal's own default path appended, also per spec.
         let path = if signal_specific {
             if path.is_empty() {
                 "/".to_string()
@@ -123,11 +98,8 @@ impl OtlpTarget {
         self
     }
 
-    /// Sends `payload` best-effort without blocking product work. Targets
-    /// built from environment configuration use one bounded background
-    /// worker; a full queue drops the external copy while local persistence
-    /// continues. Directly parsed targets remain synchronous for focused
-    /// protocol tests only.
+    /// Bounded background worker drops external copies when full; local persistence continues.
+    /// Parsed test targets send synchronously.
     pub fn send(&self, payload: &serde_json::Value) {
         let body = payload.to_string();
         if let Some(sender) = &self.sender {
@@ -179,9 +151,7 @@ impl OtlpTarget {
     }
 }
 
-/// Parses `OTEL_EXPORTER_OTLP_HEADERS`'s standard `key1=value1,key2=value2`
-/// format. Absent or malformed entries are simply omitted, never a reason
-/// to fail export setup.
+/// Ignore malformed OTLP header entries rather than failing export setup.
 fn parse_headers() -> Vec<(String, String)> {
     std::env::var("OTEL_EXPORTER_OTLP_HEADERS")
         .ok()
@@ -238,70 +208,53 @@ mod tests {
             OtlpTarget::from_env("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "/v1/logs"),
             None
         );
+
+        {
+            std::env::set_var("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318");
+            std::env::set_var("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc");
+
+            assert_eq!(
+                OtlpTarget::from_env("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "/v1/logs"),
+                None
+            );
+
+            std::env::remove_var("OTEL_EXPORTER_OTLP_ENDPOINT");
+            std::env::remove_var("OTEL_EXPORTER_OTLP_PROTOCOL");
+        }
+
+        {
+            assert_eq!(
+                OtlpTarget::parse("https://localhost:4318", "/v1/logs", false),
+                None
+            );
+        }
+
+        {
+            let target = OtlpTarget::parse("http://localhost:4318", "/v1/logs", false)
+                .expect("valid endpoint");
+            assert_eq!(target.host, "localhost");
+            assert_eq!(target.port, 4318);
+            assert_eq!(target.path, "/v1/logs");
+
+            let based = OtlpTarget::parse("http://localhost:4318/otel/", "/v1/logs", false)
+                .expect("valid base path");
+            assert_eq!(based.path, "/otel/v1/logs");
+
+            let target = OtlpTarget::parse(
+                "http://collector.internal:4318/custom/logs",
+                "/v1/logs",
+                true,
+            )
+            .expect("valid endpoint");
+            assert_eq!(target.host, "collector.internal");
+            assert_eq!(target.path, "/custom/logs");
+
+            let target =
+                OtlpTarget::parse("http://localhost", "/v1/logs", false).expect("valid endpoint");
+            assert_eq!(target.port, 80);
+        }
     }
 
-    #[test]
-    fn returns_none_for_an_unsupported_protocol() {
-        std::env::set_var("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318");
-        std::env::set_var("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc");
-
-        assert_eq!(
-            OtlpTarget::from_env("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "/v1/logs"),
-            None
-        );
-
-        std::env::remove_var("OTEL_EXPORTER_OTLP_ENDPOINT");
-        std::env::remove_var("OTEL_EXPORTER_OTLP_PROTOCOL");
-    }
-
-    #[test]
-    fn returns_none_for_an_https_endpoint() {
-        assert_eq!(
-            OtlpTarget::parse("https://localhost:4318", "/v1/logs", false),
-            None
-        );
-    }
-
-    #[test]
-    fn appends_the_signal_default_path_to_a_generic_base_endpoint() {
-        let target =
-            OtlpTarget::parse("http://localhost:4318", "/v1/logs", false).expect("valid endpoint");
-        assert_eq!(target.host, "localhost");
-        assert_eq!(target.port, 4318);
-        assert_eq!(target.path, "/v1/logs");
-
-        let based = OtlpTarget::parse("http://localhost:4318/otel/", "/v1/logs", false)
-            .expect("valid base path");
-        assert_eq!(based.path, "/otel/v1/logs");
-    }
-
-    #[test]
-    fn uses_a_signal_specific_endpoint_exactly_as_given() {
-        let target = OtlpTarget::parse(
-            "http://collector.internal:4318/custom/logs",
-            "/v1/logs",
-            true,
-        )
-        .expect("valid endpoint");
-        assert_eq!(target.host, "collector.internal");
-        assert_eq!(target.path, "/custom/logs");
-    }
-
-    #[test]
-    fn defaults_to_port_80_when_none_is_given() {
-        let target =
-            OtlpTarget::parse("http://localhost", "/v1/logs", false).expect("valid endpoint");
-        assert_eq!(target.port, 80);
-    }
-
-    /// The reproducible check standing in for "an externally managed
-    /// OTel/Grafana stack", which this sandboxed environment cannot run: a
-    /// real local `TcpListener` accepts the connection `send` makes, and
-    /// this test asserts the bytes on the wire are a well-formed HTTP/1.1
-    /// POST carrying exactly the given JSON body. This validates Tau's own
-    /// wire-format and protocol correctness; it is not a substitute for
-    /// having actually exercised a genuine OTel Collector, which this
-    /// environment has no way to stand up.
     #[test]
     fn sends_a_well_formed_http_post_with_the_json_body() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
@@ -366,6 +319,19 @@ mod tests {
             .iter()
             .any(|line| line.eq_ignore_ascii_case("x-tau-test: 1")));
         assert_eq!(body, serde_json::json!({ "resourceLogs": [] }).to_string());
+
+        {
+            let target = OtlpTarget {
+                host: "127.0.0.1".to_string(),
+                // Port 0 never accepts a real connection; this proves a refused
+                // connection is swallowed rather than propagated.
+                port: 1,
+                path: "/v1/logs".to_string(),
+                headers: Vec::new(),
+                sender: None,
+            };
+            target.send(&serde_json::json!({ "resourceLogs": [] }));
+        }
     }
 
     #[test]
@@ -382,20 +348,6 @@ mod tests {
             "enqueueing external telemetry blocked for {:?}",
             started.elapsed()
         );
-    }
-
-    #[test]
-    fn send_never_panics_when_nothing_is_listening() {
-        let target = OtlpTarget {
-            host: "127.0.0.1".to_string(),
-            // Port 0 never accepts a real connection; this proves a refused
-            // connection is swallowed rather than propagated.
-            port: 1,
-            path: "/v1/logs".to_string(),
-            headers: Vec::new(),
-            sender: None,
-        };
-        target.send(&serde_json::json!({ "resourceLogs": [] }));
     }
 
     #[test]

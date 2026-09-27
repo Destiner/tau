@@ -38,126 +38,110 @@ async function expectAnchoredTo(
   ).toBeLessThan(60);
 }
 
-test('names icon-only controls on hover without native titles', async ({
-  page,
-}) => {
-  await page.goto(scenarioUrl);
-  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
-
-  const openProject = page.getByRole('button', { name: 'Open Project' });
-  await expect(openProject).not.toHaveAttribute('title', /./);
-  await expect(openProject.locator('svg path')).toHaveAttribute(
-    'd',
-    'M216,72H131.31L104,44.69A15.86,15.86,0,0,0,92.69,40H40A16,16,0,0,0,24,56V200.62A15.4,15.4,0,0,0,39.38,216H216.89A15.13,15.13,0,0,0,232,200.89V88A16,16,0,0,0,216,72ZM92.69,56l16,16H40V56ZM216,200H40V88H216Zm-88-88a8,8,0,0,1,8,8v16h16a8,8,0,0,1,0,16H136v16a8,8,0,0,1-16,0V152H104a8,8,0,0,1,0-16h16V120A8,8,0,0,1,128,112Z',
-  );
-
-  await openProject.hover();
-  await expect(
-    page.locator('.ui-tooltip', { hasText: 'Open Project' }),
-  ).toBeVisible();
-
-  // The trigger still triggers, and its menu still knows where the button is.
-  const openProjectBox = await openProject.boundingBox();
-  await openProject.click();
-  const menu = page.getByRole('menu');
-  await expect(menu).toBeVisible();
-  await expectAnchoredTo(menu, openProjectBox);
-  await page.keyboard.press('Escape');
-  await expect(menu).toHaveCount(0);
-
-  // The reporter is admin mode's, so the code has to unlock it before its
-  // own tooltip and popover can be checked. The sidebar is clicked first
-  // because the code is ignored while the composer holds focus.
-  await page.getByLabel('Projects and Sessions').click();
-  await page.keyboard.type('iddqd');
-
-  const reportIssue = page.getByRole('button', { name: 'Report an Issue' });
-  await expect(reportIssue).toBeVisible();
-  await expect(reportIssue).not.toHaveAttribute('title', /./);
-  await reportIssue.hover();
-  await expect(
-    page.locator('.ui-tooltip', { hasText: 'Report an Issue' }),
-  ).toBeVisible();
-  const reportIssueBox = await reportIssue.boundingBox();
-  await reportIssue.click();
-  const popover = page.getByRole('dialog', { name: 'Report an Issue' });
-  await expect(popover).toBeVisible();
-  await expectAnchoredTo(popover, reportIssueBox);
-  await page.keyboard.press('Escape');
-
-  // An action that is invisible until its row is hovered still gets one.
-  const projectRow = page.locator('.project-row').first();
-  await projectRow.hover();
-  const newSession = projectRow.getByRole('button', {
-    name: /^New Session in/,
-  });
-  await newSession.hover();
-  await expect(
-    page.locator('.ui-tooltip', { hasText: 'New Session' }),
-  ).toBeVisible();
-
-  // Moving off the trigger takes the tooltip with it.
-  await page.getByRole('textbox', { name: 'Message Pi' }).hover();
-  await expect(page.locator('.ui-tooltip')).toHaveCount(0);
-});
-
 /**
  * A project row shows a name that is not where the project is, and the row is
  * too narrow to show both. The path it reveals on hover is app-drawn like every
  * other tooltip, and it sits below the row rather than over the row's own
  * actions, which carry tooltips of their own.
  */
-test('reveals a project path below the row, not in a native title', async ({
+test('reveals project and control tooltips by pointer and keyboard without breaking anchored menus', async ({
   page,
 }) => {
-  await page.goto(scenarioUrl);
-  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
-
-  const projectToggle = page.getByRole('button', {
-    name: 'Tau fixture',
-    exact: true,
+  await test.step('reveals a project path below the row, not in a native title', async () => {
+    await page.goto(scenarioUrl);
+    await expect(
+      page.getByRole('textbox', { name: 'Message Pi' }),
+    ).toBeEnabled();
+    const projectToggle = page.getByRole('button', {
+      name: 'Tau fixture',
+      exact: true,
+    });
+    await expect(projectToggle).not.toHaveAttribute('title', /./);
+    await expect(page.locator('.ui-status-dot[title]')).toHaveCount(0);
+    const rowBox = await page.locator('.project-row').first().boundingBox();
+    await projectToggle.hover();
+    const tooltip = page.locator('.ui-tooltip', {
+      hasText: '/fixture/tau-project',
+    });
+    await expect(tooltip).toBeVisible();
+    const tooltipBox = await tooltip.boundingBox();
+    expect(rowBox).not.toBeNull();
+    expect(tooltipBox).not.toBeNull();
+    if (rowBox && tooltipBox) {
+      expect(tooltipBox.y).toBeGreaterThanOrEqual(rowBox.y + rowBox.height);
+    }
+    await page
+      .getByRole('button', { name: 'New Session in Tau fixture' })
+      .hover();
+    await expect(
+      page.locator('.ui-tooltip', { hasText: 'New Session' }),
+    ).toBeVisible();
+    await expect(tooltip).toHaveCount(0);
   });
-  await expect(projectToggle).not.toHaveAttribute('title', /./);
-  await expect(page.locator('.ui-status-dot[title]')).toHaveCount(0);
 
-  const rowBox = await page.locator('.project-row').first().boundingBox();
-  await projectToggle.hover();
-  const tooltip = page.locator('.ui-tooltip', {
-    hasText: '/fixture/tau-project',
+  await test.step('shows the tooltip to a keyboard, not only to a pointer', async () => {
+    await page.getByRole('textbox', { name: 'Message Pi' }).hover();
+    await expect(page.locator('.ui-tooltip')).toHaveCount(0);
+    await expect(
+      page.getByRole('textbox', { name: 'Message Pi' }),
+    ).toBeEnabled();
+    const newSession = page
+      .getByRole('button', { name: 'New Session', exact: true })
+      .first();
+    await newSession.focus();
+    await expect(
+      page.locator('.ui-tooltip', { hasText: 'New Session' }),
+    ).toBeVisible();
+    await newSession.blur();
+    await expect(page.locator('.ui-tooltip')).toHaveCount(0);
   });
-  await expect(tooltip).toBeVisible();
 
-  const tooltipBox = await tooltip.boundingBox();
-  expect(rowBox).not.toBeNull();
-  expect(tooltipBox).not.toBeNull();
-  if (rowBox && tooltipBox) {
-    expect(tooltipBox.y).toBeGreaterThanOrEqual(rowBox.y + rowBox.height);
-  }
-
-  // The row's own actions take the path with them and name themselves instead.
-  await page
-    .getByRole('button', { name: 'New Session in Tau fixture' })
-    .hover();
-  await expect(
-    page.locator('.ui-tooltip', { hasText: 'New Session' }),
-  ).toBeVisible();
-  await expect(tooltip).toHaveCount(0);
-});
-
-test('shows the tooltip to a keyboard, not only to a pointer', async ({
-  page,
-}) => {
-  await page.goto(scenarioUrl);
-  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
-
-  const newSession = page
-    .getByRole('button', { name: 'New Session', exact: true })
-    .first();
-  await newSession.focus();
-  await expect(
-    page.locator('.ui-tooltip', { hasText: 'New Session' }),
-  ).toBeVisible();
-
-  await newSession.blur();
-  await expect(page.locator('.ui-tooltip')).toHaveCount(0);
+  await test.step('names icon-only controls on hover without native titles', async () => {
+    await expect(
+      page.getByRole('textbox', { name: 'Message Pi' }),
+    ).toBeEnabled();
+    const openProject = page.getByRole('button', { name: 'Open Project' });
+    await expect(openProject).not.toHaveAttribute('title', /./);
+    await expect(openProject.locator('svg path')).toHaveAttribute(
+      'd',
+      'M216,72H131.31L104,44.69A15.86,15.86,0,0,0,92.69,40H40A16,16,0,0,0,24,56V200.62A15.4,15.4,0,0,0,39.38,216H216.89A15.13,15.13,0,0,0,232,200.89V88A16,16,0,0,0,216,72ZM92.69,56l16,16H40V56ZM216,200H40V88H216Zm-88-88a8,8,0,0,1,8,8v16h16a8,8,0,0,1,0,16H136v16a8,8,0,0,1-16,0V152H104a8,8,0,0,1,0-16h16V120A8,8,0,0,1,128,112Z',
+    );
+    await openProject.hover();
+    await expect(
+      page.locator('.ui-tooltip', { hasText: 'Open Project' }),
+    ).toBeVisible();
+    const openProjectBox = await openProject.boundingBox();
+    await openProject.click();
+    const menu = page.getByRole('menu');
+    await expect(menu).toBeVisible();
+    await expectAnchoredTo(menu, openProjectBox);
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+    await page.getByLabel('Projects and Sessions').click();
+    await page.keyboard.type('iddqd');
+    const reportIssue = page.getByRole('button', { name: 'Report an Issue' });
+    await expect(reportIssue).toBeVisible();
+    await expect(reportIssue).not.toHaveAttribute('title', /./);
+    await reportIssue.hover();
+    await expect(
+      page.locator('.ui-tooltip', { hasText: 'Report an Issue' }),
+    ).toBeVisible();
+    const reportIssueBox = await reportIssue.boundingBox();
+    await reportIssue.click();
+    const popover = page.getByRole('dialog', { name: 'Report an Issue' });
+    await expect(popover).toBeVisible();
+    await expectAnchoredTo(popover, reportIssueBox);
+    await page.keyboard.press('Escape');
+    const projectRow = page.locator('.project-row').first();
+    await projectRow.hover();
+    const newSession = projectRow.getByRole('button', {
+      name: /^New Session in/,
+    });
+    await newSession.hover();
+    await expect(
+      page.locator('.ui-tooltip', { hasText: 'New Session' }),
+    ).toBeVisible();
+    await page.getByRole('textbox', { name: 'Message Pi' }).hover();
+    await expect(page.locator('.ui-tooltip')).toHaveCount(0);
+  });
 });

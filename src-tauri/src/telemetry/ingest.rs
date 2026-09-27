@@ -1,14 +1,6 @@
-//! The frontend telemetry ingest command: the only way frontend-originated
-//! records reach disk. Every record is revalidated against the Stage 0
-//! catalog before it is persisted; nothing here trusts the frontend's own
-//! validation, and no unrecognized field, family, key, type, or oversized
-//! value is accepted.
-//!
-//! This command must never itself be traced. Wrapping its own invocation
-//! with a span would enqueue a record about sending the batch, which would
-//! only reach disk by calling this same command again — recursing forever.
-//! Unlike `storage::load_workspace`, it takes no `TraceContext` argument and
-//! never calls `Telemetry::start_command_span`.
+//! Frontend records are revalidated against the attribute catalog before
+//! persistence. Ingest itself must not be traced, or sending telemetry would
+//! recursively generate more telemetry.
 use std::collections::HashMap;
 
 use opentelemetry::logs::Severity;
@@ -25,11 +17,7 @@ use super::{attributes, Telemetry, SCOPE_NAME};
 /// the frontend's own bounded queue caps real batches far below this.
 const MAX_RECORDS_PER_CALL: usize = 64;
 
-/// Hard upper bound on a reported `FrontendMetricRecord` value (24 hours in
-/// milliseconds), mirroring `src/lib/telemetry/metric.ts`'s own bound.
-/// Neither an event-loop-lag reading nor a long-task duration can
-/// genuinely reach this; it exists only to reject a corrupted or
-/// nonsensical value.
+/// Reject implausible durations above 24 hours, matching the frontend bound.
 const MAX_METRIC_VALUE_MS: f64 = 24.0 * 60.0 * 60.0 * 1000.0;
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -46,15 +34,8 @@ pub struct FrontendSpanRecord {
     attributes: HashMap<String, FrontendAttributeValue>,
 }
 
-/// The wire shape for a frontend-originated log record (Stage 4's
-/// `frontend.error`). Deliberately narrower than a span: no trace/span
-/// identity, and no frontend-supplied event name or severity —
-/// `fixed_log_metadata` maps `family` to both, so an untrusted caller can
-/// never choose either. This shape and a span's are structurally disjoint
-/// (a span always requires `traceId`/`spanId`/`sampled`/`startTimeUnixNano`/
-/// `endTimeUnixNano`, none of which a log record carries), so
-/// `ingest_records` can try deserializing as a span first and fall back to
-/// this without an explicit discriminant field.
+/// Frontend logs cannot choose their event name or severity; the family
+/// determines both. Disjoint wire shapes allow span-first decoding.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FrontendLogRecord {
@@ -62,23 +43,15 @@ pub struct FrontendLogRecord {
     time_unix_nano: String,
     #[serde(default)]
     attributes: HashMap<String, FrontendAttributeValue>,
-    /// Optional linked span identity (`controller.lifecycle`,
-    /// `operation.checkpoint`): present only for the handful of log
-    /// families a Stage 5 caller links to an active span. Both fields must
-    /// be present and well-formed together, or neither is attached; see
-    /// `validated_log_json`.
+    /// Linked log trace/span IDs must both be present and valid, or both absent.
     #[serde(default)]
     trace_id: Option<String>,
     #[serde(default)]
     span_id: Option<String>,
 }
 
-/// The wire shape for a raw frontend metric value with no native span/log
-/// counterpart to derive a metric from (event-loop lag, long-task
-/// duration; see `src/lib/telemetry/metric.ts`). `value` is required and
-/// rejected by `FrontendLogRecord`'s `deny_unknown_fields`, and this shape
-/// lacks every field a span requires, so all three wire shapes stay
-/// structurally disjoint without an explicit discriminant.
+/// Raw metric values have a disjoint wire shape from logs and spans;
+/// unknown fields are rejected.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FrontendMetricRecord {
@@ -89,9 +62,7 @@ pub struct FrontendMetricRecord {
     attributes: HashMap<String, FrontendAttributeValue>,
 }
 
-/// Deliberately narrower than `serde_json::Value`: a frontend record can
-/// only ever carry the same string/int shapes the catalog allows, never an
-/// arbitrary object or array.
+/// Accept only catalog-compatible scalar attribute shapes, never objects or arrays.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 enum FrontendAttributeValue {
@@ -115,11 +86,8 @@ pub struct IngestOutcome {
     pub rejected: u32,
 }
 
-/// Takes `Value` rather than `Vec<FrontendSpanRecord>` deliberately: a
-/// batch is a JSON array of otherwise-untyped values, so one record that
-/// fails to deserialize (an unknown field, a wrong-shaped attribute) is
-/// rejected on its own rather than invalidating every other record in the
-/// same call.
+/// Decode each record independently so a malformed item does not discard
+/// the rest of the batch.
 #[tauri::command]
 pub fn ingest_telemetry(telemetry: State<'_, Telemetry>, records: Vec<Value>) -> IngestOutcome {
     ingest_records(&telemetry, records)
@@ -142,10 +110,7 @@ fn ingest_records(telemetry: &Telemetry, records: Vec<Value>) -> IngestOutcome {
     outcome
 }
 
-/// Tries a record as a span, then a log, then a raw metric value; a value
-/// that matches none of the three shapes (or fails its family's
-/// validation) is rejected. Cloning `raw` for the first two attempts is
-/// cheap: batches are capped at `MAX_RECORDS_PER_CALL` small JSON objects.
+/// Decode disjoint span/log/metric shapes independently; reject invalid families.
 fn ingest_one(telemetry: &Telemetry, raw: Value) -> bool {
     if let Ok(record) = serde_json::from_value::<FrontendSpanRecord>(raw.clone()) {
         if let Some(value) = validated_span_json(&record, &telemetry.resource_json, SCOPE_NAME) {
@@ -170,13 +135,8 @@ fn ingest_one(telemetry: &Telemetry, raw: Value) -> bool {
     false
 }
 
-/// Derives duration-histogram and RPC-failure-counter metrics from an
-/// already-validated, already-persisted frontend span — no separate wire
-/// format needed for these: the duration is simply the span's own
-/// `end - start`, and the outcome is simply its own `pi.rpc.outcome`
-/// attribute. Called only after `validated_span_json` has already accepted
-/// the record, so both timestamps are known well-formed; still re-parsed
-/// defensively rather than assumed.
+/// Derives metrics from validated, persisted spans rather than accepting
+/// a second wire format for durations or RPC outcomes.
 fn record_span_metrics(telemetry: &Telemetry, record: &FrontendSpanRecord) {
     let (Some(start), Some(end)) = (
         canonical_timestamp(&record.start_time_unix_nano),
@@ -214,10 +174,7 @@ fn record_span_metrics(telemetry: &Telemetry, record: &FrontendSpanRecord) {
     }
 }
 
-/// Derives native gauge updates from an already-validated,
-/// already-persisted frontend log — `frontend.heartbeat`'s own counters and
-/// `telemetry.health`'s own drop count, both already checked against the
-/// catalog by `validated_log_json`. Any other family is a no-op.
+/// Only validated, persisted heartbeat and health logs may update native gauges.
 fn record_log_metrics(telemetry: &Telemetry, record: &FrontendLogRecord) {
     let int_attribute = |key: &str| -> u64 {
         match record.attributes.get(key) {
@@ -244,10 +201,7 @@ fn record_log_metrics(telemetry: &Telemetry, record: &FrontendLogRecord) {
     }
 }
 
-/// Validates a raw frontend metric value against the catalog and this
-/// module's own hard value bound. `family` selects the native instrument
-/// (`record_metric`), the same way a log record's `family` selects its
-/// fixed event name/severity.
+/// Bound raw frontend measurements and select only reviewed metric families.
 fn validate_metric(record: &FrontendMetricRecord) -> bool {
     if !record.value.is_finite() || record.value < 0.0 || record.value > MAX_METRIC_VALUE_MS {
         return false;
@@ -270,10 +224,7 @@ fn validate_metric(record: &FrontendMetricRecord) -> bool {
     })
 }
 
-/// Records one validated raw frontend metric value into its native
-/// instrument. `family` is one of the two reviewed `FrontendMetricRecord`
-/// families; any other value cannot reach here since `validate_metric`
-/// already rejected it via `required_attributes`.
+/// Validation restricts this to the two reviewed raw metric families.
 fn record_metric(telemetry: &Telemetry, record: &FrontendMetricRecord) {
     if record.family == attributes::FRONTEND_EVENT_LOOP_LAG.name {
         let mut dimensions = Vec::with_capacity(2);
@@ -299,11 +250,7 @@ fn record_metric(telemetry: &Telemetry, record: &FrontendMetricRecord) {
     }
 }
 
-/// The fixed `(eventName, severity)` pair a frontend-owned log family
-/// produces. Neither is ever taken from the frontend: trusting an
-/// untrusted caller's choice of event name or severity would add a second
-/// categorical dimension to review for no benefit, since today every
-/// family has exactly one of each.
+/// Fixes event name and severity by family, never by untrusted input.
 fn fixed_log_metadata(family: &str) -> Option<(&'static str, Severity)> {
     if family == attributes::FRONTEND_ERROR.name {
         Some(("frontend.error", Severity::Error))
@@ -326,10 +273,6 @@ fn fixed_log_metadata(family: &str) -> Option<(&'static str, Severity)> {
     }
 }
 
-/// Validates one frontend log record against the Stage 0 catalog and, if it
-/// passes every check, converts it to the same OTLP JSON shape native logs
-/// use. Mirrors `validated_span_json`'s structure and required-attribute
-/// check.
 fn validated_log_json(
     record: &FrontendLogRecord,
     resource_json: &Value,
@@ -339,9 +282,7 @@ fn validated_log_json(
     validate_frontend_attribute_keys(&record.family, &record.attributes)?;
 
     let time = canonical_timestamp(&record.time_unix_nano)?;
-    // Both fields must be present and well-formed together, or neither is
-    // attached: an asymmetric or malformed pair rejects the whole record,
-    // the same strictness a span's own trace/span id gets.
+    // Reject an incomplete or malformed trace/span ID pair, not just the link.
     let linked_context = match (&record.trace_id, &record.span_id) {
         (Some(trace_id), Some(span_id)) => {
             if record.family != attributes::CONTROLLER_LIFECYCLE.name
@@ -388,17 +329,8 @@ fn validated_log_json(
     ))
 }
 
-/// Validates one frontend record against the Stage 0 catalog and, if it
-/// passes every check, converts it to the same OTLP JSON shape native spans
-/// use. Any failure rejects the whole record rather than persisting a
-/// partially-validated one.
-/// Every attribute key a frontend-owned family's record must carry, in
-/// addition to the trace/span identity fields already required of every
-/// record. Reviewed context identifiers may be added; every key/value still
-/// passes the family catalog, and the total is bounded. Families not
-/// listed here are not owned by this frontend transport at all: `send_pi`'s
-/// RPC bodies never reach here, and `ingest_telemetry` must never trace
-/// itself.
+/// Rejects the entire record on validation failure; never persist a
+/// partially validated span or unreviewed attributes.
 fn required_attributes(family: &str) -> Option<&'static [&'static str]> {
     if family == attributes::TAURI_INVOKE.name {
         Some(&["tau.invoke.command"])
@@ -612,10 +544,7 @@ mod tests {
             span_object["attributes"][0],
             json!({ "key": "tau.invoke.command", "value": { "stringValue": "load_workspace" } })
         );
-    }
 
-    #[test]
-    fn accepts_a_reviewed_invoke_outcome() {
         let resource_json = json!({ "attributes": [] });
         let mut attributes = command_attribute("load_workspace");
         attributes.insert(
@@ -631,110 +560,141 @@ mod tests {
             attribute["key"] == "tau.invoke.outcome"
                 && attribute["value"]["stringValue"] == "success"
         }));
-    }
 
-    #[test]
-    fn rejects_an_unknown_family() {
-        let resource_json = json!({ "attributes": [] });
-        assert!(validated_span_json(
-            &record("not.a.family", HashMap::new()),
-            &resource_json,
-            "tau"
-        )
-        .is_none());
-    }
+        {
+            let resource_json = json!({ "attributes": [] });
+            assert!(validated_span_json(
+                &record("not.a.family", HashMap::new()),
+                &resource_json,
+                "tau"
+            )
+            .is_none());
 
-    #[test]
-    fn rejects_a_cataloged_family_not_owned_by_the_frontend_transport() {
-        let resource_json = json!({ "attributes": [] });
-        assert!(validated_span_json(
-            &record("app.lifecycle", HashMap::new()),
-            &resource_json,
-            "tau"
-        )
-        .is_none());
-    }
-
-    #[test]
-    fn rejects_an_attribute_outside_the_family_allowlist() {
-        let resource_json = json!({ "attributes": [] });
-        let attributes = HashMap::from([(
-            "prompt.text".to_string(),
-            FrontendAttributeValue::Str("user content".to_string()),
-        )]);
-        assert!(
-            validated_span_json(&record("tauri.invoke", attributes), &resource_json, "tau")
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn rejects_an_oversized_attribute_value() {
-        let resource_json = json!({ "attributes": [] });
-        let oversized = "x".repeat(129);
-        let attributes = HashMap::from([(
-            "tau.invoke.command".to_string(),
-            FrontendAttributeValue::Str(oversized),
-        )]);
-        assert!(
-            validated_span_json(&record("tauri.invoke", attributes), &resource_json, "tau")
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn rejects_unreviewed_command_values_even_when_the_type_and_length_are_valid() {
-        let resource_json = json!({ "attributes": [] });
-        let canary = crate::telemetry::privacy::FORBIDDEN_CONTENT_CANARIES[0].1;
-        assert!(validated_span_json(
-            &record("tauri.invoke", command_attribute(canary)),
-            &resource_json,
-            "tau"
-        )
-        .is_none());
-    }
-
-    #[test]
-    fn rejects_malformed_or_reversed_timestamps() {
-        let resource_json = json!({ "attributes": [] });
-        for (start, end) in [
-            ("not-a-time", "1000005000"),
-            ("1000000000", "prompt-canary"),
-            ("1000005000", "1000000000"),
-            ("18446744073709551616", "18446744073709551616"),
-        ] {
-            let mut invalid = record("tauri.invoke", command_attribute("load_workspace"));
-            invalid.start_time_unix_nano = start.to_string();
-            invalid.end_time_unix_nano = end.to_string();
-            assert!(validated_span_json(&invalid, &resource_json, "tau").is_none());
+            let resource_json = json!({ "attributes": [] });
+            assert!(validated_span_json(
+                &record("app.lifecycle", HashMap::new()),
+                &resource_json,
+                "tau"
+            )
+            .is_none());
         }
-    }
 
-    #[test]
-    fn rejects_a_malformed_trace_id() {
-        let resource_json = json!({ "attributes": [] });
-        let mut malformed = record("tauri.invoke", command_attribute("load_workspace"));
-        malformed.trace_id = "not-hex".to_string();
-        assert!(validated_span_json(&malformed, &resource_json, "tau").is_none());
-    }
+        {
+            let resource_json = json!({ "attributes": [] });
+            let attributes = HashMap::from([(
+                "prompt.text".to_string(),
+                FrontendAttributeValue::Str("user content".to_string()),
+            )]);
+            assert!(validated_span_json(
+                &record("tauri.invoke", attributes),
+                &resource_json,
+                "tau"
+            )
+            .is_none());
 
-    #[test]
-    fn rejects_a_malformed_parent_span_id() {
-        let resource_json = json!({ "attributes": [] });
-        let mut malformed = record("tauri.invoke", command_attribute("load_workspace"));
-        malformed.parent_span_id = Some("not-hex".to_string());
-        assert!(validated_span_json(&malformed, &resource_json, "tau").is_none());
-    }
+            let resource_json = json!({ "attributes": [] });
+            let oversized = "x".repeat(129);
+            let attributes = HashMap::from([(
+                "tau.invoke.command".to_string(),
+                FrontendAttributeValue::Str(oversized),
+            )]);
+            assert!(validated_span_json(
+                &record("tauri.invoke", attributes),
+                &resource_json,
+                "tau"
+            )
+            .is_none());
 
-    #[test]
-    fn rejects_a_record_without_the_required_command_attribute() {
-        let resource_json = json!({ "attributes": [] });
-        assert!(validated_span_json(
-            &record("tauri.invoke", HashMap::new()),
-            &resource_json,
-            "tau"
-        )
-        .is_none());
+            let resource_json = json!({ "attributes": [] });
+            let canary = crate::telemetry::privacy::FORBIDDEN_CONTENT_CANARIES[0].1;
+            assert!(validated_span_json(
+                &record("tauri.invoke", command_attribute(canary)),
+                &resource_json,
+                "tau"
+            )
+            .is_none());
+        }
+
+        {
+            let resource_json = json!({ "attributes": [] });
+            for (start, end) in [
+                ("not-a-time", "1000005000"),
+                ("1000000000", "prompt-canary"),
+                ("1000005000", "1000000000"),
+                ("18446744073709551616", "18446744073709551616"),
+            ] {
+                let mut invalid = record("tauri.invoke", command_attribute("load_workspace"));
+                invalid.start_time_unix_nano = start.to_string();
+                invalid.end_time_unix_nano = end.to_string();
+                assert!(validated_span_json(&invalid, &resource_json, "tau").is_none());
+            }
+
+            let resource_json = json!({ "attributes": [] });
+            let mut malformed = record("tauri.invoke", command_attribute("load_workspace"));
+            malformed.trace_id = "not-hex".to_string();
+            assert!(validated_span_json(&malformed, &resource_json, "tau").is_none());
+
+            let resource_json = json!({ "attributes": [] });
+            let mut malformed = record("tauri.invoke", command_attribute("load_workspace"));
+            malformed.parent_span_id = Some("not-hex".to_string());
+            assert!(validated_span_json(&malformed, &resource_json, "tau").is_none());
+
+            let resource_json = json!({ "attributes": [] });
+            assert!(validated_span_json(
+                &record("tauri.invoke", HashMap::new()),
+                &resource_json,
+                "tau"
+            )
+            .is_none());
+        }
+
+        {
+            let resource_json = json!({ "attributes": [] });
+            let attributes = HashMap::from([string_attribute("tau.action.name", "session.select")]);
+            let value =
+                validated_span_json(&record("ui.action", attributes), &resource_json, "tau")
+                    .expect("valid ui.action record");
+            let span_object = &value["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
+            assert_eq!(span_object["name"], "ui.action");
+
+            let resource_json = json!({ "attributes": [] });
+            let attributes = HashMap::from([
+                string_attribute("tau.action.name", "session.select"),
+                string_attribute("tau.session.id", "session-1"),
+                string_attribute("tau.controller.id", "controller-1"),
+            ]);
+            let value =
+                validated_span_json(&record("ui.action", attributes), &resource_json, "tau")
+                    .expect("valid scoped ui.action record");
+            let persisted = value["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"]
+                .as_array()
+                .expect("attributes");
+            assert!(persisted
+                .iter()
+                .any(|attribute| attribute["key"] == "tau.session.id"));
+
+            {
+                let resource_json = json!({ "attributes": [] });
+                let attributes =
+                    HashMap::from([string_attribute("tau.action.name", "not.a.real.action")]);
+                assert!(validated_span_json(
+                    &record("ui.action", attributes),
+                    &resource_json,
+                    "tau"
+                )
+                .is_none());
+
+                let resource_json = json!({ "attributes": [] });
+                let canary = crate::telemetry::privacy::FORBIDDEN_CONTENT_CANARIES[0].1;
+                let attributes = HashMap::from([string_attribute("tau.action.name", canary)]);
+                assert!(validated_span_json(
+                    &record("ui.action", attributes),
+                    &resource_json,
+                    "tau"
+                )
+                .is_none());
+            }
+        }
     }
 
     fn string_attribute(key: &str, value: &str) -> (String, FrontendAttributeValue) {
@@ -746,53 +706,6 @@ mod tests {
 
     fn int_attribute(key: &str, value: i64) -> (String, FrontendAttributeValue) {
         (key.to_string(), FrontendAttributeValue::Int(value))
-    }
-
-    #[test]
-    fn accepts_a_well_formed_ui_action_record() {
-        let resource_json = json!({ "attributes": [] });
-        let attributes = HashMap::from([string_attribute("tau.action.name", "session.select")]);
-        let value = validated_span_json(&record("ui.action", attributes), &resource_json, "tau")
-            .expect("valid ui.action record");
-        let span_object = &value["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
-        assert_eq!(span_object["name"], "ui.action");
-    }
-
-    #[test]
-    fn accepts_reviewed_context_identifiers_on_a_frontend_record() {
-        let resource_json = json!({ "attributes": [] });
-        let attributes = HashMap::from([
-            string_attribute("tau.action.name", "session.select"),
-            string_attribute("tau.session.id", "session-1"),
-            string_attribute("tau.controller.id", "controller-1"),
-        ]);
-        let value = validated_span_json(&record("ui.action", attributes), &resource_json, "tau")
-            .expect("valid scoped ui.action record");
-        let persisted = value["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"]
-            .as_array()
-            .expect("attributes");
-        assert!(persisted
-            .iter()
-            .any(|attribute| attribute["key"] == "tau.session.id"));
-    }
-
-    #[test]
-    fn rejects_an_unreviewed_action_name() {
-        let resource_json = json!({ "attributes": [] });
-        let attributes = HashMap::from([string_attribute("tau.action.name", "not.a.real.action")]);
-        assert!(
-            validated_span_json(&record("ui.action", attributes), &resource_json, "tau").is_none()
-        );
-    }
-
-    #[test]
-    fn rejects_a_forbidden_content_canary_disguised_as_an_action_name() {
-        let resource_json = json!({ "attributes": [] });
-        let canary = crate::telemetry::privacy::FORBIDDEN_CONTENT_CANARIES[0].1;
-        let attributes = HashMap::from([string_attribute("tau.action.name", canary)]);
-        assert!(
-            validated_span_json(&record("ui.action", attributes), &resource_json, "tau").is_none()
-        );
     }
 
     fn pi_rpc_attributes(method: &str, outcome: &str) -> HashMap<String, FrontendAttributeValue> {
@@ -819,55 +732,94 @@ mod tests {
             .iter()
             .any(|attribute| attribute["key"] == "pi.generation"
                 && attribute["value"]["intValue"] == "3"));
-    }
 
-    #[test]
-    fn rejects_a_pi_rpc_record_missing_a_required_attribute() {
         let resource_json = json!({ "attributes": [] });
         let mut attributes = pi_rpc_attributes("get_state", "success");
         attributes.remove("tau.runtime.id");
         assert!(
             validated_span_json(&record("pi.rpc", attributes), &resource_json, "tau").is_none()
         );
-    }
 
-    #[test]
-    fn rejects_an_unreviewed_rpc_outcome() {
         let resource_json = json!({ "attributes": [] });
         let attributes = pi_rpc_attributes("get_state", "not-a-real-outcome");
         assert!(
             validated_span_json(&record("pi.rpc", attributes), &resource_json, "tau").is_none()
         );
-    }
 
-    #[test]
-    fn accepts_a_well_formed_pi_stream_aggregate_record() {
-        let resource_json = json!({ "attributes": [] });
-        let attributes = HashMap::from([
-            int_attribute("pi.stream.delta_count", 12),
-            int_attribute("pi.stream.character_count", 480),
-            string_attribute("tau.runtime.id", "runtime-1"),
-            int_attribute("pi.generation", 3),
-        ]);
-        let value = validated_span_json(&record("pi.stream", attributes), &resource_json, "tau")
-            .expect("valid pi.stream record");
-        let span_object = &value["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
-        assert_eq!(span_object["name"], "pi.stream");
-    }
+        {
+            let resource_json = json!({ "attributes": [] });
+            let attributes = HashMap::from([
+                int_attribute("pi.stream.delta_count", 12),
+                int_attribute("pi.stream.character_count", 480),
+                string_attribute("tau.runtime.id", "runtime-1"),
+                int_attribute("pi.generation", 3),
+            ]);
+            let value =
+                validated_span_json(&record("pi.stream", attributes), &resource_json, "tau")
+                    .expect("valid pi.stream record");
+            let span_object = &value["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
+            assert_eq!(span_object["name"], "pi.stream");
 
-    #[test]
-    fn rejects_a_pi_stream_record_with_an_extra_attribute() {
-        let resource_json = json!({ "attributes": [] });
-        let mut attributes = HashMap::from([
-            int_attribute("pi.stream.delta_count", 12),
-            int_attribute("pi.stream.character_count", 480),
-            string_attribute("tau.runtime.id", "runtime-1"),
-            int_attribute("pi.generation", 3),
-        ]);
-        attributes.insert("unexpected.key".to_string(), FrontendAttributeValue::Int(1));
-        assert!(
-            validated_span_json(&record("pi.stream", attributes), &resource_json, "tau").is_none()
-        );
+            let resource_json = json!({ "attributes": [] });
+            let mut attributes = HashMap::from([
+                int_attribute("pi.stream.delta_count", 12),
+                int_attribute("pi.stream.character_count", 480),
+                string_attribute("tau.runtime.id", "runtime-1"),
+                int_attribute("pi.generation", 3),
+            ]);
+            attributes.insert("unexpected.key".to_string(), FrontendAttributeValue::Int(1));
+            assert!(
+                validated_span_json(&record("pi.stream", attributes), &resource_json, "tau")
+                    .is_none()
+            );
+        }
+
+        {
+            let resource = json!({ "attributes": [] });
+            let attributes = HashMap::from([
+                string_attribute("tau.action.name", "session.select"),
+                string_attribute("tau.action.milestone", "paint_opportunity"),
+                int_attribute("tau.action.elapsed_ms", 42),
+            ]);
+            let mut record = log_record("action.milestone", attributes);
+            record.trace_id = Some("4bf92f3577b34da6a3ce929d0e0e4736".into());
+            record.span_id = Some("00f067aa0ba902b7".into());
+            let value = validated_log_json(&record, &resource, "tau").expect("linked milestone");
+            let log = &value["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+            assert_eq!(log["traceId"], "4bf92f3577b34da6a3ce929d0e0e4736");
+            assert_eq!(log["eventName"], "action.milestone");
+            for kind in attributes::ACTION_MILESTONE_KINDS {
+                record.attributes.insert(
+                    "tau.action.milestone".into(),
+                    FrontendAttributeValue::Str((*kind).into()),
+                );
+                assert!(
+                    validated_log_json(&record, &resource, "tau").is_some(),
+                    "{kind}"
+                );
+            }
+
+            record.attributes.remove("tau.action.elapsed_ms");
+            assert!(validated_log_json(&record, &resource, "tau").is_none());
+            record.attributes.insert(
+                "tau.action.elapsed_ms".into(),
+                FrontendAttributeValue::Int(42),
+            );
+            record.attributes.insert(
+                "tau.action.milestone".into(),
+                FrontendAttributeValue::Str("draft text".into()),
+            );
+            assert!(validated_log_json(&record, &resource, "tau").is_none());
+            record.attributes.insert(
+                "tau.action.milestone".into(),
+                FrontendAttributeValue::Str("ready".into()),
+            );
+            record.attributes.insert(
+                "tau.action.elapsed_ms".into(),
+                FrontendAttributeValue::Int(86_400_001),
+            );
+            assert!(validated_log_json(&record, &resource, "tau").is_none());
+        }
     }
 
     fn log_record(
@@ -881,54 +833,6 @@ mod tests {
             trace_id: None,
             span_id: None,
         }
-    }
-
-    #[test]
-    fn action_milestone_requires_reviewed_fields_and_accepts_trace_link() {
-        let resource = json!({ "attributes": [] });
-        let attributes = HashMap::from([
-            string_attribute("tau.action.name", "session.select"),
-            string_attribute("tau.action.milestone", "paint_opportunity"),
-            int_attribute("tau.action.elapsed_ms", 42),
-        ]);
-        let mut record = log_record("action.milestone", attributes);
-        record.trace_id = Some("4bf92f3577b34da6a3ce929d0e0e4736".into());
-        record.span_id = Some("00f067aa0ba902b7".into());
-        let value = validated_log_json(&record, &resource, "tau").expect("linked milestone");
-        let log = &value["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
-        assert_eq!(log["traceId"], "4bf92f3577b34da6a3ce929d0e0e4736");
-        assert_eq!(log["eventName"], "action.milestone");
-        for kind in attributes::ACTION_MILESTONE_KINDS {
-            record.attributes.insert(
-                "tau.action.milestone".into(),
-                FrontendAttributeValue::Str((*kind).into()),
-            );
-            assert!(
-                validated_log_json(&record, &resource, "tau").is_some(),
-                "{kind}"
-            );
-        }
-
-        record.attributes.remove("tau.action.elapsed_ms");
-        assert!(validated_log_json(&record, &resource, "tau").is_none());
-        record.attributes.insert(
-            "tau.action.elapsed_ms".into(),
-            FrontendAttributeValue::Int(42),
-        );
-        record.attributes.insert(
-            "tau.action.milestone".into(),
-            FrontendAttributeValue::Str("draft text".into()),
-        );
-        assert!(validated_log_json(&record, &resource, "tau").is_none());
-        record.attributes.insert(
-            "tau.action.milestone".into(),
-            FrontendAttributeValue::Str("ready".into()),
-        );
-        record.attributes.insert(
-            "tau.action.elapsed_ms".into(),
-            FrontendAttributeValue::Int(86_400_001),
-        );
-        assert!(validated_log_json(&record, &resource, "tau").is_none());
     }
 
     fn frontend_error_attributes(
@@ -961,88 +865,77 @@ mod tests {
             .iter()
             .any(|attribute| attribute["key"] == "tau.error.location"
                 && attribute["value"]["stringValue"] == "index.ts:10:4"));
-    }
 
-    #[test]
-    fn accepts_a_frontend_queue_overflow_health_record() {
-        let resource_json = json!({ "attributes": [] });
-        let attributes = HashMap::from([int_attribute("tau.telemetry.dropped_count", 3)]);
-        let value = validated_log_json(
-            &log_record("telemetry.health", attributes),
-            &resource_json,
-            "tau",
-        )
-        .expect("valid telemetry.health record");
-        let log_object = &value["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
-        assert_eq!(log_object["eventName"], "telemetry.queue_overflow");
-        assert_eq!(log_object["severityNumber"], Severity::Warn as i32);
-    }
+        {
+            let resource_json = json!({ "attributes": [] });
+            let attributes =
+                frontend_error_attributes("not-a-real-source", "TypeError", "index.ts:10:4");
+            assert!(validated_log_json(
+                &log_record("frontend.error", attributes),
+                &resource_json,
+                "tau"
+            )
+            .is_none());
 
-    #[test]
-    fn rejects_the_native_writer_failure_counter_from_frontend_health() {
-        let resource_json = json!({ "attributes": [] });
-        let attributes = HashMap::from([
-            int_attribute("tau.telemetry.dropped_count", 3),
-            int_attribute("tau.telemetry.failed_write_count", 1),
-        ]);
-        assert!(validated_log_json(
-            &log_record("telemetry.health", attributes),
-            &resource_json,
-            "tau"
-        )
-        .is_none());
-    }
+            let resource_json = json!({ "attributes": [] });
+            let canary = crate::telemetry::privacy::FORBIDDEN_CONTENT_CANARIES[0].1;
+            let attributes = frontend_error_attributes("console_error", canary, "index.ts:10:4");
+            assert!(validated_log_json(
+                &log_record("frontend.error", attributes),
+                &resource_json,
+                "tau"
+            )
+            .is_none());
 
-    #[test]
-    fn rejects_an_unreviewed_frontend_error_source() {
-        let resource_json = json!({ "attributes": [] });
-        let attributes =
-            frontend_error_attributes("not-a-real-source", "TypeError", "index.ts:10:4");
-        assert!(validated_log_json(
-            &log_record("frontend.error", attributes),
-            &resource_json,
-            "tau"
-        )
-        .is_none());
-    }
+            let resource_json = json!({ "attributes": [] });
+            let mut attributes =
+                frontend_error_attributes("console_error", "Error", "index.ts:10:4");
+            attributes.remove("tau.error.location");
+            assert!(validated_log_json(
+                &log_record("frontend.error", attributes),
+                &resource_json,
+                "tau"
+            )
+            .is_none());
+        }
 
-    #[test]
-    fn rejects_a_forbidden_content_canary_disguised_as_a_frontend_error_kind() {
-        let resource_json = json!({ "attributes": [] });
-        let canary = crate::telemetry::privacy::FORBIDDEN_CONTENT_CANARIES[0].1;
-        let attributes = frontend_error_attributes("console_error", canary, "index.ts:10:4");
-        assert!(validated_log_json(
-            &log_record("frontend.error", attributes),
-            &resource_json,
-            "tau"
-        )
-        .is_none());
-    }
+        {
+            // `tauri.invoke` is frontend-owned as a span, never as a log: a
+            // log-shaped payload naming it must still be rejected.
+            let resource_json = json!({ "attributes": [] });
+            assert!(validated_log_json(
+                &log_record("tauri.invoke", HashMap::new()),
+                &resource_json,
+                "tau"
+            )
+            .is_none());
+        }
 
-    #[test]
-    fn rejects_a_frontend_error_record_missing_a_required_attribute() {
-        let resource_json = json!({ "attributes": [] });
-        let mut attributes = frontend_error_attributes("console_error", "Error", "index.ts:10:4");
-        attributes.remove("tau.error.location");
-        assert!(validated_log_json(
-            &log_record("frontend.error", attributes),
-            &resource_json,
-            "tau"
-        )
-        .is_none());
-    }
+        {
+            let resource_json = json!({ "attributes": [] });
+            let attributes = HashMap::from([int_attribute("tau.telemetry.dropped_count", 3)]);
+            let value = validated_log_json(
+                &log_record("telemetry.health", attributes),
+                &resource_json,
+                "tau",
+            )
+            .expect("valid telemetry.health record");
+            let log_object = &value["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+            assert_eq!(log_object["eventName"], "telemetry.queue_overflow");
+            assert_eq!(log_object["severityNumber"], Severity::Warn as i32);
 
-    #[test]
-    fn rejects_a_log_shaped_record_for_a_family_the_frontend_does_not_own_as_a_log() {
-        // `tauri.invoke` is frontend-owned as a span, never as a log: a
-        // log-shaped payload naming it must still be rejected.
-        let resource_json = json!({ "attributes": [] });
-        assert!(validated_log_json(
-            &log_record("tauri.invoke", HashMap::new()),
-            &resource_json,
-            "tau"
-        )
-        .is_none());
+            let resource_json = json!({ "attributes": [] });
+            let attributes = HashMap::from([
+                int_attribute("tau.telemetry.dropped_count", 3),
+                int_attribute("tau.telemetry.failed_write_count", 1),
+            ]);
+            assert!(validated_log_json(
+                &log_record("telemetry.health", attributes),
+                &resource_json,
+                "tau"
+            )
+            .is_none());
+        }
     }
 
     fn test_telemetry() -> (Telemetry, tempfile::TempDir) {
@@ -1081,40 +974,46 @@ mod tests {
             }
         );
         assert_eq!(telemetry.store.read_records(Signal::Trace).len(), 1);
+
+        {
+            let (telemetry, _directory) = test_telemetry();
+            let mut malformed =
+                to_value(&record("tauri.invoke", command_attribute("load_workspace")));
+            malformed
+                .as_object_mut()
+                .expect("object")
+                .insert("promptText".to_string(), json!("unexpected content"));
+            let records = vec![
+                malformed,
+                to_value(&record("tauri.invoke", command_attribute("load_workspace"))),
+            ];
+
+            let outcome = ingest_records(&telemetry, records);
+
+            assert_eq!(
+                outcome,
+                IngestOutcome {
+                    accepted: 1,
+                    rejected: 1
+                }
+            );
+        }
+
+        {
+            let (telemetry, _directory) = test_telemetry();
+            let records = (0..MAX_RECORDS_PER_CALL + 5)
+                .map(|_| to_value(&record("tauri.invoke", command_attribute("load_workspace"))))
+                .collect();
+
+            let outcome = ingest_records(&telemetry, records);
+
+            assert_eq!(outcome.accepted, MAX_RECORDS_PER_CALL as u32);
+            assert_eq!(outcome.rejected, 5);
+        }
     }
 
-    #[test]
-    fn ingest_rejects_an_unrecognized_field_without_rejecting_the_rest_of_the_batch() {
-        let (telemetry, _directory) = test_telemetry();
-        let mut malformed = to_value(&record("tauri.invoke", command_attribute("load_workspace")));
-        malformed
-            .as_object_mut()
-            .expect("object")
-            .insert("promptText".to_string(), json!("unexpected content"));
-        let records = vec![
-            malformed,
-            to_value(&record("tauri.invoke", command_attribute("load_workspace"))),
-        ];
-
-        let outcome = ingest_records(&telemetry, records);
-
-        assert_eq!(
-            outcome,
-            IngestOutcome {
-                accepted: 1,
-                rejected: 1
-            }
-        );
-    }
-
-    /// Stage 6's comprehensive end-to-end privacy sweep: every forbidden-
-    /// content canary, smuggled in as an extra field under every plausible
-    /// "a bug forwarded content here" field name, is rejected outright by
-    /// `deny_unknown_fields` regardless of which shape (span/log/metric) or
-    /// which field name carries it — the type system rejects the whole
-    /// record before any attribute-level check even runs. A clean sibling
-    /// record in the same batch still succeeds, proving one bad record
-    /// never poisons the rest.
+    /// Inject all forbidden canaries as unknown fields into each wire shape; reject them
+    /// outright.
     #[test]
     fn no_forbidden_content_canary_survives_ingest_via_any_unexpected_field() {
         use crate::telemetry::privacy::FORBIDDEN_CONTENT_CANARIES;
@@ -1132,10 +1031,7 @@ mod tests {
             "clipboard",
         ];
 
-        // Each (canary, field) pair is its own small batch — well under
-        // `MAX_RECORDS_PER_CALL` — paired with one clean sibling record per
-        // shape, so a poisoned record's rejection is checked against not
-        // collaterally rejecting a clean record in the very same call.
+        // Pair each poisoned record with a clean sibling to verify per-record rejection.
         let mut total_rejected = 0;
         let mut total_accepted = 0;
         for (_, canary) in FORBIDDEN_CONTENT_CANARIES {
@@ -1199,19 +1095,6 @@ mod tests {
     }
 
     #[test]
-    fn ingest_rejects_batches_beyond_the_per_call_bound() {
-        let (telemetry, _directory) = test_telemetry();
-        let records = (0..MAX_RECORDS_PER_CALL + 5)
-            .map(|_| to_value(&record("tauri.invoke", command_attribute("load_workspace"))))
-            .collect();
-
-        let outcome = ingest_records(&telemetry, records);
-
-        assert_eq!(outcome.accepted, MAX_RECORDS_PER_CALL as u32);
-        assert_eq!(outcome.rejected, 5);
-    }
-
-    #[test]
     fn frontend_parent_and_native_child_persist_in_one_trace() {
         let (telemetry, _directory) = test_telemetry();
         let frontend = record("tauri.invoke", command_attribute("load_workspace"));
@@ -1244,6 +1127,8 @@ mod tests {
         }));
     }
 
+    /// The ingest command itself must never be traced: processing a batch
+    /// persists exactly the records the batch validated, and nothing else.
     #[test]
     fn ingest_persists_a_frontend_error_log_record() {
         let (telemetry, _directory) = test_telemetry();
@@ -1262,90 +1147,40 @@ mod tests {
         );
         assert_eq!(telemetry.store.read_records(Signal::Log).len(), 1);
         assert_eq!(telemetry.store.read_records(Signal::Trace).len(), 0);
-    }
 
-    #[test]
-    fn ingest_dispatches_spans_and_logs_in_the_same_batch() {
-        let (telemetry, _directory) = test_telemetry();
-        let span = to_value(&record("tauri.invoke", command_attribute("load_workspace")));
-        let log = to_log_value(&log_record(
-            "frontend.error",
-            frontend_error_attributes("console_error", "none", ""),
-        ));
+        {
+            let (telemetry, _directory) = test_telemetry();
+            let span = to_value(&record("tauri.invoke", command_attribute("load_workspace")));
+            let log = to_log_value(&log_record(
+                "frontend.error",
+                frontend_error_attributes("console_error", "none", ""),
+            ));
 
-        let outcome = ingest_records(&telemetry, vec![span, log]);
+            let outcome = ingest_records(&telemetry, vec![span, log]);
 
-        assert_eq!(
-            outcome,
-            IngestOutcome {
-                accepted: 2,
-                rejected: 0
-            }
-        );
-        assert_eq!(telemetry.store.read_records(Signal::Trace).len(), 1);
-        assert_eq!(telemetry.store.read_records(Signal::Log).len(), 1);
-    }
-
-    /// The ingest command itself must never be traced: processing a batch
-    /// persists exactly the records the batch validated, and nothing else.
-    #[test]
-    fn ingesting_does_not_record_a_span_about_itself() {
-        let (telemetry, _directory) = test_telemetry();
-        let outcome = ingest_records(
-            &telemetry,
-            vec![to_value(&record(
-                "tauri.invoke",
-                command_attribute("load_workspace"),
-            ))],
-        );
-        assert_eq!(outcome.accepted, 1);
-        assert_eq!(telemetry.store.read_records(Signal::Trace).len(), 1);
-    }
-
-    fn metric_record(
-        family: &str,
-        value: f64,
-        attributes: HashMap<String, FrontendAttributeValue>,
-    ) -> FrontendMetricRecord {
-        FrontendMetricRecord {
-            family: family.to_string(),
-            value,
-            time_unix_nano: "1000000000".to_string(),
-            attributes,
+            assert_eq!(
+                outcome,
+                IngestOutcome {
+                    accepted: 2,
+                    rejected: 0
+                }
+            );
+            assert_eq!(telemetry.store.read_records(Signal::Trace).len(), 1);
+            assert_eq!(telemetry.store.read_records(Signal::Log).len(), 1);
         }
-    }
 
-    fn to_metric_value(record: &FrontendMetricRecord) -> Value {
-        serde_json::to_value(record).expect("serializable record")
-    }
-
-    fn heartbeat_attributes() -> HashMap<String, FrontendAttributeValue> {
-        HashMap::from([
-            string_attribute("tau.heartbeat.visibility", "visible"),
-            string_attribute("tau.heartbeat.focused", "true"),
-            int_attribute("tau.heartbeat.pending_rpc_count", 1),
-            int_attribute("tau.heartbeat.controller_count", 2),
-            int_attribute("tau.heartbeat.active_controller_count", 1),
-            int_attribute("tau.heartbeat.runtime_count", 1),
-            int_attribute("tau.heartbeat.queue_length", 0),
-        ])
-    }
-
-    fn state_summary_attributes() -> HashMap<String, FrontendAttributeValue> {
-        HashMap::from([
-            int_attribute("tau.state.controller_count", 2),
-            int_attribute("tau.state.runtime_count", 1),
-            int_attribute("tau.state.pending_rpc_count", 0),
-            int_attribute("tau.state.notification_count", 0),
-            int_attribute("tau.state.dialog_count", 0),
-            int_attribute("tau.state.transcript.user_count", 3),
-            int_attribute("tau.state.transcript.assistant_count", 3),
-            int_attribute("tau.state.transcript.tool_count", 0),
-            int_attribute("tau.state.transcript.thinking_count", 0),
-            int_attribute("tau.state.transcript.error_count", 0),
-            string_attribute("tau.state.draft_bucket", "empty"),
-            int_attribute("tau.state.oldest_pending_rpc_age_ms", 0),
-        ])
+        {
+            let (telemetry, _directory) = test_telemetry();
+            let outcome = ingest_records(
+                &telemetry,
+                vec![to_value(&record(
+                    "tauri.invoke",
+                    command_attribute("load_workspace"),
+                ))],
+            );
+            assert_eq!(outcome.accepted, 1);
+            assert_eq!(telemetry.store.read_records(Signal::Trace).len(), 1);
+        }
     }
 
     #[test]
@@ -1376,91 +1211,28 @@ mod tests {
         assert_eq!(records.len(), 1);
         let log_object = &records[0]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
         assert_eq!(log_object["eventName"], "controller.state_transition");
-    }
 
-    #[test]
-    fn ingest_rejects_a_controller_lifecycle_record_missing_a_required_attribute() {
-        let (telemetry, _directory) = test_telemetry();
-        let attributes = HashMap::from([string_attribute("tau.controller.state.before", "idle")]);
-
-        let outcome = ingest_records(
-            &telemetry,
-            vec![to_log_value(&log_record(
+        {
+            let (telemetry, _directory) = test_telemetry();
+            let mut log = log_record(
                 "controller.lifecycle",
-                attributes,
-            ))],
-        );
+                HashMap::from([
+                    string_attribute("tau.controller.state.before", "idle"),
+                    string_attribute("tau.controller.state.after", "starting"),
+                    string_attribute("tau.controller.transition.cause", "controller_start"),
+                ]),
+            );
+            log.trace_id = Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string());
+            log.span_id = Some("00f067aa0ba902b7".to_string());
 
-        assert_eq!(
-            outcome,
-            IngestOutcome {
-                accepted: 0,
-                rejected: 1
-            }
-        );
-    }
+            let outcome = ingest_records(&telemetry, vec![to_log_value(&log)]);
 
-    #[test]
-    fn ingest_links_a_controller_lifecycle_log_to_the_given_trace_and_span() {
-        let (telemetry, _directory) = test_telemetry();
-        let mut log = log_record(
-            "controller.lifecycle",
-            HashMap::from([
-                string_attribute("tau.controller.state.before", "idle"),
-                string_attribute("tau.controller.state.after", "starting"),
-                string_attribute("tau.controller.transition.cause", "controller_start"),
-            ]),
-        );
-        log.trace_id = Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string());
-        log.span_id = Some("00f067aa0ba902b7".to_string());
-
-        let outcome = ingest_records(&telemetry, vec![to_log_value(&log)]);
-
-        assert_eq!(outcome.accepted, 1);
-        let records = telemetry.store.read_records(Signal::Log);
-        let log_object = &records[0]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
-        assert_eq!(log_object["traceId"], "4bf92f3577b34da6a3ce929d0e0e4736");
-        assert_eq!(log_object["spanId"], "00f067aa0ba902b7");
-    }
-
-    #[test]
-    fn ingest_rejects_a_log_with_only_a_trace_id_and_no_span_id() {
-        let (telemetry, _directory) = test_telemetry();
-        let mut log = log_record(
-            "controller.lifecycle",
-            HashMap::from([
-                string_attribute("tau.controller.state.before", "idle"),
-                string_attribute("tau.controller.state.after", "starting"),
-                string_attribute("tau.controller.transition.cause", "controller_start"),
-            ]),
-        );
-        log.trace_id = Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string());
-
-        let outcome = ingest_records(&telemetry, vec![to_log_value(&log)]);
-
-        assert_eq!(
-            outcome,
-            IngestOutcome {
-                accepted: 0,
-                rejected: 1
-            }
-        );
-    }
-
-    #[test]
-    fn ingest_rejects_trace_linkage_on_an_unlinked_log_family() {
-        let (telemetry, _directory) = test_telemetry();
-        let mut log = log_record(
-            "frontend.error",
-            frontend_error_attributes("window_error", "Error", "main.ts:1:1"),
-        );
-        log.trace_id = Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string());
-        log.span_id = Some("00f067aa0ba902b7".to_string());
-
-        let outcome = ingest_records(&telemetry, vec![to_log_value(&log)]);
-
-        assert_eq!(outcome.accepted, 0);
-        assert_eq!(outcome.rejected, 1);
+            assert_eq!(outcome.accepted, 1);
+            let records = telemetry.store.read_records(Signal::Log);
+            let log_object = &records[0]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+            assert_eq!(log_object["traceId"], "4bf92f3577b34da6a3ce929d0e0e4736");
+            assert_eq!(log_object["spanId"], "00f067aa0ba902b7");
+        }
     }
 
     #[test]
@@ -1515,6 +1287,52 @@ mod tests {
         assert_eq!(log_object["traceId"], "4bf92f3577b34da6a3ce929d0e0e4736");
     }
 
+    fn metric_record(
+        family: &str,
+        value: f64,
+        attributes: HashMap<String, FrontendAttributeValue>,
+    ) -> FrontendMetricRecord {
+        FrontendMetricRecord {
+            family: family.to_string(),
+            value,
+            time_unix_nano: "1000000000".to_string(),
+            attributes,
+        }
+    }
+
+    fn to_metric_value(record: &FrontendMetricRecord) -> Value {
+        serde_json::to_value(record).expect("serializable record")
+    }
+
+    fn heartbeat_attributes() -> HashMap<String, FrontendAttributeValue> {
+        HashMap::from([
+            string_attribute("tau.heartbeat.visibility", "visible"),
+            string_attribute("tau.heartbeat.focused", "true"),
+            int_attribute("tau.heartbeat.pending_rpc_count", 1),
+            int_attribute("tau.heartbeat.controller_count", 2),
+            int_attribute("tau.heartbeat.active_controller_count", 1),
+            int_attribute("tau.heartbeat.runtime_count", 1),
+            int_attribute("tau.heartbeat.queue_length", 0),
+        ])
+    }
+
+    fn state_summary_attributes() -> HashMap<String, FrontendAttributeValue> {
+        HashMap::from([
+            int_attribute("tau.state.controller_count", 2),
+            int_attribute("tau.state.runtime_count", 1),
+            int_attribute("tau.state.pending_rpc_count", 0),
+            int_attribute("tau.state.notification_count", 0),
+            int_attribute("tau.state.dialog_count", 0),
+            int_attribute("tau.state.transcript.user_count", 3),
+            int_attribute("tau.state.transcript.assistant_count", 3),
+            int_attribute("tau.state.transcript.tool_count", 0),
+            int_attribute("tau.state.transcript.thinking_count", 0),
+            int_attribute("tau.state.transcript.error_count", 0),
+            string_attribute("tau.state.draft_bucket", "empty"),
+            int_attribute("tau.state.oldest_pending_rpc_age_ms", 0),
+        ])
+    }
+
     #[test]
     fn ingest_persists_a_frontend_heartbeat_log_and_its_native_gauges() {
         let (telemetry, _directory) = test_telemetry();
@@ -1535,64 +1353,58 @@ mod tests {
             record["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["name"]
                 == "tau.telemetry.pending_rpc_count"
         }));
-    }
 
-    #[test]
-    fn ingest_persists_a_frontend_state_summary_log() {
-        let (telemetry, _directory) = test_telemetry();
+        {
+            let (telemetry, _directory) = test_telemetry();
 
-        let outcome = ingest_records(
-            &telemetry,
-            vec![to_log_value(&log_record(
-                "frontend.state_summary",
-                state_summary_attributes(),
-            ))],
-        );
+            let outcome = ingest_records(
+                &telemetry,
+                vec![to_log_value(&log_record(
+                    "frontend.state_summary",
+                    state_summary_attributes(),
+                ))],
+            );
 
-        assert_eq!(outcome.accepted, 1);
-        let records = telemetry.store.read_records(Signal::Log);
-        let log_object = &records[0]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
-        assert_eq!(log_object["eventName"], "frontend.state_summary");
-        let encoded = log_object.to_string();
-        // Content-free by construction: nothing here is transcript or draft
-        // text, only the reviewed counts/bucket attributes.
-        assert!(!encoded.contains("tau-canary"));
-    }
-
-    /// Stage 6's state-summary size measurement: with every count at its
-    /// largest plausible magnitude, the serialized record still fits
-    /// comfortably in a small bound — proof that its size is driven by its
-    /// fixed *attribute count* (12), not by how much state it summarizes, so
-    /// a workspace with thousands of controllers costs the same few hundred
-    /// bytes as one with none.
-    #[test]
-    fn frontend_state_summary_serializes_to_a_small_bounded_size_regardless_of_counts() {
-        let resource_json = json!({ "attributes": [] });
-        let mut attributes = state_summary_attributes();
-        for (key, value) in &mut attributes {
-            if let FrontendAttributeValue::Int(count) = value {
-                *count = if key == "tau.state.oldest_pending_rpc_age_ms" {
-                    86_400_000
-                } else {
-                    999_999_999
-                };
-            }
+            assert_eq!(outcome.accepted, 1);
+            let records = telemetry.store.read_records(Signal::Log);
+            let log_object = &records[0]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+            assert_eq!(log_object["eventName"], "frontend.state_summary");
+            let encoded = log_object.to_string();
+            // Content-free by construction: nothing here is transcript or draft
+            // text, only the reviewed counts/bucket attributes.
+            assert!(!encoded.contains("tau-canary"));
         }
-        let mut log = log_record("frontend.state_summary", attributes);
-        log.trace_id = None;
-        log.span_id = None;
 
-        let value =
-            validated_log_json(&log, &resource_json, "tau").expect("valid state summary record");
-        let serialized = value.to_string();
+        {
+            let resource_json = json!({ "attributes": [] });
+            let mut attributes = state_summary_attributes();
+            for (key, value) in &mut attributes {
+                if let FrontendAttributeValue::Int(count) = value {
+                    *count = if key == "tau.state.oldest_pending_rpc_age_ms" {
+                        86_400_000
+                    } else {
+                        999_999_999
+                    };
+                }
+            }
+            let mut log = log_record("frontend.state_summary", attributes);
+            log.trace_id = None;
+            log.span_id = None;
 
-        assert!(
-            serialized.len() < 2048,
-            "frontend.state_summary serialized to {} bytes at worst-case counts, expected < 2048",
-            serialized.len()
-        );
+            let value = validated_log_json(&log, &resource_json, "tau")
+                .expect("valid state summary record");
+            let serialized = value.to_string();
+
+            assert!(
+                serialized.len() < 2048,
+                "frontend.state_summary serialized to {} bytes at worst-case counts, expected < 2048",
+                serialized.len()
+            );
+        }
     }
 
+    /// Maximum plausible counts still yield a fixed-size state summary, not content-dependent
+    /// growth.
     #[test]
     fn ingest_persists_an_event_loop_lag_metric_never_a_log() {
         let (telemetry, _directory) = test_telemetry();
@@ -1631,129 +1443,117 @@ mod tests {
                 ["dataPoints"][0]["sum"],
             42.0
         );
-    }
 
-    #[test]
-    fn ingest_persists_a_long_task_metric_with_no_attributes() {
-        let (telemetry, _directory) = test_telemetry();
+        {
+            let (telemetry, _directory) = test_telemetry();
 
-        let outcome = ingest_records(
-            &telemetry,
-            vec![to_metric_value(&metric_record(
-                "frontend.long_task",
-                90.0,
-                HashMap::new(),
-            ))],
-        );
-
-        assert_eq!(
-            outcome,
-            IngestOutcome {
-                accepted: 1,
-                rejected: 0
-            }
-        );
-        let metrics = process_metric_records(&telemetry);
-        assert!(metrics.iter().any(|record| {
-            record["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["name"]
-                == "tau.frontend.long_task.duration"
-        }));
-    }
-
-    #[test]
-    fn ingest_rejects_a_metric_value_beyond_the_hard_bound() {
-        let (telemetry, _directory) = test_telemetry();
-
-        let outcome = ingest_records(
-            &telemetry,
-            vec![to_metric_value(&metric_record(
-                "frontend.long_task",
-                MAX_METRIC_VALUE_MS + 1.0,
-                HashMap::new(),
-            ))],
-        );
-
-        assert_eq!(
-            outcome,
-            IngestOutcome {
-                accepted: 0,
-                rejected: 1
-            }
-        );
-    }
-
-    #[test]
-    fn ingest_rejects_a_negative_or_non_finite_metric_value() {
-        let (telemetry, _directory) = test_telemetry();
-
-        let outcome = ingest_records(
-            &telemetry,
-            vec![
-                to_metric_value(&metric_record("frontend.long_task", -1.0, HashMap::new())),
-                to_metric_value(&metric_record(
+            let outcome = ingest_records(
+                &telemetry,
+                vec![to_metric_value(&metric_record(
                     "frontend.long_task",
-                    f64::NAN,
+                    90.0,
                     HashMap::new(),
-                )),
-                to_metric_value(&metric_record(
+                ))],
+            );
+
+            assert_eq!(
+                outcome,
+                IngestOutcome {
+                    accepted: 1,
+                    rejected: 0
+                }
+            );
+            let metrics = process_metric_records(&telemetry);
+            assert!(metrics.iter().any(|record| {
+                record["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["name"]
+                    == "tau.frontend.long_task.duration"
+            }));
+        }
+
+        {
+            let (telemetry, _directory) = test_telemetry();
+
+            let outcome = ingest_records(
+                &telemetry,
+                vec![to_metric_value(&metric_record(
                     "frontend.long_task",
-                    f64::INFINITY,
+                    MAX_METRIC_VALUE_MS + 1.0,
                     HashMap::new(),
-                )),
-            ],
-        );
+                ))],
+            );
 
-        assert_eq!(
-            outcome,
-            IngestOutcome {
-                accepted: 0,
-                rejected: 3
+            assert_eq!(
+                outcome,
+                IngestOutcome {
+                    accepted: 0,
+                    rejected: 1
+                }
+            );
+
+            let outcome = ingest_records(
+                &telemetry,
+                vec![
+                    to_metric_value(&metric_record("frontend.long_task", -1.0, HashMap::new())),
+                    to_metric_value(&metric_record(
+                        "frontend.long_task",
+                        f64::NAN,
+                        HashMap::new(),
+                    )),
+                    to_metric_value(&metric_record(
+                        "frontend.long_task",
+                        f64::INFINITY,
+                        HashMap::new(),
+                    )),
+                ],
+            );
+
+            assert_eq!(
+                outcome,
+                IngestOutcome {
+                    accepted: 0,
+                    rejected: 3
+                }
+            );
+
+            {
+                let (telemetry, _directory) = test_telemetry();
+
+                let outcome = ingest_records(
+                    &telemetry,
+                    vec![to_metric_value(&metric_record(
+                        "frontend.event_loop_lag",
+                        10.0,
+                        HashMap::new(),
+                    ))],
+                );
+
+                assert_eq!(
+                    outcome,
+                    IngestOutcome {
+                        accepted: 0,
+                        rejected: 1
+                    }
+                );
+
+                let attributes = HashMap::from([
+                    string_attribute("tau.heartbeat.visibility", "visible"),
+                    string_attribute("tau.heartbeat.focused", "true"),
+                    string_attribute("tau.session.id", "session-1"),
+                ]);
+
+                let outcome = ingest_records(
+                    &telemetry,
+                    vec![to_metric_value(&metric_record(
+                        "frontend.event_loop_lag",
+                        10.0,
+                        attributes,
+                    ))],
+                );
+
+                assert_eq!(outcome.accepted, 0);
+                assert_eq!(outcome.rejected, 1);
             }
-        );
-    }
-
-    #[test]
-    fn ingest_rejects_an_event_loop_lag_record_missing_its_required_dimensions() {
-        let (telemetry, _directory) = test_telemetry();
-
-        let outcome = ingest_records(
-            &telemetry,
-            vec![to_metric_value(&metric_record(
-                "frontend.event_loop_lag",
-                10.0,
-                HashMap::new(),
-            ))],
-        );
-
-        assert_eq!(
-            outcome,
-            IngestOutcome {
-                accepted: 0,
-                rejected: 1
-            }
-        );
-    }
-
-    #[test]
-    fn ingest_rejects_high_cardinality_context_on_a_metric_record() {
-        let (telemetry, _directory) = test_telemetry();
-        let attributes = HashMap::from([
-            string_attribute("tau.heartbeat.visibility", "visible"),
-            string_attribute("tau.heartbeat.focused", "true"),
-            string_attribute("tau.session.id", "session-1"),
-        ]);
-
-        let outcome = ingest_records(
-            &telemetry,
-            vec![to_metric_value(&metric_record(
-                "frontend.event_loop_lag",
-                10.0,
-                attributes,
-            ))],
-        );
-
-        assert_eq!(outcome.accepted, 0);
-        assert_eq!(outcome.rejected, 1);
+        }
     }
 
     #[test]
@@ -1774,56 +1574,52 @@ mod tests {
             record["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["name"]
                 == "tau.invoke.duration"
         }));
-    }
 
-    #[test]
-    fn record_span_metrics_counts_a_non_success_pi_rpc_outcome_as_a_failure() {
-        let (telemetry, _directory) = test_telemetry();
-        let attributes = HashMap::from([
-            string_attribute("pi.rpc.method", "prompt"),
-            string_attribute("pi.rpc.request_id", "tau-prompt-1"),
-            string_attribute("pi.rpc.outcome", "timeout"),
-            string_attribute("tau.runtime.id", "runtime-1"),
-            int_attribute("pi.generation", 1),
-        ]);
+        {
+            let (telemetry, _directory) = test_telemetry();
+            let attributes = HashMap::from([
+                string_attribute("pi.rpc.method", "prompt"),
+                string_attribute("pi.rpc.request_id", "tau-prompt-1"),
+                string_attribute("pi.rpc.outcome", "timeout"),
+                string_attribute("tau.runtime.id", "runtime-1"),
+                int_attribute("pi.generation", 1),
+            ]);
 
-        let outcome = ingest_records(&telemetry, vec![to_value(&record("pi.rpc", attributes))]);
+            let outcome = ingest_records(&telemetry, vec![to_value(&record("pi.rpc", attributes))]);
 
-        assert_eq!(outcome.accepted, 1);
-        let metrics = process_metric_records(&telemetry);
-        let failures = metrics
-            .iter()
-            .find(|record| {
+            assert_eq!(outcome.accepted, 1);
+            let metrics = process_metric_records(&telemetry);
+            let failures = metrics
+                .iter()
+                .find(|record| {
+                    record["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["name"]
+                        == "tau.pi_rpc.failures"
+                })
+                .expect("failure counter");
+            assert_eq!(
+                failures["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["sum"]
+                    ["dataPoints"][0]["asInt"],
+                "1"
+            );
+
+            let (telemetry, _directory) = test_telemetry();
+            let attributes = HashMap::from([
+                string_attribute("pi.rpc.method", "prompt"),
+                string_attribute("pi.rpc.request_id", "tau-prompt-1"),
+                string_attribute("pi.rpc.outcome", "abandoned_process_exit"),
+                string_attribute("tau.runtime.id", "runtime-1"),
+                int_attribute("pi.generation", 1),
+            ]);
+
+            let outcome = ingest_records(&telemetry, vec![to_value(&record("pi.rpc", attributes))]);
+
+            assert_eq!(outcome.accepted, 1);
+            let metrics = process_metric_records(&telemetry);
+            assert!(metrics.iter().any(|record| {
                 record["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["name"]
-                    == "tau.pi_rpc.failures"
-            })
-            .expect("failure counter");
-        assert_eq!(
-            failures["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["sum"]["dataPoints"][0]
-                ["asInt"],
-            "1"
-        );
-    }
-
-    #[test]
-    fn record_span_metrics_counts_abandoned_requests_separately() {
-        let (telemetry, _directory) = test_telemetry();
-        let attributes = HashMap::from([
-            string_attribute("pi.rpc.method", "prompt"),
-            string_attribute("pi.rpc.request_id", "tau-prompt-1"),
-            string_attribute("pi.rpc.outcome", "abandoned_process_exit"),
-            string_attribute("tau.runtime.id", "runtime-1"),
-            int_attribute("pi.generation", 1),
-        ]);
-
-        let outcome = ingest_records(&telemetry, vec![to_value(&record("pi.rpc", attributes))]);
-
-        assert_eq!(outcome.accepted, 1);
-        let metrics = process_metric_records(&telemetry);
-        assert!(metrics.iter().any(|record| {
-            record["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["name"]
-                == "tau.pi_rpc.abandoned"
-        }));
+                    == "tau.pi_rpc.abandoned"
+            }));
+        }
     }
 
     fn process_metric_records(telemetry: &Telemetry) -> Vec<Value> {
@@ -1831,13 +1627,8 @@ mod tests {
         telemetry.store.read_records(Signal::Metric)
     }
 
-    /// Stage 6's completion criterion in test form: a representative mix of
-    /// every signal source (a frontend action → invoke → RPC span chain, a
-    /// linked controller-lifecycle transition, native process lifecycle,
-    /// app start/exit, and an uncorrelated frontend error) ingested into one
-    /// store, then reconstructed three different ways — by trace, by
-    /// session, and globally with no session at all — the way a person
-    /// investigating an issue from an approximate time actually would.
+    /// Exercise correlation across frontend, native, lifecycle, and uncorrelated signals in one
+    /// persisted timeline.
     #[test]
     fn a_time_window_reconstructs_representative_global_and_session_bound_chronology() {
         let (telemetry, _directory) = test_telemetry();
@@ -1848,8 +1639,6 @@ mod tests {
 
         telemetry.record_app_started();
 
-        // The action span: a real user gesture, carrying session/controller
-        // context so it is also session-findable.
         let mut action = record(
             "ui.action",
             HashMap::from([
@@ -1861,14 +1650,11 @@ mod tests {
         action.trace_id = TRACE_ID.to_string();
         action.span_id = ACTION_SPAN.to_string();
 
-        // Its native `tauri.invoke` child.
         let mut invoke = record("tauri.invoke", command_attribute("set_active_session"));
         invoke.trace_id = TRACE_ID.to_string();
         invoke.span_id = INVOKE_SPAN.to_string();
         invoke.parent_span_id = Some(ACTION_SPAN.to_string());
 
-        // A Pi RPC child sharing the same runtime as the native process
-        // lifecycle log below — the process↔RPC correlation.
         let mut rpc = record(
             "pi.rpc",
             HashMap::from([
@@ -1883,9 +1669,6 @@ mod tests {
         rpc.span_id = RPC_SPAN.to_string();
         rpc.parent_span_id = Some(ACTION_SPAN.to_string());
 
-        // The named state transition the action's RPC caused, linked to the
-        // action's own span and carrying the same session/controller/
-        // runtime context.
         let mut transition = log_record(
             "controller.lifecycle",
             HashMap::from([
@@ -1917,8 +1700,6 @@ mod tests {
             }
         );
 
-        // Native process lifecycle, sharing the RPC's runtime id but no
-        // trace — process lifetime is not itself a span in this design.
         telemetry.record_process_lifecycle("pi.process.started", "runtime-1", Some(1), None, &[]);
 
         // An uncorrelated frontend error: global, undetected-issue evidence
@@ -1934,8 +1715,6 @@ mod tests {
         let traces = telemetry.store.read_records(Signal::Trace);
         let logs = telemetry.store.read_records(Signal::Log);
 
-        // 1. By trace: the action → invoke → RPC chain plus the transition it
-        //    caused reconstruct as one connected chronology.
         let same_trace_spans: Vec<&Value> = traces
             .iter()
             .filter(|record| {
@@ -1963,9 +1742,7 @@ mod tests {
             "controller.state_transition"
         );
 
-        // 2. By session: the action span and the transition log both carry
-        //    `tau.session.id`, surfacing the session-bound slice without
-        //    needing the trace id at all.
+        // Session correlation joins action spans and transition logs without trace IDs.
         let session_bound_logs = logs.iter().filter(|record| {
             record["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["attributes"]
                 .as_array()
@@ -1978,8 +1755,7 @@ mod tests {
         });
         assert_eq!(session_bound_logs.count(), 1, "the linked transition log");
 
-        // 3. Process↔RPC correlation: the RPC span and the native process
-        //    lifecycle log share `tau.runtime.id`, without any session.
+        // Runtime correlation joins RPC spans to native process lifecycle without a session.
         let process_log = logs
             .iter()
             .find(|record| {
@@ -2012,9 +1788,7 @@ mod tests {
             runtime_id_of(rpc_span_object),
         );
 
-        // 4. Global, undetected-issue evidence needs no session at all:
-        //    app.started/app.exited/frontend.error are all present
-        //    unconditionally.
+        // Global app lifecycle and errors remain visible without session context.
         let event_names: Vec<&Value> = logs
             .iter()
             .map(|record| &record["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["eventName"])

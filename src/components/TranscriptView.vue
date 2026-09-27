@@ -175,12 +175,12 @@ const props = defineProps<{
   showWorkingIndicator: boolean;
   workingLabel: string;
   basePath?: string;
-  /** Remote file paths use app-managed preview and directory-copy behavior. */
+
   copyPaths?: boolean;
   remoteProjectPath?: string;
-  /** Session this transcript belongs to, under which its position is kept. */
+
   sessionKey?: string;
-  /** The interactive prompt this session is waiting on, if there is one. */
+
   prompt?: ExtensionPrompt;
   promptDisabled?: boolean;
 }>();
@@ -202,20 +202,10 @@ const compactingEntry: TranscriptEntry = {
   text: '',
 };
 
-/**
- * Which activity rows are open, held by message id rather than in the row
- * itself: the virtualizer unmounts rows the reader scrolls away from.
- */
 const expandedEntries = ref(new Set<string>());
 
-/** How far from the end the reader may sit and still be counted as following. */
 const followThreshold = 48;
 
-/**
- * Where this session was last left, if it has been read before. Taken once:
- * the transcript is keyed by session, so another session arrives as another
- * component rather than as a change to this one.
- */
 const restored = recallScroll(props.sessionKey ?? '');
 
 /**
@@ -227,10 +217,6 @@ const restored = recallScroll(props.sessionKey ?? '');
  */
 let following = restored?.following ?? true;
 
-/**
- * The offset the last scroll was seen at, which is how a scroll the reader
- * made is told apart from one the content caused.
- */
 let lastScrollOffset = restored?.offset ?? 0;
 
 const rowVirtualizer = useVirtualizer<HTMLElement, HTMLElement>(
@@ -265,11 +251,7 @@ const rowVirtualizer = useVirtualizer<HTMLElement, HTMLElement>(
       },
       anchorTo: 'end' as const,
       scrollEndThreshold: followThreshold,
-      /**
-       * The measured sizes this session was left with, so the first render is
-       * laid out as the reader left it rather than out of estimates, and the
-       * offset restored below means the same content it did then.
-       */
+
       initialMeasurementsCache: restored?.measurements,
       initialOffset: restored?.offset,
       overscan: 8,
@@ -283,11 +265,6 @@ const virtualRows = computed(() => rowVirtualizer.value.getVirtualItems());
 const totalSize = computed(() => rowVirtualizer.value.getTotalSize());
 const firstRowOffset = computed(() => virtualRows.value[0]?.start ?? 0);
 
-/**
- * Changes worth following, as one comparable value: rows appended or dropped,
- * the indicator appearing, and — through the measured total — a row growing as
- * it streams. Scrolling alone leaves it untouched.
- */
 const contentSignature = computed(() =>
   [
     props.messages.length,
@@ -371,15 +348,6 @@ watch(historySignature, () => {
   if (pendingHistoryAnchor) void nextTick(restoreHistoryAnchor);
 });
 
-/**
- * Takes up the position this session was left at. A reader who left at the end
- * is given the end as it stands now rather than the pixel it was then, since
- * the session goes on streaming while it is off screen.
- *
- * The offset is asked for rather than written to scrollTop directly: the
- * virtualizer starts out believing it, and only a scroll it made itself keeps
- * its next update from undoing it.
- */
 function restoreScroll(): void {
   if (following) {
     scrollToEnd();
@@ -394,15 +362,6 @@ function scrollToEnd(): void {
   scrollToLatest();
 }
 
-/**
- * The end of the transcript, asked for as an offset past it: it is clamped to
- * the live maximum, and unlike a bare scrollTop write it is one the
- * virtualizer knows about.
- *
- * The last row is not the end. The bottom padding, and a prompt when the
- * session is waiting on an answer, sit below it, and aiming at the row leaves
- * the reader short of both.
- */
 function scrollToLatest(): void {
   const element = transcript.value;
   if (element) {
@@ -413,12 +372,6 @@ function scrollToLatest(): void {
   rowVirtualizer.value.scrollToEnd();
 }
 
-/**
- * An end-anchored virtualizer can cache a positive offset after asking an
- * underfilled scroller to move: the browser clamps the write to zero and emits
- * no event to report that authoritative value. Let its own observer read the
- * clamped position before overscan removes early rows from the DOM.
- */
 function reconcileUnscrollableOffset(): void {
   const element = transcript.value;
   if (
@@ -431,14 +384,6 @@ function reconcileUnscrollableOffset(): void {
   }
 }
 
-/**
- * Leaving the end is something the reader does, not something that happens to
- * them: a row that grows after it was measured — an image that has only just
- * decoded — moves the end away from a reader who has not scrolled at all, and
- * reading that as leaving would strand them a row short of everything that
- * followed. Only a scroll back up gives up the end; scrolling down to it takes
- * it up again.
- */
 function handleScroll(): void {
   const element = transcript.value;
   if (!element) return;
@@ -468,7 +413,6 @@ function requestEarlierHistory(index: number, element: HTMLElement): void {
   emit('load-history');
 }
 
-/** Keeps the activated divider under the pointer while rows appear above it. */
 async function restoreHistoryAnchor(): Promise<void> {
   const anchor = pendingHistoryAnchor;
   if (!anchor) return;
@@ -647,13 +591,10 @@ defineExpose({ scrollToEnd });
   padding-bottom: 0;
 }
 
-/* The divider sits after the virtualizer's 30px end pad, so pull it through
- * that reserved tail rather than stacking both spaces. */
 .transient-compaction {
   margin-top: -30px;
 }
 
-/* A run of activity is one thing; only its last row is followed by a gap. */
 .message.compact {
   padding-bottom: 0;
 }

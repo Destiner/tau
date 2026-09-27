@@ -1,5 +1,3 @@
-/// <reference types="node" />
-
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -21,16 +19,15 @@ function projectNamed(
 }
 
 describe('Archive E2E error guard', () => {
-  test.each(['archive-window', 'archive-performance'])(
-    '%s uses the shared browser-error fixture',
-    (name) => {
+  test('archive suites use the shared browser-error fixture', () => {
+    for (const name of ['archive-window', 'archive-performance']) {
       const source = readFileSync(
         new URL(`./e2e/${name}.e2e.ts`, import.meta.url),
         'utf8',
       );
       expect(source).toMatch(/import \{ expect, test \} from '\.\/fixtures';/);
-    },
-  );
+    }
+  });
 });
 
 describe('Bundled E2E server isolation', () => {
@@ -82,12 +79,11 @@ describe('Bundled E2E server isolation', () => {
 });
 
 describe('Playwright scheduling', () => {
-  test.each([
-    ['1', 'on-first-retry'],
-    ['', 'retain-on-failure'],
-  ])(
-    'selects tracing for CI=%j without changing retries',
-    async (ci, trace) => {
+  test('selects tracing for both CI modes without changing retries', async () => {
+    for (const [ci, trace] of [
+      ['1', 'on-first-retry'],
+      ['', 'retain-on-failure'],
+    ]) {
       vi.stubEnv('CI', ci);
       vi.resetModules();
       try {
@@ -97,28 +93,24 @@ describe('Playwright scheduling', () => {
       } finally {
         vi.unstubAllEnvs();
       }
-    },
-  );
+    }
+  });
 
-  test('runs functional browsers at the configured capacity', () => {
+  test('schedules functional browsers and isolates Chromium benchmarks', () => {
     expect(playwrightConfig.fullyParallel).toBe(true);
     expect(playwrightConfig.workers).toBe(2);
 
     for (const name of ['chromium', 'webkit']) {
       expect(projectNamed(name).testIgnore).toBe(performanceSpec);
     }
-  });
 
-  test('runs both benchmarks in an isolated Chromium phase', () => {
     const project = projectNamed('chromium-performance');
 
     expect(project.testMatch).toBe(performanceSpec);
     expect(project.workers).toBe(1);
     expect(project.dependencies).toEqual(['chromium', 'webkit']);
     expect(project.use?.browserName).toBe('chromium');
-  });
 
-  test('provides a dependency-free isolated performance command', () => {
     const packageJson = JSON.parse(
       readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
     ) as { scripts?: Record<string, string> };

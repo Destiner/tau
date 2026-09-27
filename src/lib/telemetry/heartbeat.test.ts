@@ -1,11 +1,3 @@
-/*
- * Stage 5's heartbeat/state-summary timer and long-task observer. The
- * recording functions themselves (`recordHeartbeat`/`recordEventLoopLag`/
- * `recordLongTask`/`recordStateSummary`) are covered by
- * `src/lib/telemetry/index.test.ts`, and `buildStateSnapshot` by
- * `src/composables/state.test.ts`; this file only tests this module's own
- * scheduling/observation mechanics, so every dependency below is mocked.
- */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const stateSnapshot = {
@@ -120,7 +112,7 @@ describe('startHeartbeat', () => {
     );
     // Neither reporting function itself throws or otherwise signals a
     // failure just because the window was hidden: the visibility/focus
-    // dimensions are the evidence, not a separate error record.
+
     expect(recordHeartbeat).toHaveBeenCalledTimes(1);
   });
 
@@ -135,8 +127,6 @@ describe('startHeartbeat', () => {
     const { startHeartbeat } = await import('./heartbeat');
     startHeartbeat();
 
-    // Simulate background-timer throttling: the scheduled 30s tick actually
-    // fires much later than its own schedule.
     now += 150_000;
     await vi.advanceTimersByTimeAsync(30_000);
 
@@ -146,7 +136,7 @@ describe('startHeartbeat', () => {
     nowSpy.mockRestore();
   });
 
-  it('is a no-op the second time it is called while already running', async () => {
+  it('does not double schedule and can stop then restart', async () => {
     vi.stubGlobal('document', {
       visibilityState: 'visible',
       hasFocus: () => true,
@@ -158,16 +148,7 @@ describe('startHeartbeat', () => {
     await vi.advanceTimersByTimeAsync(30_000);
 
     expect(recordHeartbeat).toHaveBeenCalledTimes(1);
-  });
-
-  it('reschedules and ticks again after stopping and restarting', async () => {
-    vi.stubGlobal('document', {
-      visibilityState: 'visible',
-      hasFocus: () => true,
-    });
-    const { startHeartbeat, stopHeartbeat } = await import('./heartbeat');
-    startHeartbeat();
-    await vi.advanceTimersByTimeAsync(30_000);
+    const { stopHeartbeat } = await import('./heartbeat');
     stopHeartbeat();
     vi.clearAllMocks();
 
@@ -210,7 +191,7 @@ describe('installLongTaskObserver', () => {
     expect(recordLongTask).toHaveBeenCalledWith(80);
   });
 
-  it('does nothing when the webview does not support longtask entries', async () => {
+  it('does nothing when longtask observation is unsupported or unavailable', async () => {
     class FakePerformanceObserver {
       static supportedEntryTypes: string[] = [];
       observe(): void {
@@ -222,12 +203,7 @@ describe('installLongTaskObserver', () => {
 
     const { installLongTaskObserver } = await import('./heartbeat');
     expect(() => installLongTaskObserver()).not.toThrow();
-  });
-
-  it('does nothing when PerformanceObserver does not exist at all', async () => {
     vi.stubGlobal('PerformanceObserver', undefined);
-
-    const { installLongTaskObserver } = await import('./heartbeat');
     expect(() => installLongTaskObserver()).not.toThrow();
   });
 });

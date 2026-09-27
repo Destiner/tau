@@ -94,36 +94,6 @@ mod tests {
     fn the_remote_command_bounds_settings_between_markers() {
         assert!(REMOTE_SETTINGS_INNER_COMMAND.contains(SETTINGS_MARKER));
         assert!(REMOTE_SETTINGS_INNER_COMMAND.contains(SETTINGS_END_MARKER));
-    }
-
-    #[test]
-    fn reads_settings_through_a_csh_remote_environment() {
-        let shell = std::path::Path::new("/bin/csh");
-        if !shell.is_file() {
-            return;
-        }
-        let directory = tempfile::tempdir().expect("Pi agent directory");
-        std::fs::write(
-            directory.path().join("settings.json"),
-            r#"{"enabledModels":["openai/*"]}"#,
-        )
-        .expect("Pi settings");
-        let output = std::process::Command::new(shell)
-            .args(["-c", &remote_settings_command()])
-            .env("SHELL", shell)
-            .env("PI_CODING_AGENT_DIR", directory.path())
-            .output()
-            .expect("csh remote settings fixture");
-        assert!(output.status.success());
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert_eq!(
-            parse_model_scope(settings_between_markers(&stdout)),
-            ["openai/*"],
-        );
-    }
-
-    #[test]
-    fn ignores_remote_shell_output_outside_the_settings_markers() {
         let output = format!(
             "login banner\n{SETTINGS_MARKER}\n{{\"enabledModels\":[\"openai/*\"]}}\n{SETTINGS_END_MARKER}\nlogout banner"
         );
@@ -131,6 +101,31 @@ mod tests {
             settings_between_markers(&output).trim(),
             r#"{"enabledModels":["openai/*"]}"#,
         );
+
+        {
+            let shell = std::path::Path::new("/bin/csh");
+            if !shell.is_file() {
+                return;
+            }
+            let directory = tempfile::tempdir().expect("Pi agent directory");
+            std::fs::write(
+                directory.path().join("settings.json"),
+                r#"{"enabledModels":["openai/*"]}"#,
+            )
+            .expect("Pi settings");
+            let output = std::process::Command::new(shell)
+                .args(["-c", &remote_settings_command()])
+                .env("SHELL", shell)
+                .env("PI_CODING_AGENT_DIR", directory.path())
+                .output()
+                .expect("csh remote settings fixture");
+            assert!(output.status.success());
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert_eq!(
+                parse_model_scope(settings_between_markers(&stdout)),
+                ["openai/*"],
+            );
+        }
     }
 
     #[test]
@@ -140,10 +135,7 @@ mod tests {
             parse_model_scope(settings),
             vec!["openai/gpt-5.5".to_string(), "anthropic/*".to_string()]
         );
-    }
 
-    #[test]
-    fn treats_missing_or_invalid_settings_as_unscoped() {
         assert!(parse_model_scope("").is_empty());
         assert!(parse_model_scope("{").is_empty());
         assert!(parse_model_scope(r#"{"theme":"dark"}"#).is_empty());

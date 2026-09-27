@@ -18,12 +18,13 @@ describe('hrTimeToNanosString', () => {
 });
 
 describe('createTracer', () => {
-  it('exports a well-formed record for a root span', () => {
+  it('exports a root span with only catalog-approved attributes', () => {
     const queue = createBoundedQueue<FrontendSpanRecord>(10);
     const tracer = createTracer(queue);
 
     const span = tracer.startSpan('tauri.invoke', undefined, ROOT_CONTEXT);
     span.setAttribute('tau.invoke.command', 'load_workspace');
+    span.setAttribute('does.not.exist', 'value');
     span.end();
 
     expect(queue.length).toBe(1);
@@ -39,21 +40,6 @@ describe('createTracer', () => {
     expect(Number(record?.endTimeUnixNano)).toBeGreaterThanOrEqual(
       Number(record?.startTimeUnixNano),
     );
-  });
-
-  it('drops an attribute the catalog does not allow for the span family', () => {
-    const queue = createBoundedQueue<FrontendSpanRecord>(10);
-    const tracer = createTracer(queue);
-
-    const span = tracer.startSpan('tauri.invoke', undefined, ROOT_CONTEXT);
-    span.setAttribute('tau.invoke.command', 'load_workspace');
-    span.setAttribute('does.not.exist', 'value');
-    span.end();
-
-    const [record] = queue.drain(1);
-    expect(record?.attributes).toEqual({
-      'tau.invoke.command': 'load_workspace',
-    });
   });
 
   it('drops an oversized attribute value', () => {

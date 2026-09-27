@@ -1,5 +1,3 @@
-/// <reference types="node" />
-
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
@@ -134,7 +132,6 @@ describe('PR CI workflow', () => {
         step.uses?.startsWith('actions/checkout@'),
       );
       expect(checkout?.with?.['persist-credentials']).toBe(false);
-      // Rust's process tests also launch scripts/pi-stdio-adapter.ts via Bun.
       expect(
         workflow.jobs[lane].steps.find((step) =>
           step.uses?.startsWith('oven-sh/setup-bun@'),
