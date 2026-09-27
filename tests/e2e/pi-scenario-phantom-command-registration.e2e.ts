@@ -85,9 +85,14 @@ test('registers a command-created session after assistant message_end while work
     .locator('button[aria-current="page"]');
   await expect(sessionRow).toHaveCount(1);
   await expect(sessionRow).toContainText(sessionName);
+  await sessionRow.hover();
   await expect(
     page.getByRole('button', { name: `Archive ${sessionName}` }),
-  ).toHaveCount(1);
+  ).toBeVisible();
+  await sessionRow.focus();
+  await expect(
+    page.getByRole('button', { name: `Archive ${sessionName}` }),
+  ).toBeVisible();
   await expect(page.getByText(command, { exact: true })).toHaveCount(0);
 
   const diagnostics = await page.evaluate(() => ({

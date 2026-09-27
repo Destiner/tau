@@ -54,10 +54,13 @@ test('wraps an unbroken link without widening the composer', async ({
     )
     .toBe(true);
 
-  // Complete the deterministic scenario after checking the unsent draft.
+  // The final delta is visible before settlement hydration has finished.
   await composer.fill(prompt);
   await composer.press('Enter');
   await expect(page.getByText(completeReply, { exact: true })).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => window.__TAU_PI_SCENARIO__?.verify().ok))
+    .toBe(true);
 });
 
 test('keeps the composer editable but blocks repeat sends during delivery', async ({

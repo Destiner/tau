@@ -83,6 +83,7 @@ pub fn seed(profile: &StorageProfile) -> Result<(), String> {
             }
             sessions.sessions.push(TauSessionRecord {
                 id,
+                path: None,
                 name: Some(session.title),
                 archived: false,
             });
@@ -164,8 +165,8 @@ fn seed_performance(profile: &StorageProfile) -> Result<(), String> {
                 .ok_or_else(|| {
                     "The performance fixture's target file size is too small.".to_string()
                 })?;
-            let file = fs::File::create(sessions_dir.join(format!("{index:04}_{id}.jsonl")))
-                .map_err(seed_error)?;
+            let session_path = sessions_dir.join(format!("{index:04}_{id}.jsonl"));
+            let file = fs::File::create(&session_path).map_err(seed_error)?;
             let mut writer = BufWriter::new(file);
             writer
                 .write_all(transcript.as_bytes())
@@ -191,6 +192,7 @@ fn seed_performance(profile: &StorageProfile) -> Result<(), String> {
                 }
                 sessions.sessions.push(TauSessionRecord {
                     id,
+                    path: Some(session_path.to_string_lossy().into_owned()),
                     name: Some(format!("Synthetic session {index}")),
                     archived: index < 423,
                 });

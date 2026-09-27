@@ -61,11 +61,14 @@ async function expectWholeTranscript(page: Page): Promise<void> {
 
 test.beforeEach(async ({ page }) => {
   await page.setViewportSize({ width: 1_280, height: 1_000 });
+});
+
+async function openCompactTranscript(page: Page): Promise<void> {
   await page.goto(fixtureUrl);
   await expect(page.getByTestId('fixture-count')).toHaveText('24 messages');
   await expect(page.locator(finalTool)).toBeVisible();
   await expectWholeTranscript(page);
-});
+}
 
 test('scrolls an expanded tool call as one payload', async ({ page }) => {
   await page.goto('/?fixture=long-transcript&verbose-tool=true');
@@ -125,6 +128,7 @@ test('scrolls an expanded tool call as one payload', async ({ page }) => {
 test('keeps early rows mounted when an underfilled tool run is expanded', async ({
   page,
 }) => {
+  await openCompactTranscript(page);
   const header = page.locator(`${finalTool} .activity-header`);
 
   await header.click();
@@ -143,6 +147,7 @@ test('keeps early rows mounted when an underfilled tool run is expanded', async 
 test('does not restore a poisoned offset after switching sessions', async ({
   page,
 }) => {
+  await openCompactTranscript(page);
   const header = page.locator(`${finalTool} .activity-header`);
   await header.click();
   await expect(header).toHaveAttribute('aria-expanded', 'true');

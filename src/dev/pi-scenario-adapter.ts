@@ -101,7 +101,7 @@ const PLAN_SESSION = {
 };
 const COMMAND_SESSION = {
   id: 'session-mcp',
-  path: `${PROJECT_PATH}/session-mcp.jsonl`,
+  path: '/fixture/mission/sessions/session-mcp.jsonl',
   name: 'MCP workflow',
 };
 const FIRST_PROMPT_SESSION = {

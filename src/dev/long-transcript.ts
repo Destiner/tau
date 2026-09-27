@@ -188,6 +188,14 @@ function createLongTranscript(count = 5_000): TranscriptEntry[] {
   return Array.from({ length: count }, (_, index) => createMessage(index));
 }
 
+function createShowcaseTranscript(): TranscriptEntry[] {
+  return Array.from({ length: 13 }, (_, index) => createMessage(4_987 + index));
+}
+
+function createPreviewTranscript(): TranscriptEntry[] {
+  return [createMessage(4_997)];
+}
+
 function createVerboseToolTranscript(): TranscriptEntry[] {
   const argumentTail = 'ARGUMENT_TAIL_SENTINEL';
   const resultTail = 'RESULT_TAIL_SENTINEL';
@@ -404,5 +412,10 @@ Inspect selection, scrolling, keyboard behavior, window behavior, and perceived 
   };
 }
 
-export { createCompactToolTranscript, createVerboseToolTranscript };
+export {
+  createCompactToolTranscript,
+  createPreviewTranscript,
+  createShowcaseTranscript,
+  createVerboseToolTranscript,
+};
 export default createLongTranscript;

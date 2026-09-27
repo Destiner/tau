@@ -184,6 +184,8 @@ test('copies an absolute path from a remote dialog title', async ({ page }) => {
     };
   });
   await page.goto(`${fixtureUrl}&remote=true`);
+  // Highlighting replaces the title markup, including its path control.
+  await expect(page.locator('.extension-prompt-title pre.shiki')).toBeVisible();
 
   const plan = page.getByRole('button', {
     name: 'Preview path /home/agent/.pi/workflows/implement/RHI-6283/implementation-plan.md',
@@ -317,10 +319,8 @@ for (const method of ['select', 'confirm', 'input', 'editor'] as const) {
   });
 }
 
-test('consumes Escape while a prompt is submitting or disabled', async ({
-  page,
-}) => {
-  for (const state of ['submitting', 'disabled'] as const) {
+for (const state of ['submitting', 'disabled'] as const) {
+  test(`consumes Escape while a prompt is ${state}`, async ({ page }) => {
     await page.goto(`${fixtureUrl}&method=input&${state}=true`);
     const prompt = page.getByRole('dialog');
     const result = await prompt.evaluate((element) => {
@@ -336,8 +336,8 @@ test('consumes Escape while a prompt is submitting or disabled', async ({
     expect(result).toBe(true);
     await expect(prompt).toBeVisible();
     await expect(page.getByTestId('dialog-outcome')).toBeEmpty();
-  }
-});
+  });
+}
 
 test('ignores composition Escape and claims repeated cancellation once', async ({
   page,

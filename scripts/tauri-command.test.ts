@@ -118,8 +118,10 @@ describe('Tauri launcher', () => {
 
   it('runs two real Vite servers concurrently with distinct reachable URLs', async () => {
     const vite = await vi.importActual<typeof import('vite')>('vite');
+    let port = 0;
     createServerMock.mockImplementation(() =>
       vite.createServer({
+        server: { host: '127.0.0.1', port },
         logLevel: 'silent',
         optimizeDeps: { noDiscovery: true, include: [] },
       }),
@@ -127,6 +129,8 @@ describe('Tauri launcher', () => {
     const urls: string[] = [];
     await runTauri(['dev'], async (firstArgs) => {
       const firstUrl = overrideFrom(firstArgs).build.devUrl;
+      // Force a collision with our own server, not a developer's port 1420.
+      port = Number(new URL(firstUrl).port);
       urls.push(firstUrl);
       await runTauri(['dev'], async (secondArgs) => {
         const secondUrl = overrideFrom(secondArgs).build.devUrl;

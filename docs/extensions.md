@@ -62,6 +62,8 @@ A workflow resumed by its own command re-attaches to the phase session that is a
 
 Adoption is limited to the identities Pi hands over — a replacement, the session a prompt just created, and the session an extension command leaves behind. Bootstraps and run-state polls only re-state a session Tau already opened, so a hidden session that keeps working does not put its row back on its own. Until Tau's registry agrees, the unregistered row stays in the sidebar, because it is the only handle on a session Pi is running.
 
+Local registration stores the transcript path in the owning project's Tau registry, even when an extension saves the transcript outside that project's default Pi session directory. Tau lists only registered paths whose on-disk Pi header matches the registered identity. Older registry entries without a path still discover files in the default directory; a missing or mismatched explicit path never falls back to a different file. Pi continues to own the transcript itself.
+
 ## Sessions Pi never saved
 
 Pi buffers a new persistent session until its first finalized assistant message. `AgentSession` emits assistant `message_end` to RPC listeners immediately before synchronously appending that message, which creates and flushes the JSONL. Tau therefore sends an identity-scoped Pi RPC request on the first assistant `message_end`; its response is an ordering barrier behind that append. Tau registers only if the same generation, session id, and path still own the runtime when the response arrives. This Pi-side ordering is also the durability proof for remote sessions, because Tau's native remote registry does not inspect the remote file. The boundary can make a long, tool-driven first run reopenable while it is still working.

@@ -1,8 +1,9 @@
 import type { Page } from '@playwright/test';
 
+import waitForShowcaseRendering from './fixture-readiness';
 import { expect, test } from './fixtures';
 
-const fixtureUrl = '/?fixture=long-transcript';
+const fixtureUrl = '/?fixture=long-transcript&preview=true';
 const transcriptPath = 'src/components/TranscriptView.vue';
 const localRoot = '/Users/someone/code/tau';
 const remoteRoot = '/home/agent/rhinestone';
@@ -74,8 +75,9 @@ async function openFixture(
   }, snapshots);
   await page.goto(remote ? `${fixtureUrl}&remote=true` : fixtureUrl);
   await expect(page.getByTestId('fixture-count')).toHaveText(
-    remote ? '5001 messages' : '5000 messages',
+    remote ? '2 messages' : '1 messages',
   );
+  await waitForShowcaseRendering(page);
 }
 
 async function openDocument(page: Page, remote = false): Promise<void> {
