@@ -81,8 +81,9 @@ now divided by purpose:
   waits for `scrollend` before capturing the starting anchor. The restoration
   check still uses its original 150 ms settling wait and immediate same-message,
   less-than-2-pixel assertion; its acceptance window was not extended.
-- `transcript-preview.e2e.ts`: 12 file-preview/copy cases, one navigation after
-  mock installation, using only the original assistant showcase message.
+- `transcript-preview.e2e.ts`: 13 file-preview/copy cases (including the later
+  line-reference regression from `main`), one navigation after mock installation,
+  using only the original assistant showcase message.
 - `transcript-rendering.e2e.ts`: 16 rendering cases after consolidation, using
   the 13-message showcase.
 - `markdown-preview.e2e.ts`: all 12 existing cases retained with the one-message
@@ -127,8 +128,11 @@ Four standalone cases per browser were consolidated away. Separately,
 `extension-dialog.e2e.ts` now runs the submitting/disabled Escape states as two
 isolated cases instead of navigating twice within one case. Both sets of
 assertions remain; a new context avoids aborting the old page's pending syntax
-highlighter import. The net count is **160 → 157** per browser, or **320 → 314**
-functional executions across 44 → 46 files. All unique browser assertions are
+highlighter import. At the measured revision, the net count was **160 → 157** per browser, or
+**320 → 314** functional executions across 44 → 46 files. The subsequent merge
+of `main` retained its added line-reference case and remote range assertions in
+`transcript-preview.e2e.ts`; the current comparison is **161 → 158** per browser
+(**322 → 316** executions). All unique browser assertions are
 retained. Smaller fixtures and eliminated navigation reduce work beyond this
 count reduction.
 
@@ -198,7 +202,8 @@ improvement.
 
 ### Controlled final comparison
 
-Measured on 2026-09-27. Baseline revision:
+Measured on 2026-09-27, before the later line-reference regression merge from
+`main`; the optimized snapshot is commit `5729b7b`. Baseline revision:
 `b73955a52e9c90b20d536bc5df15a7ef6cfc496b`. Local host: Apple M2, 8 GiB RAM,
 macOS 26.6.2, Bun 1.3.0, Node 26.8.2, Playwright 1.62.1. Both browser versions
 came from the unchanged lockfile.

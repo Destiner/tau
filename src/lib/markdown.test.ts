@@ -48,15 +48,14 @@ describe('file references', () => {
     );
   });
 
-  it('keeps a line and column in the text and out of the path', () => {
-    expect(parseFileReference('src/App.vue:42')).toEqual({
-      text: 'src/App.vue:42',
-      path: 'src/App.vue',
-    });
-    expect(parseFileReference('src/App.vue:42:10')).toEqual({
-      text: 'src/App.vue:42:10',
-      path: 'src/App.vue',
-    });
+  it('keeps numeric markers in the reference and out of the path', () => {
+    for (const marker of [':42', ':42:10', ':21-31', ':21–31']) {
+      expect(parseFileReference(`src/App.vue${marker}`)).toEqual({
+        text: `src/App.vue${marker}`,
+        path: 'src/App.vue',
+      });
+    }
+    expect(parseFileReference('src/App.vue:abc')).toBeNull();
   });
 
   it('leaves sentence punctuation outside the reference', () => {
@@ -187,6 +186,14 @@ describe('explicit Markdown file destinations', () => {
     expect(parseMarkdownFileDestination('src/My%20App.vue:42:10')).toBe(
       'src/My App.vue',
     );
+    for (const marker of [':21-31', ':21–31', ':21%E2%80%9331']) {
+      expect(parseMarkdownFileDestination(`docs/My%20File.md${marker}`)).toBe(
+        'docs/My File.md',
+      );
+      expect(
+        parseMarkdownFileDestination(`file:///tmp/My%20File.md${marker}`),
+      ).toBe('/tmp/My File.md');
+    }
   });
 
   it('protects local file destinations and strips unsafe authorities', () => {
@@ -244,7 +251,31 @@ describe('path resolution', () => {
 describe('linking file paths in markup', () => {
   it('links a path and leaves the surrounding text alone', () => {
     expect(linkFilePaths('<p>Wrote src/App.vue:42, and stopped.</p>')).toBe(
-      '<p>Wrote <a class="file-link" role="link" tabindex="0" data-tau-path="src/App.vue">src/App.vue:42</a>, and stopped.</p>',
+      '<p>Wrote <a class="file-link" role="link" tabindex="0" data-tau-path="src/App.vue">src/App.vue</a>:42, and stopped.</p>',
+    );
+  });
+
+  it('leaves markers outside links in prose and inline code without losing text', () => {
+    const examples = [
+      ['src/components/ProjectSidebar.vue', ':922'],
+      ['tests/playwright-config.test.ts', ':21–31'],
+      ['tests/playwright-config.test.ts', ':21-31'],
+      ['./src/App.vue', ':42:10'],
+      ['../tau/README.md', ':42'],
+      ['/Users/tim/notes.md', ':42:10'],
+      ['~/.config/pi/settings.json', ':21–31'],
+    ];
+    for (const [path, marker] of examples) {
+      const anchor = `<a class="file-link" role="link" tabindex="0" data-tau-path="${path}">${path}</a>`;
+      expect(linkFilePaths(`<p>See ${path}${marker}, then ${path}.</p>`)).toBe(
+        `<p>See ${anchor}${marker}, then ${anchor}.</p>`,
+      );
+      expect(linkFilePaths(`<code>${path}${marker}</code>`, true)).toBe(
+        `<code><a class="file-link" role="button" tabindex="0" aria-label="Preview path ${path}" data-tau-path="${path}">${path}</a>${marker}</code>`,
+      );
+    }
+    expect(linkFilePaths('<p>src/my-file.ts:21-31!</p>')).toContain(
+      'data-tau-path="src/my-file.ts">src/my-file.ts</a>:21-31!',
     );
   });
 
@@ -338,6 +369,18 @@ describe('linking file paths in markup', () => {
 
     for (const path of encoded) {
       expect(html).toContain(`data-tau-path="${path}"`);
+    }
+  });
+
+  it('keeps markers outside standalone rooted links with encoded characters', () => {
+    for (const [encodedPath, path, marker] of [
+      ['~/Documents/a &amp; b.txt', '~/Documents/a & b.txt', ':21–31'],
+      ['/tmp/a &#38; b.txt', '/tmp/a & b.txt', ':42:10'],
+      ['/Users/tim/My File.md', '/Users/tim/My File.md', ':21-31'],
+    ] as const) {
+      expect(linkFilePaths(`<code> ${encodedPath}${marker} </code>`)).toBe(
+        `<code> <a class="file-link" role="link" tabindex="0" data-tau-path="${path.replace(/&/g, '&amp;')}">${encodedPath}</a>${marker} </code>`,
+      );
     }
   });
 

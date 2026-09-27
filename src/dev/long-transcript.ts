@@ -70,6 +70,10 @@ A paragraph with [Tau docs](https://example.com/tau/docs), *real emphasis*, ~~a 
 
 Local source: \`src/components/TranscriptView.vue\`.
 
+Line reference: src/components/ProjectSidebar.vue:922.
+
+Range reference: \`tests/playwright-config.test.ts:21–31\`.
+
 Local directory: \`src/components/\`.
 
 ---
