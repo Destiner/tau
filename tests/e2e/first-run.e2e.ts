@@ -7,6 +7,7 @@ const scenarioUrl = '/?test-scenario=empty-workspace';
 test('shows preparation feedback while ownership is pending', async ({
   page,
 }) => {
+  await page.clock.install();
   await page.goto(`${scenarioUrl}&ownership-delay=3000`);
 
   await expect(page.locator('.first-run-preparing')).toContainText(
@@ -18,6 +19,7 @@ test('shows preparation feedback while ownership is pending', async ({
   const localProject = page.getByRole('button', {
     name: 'Open Local Project',
   });
+  await page.clock.fastForward(3_000);
   await expect(localProject).toBeVisible();
   await expect(page.locator('.first-run-preparing')).toHaveCount(0);
   await localProject.click();

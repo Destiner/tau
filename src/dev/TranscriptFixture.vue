@@ -29,6 +29,8 @@ import TranscriptView from '../components/TranscriptView.vue';
 
 import createLongTranscript, {
   createCompactToolTranscript,
+  createPreviewTranscript,
+  createShowcaseTranscript,
   createVerboseToolTranscript,
 } from './long-transcript';
 
@@ -58,6 +60,8 @@ const parameters = new URLSearchParams(window.location.search);
 const requestedCount = parameters.get('count');
 const compactTools = parameters.get('compact-tools') === 'true';
 const verboseTool = parameters.get('verbose-tool') === 'true';
+const showcase = parameters.get('showcase') === 'true';
+const preview = parameters.get('preview') === 'true';
 const remote = parameters.get('remote') === 'true';
 const compacted = parameters.get('compacted') === 'true';
 const initialCount = Number(requestedCount);
@@ -65,13 +69,17 @@ const initialMessages = verboseTool
   ? createVerboseToolTranscript()
   : compactTools
     ? createCompactToolTranscript()
-    : createLongTranscript(
-        requestedCount && Number.isFinite(initialCount) && initialCount >= 0
-          ? initialCount
-          : compacted
-            ? 12
-            : undefined,
-      );
+    : preview
+      ? createPreviewTranscript()
+      : showcase
+        ? createShowcaseTranscript()
+        : createLongTranscript(
+            requestedCount && Number.isFinite(initialCount) && initialCount >= 0
+              ? initialCount
+              : compacted
+                ? 12
+                : undefined,
+          );
 const messages = ref(
   compacted
     ? [

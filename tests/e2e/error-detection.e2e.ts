@@ -13,13 +13,13 @@ test('fails when the page throws an uncaught error', async ({ page }) => {
     true,
     'demonstrates that ./fixtures fails a test on an unexpected page error',
   );
-  await page.goto('/?fixture=long-transcript');
+  const error = page.waitForEvent('pageerror');
   await page.evaluate(() => {
     queueMicrotask(() => {
       throw new Error('tau-e2e-fixture-demo-page-error');
     });
   });
-  await page.waitForTimeout(200);
+  await error;
 });
 
 test('fails when the page calls console.error', async ({ page }) => {
@@ -27,8 +27,11 @@ test('fails when the page calls console.error', async ({ page }) => {
     true,
     'demonstrates that ./fixtures fails a test on an unexpected console.error call',
   );
-  await page.goto('/?fixture=long-transcript');
+  const error = page.waitForEvent('console', {
+    predicate: (message) => message.type() === 'error',
+  });
   await page.evaluate(() => {
     console.error('tau-e2e-fixture-demo-console-error');
   });
+  await error;
 });

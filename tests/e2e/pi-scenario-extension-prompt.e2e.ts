@@ -4,6 +4,8 @@ import { expect, test } from './fixtures';
 
 const scenarioUrl = '/?test-scenario=saved-session-extension-prompt';
 
+test.use({ pausedClock: true });
+
 /**
  * A question an extension asks belongs to the turn that asked it, so it is
  * rendered in the transcript and the composer stands down until it is answered:
@@ -32,8 +34,12 @@ test('renders an extension prompt in the transcript in place of the composer', a
   // The first option holds focus, so the answer is a keystroke away.
   await expect(prompt.getByRole('option', { name: 'patch' })).toBeFocused();
 
-  // Pi stops waiting, and the composer comes back with the caret in it.
-  await expect(prompt).toHaveCount(0, { timeout: promptTimeout * 2 });
+  // Expiry, not assertion speed, determines when the composer returns.
+  await page.clock.fastForward(promptTimeout - 1);
+  await expect(prompt).toBeVisible();
+  await expect(composer).toHaveCount(0);
+  await page.clock.runFor(1);
+  await expect(prompt).toHaveCount(0);
   await expect(composer).toBeFocused();
 });
 
@@ -59,9 +65,6 @@ test('renders a prompt asked of a session that holds nothing yet', async ({
 test('Escape cancels a focused prompt through its originating runtime', async ({
   page,
 }) => {
-  const time = new Date('2026-01-02T12:00:00Z');
-  await page.clock.install({ time });
-  await page.clock.pauseAt(time);
   await page.goto(
     '/?test-scenario=saved-session-extension-prompt-escape-cancellation',
   );
