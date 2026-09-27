@@ -463,6 +463,28 @@ const OPERATION_CHECKPOINT: RecordFamily = {
   ],
 };
 
+const ACTION_MILESTONE_KINDS = [
+  'ready',
+  'persisted',
+  'paint_opportunity',
+  'paint_unavailable',
+] as const;
+type ActionMilestoneKind = (typeof ACTION_MILESTONE_KINDS)[number];
+
+const ACTION_MILESTONE: RecordFamily = {
+  name: 'action.milestone',
+  attributes: [
+    stringAttribute('tau.action.name', true),
+    stringAttribute('tau.action.milestone', true),
+    {
+      key: 'tau.action.elapsed_ms',
+      kind: 'int',
+      maxLen: null,
+      metricSafe: false,
+    },
+  ],
+};
+
 const HEARTBEAT_VISIBILITY_VALUES = ['visible', 'hidden'] as const;
 type HeartbeatVisibility = (typeof HEARTBEAT_VISIBILITY_VALUES)[number];
 
@@ -559,6 +581,7 @@ const FAMILIES: readonly RecordFamily[] = [
   RUST_PANIC,
   FRONTEND_ERROR,
   OPERATION_CHECKPOINT,
+  ACTION_MILESTONE,
   FRONTEND_HEARTBEAT,
   FRONTEND_STATE_SUMMARY,
   FRONTEND_EVENT_LOOP_LAG,
@@ -601,6 +624,8 @@ function categoricalValues(key: string): readonly string[] | undefined {
   switch (key) {
     case 'tau.action.name':
       return UI_ACTION_NAMES;
+    case 'tau.action.milestone':
+      return ACTION_MILESTONE_KINDS;
     case 'tau.invoke.command':
       return TAURI_INVOKE_COMMANDS;
     case 'tau.invoke.outcome':
@@ -663,6 +688,7 @@ function numericRange(key: string): readonly [number, number] | undefined {
     return [0, MAX_COUNT_ATTRIBUTE];
   }
   if (key === 'pi.generation') return [0, MAX_COUNT_ATTRIBUTE];
+  if (key === 'tau.action.elapsed_ms') return [0, MAX_AGE_ATTRIBUTE_MS];
   if (key === 'tau.state.oldest_pending_rpc_age_ms') {
     return [0, MAX_AGE_ATTRIBUTE_MS];
   }
@@ -703,6 +729,7 @@ export type {
   AttributeError,
   AttributeKind,
   AttributeSpec,
+  ActionMilestoneKind,
   ControllerLifecycleCause,
   ControllerLifecycleState,
   DraftLengthBucket,
@@ -721,6 +748,8 @@ export type {
 
 export {
   allowedAttribute,
+  ACTION_MILESTONE,
+  ACTION_MILESTONE_KINDS,
   APP_LIFECYCLE,
   CONTEXT_ATTRIBUTES,
   CONTROLLER_LIFECYCLE,

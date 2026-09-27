@@ -13,6 +13,7 @@ import {
 import { invoke } from '@tauri-apps/api/core';
 
 import {
+  ACTION_MILESTONE,
   CONTROLLER_LIFECYCLE,
   FRONTEND_ERROR,
   FRONTEND_EVENT_LOOP_LAG,
@@ -27,6 +28,7 @@ import {
   TELEMETRY_HEALTH,
   UI_ACTION,
   validateAttribute,
+  type ActionMilestoneKind,
   type ControllerLifecycleCause,
   type ControllerLifecycleState,
   type DraftLengthBucket,
@@ -75,6 +77,7 @@ let lastReportedDroppedCount = 0;
  * `src/lib/admin-mode.ts`). Off is the starting state, not a fallback: a
  * failed or slow read of the setting leaves the app recording nothing. */
 let enabled = false;
+let telemetryEpoch = 0;
 
 /** Turns recording on or off. Every span, log, and metric record already
  * passes through the queue, so gating the queue's `push` is enough to stop
@@ -83,6 +86,7 @@ let enabled = false;
 function setTelemetryEnabled(next: boolean): void {
   if (enabled === next) return;
   enabled = next;
+  telemetryEpoch++;
   if (next || !state) return;
   state.queue.drain(Number.MAX_SAFE_INTEGER);
 }
@@ -336,6 +340,124 @@ function startActionSpan(
     undefined,
     scope,
   );
+}
+
+const PAINT_WAIT_MS = 5_000;
+
+interface ActionMilestones {
+  readonly span: CommandSpanHandle;
+  /** Record a semantic readiness or successful durable-write boundary. */
+  mark: (kind: 'ready' | 'persisted') => void;
+  /** Call after the visible state mutation; does not wait for or prove paint. */
+  afterRender: () => void;
+  /** Cancel pending frames/timeouts on replacement, failure, or unmount. */
+  cancel: () => void;
+}
+
+/**
+ * Starts an action with linked, once-only milestones. `afterRender` should be
+ * called after Vue's nextTick following the visible mutation, not when the
+ * command resolves. Two animation frames give the browser an opportunity to
+ * paint the committed DOM; they cannot prove that pixels reached the screen.
+ * Hidden windows and suspended frames get a bounded unavailable marker.
+ */
+function startActionMilestones(
+  action: UiActionName,
+  scope?: TelemetryScope,
+): ActionMilestones {
+  const span = startActionSpan(action, scope);
+  const started = performance.now();
+  const epoch = telemetryEpoch;
+  const seen = new Set<ActionMilestoneKind>();
+  let frame: number | undefined;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let cancelled = false;
+  let paintSettled = false;
+
+  function cancel(): void {
+    cancelled = true;
+    if (frame !== undefined) cancelAnimationFrame(frame);
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+
+  function mark(kind: ActionMilestoneKind): void {
+    if (cancelled || !enabled || epoch !== telemetryEpoch || seen.has(kind))
+      return;
+    seen.add(kind);
+    try {
+      const elapsed = Math.round(performance.now() - started);
+      if (
+        !Number.isSafeInteger(elapsed) ||
+        elapsed < 0 ||
+        elapsed > MAX_METRIC_VALUE_MS
+      )
+        return;
+      const family = ACTION_MILESTONE.name;
+      const attributes: Record<string, string | number> = {
+        'tau.action.name': action,
+        'tau.action.milestone': kind,
+        'tau.action.elapsed_ms': elapsed,
+      };
+      if (
+        Object.entries(attributes).some(
+          ([key, value]) => !validateAttribute(family, key, value).valid,
+        )
+      )
+        return;
+      const { queue, scheduleFlush } = ensureState();
+      queue.push({
+        family,
+        timeUnixNano: nowUnixNanoString(),
+        attributes: { ...logScopeAttributes(family, scope), ...attributes },
+        ...(span.context && {
+          traceId: span.context.traceId,
+          spanId: span.context.spanId,
+        }),
+      });
+      scheduleFlush();
+    } catch {
+      // Instrumentation must never affect the user action.
+    }
+  }
+
+  function afterRender(): void {
+    if (
+      cancelled ||
+      !enabled ||
+      epoch !== telemetryEpoch ||
+      timeout !== undefined ||
+      paintSettled
+    )
+      return;
+    try {
+      if (document.visibilityState !== 'visible') {
+        paintSettled = true;
+        mark('paint_unavailable');
+        return;
+      }
+      timeout = setTimeout(() => {
+        paintSettled = true;
+        if (frame !== undefined) cancelAnimationFrame(frame);
+        mark('paint_unavailable');
+        timeout = undefined;
+      }, PAINT_WAIT_MS);
+      frame = requestAnimationFrame(() => {
+        if (paintSettled) return;
+        frame = requestAnimationFrame(() => {
+          if (paintSettled) return;
+          paintSettled = true;
+          if (timeout !== undefined) clearTimeout(timeout);
+          timeout = undefined;
+          if (document.visibilityState === 'visible') mark('paint_opportunity');
+          else mark('paint_unavailable');
+        });
+      });
+    } catch {
+      cancel();
+    }
+  }
+
+  return { span, mark, afterRender, cancel };
 }
 
 /**
@@ -920,6 +1042,7 @@ function recordStateSummary(input: StateSummaryInput): void {
 }
 
 export type {
+  ActionMilestones,
   CommandSpanHandle,
   RpcSpanHandle,
   StateSummaryInput,
@@ -939,6 +1062,7 @@ export {
   recordStateSummary,
   recordStreamAggregate,
   setTelemetryEnabled,
+  startActionMilestones,
   startActionSpan,
   startCommandSpan,
   startRpcSpan,

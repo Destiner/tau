@@ -639,6 +639,37 @@ pub const OPERATION_CHECKPOINT: RecordFamily = RecordFamily {
     ],
 };
 
+pub const ACTION_MILESTONE_KINDS: &[&str] = &[
+    "ready",
+    "persisted",
+    "paint_opportunity",
+    "paint_unavailable",
+];
+
+pub const ACTION_MILESTONE: RecordFamily = RecordFamily {
+    name: "action.milestone",
+    attributes: &[
+        AttributeSpec {
+            key: "tau.action.name",
+            kind: AttributeKind::Str,
+            max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.action.milestone",
+            kind: AttributeKind::Str,
+            max_len: Some(DEFAULT_MAX_ATTRIBUTE_LEN),
+            metric_safe: true,
+        },
+        AttributeSpec {
+            key: "tau.action.elapsed_ms",
+            kind: AttributeKind::I64,
+            max_len: None,
+            metric_safe: false,
+        },
+    ],
+};
+
 /// Categorical values shared by `tau.heartbeat.visibility`.
 pub const HEARTBEAT_VISIBILITY_VALUES: &[&str] = &["visible", "hidden"];
 
@@ -830,6 +861,7 @@ pub const FAMILIES: &[&RecordFamily] = &[
     &RUST_PANIC,
     &FRONTEND_ERROR,
     &OPERATION_CHECKPOINT,
+    &ACTION_MILESTONE,
     &FRONTEND_HEARTBEAT,
     &FRONTEND_STATE_SUMMARY,
     &FRONTEND_EVENT_LOOP_LAG,
@@ -870,6 +902,7 @@ pub fn is_metric_safe(key: &str) -> bool {
 fn categorical_values(key: &str) -> Option<&'static [&'static str]> {
     match key {
         "tau.action.name" => Some(UI_ACTION_NAMES),
+        "tau.action.milestone" => Some(ACTION_MILESTONE_KINDS),
         "tau.invoke.command" => Some(TAURI_INVOKE_COMMANDS),
         "tau.invoke.outcome" => Some(TAURI_INVOKE_OUTCOMES),
         "pi.rpc.method" => Some(PI_RPC_METHODS),
@@ -912,7 +945,7 @@ fn numeric_range(key: &str) -> Option<(i64, i64)> {
     if key == "pi.generation" {
         return Some((0, MAX_COUNT_ATTRIBUTE));
     }
-    if key == "tau.state.oldest_pending_rpc_age_ms" {
+    if key == "tau.action.elapsed_ms" || key == "tau.state.oldest_pending_rpc_age_ms" {
         return Some((0, MAX_AGE_ATTRIBUTE_MS));
     }
     None

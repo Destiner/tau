@@ -14,6 +14,12 @@ When admin mode is on, Tau continuously writes content-free OpenTelemetry JSONL 
 
 Retention is bounded to seven days and 256 MiB. Telemetry failure does not fail product operations. Records contain operation names, lifecycle state, timings, outcomes, counts, sanitized source basenames, and relevant session/runtime identifiers. Pi frontend ownership records distinguish initial claims, replacements, rejected claims, and cleanup failures, including only the stale direct-child count. Children stopped during replacement have a matching `pi.process.stopped` record with the fixed `ownership_replaced` reason. Owner tokens and native failure text are never recorded. Records do not contain prompts, transcripts, drafts, tool or extension payloads, file/clipboard contents, paths, SSH commands, connection strings, stderr, credentials, or raw errors.
 
+## Action milestones
+
+`startActionMilestones(name, scope?)` from `src/lib/telemetry` returns `{ span, mark, afterRender, cancel }`. Use `span.context` for child invokes/RPCs and end `span` as usual. Call `mark('ready')` only when the selected session/controller is usable; call `mark('persisted')` only after the durable native write succeeds (not at optimistic state update or command dispatch). After applying the UI mutation, `await nextTick(); milestones.afterRender()` schedules two animation frames. Do not await frames to show a hidden window. Call `cancel()` on replacement/unmount/failure to discard pending frame work; it does not end the action span.
+
+A milestone is a once-only, content-free `action.milestone` log linked to the action's trace/span, with allowlisted action name, fixed milestone kind (`ready`, `persisted`, `paint_opportunity`, `paint_unavailable`), bounded elapsed milliseconds and optional reviewed scope IDs. `paint_opportunity` is **not** proof of compositing or pixels on screen. Hidden windows and a five-second frame timeout report `paint_unavailable`, never a fabricated paint. Disable/re-enable of admin mode invalidates pending milestones; outside admin mode they record nothing and schedule no frames. The existing bounded queue and native ingest validation apply. Missing readiness/persistence markers are not success signals: only emit them at the corresponding confirmed boundary. No free-form labels, paths, or content may be passed as dimensions.
+
 ## User issue reports
 
 The report button in the sidebar footer is part of admin mode and is not shown otherwise. Reports submitted from it are stored separately from content-free telemetry:
