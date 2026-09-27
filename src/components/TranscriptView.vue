@@ -432,8 +432,9 @@ async function restoreHistoryAnchor(): Promise<void> {
       []),
   ].find((element) => element.dataset.messageId === anchor.messageId);
   if (row) {
-    const offset =
-      rowVirtualizer.value.scrollOffset ?? transcript.value?.scrollTop ?? 0;
+    // ResizeObserver may have adjusted the DOM scroll position before the
+    // virtualizer receives its scroll event; use the position the reader sees.
+    const offset = transcript.value?.scrollTop ?? 0;
     rowVirtualizer.value.scrollToOffset(
       offset + row.getBoundingClientRect().top - anchor.viewportTop,
     );
