@@ -40,7 +40,8 @@ describe('highlighting a fenced block', () => {
     expect(highlightCode('let a = 1\n', 'swift')).toBeNull();
     expect(highlightCode('plain text\n', '')).toBeNull();
 
-    expect(highlightCode('const a = 1;\n'.repeat(2_000), 'ts')).toBeNull();
+    expect(highlightCode('x'.repeat(20_000), 'ts')).not.toBeNull();
+    expect(highlightCode('x'.repeat(20_001), 'ts')).toBeNull();
   });
 
   it('holds a block it has already highlighted', async () => {

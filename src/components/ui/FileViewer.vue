@@ -84,6 +84,13 @@
               v-html="highlighted"
             ></div>
             <!-- eslint-enable vue/no-v-html -->
+            <div
+              v-else-if="largeSource"
+              ref="textContent"
+              class="file-viewer-code"
+            >
+              <pre><code>{{ text }}</code></pre>
+            </div>
             <pre
               v-else
               ref="textContent"
@@ -197,6 +204,7 @@ import {
 } from '../../lib/fullscreen-viewer';
 import highlightCode from '../../lib/highlight';
 import parsePreviewMarkdown from '../../lib/markdown-frontmatter';
+import highlightPreview from '../../lib/preview-highlight';
 
 import MarkdownContent from './MarkdownContent.vue';
 import UiIcon from './UiIcon.vue';
@@ -244,6 +252,13 @@ function replacePreview(preview: FilePreviewDescriptor): void {
   emit('replace', preview);
 }
 const assetUrl = computed(() => filePreviewAssetUrl(props.assetPath));
+const largeSource = computed(
+  () =>
+    previewType.value.kind === 'text' &&
+    previewType.value.presentation === 'source' &&
+    Boolean(previewType.value.language) &&
+    (text.value?.length ?? 0) > 20_000,
+);
 const highlighted = computed(() => {
   const source = text.value;
   const language = previewType.value.language;
@@ -251,6 +266,7 @@ const highlighted = computed(() => {
 });
 
 let request: AbortController | undefined;
+let cancelHighlight: (() => void) | undefined;
 let fullscreenViewer: FullscreenViewer | undefined;
 let loadingDelay = 0;
 let loadingDeadline = 0;
@@ -288,6 +304,8 @@ function failLoading(): void {
 }
 
 async function loadPreview(): Promise<void> {
+  cancelHighlight?.();
+  cancelHighlight = undefined;
   request?.abort();
   request = new AbortController();
   text.value = null;
@@ -316,6 +334,16 @@ async function loadPreview(): Promise<void> {
     text.value = preview.text;
     truncated.value = preview.truncated;
     finishLoading();
+    if (largeSource.value && previewType.value.language) {
+      await nextTick();
+      if (activeRequest === request && textContent.value) {
+        cancelHighlight = highlightPreview(
+          textContent.value,
+          preview.text,
+          previewType.value.language,
+        );
+      }
+    }
   } catch {
     if (activeRequest !== request || activeRequest.signal.aborted) return;
     failLoading();
@@ -430,6 +458,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleKeydownCapture, true);
   if (fullscreenViewer) unregisterFullscreenViewer(fullscreenViewer);
   request?.abort();
+  cancelHighlight?.();
   clearLoadingTimers();
 });
 </script>
