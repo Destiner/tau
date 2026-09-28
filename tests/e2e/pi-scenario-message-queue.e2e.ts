@@ -104,6 +104,23 @@ test('queues busy composer messages and never clears them implicitly', async ({
     queue.getByRole('button', { name: `Follow Up 1: ${followUpMessage}` }),
   ).toBeVisible();
   await expect(queue.locator('.queue-ordinal')).toHaveText('1');
+  const steeringPill = queue.getByRole('button', {
+    name: `Steering: ${steeringMessage}`,
+  });
+  await steeringPill.focus();
+  await expect(page.getByRole('tooltip').locator('strong')).toHaveText(
+    'Steering',
+  );
+  const followUpPill = queue.getByRole('button', {
+    name: `Follow Up 1: ${followUpMessage}`,
+  });
+  await followUpPill.focus();
+  await expect(page.getByRole('tooltip').locator('strong')).toHaveText(
+    'Follow Up',
+  );
+  await followUpPill.press('Escape');
+  await expect(page.getByRole('tooltip')).toHaveCount(0);
+  await expect(followUpPill).toBeFocused();
   await expect(queue.locator('.queue-feedback')).toHaveCount(0);
   await page.setViewportSize({ width: 420, height: 540 });
   expect(
