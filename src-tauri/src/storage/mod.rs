@@ -21,11 +21,7 @@ use crate::{
 };
 use tauri::State;
 
-/// Every storage command below accepts the same optional, explicit
-/// `telemetry_context`: a caller without a span (or a malformed one) still
-/// runs normally, since telemetry failure must never fail the command it is
-/// attached to. Stage 2 proved the pattern end to end on this one command;
-/// Stage 3 applies it to the rest of storage's ordinary invokes.
+/// Missing or malformed telemetry context must never fail a storage command.
 #[tauri::command]
 pub async fn load_workspace(
     telemetry: State<'_, Telemetry>,
