@@ -25,6 +25,7 @@ import {
   savedSessionPromptProcessExit,
 } from './saved-session-process-failures';
 import savedSessionPromptAdmission from './saved-session-prompt-admission';
+import savedSessionQueuePills from './saved-session-queue-pills';
 import savedSessionQueueRejection from './saved-session-queue-rejection';
 import savedSessionSteeringBoundary from './saved-session-steering-boundary';
 import {
@@ -45,6 +46,7 @@ const scenarios = [
   savedSessionCompactionNotifications,
   savedSessionPromptAdmission,
   savedSessionMessageQueue,
+  savedSessionQueuePills,
   savedSessionQueueRejection,
   savedSessionSteeringBoundary,
   savedSessionStaleGeneration,

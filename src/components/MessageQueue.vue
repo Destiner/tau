@@ -47,11 +47,9 @@
         class="queue-chip"
         type="button"
         :aria-label="`Follow Up ${index + 1}: ${text}`"
-        @mouseenter="
-          (event) => scheduleMessageShow(event, 'followUp', text, index + 1)
-        "
+        @mouseenter="(event) => scheduleMessageShow(event, 'followUp', text)"
         @mouseleave="hideMessage"
-        @focus="(event) => showMessage(event, 'followUp', text, index + 1)"
+        @focus="(event) => showMessage(event, 'followUp', text)"
         @blur="scheduleMessageClose"
       >
         <span
@@ -97,9 +95,7 @@
         @keydown.escape="handleEscape"
       >
         <strong>{{
-          messagePreview.kind === 'steering'
-            ? 'Steering'
-            : `Follow Up • ${messagePreview.order}`
+          messagePreview.kind === 'steering' ? 'Steering' : 'Follow Up'
         }}</strong>
         <MarkdownText :source="messagePreview.text" />
       </div>
@@ -168,7 +164,6 @@ const details = ref<'failed' | null>(null);
 const messagePreview = ref<{
   kind: 'steering' | 'followUp';
   text: string;
-  order?: number;
 } | null>(null);
 const previewStyle = ref<Record<string, string>>({});
 const previewElement = ref<HTMLElement | null>(null);
@@ -200,32 +195,29 @@ function scheduleMessageShow(
   event: Event,
   kind: 'steering' | 'followUp',
   text: string,
-  order?: number,
 ): void {
   cancelMessageShow();
   const target = event.currentTarget as HTMLElement;
   messageShowTimer = setTimeout(() => {
-    if (target.isConnected) showMessageAt(target, kind, text, order);
+    if (target.isConnected) showMessageAt(target, kind, text);
   }, 180);
 }
 function showMessage(
   event: Event,
   kind: 'steering' | 'followUp',
   text: string,
-  order?: number,
 ): void {
   if (suppressPreviewFocus) {
     suppressPreviewFocus = false;
     return;
   }
   cancelMessageShow();
-  showMessageAt(event.currentTarget as HTMLElement, kind, text, order);
+  showMessageAt(event.currentTarget as HTMLElement, kind, text);
 }
 function showMessageAt(
   target: HTMLElement,
   kind: 'steering' | 'followUp',
   text: string,
-  order?: number,
 ): void {
   cancelMessageClose();
   previewTrigger = target;
@@ -236,7 +228,7 @@ function showMessageAt(
     top: `${rect.top - 5}px`,
     visibility: 'hidden',
   };
-  messagePreview.value = { kind, text, order };
+  messagePreview.value = { kind, text };
   void nextTick(() => {
     if (previewVersion !== version || !previewElement.value) return;
     const { width, height } = previewElement.value.getBoundingClientRect();
@@ -338,7 +330,8 @@ function closeDetails(): void {
   flex: 0 0 auto;
   align-items: center;
   gap: 4px;
-  max-width: min(230px, 75%);
+  min-width: 0;
+  max-width: min(180px, 75%);
   height: var(--control-sm);
   padding: 0 5px;
   border: 1px solid var(--border);
@@ -366,9 +359,9 @@ function closeDetails(): void {
 .queue-chip .queue-ordinal {
   display: grid;
   flex: none;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 2px;
   border-radius: 4px;
   place-items: center;
   background: var(--hover);
