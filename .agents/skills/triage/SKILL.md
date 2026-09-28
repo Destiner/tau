@@ -54,7 +54,7 @@ Use it to reproduce an issue or collect more context: filter records by the
 report's `sessionId` and search the minutes around its `timeUnixNano` for
 failed spans, error-level logs, or unusual timings. For deterministic UI
 reproduction afterwards, use the scenario tooling (`bun run repro -- --list`,
-`docs/reproduction-scenarios.md`).
+`docs/reproduction.md`).
 
 ## Investigating and fixing a report
 

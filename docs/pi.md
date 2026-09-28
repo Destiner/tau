@@ -1,10 +1,12 @@
-# Workflows and extensions
+# Pi
+
+## Extensions
 
 Tau delegates extension discovery and execution to Pi rather than implementing a separate extension runtime. Tau drives that runtime over Pi's RPC protocol.
 
 This matrix describes Tau's extension compatibility with Pi 0.84.1. Queue controls additionally require Pi 0.84.4 or later for `clear_queue`. "Supported" means Tau either renders the feature or preserves Pi's runtime behavior. It does not mean every TUI-only presentation API has a Tau equivalent.
 
-## Support matrix
+### Support matrix
 
 - **Global and project extension discovery (supported):** Pi loads trusted extensions, settings, skills, models, authentication, and other resources.
 - **Extension slash commands (supported):** Tau discovers them through `get_commands` and invokes them through `prompt`. Pi executes them instead of sending them to the model, so Tau does not show them as user messages.
@@ -32,7 +34,7 @@ This matrix describes Tau's extension compatibility with Pi 0.84.1. Queue contro
 - **Extension installation or management UI (deferred):** Install extensions through Pi's normal global, project, package, or settings mechanisms.
 - **Dedicated workflow dashboard (deferred):** Workflow phases appear as ordinary Tau sessions.
 
-## Queue delivery and lifetime
+### Queue delivery and lifetime
 
 While a saved session is working, Tau sends ordinary `prompt` requests with `streamingBehavior: "steer"` or `"followUp"`. Pi decides whether the message is queued or starts an ordinary run if it became idle. Steering messages are delivered as separate user messages together at Pi's next eligible turn boundary; follow-ups run one at a time after the current work. Shift+Enter inserts a newline. Idle submissions use the ordinary prompt path; extension slash commands are not run immediately from the busy queue path.
 
@@ -40,7 +42,7 @@ Before a session's first queue submission, Tau checks Pi's `get_state` modes and
 
 **Clear All** issues Pi's `clear_queue` once for both groups. It does not stop the current run, undo messages Pi already selected for delivery, or re-add remaining text. A rejected command shows an in-place upgrade/retry message rather than simulating removal. **Stop** aborts only current work and never clears either queue. Pending messages survive switching between live, warm sessions, but are not stored by Tau or automatically replayed after a process exit, replacement, reconnect, or app restart. Lost queue work gets session-local feedback. A queued but idle runtime is protected from idle eviction.
 
-## Runtime lifetime
+### Runtime lifetime
 
 Pi supplies `ExtensionCommandContext` (which can open sessions) only to command handlers and `withSession` callbacks. Tool/event handlers receive `ExtensionContext`, which cannot. Workflows must retain the opening context in the Pi process across phases. Reopening a session file restores transcript, marker entries, and name, **not** this handoff. Tau keeps idle runtimes warm and evicts least-recently-active ones only past a limit. After app exit, SSH loss, or eviction, the workflow must resume through its own command.
 
@@ -52,7 +54,7 @@ Remote Pi runtimes use dedicated SSH connections with 15-second server-alive pro
 
 When an established remote connection exits, Tau keeps the session, draft, and interrupted transcript, clears live activity, and offers a session-local **Reconnect** action. Selecting the session does not reconnect it, and reconnecting never resends a prompt or extension response. A responsive SSH server cannot reveal a Pi process that is itself hung, and reopening restores Pi's persisted history rather than lost in-memory extension continuations.
 
-## Sessions Tau had archived
+### Sessions Tau had archived
 
 A workflow resumed by its own command re-attaches to the phase session that is already on disk, which may be a session the user archived in the meantime. Registering that identity is Tau adopting a session Pi handed it, so the row comes back out of the archive: a session Tau is showing has to be one the user can select and return to.
 
@@ -60,7 +62,7 @@ Adoption is limited to the identities Pi hands over — a replacement, the sessi
 
 Local registration stores the transcript path in the owning project's Tau registry, even when an extension saves the transcript outside that project's default Pi session directory. Tau lists only registered paths whose on-disk Pi header matches the registered identity. Older registry entries without a path still discover files in the default directory; a missing or mismatched explicit path never falls back to a different file. Pi continues to own the transcript itself.
 
-## Sessions Pi never saved
+### Sessions Pi never saved
 
 Pi buffers new sessions until a finalized assistant message. `AgentSession` emits assistant `message_end` immediately before synchronously appending and flushing it to JSONL. Tau sends an identity-scoped RPC request at that event; its response is an ordering barrier after the append. Registration requires the same runtime generation, session id, and path on response. This also proves remote durability (Tau does not inspect remote files) and can make a tool-driven first run reopenable before settlement.
 

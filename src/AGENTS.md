@@ -15,6 +15,7 @@ Vue 3 and TypeScript UI for Tau. Root guidance and the quality rubric still appl
 ## Patterns
 
 - Keep state mutations in the existing state/runtime layers; components should render state and dispatch actions.
+- Use the token scales and semantics in `styles.css` and shared interaction styles in `components/ui/surface.css`; do not duplicate values in components.
 - Key asynchronous work by controller, runtime generation, and request identity. Drop stale events before they mutate state.
 - Preserve per-session isolation, drafts, optimistic prompts, extension dialogs, and warm-runtime workflow context.
 - Transcript entries need stable identity across hydration and streaming so virtualization, measured heights, expansion state, and reader position survive rerenders.
