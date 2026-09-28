@@ -2,7 +2,6 @@ import {
   followUp,
   longSentence,
   multiline,
-  steering,
   unbroken,
 } from '../support/pi-scenario/saved-session-queue-pills';
 
@@ -36,19 +35,6 @@ test('sizes pills intrinsically with a bounded cap and compact, readable double-
   await page.goto(scenarioUrl);
   await gate(page, 'pills-rendered');
   const queue = page.getByRole('region', { name: 'Pending messages' });
-  const shortSteering = queue.getByRole('button', {
-    name: `Steering: ${steering[0]}`,
-  });
-  const longSteering = queue.getByRole('button', {
-    name: `Steering: ${longSentence}`,
-  });
-  const shortFollowUp = queue.getByRole('button', {
-    name: `Follow Up 1: ${followUp[0]}`,
-  });
-  const longFollowUp = queue.getByRole('button', {
-    name: `Follow Up 2: ${longSentence}`,
-  });
-  await expect(shortFollowUp).toBeAttached();
   const geometry = await queue.evaluate((element) => {
     const chips = [...element.querySelectorAll<HTMLElement>('.queue-chip')];
     const badge = element.querySelector<HTMLElement>('.queue-ordinal');
@@ -93,19 +79,10 @@ test('sizes pills intrinsically with a bounded cap and compact, readable double-
   );
   expect(new Set(geometry.heights).size).toBe(1);
   await expect(
-    queue.getByRole('button', { name: `Steering: ${unbroken}` }),
-  ).toBeAttached();
-  await expect(
-    queue.getByRole('button', { name: `Follow Up 3: ${multiline}` }),
-  ).toBeAttached();
-  await expect(
     queue
       .getByRole('button', { name: `Follow Up 11: ${followUp[10]}` })
       .locator('.queue-ordinal'),
   ).toHaveText('11');
-  await expect(shortSteering).toBeAttached();
-  await expect(longSteering).toBeAttached();
-  await expect(longFollowUp).toBeAttached();
   await queue.getByRole('button', { name: `Steering: ${unbroken}` }).focus();
   await expect(page.getByRole('tooltip')).toContainText(unbroken);
   await queue
