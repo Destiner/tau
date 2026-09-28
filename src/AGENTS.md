@@ -6,7 +6,7 @@ Vue 3 and TypeScript UI for Tau. Root guidance and the quality rubric still appl
 
 - `components/` - Product surfaces; `components/ui/` contains reusable primitives.
 - `composables/state.ts` - Reactive workspace, session, controller, and draft state.
-- `composables/useTau.ts` - User actions and orchestration exposed to the component tree.
+- `composables/useTau/` - User actions and orchestration exposed to the component tree.
 - `lib/pi/` - Pi RPC lifecycle, model scope, transcript hydration, and error presentation; `rpc-bookkeeping.ts` owns request spans/timeouts and streaming aggregates.
 - `lib/telemetry/` - Content-free tracing, metrics, logging, privacy, and bounded ingestion.
 - `lib/admin-mode.ts` / `lib/admin-code.ts` - The switch that gates telemetry and the issue reporter, and the cheat code that flips it.
@@ -21,7 +21,7 @@ Vue 3 and TypeScript UI for Tau. Root guidance and the quality rubric still appl
 - Transcript entries need stable identity across hydration and streaming so virtualization, measured heights, expansion state, and reader position survive rerenders.
 - Sanitize rendered content and open web links outside the webview. File paths use their captured local or remote project context; regular files preview from private, narrowly scoped snapshots, while directories retain their local-open or remote-copy behavior.
 - Keep fixtures behind `import.meta.env.DEV` and dynamic imports so production bundles do not include them.
-- Use existing traced Tauri invocation and privacy helpers for product operations; raw RPC transport is the narrow exception in `lib/pi/runtime.ts`, and `read_admin_mode` is the one untraced command.
+- Use existing traced Tauri invocation and privacy helpers for product operations; raw RPC transport is the narrow exception in `lib/pi/runtime/`, and `read_admin_mode` is the one untraced command.
 - Telemetry records nothing outside admin mode.
 
 ## Testing

@@ -15,9 +15,9 @@ Run these commands from the repository root.
 ## Structure
 
 - `src/lib.rs` - App lifecycle, native menu/window behavior, managed state, and command registration.
-- `src/pi.rs` - Local/remote Pi process lifecycle and JSONL RPC transport.
+- `src/pi/` - Local/remote Pi process lifecycle and JSONL RPC transport.
 - `src/ssh.rs` - OpenSSH connection parsing, probing, and remote commands.
-- `src/storage.rs` / `src/settings.rs` - Workspace/session persistence and Pi settings.
+- `src/storage/` / `src/settings.rs` - Workspace/session persistence and Pi settings.
 - `src/telemetry/` - Native OpenTelemetry ingestion, local segments, retention, privacy, and optional export.
 - `src/profile.rs` - Isolated development and production profile paths.
 
