@@ -50,6 +50,8 @@ import {
   finishSessionNameRefresh,
   requestSessionNameRefresh,
   syncAfterCommand,
+  clearCommandRefreshWatch,
+  failCommandRefresh,
   clearSessionReplacementWatch,
   scheduleMaterializationVerificationRetry,
   clearMaterializationVerificationWatch,
@@ -173,7 +175,8 @@ async function handleResponse(
     command === 'get_state' &&
     Boolean(controller.commandSyncRequestId) &&
     responseId === controller.commandSyncRequestId;
-  if (resolvesCommandSync) controller.commandSyncRequestId = '';
+  if (resolvesCommandSync && response.success !== true)
+    controller.commandSyncRequestId = '';
   const resolvesAbortProbe =
     command === 'get_state' &&
     Boolean(controller.abortProbeRequestId) &&
@@ -257,8 +260,10 @@ async function handleResponse(
     Boolean(controller.commandPromptRequestId) &&
     responseId === controller.commandPromptRequestId
   ) {
-    controller.commandPromptRequestId = '';
     if (response.success === true) {
+      // Establish the read watch before releasing command execution ownership.
+      void syncAfterCommand(controller);
+      controller.commandPromptRequestId = '';
       if (resolvesSubmittedPrompt && controller.submittedPrompt) {
         controller.submittedPrompt.accepted = true;
         controller.submittedPrompt = undefined;
@@ -270,9 +275,9 @@ async function handleResponse(
         'prompt_response',
         responseContext,
       );
-      await syncAfterCommand(controller);
       return;
     }
+    controller.commandPromptRequestId = '';
   }
   if (response.success !== true) {
     if (resolvesSessionNameState) {
@@ -320,6 +325,13 @@ async function handleResponse(
       ? errorCopy.historyLoad
       : rpcFailureCopy(command);
     setControllerError(controller, failureMessage);
+    if (
+      resolvesCommandSync ||
+      (command === 'get_messages' &&
+        controller.commandMessagesRequestId === responseId)
+    ) {
+      failCommandRefresh(controller);
+    }
     if (resolvesMaterializationBarrier) {
       controller.materializationBarrierRequestId = '';
     }
@@ -678,6 +690,7 @@ async function handleResponse(
         working: materializationBarrierForCurrentSession
           ? controller.working || controller.streaming || nowStreaming
           : nowStreaming ||
+            Boolean(controller.commandPromptRequestId) ||
             Boolean(pending) ||
             Boolean(controller.submittedPrompt?.optimisticId),
         connectingRemote: false,
@@ -722,6 +735,8 @@ async function handleResponse(
       }
     }
     if (!controllerIdentityMatches(controller, synchronizedIdentity)) return;
+    if (resolvesCommandSync && controller.commandSyncRequestId !== responseId)
+      return;
     if (materializationBarrierForCurrentSession) {
       controller.materializationBarrierRequestId = '';
       return;
@@ -746,12 +761,19 @@ async function handleResponse(
       releaseIdleRuntimes();
       return;
     }
-    if (resolvesCommandSync && controller.streaming && !sessionChanged) return;
+    if (resolvesCommandSync && controller.streaming && !sessionChanged) {
+      clearCommandRefreshWatch(controller);
+      return;
+    }
     // A run that outlived its abort is still writing the transcript, so the
     // probe only reports on it. A run that did stop falls through and syncs.
     if (resolvesAbortProbe && controller.streaming && !sessionChanged) return;
 
     const messagesRequestId = nextRequestId('messages');
+    if (resolvesCommandSync) {
+      controller.commandSyncRequestId = '';
+      controller.commandMessagesRequestId = messagesRequestId;
+    }
     if (controller.postSettlementHydration && !nowStreaming) {
       controller.materializationMessagesRequestId = messagesRequestId;
     }
@@ -885,6 +907,9 @@ async function handleResponse(
         controller.postSettlementHydration = false;
         controller.settledAssistantActivity = false;
       }
+    }
+    if (controller.commandMessagesRequestId === responseId) {
+      clearCommandRefreshWatch(controller);
     }
     // A hidden session that finishes hydrating has nothing left to wait for,
     // so this is where a runtime the user has moved on from is accounted for.

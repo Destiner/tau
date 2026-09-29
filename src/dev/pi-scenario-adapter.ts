@@ -249,6 +249,13 @@ const REQUIRED_NATIVE_COUNTS = {
     set_active_project: 1,
     set_active_session: 3,
   },
+  'phantom-command-replacement': {
+    load_workspace: 1,
+    read_model_scope: 2,
+    register_session: 3,
+    set_active_project: 1,
+    set_active_session: 5,
+  },
   'phantom-command-only': {
     load_workspace: 1,
     read_model_scope: 2,
@@ -874,6 +881,24 @@ function expectedNativeSession(
   command: 'register_session' | 'set_active_session',
   invocation: number,
 ): NativeSessionIdentity {
+  if (scenarioName === 'phantom-command-replacement') {
+    const expected =
+      command === 'register_session'
+        ? [
+            MAIN_SESSION,
+            REPLACEMENT_SESSION,
+            { ...REPLACEMENT_SESSION, adopted: false },
+          ][invocation - 1]
+        : [
+            MAIN_SESSION,
+            MAIN_SESSION,
+            REPLACEMENT_SESSION,
+            REPLACEMENT_SESSION,
+            REPLACEMENT_SESSION,
+          ][invocation - 1];
+    if (!expected) throw new Error(`${command} ran too many times.`);
+    return expected;
+  }
   if (scenarioName === 'saved-session-command-replacement') {
     const sequence =
       command === 'register_session'
@@ -989,7 +1014,8 @@ function scenarioRuntimeKey(
   if (
     scenarioName === 'phantom-command-registration' ||
     scenarioName === 'phantom-first-prompt-registration' ||
-    scenarioName === 'phantom-command-only'
+    scenarioName === 'phantom-command-only' ||
+    scenarioName === 'phantom-command-replacement'
   ) {
     if (count > 1) throw new Error('A command session started twice.');
     return sessionPath === null ? 'phantom' : 'main';

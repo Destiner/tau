@@ -2,6 +2,7 @@ import archivedSessionsReview from './archived-sessions-review';
 import emptyWorkspace from './empty-workspace';
 import phantomCommandOnly from './phantom-command-only';
 import phantomCommandRegistration from './phantom-command-registration';
+import phantomCommandReplacement from './phantom-command-replacement';
 import phantomFirstPromptRegistration from './phantom-first-prompt-registration';
 import planImplementReplacement from './plan-implement-replacement';
 import savedSessionAutoRetry from './saved-session-auto-retry';
@@ -53,6 +54,7 @@ const scenarios = [
   savedSessionCommandReplacement,
   planImplementReplacement,
   phantomCommandRegistration,
+  phantomCommandReplacement,
   phantomFirstPromptRegistration,
   phantomCommandOnly,
   savedSessionUnacknowledgedAbort,

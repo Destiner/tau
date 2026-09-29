@@ -60,6 +60,7 @@ import {
   requestSessionNameRefresh,
   watchSessionReplacement,
   clearSessionReplacementWatch,
+  clearCommandRefreshWatch,
   clearMaterializationVerificationWatch,
   clearAbortWatch,
   discardReleasedEmptySession,
@@ -245,7 +246,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     controller.runStateRequestId = '';
     controller.startMessagesRequestId = '';
     controller.commandPromptRequestId = '';
-    controller.commandSyncRequestId = '';
+    clearCommandRefreshWatch(controller);
     controller.replacementProbeRequestId = '';
     controller.abortProbeRequestId = '';
     controller.historyRequestId = '';

@@ -265,6 +265,8 @@ interface SessionController {
   startMessagesRequestId: string;
   commandPromptRequestId: string;
   commandSyncRequestId: string;
+  commandMessagesRequestId: string;
+  commandRefreshFailed: boolean;
   replacementProbeRequestId: string;
   abortProbeRequestId: string;
   connectingRemote: boolean;
@@ -1087,6 +1089,8 @@ function createController(
     startMessagesRequestId: '',
     commandPromptRequestId: '',
     commandSyncRequestId: '',
+    commandMessagesRequestId: '',
+    commandRefreshFailed: false,
     replacementProbeRequestId: '',
     abortProbeRequestId: '',
     connectingRemote: false,

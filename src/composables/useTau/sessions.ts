@@ -8,6 +8,7 @@ import {
   removeEmptyActivePhantom,
   removeRegisteredEphemeralSession,
   startController,
+  syncAfterCommand,
 } from '../../lib/pi/runtime';
 import { startActionMilestones } from '../../lib/telemetry';
 import { advanceArchiveRevision, archiveRevision } from '../archive-revision';
@@ -197,6 +198,8 @@ function createSessions() {
         const controller = activeController.value;
         if (controller) {
           controller.unread = false;
+          if (controller.commandRefreshFailed && controller.generation)
+            void syncAfterCommand(controller);
           if (controller.remoteDisconnected) reopenRemoteFeedback(controller);
           if (
             !controller.phantom &&
@@ -228,6 +231,8 @@ function createSessions() {
         cancelSavedPreview();
       if (controller.remoteDisconnected) reopenRemoteFeedback(controller);
       controller.unread = false;
+      if (controller.commandRefreshFailed && controller.generation)
+        void syncAfterCommand(controller);
       trackSelection(controller, milestones, project.path, session.id);
       trackSelectionWrite(
         persistProjectSelection(project.path, controller, actionSpan.context),

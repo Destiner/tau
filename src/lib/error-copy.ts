@@ -34,7 +34,7 @@ const errorCopy = {
   removeProject: 'The project could not be removed. Try again.',
   restoreSession: 'The session could not be restored. Try again.',
   sessionRefresh:
-    'This session could not be refreshed. Select it again to reconnect.',
+    'This session could not be refreshed. Select it again to retry the read.',
   sessionRegistration:
     'This session could not be saved. Continue here, then try reopening it.',
   sessionRename:
