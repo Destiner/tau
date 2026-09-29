@@ -4,6 +4,38 @@ import { expect, test } from './fixtures';
 
 const scenarioUrl = '/?test-scenario=empty-workspace';
 
+test('keeps a first-run update failure inside the version popover', async ({
+  page,
+}) => {
+  await page.goto(`${scenarioUrl}&test-update=first-run-failure`);
+  const trigger = page.getByRole('button', {
+    name: `Tau version ${appVersion}`,
+  });
+  await expect(trigger).toBeVisible();
+  await expect(
+    trigger.locator('.update-indicator, .update-failure-mark'),
+  ).toHaveCount(0);
+  await expect(page.locator('.update-popover')).toHaveCount(0);
+  await trigger.focus();
+  await page.keyboard.press('Enter');
+  const popover = page.locator('.update-popover');
+  await expect(popover.getByText('Update failed')).toBeVisible();
+  await expect(
+    popover.getByText(
+      'Tau could not check for updates. Check your connection and try again.',
+    ),
+  ).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await expect(popover.getByText('Update failed')).toBeVisible();
+  await expect(trigger).toHaveAttribute(
+    'aria-label',
+    `Tau version ${appVersion}`,
+  );
+  await page.getByRole('button', { name: 'Open Local Project' }).click();
+});
+
 test('prepares Pi then offers and navigates both project actions in the empty workspace', async ({
   page,
 }) => {

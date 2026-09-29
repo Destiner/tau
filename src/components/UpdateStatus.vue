@@ -18,11 +18,6 @@
           :class="indicator"
           aria-hidden="true"
         ></span>
-        <UiIcon
-          v-else-if="indicator === 'failure'"
-          class="update-failure-mark"
-          name="cross"
-        />
       </button>
     </PopoverTrigger>
     <PopoverPortal>
@@ -93,7 +88,6 @@ import appVersion from '../lib/app-version';
 import { updateFailureDescription, useUpdate } from '../lib/update';
 
 import UiButton from './ui/UiButton.vue';
-import UiIcon from './ui/UiIcon.vue';
 
 withDefaults(defineProps<{ firstRun?: boolean }>(), { firstRun: false });
 
@@ -102,24 +96,18 @@ const state = update.state;
 const open = ref(false);
 const checkingCopy = ref<{ title: string; description: string } | null>(null);
 
-const indicator = computed<'accent' | 'downloading' | 'failure' | undefined>(
-  () => {
-    if (state.failureUnread) return 'failure';
-    if (state.phase === 'downloading' || state.phase === 'verifying')
-      return 'downloading';
-    if (
-      state.phase === 'available' ||
-      state.phase === 'awaiting-confirmation' ||
-      state.phase === 'restart-needed'
-    )
-      return 'accent';
-    return undefined;
-  },
-);
-const triggerLabel = computed(() => {
-  const suffix = indicator.value === 'failure' ? ', update failed' : '';
-  return `Tau version ${appVersion}${suffix}`;
+const indicator = computed<'accent' | 'downloading' | undefined>(() => {
+  if (state.phase === 'downloading' || state.phase === 'verifying')
+    return 'downloading';
+  if (
+    state.phase === 'available' ||
+    state.phase === 'awaiting-confirmation' ||
+    state.phase === 'restart-needed'
+  )
+    return 'accent';
+  return undefined;
 });
+const triggerLabel = `Tau version ${appVersion}`;
 const isBusy = computed(
   () => update.inProgress.value || state.phase === 'checking',
 );
@@ -148,7 +136,7 @@ const title = computed(() => {
     case 'installing':
       return 'Installing update';
     case 'restart-needed':
-      return 'Restart needed';
+      return state.failureCategory ? 'Update failed' : 'Restart needed';
     case 'failure':
       return 'Update failed';
     case 'current':
@@ -176,7 +164,9 @@ const description = computed(() => {
     case 'installing':
       return 'Tau will restart when installation finishes.';
     case 'restart-needed':
-      return 'The update is installed. Restart Tau to finish.';
+      return state.failureCategory
+        ? updateFailureDescription(state.failureCategory)
+        : 'The update is installed. Restart Tau to finish.';
     case 'failure':
       return updateFailureDescription(state.failureCategory);
     case 'current':
@@ -210,10 +200,6 @@ watch(
   },
   { immediate: true },
 );
-
-watch(open, (isOpen) => {
-  if (isOpen) update.acknowledgeFailure();
-});
 
 watch(
   () => state.phase,
@@ -279,12 +265,6 @@ function runPrimaryAction(): void {
 
 .update-indicator.downloading {
   background: var(--muted);
-}
-
-.update-failure-mark {
-  width: 8px;
-  height: 8px;
-  color: var(--danger);
 }
 
 .first-run-trigger {

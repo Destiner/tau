@@ -52,6 +52,8 @@ interface BrowserSandboxOptions {
   updateAvailable?: boolean;
   updateCheckDelayMs?: number;
   updateProgressDelayMs?: number;
+  controlledUpdateCheck?: boolean;
+  updateFailure?: 'download' | 'verification' | 'restart';
   emitAppEvent?: (event: string, payload: unknown) => Promise<void>;
   simulateUpdateRestart?: () => Promise<never>;
 }
@@ -212,6 +214,7 @@ function createBrowserSandboxHandler(
   let ownershipRevision = 0;
   let activeOwner = '';
   let updateStatus: SandboxUpdateStatus = 'available';
+  let updateFailureDelivered = false;
   let pendingQuitRequest: SandboxQuitRequest | null = null;
   let authorizedQuitRequest: SandboxQuitRequest | null = null;
   const updateOperationId = 1;
@@ -477,8 +480,9 @@ function createBrowserSandboxHandler(
     if (command === 'update_snapshot') {
       const supported = options.updatesSupported ?? options.updateAvailable;
       if (!supported) return { supported: false, status: 'idle' };
-      if (!options.updateAvailable)
+      if (!options.updateAvailable || options.controlledUpdateCheck)
         return { supported: true, status: 'upToDate' };
+      if (options.updateFailure === 'restart') updateStatus = 'restartNeeded';
       return {
         supported: true,
         status:
@@ -494,6 +498,20 @@ function createBrowserSandboxHandler(
       };
     }
     if (command === 'check_for_update') {
+      if (options.controlledUpdateCheck) {
+        document.documentElement.dataset.updateCheckPending = 'true';
+        const failed = await new Promise<boolean>((resolve) => {
+          window.addEventListener(
+            'tau:test-update-check',
+            (event) => {
+              delete document.documentElement.dataset.updateCheckPending;
+              resolve((event as CustomEvent<{ fail: boolean }>).detail.fail);
+            },
+            { once: true },
+          );
+        });
+        if (failed) throw { category: 'checkFailed' };
+      }
       if (options.updateCheckDelayMs) {
         await new Promise((resolve) =>
           setTimeout(resolve, options.updateCheckDelayMs),
@@ -519,6 +537,9 @@ function createBrowserSandboxHandler(
       ) {
         throw new Error('Browser sandbox rejected update download arguments.');
       }
+      if (options.updateFailure === 'download') {
+        throw { category: 'downloadFailed' };
+      }
       const emitProgress = async (
         downloadedBytes: number,
         phase: 'downloading' | 'verifying',
@@ -540,6 +561,9 @@ function createBrowserSandboxHandler(
       await emitProgress(72, 'downloading');
       await emitProgress(100, 'downloading');
       await emitProgress(100, 'verifying');
+      if (options.updateFailure === 'verification') {
+        throw { category: 'verificationFailed' };
+      }
       updateStatus = 'prepared';
       return null;
     }
@@ -598,6 +622,10 @@ function createBrowserSandboxHandler(
         operationId !== updateOperationId
       ) {
         throw new Error('Browser sandbox rejected update restart arguments.');
+      }
+      if (options.updateFailure === 'restart' && !updateFailureDelivered) {
+        updateFailureDelivered = true;
+        throw { category: 'installFailed' };
       }
       return null;
     }
@@ -816,7 +844,12 @@ function installBrowserSandbox(): void {
     'test-update',
   );
   const updateFixtureRequested =
-    testUpdate === 'available' || testUpdate === 'checking';
+    testUpdate === 'available' ||
+    testUpdate === 'checking' ||
+    testUpdate === 'controlled' ||
+    testUpdate === 'download-failure' ||
+    testUpdate === 'verification-failure' ||
+    testUpdate === 'restart-failure';
   const updateAvailable =
     updateFixtureRequested &&
     sessionStorage.getItem('tau-update-fixture-installed') !== 'true';
@@ -826,6 +859,15 @@ function installBrowserSandbox(): void {
       updatesSupported: updateFixtureRequested,
       updateAvailable,
       updateCheckDelayMs: testUpdate === 'checking' ? 1_000 : undefined,
+      controlledUpdateCheck: testUpdate === 'controlled',
+      updateFailure:
+        testUpdate === 'download-failure'
+          ? 'download'
+          : testUpdate === 'verification-failure'
+            ? 'verification'
+            : testUpdate === 'restart-failure'
+              ? 'restart'
+              : undefined,
       updateProgressDelayMs: 180,
       emitAppEvent: (event, payload) => emit(event, payload),
       async simulateUpdateRestart(): Promise<never> {
