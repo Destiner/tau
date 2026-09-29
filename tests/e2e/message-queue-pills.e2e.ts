@@ -13,6 +13,7 @@ async function gate(
   page: import('@playwright/test').Page,
   name: string,
 ): Promise<void> {
+  await page.waitForFunction(() => Boolean(window.__TAU_PI_SCENARIO__));
   await page.evaluate(async (gateName) => {
     const scenario = window.__TAU_PI_SCENARIO__;
     if (!scenario) throw new Error('Expected the browser Pi scenario API.');
