@@ -39,7 +39,6 @@ interface UpdateSnapshot {
   downloadedBytes: number;
   totalBytes?: number;
   failureCategory?: UpdateErrorCategory;
-  failureUnread: boolean;
   revealToken: number;
 }
 
@@ -143,7 +142,6 @@ interface UpdateService {
   install(requestId: number, operationId: number): Promise<void>;
   restart(): Promise<void>;
   consumeReveal(): boolean;
-  acknowledgeFailure(): void;
 }
 
 const UPDATE_ERROR_CATEGORIES = new Set<UpdateErrorCategory>([
@@ -228,7 +226,6 @@ function createUpdateService(
   const state = reactive<UpdateSnapshot>({
     phase: 'unavailable',
     downloadedBytes: 0,
-    failureUnread: false,
     revealToken: 0,
   });
   const inProgress = computed(() =>
@@ -260,7 +257,6 @@ function createUpdateService(
     }
     state.phase = 'failure';
     state.failureCategory = updateErrorCategory(error) ?? fallbackCategory;
-    state.failureUnread = true;
   }
 
   function applySnapshot(
@@ -287,7 +283,6 @@ function createUpdateService(
     }
     prepared = snapshot.status === 'prepared';
     state.failureCategory = undefined;
-    state.failureUnread = false;
     switch (snapshot.status) {
       case 'available':
         state.phase =
@@ -298,7 +293,6 @@ function createUpdateService(
         if (category) {
           state.phase = 'failure';
           state.failureCategory = category;
-          state.failureUnread = true;
         } else {
           state.phase = 'awaiting-confirmation';
         }
@@ -323,7 +317,6 @@ function createUpdateService(
         prepared = false;
         state.failureCategory =
           updateErrorCategory(snapshot.error) ?? 'checkFailed';
-        state.failureUnread = true;
         break;
       default:
         state.phase = 'current';
@@ -408,7 +401,6 @@ function createUpdateService(
     state.phase = 'checking';
     state.version = undefined;
     state.failureCategory = undefined;
-    state.failureUnread = false;
     updateOperationId = undefined;
     prepared = false;
     const flight = (async (): Promise<void> => {
@@ -547,7 +539,6 @@ function createUpdateService(
     state.downloadedBytes = 0;
     state.totalBytes = undefined;
     state.failureCategory = undefined;
-    state.failureUnread = false;
     try {
       await dependencies.invoke<void>('download_update', {
         operationId: updateOperationId,
@@ -583,7 +574,6 @@ function createUpdateService(
     const attempt = ++operation;
     state.phase = 'awaiting-confirmation';
     state.failureCategory = undefined;
-    state.failureUnread = false;
     try {
       await dependencies.invoke<void>('request_update_restart', {
         operationId: updateOperationId,
@@ -607,7 +597,6 @@ function createUpdateService(
     const attempt = ++operation;
     state.phase = 'installing';
     state.failureCategory = undefined;
-    state.failureUnread = false;
     try {
       await dependencies.invoke<void>('install_update', {
         requestId,
@@ -624,6 +613,7 @@ function createUpdateService(
   async function restart(): Promise<void> {
     if (state.phase !== 'restart-needed' || updateOperationId === undefined)
       return;
+    state.failureCategory = undefined;
     try {
       await dependencies.invoke<void>('restart_after_update', {
         operationId: updateOperationId,
@@ -631,7 +621,6 @@ function createUpdateService(
     } catch (error) {
       state.failureCategory =
         updateErrorCategory(error) ?? 'authorizationExpired';
-      state.failureUnread = true;
     }
   }
 
@@ -639,10 +628,6 @@ function createUpdateService(
     if (consumedRevealToken >= state.revealToken) return false;
     consumedRevealToken = state.revealToken;
     return true;
-  }
-
-  function acknowledgeFailure(): void {
-    state.failureUnread = false;
   }
 
   function dispose(): void {
@@ -666,7 +651,6 @@ function createUpdateService(
     install,
     restart,
     consumeReveal,
-    acknowledgeFailure,
   };
 }
 

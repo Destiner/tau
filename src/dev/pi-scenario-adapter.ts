@@ -646,6 +646,17 @@ function installPiScenarioAdapter(scenarioName: string): void {
       }
       if (command === 'update_snapshot') {
         count(command);
+        if (
+          scenarioName === 'empty-workspace' &&
+          new URLSearchParams(window.location.search).get('test-update') ===
+            'first-run-failure'
+        ) {
+          return {
+            supported: true,
+            status: 'failed',
+            error: { category: 'checkFailed' },
+          };
+        }
         return { supported: false, status: 'idle' };
       }
       if (command === 'check_for_update') {

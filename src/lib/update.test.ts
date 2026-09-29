@@ -131,12 +131,12 @@ describe('update service', () => {
     ]);
   });
 
-  it('keeps unsupported builds unavailable without a failed check mark', async () => {
+  it('keeps unsupported builds unavailable without a failure', async () => {
     const test = harness();
     test.service.initialize();
     await flush();
     expect(test.service.state.phase).toBe('unavailable');
-    expect(test.service.state.failureUnread).toBe(false);
+    expect(test.service.state.failureCategory).toBeUndefined();
   });
 
   it('surfaces a failed first check while the initial snapshot is pending', async () => {
@@ -155,7 +155,6 @@ describe('update service', () => {
     expect(test.service.state).toMatchObject({
       phase: 'failure',
       failureCategory: 'checkFailed',
-      failureUnread: true,
     });
 
     finishSnapshot({ supported: true, status: 'idle' });
@@ -616,23 +615,63 @@ describe('update service', () => {
     expect(updateFailureDescription('installFailed')).toContain('installed');
   });
 
-  it('shows one failure mark per failed attempt and clears it on acknowledgement', async () => {
+  it('retains a failed check until retry replaces it and keeps repeated failures actionable', async () => {
     const test = harness();
-    test.respond('check_for_update', current, new Error('private details'));
+    test.respond(
+      'check_for_update',
+      new InvocationReject({ category: 'checkFailed' }),
+      current,
+      new Error('private details'),
+    );
 
-    await test.service.check(true);
     await test.service.check(true);
     expect(test.service.state).toMatchObject({
       phase: 'failure',
-      failureUnread: true,
+      failureCategory: 'checkFailed',
     });
-    test.service.acknowledgeFailure();
-    expect(test.service.state.failureUnread).toBe(false);
-    test.service.acknowledgeFailure();
-    expect(test.service.state.failureUnread).toBe(false);
-
-    test.respond('check_for_update', new Error('new private details'));
     await test.service.check(true);
-    expect(test.service.state.failureUnread).toBe(true);
+    expect(test.service.state.phase).toBe('current');
+    expect(test.service.state.failureCategory).toBeUndefined();
+    await test.service.check(true);
+    expect(test.service.state).toMatchObject({
+      phase: 'failure',
+      failureCategory: 'checkFailed',
+    });
+  });
+
+  it('keeps restart recovery after failure without downloading or installing again', async () => {
+    const test = harness();
+    test.respond('update_snapshot', {
+      ...preparedSnapshot,
+      status: 'restartNeeded',
+    });
+    test.respond(
+      'restart_after_update',
+      new InvocationReject({ category: 'installFailed' }),
+      undefined,
+    );
+    test.service.initialize();
+    await flush();
+
+    await test.service.restart();
+    expect(test.service.state).toMatchObject({
+      phase: 'restart-needed',
+      failureCategory: 'installFailed',
+    });
+    expect(
+      updateFailureDescription(test.service.state.failureCategory),
+    ).toContain('installed');
+    await test.service.restart();
+    expect(test.service.state.phase).toBe('restart-needed');
+    expect(test.service.state.failureCategory).toBeUndefined();
+    expect(
+      test.calls.filter(({ command }) => command === 'restart_after_update'),
+    ).toHaveLength(2);
+    expect(
+      test.calls.some(
+        ({ command }) =>
+          command === 'download_update' || command === 'install_update',
+      ),
+    ).toBe(false);
   });
 });
