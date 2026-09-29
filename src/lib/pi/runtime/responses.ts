@@ -245,7 +245,11 @@ async function handleResponse(
   if (
     command === 'prompt' &&
     !resolvesSubmittedPrompt &&
-    !pendingResult.matched
+    !(
+      pendingResult.matched &&
+      pendingResult.method === 'prompt' &&
+      pendingResult.dispatchSnapshot?.generation === controller.generation
+    )
   ) {
     return;
   }
@@ -258,7 +262,10 @@ async function handleResponse(
   if (
     command === 'prompt' &&
     Boolean(controller.commandPromptRequestId) &&
-    responseId === controller.commandPromptRequestId
+    responseId === controller.commandPromptRequestId &&
+    pendingResult.matched &&
+    pendingResult.method === 'prompt' &&
+    pendingResult.dispatchSnapshot?.generation === controller.generation
   ) {
     if (response.success === true) {
       // Establish the read watch before releasing command execution ownership.
@@ -624,6 +631,11 @@ async function handleResponse(
     if (sessionChanged) applySessionName(controller, reportedSessionName);
 
     let syncingAfterSessionChange = false;
+    const transfersCommandRefresh =
+      sessionChanged &&
+      Boolean(
+        controller.commandSyncRequestId || controller.commandMessagesRequestId,
+      );
     if (sessionChanged) {
       // The response that revealed the replacement already ended its own
       // span above; anything else still pending for this runtime and
@@ -632,6 +644,7 @@ async function handleResponse(
         controller.runtimeId,
         controller.generation,
         'abandoned_replacement',
+        controller.commandPromptRequestId,
       );
       clearSessionReplacementWatch(controller);
       trailingSessionNameRefresh =
@@ -770,9 +783,11 @@ async function handleResponse(
     if (resolvesAbortProbe && controller.streaming && !sessionChanged) return;
 
     const messagesRequestId = nextRequestId('messages');
-    if (resolvesCommandSync) {
+    if (resolvesCommandSync || transfersCommandRefresh) {
       controller.commandSyncRequestId = '';
       controller.commandMessagesRequestId = messagesRequestId;
+      if (sessionChanged)
+        controller.commandSyncingRequestId = messagesRequestId;
     }
     if (controller.postSettlementHydration && !nowStreaming) {
       controller.materializationMessagesRequestId = messagesRequestId;

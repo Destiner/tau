@@ -72,6 +72,7 @@ export default function sessionControllerFixture(
     commandPromptRequestId: '',
     commandSyncRequestId: '',
     commandMessagesRequestId: '',
+    commandSyncingRequestId: '',
     commandRefreshFailed: false,
     replacementProbeRequestId: '',
     abortProbeRequestId: '',

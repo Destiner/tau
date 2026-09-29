@@ -86,11 +86,21 @@ function clearCommandRefreshWatch(controller: SessionController): void {
   commandRefreshTimers.delete(controller.key);
   controller.commandSyncRequestId = '';
   controller.commandMessagesRequestId = '';
+  controller.commandSyncingRequestId = '';
 }
 
 function failCommandRefresh(controller: SessionController): void {
+  const settlesSyncing =
+    Boolean(controller.commandSyncingRequestId) &&
+    controller.commandSyncingRequestId === controller.commandMessagesRequestId;
   clearCommandRefreshWatch(controller);
   if (controller.disposed) return;
+  if (settlesSyncing)
+    setControllerLifecycle(
+      controller,
+      { syncing: false },
+      'get_messages_failed',
+    );
   controller.commandRefreshFailed = true;
   setControllerError(controller, errorCopy.sessionRefresh);
 }
@@ -467,6 +477,11 @@ async function rpc(
       controller.startMessagesRequestId = requestId;
     }
     if (controller.commandMessagesRequestId) {
+      if (
+        controller.commandSyncingRequestId ===
+        controller.commandMessagesRequestId
+      )
+        controller.commandSyncingRequestId = requestId;
       controller.commandMessagesRequestId = requestId;
     }
     if (controller.materializationMessagesRequestId) {

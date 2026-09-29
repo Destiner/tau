@@ -98,6 +98,121 @@ describe('command-created session durability — verification', () => {
     };
   }
 
+  it('accepts the command completion after agent_start and a replacement read', async () => {
+    const { handleResponse, handleRpc, rpc } = await import('./index');
+    const controller = makeController({ sessionId: 'before' });
+    addEphemeral(controller);
+    const commandId = nextRequestId('command');
+    controller.commandPromptRequestId = commandId;
+    controller.submittedPrompt = {
+      requestId: commandId,
+      optimisticId: '',
+      generation: controller.generation,
+      message: '/replace',
+      draft: '/replace',
+      accepted: false,
+    } as SessionController['submittedPrompt'];
+    await rpc(controller, {
+      id: commandId,
+      type: 'prompt',
+      message: '/replace',
+    });
+    await handleRpc(controller, { type: 'agent_start' });
+    const stateId = nextRequestId('run-state');
+    controller.runStateRequestId = stateId;
+    await rpc(controller, { id: stateId, type: 'get_state' });
+    await handleResponse(controller, {
+      id: stateId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'after',
+        sessionFile: '/tmp/project/after.jsonl',
+        isStreaming: true,
+      },
+    });
+    expect(controller.submittedPrompt).toBeUndefined();
+    await handleResponse(controller, {
+      id: commandId,
+      command: 'prompt',
+      success: true,
+    });
+    expect(controller.commandPromptRequestId).toBe('');
+    expect(controller.commandSyncRequestId).not.toBe('');
+    await handleResponse(controller, {
+      id: controller.commandSyncRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'after',
+        sessionFile: '/tmp/project/after.jsonl',
+        isStreaming: false,
+      },
+    });
+    await handleResponse(controller, {
+      id: controller.commandMessagesRequestId,
+      command: 'get_messages',
+      success: true,
+      data: { messages: [] },
+    });
+    expect(controller.working).toBe(false);
+    expect(controller.commandRefreshFailed).toBe(false);
+  });
+
+  it('transfers command reconciliation when a name refresh discovers the replacement first', async () => {
+    vi.useFakeTimers();
+    try {
+      const { handleResponse, requestSessionNameRefresh, rpc } =
+        await import('./index');
+      const controller = makeController({ sessionId: 'before' });
+      addEphemeral(controller);
+      const commandId = nextRequestId('command');
+      controller.commandPromptRequestId = commandId;
+      await rpc(controller, {
+        id: commandId,
+        type: 'prompt',
+        message: '/replace',
+      });
+      await handleResponse(controller, {
+        id: commandId,
+        command: 'prompt',
+        success: true,
+      });
+      const oldRead = controller.commandSyncRequestId;
+      await requestSessionNameRefresh(controller);
+      await handleResponse(controller, {
+        id: controller.sessionNameStateRequestId,
+        command: 'get_state',
+        success: true,
+        data: {
+          sessionId: 'after',
+          sessionFile: '/tmp/project/after.jsonl',
+          isStreaming: false,
+        },
+      });
+      const historyId = controller.commandMessagesRequestId;
+      expect(historyId).not.toBe('');
+      expect(controller.commandSyncRequestId).toBe('');
+      await handleResponse(controller, {
+        id: historyId,
+        command: 'get_messages',
+        success: true,
+        data: { messages: [] },
+      });
+      await handleResponse(controller, {
+        id: oldRead,
+        command: 'get_state',
+        success: true,
+        data: { sessionId: 'stale', sessionFile: '/tmp/project/stale.jsonl' },
+      });
+      await vi.advanceTimersByTimeAsync(10_001);
+      expect(controller.sessionId).toBe('after');
+      expect(controller.commandRefreshFailed).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('retries verification after a failed settled message hydration', async () => {
     const telemetry = await import('../../telemetry');
     const { handleResponse, probeSessionReplacement, rpc } =

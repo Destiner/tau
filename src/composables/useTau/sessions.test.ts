@@ -1562,6 +1562,63 @@ describe('session replacement hardening', () => {
     tau.dispose();
   });
 
+  it.each(['failure', 'timeout'] as const)(
+    'settles successor loading after command history %s, even after feedback dismissal',
+    async (terminal) => {
+      const { controller, tau } = await setupUnansweredPhantomCommand();
+      if (terminal === 'timeout') vi.useFakeTimers();
+      emitRpc(controller, {
+        id: controller.commandPromptRequestId,
+        type: 'response',
+        command: 'prompt',
+        success: true,
+      });
+      if (terminal === 'timeout') await vi.advanceTimersByTimeAsync(0);
+      else
+        await vi.waitFor(() =>
+          expect(controller.commandSyncRequestId).not.toBe(''),
+        );
+      emitRpc(controller, {
+        id: controller.commandSyncRequestId,
+        type: 'response',
+        command: 'get_state',
+        success: true,
+        data: {
+          sessionId: 'empty-successor',
+          sessionFile: '/tmp/empty-successor.jsonl',
+          isStreaming: false,
+        },
+      });
+      if (terminal === 'timeout') await vi.advanceTimersByTimeAsync(0);
+      else
+        await vi.waitFor(() =>
+          expect(controller.commandMessagesRequestId).not.toBe(''),
+        );
+      expect(controller.syncing).toBe(true);
+      if (terminal === 'failure') {
+        emitRpc(controller, {
+          id: controller.commandMessagesRequestId,
+          type: 'response',
+          command: 'get_messages',
+          success: false,
+        });
+        await vi.waitFor(() =>
+          expect(controller.commandRefreshFailed).toBe(true),
+        );
+      } else {
+        await vi.advanceTimersByTimeAsync(10_001);
+        vi.useRealTimers();
+      }
+      expect(controller.commandRefreshFailed).toBe(true);
+      expect(controller.syncing).toBe(false);
+      expect(tau.activeFeedback.value).toBeDefined();
+      tau.acknowledgeFeedback(tau.activeFeedback.value!);
+      expect(tau.sessionLoading.value).toBe(false);
+      expect(controller.commandMessagesRequestId).toBe('');
+      tau.dispose();
+    },
+  );
+
   it('transfers command reconciliation to a newer history read', async () => {
     const { controller, tau } = await setupUnansweredPhantomCommand();
     emitRpc(controller, {
