@@ -13,6 +13,8 @@ A minimal, focused interface for [Pi](https://pi.dev).
 - Support for [Pi Extensions](https://pi.dev/docs/latest/extensions)
 - Archived sessions
 - Mermaid diagram rendering
+- Steering
+- File previews
 
 ## Development
 
@@ -44,8 +46,7 @@ boundaries.
 ## Roadmap
 
 - Search
-- Steering
-- File operations (explorer/editor)
+- File explorer
 - Keyboard shortcuts
 - Command palette
 
@@ -53,6 +54,8 @@ boundaries.
 
 - Support for other harnesses
 - Integrated terminal and browser
+- Debugging tools
+- File editor
 
 ## Philosophy
 
@@ -68,4 +71,4 @@ Also, no tabs.
 
 - [Zed](https://zed.dev)
 - [Linear](https://linear.app)
-- [fx](https://fx.sh)
+- [iA Writer](https://ia.net/writer)
