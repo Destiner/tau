@@ -147,6 +147,7 @@ test('keeps narrow rails scrollable, previews bounded, and focus and order corre
     page.getByRole('tooltip').filter({ hasText: followUp[0] }),
   ).toBeVisible();
   await first.press('Escape');
+  await first.scrollIntoViewIfNeeded();
   await first.hover();
   await page.clock.runFor(200);
   const hoverPreview = page
