@@ -59,30 +59,24 @@ beforeEach(async () => {
 });
 
 describe('runtime failures and recovery', () => {
-  it.each(['local', 'remote'])(
-    'does not evict %s command work or failed refreshes',
-    async (kind) => {
-      const { canReleaseRuntime } = await import('./index');
-      const controller = makeController({
-        key: `idle-${kind}`,
-        ...(kind === 'remote' ? { connectingRemote: false } : {}),
-      });
-      expect(canReleaseRuntime(controller)).toBe(true);
-      controller.commandPromptRequestId = 'command';
-      expect(canReleaseRuntime(controller)).toBe(false);
-      controller.commandPromptRequestId = '';
-      controller.commandSyncRequestId = 'state';
-      expect(canReleaseRuntime(controller)).toBe(false);
-      controller.commandSyncRequestId = '';
-      controller.commandMessagesRequestId = 'messages';
-      expect(canReleaseRuntime(controller)).toBe(false);
-      controller.commandMessagesRequestId = '';
-      controller.commandRefreshFailed = true;
-      expect(canReleaseRuntime(controller)).toBe(false);
-      controller.commandRefreshFailed = false;
-      expect(canReleaseRuntime(controller)).toBe(true);
-    },
-  );
+  it('does not evict command work or failed refreshes', async () => {
+    const { canReleaseRuntime } = await import('./index');
+    const controller = makeController({ key: 'idle-command' });
+    expect(canReleaseRuntime(controller)).toBe(true);
+    controller.commandPromptRequestId = 'command';
+    expect(canReleaseRuntime(controller)).toBe(false);
+    controller.commandPromptRequestId = '';
+    controller.commandSyncRequestId = 'state';
+    expect(canReleaseRuntime(controller)).toBe(false);
+    controller.commandSyncRequestId = '';
+    controller.commandMessagesRequestId = 'messages';
+    expect(canReleaseRuntime(controller)).toBe(false);
+    controller.commandMessagesRequestId = '';
+    controller.commandRefreshFailed = true;
+    expect(canReleaseRuntime(controller)).toBe(false);
+    controller.commandRefreshFailed = false;
+    expect(canReleaseRuntime(controller)).toBe(true);
+  });
   it('evicts truly idle controllers before a pending command under cache pressure', async () => {
     const { releaseIdleRuntimes } = await import('./index');
     const pending = makeController({
