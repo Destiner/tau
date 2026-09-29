@@ -65,6 +65,71 @@ import {
 } from './registration';
 
 const materializationVerificationRetryDelays = [250, 750, 1_500];
+const commandRefreshTimeoutMs = 10_000;
+const commandRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function commandHasPendingWork(controller: SessionController): boolean {
+  return Boolean(
+    controller.pendingPrompt ||
+    controller.submittedPrompt ||
+    controller.promptSubmitting ||
+    controller.commandPromptRequestId ||
+    controller.commandSyncRequestId ||
+    controller.commandMessagesRequestId ||
+    controller.postSettlementHydration,
+  );
+}
+
+function clearCommandRefreshWatch(controller: SessionController): void {
+  const timer = commandRefreshTimers.get(controller.key);
+  if (timer) clearTimeout(timer);
+  commandRefreshTimers.delete(controller.key);
+  controller.commandSyncRequestId = '';
+  controller.commandMessagesRequestId = '';
+  controller.commandSyncingRequestId = '';
+}
+
+function failCommandRefresh(controller: SessionController): void {
+  const settlesSyncing =
+    Boolean(controller.commandSyncingRequestId) &&
+    controller.commandSyncingRequestId === controller.commandMessagesRequestId;
+  clearCommandRefreshWatch(controller);
+  if (controller.disposed) return;
+  if (settlesSyncing)
+    setControllerLifecycle(
+      controller,
+      { syncing: false },
+      'get_messages_failed',
+    );
+  controller.commandRefreshFailed = true;
+  setControllerError(controller, errorCopy.sessionRefresh);
+}
+
+function watchCommandRefresh(controller: SessionController): void {
+  const generation = controller.generation;
+  commandRefreshTimers.set(
+    controller.key,
+    setTimeout(() => {
+      if (
+        controller.disposed ||
+        controller.generation !== generation ||
+        (!controller.commandSyncRequestId &&
+          !controller.commandMessagesRequestId)
+      )
+        return;
+      endPendingRpcSpan(
+        rpcSpanKey(
+          controller.runtimeId,
+          generation,
+          controller.commandMessagesRequestId ||
+            controller.commandSyncRequestId,
+        ),
+        'timeout',
+      );
+      failCommandRefresh(controller);
+    }, commandRefreshTimeoutMs),
+  );
+}
 
 interface MaterializationVerificationRetry {
   generation: number;
@@ -110,7 +175,8 @@ async function startController(
   controller.historyRequestId = '';
   setHistoryLoading(controller, false);
   controller.commandPromptRequestId = '';
-  controller.commandSyncRequestId = '';
+  clearCommandRefreshWatch(controller);
+  controller.commandRefreshFailed = false;
   controller.replacementProbeRequestId = '';
   clearSessionNameRefresh(controller);
   controller.sessionNameRevision = 0;
@@ -312,8 +378,11 @@ function cleanupRejectedRpcDispatch(
   if (controller.commandPromptRequestId === requestId) {
     controller.commandPromptRequestId = '';
   }
-  if (controller.commandSyncRequestId === requestId) {
-    controller.commandSyncRequestId = '';
+  if (
+    controller.commandSyncRequestId === requestId ||
+    controller.commandMessagesRequestId === requestId
+  ) {
+    failCommandRefresh(controller);
   }
   if (controller.replacementProbeRequestId === requestId) {
     controller.replacementProbeRequestId = '';
@@ -406,6 +475,14 @@ async function rpc(
   if (method === 'get_messages') {
     if (controller.startMessagesRequestId) {
       controller.startMessagesRequestId = requestId;
+    }
+    if (controller.commandMessagesRequestId) {
+      if (
+        controller.commandSyncingRequestId ===
+        controller.commandMessagesRequestId
+      )
+        controller.commandSyncingRequestId = requestId;
+      controller.commandMessagesRequestId = requestId;
     }
     if (controller.materializationMessagesRequestId) {
       controller.materializationMessagesRequestId = requestId;
@@ -614,13 +691,16 @@ async function requestSessionNameRefresh(
 
 async function syncAfterCommand(controller: SessionController): Promise<void> {
   if (controller.disposed || !controller.generation) return;
+  clearCommandRefreshWatch(controller);
   const requestId = nextRequestId('command-sync');
+  controller.commandRefreshFailed = false;
   controller.commandSyncRequestId = requestId;
+  watchCommandRefresh(controller);
   try {
     await rpc(controller, { id: requestId, type: 'get_state' });
   } catch {
-    controller.commandSyncRequestId = '';
-    setControllerError(controller, errorCopy.sessionRefresh);
+    if (controller.commandSyncRequestId === requestId)
+      failCommandRefresh(controller);
   }
 }
 
@@ -1026,24 +1106,21 @@ function removeEmptyActivePhantom(): void {
   const session = controller
     ? ephemeralSessionByController(controller.key)
     : undefined;
-  // Command-only custom entries and notifications are not Pi transcript
-  // content. Until Pi reports a user or assistant message, this row remains
-  // as disposable as the unsent session it came from. A workflow successor is
-  // the exception while Tau verifies the identity an extension just created.
-  const unansweredUnsavedCommand = Boolean(
-    controller?.commandPromptRequestId && !controller.streaming,
-  );
+  // An empty command-only session is disposable only after its handler and
+  // identity/history reconciliation have finished.
   if (
     !controller ||
     !session ||
     workspaceContainsSession(controller) ||
     controller.lastUserMessageAt > 0 ||
     controller.hasPiTranscript ||
-    controller.postSettlementHydration ||
+    commandHasPendingWork(controller) ||
+    controller.commandRefreshFailed ||
     controller.draft.trim() ||
     queueHasWork(controller.queue, controller.queueSubmissions) ||
     controller.queueFailedDrafts.length > 0 ||
-    (controller.working && !unansweredUnsavedCommand) ||
+    controller.working ||
+    controller.streaming ||
     controllerHasPendingDialog(controller)
   ) {
     return;
@@ -1078,6 +1155,7 @@ function removeEphemeralSession(
       controller.retry = undefined;
       clearSessionReplacementWatch(controller);
       clearSessionNameRefresh(controller);
+      clearCommandRefreshWatch(controller);
       clearMaterializationVerificationWatch(controller);
       clearAbortWatch(controller);
       void stopControllerProcess(controller);
@@ -1098,6 +1176,7 @@ function removeProjectUiState(projectPath: string): void {
     controller.retry = undefined;
     clearSessionReplacementWatch(controller);
     clearSessionNameRefresh(controller);
+    clearCommandRefreshWatch(controller);
     clearMaterializationVerificationWatch(controller);
     clearAbortWatch(controller);
   }
@@ -1112,6 +1191,8 @@ function canReleaseRuntime(controller: SessionController): boolean {
     controller.ready &&
     !controller.streaming &&
     !controller.working &&
+    !commandHasPendingWork(controller) &&
+    !controller.commandRefreshFailed &&
     !controller.starting &&
     !controller.syncing &&
     !controller.pendingSettingRequestId &&
@@ -1143,6 +1224,7 @@ async function discardReleasedEmptySession(
     workspaceContainsSession(controller) ||
     controller.materializationVerified ||
     controller.remoteDisconnected ||
+    controller.commandRefreshFailed ||
     controller.draft.trim() ||
     queueHasWork(controller.queue, controller.queueSubmissions) ||
     controller.queueFailedDrafts.length > 0 ||
@@ -1213,6 +1295,9 @@ async function stopControllerProcess(
   const replacedDuringStop = controller.sessionId !== stoppedSessionId;
   clearSessionReplacementWatch(controller);
   clearSessionNameRefresh(controller);
+  clearCommandRefreshWatch(controller);
+  controller.commandPromptRequestId = '';
+  controller.commandRefreshFailed = false;
   clearMaterializationVerificationWatch(controller);
   clearAbortWatch(controller);
   clearRemoteConnectionWatch(controller);
@@ -1291,6 +1376,8 @@ export {
   finishSessionNameRefresh,
   requestSessionNameRefresh,
   syncAfterCommand,
+  clearCommandRefreshWatch,
+  failCommandRefresh,
   watchSessionReplacement,
   probeSessionReplacement,
   clearSessionReplacementWatch,

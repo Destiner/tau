@@ -13,6 +13,7 @@ async function gate(
   page: import('@playwright/test').Page,
   name: string,
 ): Promise<void> {
+  await page.waitForFunction(() => Boolean(window.__TAU_PI_SCENARIO__));
   await page.evaluate(async (gateName) => {
     const scenario = window.__TAU_PI_SCENARIO__;
     if (!scenario) throw new Error('Expected the browser Pi scenario API.');
@@ -146,6 +147,7 @@ test('keeps narrow rails scrollable, previews bounded, and focus and order corre
     page.getByRole('tooltip').filter({ hasText: followUp[0] }),
   ).toBeVisible();
   await first.press('Escape');
+  await first.scrollIntoViewIfNeeded();
   await first.hover();
   await page.clock.runFor(200);
   const hoverPreview = page

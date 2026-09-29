@@ -1417,7 +1417,7 @@ describe('session replacement hardening', () => {
     tau.dispose();
   });
 
-  it('keeps an unanswered command unarchivable until leaving removes its empty session', async () => {
+  it('keeps an unanswered command and its runtime when leaving', async () => {
     const { controller, otherSession, project, tau } =
       await setupUnansweredPhantomCommand();
     const session = tau.state.ephemeralSessions.find(
@@ -1435,26 +1435,354 @@ describe('session replacement hardening', () => {
 
     await tau.selectSession(project, otherSession);
 
-    expect(
-      tau.state.ephemeralSessions.some(
-        (session) => session.controllerKey === controller.key,
-      ),
-    ).toBe(false);
-    expect(
-      tau.state.controllers.some(
-        (candidate) => candidate.key === controller.key,
-      ),
-    ).toBe(false);
+    expect(tau.state.ephemeralSessions).toContain(session);
+    expect(tau.state.controllers).toContain(controller);
     expect(tau.state.activeSessionId).toBe(otherSession.id);
-    expect(
-      vi
-        .mocked(invoke)
-        .mock.calls.some(([command]) => command === 'archive_session'),
-    ).toBe(false);
-    await vi.waitFor(() => {
-      expect(stoppedRuntimes()).toContain(controller.runtimeId);
-    });
+    expect(stoppedRuntimes()).not.toContain(controller.runtimeId);
     tau.dispose();
+  });
+
+  it('keeps a hidden command through state and history reconciliation, then cleans up an empty result', async () => {
+    const { controller, otherSession, project, tau } =
+      await setupUnansweredPhantomCommand();
+    const session = tau.state.ephemeralSessions.find(
+      (candidate) => candidate.controllerKey === controller.key,
+    );
+    if (!session) throw new Error('Expected the command session');
+
+    // An unrelated idle poll cannot signal that the extension handler finished.
+    const { rpc } = await import('../../lib/pi/runtime');
+    const idleId = nextRequestId('idle-state');
+    await rpc(controller, { id: idleId, type: 'get_state' });
+    emitRpc(controller, {
+      id: idleId,
+      type: 'response',
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: controller.sessionId,
+        sessionFile: controller.sessionPath,
+        isStreaming: false,
+      },
+    });
+    await tau.selectSession(project, otherSession);
+    expect(tau.state.ephemeralSessions).toContain(session);
+    expect(stoppedRuntimes()).not.toContain(controller.runtimeId);
+
+    emitRpc(controller, {
+      id: controller.commandPromptRequestId,
+      type: 'response',
+      command: 'prompt',
+      success: true,
+    });
+    await vi.waitFor(() =>
+      expect(controller.commandSyncRequestId).not.toBe(''),
+    );
+    await tau.selectSession(project, session);
+    await tau.selectSession(project, otherSession);
+    expect(tau.state.ephemeralSessions).toContain(session);
+    expect(stoppedRuntimes()).not.toContain(controller.runtimeId);
+
+    emitRpc(controller, {
+      id: controller.commandSyncRequestId,
+      type: 'response',
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'command-successor',
+        sessionFile: '/tmp/command-successor.jsonl',
+        isStreaming: false,
+      },
+    });
+    await vi.waitFor(() =>
+      expect(controller.commandMessagesRequestId).not.toBe(''),
+    );
+    expect(controller.sessionId).toBe('command-successor');
+    await tau.newSession(project);
+    expect(tau.state.ephemeralSessions).toContain(session);
+    expect(stoppedRuntimes()).not.toContain(controller.runtimeId);
+
+    emitRpc(controller, {
+      id: controller.commandMessagesRequestId,
+      type: 'response',
+      command: 'get_messages',
+      success: true,
+      data: { messages: [] },
+    });
+    await vi.waitFor(() =>
+      expect(controller.commandMessagesRequestId).toBe(''),
+    );
+    expect(tau.state.ephemeralSessions).toContain(session);
+    await tau.selectSession(project, session);
+    await tau.selectSession(project, otherSession);
+    expect(tau.state.ephemeralSessions).not.toContain(session);
+    tau.dispose();
+  });
+
+  it('keeps an empty command row when its history read fails', async () => {
+    const { controller, otherSession, project, tau } =
+      await setupUnansweredPhantomCommand();
+    const session = tau.state.ephemeralSessions.find(
+      (candidate) => candidate.controllerKey === controller.key,
+    );
+    if (!session) throw new Error('Expected the command session');
+    emitRpc(controller, {
+      id: controller.commandPromptRequestId,
+      type: 'response',
+      command: 'prompt',
+      success: true,
+    });
+    await vi.waitFor(() =>
+      expect(controller.commandSyncRequestId).not.toBe(''),
+    );
+    emitRpc(controller, {
+      id: controller.commandSyncRequestId,
+      type: 'response',
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: controller.sessionId,
+        sessionFile: controller.sessionPath,
+        isStreaming: false,
+      },
+    });
+    await vi.waitFor(() =>
+      expect(controller.commandMessagesRequestId).not.toBe(''),
+    );
+    emitRpc(controller, {
+      id: controller.commandMessagesRequestId,
+      type: 'response',
+      command: 'get_messages',
+      success: false,
+    });
+    await vi.waitFor(() => expect(controller.commandRefreshFailed).toBe(true));
+    await tau.selectSession(project, otherSession);
+    expect(tau.state.ephemeralSessions).toContain(session);
+    expect(stoppedRuntimes()).not.toContain(controller.runtimeId);
+    tau.dispose();
+  });
+
+  it.each(['failure', 'timeout'] as const)(
+    'settles successor loading after command history %s, even after feedback dismissal',
+    async (terminal) => {
+      const { controller, tau } = await setupUnansweredPhantomCommand();
+      if (terminal === 'timeout') vi.useFakeTimers();
+      emitRpc(controller, {
+        id: controller.commandPromptRequestId,
+        type: 'response',
+        command: 'prompt',
+        success: true,
+      });
+      if (terminal === 'timeout') await vi.advanceTimersByTimeAsync(0);
+      else
+        await vi.waitFor(() =>
+          expect(controller.commandSyncRequestId).not.toBe(''),
+        );
+      emitRpc(controller, {
+        id: controller.commandSyncRequestId,
+        type: 'response',
+        command: 'get_state',
+        success: true,
+        data: {
+          sessionId: 'empty-successor',
+          sessionFile: '/tmp/empty-successor.jsonl',
+          isStreaming: false,
+        },
+      });
+      if (terminal === 'timeout') await vi.advanceTimersByTimeAsync(0);
+      else
+        await vi.waitFor(() =>
+          expect(controller.commandMessagesRequestId).not.toBe(''),
+        );
+      expect(controller.syncing).toBe(true);
+      if (terminal === 'failure') {
+        emitRpc(controller, {
+          id: controller.commandMessagesRequestId,
+          type: 'response',
+          command: 'get_messages',
+          success: false,
+        });
+        await vi.waitFor(() =>
+          expect(controller.commandRefreshFailed).toBe(true),
+        );
+      } else {
+        await vi.advanceTimersByTimeAsync(10_001);
+        vi.useRealTimers();
+      }
+      expect(controller.commandRefreshFailed).toBe(true);
+      expect(controller.syncing).toBe(false);
+      expect(tau.activeFeedback.value).toBeDefined();
+      tau.acknowledgeFeedback(tau.activeFeedback.value!);
+      expect(tau.sessionLoading.value).toBe(false);
+      expect(controller.commandMessagesRequestId).toBe('');
+      tau.dispose();
+    },
+  );
+
+  it('transfers command reconciliation to a newer history read', async () => {
+    const { controller, tau } = await setupUnansweredPhantomCommand();
+    emitRpc(controller, {
+      id: controller.commandPromptRequestId,
+      type: 'response',
+      command: 'prompt',
+      success: true,
+    });
+    await vi.waitFor(() =>
+      expect(controller.commandSyncRequestId).not.toBe(''),
+    );
+    emitRpc(controller, {
+      id: controller.commandSyncRequestId,
+      type: 'response',
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: controller.sessionId,
+        sessionFile: controller.sessionPath,
+        isStreaming: false,
+      },
+    });
+    await vi.waitFor(() =>
+      expect(controller.commandMessagesRequestId).not.toBe(''),
+    );
+    const olderRead = controller.commandMessagesRequestId;
+    const newerRead = nextRequestId('newer-messages');
+    const { rpc } = await import('../../lib/pi/runtime');
+    await rpc(controller, { id: newerRead, type: 'get_messages' });
+    expect(controller.commandMessagesRequestId).toBe(newerRead);
+    emitRpc(controller, {
+      id: olderRead,
+      type: 'response',
+      command: 'get_messages',
+      success: true,
+      data: { messages: [] },
+    });
+    expect(controller.commandMessagesRequestId).toBe(newerRead);
+    emitRpc(controller, {
+      id: newerRead,
+      type: 'response',
+      command: 'get_messages',
+      success: true,
+      data: { messages: [] },
+    });
+    await vi.waitFor(() =>
+      expect(controller.commandMessagesRequestId).toBe(''),
+    );
+    expect(controller.commandRefreshFailed).toBe(false);
+    tau.dispose();
+  });
+
+  it('retains a failed command refresh and retries reads without resending the command', async () => {
+    const { controller, otherSession, project, tau } =
+      await setupUnansweredPhantomCommand();
+    const session = tau.state.ephemeralSessions.find(
+      (candidate) => candidate.controllerKey === controller.key,
+    );
+    if (!session) throw new Error('Expected the command session');
+    emitRpc(controller, {
+      id: controller.commandPromptRequestId,
+      type: 'response',
+      command: 'prompt',
+      success: true,
+    });
+    await vi.waitFor(() =>
+      expect(controller.commandSyncRequestId).not.toBe(''),
+    );
+    const firstRead = controller.commandSyncRequestId;
+    emitRpc(controller, {
+      id: firstRead,
+      type: 'response',
+      command: 'get_state',
+      success: false,
+    });
+    await vi.waitFor(() => expect(controller.commandRefreshFailed).toBe(true));
+    await tau.selectSession(project, otherSession);
+    expect(tau.state.ephemeralSessions).toContain(session);
+    expect(stoppedRuntimes()).not.toContain(controller.runtimeId);
+    await tau.selectSession(project, session);
+    expect(controller.commandSyncRequestId).not.toBe(firstRead);
+    expect(controller.commandSyncRequestId).not.toBe('');
+    expect(sentRequests(controller, 'prompt')).toHaveLength(1);
+    expect(stoppedRuntimes()).not.toContain(controller.runtimeId);
+    tau.dispose();
+  });
+
+  it('keeps a failed-refresh row after process loss rather than treating it as empty', async () => {
+    const { controller, otherSession, project, tau } =
+      await setupUnansweredPhantomCommand();
+    const session = tau.state.ephemeralSessions.find(
+      (candidate) => candidate.controllerKey === controller.key,
+    );
+    if (!session) throw new Error('Expected the command session');
+    emitRpc(controller, {
+      id: controller.commandPromptRequestId,
+      type: 'response',
+      command: 'prompt',
+      success: true,
+    });
+    await vi.waitFor(() =>
+      expect(controller.commandSyncRequestId).not.toBe(''),
+    );
+    emitRpc(controller, {
+      id: controller.commandSyncRequestId,
+      type: 'response',
+      command: 'get_state',
+      success: false,
+    });
+    await vi.waitFor(() => expect(controller.commandRefreshFailed).toBe(true));
+    await tau.selectSession(project, otherSession);
+    const { handleBridgeEvent } = await import('../../lib/pi/runtime');
+    await handleBridgeEvent({
+      runtimeId: controller.runtimeId,
+      generation: controller.generation,
+      kind: 'exited',
+      code: 1,
+    });
+    expect(tau.state.ephemeralSessions).toContain(session);
+    expect(controller.commandRefreshFailed).toBe(true);
+    tau.dispose();
+  });
+
+  it('bounds command read reconciliation without timing out the handler', async () => {
+    const { controller, otherSession, project, tau } =
+      await setupUnansweredPhantomCommand();
+    const session = tau.state.ephemeralSessions.find(
+      (candidate) => candidate.controllerKey === controller.key,
+    );
+    if (!session) throw new Error('Expected the command session');
+    vi.useFakeTimers();
+    try {
+      await vi.advanceTimersByTimeAsync(10_001);
+      expect(controller.commandPromptRequestId).not.toBe('');
+      expect(controller.commandRefreshFailed).toBe(false);
+      await tau.selectSession(project, otherSession);
+      expect(tau.state.ephemeralSessions).toContain(session);
+      emitRpc(controller, {
+        id: controller.commandPromptRequestId,
+        type: 'response',
+        command: 'prompt',
+        success: true,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      const lateRequestId = controller.commandSyncRequestId;
+      expect(lateRequestId).not.toBe('');
+      await vi.advanceTimersByTimeAsync(10_001);
+      expect(controller.commandRefreshFailed).toBe(true);
+      expect(controller.commandSyncRequestId).toBe('');
+      expect(tau.state.ephemeralSessions).toContain(session);
+      expect(stoppedRuntimes()).not.toContain(controller.runtimeId);
+      emitRpc(controller, {
+        id: lateRequestId,
+        type: 'response',
+        command: 'get_state',
+        success: true,
+        data: { sessionId: 'stale', sessionFile: '/tmp/stale.jsonl' },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(controller.sessionId).not.toBe('stale');
+    } finally {
+      vi.useRealTimers();
+      tau.dispose();
+    }
   });
 
   it.each([

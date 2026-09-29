@@ -59,6 +59,52 @@ beforeEach(async () => {
 });
 
 describe('runtime failures and recovery', () => {
+  it('does not evict command work or failed refreshes', async () => {
+    const { canReleaseRuntime } = await import('./index');
+    const controller = makeController({ key: 'idle-command' });
+    expect(canReleaseRuntime(controller)).toBe(true);
+    controller.commandPromptRequestId = 'command';
+    expect(canReleaseRuntime(controller)).toBe(false);
+    controller.commandPromptRequestId = '';
+    controller.commandSyncRequestId = 'state';
+    expect(canReleaseRuntime(controller)).toBe(false);
+    controller.commandSyncRequestId = '';
+    controller.commandMessagesRequestId = 'messages';
+    expect(canReleaseRuntime(controller)).toBe(false);
+    controller.commandMessagesRequestId = '';
+    controller.commandRefreshFailed = true;
+    expect(canReleaseRuntime(controller)).toBe(false);
+    controller.commandRefreshFailed = false;
+    expect(canReleaseRuntime(controller)).toBe(true);
+  });
+  it('evicts truly idle controllers before a pending command under cache pressure', async () => {
+    const { releaseIdleRuntimes } = await import('./index');
+    const pending = makeController({
+      key: 'pending-command',
+      runtimeId: 'pending-runtime',
+      commandPromptRequestId: 'command',
+      lastActiveSequence: 0,
+    });
+    state.controllers.push(pending);
+    for (let index = 1; index <= 8; index += 1) {
+      state.controllers.push(
+        makeController({
+          key: `idle-${index}`,
+          runtimeId: `idle-runtime-${index}`,
+          lastActiveSequence: index,
+        }),
+      );
+    }
+    const { invokeTraced } = await import('../../telemetry');
+    releaseIdleRuntimes();
+    expect(
+      vi
+        .mocked(invokeTraced)
+        .mock.calls.filter(([command]) => command === 'stop_pi')
+        .map(([, args]) => (args as { runtimeId: string }).runtimeId),
+    ).toEqual(['idle-runtime-2', 'idle-runtime-1']);
+  });
+
   it('does not clear newer bookkeeping when an old transport send rejects', async () => {
     const { rpc } = await import('./index');
     const controller = makeController({

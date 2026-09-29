@@ -88,10 +88,12 @@ function abandonPendingRpcSpans(
   runtimeId: string,
   generation: number,
   outcome: PiRpcOutcome,
+  retainedRequestId?: string,
 ): void {
   const prefix = `${runtimeId}:${generation}:`;
   for (const key of pendingRpcSpans.keys()) {
-    if (key.startsWith(prefix)) endPendingRpcSpan(key, outcome);
+    if (key.startsWith(prefix) && key !== `${prefix}${retainedRequestId}`)
+      endPendingRpcSpan(key, outcome);
   }
 }
 
