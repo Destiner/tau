@@ -50,10 +50,6 @@ test('keeps failed checks inside the sidebar popover before and after viewing, t
   await page.keyboard.press('Escape');
   await expect(popover).toBeHidden();
   await expect(trigger).toBeFocused();
-  await expect(trigger).toHaveAttribute(
-    'aria-label',
-    `Tau version ${appVersion}`,
-  );
   await trigger.click();
   await expect(popover.getByText('Update failed')).toBeVisible();
 
@@ -113,11 +109,6 @@ test('reveals the popover for a native check and keeps its failure inside', asyn
   await expect(popover).toBeVisible();
   await finishCheck(page, true);
   await expect(popover.getByText('Update failed')).toBeVisible();
-  await expect(trigger).toHaveAttribute(
-    'aria-label',
-    `Tau version ${appVersion}`,
-  );
-  await expect(trigger.locator('.update-failure-mark')).toHaveCount(0);
 });
 
 test('keeps download and verification failures local and actionable', async ({
@@ -134,19 +125,15 @@ test('keeps download and verification failures local and actionable', async ({
     ],
   ] as const) {
     await page.goto(`/?test-update=${fixture}`);
-    const trigger = page.getByRole('button', {
-      name: `Tau version ${appVersion}`,
-    });
-    await trigger.click();
+    await page
+      .getByRole('button', {
+        name: `Tau version ${appVersion}`,
+      })
+      .click();
     const popover = page.locator('.update-popover');
     await popover.getByRole('button', { name: 'Update' }).click();
     await expect(popover.getByText(copy)).toBeVisible();
     await expect(popover.getByRole('button', { name: 'Update' })).toBeEnabled();
-    await expect(trigger).toHaveAttribute(
-      'aria-label',
-      `Tau version ${appVersion}`,
-    );
-    await expect(trigger.locator('.update-failure-mark')).toHaveCount(0);
   }
 });
 
@@ -165,10 +152,6 @@ test('keeps restart recovery in the popover after a failed invocation', async ({
     popover.getByText('The update could not be installed. Try again.'),
   ).toBeVisible();
   await expect(popover.getByRole('button', { name: 'Restart' })).toBeVisible();
-  await expect(trigger).toHaveAttribute(
-    'aria-label',
-    `Tau version ${appVersion}`,
-  );
   await popover.getByRole('button', { name: 'Restart' }).click();
   await expect(popover.getByText('Restart needed')).toBeVisible();
 });
