@@ -189,6 +189,9 @@ defineExpose({
     paletteFocusPending.value = true;
   },
   cancelRename: cancelSessionRename,
+  get renaming() {
+    return renamingSession.value;
+  },
   get header() {
     return header.value;
   },

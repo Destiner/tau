@@ -71,6 +71,7 @@
       variant="fade"
       label="Dismiss queue status"
       @click="dismiss"
+      @keydown.escape="handleStatusEscape"
       ><UiIcon name="cross"
     /></UiIconButton>
     <button
@@ -120,6 +121,9 @@
           variant="ghost"
           :disabled="!canRecover"
           @click="() => emit('recover', index)"
+          @keydown="
+            (event: KeyboardEvent) => handleRestoreKeydown(event, index)
+          "
           >Restore Draft</UiButton
         >
       </div>
@@ -201,6 +205,27 @@ function clear(): void {
 }
 function dismiss(): void {
   emit('dismiss');
+}
+function handleStatusEscape(event: KeyboardEvent): void {
+  event.preventDefault();
+  event.stopPropagation();
+  dismiss();
+}
+function handleRestoreKeydown(event: KeyboardEvent, index: number): void {
+  if (
+    event.isComposing ||
+    event.repeat ||
+    event.key !== 'Enter' ||
+    (!event.metaKey && !event.ctrlKey) ||
+    event.altKey ||
+    event.shiftKey ||
+    !props.canRecover ||
+    !props.failedDrafts[index]
+  )
+    return;
+  event.preventDefault();
+  event.stopPropagation();
+  emit('recover', index);
 }
 function scheduleMessageShow(
   event: Event,

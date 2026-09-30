@@ -465,6 +465,7 @@ function blockingSurface(): boolean {
     activeExtensionDialog.value ||
     feedbackDialogOpen.value ||
     fullscreenViewerOpen.value ||
+    sessionHeader.value?.renaming ||
     document.querySelector('.issue-report-popover[data-state="open"]'),
   );
 }
@@ -552,12 +553,7 @@ register(
   'Mod+N',
   active,
   async (ctx) => {
-    const focusedPath = paletteOpen.value
-      ? undefined
-      : projectSidebar.value?.focusedProjectPath();
-    const project = state.workspace?.projects.find(
-      (p) => p.path === (focusedPath ?? ctx.projectPath),
-    );
+    const project = commandProject(ctx);
     if (project) await newSession(project);
   },
   'Session',
@@ -914,8 +910,9 @@ function navigateSession(direction: number): void {
   if (target) void selectSession(project, target);
 }
 const paletteRows = computed<CommandPaletteRow[]>(() => {
-  if (palettePage.value === 'root')
-    return commands.palette(context(true)).map(({ definition, title }) => ({
+  if (palettePage.value === 'root') {
+    const ctx = context(true);
+    return commands.palette(ctx).map(({ definition, title }) => ({
       id: definition.id,
       title: [
         'session.switch',
@@ -929,7 +926,21 @@ const paletteRows = computed<CommandPaletteRow[]>(() => {
       shortcut: definition.shortcuts?.[0]
         ? formatShortcut(definition.shortcuts[0].shortcut, platform)
         : undefined,
+      detail:
+        definition.id === 'project.remove'
+          ? [commandProject(ctx)?.name, commandProject(ctx)?.workingDirectory]
+              .filter(Boolean)
+              .join(' · ')
+          : [
+                'session.archive',
+                'session.unarchive',
+                'session.markRead',
+                'session.markUnread',
+              ].includes(definition.id)
+            ? commandSession(ctx)?.title
+            : undefined,
     }));
+  }
   const project = commandProject(context(true));
   if (palettePage.value === 'sessions')
     return (project ? projectSessions(project) : [])
@@ -993,6 +1004,9 @@ function backPalette(): void {
 }
 async function selectPaletteRow(id: string): Promise<void> {
   if (palettePage.value === 'root') {
+    const ctx = context(true);
+    if (!commands.palette(ctx).some(({ definition }) => definition.id === id))
+      return;
     const nested = [
       'session.switch',
       'project.switch',
@@ -1005,7 +1019,7 @@ async function selectPaletteRow(id: string): Promise<void> {
       composerBar.value?.closeSelectors();
       projectSidebar.value?.closeProjectMenu();
     }
-    const result = await commands.dispatch(id, context(true));
+    const result = await commands.dispatch(id, ctx);
     if (result.status !== 'executed' && !nested) paletteOpen.value = true;
     return;
   }
@@ -1426,7 +1440,7 @@ function handleChooseDirectory(
 
 function handleNewSession(): void {
   if (paletteOpen.value) return;
-  void commands.dispatch('session.new', context());
+  void commands.dispatch('session.new', focusedProjectContext());
 }
 
 async function watchWindowFocus(): Promise<void> {
@@ -1563,6 +1577,29 @@ function handlePaletteEscape(event: KeyboardEvent): void {
   restorePaletteFocus();
 }
 
+function focusedProjectContext(): CommandContext {
+  const ctx = context();
+  const path = projectSidebar.value?.focusedProjectPath();
+  if (
+    path &&
+    state.workspace?.projects.some((project) => project.path === path)
+  )
+    ctx.projectPath = path;
+  return ctx;
+}
+
+function focusedSessionContext(): CommandContext {
+  const id = projectSidebar.value?.focusedSessionId();
+  if (!id) return context();
+  const ctx = focusedProjectContext();
+  if (
+    commandProject(ctx) &&
+    projectSessions(commandProject(ctx)!).some((session) => session.id === id)
+  )
+    ctx.sessionId = id;
+  return ctx;
+}
+
 function handleDocumentKeydown(event: KeyboardEvent): void {
   if (event.defaultPrevented) return;
   if (shortcutMatches(event, 'Mod+K', platform)) {
@@ -1576,20 +1613,8 @@ function handleDocumentKeydown(event: KeyboardEvent): void {
     !event.isComposing &&
     !event.getModifierState?.('AltGraph')
   ) {
-    const ctx = context();
-    const focusedPath = projectSidebar.value?.focusedProjectPath();
-    if (
-      focusedPath &&
-      state.workspace?.projects.some((p) => p.path === focusedPath)
-    )
-      ctx.projectPath = focusedPath;
-    const focusedId = projectSidebar.value?.focusedSessionId();
-    if (
-      focusedId &&
-      commandProject(ctx) &&
-      projectSessions(commandProject(ctx)!).some((s) => s.id === focusedId)
-    )
-      ctx.sessionId = focusedId;
+    const projectCtx = focusedProjectContext();
+    const sessionCtx = focusedSessionContext();
     if (
       document.activeElement?.matches('.project-toggle') &&
       !event.metaKey &&
@@ -1601,19 +1626,24 @@ function handleDocumentKeydown(event: KeyboardEvent): void {
       event.preventDefault();
       void commands.dispatch(
         event.key === 'ArrowRight' ? 'project.expand' : 'project.collapse',
-        ctx,
+        projectCtx,
       );
       return;
     }
     const variants = [
       [
         'Mod+Shift+A',
-        commandSession(ctx)?.archived ? 'session.unarchive' : 'session.archive',
+        commandSession(sessionCtx)?.archived
+          ? 'session.unarchive'
+          : 'session.archive',
       ],
       [
         'Mod+Shift+U',
-        commandSession(ctx) &&
-        isSessionUnread(commandProject(ctx)!, commandSession(ctx)!)
+        commandSession(sessionCtx) &&
+        isSessionUnread(
+          commandProject(sessionCtx)!,
+          commandSession(sessionCtx)!,
+        )
           ? 'session.markRead'
           : 'session.markUnread',
       ],
@@ -1623,7 +1653,7 @@ function handleDocumentKeydown(event: KeyboardEvent): void {
     );
     if (variant) {
       event.preventDefault();
-      void commands.dispatch(variant[1], ctx);
+      void commands.dispatch(variant[1], sessionCtx);
       return;
     }
     const binding = bindings.find(
@@ -1634,7 +1664,14 @@ function handleDocumentKeydown(event: KeyboardEvent): void {
     );
     if (binding) {
       event.preventDefault();
-      void commands.dispatch(binding.id, ctx);
+      void commands.dispatch(
+        binding.id,
+        ['session.new', 'project.moveUp', 'project.moveDown'].includes(
+          binding.id,
+        )
+          ? projectCtx
+          : context(),
+      );
       return;
     }
   }

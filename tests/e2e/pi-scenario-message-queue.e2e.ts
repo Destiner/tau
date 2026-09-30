@@ -24,6 +24,12 @@ async function releaseGate(page: Page, gate: string): Promise<void> {
   }, gate);
 }
 
+async function modShortcut(page: Page, key: string): Promise<string> {
+  return (await page.evaluate(() => /Mac|iPhone|iPad/.test(navigator.platform)))
+    ? `Meta+${key}`
+    : `Control+${key}`;
+}
+
 test('preserves a newer draft on queue rejection and restores the unsent draft only when safe', async ({
   page,
 }) => {
@@ -44,7 +50,11 @@ test('preserves a newer draft on queue rejection and restores the unsent draft o
   await expect(composer).toHaveValue('New draft stays');
   const queue = page.getByRole('region', { name: 'Pending messages' });
   await expect(queue).toContainText('Message was not queued. Try again.');
-  await queue.getByRole('button', { name: 'Dismiss queue status' }).click();
+  const dismissStatus = queue.getByRole('button', {
+    name: 'Dismiss queue status',
+  });
+  await dismissStatus.focus();
+  await dismissStatus.press('Escape');
   await expect(queue.locator('.queue-feedback')).toHaveCount(0);
   await page.getByRole('button', { name: 'Review Unsent (1)' }).click();
   const restore = page.getByRole('button', { name: 'Restore Draft' });
@@ -54,7 +64,8 @@ test('preserves a newer draft on queue rejection and restores the unsent draft o
   ).toBeVisible();
   await composer.fill('');
   await expect(restore).toBeEnabled();
-  await restore.click();
+  await restore.focus();
+  await restore.press(await modShortcut(page, 'Enter'));
   await expect(composer).toHaveValue('Restore me later');
   await expect(composer).toBeFocused();
   await expect(

@@ -136,6 +136,12 @@ test('opening with Mod+K preserves an uncommitted session rename', async ({
     page.getByRole('dialog', { name: 'Command Palette' }),
   ).toBeVisible();
   await expect(name).toHaveValue('Uncommitted rename');
+  await expect(page.getByRole('option', { name: /New Session/ })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole('option', { name: /Switch Session/ }),
+  ).toHaveCount(0);
 
   await page.keyboard.press('Escape');
   await expect(name).toBeVisible();
@@ -331,6 +337,91 @@ test('switching sessions from archived review returns to active sessions with th
   await expect(composer).toHaveValue(
     'Keep this draft while reviewing archives',
   );
+});
+
+test('a palette New Session targets its captured project, not the sidebar row that held focus', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
+  const notes = page.locator(
+    '.project-group[data-project-path="/browser-dev/projects/notes"]',
+  );
+  await notes.locator('.project-toggle').focus();
+  await openPalette(page);
+  await expect(
+    page
+      .getByRole('option', { name: /Remove Project/ })
+      .locator('.command-palette-detail'),
+  ).toHaveText('atlas · /browser-dev/projects/atlas');
+  await page.getByRole('option', { name: /New Session/ }).click();
+  await expect(
+    page.locator(
+      '.project-group[data-project-path="/browser-dev/projects/atlas"] .project-row',
+    ),
+  ).toHaveClass(/selected/);
+  await expect(notes.locator('.session-row')).toHaveCount(2);
+});
+
+test('a project-row New Session targets that row, not the active project', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
+  const notes = page.locator(
+    '.project-group[data-project-path="/browser-dev/projects/notes"]',
+  );
+  await notes.hover();
+  await notes.getByRole('button', { name: 'New Session in notes' }).click();
+  await expect(notes.locator('.project-row')).toHaveClass(/selected/);
+});
+
+test('New Session shortcut uses a focused project row', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
+  const notes = page.locator(
+    '.project-group[data-project-path="/browser-dev/projects/notes"]',
+  );
+  await notes.locator('.project-toggle').focus();
+  await page.evaluate(async () => {
+    const internals = (
+      window as typeof window & {
+        __TAURI_INTERNALS__: {
+          invoke: (cmd: string, args: unknown) => Promise<unknown>;
+        };
+      }
+    ).__TAURI_INTERNALS__;
+    await internals.invoke('plugin:event|emit', {
+      event: 'tau://new-session',
+      payload: undefined,
+    });
+  });
+  await expect(notes.locator('.project-row')).toHaveClass(/selected/);
+});
+
+test('focused sidebar rows do not retarget composer and session cycling shortcuts', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
+  const notes = page.locator(
+    '.project-group[data-project-path="/browser-dev/projects/notes"]',
+  );
+  const noteSession = notes
+    .locator('.session-row')
+    .first()
+    .locator('.session-select');
+  await noteSession.focus();
+  await page.keyboard.press(await modShortcut(page, 'Shift+m'));
+  await expect(
+    page.getByRole('dialog', { name: 'Choose Model' }),
+  ).toBeVisible();
+  await page.keyboard.press('Escape');
+  await noteSession.focus();
+  await page.keyboard.press('Control+Tab');
+  await expect(
+    page.getByRole('heading', { name: 'Navigation review' }),
+  ).toBeVisible();
 });
 
 test('Cmd+Shift+R from the composer targets the active session, not a hovered row', async ({

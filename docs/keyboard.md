@@ -1,10 +1,8 @@
 # Keyboard and command palette
 
-> **Status: staged target keymap.** This is the approved keyboard contract for
-> incremental implementation, not a claim that every command below is shipped.
-> An action is documented as available only after its implementation and tests
-> land. Platform-native behavior and the explicit exclusions remain owned by
-> their existing controls.
+> **Status: implemented keymap.** Commands are shown only when their current
+> target and app state allow them. Platform-native behavior and the explicit
+> exclusions remain owned by their existing controls.
 
 ## Conventions
 
