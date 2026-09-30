@@ -28,6 +28,7 @@ export default function sessionControllerFixture(
     materializationVerified: false,
     materializationBarrierRequestId: '',
     postSettlementHydration: false,
+    provisionalReplacement: undefined,
     settledAssistantActivity: false,
     materializationStateRequestId: '',
     materializationMessagesRequestId: '',

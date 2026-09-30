@@ -210,6 +210,11 @@ interface SessionController {
   materializationBarrierRequestId: string;
 
   postSettlementHydration: boolean;
+  provisionalReplacement?: {
+    generation: number;
+    sessionId: string;
+    sessionPath: string;
+  };
 
   settledAssistantActivity: boolean;
 
@@ -1044,6 +1049,7 @@ function createController(
     materializationVerified: false,
     materializationBarrierRequestId: '',
     postSettlementHydration: false,
+    provisionalReplacement: undefined,
     settledAssistantActivity: false,
     materializationStateRequestId: '',
     materializationMessagesRequestId: '',

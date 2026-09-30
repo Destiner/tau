@@ -438,6 +438,82 @@ describe('command-created session durability — verification', () => {
     },
   );
 
+  it.each([undefined, 'ssh://test-host'])(
+    'keeps a delayed %s replacement alive after successful empty verification reads',
+    async (connectionString) => {
+      vi.useFakeTimers();
+      try {
+        const {
+          handleResponse,
+          handleRpc,
+          watchingMaterializationVerification,
+        } = await import('./index');
+        const controller = makeController({
+          sessionId: 'completed-plan',
+          sessionPath: '/tmp/project/plan.jsonl',
+          materializationVerified: true,
+        });
+        addEphemeral(controller, connectionString);
+        state.ephemeralSessions[0]!.selected = false;
+        state.activeControllerKey = 'another-controller';
+        state.activeSessionId = 'another-session';
+        const other = makeController({
+          key: 'another-controller',
+          sessionId: 'another-session',
+          draft: 'Keep draft',
+        });
+        state.controllers.push(other);
+        await handleRpc(controller, { type: 'agent_settled' });
+        await handleResponse(controller, {
+          id: controller.materializationStateRequestId,
+          command: 'get_state',
+          success: true,
+          data: {
+            sessionId: 'implementation',
+            sessionFile: '/tmp/project/implementation.jsonl',
+            isStreaming: false,
+          },
+        });
+        const respondEmpty = async (): Promise<void> => {
+          await handleResponse(controller, {
+            id: controller.materializationMessagesRequestId,
+            command: 'get_messages',
+            success: true,
+            data: { messages: [] },
+          });
+        };
+        await respondEmpty();
+        for (const delay of [250, 750, 1_500]) {
+          await vi.advanceTimersByTimeAsync(delay);
+          await handleResponse(controller, {
+            id: controller.materializationStateRequestId,
+            command: 'get_state',
+            success: true,
+            data: {
+              sessionId: 'implementation',
+              sessionFile: '/tmp/project/implementation.jsonl',
+              isStreaming: false,
+            },
+          });
+          await respondEmpty();
+        }
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(watchingMaterializationVerification(controller)).toBe(false);
+        expect(controller.generation).toBe(1);
+        expect(state.ephemeralSessions).toEqual([
+          expect.objectContaining({ id: 'implementation' }),
+        ]);
+        expect(state.activeSessionId).toBe('another-session');
+        expect(other.draft).toBe('Keep draft');
+        await handleRpc(controller, { type: 'agent_start' });
+        expect(controller.generation).toBe(1);
+        expect(controller.working).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it('stops retrying and releases an unverified identity after the bounded policy', async () => {
     vi.useFakeTimers();
     try {

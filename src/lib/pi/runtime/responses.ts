@@ -637,6 +637,18 @@ async function handleResponse(
         controller.commandSyncRequestId || controller.commandMessagesRequestId,
       );
     if (sessionChanged) {
+      controller.provisionalReplacement =
+        transfersCommandRefresh ||
+        resolvesCommandSync ||
+        Boolean(controller.commandPromptRequestId)
+          ? undefined
+          : {
+              generation: controller.generation,
+              sessionId: controller.sessionId,
+              sessionPath: controller.sessionPath,
+            };
+    }
+    if (sessionChanged) {
       // The response that revealed the replacement already ended its own
       // span above; anything else still pending for this runtime and
       // generation belongs to the session Pi just swapped out from under it.
@@ -691,6 +703,7 @@ async function handleResponse(
     if (materializationBarrierForCurrentSession) {
       clearMaterializationVerificationWatch(controller);
       controller.materializationVerified = true;
+      controller.provisionalReplacement = undefined;
     }
     setControllerLifecycle(
       controller,
@@ -836,6 +849,7 @@ async function handleResponse(
       if (completedAssistant) {
         clearMaterializationVerificationWatch(controller);
         controller.materializationVerified = true;
+        controller.provisionalReplacement = undefined;
       } else {
         scheduleMaterializationVerificationRetry(controller);
       }
