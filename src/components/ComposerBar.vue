@@ -36,10 +36,7 @@
         @keydown="handleComposerKeydown"
       ></textarea>
     </UiContextMenu>
-    <div
-      class="composer-toolbar"
-      :class="{ 'has-retry': retryPresentation }"
-    >
+    <div class="composer-toolbar">
       <ModelSelector
         v-model:open="modelSelectorOpen"
         :model-value="`${currentModelProvider}/${currentModelId}`"
@@ -450,7 +447,6 @@ defineExpose({
   display: inline-flex;
   align-items: center;
   height: var(--control-sm);
-  margin-left: auto;
   padding: 0 4px;
   border-radius: var(--radius-sm);
   outline: 0;
@@ -467,10 +463,6 @@ defineExpose({
 
 .send-button {
   margin-left: auto;
-}
-
-.composer-toolbar.has-retry .send-button {
-  margin-left: 0;
 }
 
 /* Phosphor's stop and triangle read larger than the old glyphs at the same

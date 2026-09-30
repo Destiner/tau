@@ -24,12 +24,46 @@ async function releaseGate(page: Page, gate: string): Promise<void> {
   }, gate);
 }
 
+async function expectOutwardPulse(page: Page): Promise<void> {
+  const divider = page.locator(
+    '.message.compaction:not(.transient-compaction) .compaction-divider',
+  );
+  await expect(divider).toHaveClass(/pulse/);
+  const animations = await divider.evaluate((element) => {
+    const rules = Array.from(element.querySelectorAll('.rule'));
+    return rules.map((rule) => {
+      const pseudo = getComputedStyle(rule, '::after');
+      const name = pseudo.animationName;
+      const keyframes = Array.from(document.styleSheets)
+        .flatMap((sheet) => Array.from(sheet.cssRules))
+        .find(
+          (entry): entry is CSSKeyframesRule =>
+            entry instanceof CSSKeyframesRule && entry.name === name,
+        );
+      const frames = keyframes ? Array.from(keyframes.cssRules) : [];
+      return {
+        name: name.replace(/-[0-9a-f]{8}$/, ''),
+        start: (frames[0] as CSSKeyframeRule | undefined)?.style.transform,
+        end: (frames[frames.length - 1] as CSSKeyframeRule | undefined)?.style
+          .transform,
+      };
+    });
+  });
+  expect(animations).toEqual([
+    { name: 'pulse-left', start: 'translate(110%)', end: 'translate(-440%)' },
+    { name: 'pulse-right', start: 'translate(-110%)', end: 'translate(440%)' },
+  ]);
+}
+
 async function expectActiveCompaction(page: Page): Promise<void> {
   const composer = page.getByRole('textbox', { name: 'Message Pi' });
   const stop = page.getByRole('button', { name: 'Stop Pi' });
 
   const compaction = page.locator('.transient-compaction');
   await expect(compaction).toHaveText('compacting');
+  await expect(compaction.locator('.compaction-divider')).not.toHaveClass(
+    /pulse/,
+  );
   await expect
     .poll(async () => {
       const content = await page
@@ -85,6 +119,11 @@ test('shows non-interruptible compaction from events and reconciled state', asyn
     .last();
   await expect(permanent).toHaveCount(1);
   await expect(permanent).toHaveText('compacted');
+  await expectOutwardPulse(page);
+  await page.clock.runFor(650);
+  await expect(permanent.locator('.compaction-divider')).not.toHaveClass(
+    /pulse/,
+  );
   await expect(retained).toHaveCount(1);
   await expect(continued).toBeVisible();
   await expect
@@ -109,10 +148,20 @@ test('shows non-interruptible compaction from events and reconciled state', asyn
   await waitForGate(page, 'missed-start-reconciled');
   await expectActiveCompaction(page);
 
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await releaseGate(page, 'missed-start-reconciled');
   await expect(page.locator('.transient-compaction')).toHaveCount(0);
   await expect(page.locator('.message.compaction')).toHaveCount(1);
   await expect(page.locator('.message.compaction')).toHaveText('compacted');
+  const divider = page.locator('.message.compaction .compaction-divider');
+  await expect(divider).toHaveClass(/pulse/);
+  expect(
+    await divider
+      .locator('.rule')
+      .evaluateAll((rules) =>
+        rules.map((rule) => getComputedStyle(rule, '::after').animationName),
+      ),
+  ).toEqual(['none', 'none']);
   await expect(composer).toHaveValue('');
   await expect(
     page.getByRole('button', { name: 'Send Message' }),

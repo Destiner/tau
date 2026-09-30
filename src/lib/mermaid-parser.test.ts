@@ -8,6 +8,16 @@ const codeLabels = `flowchart LR
   B --> C["execute([parent, ...children])"]
   C --> D["submit {proofs: []}, sponsored: true"]`;
 
+const reportedFlowchart = `flowchart TD
+  Plan[Approved plan] --> Fixture[Synthetic fixture]
+  Plan --> Review{Approved?}
+  Fixture --> Regression[Browser regression]
+  Review -->|No| Fixture
+  Review -->|Yes| Regression
+  Regression -- two<br/>lines --> Topology[Topology assertions]
+  Topology -- count ≤ 7 --> Viewer[Diagram viewer]
+  Viewer -- count > 7 --> Complete[/Ready to ship/]`;
+
 const forwardDefinitions = `graph TD
   D1 --> E
   F --> G
@@ -43,13 +53,58 @@ function edges(source: string): [string, string, string | undefined][] {
 /*
  * Patch rationale: https://github.com/lukilabs/beautiful-mermaid/issues/125.
  * Bun loads src/index.ts; ESM/Vite loads dist/index.js. Keep both patched
- * parsers equivalent; regenerate with `bun patch --commit` and check a frozen
+ * parsers and shape rendering equivalent, including both parallelograms;
+ * regenerate with `bun patch --commit` and check a frozen
  * install. Verify parseMermaid with both Bun and Node, these regressions plus
  * mermaid-source/mermaid tests, and transcript browser tests. Remove the patch
  * only when an upstream release passes all of them; this is a supported
  * flowchart subset, not the full Mermaid grammar.
  */
 describe('patched beautiful-mermaid flowchart parser', () => {
+  it('keeps the full reported topology, labels, and final parallelogram', () => {
+    expect(nodes(`${reportedFlowchart}\n`)).toEqual([
+      ['Plan', 'Approved plan', 'rectangle'],
+      ['Fixture', 'Synthetic fixture', 'rectangle'],
+      ['Review', 'Approved?', 'diamond'],
+      ['Regression', 'Browser regression', 'rectangle'],
+      ['Topology', 'Topology assertions', 'rectangle'],
+      ['Viewer', 'Diagram viewer', 'rectangle'],
+      ['Complete', 'Ready to ship', 'parallelogram'],
+    ]);
+    expect(edges(reportedFlowchart)).toEqual([
+      ['Plan', 'Fixture', undefined],
+      ['Plan', 'Review', undefined],
+      ['Fixture', 'Regression', undefined],
+      ['Review', 'Fixture', 'No'],
+      ['Review', 'Regression', 'Yes'],
+      ['Regression', 'Topology', 'two\nlines'],
+      ['Topology', 'Viewer', 'count ≤ 7'],
+      ['Viewer', 'Complete', 'count > 7'],
+    ]);
+  });
+
+  it('distinguishes four slash shapes in a chain and later definitions', () => {
+    const source = String.raw`graph LR
+  A[/one/] --> B[\two\] --> C[/three\] --> D[\four/]
+  D --> E
+  E[/named/]:::hot`;
+    expect(nodes(source)).toEqual([
+      ['A', 'one', 'parallelogram'],
+      ['B', 'two', 'parallelogram-alt'],
+      ['C', 'three', 'trapezoid'],
+      ['D', 'four', 'trapezoid-alt'],
+      ['E', 'named', 'parallelogram'],
+    ]);
+    expect(edges(source).map(([from, to]) => [from, to])).toEqual([
+      ['A', 'B'],
+      ['B', 'C'],
+      ['C', 'D'],
+      ['D', 'E'],
+    ]);
+    expect(nodes('graph TD\n A[/"inner /] and \\]"/]')).toEqual([
+      ['A', 'inner /] and \\]', 'parallelogram'],
+    ]);
+  });
   it('preserves ordered topology, code-like labels and forward definitions', () => {
     expect(nodes(codeLabels)).toEqual([
       ['A', 'metadata.calls = request.tasks ?? []', 'rectangle'],
@@ -86,6 +141,8 @@ describe('patched beautiful-mermaid flowchart parser', () => {
       ['circle', '((', '))'],
       ['subroutine', '[[', ']]'],
       ['cylinder', '[(', ')]'],
+      ['parallelogram', '[/', '/]'],
+      ['parallelogram-alt', '[\\', '\\]'],
       ['trapezoid', '[/', '\\]'],
       ['trapezoid-alt', '[\\', '/]'],
       ['asymmetric', '>', ']'],
@@ -144,6 +201,9 @@ describe('patched beautiful-mermaid flowchart parser', () => {
       'A --> B garbage',
       'A["quoted" garbage]',
       'A["ambiguous \\" quote"]',
+      'A[/unfinished',
+      'A[\\unfinished',
+      'A[/valid/] garbage',
     ]) {
       expect(() => graph(`graph TD\n ${line}`)).toThrow();
     }

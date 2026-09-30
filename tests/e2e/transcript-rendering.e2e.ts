@@ -392,7 +392,7 @@ test('draws a themed diagram and opens its pan-and-zoom viewer', async ({
       '[data-message-id="fixture-markdown-showcase"]',
     );
     const diagram = showcase.locator('.diagram svg').first();
-    await expect(showcase.locator('.diagram')).toHaveCount(3, {
+    await expect(showcase.locator('.diagram')).toHaveCount(4, {
       timeout: 20_000,
     });
     await expect(
@@ -436,6 +436,18 @@ test('draws a themed diagram and opens its pan-and-zoom viewer', async ({
       await expect(node.locator('text')).toHaveText(label);
     }
     await expect(codeSvg.locator('polyline.edge')).toHaveCount(4);
+    const syntheticDiagram = showcase.locator('.diagram').filter({
+      has: page.locator(
+        'g.node[data-id="Complete"][data-label="Ready to ship"]',
+      ),
+    });
+    await expect(syntheticDiagram).toHaveCount(1);
+    const syntheticSvg = syntheticDiagram.locator('svg');
+    await expect(syntheticSvg.locator('g.node')).toHaveCount(7);
+    await expect(syntheticSvg.locator('polyline.edge')).toHaveCount(8);
+    await expect(
+      syntheticSvg.locator('g.node[data-id="Complete"]'),
+    ).toHaveAttribute('data-shape', 'parallelogram');
     const sourceBlocks = showcase.locator(
       '.code-block[data-tau-lang="mermaid"]',
     );
@@ -465,12 +477,15 @@ test('draws a themed diagram and opens its pan-and-zoom viewer', async ({
     const showcase = page.locator(
       '[data-message-id="fixture-markdown-showcase"]',
     );
-    const figure = showcase.locator('.diagram').first();
-    const button = figure.locator('.diagram-expand');
-    await expect(showcase.locator('.diagram')).toHaveCount(3, {
-      timeout: 20_000,
+    const figure = showcase.locator('.diagram').filter({
+      has: page.locator(
+        'g.node[data-id="Complete"][data-label="Ready to ship"]',
+      ),
     });
-    await expect(showcase.locator('.diagram-expand')).toHaveCount(3);
+    const button = figure.locator('.diagram-expand');
+    await expect(figure).toHaveCount(1, { timeout: 20_000 });
+    await expect(showcase.locator('.diagram')).toHaveCount(4);
+    await expect(showcase.locator('.diagram-expand')).toHaveCount(4);
     await expect
       .poll(() =>
         button.evaluate((element) => getComputedStyle(element).opacity),
@@ -490,17 +505,14 @@ test('draws a themed diagram and opens its pan-and-zoom viewer', async ({
     const drawing = viewer.locator('.viewer-drawing');
     const vector = drawing.locator(':scope > svg');
     await expect(
-      vector.locator('text', { hasText: 'Session live?' }),
+      vector.locator('text', { hasText: 'Ready to ship' }),
     ).toHaveCount(1);
-    await expect(
-      vector.locator('g.node[data-id="F"] text', {
-        hasText: 'for both sides?',
-      }),
-    ).toHaveCount(1);
-    await expect(
-      vector.locator('g.node[data-id="I"] text', { hasText: '+ no result?' }),
-    ).toHaveCount(1);
-    await expect(vector.locator('g.node[data-shape="diamond"]')).toHaveCount(3);
+    await expect(vector.locator('g.node')).toHaveCount(7);
+    await expect(vector.locator('polyline.edge')).toHaveCount(8);
+    await expect(vector.locator('g.node[data-id="Complete"]')).toHaveAttribute(
+      'data-shape',
+      'parallelogram',
+    );
     await expect(vector).toHaveAttribute('width', '100%');
     await expect(vector).toHaveAttribute('height', '100%');
     await expect(vector).toHaveAttribute('preserveAspectRatio', 'none');

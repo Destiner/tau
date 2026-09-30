@@ -257,6 +257,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     controller.remoteConnectionTimedOut = false;
     clearSettingRequestWatch(controller);
     controller.generation = 0;
+    controller.provisionalReplacement = undefined;
     controller.remoteDisconnected = recoverableRemoteExit;
     controller.reconnectingRemote = false;
     controller.retry = undefined;

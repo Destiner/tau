@@ -18,6 +18,7 @@ for (const scheme of ['light', 'dark'] as const) {
     await page.evaluate(() => document.fonts.ready);
     const button = page.getByRole('button', { name: 'Load earlier messages' });
     await expect(button).toHaveText('compacted');
+    await expect(button).not.toHaveClass(/pulse/);
     await button.scrollIntoViewIfNeeded();
     await expect(button).toBeInViewport();
     const before = await button.boundingBox();

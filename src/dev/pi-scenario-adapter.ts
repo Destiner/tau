@@ -99,6 +99,11 @@ const PLAN_SESSION = {
   path: `${PROJECT_PATH}/session-plan.jsonl`,
   name: 'docs · RHI-6267 · Plan',
 };
+const IMPLEMENT_SESSION = {
+  id: 'session-implement',
+  path: `${PROJECT_PATH}/session-implement.jsonl`,
+  name: 'docs · RHI-6267 · Implement',
+};
 const COMMAND_SESSION = {
   id: 'session-mcp',
   path: '/fixture/mission/sessions/session-mcp.jsonl',
@@ -235,6 +240,12 @@ const REQUIRED_NATIVE_COUNTS = {
     set_active_project: 1,
     set_active_session: 9,
   },
+  'delayed-successor-verification': {
+    load_workspace: 1,
+    read_model_scope: 2,
+    register_session: 5,
+    set_active_session: 10,
+  },
   'phantom-command-registration': {
     load_workspace: 1,
     read_model_scope: 2,
@@ -341,7 +352,8 @@ function scenarioWorkspace(scenarioName: string): WorkspaceSnapshot {
   if (
     scenarioName === 'saved-session-prompt-process-exit' ||
     scenarioName === 'saved-session-command-replacement' ||
-    scenarioName === 'plan-implement-replacement'
+    scenarioName === 'plan-implement-replacement' ||
+    scenarioName === 'delayed-successor-verification'
   ) {
     workspace.projects[0]?.sessions.push({
       id: BACKUP_SESSION.id,
@@ -543,17 +555,31 @@ function installPiScenarioAdapter(scenarioName: string): void {
         const invocation = count(command);
         const expected =
           scenarioName === 'phantom-command-registration' ||
-          scenarioName === 'phantom-first-prompt-registration'
+          scenarioName === 'phantom-first-prompt-registration' ||
+          scenarioName === 'delayed-successor-verification'
             ? ((): NativeSessionIdentity => {
+                const candidates =
+                  scenarioName === 'delayed-successor-verification'
+                    ? [
+                        MAIN_SESSION,
+                        BACKUP_SESSION,
+                        PLAN_SESSION,
+                        IMPLEMENT_SESSION,
+                      ]
+                    : [MAIN_SESSION, COMMAND_SESSION, FIRST_PROMPT_SESSION];
                 const session =
-                  [MAIN_SESSION, COMMAND_SESSION, FIRST_PROMPT_SESSION].find(
+                  candidates.find(
                     (candidate) => candidate.id === args.sessionId,
                   ) ?? MAIN_SESSION;
                 return {
                   ...session,
                   adopted:
-                    session.id !== MAIN_SESSION.id &&
-                    !registeredSessionIds.has(session.id),
+                    scenarioName === 'delayed-successor-verification'
+                      ? (session.id === PLAN_SESSION.id ||
+                          session.id === IMPLEMENT_SESSION.id) &&
+                        !registeredSessionIds.has(session.id)
+                      : session.id !== MAIN_SESSION.id &&
+                        !registeredSessionIds.has(session.id),
                 };
               })()
             : expectedNativeSession(scenarioName, command, invocation);
@@ -563,6 +589,8 @@ function installPiScenarioAdapter(scenarioName: string): void {
           workspace = replacementWorkspace();
         } else if (expected.id === PLAN_SESSION.id) {
           workspace = upsertSessionWorkspace(workspace, PLAN_SESSION);
+        } else if (expected.id === IMPLEMENT_SESSION.id) {
+          workspace = upsertSessionWorkspace(workspace, IMPLEMENT_SESSION);
         } else if (expected.id === COMMAND_SESSION.id) {
           workspace = commandSessionWorkspace();
         } else if (expected.id === FIRST_PROMPT_SESSION.id) {
@@ -1010,7 +1038,8 @@ function scenarioRuntimeKey(
   if (
     scenarioName === 'saved-session-prompt-process-exit' ||
     scenarioName === 'saved-session-command-replacement' ||
-    scenarioName === 'plan-implement-replacement'
+    scenarioName === 'plan-implement-replacement' ||
+    scenarioName === 'delayed-successor-verification'
   ) {
     if (count > 1) throw new Error('A scenario session started twice.');
     if (sessionPath === BACKUP_SESSION.path) return 'backup';
@@ -1020,7 +1049,10 @@ function scenarioRuntimeKey(
     ) {
       return 'reopened-plan';
     }
-    return scenarioName === 'plan-implement-replacement' ? 'workflow' : 'main';
+    return scenarioName === 'plan-implement-replacement' ||
+      scenarioName === 'delayed-successor-verification'
+      ? 'workflow'
+      : 'main';
   }
   if (
     scenarioName === 'phantom-command-registration' ||

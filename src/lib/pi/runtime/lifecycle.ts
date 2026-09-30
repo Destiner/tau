@@ -181,6 +181,7 @@ async function startController(
   clearSessionNameRefresh(controller);
   controller.sessionNameRevision = 0;
   controller.postSettlementHydration = false;
+  controller.provisionalReplacement = undefined;
   controller.settledAssistantActivity = false;
   controller.materializationBarrierRequestId = '';
   controller.materializationStateRequestId = '';
@@ -806,10 +807,9 @@ function scheduleMaterializationVerificationRetry(
     setControllerLifecycle(
       controller,
       { syncing: false },
-      'bridge_event_failed',
+      'materialization_retry',
     );
-    releaseRuntime(controller);
-    releaseIdleRuntimes();
+    releaseOrCacheRuntime(controller);
     return;
   }
 
@@ -1086,6 +1086,7 @@ async function retireUnsavedSession(
   controller.lastUserMessageAt = 0;
   controller.hasPiTranscript = false;
   controller.materializationVerified = false;
+  controller.provisionalReplacement = undefined;
   controller.postSettlementHydration = false;
   controller.settledAssistantActivity = false;
   controller.materializationBarrierRequestId = '';
@@ -1101,6 +1102,17 @@ async function retireUnsavedSession(
   setControllerError(controller, errorCopy.unsavedSession);
 }
 
+function retainsProvisionalReplacement(controller: SessionController): boolean {
+  const identity = controller.provisionalReplacement;
+  return Boolean(
+    identity &&
+    !controller.disposed &&
+    controller.generation === identity.generation &&
+    controller.sessionId === identity.sessionId &&
+    controller.sessionPath === identity.sessionPath,
+  );
+}
+
 function removeEmptyActivePhantom(): void {
   const controller = activeController.value;
   const session = controller
@@ -1114,6 +1126,8 @@ function removeEmptyActivePhantom(): void {
     workspaceContainsSession(controller) ||
     controller.lastUserMessageAt > 0 ||
     controller.hasPiTranscript ||
+    controller.postSettlementHydration ||
+    retainsProvisionalReplacement(controller) ||
     commandHasPendingWork(controller) ||
     controller.commandRefreshFailed ||
     controller.draft.trim() ||
@@ -1152,6 +1166,7 @@ function removeEphemeralSession(
     const controller = controllerByKey(session.controllerKey);
     if (controller) {
       controller.disposed = true;
+      controller.provisionalReplacement = undefined;
       controller.retry = undefined;
       clearSessionReplacementWatch(controller);
       clearSessionNameRefresh(controller);
@@ -1173,6 +1188,7 @@ function removeProjectUiState(projectPath: string): void {
   for (const controller of state.controllers) {
     if (controller.projectPath !== projectPath) continue;
     controller.disposed = true;
+    controller.provisionalReplacement = undefined;
     controller.retry = undefined;
     clearSessionReplacementWatch(controller);
     clearSessionNameRefresh(controller);
@@ -1258,6 +1274,11 @@ function releaseRuntime(controller: SessionController | undefined): void {
   void stopControllerProcess(controller);
 }
 
+function releaseOrCacheRuntime(controller: SessionController): void {
+  if (!retainsProvisionalReplacement(controller)) releaseRuntime(controller);
+  releaseIdleRuntimes();
+}
+
 function releaseIdleRuntimes(): void {
   const idle = state.controllers
     .filter((controller) => canReleaseRuntime(controller))
@@ -1306,6 +1327,7 @@ async function stopControllerProcess(
   flushStreamAggregate(controller.runtimeId, generation);
   resetQueue(controller, true);
   controller.generation = 0;
+  controller.provisionalReplacement = undefined;
   controller.retry = undefined;
   controller.compacting = false;
   controller.compactionReconciliationPending = false;
@@ -1402,6 +1424,7 @@ export {
   canReleaseRuntime,
   discardReleasedEmptySession,
   releaseRuntime,
+  releaseOrCacheRuntime,
   releaseIdleRuntimes,
   stopControllerProcess,
 };

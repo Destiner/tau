@@ -29,6 +29,7 @@ export {
   removeProjectUiState,
   canReleaseRuntime,
   releaseRuntime,
+  releaseOrCacheRuntime,
   releaseIdleRuntimes,
   stopControllerProcess,
   piConnectionFailureMessage,

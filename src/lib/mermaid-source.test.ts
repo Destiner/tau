@@ -27,7 +27,9 @@ for both sides?}
       ['((', '))'],
       ['[[', ']]'],
       ['[(', ')]'],
+      ['[/', '/]'],
       ['[/', '\\]'],
+      ['[\\', '\\]'],
       ['[\\', '/]'],
       ['>', ']'],
       ['{{', '}}'],
@@ -118,6 +120,19 @@ two]`;
 %% generated
 flowchart TB
   A[one\\ntwo]`);
+  });
+
+  it('selects slash shapes by their matching closer without swallowing later nodes', () => {
+    const source = String.raw`flowchart LR
+  A[/first
+second/] --> B[\opposite\] --> C[/wide\] --> D[\narrow/]
+  D --> E`;
+    expect(adapted(source)).toBe(String.raw`flowchart LR
+  A[/first\nsecond/] --> B[\opposite\] --> C[/wide\] --> D[\narrow/]
+  D --> E`);
+    expect(adapted('graph TD\n A[/prices legacy ids/]\n')).toBe(
+      'graph TD\n A[/prices legacy ids/]\n',
+    );
   });
 
   it('declines ambiguous or unterminated multiline labels', () => {
