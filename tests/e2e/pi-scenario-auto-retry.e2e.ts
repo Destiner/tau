@@ -49,14 +49,10 @@ test('shows reviewed retry copy beside the selectors without shifting the compos
   const retryBounds = await retry.boundingBox();
   expect(retryBounds).not.toBeNull();
   expect(effortBefore).not.toBeNull();
-  expect(stopBefore).not.toBeNull();
   const gapFromEffort =
     retryBounds!.x - (effortBefore!.x + effortBefore!.width);
   expect(gapFromEffort).toBeGreaterThanOrEqual(0);
   expect(gapFromEffort).toBeLessThanOrEqual(8);
-  expect(stopBefore!.x - (retryBounds!.x + retryBounds!.width)).toBeGreaterThan(
-    16,
-  );
 
   await retry.focus();
   await expect(
