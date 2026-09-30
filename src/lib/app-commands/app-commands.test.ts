@@ -3,10 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   CommandRegistry,
   type KeyboardShortcutEvent,
-  filterFuzzy,
   formatShortcut,
   normalizeShortcut,
-  paletteBackspaceReturnsRoot,
   shortcutMatches,
 } from './index';
 
@@ -242,27 +240,5 @@ describe('command registry', () => {
     });
     release?.();
     await expect(first).resolves.toEqual({ status: 'executed' });
-  });
-});
-
-describe('stable palette filtering', () => {
-  const entries = [
-    { title: 'Open Project', keywords: ['local remote'] },
-    { title: 'Switch Session', keywords: ['recent'] },
-    { title: 'Choose Model', keywords: ['provider'] },
-  ];
-
-  it('fuzzy filters titles and aliases without reordering', () => {
-    expect(filterFuzzy(entries, 'op')).toEqual([entries[0]]);
-    expect(filterFuzzy(entries, 'rec')).toEqual([entries[0], entries[1]]);
-    expect(filterFuzzy(entries, 'zzz')).toEqual([]);
-  });
-
-  it('returns to the root only for Backspace on an empty nested search', () => {
-    expect(paletteBackspaceReturnsRoot('Backspace', '', 'sessions')).toBe(true);
-    expect(paletteBackspaceReturnsRoot('Backspace', 's', 'sessions')).toBe(
-      false,
-    );
-    expect(paletteBackspaceReturnsRoot('Backspace', '', 'root')).toBe(false);
   });
 });

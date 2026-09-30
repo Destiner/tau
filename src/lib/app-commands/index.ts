@@ -1,10 +1,4 @@
 export {
-  filterFuzzy,
-  fuzzyIncludes,
-  paletteBackspaceReturnsRoot,
-  type FuzzyFilterItem,
-} from './filter';
-export {
   CommandRegistry,
   type CommandAvailability,
   type CommandDefinition,

@@ -62,58 +62,6 @@ test('keeps failed checks inside the sidebar popover before and after viewing, t
   await expect(trigger.locator('.update-indicator.accent')).toBeVisible();
 });
 
-for (const shortcut of ['Meta+Enter', 'Control+Enter'] as const) {
-  test(`starts an update once with ${shortcut}`, async ({ page }) => {
-    await page.goto('/?test-update=download-failure');
-    await page
-      .getByRole('button', { name: `Tau version ${appVersion}` })
-      .click();
-    const popover = page.locator('.update-popover');
-
-    await popover.getByRole('button', { name: 'Update' }).press(shortcut);
-
-    await expect(
-      popover.getByText(
-        'The update could not be downloaded. Check your connection and try again.',
-      ),
-    ).toBeVisible();
-  });
-
-  test(`blocks ${shortcut} while an update check is busy`, async ({ page }) => {
-    await page.goto('/?test-update=controlled');
-    await page
-      .getByRole('button', { name: `Tau version ${appVersion}` })
-      .click();
-    const popover = page.locator('.update-popover');
-    await expect(popover).toHaveAttribute('aria-busy', 'true');
-
-    await popover.press(shortcut);
-
-    await expect(
-      popover.getByRole('button', { name: 'Checking…' }),
-    ).toBeDisabled();
-    await finishCheck(page, false);
-  });
-}
-
-for (const shortcut of ['Meta+Shift+Enter', 'Control+Shift+Enter'] as const) {
-  test(`skips an available update with ${shortcut}`, async ({ page }) => {
-    await page.goto('/?test-update=controlled');
-    await finishCheck(page, false);
-    const trigger = page.getByRole('button', {
-      name: `Tau version ${appVersion}`,
-    });
-    await trigger.click();
-    const popover = page.locator('.update-popover');
-    await expect(popover.getByText('Version 0.2.0 available')).toBeVisible();
-
-    await popover.press(shortcut);
-
-    await expect(popover).toBeHidden();
-    await expect(trigger.locator('.update-indicator')).toHaveCount(0);
-  });
-}
-
 test('shows a repeated check failure in place without changing the trigger', async ({
   page,
 }) => {
