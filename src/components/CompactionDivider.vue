@@ -2,7 +2,7 @@
   <component
     :is="entry.historyAvailable ? 'button' : 'div'"
     class="compaction-divider"
-    :class="{ clickable: entry.historyAvailable, loading: showLoading }"
+    :class="{ clickable: entry.historyAvailable, loading: showLoading, pulse }"
     :type="entry.historyAvailable ? 'button' : undefined"
     :disabled="entry.historyLoading || undefined"
     :aria-label="entry.historyAvailable ? 'Load earlier messages' : undefined"
@@ -21,7 +21,7 @@ import { onBeforeUnmount, ref, watch } from 'vue';
 import type { TranscriptEntry } from '../lib/pi/transcript';
 
 const props = withDefaults(
-  defineProps<{ entry: TranscriptEntry; label?: string }>(),
+  defineProps<{ entry: TranscriptEntry; label?: string; pulse?: boolean }>(),
   { label: 'compacted' },
 );
 const emit = defineEmits<{ load: [element: HTMLElement] }>();
@@ -98,14 +98,61 @@ button.compaction-divider {
   background: color-mix(in srgb, var(--muted) 55%, transparent);
 }
 
+.compaction-divider.pulse .rule::after,
 .compaction-divider.loading .rule::after {
   content: '';
   position: absolute;
   width: 30%;
+  background: var(--muted);
+  inset-block: 0;
+}
+
+.compaction-divider.loading .rule::after {
+  left: 0;
   animation: loading 850ms ease-in-out infinite;
   opacity: 0.7;
-  background: var(--muted);
-  inset: 0;
+}
+
+.compaction-divider.pulse .rule:first-child::after {
+  right: 0;
+  animation: pulse-left 650ms ease-out both;
+}
+
+.compaction-divider.pulse .rule:last-child::after {
+  left: 0;
+  animation: pulse-right 650ms ease-out both;
+}
+
+@keyframes pulse-left {
+  0% {
+    transform: translateX(110%);
+    opacity: 0;
+  }
+
+  25% {
+    opacity: 0.8;
+  }
+
+  100% {
+    transform: translateX(-440%);
+    opacity: 0;
+  }
+}
+
+@keyframes pulse-right {
+  0% {
+    transform: translateX(-110%);
+    opacity: 0;
+  }
+
+  25% {
+    opacity: 0.8;
+  }
+
+  100% {
+    transform: translateX(440%);
+    opacity: 0;
+  }
 }
 
 @keyframes loading {
@@ -115,6 +162,14 @@ button.compaction-divider {
 
   to {
     transform: translateX(440%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .compaction-divider.loading .rule::after,
+  .compaction-divider.pulse .rule:first-child::after,
+  .compaction-divider.pulse .rule:last-child::after {
+    animation: none;
   }
 }
 </style>

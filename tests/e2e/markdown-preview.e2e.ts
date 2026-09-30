@@ -128,9 +128,20 @@ const preview = true;
 const value = 42;
 \`\`\`
 
+\`\`\`md
+flowchart LR
+  Markdown[Markdown fence] --> Source[Stays source]
+\`\`\`
+
+\`\`\`
+flowchart LR
+  Plain[Unlabelled fence] --> Source[Stays source]
+\`\`\`
+
 \`\`\`mermaid
 flowchart LR
   A[Start] --> B[End]
+  B --> C[/Ready to ship/]
 \`\`\`
 
 ![Relative picture](./private.png)
@@ -206,9 +217,19 @@ flowchart LR
   await expect(
     document.locator('.code-block[data-tau-lang="ts"] pre.shiki'),
   ).toContainText('const preview = true;');
-  await expect(document.locator('.diagram > svg')).toHaveCount(1, {
-    timeout: 20_000,
-  });
+  const markdownFence = document.locator('.code-block[data-tau-lang="md"]');
+  const unlabelledFence = document
+    .locator('.code-block:not([data-tau-lang])')
+    .filter({ hasText: 'Unlabelled fence' });
+  await expect(markdownFence).toContainText('Markdown fence');
+  await expect(markdownFence.locator('.diagram')).toHaveCount(0);
+  await expect(unlabelledFence).toHaveCount(1);
+  await expect(unlabelledFence.locator('.diagram')).toHaveCount(0);
+  const diagram = document.locator('.diagram > svg');
+  await expect(diagram).toHaveCount(1, { timeout: 20_000 });
+  await expect(
+    diagram.locator('g.node[data-id="C"][data-label="Ready to ship"]'),
+  ).toHaveAttribute('data-shape', 'parallelogram');
   await expect(dialog.locator('.file-viewer-code')).toHaveCount(0);
   await expect(document).toContainText('Relative picture');
   await expect(document.locator('img')).toHaveCount(0);
@@ -236,8 +257,9 @@ flowchart LR
   expect((await document.boundingBox())?.width).toBe(800);
   await page.setViewportSize({ width: 520, height: 700 });
   expect((await document.boundingBox())?.width).toBe(520);
-  await dialog.getByRole('button', { name: 'Copy Code' }).click();
-  await expect(dialog.locator('.code-copy')).toHaveAttribute(
+  const tsCode = document.locator('.code-block[data-tau-lang="ts"]');
+  await tsCode.getByRole('button', { name: 'Copy Code' }).click();
+  await expect(tsCode.locator('.code-copy')).toHaveAttribute(
     'data-copied',
     'true',
   );

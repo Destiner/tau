@@ -56,6 +56,7 @@
               <CompactionDivider
                 v-else-if="messageAt(virtualRow.index)?.kind === 'compaction'"
                 :entry="messageAt(virtualRow.index)!"
+                :pulse="messageAt(virtualRow.index)?.id === pulsingCompactionId"
                 @load="
                   (element) => requestEarlierHistory(virtualRow.index, element)
                 "
@@ -202,6 +203,49 @@ const compactingEntry: TranscriptEntry = {
   text: '',
 };
 
+const pulsingCompactionId = ref<string>();
+let previousCompactions = new Set<TranscriptEntry>();
+let awaitingCompactedHistory = false;
+let pulseTimer: ReturnType<typeof setTimeout> | undefined;
+
+watch(
+  () => props.compacting,
+  (compacting, wasCompacting) => {
+    if (compacting) {
+      previousCompactions = new Set(
+        props.messages.filter((entry) => entry.kind === 'compaction'),
+      );
+      awaitingCompactedHistory = false;
+      pulsingCompactionId.value = undefined;
+      clearTimeout(pulseTimer);
+    } else if (wasCompacting) {
+      awaitingCompactedHistory = true;
+      pulseNewCompaction(props.messages);
+    }
+  },
+  { immediate: true },
+);
+
+watch(
+  () => props.messages,
+  (messages) => pulseNewCompaction(messages),
+);
+
+function pulseNewCompaction(messages: TranscriptEntry[]): void {
+  if (!awaitingCompactedHistory) return;
+  const marker = [...messages]
+    .reverse()
+    .find(
+      (entry) => entry.kind === 'compaction' && !previousCompactions.has(entry),
+    );
+  if (!marker) return;
+  awaitingCompactedHistory = false;
+  pulsingCompactionId.value = marker.id;
+  pulseTimer = setTimeout(() => {
+    pulsingCompactionId.value = undefined;
+  }, 650);
+}
+
 const expandedEntries = ref(new Set<string>());
 
 const followThreshold = 48;
@@ -324,6 +368,7 @@ for (const bottomRow of [compactionRow, promptRow]) {
 }
 
 onBeforeUnmount(() => {
+  clearTimeout(pulseTimer);
   viewportObserver?.disconnect();
   const element = transcript.value;
   const offset =
