@@ -102,7 +102,9 @@
     </Teleport>
     <div
       v-if="details"
+      ref="reviewRegion"
       class="queue-details"
+      tabindex="-1"
       role="region"
       aria-label="Message details"
     >
@@ -161,6 +163,15 @@ const emit = defineEmits<{
   dismiss: [];
 }>();
 const details = ref<'failed' | null>(null);
+const reviewRegion = ref<HTMLElement>();
+
+function openReview(): void {
+  if (!props.failedDrafts.length) return;
+  details.value = 'failed';
+  void nextTick(() => reviewRegion.value?.focus({ preventScroll: true }));
+}
+
+defineExpose({ openReview });
 const messagePreview = ref<{
   kind: 'steering' | 'followUp';
   text: string;

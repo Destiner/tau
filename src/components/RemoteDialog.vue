@@ -13,6 +13,7 @@
     <form
       v-if="step === 'connection'"
       class="remote-connection-form"
+      @keydown="handleConnectionKeydown"
       @submit.prevent="submitConnection"
     >
       <UiContextMenu
@@ -50,6 +51,7 @@
     <div
       v-else
       class="remote-directory-dialog"
+      @keydown="handleDirectorySurfaceKeydown"
     >
       <UiContextMenu
         :items="() => textFieldItems(() => directoryFilterInput?.input)"
@@ -177,8 +179,51 @@ function chooseDirectory(option: RemoteDirectoryOption): void {
   emit('choose-directory', option.path, option.kind);
 }
 
+function handleConnectionKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && props.connecting) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+  if (
+    event.key === 'Enter' &&
+    (event.metaKey || event.ctrlKey) &&
+    !event.isComposing
+  ) {
+    event.preventDefault();
+    if (!props.connecting) submitConnection();
+  }
+}
+
+function handleDirectorySurfaceKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && props.connecting) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+  if (!event.metaKey && !event.ctrlKey) return;
+
+  if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    if (props.connecting) return;
+    const back = props.directoryOptions.find(
+      (option) => option.kind === 'back',
+    );
+    if (back) chooseDirectory(back);
+    return;
+  }
+  if (event.key === 'Enter' && !event.isComposing) {
+    event.preventDefault();
+    if (props.connecting) return;
+    const select = props.directoryOptions.find(
+      (option) => option.kind === 'select',
+    );
+    if (select) chooseDirectory(select);
+  }
+}
+
 function handleDirectoryKeydown(event: KeyboardEvent): void {
-  if (props.connecting) return;
+  if (props.connecting || event.metaKey || event.ctrlKey) return;
   const lastIndex = props.directoryOptions.length - 1;
   if (lastIndex < 0) return;
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {

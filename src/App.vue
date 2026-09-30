@@ -16,7 +16,63 @@
         class="first-run-titlebar"
         @mousedown="handleTitlebarMouseDown"
         @dblclick="handleTitlebarDoubleClick"
-      ></header>
+      >
+        <UiTooltip
+          text="Open Project"
+          shortcut="Mod+O"
+        >
+          <span class="first-run-project-anchor">
+            <UiMenu
+              v-model:open="firstRunProjectMenuOpen"
+              :items="firstRunProjectMenuItems"
+              side="bottom"
+            >
+              <template #trigger
+                ><UiIconButton
+                  label="Open Project"
+                  size="md"
+                  variant="fill"
+                  :disabled="projectActionsDisabled"
+                  ><UiIcon name="folder-plus" /></UiIconButton
+              ></template>
+            </UiMenu>
+          </span>
+        </UiTooltip>
+        <UiTooltip
+          text="Command Palette"
+          side="bottom"
+          content-class="first-run-palette-tooltip"
+        >
+          <template #content
+            ><span
+              >Command Palette
+              <kbd>{{ formatShortcut('Mod+K', platform) }}</kbd></span
+            ></template
+          >
+          <UiIconButton
+            label="Open Command Palette"
+            size="md"
+            variant="fill"
+            @click="togglePalette"
+          >
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            >
+              <circle
+                cx="10.8"
+                cy="10.8"
+                r="6.5"
+              />
+              <path d="m16 16 5 5" />
+            </svg>
+          </UiIconButton>
+        </UiTooltip>
+      </header>
       <section class="first-run-content">
         <div
           v-if="preparationIndicatorVisible"
@@ -27,7 +83,10 @@
           <span>Preparing Pi</span>
         </div>
         <template v-if="workspaceIsEmpty">
-          <UpdateStatus first-run />
+          <UpdateStatus
+            ref="firstRunUpdateStatus"
+            first-run
+          />
           <div class="first-run-actions">
             <UiButton
               ref="firstRunLocalProjectButton"
@@ -68,9 +127,12 @@
       >
         <SessionHeader
           ref="sessionHeader"
+          :palette-open="paletteOpen"
           @mousedown="handleTitlebarMouseDown"
           @dblclick="handleTitlebarDoubleClick"
           @composer-focus="focusComposer"
+          @palette-toggle="togglePalette"
+          @new-session="handleNewSession"
         />
 
         <div
@@ -116,6 +178,7 @@
             !activeExtensionDialog &&
             !remoteReconnectFeedback
           "
+          ref="messageQueue"
           :queue="activeQueue"
           :feedback="queueFeedback"
           :busy="queueBusy"
@@ -140,11 +203,24 @@
             v-else
             ref="composerBar"
             :header-element="() => sessionHeader?.header"
-            @send="handleComposerSend"
+            @send="dispatchComposerSend"
           />
         </footer>
       </main>
     </template>
+
+    <CommandPalette
+      v-model:open="paletteOpen"
+      v-model:query="paletteQuery"
+      v-model:selected-id="paletteSelectedId"
+      :rows="paletteRows"
+      :page-title="paletteTitle"
+      :placeholder="palettePlaceholder"
+      :nested="palettePage !== 'root'"
+      @select="selectPaletteRow"
+      @back="backPalette"
+      @close="restorePaletteFocus"
+    />
 
     <QuitConfirmation
       :open="quitRequest !== null"
@@ -193,10 +269,14 @@ import {
   nextTick,
   onBeforeUnmount,
   onMounted,
+  provide,
   ref,
   watch,
 } from 'vue';
 
+import CommandPalette, {
+  type CommandPaletteRow,
+} from './components/CommandPalette.vue';
 import ComposerBar from './components/ComposerBar.vue';
 import FeedbackDialog from './components/FeedbackDialog.vue';
 import MessageQueue from './components/MessageQueue.vue';
@@ -208,10 +288,22 @@ import SessionHeader from './components/SessionHeader.vue';
 import TranscriptView from './components/TranscriptView.vue';
 import UpdateStatus from './components/UpdateStatus.vue';
 import UiButton from './components/ui/UiButton.vue';
+import UiIcon from './components/ui/UiIcon.vue';
+import UiIconButton from './components/ui/UiIconButton.vue';
+import UiMenu from './components/ui/UiMenu.vue';
 import UiSpinner from './components/ui/UiSpinner.vue';
+import UiTooltip from './components/ui/UiTooltip.vue';
+import { type ProjectSummary, type SessionSummary } from './composables/state';
 import useTau from './composables/useTau';
 import { createAdminCodeMatcher } from './lib/admin-code';
-import { toggleAdminMode } from './lib/admin-mode';
+import { adminMode, toggleAdminMode } from './lib/admin-mode';
+import {
+  CommandRegistry,
+  formatShortcut,
+  shortcutMatches,
+} from './lib/app-commands';
+import { appCommandDispatchKey } from './lib/app-commands/binding';
+import { paletteLayerOpen } from './lib/app-commands/surface';
 import { loadSidebarWidth } from './lib/sidebar-width';
 import { invokeTraced } from './lib/telemetry';
 import { useUpdate } from './lib/update';
@@ -234,6 +326,9 @@ const transcriptView = ref<InstanceType<typeof TranscriptView>>();
 const projectSidebar = ref<InstanceType<typeof ProjectSidebar>>();
 const sessionHeader = ref<InstanceType<typeof SessionHeader>>();
 const composerBar = ref<InstanceType<typeof ComposerBar>>();
+const messageQueue = ref<InstanceType<typeof MessageQueue>>();
+const firstRunUpdateStatus = ref<InstanceType<typeof UpdateStatus>>();
+const firstRunProjectMenuOpen = ref(false);
 const firstRunLocalProjectButton = ref<InstanceType<typeof UiButton>>();
 const firstRunRemoteProjectButton = ref<InstanceType<typeof UiButton>>();
 const windowFocused = ref(true);
@@ -278,6 +373,29 @@ const {
   sessionLoading,
   initialize,
   acknowledgeFeedback,
+  archiveSession,
+  unarchiveSession,
+  canArchiveSession,
+  canReconnectRemote,
+  canRenameSession,
+  canCompose,
+  canQueue,
+  extensionCommandDraft,
+  draft,
+  efforts,
+  effortLabels,
+  models,
+  selectModel,
+  selectEffort,
+  settingsDisabled,
+  projectSessions,
+  selectSession,
+  toggleProject,
+  removeProject,
+  isSessionUnread,
+  markSessionRead,
+  markSessionUnread,
+  stop,
   addLocalProject,
   openRemoteProjectDialog,
   dispose,
@@ -297,6 +415,643 @@ const {
  * from assistive tech until it carries a meaning worth announcing. UiStatusDot
  * renders that itself from the label.
  */
+
+type PalettePage = 'root' | 'sessions' | 'projects' | 'models' | 'efforts';
+type CommandContext = {
+  projectPath: string;
+  sessionId: string;
+  blocked: boolean;
+};
+const platform = /Mac|iPhone|iPad/.test(navigator.platform) ? 'mac' : 'non-mac';
+const paletteOpen = ref(false);
+watch(
+  paletteOpen,
+  (open) => {
+    paletteLayerOpen.value = open;
+  },
+  { flush: 'sync' },
+);
+const paletteQuery = ref('');
+const paletteSelectedId = ref<string | null>(null);
+const palettePage = ref<PalettePage>('root');
+const paletteOrigin = ref<HTMLElement>();
+const paletteSelection = ref({ projectPath: '', sessionId: '' });
+const rootSelection = ref<string | null>(null);
+const rootQuery = ref('');
+const paletteTitle = computed(
+  () =>
+    ({
+      root: 'Command Palette',
+      sessions: 'Switch Session',
+      projects: 'Switch Project',
+      models: 'Choose Model',
+      efforts: 'Choose Thinking Effort',
+    })[palettePage.value],
+);
+const palettePlaceholder = computed(
+  () =>
+    ({
+      root: 'Search commands…',
+      sessions: 'Search sessions…',
+      projects: 'Search projects…',
+      models: 'Search models…',
+      efforts: 'Search efforts…',
+    })[palettePage.value],
+);
+function blockingSurface(): boolean {
+  return Boolean(
+    quitRequest.value ||
+    state.remoteDialogOpen ||
+    activeExtensionDialog.value ||
+    feedbackDialogOpen.value ||
+    fullscreenViewerOpen.value ||
+    document.querySelector('.issue-report-popover[data-state="open"]'),
+  );
+}
+const context = (pinned = false): CommandContext => ({
+  projectPath: pinned
+    ? paletteSelection.value.projectPath
+    : state.activeProjectPath,
+  sessionId: pinned ? paletteSelection.value.sessionId : state.activeSessionId,
+  blocked: blockingSurface(),
+});
+const commandProject = (ctx: CommandContext): ProjectSummary | undefined =>
+  state.workspace?.projects.find((project) => project.path === ctx.projectPath);
+const commandSession = (ctx: CommandContext): SessionSummary | undefined => {
+  const project = commandProject(ctx);
+  if (!project) return undefined;
+  return (
+    projectSessions(project).find((s) => s.id === ctx.sessionId) ??
+    project.sessions.find((s) => s.id === ctx.sessionId)
+  );
+};
+const commands = new CommandRegistry<CommandContext>();
+provide(appCommandDispatchKey, (id, target) => {
+  const ctx = { ...context(), ...target };
+  // Existing sidebar actions can open a project layer over an extension prompt.
+  // The palette remains blocked there, but the pointer flow must still work.
+  if (
+    activeExtensionDialog.value &&
+    (id === 'project.openLocal' || id === 'project.openRemote')
+  )
+    ctx.blocked = false;
+  void commands.dispatch(id, ctx);
+});
+const bindings: Array<{ id: string; shortcut: string }> = [];
+function register(
+  id: string,
+  title: string | ((ctx: CommandContext) => string),
+  shortcut: string | undefined,
+  available: (ctx: CommandContext) => boolean,
+  execute: (ctx: CommandContext) => void | Promise<void>,
+  group = 'Navigation',
+): void {
+  if (shortcut) bindings.push({ id, shortcut });
+  commands.register({
+    id,
+    title,
+    palette: true,
+    group,
+    ...(shortcut ? { shortcuts: [{ shortcut, scope: 'app' }] } : {}),
+    availability: (ctx) =>
+      available(ctx)
+        ? { available: true }
+        : { available: false, reason: 'Unavailable' },
+    execute,
+  });
+}
+function safe(ctx: CommandContext): boolean {
+  return !ctx.blocked && !projectActionsDisabled.value;
+}
+function active(ctx: CommandContext): boolean {
+  return safe(ctx) && Boolean(commandProject(ctx));
+}
+function session(ctx: CommandContext): boolean {
+  return active(ctx) && Boolean(commandSession(ctx));
+}
+function currentSession(ctx: CommandContext): boolean {
+  return (
+    session(ctx) &&
+    ctx.projectPath === state.activeProjectPath &&
+    ctx.sessionId === state.activeSessionId
+  );
+}
+function page(value: PalettePage): void {
+  rootQuery.value = paletteQuery.value;
+  rootSelection.value = paletteSelectedId.value;
+  palettePage.value = value;
+  paletteQuery.value = '';
+  paletteSelectedId.value = null;
+  void nextTick(() =>
+    document.querySelector<HTMLInputElement>('.command-palette input')?.focus(),
+  );
+}
+register(
+  'session.new',
+  'New Session',
+  'Mod+N',
+  active,
+  async (ctx) => {
+    const focusedPath = paletteOpen.value
+      ? undefined
+      : projectSidebar.value?.focusedProjectPath();
+    const project = state.workspace?.projects.find(
+      (p) => p.path === (focusedPath ?? ctx.projectPath),
+    );
+    if (project) await newSession(project);
+  },
+  'Session',
+);
+const firstRunProjectMenuItems = [
+  {
+    label: 'Open Local Project',
+    run: (): void => {
+      void commands.dispatch('project.openLocal', context());
+    },
+  },
+  {
+    label: 'Open Remote Project',
+    run: (): void => {
+      void commands.dispatch('project.openRemote', context());
+    },
+  },
+];
+register(
+  'project.open',
+  'Open Project',
+  'Mod+O',
+  safe,
+  () => {
+    if (projectSidebar.value) projectSidebar.value.openProjectMenu();
+    else firstRunProjectMenuOpen.value = true;
+  },
+  'Project',
+);
+register(
+  'project.openLocal',
+  'Open Local Project',
+  'Mod+Shift+O',
+  safe,
+  () => addLocalProject(),
+  'Project',
+);
+register(
+  'project.openRemote',
+  'Open Remote Project',
+  'Mod+Alt+O',
+  safe,
+  () => openRemoteProjectDialog(),
+  'Project',
+);
+register('session.switch', 'Switch Session', 'Mod+P', active, () => {
+  if (!paletteOpen.value) openPalette();
+  page('sessions');
+});
+register(
+  'project.switch',
+  'Switch Project',
+  'Mod+Shift+P',
+  (ctx) => safe(ctx) && Boolean(state.workspace?.projects.length),
+  () => {
+    if (!paletteOpen.value) openPalette();
+    page('projects');
+  },
+);
+register(
+  'session.rename',
+  'Rename Session',
+  'Mod+Shift+R',
+  (ctx) => currentSession(ctx) && canRenameSession.value,
+  () => sessionHeader.value?.beginRename(),
+  'Session',
+);
+register(
+  'session.archive',
+  'Archive Session',
+  undefined,
+  (ctx) =>
+    session(ctx) &&
+    Boolean(
+      commandSession(ctx) &&
+      !commandSession(ctx)?.archived &&
+      canArchiveSession(commandProject(ctx)!, commandSession(ctx)!),
+    ),
+  (ctx) => archiveSession(commandProject(ctx)!, commandSession(ctx)!),
+  'Session',
+);
+register(
+  'session.unarchive',
+  'Unarchive Session',
+  undefined,
+  (ctx) => session(ctx) && Boolean(commandSession(ctx)?.archived),
+  (ctx) => unarchiveSession(commandProject(ctx)!, commandSession(ctx)!),
+  'Session',
+);
+register(
+  'session.markRead',
+  'Mark as Read',
+  undefined,
+  (ctx) =>
+    session(ctx) &&
+    Boolean(isSessionUnread(commandProject(ctx)!, commandSession(ctx)!)),
+  (ctx) => markSessionRead(commandProject(ctx)!, commandSession(ctx)!),
+  'Session',
+);
+register(
+  'session.markUnread',
+  'Mark as Unread',
+  undefined,
+  (ctx) =>
+    session(ctx) &&
+    !isSessionUnread(commandProject(ctx)!, commandSession(ctx)!),
+  (ctx) => markSessionUnread(commandProject(ctx)!, commandSession(ctx)!),
+  'Session',
+);
+register(
+  'sidebar.toggleArchived',
+  () =>
+    projectSidebar.value?.showingArchived
+      ? 'Show Active Sessions'
+      : 'Show Archived Sessions',
+  'Mod+Shift+H',
+  safe,
+  () => projectSidebar.value?.toggleArchivedView(),
+);
+register(
+  'project.expand',
+  'Expand Project',
+  undefined,
+  (ctx) => active(ctx) && Boolean(commandProject(ctx)?.collapsed),
+  (ctx) => toggleProject(commandProject(ctx)!),
+  'Project',
+);
+register(
+  'project.collapse',
+  'Collapse Project',
+  undefined,
+  (ctx) => active(ctx) && !commandProject(ctx)?.collapsed,
+  (ctx) => toggleProject(commandProject(ctx)!),
+  'Project',
+);
+register(
+  'project.moveUp',
+  'Move Project Up',
+  'Mod+Alt+ArrowUp',
+  (ctx) =>
+    active(ctx) &&
+    (state.workspace?.projects.findIndex((p) => p.path === ctx.projectPath) ??
+      0) > 0,
+  (ctx) => projectSidebar.value?.moveProject(ctx.projectPath, 'up'),
+  'Project',
+);
+register(
+  'project.moveDown',
+  'Move Project Down',
+  'Mod+Alt+ArrowDown',
+  (ctx) =>
+    active(ctx) &&
+    (state.workspace?.projects.findIndex((p) => p.path === ctx.projectPath) ??
+      -1) <
+      (state.workspace?.projects.length ?? 0) - 1,
+  (ctx) => projectSidebar.value?.moveProject(ctx.projectPath, 'down'),
+  'Project',
+);
+register(
+  'project.remove',
+  'Remove Project',
+  undefined,
+  active,
+  (ctx) => removeProject(commandProject(ctx)!),
+  'Project',
+);
+register(
+  'focus.composer',
+  'Focus Composer',
+  'Mod+L',
+  (ctx) => safe(ctx) && Boolean(composerBar.value),
+  () => composerBar.value?.focus(),
+);
+register('focus.sidebar', 'Focus Sidebar', 'Mod+Shift+L', safe, () => {
+  if (!projectSidebar.value) return;
+  projectSidebar.value.focusSelectedRow();
+  if (document.activeElement === document.body)
+    projectSidebar.value.openProjectButton?.focus({ preventScroll: true });
+});
+register(
+  'focus.transcript',
+  'Focus Transcript',
+  'Mod+Shift+T',
+  (ctx) => safe(ctx) && Boolean(transcriptView.value),
+  () => {
+    const el = document.querySelector<HTMLElement>('.transcript');
+    if (el) {
+      el.tabIndex = -1;
+      el.focus({ preventScroll: true });
+    }
+  },
+);
+register(
+  'model.choose',
+  'Choose Model',
+  'Mod+Shift+M',
+  (ctx) => currentSession(ctx) && !settingsDisabled.value,
+  () => {
+    if (!paletteOpen.value) openPalette();
+    page('models');
+  },
+  'Composer',
+);
+register(
+  'effort.choose',
+  'Choose Thinking Effort',
+  'Mod+Shift+E',
+  (ctx) =>
+    currentSession(ctx) && !settingsDisabled.value && efforts.value.length > 0,
+  () => {
+    if (!paletteOpen.value) openPalette();
+    page('efforts');
+  },
+  'Composer',
+);
+register(
+  'composer.send',
+  () => (streaming.value ? 'Queue Steering Message' : 'Send Message'),
+  undefined,
+  (ctx) =>
+    currentSession(ctx) &&
+    (streaming.value
+      ? canQueue.value && !extensionCommandDraft.value
+      : canCompose.value) &&
+    Boolean(draft.value.trim()),
+  () => handleComposerSend('steer'),
+  'Composer',
+);
+register(
+  'composer.followUp',
+  'Queue Follow-up Message',
+  undefined,
+  (ctx) =>
+    currentSession(ctx) &&
+    canQueue.value &&
+    !extensionCommandDraft.value &&
+    Boolean(draft.value.trim()),
+  () => handleComposerSend('followUp'),
+  'Composer',
+);
+register(
+  'composer.stop',
+  'Stop Pi',
+  'Mod+.',
+  (ctx) =>
+    currentSession(ctx) &&
+    streaming.value &&
+    !stopping.value &&
+    !compacting.value &&
+    canDraft.value,
+  () => stop(),
+  'Composer',
+);
+register(
+  'queue.clear',
+  'Clear Queued Messages',
+  undefined,
+  (ctx) =>
+    currentSession(ctx) &&
+    !queueBusy.value &&
+    Boolean(
+      activeQueue.value.steering.length || activeQueue.value.followUp.length,
+    ),
+  handleQueueClear,
+  'Composer',
+);
+register(
+  'queue.review',
+  'Review Unsent Messages',
+  'Mod+Shift+D',
+  (ctx) => currentSession(ctx) && queueFailedDrafts.value.length > 0,
+  () => messageQueue.value?.openReview(),
+  'Composer',
+);
+register(
+  'app.updates',
+  'Show Update Status',
+  undefined,
+  safe,
+  () => {
+    if (projectSidebar.value) projectSidebar.value.openUpdateStatus();
+    else firstRunUpdateStatus.value?.openStatus();
+  },
+  'App',
+);
+register(
+  'app.checkUpdates',
+  'Check for Updates',
+  undefined,
+  safe,
+  () => update.check(true),
+  'App',
+);
+register(
+  'app.reportIssue',
+  'Report an Issue',
+  'Mod+Shift+I',
+  (ctx) => safe(ctx) && adminMode.value && Boolean(projectSidebar.value),
+  () => projectSidebar.value?.openIssueReporter(),
+  'App',
+);
+register(
+  'app.quit',
+  'Quit Tau',
+  'Mod+Q',
+  (ctx) => !ctx.blocked,
+  async () => {
+    await invokeTraced('request_quit');
+  },
+  'App',
+);
+register(
+  'history.load',
+  'Load Earlier Messages',
+  'Mod+Shift+B',
+  (ctx) =>
+    currentSession(ctx) &&
+    Boolean(activeController.value?.historyLayers.length),
+  () => loadEarlierHistory(),
+);
+register(
+  'remote.reconnect',
+  'Reconnect Remote Session',
+  'Mod+Shift+C',
+  (ctx) => currentSession(ctx) && canReconnectRemote.value,
+  () => reconnectRemoteSession(),
+  'Session',
+);
+register(
+  'session.next',
+  'Next Session',
+  'Ctrl+Tab',
+  (ctx) =>
+    active(ctx) &&
+    projectSessions(commandProject(ctx)!).some((s) => !s.archived),
+  () => navigateSession(1),
+);
+register(
+  'session.previous',
+  'Previous Session',
+  'Ctrl+Shift+Tab',
+  (ctx) =>
+    active(ctx) &&
+    projectSessions(commandProject(ctx)!).some((s) => !s.archived),
+  () => navigateSession(-1),
+);
+function navigateSession(direction: number): void {
+  const project = activeProject.value;
+  if (!project) return;
+  const list = projectSessions(project).filter((s) => !s.archived);
+  const index = list.findIndex((s) => s.id === state.activeSessionId);
+  const target =
+    list[index < 0 ? (direction > 0 ? 0 : list.length - 1) : index + direction];
+  if (target) void selectSession(project, target);
+}
+const paletteRows = computed<CommandPaletteRow[]>(() => {
+  if (palettePage.value === 'root')
+    return commands.palette(context(true)).map(({ definition, title }) => ({
+      id: definition.id,
+      title: [
+        'session.switch',
+        'project.switch',
+        'model.choose',
+        'effort.choose',
+        'project.open',
+      ].includes(definition.id)
+        ? `${title}…`
+        : title,
+      shortcut: definition.shortcuts?.[0]
+        ? formatShortcut(definition.shortcuts[0].shortcut, platform)
+        : undefined,
+    }));
+  const project = commandProject(context(true));
+  if (palettePage.value === 'sessions')
+    return (project ? projectSessions(project) : [])
+      .filter((s) => !s.archived)
+      .map((s) => ({
+        id: s.id,
+        title: s.title,
+        detail: s.id === state.activeSessionId ? 'Current' : s.lastActive,
+      }));
+  if (palettePage.value === 'projects')
+    return (state.workspace?.projects ?? []).map((p) => ({
+      id: p.path,
+      title: p.name,
+      detail: p.connectionString ?? p.workingDirectory,
+    }));
+  if (palettePage.value === 'models')
+    return models.value.map((m) => ({
+      id: `${m.provider}/${m.id}`,
+      title: m.name,
+      searchText: m.id,
+    }));
+  return efforts.value.map((effort) => ({
+    id: effort,
+    title: effortLabels[effort],
+  }));
+});
+function openPalette(): void {
+  sessionHeader.value?.preparePaletteOpen();
+  paletteOrigin.value =
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : undefined;
+  paletteSelection.value = {
+    projectPath: state.activeProjectPath,
+    sessionId: state.activeSessionId,
+  };
+  palettePage.value = 'root';
+  paletteQuery.value = '';
+  paletteSelectedId.value = null;
+  paletteOpen.value = true;
+}
+function restorePaletteFocus(): void {
+  void nextTick(() => {
+    if (paletteOrigin.value?.isConnected)
+      paletteOrigin.value.focus({ preventScroll: true });
+  });
+}
+function togglePalette(): void {
+  if (paletteOpen.value) {
+    paletteOpen.value = false;
+    restorePaletteFocus();
+  } else openPalette();
+}
+function backPalette(): void {
+  palettePage.value = 'root';
+  paletteQuery.value = rootQuery.value;
+  paletteSelectedId.value = rootSelection.value;
+  void nextTick(() =>
+    document.querySelector<HTMLInputElement>('.command-palette input')?.focus(),
+  );
+}
+async function selectPaletteRow(id: string): Promise<void> {
+  if (palettePage.value === 'root') {
+    const nested = [
+      'session.switch',
+      'project.switch',
+      'model.choose',
+      'effort.choose',
+    ].includes(id);
+    if (!nested) {
+      paletteOpen.value = false;
+      await nextTick();
+      composerBar.value?.closeSelectors();
+      projectSidebar.value?.closeProjectMenu();
+    }
+    const result = await commands.dispatch(id, context(true));
+    if (result.status !== 'executed' && !nested) paletteOpen.value = true;
+    return;
+  }
+  const ctx = context(true);
+  if (ctx.blocked || projectActionsDisabled.value) return;
+  const project = commandProject(ctx);
+  if (palettePage.value === 'sessions') {
+    const target =
+      project &&
+      projectSessions(project).find((s) => s.id === id && !s.archived);
+    if (!target) return;
+    paletteOpen.value = false;
+    composerBar.value?.closeSelectors();
+    projectSidebar.value?.showActiveSessions();
+    void selectSession(project, target);
+  } else if (palettePage.value === 'projects') {
+    const target = state.workspace?.projects.find((p) => p.path === id);
+    if (!target) return;
+    paletteOpen.value = false;
+    composerBar.value?.closeSelectors();
+    projectSidebar.value?.showActiveSessions();
+    const chosen =
+      projectSessions(target).find((s) => s.selected && !s.archived) ??
+      projectSessions(target).find((s) => !s.archived);
+    if (chosen) void selectSession(target, chosen);
+    else void newSession(target);
+  } else if (palettePage.value === 'models') {
+    if (
+      !currentSession(ctx) ||
+      settingsDisabled.value ||
+      !models.value.some((m) => `${m.provider}/${m.id}` === id)
+    )
+      return;
+    paletteOpen.value = false;
+    composerBar.value?.closeSelectors();
+    void selectModel(id);
+    void nextTick(() => composerBar.value?.focus());
+  } else {
+    const effort = efforts.value.find((e) => e === id);
+    if (!effort || !currentSession(ctx) || settingsDisabled.value) return;
+    paletteOpen.value = false;
+    composerBar.value?.closeSelectors();
+    void selectEffort(effort);
+    void nextTick(() => composerBar.value?.focus());
+  }
+}
 
 const remoteReconnectFeedback = computed(() =>
   activeFeedback.value?.action === 'reconnect'
@@ -408,12 +1163,14 @@ onMounted(() => {
   void watchMenuActions();
   document.addEventListener('contextmenu', handleDocumentContextMenu);
   document.addEventListener('keydown', handleDocumentKeydown);
+  window.addEventListener('keydown', handlePaletteEscape, true);
   window.addEventListener(
     FULLSCREEN_VIEWER_STATE_EVENT,
     handleFullscreenViewerState,
   );
 });
 onBeforeUnmount(() => {
+  paletteLayerOpen.value = false;
   update.dispose();
   dispose();
   clearTimeout(loadingIndicatorTimer);
@@ -423,6 +1180,7 @@ onBeforeUnmount(() => {
   unlistenQuitRequest?.();
   document.removeEventListener('contextmenu', handleDocumentContextMenu);
   document.removeEventListener('keydown', handleDocumentKeydown);
+  window.removeEventListener('keydown', handlePaletteEscape, true);
   window.removeEventListener(
     FULLSCREEN_VIEWER_STATE_EVENT,
     handleFullscreenViewerState,
@@ -449,7 +1207,12 @@ watch(workspaceIsEmpty, (empty) => {
 
 watch(activeExtensionDialog, (dialog) => {
   void nextTick(() => {
-    if (!dialog && !activeFeedback.value && !fullscreenViewerOpen.value) {
+    if (
+      !paletteOpen.value &&
+      !dialog &&
+      !activeFeedback.value &&
+      !fullscreenViewerOpen.value
+    ) {
       composerBar.value?.focus();
     }
   });
@@ -462,7 +1225,7 @@ watch(activeFeedback, (incident, previous) => {
       focused instanceof HTMLElement ? focused : undefined;
     return;
   }
-  if (!incident && previous?.action === 'reconnect') {
+  if (!incident && previous?.action === 'reconnect' && !paletteOpen.value) {
     void nextTick(() => composerBar.value?.focus());
   }
 });
@@ -485,6 +1248,7 @@ watch(
     if (!controllerKey) return;
     void nextTick(() => {
       if (
+        !paletteOpen.value &&
         !state.remoteDialogOpen &&
         !activeExtensionDialog.value &&
         !activeFeedback.value &&
@@ -519,6 +1283,7 @@ watch(sessionLoading, (loading) => {
   if (loading) return;
   void nextTick(() => {
     if (
+      !paletteOpen.value &&
       !state.remoteDialogOpen &&
       !activeExtensionDialog.value &&
       !activeFeedback.value &&
@@ -533,6 +1298,7 @@ watch(canDraft, (enabled) => {
   if (!enabled) return;
   void nextTick(() => {
     if (
+      !paletteOpen.value &&
       document.activeElement === document.body &&
       !sessionLoading.value &&
       !state.remoteDialogOpen &&
@@ -548,6 +1314,7 @@ watch(canDraft, (enabled) => {
 watch(promptSubmitting, () => {
   void nextTick(() => {
     if (
+      !paletteOpen.value &&
       !state.remoteDialogOpen &&
       !activeExtensionDialog.value &&
       !activeFeedback.value &&
@@ -596,7 +1363,11 @@ async function handleFeedbackAction(): Promise<void> {
 }
 
 function focusComposer(): void {
-  if (!activeFeedback.value && !fullscreenViewerOpen.value)
+  if (
+    !paletteOpen.value &&
+    !activeFeedback.value &&
+    !fullscreenViewerOpen.value
+  )
     composerBar.value?.focus();
 }
 
@@ -624,6 +1395,15 @@ function remoteDialogReturnFocus(): HTMLElement | undefined {
 }
 
 /** A send starts with the transcript pinned to its end. */
+function dispatchComposerSend(intent: 'steer' | 'followUp'): void {
+  void commands.dispatch(
+    intent === 'followUp' && streaming.value
+      ? 'composer.followUp'
+      : 'composer.send',
+    context(),
+  );
+}
+
 function handleComposerSend(intent: 'steer' | 'followUp'): void {
   if (!streaming.value) transcriptView.value?.scrollToEnd();
   void sendMessage(intent);
@@ -645,7 +1425,8 @@ function handleChooseDirectory(
 }
 
 function handleNewSession(): void {
-  if (activeProject.value) void newSession(activeProject.value);
+  if (paletteOpen.value) return;
+  void commands.dispatch('session.new', context());
 }
 
 async function watchWindowFocus(): Promise<void> {
@@ -772,8 +1553,91 @@ function handleDocumentContextMenu(event: MouseEvent): void {
   event.preventDefault();
 }
 
+// Existing fullscreen and quit listeners run in document capture; the palette
+// must dismiss before either underlying surface sees Escape.
+function handlePaletteEscape(event: KeyboardEvent): void {
+  if (!paletteOpen.value || event.key !== 'Escape') return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  paletteOpen.value = false;
+  restorePaletteFocus();
+}
+
 function handleDocumentKeydown(event: KeyboardEvent): void {
   if (event.defaultPrevented) return;
+  if (shortcutMatches(event, 'Mod+K', platform)) {
+    event.preventDefault();
+    togglePalette();
+    return;
+  }
+  if (paletteOpen.value) return;
+  if (
+    !event.repeat &&
+    !event.isComposing &&
+    !event.getModifierState?.('AltGraph')
+  ) {
+    const ctx = context();
+    const focusedPath = projectSidebar.value?.focusedProjectPath();
+    if (
+      focusedPath &&
+      state.workspace?.projects.some((p) => p.path === focusedPath)
+    )
+      ctx.projectPath = focusedPath;
+    const focusedId = projectSidebar.value?.focusedSessionId();
+    if (
+      focusedId &&
+      commandProject(ctx) &&
+      projectSessions(commandProject(ctx)!).some((s) => s.id === focusedId)
+    )
+      ctx.sessionId = focusedId;
+    if (
+      document.activeElement?.matches('.project-toggle') &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.shiftKey &&
+      ['ArrowRight', 'ArrowLeft'].includes(event.key)
+    ) {
+      event.preventDefault();
+      void commands.dispatch(
+        event.key === 'ArrowRight' ? 'project.expand' : 'project.collapse',
+        ctx,
+      );
+      return;
+    }
+    const variants = [
+      [
+        'Mod+Shift+A',
+        commandSession(ctx)?.archived ? 'session.unarchive' : 'session.archive',
+      ],
+      [
+        'Mod+Shift+U',
+        commandSession(ctx) &&
+        isSessionUnread(commandProject(ctx)!, commandSession(ctx)!)
+          ? 'session.markRead'
+          : 'session.markUnread',
+      ],
+    ] as const;
+    const variant = variants.find(([chord]) =>
+      shortcutMatches(event, chord, platform),
+    );
+    if (variant) {
+      event.preventDefault();
+      void commands.dispatch(variant[1], ctx);
+      return;
+    }
+    const binding = bindings.find(
+      ({ shortcut }) =>
+        shortcutMatches(event, shortcut, platform) &&
+        (!['Mod+N', 'Mod+Q'].includes(shortcut) ||
+          !('__TAURI_INTERNALS__' in window)),
+    );
+    if (binding) {
+      event.preventDefault();
+      void commands.dispatch(binding.id, ctx);
+      return;
+    }
+  }
   if (adminCode.press(event, Date.now())) void toggleAdminMode();
   suppressSystemBeep(event);
 }
@@ -868,7 +1732,34 @@ function isTitlebarControl(target: EventTarget | null): boolean {
 }
 
 .first-run-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   min-height: 30px;
+  padding-right: 8px;
+}
+
+.first-run-project-anchor {
+  display: flex;
+}
+
+.first-run-titlebar svg {
+  width: 16px;
+  height: 16px;
+}
+
+:global(.first-run-palette-tooltip span) {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+:global(.first-run-palette-tooltip kbd) {
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  color: var(--muted);
+  font-size: var(--text-xs);
 }
 
 .first-run-content {

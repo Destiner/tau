@@ -99,7 +99,7 @@
             tone="danger"
             :disabled="compacting || stopping || !canDraft"
             label="Stop Pi"
-            @click="stop"
+            @click="stopViaCommand"
           >
             <UiIcon name="stop" />
           </UiIconButton>
@@ -127,6 +127,7 @@
 <script setup lang="ts">
 import {
   computed,
+  inject,
   nextTick,
   onBeforeUnmount,
   onMounted,
@@ -135,6 +136,7 @@ import {
 } from 'vue';
 
 import useTau from '../composables/useTau';
+import { appCommandDispatchKey } from '../lib/app-commands/binding';
 import {
   type CommandMenuPlacement,
   type CommandOption,
@@ -159,6 +161,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{ send: [intent: 'steer' | 'followUp'] }>();
+const appCommandDispatch = inject(appCommandDispatchKey, undefined);
 
 const {
   canCompose,
@@ -333,6 +336,10 @@ function selectCommand(
 function sendSteer(): void {
   send('steer');
 }
+function stopViaCommand(): void {
+  if (appCommandDispatch) appCommandDispatch('composer.stop');
+  else void stop();
+}
 function send(intent: 'steer' | 'followUp' = 'steer'): void {
   emit('send', intent);
 }
@@ -353,8 +360,14 @@ function focus(): void {
   composerInput.value?.focus();
 }
 
+function closeSelectors(): void {
+  modelSelectorOpen.value = false;
+  effortSelectorOpen.value = false;
+}
+
 defineExpose({
   focus,
+  closeSelectors,
   get input() {
     return composerInput.value;
   },

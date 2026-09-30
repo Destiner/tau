@@ -6,6 +6,46 @@ test.beforeEach(async ({ page }) => {
   await page.goto(fixtureUrl);
 });
 
+for (const shortcut of ['Meta+Enter', 'Control+Enter'] as const) {
+  test(`submits an issue once with ${shortcut}`, async ({ page }) => {
+    const trigger = page.getByRole('button', { name: 'Report an Issue' });
+    await trigger.click();
+    const dialog = page.getByRole('dialog', { name: 'Report an Issue' });
+    await dialog
+      .getByRole('textbox', { name: 'Describe the Issue' })
+      .fill('Shortcut submission');
+    await dialog
+      .getByRole('textbox', { name: 'Describe the Issue' })
+      .press(shortcut);
+
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByTestId('submitted-report')).toHaveText(
+      '{"description":"Shortcut submission"}',
+    );
+  });
+}
+
+for (const shortcut of ['Meta+Shift+S', 'Control+Shift+S'] as const) {
+  test(`toggles session context with ${shortcut}`, async ({ page }) => {
+    await page.getByRole('button', { name: 'Report an Issue' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Report an Issue' });
+    const description = dialog.getByRole('textbox', {
+      name: 'Describe the Issue',
+    });
+    const includeSession = dialog.getByRole('checkbox', {
+      name: 'Include Current Session',
+    });
+    await description.fill('Shortcut session context');
+    await description.press(shortcut);
+    await expect(includeSession).toBeChecked();
+    await description.press('Control+Enter');
+
+    await expect(page.getByTestId('submitted-report')).toHaveText(
+      '{"description":"Shortcut session context","sessionId":"fixture-session"}',
+    );
+  });
+}
+
 test('keeps an issue draft through dismissal and failure, then submits with and without session context', async ({
   page,
 }) => {

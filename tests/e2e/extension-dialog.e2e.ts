@@ -309,6 +309,59 @@ for (const state of ['submitting', 'disabled'] as const) {
   });
 }
 
+for (const [shortcut, expected] of [
+  ['Meta+Enter', true],
+  ['Control+Enter', true],
+  ['Meta+Shift+Enter', false],
+  ['Control+Shift+Enter', false],
+] as const) {
+  test(`responds to a confirm prompt once with ${shortcut}`, async ({
+    page,
+  }) => {
+    await page.goto(`${fixtureUrl}&method=confirm`);
+
+    const prompt = page.getByRole('dialog');
+    await prompt.getByRole('button', { name: 'Confirm' }).press(shortcut);
+
+    await expect(page.getByTestId('dialog-outcome')).toHaveText(
+      JSON.stringify({ submit: expected }),
+    );
+    await expect(prompt).toHaveCount(0);
+  });
+}
+
+for (const method of ['input', 'editor'] as const) {
+  for (const shortcut of ['Meta+Enter', 'Control+Enter'] as const) {
+    test(`submits an ${method} prompt once with ${shortcut}`, async ({
+      page,
+    }) => {
+      await page.goto(`${fixtureUrl}&method=${method}&draft=shortcut`);
+
+      const prompt = page.getByRole('dialog');
+      await prompt.getByRole('textbox').press(shortcut);
+
+      await expect(page.getByTestId('dialog-outcome')).toHaveText(
+        '{"submit":"shortcut"}',
+      );
+      await expect(prompt).toHaveCount(0);
+    });
+  }
+}
+
+for (const shortcut of ['Meta+Enter', 'Control+Shift+Enter'] as const) {
+  test(`blocks ${shortcut} while a confirm prompt is busy`, async ({
+    page,
+  }) => {
+    await page.goto(`${fixtureUrl}&method=confirm&submitting=true`);
+
+    const prompt = page.getByRole('dialog');
+    await prompt.getByRole('button', { name: 'Confirm' }).press(shortcut);
+
+    await expect(prompt).toBeVisible();
+    await expect(page.getByTestId('dialog-outcome')).toBeEmpty();
+  });
+}
+
 test('ignores composition Escape and claims repeated cancellation once', async ({
   page,
 }) => {

@@ -29,6 +29,7 @@
         :side-offset="5"
         :aria-label="optionsLabel"
         @open-auto-focus="handleOpenAutoFocus"
+        @interact-outside="preserveSurfaceUnderPalette"
       >
         <header
           v-if="options.length > 0"
@@ -150,6 +151,8 @@ import {
   SelectViewport,
 } from 'reka-ui';
 import { computed, nextTick, ref, useId, watch } from 'vue';
+
+import { preserveSurfaceUnderPalette } from '../../lib/app-commands/surface';
 
 interface UiSelectOption {
   value: string;

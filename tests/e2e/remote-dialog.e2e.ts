@@ -53,6 +53,43 @@ for (const step of ['connection', 'directory'] as const) {
   });
 }
 
+for (const shortcut of [
+  'Meta+Enter',
+  'Control+Enter',
+  'Meta+Shift+Enter',
+  'Control+Shift+Enter',
+] as const) {
+  test(`submits an SSH connection once with ${shortcut}`, async ({ page }) => {
+    await page.goto('/?fixture=remote-dialog');
+
+    const dialog = page.getByRole('dialog', { name: 'SSH Connection' });
+    await dialog
+      .getByRole('textbox', { name: 'SSH Connection String' })
+      .press(shortcut);
+
+    await expect(
+      page.getByRole('dialog', { name: 'Choose Remote Working Directory' }),
+    ).toBeVisible();
+    await expect(dialog).toHaveCount(0);
+  });
+
+  test(`does not submit an SSH connection with ${shortcut} while busy`, async ({
+    page,
+  }) => {
+    await page.goto('/?fixture=remote-dialog&connecting=true');
+
+    const dialog = page.getByRole('dialog', { name: 'SSH Connection' });
+    await dialog
+      .getByRole('textbox', { name: 'SSH Connection String' })
+      .press(shortcut);
+
+    await expect(dialog).toBeVisible();
+    await expect(
+      page.getByRole('dialog', { name: 'Choose Remote Working Directory' }),
+    ).toHaveCount(0);
+  });
+}
+
 test('cannot be dismissed while a connection is pending', async ({ page }) => {
   await page.goto('/?fixture=remote-dialog&connecting=true');
 

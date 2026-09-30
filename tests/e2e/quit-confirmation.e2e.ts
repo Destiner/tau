@@ -18,6 +18,35 @@ test('confirms an interrupted quit from the keyboard', async ({ page }) => {
   await expect(page.getByTestId('quit-outcome')).toHaveText('confirmed');
 });
 
+for (const shortcut of [
+  'Meta+Enter',
+  'Control+Enter',
+  'Meta+Shift+Enter',
+  'Control+Shift+Enter',
+] as const) {
+  test(`confirms an interrupted quit once with ${shortcut}`, async ({
+    page,
+  }) => {
+    await page.goto(fixtureUrl);
+
+    const dialog = page.getByRole('alertdialog');
+    await dialog.getByRole('button', { name: 'Quit' }).press(shortcut);
+
+    await expect(dialog).toBeHidden();
+    await expect(page.getByTestId('quit-outcome')).toHaveText('confirmed');
+  });
+
+  test(`blocks ${shortcut} while quitting is busy`, async ({ page }) => {
+    await page.goto(`${fixtureUrl}&busy`);
+
+    const dialog = page.getByRole('alertdialog');
+    await dialog.getByRole('button', { name: 'Quit' }).press(shortcut);
+
+    await expect(dialog).toBeVisible();
+    await expect(page.getByTestId('quit-outcome')).toBeEmpty();
+  });
+}
+
 test('cancels the interrupted quit with Escape', async ({ page }) => {
   await page.goto(`${fixtureUrl}&sessions=1`);
 

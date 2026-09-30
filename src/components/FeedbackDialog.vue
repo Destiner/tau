@@ -6,6 +6,7 @@
     :busy="busy"
     :dismissible="dismissible"
     :return-focus="returnFocus"
+    @keydown="handleKeydown"
     @update:open="handleOpenChange"
   >
     <template #footer>
@@ -74,5 +75,19 @@ function requestAction(): void {
 
 function requestClose(): void {
   emit('close');
+}
+
+function handleKeydown(event: KeyboardEvent): void {
+  if (event.isComposing) return;
+
+  if (
+    event.key === 'Enter' &&
+    (event.metaKey || event.ctrlKey) &&
+    props.incident?.action
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!props.busy) requestAction();
+  }
 }
 </script>

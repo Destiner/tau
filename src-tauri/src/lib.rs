@@ -82,7 +82,7 @@ pub fn run() {
             } else if event.id() == update::CHECK_FOR_UPDATES_MENU_ID {
                 let _ = app.emit(update::CHECK_FOR_UPDATES_EVENT, ());
             } else if event.id() == quit::QUIT_MENU_ID {
-                quit::request_quit(app);
+                quit::request_quit(app.clone());
             }
         })
         .on_window_event(|window, event| {
@@ -116,6 +116,7 @@ pub fn run() {
             pi::start_pi,
             pi::start_pi_remote,
             pi::stop_pi,
+            quit::request_quit,
             quit::pending_quit_request,
             quit::resolve_quit_request,
             saved_transcript::read_saved_transcript,

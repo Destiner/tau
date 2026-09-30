@@ -9,6 +9,7 @@
         class="quit-confirmation"
         role="alertdialog"
         :aria-busy="busy || undefined"
+        @keydown.capture="handleKeydown"
         @open-auto-focus="handleOpenAutoFocus"
       >
         <div class="quit-confirmation-copy">
@@ -96,7 +97,7 @@ function handleOpenAutoFocus(event: Event): void {
   void nextTick(() => confirmButton.value?.button?.focus());
 }
 
-// Reka's window listener runs too late to suppress app and native Escape handling.
+// Capture before Reka's window listener and any fixture/app listener behind us.
 watchEffect((onCleanup) => {
   if (!props.open) return;
   document.addEventListener('keydown', handleEscapeKeyDown, true);
@@ -106,10 +107,24 @@ watchEffect((onCleanup) => {
 });
 
 function handleEscapeKeyDown(event: KeyboardEvent): void {
-  if (event.key !== 'Escape') return;
+  if (event.key !== 'Escape' || event.isComposing) return;
   event.preventDefault();
   event.stopImmediatePropagation();
   cancel();
+}
+
+function handleKeydown(event: KeyboardEvent): void {
+  if (event.isComposing) return;
+
+  if (
+    event.key === 'Enter' &&
+    (event.metaKey || event.ctrlKey) &&
+    !props.busy
+  ) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    confirm();
+  }
 }
 
 function cancel(): void {

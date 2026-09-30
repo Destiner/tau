@@ -17,6 +17,7 @@
         :side="side"
         :align="align"
         :side-offset="sideOffset"
+        @interact-outside="preserveSurfaceUnderPalette"
       >
         <DropdownMenuItem
           v-for="(item, index) in resolveItems()"
@@ -40,6 +41,8 @@ import {
   DropdownMenuRoot,
   DropdownMenuTrigger,
 } from 'reka-ui';
+
+import { preserveSurfaceUnderPalette } from '../../lib/app-commands/surface';
 
 const open = defineModel<boolean>('open', { default: false });
 
