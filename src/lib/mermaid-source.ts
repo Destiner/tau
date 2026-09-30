@@ -9,7 +9,9 @@ const DELIMITERS: readonly Delimiter[] = [
   { opener: '((', closer: '))' },
   { opener: '[[', closer: ']]' },
   { opener: '[(', closer: ')]' },
+  { opener: '[/', closer: '/]' },
   { opener: '[/', closer: '\\]' },
+  { opener: '[\\', closer: '\\]' },
   { opener: '[\\', closer: '/]' },
   { opener: '>', closer: ']' },
   { opener: '{{', closer: '}}' },
@@ -81,30 +83,30 @@ function startsStatement(source: string, offset: number): boolean {
 function scanLabel(
   source: string,
   contentOffset: number,
-  delimiter: Delimiter,
+  delimiters: readonly Delimiter[],
 ): { end: number; replacements: number[] } | { unsafe: boolean } {
   const quoted = source[contentOffset] === '"';
   let offset = contentOffset + (quoted ? 1 : 0);
   const replacements: number[] = [];
 
   while (offset < source.length) {
-    if (quoted) {
-      if (
-        source[offset] === '"' &&
-        source.startsWith(delimiter.closer, offset + 1)
-      ) {
-        return {
-          end: offset + 1 + delimiter.closer.length,
-          replacements,
-        };
-      }
-      if (source[offset] === '"' && replacements.length > 0) {
+    if (quoted && source[offset] === '"') {
+      const closer = delimiters.find(({ closer }) =>
+        source.startsWith(closer, offset + 1),
+      );
+      if (closer)
+        return { end: offset + 1 + closer.closer.length, replacements };
+      if (replacements.length > 0) return { unsafe: true };
+    } else if (!quoted) {
+      const closer = delimiters.find(
+        ({ closer }) =>
+          source.startsWith(closer, offset) &&
+          (delimiters.length === 1 ||
+            hasNodeBoundary(source, offset + closer.length)),
+      );
+      if (closer) return { end: offset + closer.closer.length, replacements };
+      if (source[offset] === '"' && replacements.length > 0)
         return { unsafe: true };
-      }
-    } else if (source.startsWith(delimiter.closer, offset)) {
-      return { end: offset + delimiter.closer.length, replacements };
-    } else if (source[offset] === '"' && replacements.length > 0) {
-      return { unsafe: true };
     }
 
     if (source[offset] === '\r' && source[offset + 1] === '\n') {
@@ -209,7 +211,7 @@ function adaptMermaidSource(source: string): AdaptedMermaidSource {
             const label = scanLabel(
               source,
               offset + delimiter.opener.length,
-              delimiter,
+              DELIMITERS.filter(({ opener }) => opener === delimiter.opener),
             );
             if ('unsafe' in label) {
               if (label.unsafe) return { kind: 'unsafe' };
