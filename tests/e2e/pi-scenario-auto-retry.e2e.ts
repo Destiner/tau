@@ -21,7 +21,7 @@ async function releaseGate(page: Page, gate: string): Promise<void> {
   }, gate);
 }
 
-test('shows reviewed retry copy beside Stop without shifting the composer', async ({
+test('shows reviewed retry copy beside the selectors without shifting the composer', async ({
   page,
 }) => {
   await page.goto(scenarioUrl);
@@ -29,8 +29,10 @@ test('shows reviewed retry copy beside Stop without shifting the composer', asyn
 
   const composer = page.getByRole('textbox', { name: 'Message Pi' });
   const stop = page.getByRole('button', { name: 'Stop Pi' });
+  const effort = page.getByRole('combobox', { name: 'Thinking Effort' });
   const composerBefore = await composer.boundingBox();
   const stopBefore = await stop.boundingBox();
+  const effortBefore = await effort.boundingBox();
 
   await releaseGate(page, 'before-auto-retry');
   await waitForGate(page, 'auto-retry-visible');
@@ -43,6 +45,18 @@ test('shows reviewed retry copy beside Stop without shifting the composer', asyn
   await expect(composer).toHaveValue('');
   expect(await composer.boundingBox()).toEqual(composerBefore);
   expect(await stop.boundingBox()).toEqual(stopBefore);
+  expect(await effort.boundingBox()).toEqual(effortBefore);
+  const retryBounds = await retry.boundingBox();
+  expect(retryBounds).not.toBeNull();
+  expect(effortBefore).not.toBeNull();
+  expect(stopBefore).not.toBeNull();
+  const gapFromEffort =
+    retryBounds!.x - (effortBefore!.x + effortBefore!.width);
+  expect(gapFromEffort).toBeGreaterThanOrEqual(0);
+  expect(gapFromEffort).toBeLessThanOrEqual(8);
+  expect(stopBefore!.x - (retryBounds!.x + retryBounds!.width)).toBeGreaterThan(
+    16,
+  );
 
   await retry.focus();
   await expect(
