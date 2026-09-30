@@ -10,7 +10,7 @@ import {
   clearSessionReplacementWatch,
   clearSettingRequestWatch,
   handleBridgeEvent,
-  releaseRuntime,
+  releaseOrCacheRuntime,
   startController,
   stopControllerProcess,
 } from '../../lib/pi/runtime';
@@ -103,7 +103,7 @@ function createLifecycle(
               'bridge_event_failed',
             );
             setControllerError(controller, errorCopy.bridgeEvent);
-            releaseRuntime(controller);
+            releaseOrCacheRuntime(controller);
           });
         },
       );
