@@ -175,6 +175,18 @@ graph TD
 \`\`\`
 
 \`\`\`mermaid
+flowchart TD
+  Plan[Approved plan] --> Fixture[Synthetic fixture]
+  Plan --> Review{Approved?}
+  Fixture --> Regression[Browser regression]
+  Review -->|No| Fixture
+  Review -->|Yes| Regression
+  Regression -- two<br/>lines --> Topology[Topology assertions]
+  Topology -- count ≤ 7 --> Viewer[Diagram viewer]
+  Viewer -- count > 7 --> Complete[/Ready to ship/]
+\`\`\`
+
+\`\`\`mermaid
 graph TD
   Arriving[Still streaming] --> Unclosed[No closing fence yet]`;
 

@@ -6,6 +6,16 @@ const FLOWCHART = 'graph TD\n  Prompt[Prompt] --> Answer[Answer]\n';
 
 const SEQUENCE = 'sequenceDiagram\n  Tau->>Pi: prompt\n';
 
+const REPORTED_FLOWCHART = `flowchart TD
+  Plan[Approved plan] --> Fixture[Synthetic fixture]
+  Plan --> Review{Approved?}
+  Fixture --> Regression[Browser regression]
+  Review -->|No| Fixture
+  Review -->|Yes| Regression
+  Regression -- two<br/>lines --> Topology[Topology assertions]
+  Topology -- count ≤ 7 --> Viewer[Diagram viewer]
+  Viewer -- count > 7 --> Complete[/Ready to ship/]\n`;
+
 const MULTILINE_FLOWCHART = `flowchart LR
   E[Planner] --> F{Route exists
 for both sides?}
@@ -89,6 +99,47 @@ describe('drawing a fenced diagram', () => {
         false,
       );
     }
+  });
+
+  it('renders every node and edge of a flowchart ending in a parallelogram', async () => {
+    await ready();
+    const svg = renderDiagram(REPORTED_FLOWCHART, 'mermaid') ?? '';
+    expect([...svg.matchAll(/<g class="node"[^>]+>/g)]).toHaveLength(7);
+    expect([...svg.matchAll(/<polyline class="edge"[^>]*>/g)]).toHaveLength(8);
+    expect(svg).toContain(
+      'data-id="Complete" data-label="Ready to ship" data-shape="parallelogram"',
+    );
+    expect(svg).toContain('data-label="two\nlines"');
+    expect(svg).toContain('data-label="count ≤ 7"');
+    expect(svg).toContain('data-label="count &gt; 7"');
+    expect(svg).toMatch(
+      /data-shape="parallelogram"[^>]*>\s*<polygon points="[^"]+"/,
+    );
+  });
+
+  it('renders mirrored slanted polygons with room for multiline labels', async () => {
+    await ready();
+    const svg =
+      renderDiagram(
+        String.raw`graph LR
+  A[/first\nsecond/] --> B[\opposite\]`,
+        'mermaid',
+      ) ?? '';
+    for (const shape of ['parallelogram', 'parallelogram-alt']) {
+      const points = new RegExp(
+        `data-shape="${shape}"[^>]*>\\s*<polygon points="([^"]+)"`,
+      ).exec(svg)?.[1];
+      expect(points).toBeDefined();
+      const corners = points!
+        .split(' ')
+        .map((pair) => pair.split(',').map(Number));
+      expect(corners).toHaveLength(4);
+      expect(corners[0]![0]).not.toBe(corners[3]![0]);
+      expect(corners[1]![0]).not.toBe(corners[2]![0]);
+      expect(corners[0]![1]).toBe(corners[1]![1]);
+      expect(corners[2]![1]).toBe(corners[3]![1]);
+    }
+    expect(svg).toContain('data-label="first\nsecond"');
   });
 
   it('renders complete quoted code labels and later explicit shapes', async () => {
@@ -190,6 +241,10 @@ describe('drawing a fenced diagram', () => {
     }
 
     expect(renderDiagram(FLOWCHART, 'ts')).toBeNull();
+    expect(renderDiagram(FLOWCHART, 'md')).toBeNull();
+    expect(
+      renderDiagram('graph TD\n A[/unfinished\n B --> C', 'mermaid'),
+    ).toBeNull();
     expect(renderDiagram(FLOWCHART, '')).toBeNull();
     // Source the parser cannot read, which is what half of a streamed diagram
     // and a mislabelled fence both are.
