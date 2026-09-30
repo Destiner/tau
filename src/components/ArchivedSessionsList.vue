@@ -26,6 +26,8 @@
           v-for="entry in group.items"
           :key="`${entry.projectPath}:${entry.session.id}`"
           class="row"
+          :data-project-path="entry.projectPath"
+          :data-session-id="entry.session.id"
           :class="{
             selected:
               entry.projectPath === state.activeProjectPath &&
@@ -69,7 +71,20 @@
             </button>
           </UiTooltip>
           <span class="time">{{ relativeTime(entry) }}</span>
-          <UiTooltip text="Unarchive Session">
+          <UiTooltip
+            :text="
+              (commandHint?.('session.unarchive', {
+                projectPath: entry.projectPath,
+                sessionId: entry.session.id,
+              })?.title ?? 'Unarchive Session') + ' · Focus row for shortcut'
+            "
+            :shortcut="
+              commandHint?.('session.unarchive', {
+                projectPath: entry.projectPath,
+                sessionId: entry.session.id,
+              })?.shortcut
+            "
+          >
             <UiIconButton
               class="unarchive"
               size="md"
@@ -100,6 +115,7 @@
 <script setup lang="ts">
 import {
   computed,
+  inject,
   nextTick,
   onBeforeUnmount,
   onMounted,
@@ -113,6 +129,7 @@ import type {
 } from '../composables/state';
 import { tooltipTitleMarkdown } from '../composables/state';
 import useTau from '../composables/useTau';
+import { appCommandLookupKey } from '../lib/app-commands/binding';
 import {
   groupArchivedByTime,
   type ArchivedGroup,
@@ -135,6 +152,7 @@ const {
   unarchiveSession,
 } = useTau();
 
+const commandHint = inject(appCommandLookupKey, undefined);
 const BATCH_SIZE = 50;
 const PREFETCH_PX = 200;
 const closedGroups = ref(new Set<string>());

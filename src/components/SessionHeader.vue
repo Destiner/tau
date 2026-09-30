@@ -14,7 +14,7 @@
         maxlength="240"
         spellcheck="false"
         aria-label="Session Name"
-        @blur="commitSessionRename"
+        @blur="handleSessionRenameBlur"
         @keydown.enter.prevent="commitSessionRename"
         @keydown.escape.prevent="cancelSessionRename"
       />
@@ -22,6 +22,7 @@
         <UiTooltip
           v-if="canRenameSession"
           text="Rename Session"
+          shortcut="Mod+Shift+R"
           side="bottom"
         >
           <button
@@ -42,6 +43,7 @@
     <UiTooltip
       v-if="activeProject"
       text="New Session"
+      shortcut="Mod+N"
       side="bottom"
     >
       <UiIconButton
@@ -52,6 +54,36 @@
         @click="handleNewSession"
       >
         <UiIcon name="plus" />
+      </UiIconButton>
+    </UiTooltip>
+    <UiTooltip
+      text="Command Palette"
+      shortcut="Mod+K"
+      side="bottom"
+    >
+      <UiIconButton
+        class="session-palette-button"
+        size="lg"
+        variant="fill"
+        label="Open Command Palette"
+        @pointerdown.prevent
+        @click="handlePaletteToggle"
+      >
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+        >
+          <circle
+            cx="10.8"
+            cy="10.8"
+            r="6.5"
+          />
+          <path d="m16 16 5 5" />
+        </svg>
       </UiIconButton>
     </UiTooltip>
   </header>
@@ -67,13 +99,24 @@ import UiIconButton from './ui/UiIconButton.vue';
 import UiInput from './ui/UiInput.vue';
 import UiTooltip from './ui/UiTooltip.vue';
 
-const emit = defineEmits<{ 'composer-focus': [] }>();
+const props = withDefaults(
+  defineProps<{
+    /** Keeps an in-progress rename open while the palette takes focus. */
+    paletteOpen?: boolean;
+  }>(),
+  { paletteOpen: false },
+);
+
+const emit = defineEmits<{
+  'composer-focus': [];
+  'palette-toggle': [];
+  'new-session': [];
+}>();
 
 const {
   activeProject,
   canRenameSession,
   projectActionsDisabled,
-  newSession,
   renameSession,
   sessionTitle,
 } = useTau();
@@ -81,14 +124,26 @@ const {
 const header = ref<HTMLElement>();
 const sessionTitleInput = ref<InstanceType<typeof UiInput>>();
 const renamingSession = ref(false);
+const paletteFocusPending = ref(false);
 const sessionNameDraft = ref('');
+
+watch(
+  () => props.paletteOpen,
+  (open) => {
+    if (!open) paletteFocusPending.value = false;
+  },
+);
 
 watch(canRenameSession, (renamable) => {
   if (!renamable) cancelSessionRename();
 });
 
 function handleNewSession(): void {
-  if (activeProject.value) void newSession(activeProject.value);
+  emit('new-session');
+}
+
+function handlePaletteToggle(): void {
+  emit('palette-toggle');
 }
 
 function beginSessionRename(): void {
@@ -99,6 +154,11 @@ function beginSessionRename(): void {
     sessionTitleInput.value?.input?.focus();
     sessionTitleInput.value?.input?.select();
   });
+}
+
+function handleSessionRenameBlur(): void {
+  if (props.paletteOpen || paletteFocusPending.value) return;
+  commitSessionRename();
 }
 
 function commitSessionRename(): void {
@@ -124,7 +184,14 @@ function emitComposerFocus(): void {
 
 /** App-level surfaces call this when a rename cannot outlive them. */
 defineExpose({
+  beginRename: beginSessionRename,
+  preparePaletteOpen: () => {
+    paletteFocusPending.value = true;
+  },
   cancelRename: cancelSessionRename,
+  get renaming() {
+    return renamingSession.value;
+  },
   get header() {
     return header.value;
   },
@@ -144,12 +211,18 @@ defineExpose({
   gap: 6px;
 }
 
-.session-new-button {
+.session-new-button,
+.session-palette-button {
   flex: none;
   width: 24px;
   height: 24px;
   padding: 4px;
   color: var(--muted);
+}
+
+.session-palette-button svg {
+  width: 16px;
+  height: 16px;
 }
 
 .session-heading {

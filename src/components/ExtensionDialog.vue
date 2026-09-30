@@ -79,8 +79,6 @@
         rows="6"
         :aria-label="title"
         :disabled="submitting || disabled"
-        @keydown.meta.enter.prevent="handleSubmit"
-        @keydown.ctrl.enter.prevent="handleSubmit"
       />
     </UiContextMenu>
 
@@ -232,14 +230,35 @@ function cancel(): void {
 }
 
 function handleKeydown(event: KeyboardEvent): void {
-  if (event.key !== 'Escape' || event.isComposing) return;
+  if (event.isComposing) return;
+
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (escapeClaimed || props.submitting || props.disabled) return;
+
+    escapeClaimed = true;
+    cancel();
+    return;
+  }
+
+  if (
+    event.key !== 'Enter' ||
+    (!event.metaKey && !event.ctrlKey) ||
+    props.submitting ||
+    props.disabled
+  ) {
+    return;
+  }
 
   event.preventDefault();
-  event.stopImmediatePropagation();
-  if (escapeClaimed || props.submitting || props.disabled) return;
-
-  escapeClaimed = true;
-  cancel();
+  event.stopPropagation();
+  if (props.method === 'confirm') {
+    if (event.shiftKey) reject();
+    else confirm();
+  } else if (props.method === 'input' || props.method === 'editor') {
+    handleSubmit();
+  }
 }
 
 function handleSubmit(): void {

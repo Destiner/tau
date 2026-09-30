@@ -35,6 +35,7 @@
           class="project-group"
           :class="{ removing: projectActionsDisabled }"
           :data-id="project.path"
+          :data-project-path="project.path"
         >
           <div
             class="project-row"
@@ -64,7 +65,7 @@
                 class="project-toggle"
                 type="button"
                 :disabled="projectActionsDisabled"
-                @click="() => toggleProject(project)"
+                @click="() => handleProjectToggle(project)"
               >
                 <UiStatusDot
                   v-if="projectIndicator(project)"
@@ -78,14 +79,17 @@
                 />
               </button>
             </UiTooltip>
-            <UiTooltip text="New Session">
+            <UiTooltip
+              text="New Session"
+              shortcut="Mod+N"
+            >
               <UiIconButton
                 class="row-action"
                 size="md"
                 variant="reveal"
                 :label="`New Session in ${project.name}`"
                 :disabled="projectActionsDisabled"
-                @click="() => newSession(project)"
+                @click="() => handleNewSession(project)"
               >
                 <UiIcon name="plus" />
               </UiIconButton>
@@ -98,7 +102,7 @@
                 tone="danger"
                 :label="`Remove ${project.name}`"
                 :disabled="projectActionsDisabled"
-                @click="() => removeProject(project)"
+                @click="() => handleRemoveProject(project)"
               >
                 <UiIcon name="trash" />
               </UiIconButton>
@@ -116,6 +120,7 @@
             >
               <div
                 class="session-row"
+                :data-session-id="session.id"
                 :class="{
                   selected: isSessionSelected(project, session),
                   archivable: canArchiveSession(project, session),
@@ -174,7 +179,19 @@
                 </UiTooltip>
                 <UiTooltip
                   v-if="canArchiveSession(project, session)"
-                  text="Archive Session"
+                  :text="
+                    (commandHint?.('session.archive', {
+                      projectPath: project.path,
+                      sessionId: session.id,
+                    })?.title ?? 'Archive Session') +
+                    ' · Focus row for shortcut'
+                  "
+                  :shortcut="
+                    commandHint?.('session.archive', {
+                      projectPath: project.path,
+                      sessionId: session.id,
+                    })?.shortcut
+                  "
                 >
                   <UiIconButton
                     class="session-archive"
@@ -182,7 +199,7 @@
                     variant="reveal"
                     :label="`Archive ${session.title}`"
                     :disabled="projectActionsDisabled"
-                    @click="() => archiveSession(project, session)"
+                    @click="() => handleArchiveSession(project, session)"
                   >
                     <UiIcon name="archive" />
                   </UiIconButton>
@@ -215,7 +232,10 @@
           registers with the nearest popper root, and from inside the tooltip
           that would be the tooltip's own.
         -->
-        <UiTooltip text="Open Project">
+        <UiTooltip
+          text="Open Project"
+          shortcut="Mod+O"
+        >
           <span class="project-menu-trigger">
             <UiMenu
               v-model:open="projectMenuOpen"
@@ -237,6 +257,7 @@
         </UiTooltip>
         <UiTooltip
           :text="showingArchived ? 'Show Sessions' : 'Show Archived Sessions'"
+          shortcut="Mod+Shift+H"
         >
           <UiIconButton
             size="lg"
@@ -251,11 +272,12 @@
         </UiTooltip>
         <IssueReportPopover
           v-if="adminMode"
+          ref="issueReporter"
           :session-id="state.activeSessionId || undefined"
           :submit-report="submitIssueReport"
         />
       </div>
-      <UpdateStatus />
+      <UpdateStatus ref="updateStatus" />
     </footer>
 
     <div
@@ -286,12 +308,16 @@
 <script setup lang="ts">
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import Sortable, { type SortableEvent } from 'sortablejs';
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { inject, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import type { ProjectSummary, SessionSummary } from '../composables/state';
 import { tooltipTitleMarkdown } from '../composables/state';
 import useTau from '../composables/useTau';
 import { adminMode } from '../lib/admin-mode';
+import {
+  appCommandDispatchKey,
+  appCommandLookupKey,
+} from '../lib/app-commands/binding';
 import {
   applyHeldOrder,
   heldSessions,
@@ -352,10 +378,15 @@ const {
   toggleProject,
 } = useTau();
 
+const appCommandDispatch = inject(appCommandDispatchKey, undefined);
+const commandHint = inject(appCommandLookupKey, undefined);
+
 const projectList = ref<HTMLElement>();
 const sidebar = ref<HTMLElement>();
 const openProjectButton = ref<InstanceType<typeof UiIconButton>>();
 const projectMenuOpen = ref(false);
+const updateStatus = ref<InstanceType<typeof UpdateStatus>>();
+const issueReporter = ref<InstanceType<typeof IssueReportPopover>>();
 const resizeHandlePointerFocused = ref(false);
 const resizeHighlightSuppressed = ref(false);
 
@@ -367,6 +398,10 @@ function showArchivedSessions(): void {
   showingArchived.value = true;
 }
 
+function showActiveSessions(): void {
+  if (showingArchived.value) toggleArchivedView();
+}
+
 function toggleArchivedView(): void {
   if (showingArchived.value) {
     releaseSessionOrder();
@@ -374,6 +409,38 @@ function toggleArchivedView(): void {
     return;
   }
   showArchivedSessions();
+}
+
+/** Opens the footer menu through UiMenu's bound state, retaining its anchor. */
+function openProjectMenu(): void {
+  if (!projectActionsDisabled.value) projectMenuOpen.value = true;
+}
+
+function focusedProjectPath(): string | undefined {
+  return document.activeElement?.closest<HTMLElement>('[data-project-path]')
+    ?.dataset.projectPath;
+}
+
+function focusedSessionId(): string | undefined {
+  return document.activeElement?.closest<HTMLElement>('[data-session-id]')
+    ?.dataset.sessionId;
+}
+
+function focusSelectedRow(): void {
+  const selectedRow = sidebar.value?.querySelector<HTMLButtonElement>(
+    '.session-row.selected .session-select, .project-row.selected .project-toggle',
+  );
+  selectedRow?.focus({ preventScroll: true });
+}
+
+function moveProject(path: string, direction: 'up' | 'down'): void {
+  const projects = state.workspace?.projects ?? [];
+  const fromIndex = projects.findIndex((project) => project.path === path);
+  if (fromIndex === -1) return;
+
+  const toIndex = fromIndex + (direction === 'up' ? -1 : 1);
+  if (toIndex < 0 || toIndex >= projects.length) return;
+  void reorderProjects(fromIndex, toIndex);
 }
 
 const heldOrder = ref(new Map<string, HeldSession<SessionSummary>[]>());
@@ -443,18 +510,99 @@ function orderedSessions(project: ProjectSummary): SessionSummary[] {
   );
 }
 
+function projectTarget(project: ProjectSummary): { projectPath: string } {
+  return { projectPath: project.path };
+}
+
+function sessionTarget(
+  project: ProjectSummary,
+  session: SessionSummary,
+): { projectPath: string; sessionId: string } {
+  return { projectPath: project.path, sessionId: session.id };
+}
+
+function handleProjectToggle(project: ProjectSummary): void {
+  if (appCommandDispatch) {
+    appCommandDispatch(
+      project.collapsed ? 'project.expand' : 'project.collapse',
+      projectTarget(project),
+    );
+    return;
+  }
+  toggleProject(project);
+}
+
+function handleNewSession(project: ProjectSummary): void {
+  if (appCommandDispatch) {
+    appCommandDispatch('session.new', projectTarget(project));
+    return;
+  }
+  newSession(project);
+}
+
+function handleRemoveProject(project: ProjectSummary): void {
+  if (appCommandDispatch) {
+    appCommandDispatch('project.remove', projectTarget(project));
+    return;
+  }
+  removeProject(project);
+}
+
+function handleArchiveSession(
+  project: ProjectSummary,
+  session: SessionSummary,
+): void {
+  if (appCommandDispatch) {
+    appCommandDispatch('session.archive', sessionTarget(project, session));
+    return;
+  }
+  void archiveSession(project, session);
+}
+
+function handleSessionReadState(
+  project: ProjectSummary,
+  session: SessionSummary,
+  unread: boolean,
+): void {
+  if (appCommandDispatch) {
+    appCommandDispatch(
+      unread ? 'session.markRead' : 'session.markUnread',
+      sessionTarget(project, session),
+    );
+    return;
+  }
+  if (unread) markSessionRead(project, session);
+  else markSessionUnread(project, session);
+}
+
+function handleOpenLocalProject(): void {
+  if (appCommandDispatch) {
+    appCommandDispatch('project.openLocal');
+    return;
+  }
+  void addLocalProject();
+}
+
+function handleOpenRemoteProject(): void {
+  if (appCommandDispatch) {
+    appCommandDispatch('project.openRemote');
+    return;
+  }
+  void openRemoteProjectDialog();
+}
+
 /** The project menu's two ways to add a project. */
 function projectMenuItems(): UiMenuItem[] {
   return [
     {
       label: 'Open Local Project',
       disabled: projectActionsDisabled.value,
-      run: () => void addLocalProject(),
+      run: handleOpenLocalProject,
     },
     {
       label: 'Open Remote Project',
       disabled: projectActionsDisabled.value,
-      run: () => void openRemoteProjectDialog(),
+      run: handleOpenRemoteProject,
     },
   ];
 }
@@ -475,22 +623,27 @@ function sessionMenuItems(
   session: SessionSummary,
 ): UiMenuItem[] {
   const unread = isSessionUnread(project, session);
+  const target = { projectPath: project.path, sessionId: session.id };
+  const readHint = commandHint?.(
+    unread ? 'session.markRead' : 'session.markUnread',
+    target,
+  );
+  const archiveHint = commandHint?.('session.archive', target);
   const disabled = projectActionsDisabled.value;
   const items: UiMenuItem[] = [
     {
-      label: unread ? 'Mark as Read' : 'Mark as Unread',
-      disabled,
-      run: () =>
-        unread
-          ? markSessionRead(project, session)
-          : markSessionUnread(project, session),
+      label: readHint?.title ?? (unread ? 'Mark as Read' : 'Mark as Unread'),
+      shortcut: readHint?.shortcut,
+      disabled: disabled || readHint?.available === false,
+      run: () => handleSessionReadState(project, session, unread),
     },
   ];
   if (canArchiveSession(project, session)) {
     items.push({
-      label: 'Archive Session',
-      disabled,
-      run: () => void archiveSession(project, session),
+      label: archiveHint?.title ?? 'Archive Session',
+      shortcut: archiveHint?.shortcut,
+      disabled: disabled || archiveHint?.available === false,
+      run: () => handleArchiveSession(project, session),
     });
   }
   return items;
@@ -626,6 +779,21 @@ function isTitlebarControl(target: EventTarget | null): boolean {
 }
 
 defineExpose({
+  focusSelectedRow,
+  focusedProjectPath,
+  focusedSessionId,
+  moveProject,
+  openProjectMenu,
+  closeProjectMenu: () => {
+    projectMenuOpen.value = false;
+  },
+  toggleArchivedView,
+  showActiveSessions,
+  get showingArchived() {
+    return showingArchived.value;
+  },
+  openUpdateStatus: () => updateStatus.value?.openStatus(),
+  openIssueReporter: () => issueReporter.value?.openReporter(),
   get openProjectButton() {
     return openProjectButton.value?.button;
   },

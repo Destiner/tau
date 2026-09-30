@@ -28,6 +28,8 @@
         :side-offset="5"
         aria-label="Tau Update"
         :aria-busy="isBusy || undefined"
+        @interact-outside="preserveSurfaceUnderPalette"
+        @keydown="handleKeydown"
       >
         <div
           class="update-copy"
@@ -84,6 +86,7 @@ import {
 } from 'reka-ui';
 import { computed, ref, watch } from 'vue';
 
+import { preserveSurfaceUnderPalette } from '../lib/app-commands/surface';
 import appVersion from '../lib/app-version';
 import { updateFailureDescription, useUpdate } from '../lib/update';
 
@@ -94,6 +97,12 @@ withDefaults(defineProps<{ firstRun?: boolean }>(), { firstRun: false });
 const update = useUpdate();
 const state = update.state;
 const open = ref(false);
+
+function openStatus(): void {
+  open.value = true;
+}
+
+defineExpose({ openStatus });
 const checkingCopy = ref<{ title: string; description: string } | null>(null);
 
 const indicator = computed<'accent' | 'downloading' | undefined>(() => {
@@ -212,6 +221,29 @@ watch(
 function dismiss(): void {
   void update.dismiss();
   open.value = false;
+}
+
+function handleKeydown(event: KeyboardEvent): void {
+  if (event.isComposing) return;
+
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    open.value = false;
+    return;
+  }
+
+  if (!event.metaKey && !event.ctrlKey) return;
+
+  if (event.key !== 'Enter') return;
+
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.shiftKey) {
+    if (state.phase === 'available' && !isBusy.value) dismiss();
+  } else if (primaryAction.value && !isBusy.value) {
+    runPrimaryAction();
+  }
 }
 
 function runPrimaryAction(): void {

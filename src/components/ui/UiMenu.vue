@@ -17,15 +17,22 @@
         :side="side"
         :align="align"
         :side-offset="sideOffset"
+        @interact-outside="preserveSurfaceUnderPalette"
       >
         <DropdownMenuItem
           v-for="(item, index) in resolveItems()"
           :key="`${item.label}:${index}`"
           class="ui-menu-item"
+          :aria-label="item.label"
           :disabled="item.disabled || undefined"
           @select="() => runItem(item)"
         >
-          {{ item.label }}
+          <span>{{ item.label }}</span>
+          <kbd
+            v-if="item.shortcut"
+            class="ui-menu-shortcut"
+            >{{ formatShortcut(item.shortcut, platform) }}</kbd
+          >
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenuPortal>
@@ -40,6 +47,13 @@ import {
   DropdownMenuRoot,
   DropdownMenuTrigger,
 } from 'reka-ui';
+
+import {
+  formatShortcut,
+  type ShortcutInput,
+  type ShortcutPlatform,
+} from '../../lib/app-commands/shortcut';
+import { preserveSurfaceUnderPalette } from '../../lib/app-commands/surface';
 
 const open = defineModel<boolean>('open', { default: false });
 
@@ -59,6 +73,10 @@ const props = withDefaults(
   },
 );
 
+const platform: ShortcutPlatform = /Mac|iPhone|iPad/.test(navigator.platform)
+  ? 'mac'
+  : 'non-mac';
+
 function resolveItems(): UiMenuItem[] {
   return typeof props.items === 'function' ? props.items() : props.items;
 }
@@ -69,6 +87,7 @@ function runItem(item: UiMenuItem): void {
 
 export interface UiMenuItem {
   label: string;
+  shortcut?: ShortcutInput;
   disabled?: boolean;
   run?: () => void;
 }

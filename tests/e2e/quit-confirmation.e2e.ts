@@ -18,6 +18,16 @@ test('confirms an interrupted quit from the keyboard', async ({ page }) => {
   await expect(page.getByTestId('quit-outcome')).toHaveText('confirmed');
 });
 
+test('confirms an interrupted quit with Mod+Enter', async ({ page }) => {
+  await page.goto(fixtureUrl);
+
+  const dialog = page.getByRole('alertdialog');
+  await dialog.getByRole('button', { name: 'Quit' }).press('Meta+Enter');
+
+  await expect(dialog).toBeHidden();
+  await expect(page.getByTestId('quit-outcome')).toHaveText('confirmed');
+});
+
 test('cancels the interrupted quit with Escape', async ({ page }) => {
   await page.goto(`${fixtureUrl}&sessions=1`);
 

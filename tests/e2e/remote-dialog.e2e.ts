@@ -53,6 +53,20 @@ for (const step of ['connection', 'directory'] as const) {
   });
 }
 
+test('submits an SSH connection with Mod+Enter', async ({ page }) => {
+  await page.goto('/?fixture=remote-dialog');
+
+  const dialog = page.getByRole('dialog', { name: 'SSH Connection' });
+  await dialog
+    .getByRole('textbox', { name: 'SSH Connection String' })
+    .press('Meta+Enter');
+
+  await expect(
+    page.getByRole('dialog', { name: 'Choose Remote Working Directory' }),
+  ).toBeVisible();
+  await expect(dialog).toHaveCount(0);
+});
+
 test('cannot be dismissed while a connection is pending', async ({ page }) => {
   await page.goto('/?fixture=remote-dialog&connecting=true');
 

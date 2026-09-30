@@ -19,10 +19,16 @@
           v-for="(item, index) in resolveItems()"
           :key="`${item.label}:${index}`"
           class="ui-menu-item"
+          :aria-label="item.label"
           :disabled="item.disabled || undefined"
           @select="() => runItem(item)"
         >
-          {{ item.label }}
+          <span>{{ item.label }}</span>
+          <kbd
+            v-if="item.shortcut"
+            class="ui-menu-shortcut"
+            >{{ formatShortcut(item.shortcut, platform) }}</kbd
+          >
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenuPortal>
@@ -38,6 +44,11 @@ import {
   ContextMenuTrigger,
 } from 'reka-ui';
 
+import {
+  formatShortcut,
+  type ShortcutPlatform,
+} from '../../lib/app-commands/shortcut';
+
 import type { UiMenuItem } from './UiMenu.vue';
 
 const props = withDefaults(
@@ -47,6 +58,10 @@ const props = withDefaults(
   }>(),
   { minWidth: 152 },
 );
+
+const platform: ShortcutPlatform = /Mac|iPhone|iPad/.test(navigator.platform)
+  ? 'mac'
+  : 'non-mac';
 
 function resolveItems(): UiMenuItem[] {
   return typeof props.items === 'function' ? props.items() : props.items;

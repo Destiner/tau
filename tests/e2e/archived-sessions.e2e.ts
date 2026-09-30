@@ -27,10 +27,10 @@ test('finds archived work from the sidebar menu, reviews and restores it', async
     const projectList = page.locator('.projects-body');
     await page.locator('.session-row').click({ button: 'right' });
     const sessionActions = page.getByRole('menuitem');
-    await expect(sessionActions).toHaveText([
-      'Mark as Unread',
-      'Archive Session',
-    ]);
+    await expect(
+      sessionActions.locator('span').allTextContents(),
+    ).resolves.toEqual(['Mark as Unread', 'Archive Session']);
+    await expect(sessionActions.locator('.ui-menu-shortcut')).toHaveCount(2);
     await page.keyboard.press('Escape');
     const box = await projectList.boundingBox();
     expect(box).not.toBeNull();

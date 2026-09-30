@@ -153,8 +153,9 @@ impl QuitState {
     }
 }
 
-pub fn request_quit<R: Runtime>(app: &AppHandle<R>) {
-    request(app, QuitIntent::Ordinary, None);
+#[tauri::command]
+pub fn request_quit<R: Runtime>(app: AppHandle<R>) -> bool {
+    request(&app, QuitIntent::Ordinary, None)
 }
 
 pub(crate) fn request_update_restart<R: Runtime>(app: &AppHandle<R>, operation_id: u64) -> bool {

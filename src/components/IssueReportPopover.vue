@@ -23,6 +23,8 @@
             :side-offset="5"
             aria-label="Report an Issue"
             :aria-busy="submitting || undefined"
+            @interact-outside="preserveSurfaceUnderPalette"
+            @keydown="handleKeydown"
           >
             <form
               class="issue-report-form"
@@ -84,6 +86,7 @@ import {
 } from 'reka-ui';
 import { ref, watch } from 'vue';
 
+import { preserveSurfaceUnderPalette } from '../lib/app-commands/surface';
 import textFieldItems from '../lib/text-menu';
 
 import UiButton from './ui/UiButton.vue';
@@ -100,6 +103,12 @@ const props = defineProps<{
 }>();
 
 const open = ref(false);
+
+function openReporter(): void {
+  open.value = true;
+}
+
+defineExpose({ openReporter });
 const description = ref('');
 const includeCurrentSession = ref(false);
 const submitting = ref(false);
@@ -109,6 +118,30 @@ const descriptionInput = ref<InstanceType<typeof UiTextarea>>();
 watch(description, () => {
   error.value = '';
 });
+
+function handleKeydown(event: KeyboardEvent): void {
+  if (event.isComposing) return;
+
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!submitting.value) open.value = false;
+    return;
+  }
+
+  if (!event.metaKey && !event.ctrlKey) return;
+
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    event.stopPropagation();
+    void handleSubmit();
+  } else if (event.key.toLowerCase() === 's' && event.shiftKey) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (props.sessionId && !submitting.value)
+      includeCurrentSession.value = !includeCurrentSession.value;
+  }
+}
 
 async function handleSubmit(): Promise<void> {
   const submittedDescription = description.value.trim();

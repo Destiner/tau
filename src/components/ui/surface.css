@@ -56,6 +56,13 @@
   color: var(--faint);
 }
 
+.ui-menu-shortcut {
+  margin-left: auto;
+  padding-left: 16px;
+  color: var(--muted);
+  font: inherit;
+}
+
 /* ── Selector ───────────────────────────────────────────────────────────── */
 
 /* stylelint-disable no-descending-specificity -- focus/open outranks hover. */
@@ -161,6 +168,28 @@
   color: var(--text);
   font-size: var(--text-xs);
   line-height: var(--leading-tight);
+}
+
+.ui-tooltip:has(.ui-tooltip-shortcut) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ui-tooltip-label {
+  min-width: 0;
+}
+
+/* Shortcut hints are secondary to the control's name, not keyboard-shaped UI. */
+.ui-tooltip-shortcut {
+  flex: none;
+  padding: 1px 4px;
+  border: 1px solid color-mix(in srgb, currentcolor 35%, transparent);
+  border-radius: 3px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.2;
 }
 
 .ui-tooltip[data-state='delayed-open'] {

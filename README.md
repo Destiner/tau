@@ -41,7 +41,8 @@ local mock replies; each tab/reload starts fresh and needs no Pi installation.
 `bun run repro -- <scenario>` keeps its explicit deterministic scenarios. Both
 commands also use an available port. Playwright continues to use fixed port 1420.
 See [development storage](docs/development-storage.md) for lifetime and isolation
-boundaries.
+boundaries. The staged [keyboard and command palette inventory](docs/keyboard.md)
+documents the approved target keymap.
 
 ## Roadmap
 

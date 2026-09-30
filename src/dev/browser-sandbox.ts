@@ -63,8 +63,8 @@ type SandboxUpdateStatus =
 
 interface SandboxQuitRequest {
   requestId: number;
-  intent: 'updateRestart';
-  operationId: number;
+  intent: 'ordinary' | 'updateRestart';
+  operationId?: number;
 }
 
 const ROOT = '/browser-dev/projects';
@@ -477,6 +477,12 @@ function createBrowserSandboxHandler(
     if (command === 'read_admin_mode') return false;
     if (command === 'get_dismissed_update_version') return null;
     if (command === 'pending_quit_request') return pendingQuitRequest;
+    if (command === 'request_quit') {
+      if (pendingQuitRequest) return pendingQuitRequest.intent === 'ordinary';
+      pendingQuitRequest = { requestId: 1, intent: 'ordinary' };
+      await options.emitAppEvent?.('tau://quit-requested', pendingQuitRequest);
+      return true;
+    }
     if (command === 'update_snapshot') {
       const supported = options.updatesSupported ?? options.updateAvailable;
       if (!supported) return { supported: false, status: 'idle' };
@@ -590,7 +596,7 @@ function createBrowserSandboxHandler(
       if (!pendingQuitRequest || requestId !== pendingQuitRequest.requestId) {
         return false;
       }
-      if (confirmed) {
+      if (confirmed && pendingQuitRequest.intent === 'updateRestart') {
         authorizedQuitRequest = pendingQuitRequest;
         updateStatus = 'authorized';
       }

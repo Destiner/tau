@@ -33,7 +33,17 @@
           :side-offset="6"
           :collision-padding="6"
         >
-          <slot name="content">{{ text }}</slot>
+          <template v-if="shortcut">
+            <span class="ui-tooltip-label">
+              <slot name="content">{{ text }}</slot>
+            </span>
+            <kbd class="ui-tooltip-shortcut">{{ formattedShortcut }}</kbd>
+          </template>
+          <slot
+            v-else
+            name="content"
+            >{{ text }}</slot
+          >
         </TooltipContent>
       </TooltipPortal>
     </TooltipRoot>
@@ -48,21 +58,44 @@ import {
   TooltipRoot,
   TooltipTrigger,
 } from 'reka-ui';
+import { computed } from 'vue';
 
-withDefaults(
+import {
+  formatShortcut,
+  type ShortcutInput,
+  type ShortcutPlatform,
+} from '../../lib/app-commands/shortcut';
+
+const props = withDefaults(
   defineProps<{
     /**
      * The name of the thing the trigger does — an icon button's label, said
      * out loud — or the value a row shows too little of, such as a project's
      * path. A reviewed status reason may be a sentence; never show raw error
-     * payloads or shortcut hints here.
+     * payloads here. Pass a registered shortcut separately so it can use the
+     * platform's notation.
      */
     text: string;
+    /** A real keyboard binding for this action, never an invented hint. */
+    shortcut?: ShortcutInput;
     side?: 'top' | 'right' | 'bottom' | 'left';
     align?: 'start' | 'center' | 'end';
     delay?: number;
     contentClass?: string;
   }>(),
-  { side: 'top', align: 'center', delay: 450, contentClass: undefined },
+  {
+    shortcut: undefined,
+    side: 'top',
+    align: 'center',
+    delay: 450,
+    contentClass: undefined,
+  },
+);
+
+const platform: ShortcutPlatform = /Mac|iPhone|iPad/.test(navigator.platform)
+  ? 'mac'
+  : 'non-mac';
+const formattedShortcut = computed(() =>
+  props.shortcut ? formatShortcut(props.shortcut, platform) : '',
 );
 </script>

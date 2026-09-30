@@ -101,6 +101,7 @@ const TAURI_INVOKE_COMMANDS = [
   'release_file_preview',
   'read_model_scope',
   'read_remote_model_scope',
+  'request_quit',
   'resolve_quit_request',
   'update_snapshot',
   'check_for_update',
