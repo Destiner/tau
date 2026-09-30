@@ -809,8 +809,7 @@ function scheduleMaterializationVerificationRetry(
       { syncing: false },
       'materialization_retry',
     );
-    if (!retainsProvisionalReplacement(controller)) releaseRuntime(controller);
-    releaseIdleRuntimes();
+    releaseOrCacheRuntime(controller);
     return;
   }
 
@@ -1275,6 +1274,11 @@ function releaseRuntime(controller: SessionController | undefined): void {
   void stopControllerProcess(controller);
 }
 
+function releaseOrCacheRuntime(controller: SessionController): void {
+  if (!retainsProvisionalReplacement(controller)) releaseRuntime(controller);
+  releaseIdleRuntimes();
+}
+
 function releaseIdleRuntimes(): void {
   const idle = state.controllers
     .filter((controller) => canReleaseRuntime(controller))
@@ -1420,6 +1424,7 @@ export {
   canReleaseRuntime,
   discardReleasedEmptySession,
   releaseRuntime,
+  releaseOrCacheRuntime,
   releaseIdleRuntimes,
   stopControllerProcess,
 };

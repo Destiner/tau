@@ -514,6 +514,106 @@ describe('command-created session durability — verification', () => {
     },
   );
 
+  it.each([
+    [undefined, 'response'],
+    ['ssh://test-host', 'response'],
+    [undefined, 'transport'],
+    ['ssh://test-host', 'transport'],
+  ] as const)(
+    'keeps a delayed %s replacement after failed verification %s',
+    async (connectionString, failure) => {
+      vi.useFakeTimers();
+      try {
+        const telemetry = await import('../../telemetry');
+        const {
+          handleResponse,
+          handleRpc,
+          watchingMaterializationVerification,
+        } = await import('./index');
+        const controller = makeController({
+          sessionId: 'completed-plan',
+          sessionPath: '/tmp/project/plan.jsonl',
+          materializationVerified: true,
+        });
+        addEphemeral(controller, connectionString);
+        state.ephemeralSessions[0]!.selected = false;
+        state.activeControllerKey = 'another-controller';
+        state.activeSessionId = 'another-session';
+        const other = makeController({
+          key: 'another-controller',
+          sessionId: 'another-session',
+          draft: 'Keep draft',
+        });
+        state.controllers.push(other);
+        await handleRpc(controller, { type: 'agent_settled' });
+        await handleResponse(controller, {
+          id: controller.materializationStateRequestId,
+          command: 'get_state',
+          success: true,
+          data: {
+            sessionId: 'implementation',
+            sessionFile: '/tmp/project/implementation.jsonl',
+            isStreaming: false,
+          },
+        });
+        await handleResponse(controller, {
+          id: controller.materializationMessagesRequestId,
+          command: 'get_messages',
+          success: true,
+          data: { messages: [] },
+        });
+        if (failure === 'transport') {
+          mockInvoke.mockImplementation(async (command, args) => {
+            const request = (args as { request?: Record<string, unknown> })
+              ?.request;
+            if (
+              command === 'send_pi' &&
+              String(request?.id).startsWith('tau-materialization-retry-')
+            ) {
+              throw new Error('transport unavailable');
+            }
+            return undefined;
+          });
+        }
+        for (const delay of [250, 750, 1_500]) {
+          await vi.advanceTimersByTimeAsync(delay);
+          if (failure === 'response') {
+            await handleResponse(controller, {
+              id: controller.materializationStateRequestId,
+              command: 'get_state',
+              success: false,
+            });
+          }
+        }
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(watchingMaterializationVerification(controller)).toBe(false);
+        expect(controller.postSettlementHydration).toBe(false);
+        expect(controller.generation).toBe(1);
+        expect(controller.disposed).toBe(false);
+        expect(state.ephemeralSessions).toEqual([
+          expect.objectContaining({ id: 'implementation' }),
+        ]);
+        expect(state.activeSessionId).toBe('another-session');
+        expect(other.draft).toBe('Keep draft');
+        if (failure === 'response') {
+          expect(
+            controller.feedback.some((incident) => !incident.acknowledged),
+          ).toBe(true);
+        }
+        expect(
+          vi
+            .mocked(telemetry.invokeTraced)
+            .mock.calls.some(([command]) => command === 'stop_pi'),
+        ).toBe(false);
+        await handleRpc(controller, { type: 'agent_start' });
+        expect(controller.generation).toBe(1);
+        expect(controller.working).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it('stops retrying and releases an unverified identity after the bounded policy', async () => {
     vi.useFakeTimers();
     try {

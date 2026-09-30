@@ -62,7 +62,7 @@ import {
   registerConnectedSession,
   promoteMaterializedSession,
   retireUnsavedSession,
-  releaseRuntime,
+  releaseOrCacheRuntime,
   releaseIdleRuntimes,
   stopControllerProcess,
 } from './lifecycle';
@@ -439,7 +439,7 @@ async function handleResponse(
         void stopControllerProcess(controller, responseContext, false);
         return;
       }
-      releaseRuntime(controller);
+      releaseOrCacheRuntime(controller);
     }
     if (command === 'prompt') {
       const accepted =
