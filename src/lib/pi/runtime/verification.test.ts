@@ -438,6 +438,45 @@ describe('command-created session durability — verification', () => {
     },
   );
 
+  async function discoverDelayedReplacement(
+    connectionString?: string,
+  ): Promise<{ controller: SessionController; other: SessionController }> {
+    const { handleResponse, handleRpc } = await import('./index');
+    const controller = makeController({
+      sessionId: 'completed-plan',
+      sessionPath: '/tmp/project/plan.jsonl',
+      materializationVerified: true,
+    });
+    addEphemeral(controller, connectionString);
+    state.ephemeralSessions[0]!.selected = false;
+    state.activeControllerKey = 'another-controller';
+    state.activeSessionId = 'another-session';
+    const other = makeController({
+      key: 'another-controller',
+      sessionId: 'another-session',
+      draft: 'Keep draft',
+    });
+    state.controllers.push(other);
+    await handleRpc(controller, { type: 'agent_settled' });
+    await handleResponse(controller, {
+      id: controller.materializationStateRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'implementation',
+        sessionFile: '/tmp/project/implementation.jsonl',
+        isStreaming: false,
+      },
+    });
+    await handleResponse(controller, {
+      id: controller.materializationMessagesRequestId,
+      command: 'get_messages',
+      success: true,
+      data: { messages: [] },
+    });
+    return { controller, other };
+  }
+
   it.each([undefined, 'ssh://test-host'])(
     'keeps a delayed %s replacement alive after successful empty verification reads',
     async (connectionString) => {
@@ -448,32 +487,8 @@ describe('command-created session durability — verification', () => {
           handleRpc,
           watchingMaterializationVerification,
         } = await import('./index');
-        const controller = makeController({
-          sessionId: 'completed-plan',
-          sessionPath: '/tmp/project/plan.jsonl',
-          materializationVerified: true,
-        });
-        addEphemeral(controller, connectionString);
-        state.ephemeralSessions[0]!.selected = false;
-        state.activeControllerKey = 'another-controller';
-        state.activeSessionId = 'another-session';
-        const other = makeController({
-          key: 'another-controller',
-          sessionId: 'another-session',
-          draft: 'Keep draft',
-        });
-        state.controllers.push(other);
-        await handleRpc(controller, { type: 'agent_settled' });
-        await handleResponse(controller, {
-          id: controller.materializationStateRequestId,
-          command: 'get_state',
-          success: true,
-          data: {
-            sessionId: 'implementation',
-            sessionFile: '/tmp/project/implementation.jsonl',
-            isStreaming: false,
-          },
-        });
+        const { controller, other } =
+          await discoverDelayedReplacement(connectionString);
         const respondEmpty = async (): Promise<void> => {
           await handleResponse(controller, {
             id: controller.materializationMessagesRequestId,
@@ -482,7 +497,6 @@ describe('command-created session durability — verification', () => {
             data: { messages: [] },
           });
         };
-        await respondEmpty();
         for (const delay of [250, 750, 1_500]) {
           await vi.advanceTimersByTimeAsync(delay);
           await handleResponse(controller, {
@@ -530,38 +544,8 @@ describe('command-created session durability — verification', () => {
           handleRpc,
           watchingMaterializationVerification,
         } = await import('./index');
-        const controller = makeController({
-          sessionId: 'completed-plan',
-          sessionPath: '/tmp/project/plan.jsonl',
-          materializationVerified: true,
-        });
-        addEphemeral(controller, connectionString);
-        state.ephemeralSessions[0]!.selected = false;
-        state.activeControllerKey = 'another-controller';
-        state.activeSessionId = 'another-session';
-        const other = makeController({
-          key: 'another-controller',
-          sessionId: 'another-session',
-          draft: 'Keep draft',
-        });
-        state.controllers.push(other);
-        await handleRpc(controller, { type: 'agent_settled' });
-        await handleResponse(controller, {
-          id: controller.materializationStateRequestId,
-          command: 'get_state',
-          success: true,
-          data: {
-            sessionId: 'implementation',
-            sessionFile: '/tmp/project/implementation.jsonl',
-            isStreaming: false,
-          },
-        });
-        await handleResponse(controller, {
-          id: controller.materializationMessagesRequestId,
-          command: 'get_messages',
-          success: true,
-          data: { messages: [] },
-        });
+        const { controller, other } =
+          await discoverDelayedReplacement(connectionString);
         if (failure === 'transport') {
           mockInvoke.mockImplementation(async (command, args) => {
             const request = (args as { request?: Record<string, unknown> })
