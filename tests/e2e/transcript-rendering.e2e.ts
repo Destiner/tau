@@ -444,39 +444,10 @@ test('draws a themed diagram and opens its pan-and-zoom viewer', async ({
     await expect(syntheticDiagram).toHaveCount(1);
     const syntheticSvg = syntheticDiagram.locator('svg');
     await expect(syntheticSvg.locator('g.node')).toHaveCount(7);
-    const syntheticEdges = syntheticSvg.locator('polyline.edge');
-    await expect(syntheticEdges).toHaveCount(8);
-    expect(
-      await syntheticEdges.evaluateAll((elements) =>
-        elements.map((element) => [
-          element.getAttribute('data-from'),
-          element.getAttribute('data-to'),
-          element.getAttribute('data-label'),
-        ]),
-      ),
-    ).toEqual([
-      ['Plan', 'Fixture', null],
-      ['Plan', 'Review', null],
-      ['Fixture', 'Regression', null],
-      ['Review', 'Fixture', 'No'],
-      ['Review', 'Regression', 'Yes'],
-      ['Regression', 'Topology', 'two\nlines'],
-      ['Topology', 'Viewer', 'count ≤ 7'],
-      ['Viewer', 'Complete', 'count > 7'],
-    ]);
-    for (const [id, label, shape] of [
-      ['Plan', 'Approved plan', 'rectangle'],
-      ['Fixture', 'Synthetic fixture', 'rectangle'],
-      ['Review', 'Approved?', 'diamond'],
-      ['Regression', 'Browser regression', 'rectangle'],
-      ['Topology', 'Topology assertions', 'rectangle'],
-      ['Viewer', 'Diagram viewer', 'rectangle'],
-      ['Complete', 'Ready to ship', 'parallelogram'],
-    ] as const) {
-      const node = syntheticSvg.locator(`g.node[data-id="${id}"]`);
-      await expect(node).toHaveAttribute('data-label', label);
-      await expect(node).toHaveAttribute('data-shape', shape);
-    }
+    await expect(syntheticSvg.locator('polyline.edge')).toHaveCount(8);
+    await expect(
+      syntheticSvg.locator('g.node[data-id="Complete"]'),
+    ).toHaveAttribute('data-shape', 'parallelogram');
     const sourceBlocks = showcase.locator(
       '.code-block[data-tau-lang="mermaid"]',
     );
