@@ -302,7 +302,10 @@ import {
   formatShortcut,
   shortcutMatches,
 } from './lib/app-commands';
-import { appCommandDispatchKey } from './lib/app-commands/binding';
+import {
+  appCommandDispatchKey,
+  appCommandLookupKey,
+} from './lib/app-commands/binding';
 import { paletteLayerOpen } from './lib/app-commands/surface';
 import { loadSidebarWidth } from './lib/sidebar-width';
 import { invokeTraced } from './lib/telemetry';
@@ -498,6 +501,16 @@ provide(appCommandDispatchKey, (id, target) => {
     ctx.blocked = false;
   void commands.dispatch(id, ctx);
 });
+provide(appCommandLookupKey, (id, target) => {
+  const entry = commands.discover(id, { ...context(), ...target });
+  return (
+    entry && {
+      title: entry.title,
+      shortcut: entry.definition.shortcuts?.[0]?.shortcut,
+      available: entry.available,
+    }
+  );
+});
 const bindings: Array<{ id: string; shortcut: string }> = [];
 function register(
   id: string,
@@ -506,14 +519,17 @@ function register(
   available: (ctx: CommandContext) => boolean,
   execute: (ctx: CommandContext) => void | Promise<void>,
   group = 'Navigation',
+  variantGroup?: string,
+  scope = 'app',
 ): void {
-  if (shortcut) bindings.push({ id, shortcut });
+  if (shortcut && scope === 'app' && !variantGroup)
+    bindings.push({ id, shortcut });
   commands.register({
     id,
     title,
     palette: true,
     group,
-    ...(shortcut ? { shortcuts: [{ shortcut, scope: 'app' }] } : {}),
+    ...(shortcut ? { shortcuts: [{ shortcut, scope, variantGroup }] } : {}),
     availability: (ctx) =>
       available(ctx)
         ? { available: true }
@@ -624,7 +640,7 @@ register(
 register(
   'session.archive',
   'Archive Session',
-  undefined,
+  'Mod+Shift+A',
   (ctx) =>
     session(ctx) &&
     Boolean(
@@ -634,34 +650,38 @@ register(
     ),
   (ctx) => archiveSession(commandProject(ctx)!, commandSession(ctx)!),
   'Session',
+  'archive',
 );
 register(
   'session.unarchive',
   'Unarchive Session',
-  undefined,
+  'Mod+Shift+A',
   (ctx) => session(ctx) && Boolean(commandSession(ctx)?.archived),
   (ctx) => unarchiveSession(commandProject(ctx)!, commandSession(ctx)!),
   'Session',
+  'archive',
 );
 register(
   'session.markRead',
   'Mark as Read',
-  undefined,
+  'Mod+Shift+U',
   (ctx) =>
     session(ctx) &&
     Boolean(isSessionUnread(commandProject(ctx)!, commandSession(ctx)!)),
   (ctx) => markSessionRead(commandProject(ctx)!, commandSession(ctx)!),
   'Session',
+  'read',
 );
 register(
   'session.markUnread',
   'Mark as Unread',
-  undefined,
+  'Mod+Shift+U',
   (ctx) =>
     session(ctx) &&
     !isSessionUnread(commandProject(ctx)!, commandSession(ctx)!),
   (ctx) => markSessionUnread(commandProject(ctx)!, commandSession(ctx)!),
   'Session',
+  'read',
 );
 register(
   'sidebar.toggleArchived',
@@ -772,7 +792,7 @@ register(
 register(
   'composer.send',
   () => (streaming.value ? 'Queue Steering Message' : 'Send Message'),
-  undefined,
+  'Enter',
   (ctx) =>
     currentSession(ctx) &&
     (streaming.value
@@ -781,11 +801,13 @@ register(
     Boolean(draft.value.trim()),
   () => handleComposerSend('steer'),
   'Composer',
+  undefined,
+  'composer',
 );
 register(
   'composer.followUp',
   'Queue Follow-up Message',
-  undefined,
+  'Mod+Enter',
   (ctx) =>
     currentSession(ctx) &&
     canQueue.value &&
@@ -793,6 +815,8 @@ register(
     Boolean(draft.value.trim()),
   () => handleComposerSend('followUp'),
   'Composer',
+  undefined,
+  'composer',
 );
 register(
   'composer.stop',
@@ -984,8 +1008,12 @@ function openPalette(): void {
 }
 function restorePaletteFocus(): void {
   void nextTick(() => {
-    if (paletteOrigin.value?.isConnected)
+    if (
+      paletteOrigin.value?.isConnected &&
+      paletteOrigin.value !== document.body
+    )
       paletteOrigin.value.focus({ preventScroll: true });
+    else composerBar.value?.focus();
   });
 }
 function togglePalette(): void {
@@ -1021,6 +1049,8 @@ async function selectPaletteRow(id: string): Promise<void> {
     }
     const result = await commands.dispatch(id, ctx);
     if (result.status !== 'executed' && !nested) paletteOpen.value = true;
+    else if (!nested && id !== 'queue.review' && !blockingSurface())
+      restorePaletteFocus();
     return;
   }
   const ctx = context(true);
@@ -1035,6 +1065,7 @@ async function selectPaletteRow(id: string): Promise<void> {
     composerBar.value?.closeSelectors();
     projectSidebar.value?.showActiveSessions();
     void selectSession(project, target);
+    void nextTick(() => composerBar.value?.focus());
   } else if (palettePage.value === 'projects') {
     const target = state.workspace?.projects.find((p) => p.path === id);
     if (!target) return;
@@ -1044,8 +1075,10 @@ async function selectPaletteRow(id: string): Promise<void> {
     const chosen =
       projectSessions(target).find((s) => s.selected && !s.archived) ??
       projectSessions(target).find((s) => !s.archived);
+    if (target.collapsed) void toggleProject(target);
     if (chosen) void selectSession(target, chosen);
     else void newSession(target);
+    void nextTick(() => composerBar.value?.focus());
   } else if (palettePage.value === 'models') {
     if (
       !currentSession(ctx) ||
@@ -1099,6 +1132,18 @@ const feedbackActionBusy = computed(() => {
     default:
       return false;
   }
+});
+commands.register({
+  id: 'feedback.action',
+  title: 'Retry',
+  shortcuts: [{ shortcut: 'Mod+Enter', scope: 'feedback-dialog' }],
+  availability: () =>
+    feedbackDialogOpen.value &&
+    activeFeedback.value?.action &&
+    !feedbackActionBusy.value
+      ? { available: true }
+      : { available: false, reason: 'Feedback action unavailable' },
+  execute: () => handleFeedbackAction(),
 });
 const workspaceIsEmpty = computed(
   () => state.workspace !== null && state.workspace.projects.length === 0,
@@ -1580,11 +1625,7 @@ function handlePaletteEscape(event: KeyboardEvent): void {
 function focusedProjectContext(): CommandContext {
   const ctx = context();
   const path = projectSidebar.value?.focusedProjectPath();
-  if (
-    path &&
-    state.workspace?.projects.some((project) => project.path === path)
-  )
-    ctx.projectPath = path;
+  if (path) ctx.projectPath = path;
   return ctx;
 }
 
@@ -1592,11 +1633,9 @@ function focusedSessionContext(): CommandContext {
   const id = projectSidebar.value?.focusedSessionId();
   if (!id) return context();
   const ctx = focusedProjectContext();
-  if (
-    commandProject(ctx) &&
-    projectSessions(commandProject(ctx)!).some((session) => session.id === id)
-  )
-    ctx.sessionId = id;
+  // A focused row is an explicit target. An identity that disappeared must
+  // fail availability rather than silently retarget the active session.
+  ctx.sessionId = id;
   return ctx;
 }
 
@@ -1630,30 +1669,17 @@ function handleDocumentKeydown(event: KeyboardEvent): void {
       );
       return;
     }
-    const variants = [
-      [
-        'Mod+Shift+A',
-        commandSession(sessionCtx)?.archived
-          ? 'session.unarchive'
-          : 'session.archive',
-      ],
-      [
-        'Mod+Shift+U',
-        commandSession(sessionCtx) &&
-        isSessionUnread(
-          commandProject(sessionCtx)!,
-          commandSession(sessionCtx)!,
-        )
-          ? 'session.markRead'
-          : 'session.markUnread',
-      ],
-    ] as const;
-    const variant = variants.find(([chord]) =>
-      shortcutMatches(event, chord, platform),
-    );
-    if (variant) {
+    if (
+      ['session.archive', 'session.markRead'].some((id) =>
+        shortcutMatches(
+          event,
+          commands.get(id)?.shortcuts?.[0]?.shortcut ?? '',
+          platform,
+        ),
+      )
+    ) {
       event.preventDefault();
-      void commands.dispatch(variant[1], sessionCtx);
+      void commands.dispatchShortcut(event, sessionCtx, ['app'], platform);
       return;
     }
     const binding = bindings.find(

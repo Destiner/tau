@@ -179,7 +179,19 @@
                 </UiTooltip>
                 <UiTooltip
                   v-if="canArchiveSession(project, session)"
-                  text="Archive Session"
+                  :text="
+                    (commandHint?.('session.archive', {
+                      projectPath: project.path,
+                      sessionId: session.id,
+                    })?.title ?? 'Archive Session') +
+                    ' · Focus row for shortcut'
+                  "
+                  :shortcut="
+                    commandHint?.('session.archive', {
+                      projectPath: project.path,
+                      sessionId: session.id,
+                    })?.shortcut
+                  "
                 >
                   <UiIconButton
                     class="session-archive"
@@ -302,7 +314,10 @@ import type { ProjectSummary, SessionSummary } from '../composables/state';
 import { tooltipTitleMarkdown } from '../composables/state';
 import useTau from '../composables/useTau';
 import { adminMode } from '../lib/admin-mode';
-import { appCommandDispatchKey } from '../lib/app-commands/binding';
+import {
+  appCommandDispatchKey,
+  appCommandLookupKey,
+} from '../lib/app-commands/binding';
 import {
   applyHeldOrder,
   heldSessions,
@@ -364,6 +379,7 @@ const {
 } = useTau();
 
 const appCommandDispatch = inject(appCommandDispatchKey, undefined);
+const commandHint = inject(appCommandLookupKey, undefined);
 
 const projectList = ref<HTMLElement>();
 const sidebar = ref<HTMLElement>();
@@ -607,18 +623,26 @@ function sessionMenuItems(
   session: SessionSummary,
 ): UiMenuItem[] {
   const unread = isSessionUnread(project, session);
+  const target = { projectPath: project.path, sessionId: session.id };
+  const readHint = commandHint?.(
+    unread ? 'session.markRead' : 'session.markUnread',
+    target,
+  );
+  const archiveHint = commandHint?.('session.archive', target);
   const disabled = projectActionsDisabled.value;
   const items: UiMenuItem[] = [
     {
-      label: unread ? 'Mark as Read' : 'Mark as Unread',
-      disabled,
+      label: readHint?.title ?? (unread ? 'Mark as Read' : 'Mark as Unread'),
+      shortcut: readHint?.shortcut,
+      disabled: disabled || readHint?.available === false,
       run: () => handleSessionReadState(project, session, unread),
     },
   ];
   if (canArchiveSession(project, session)) {
     items.push({
-      label: 'Archive Session',
-      disabled,
+      label: archiveHint?.title ?? 'Archive Session',
+      shortcut: archiveHint?.shortcut,
+      disabled: disabled || archiveHint?.available === false,
       run: () => handleArchiveSession(project, session),
     });
   }

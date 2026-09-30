@@ -56,6 +56,35 @@ test('preserves a newer draft on queue rejection and restores the unsent draft o
   await dismissStatus.focus();
   await dismissStatus.press('Escape');
   await expect(queue.locator('.queue-feedback')).toHaveCount(0);
+
+  await composer.focus();
+  await composer.press(await modShortcut(page, 'Shift+D'));
+  const details = page.getByRole('region', { name: 'Message details' });
+  await expect(details).toBeFocused();
+  await details.getByRole('button', { name: 'Close' }).click();
+  await expect(composer).toBeFocused();
+
+  await composer.press(await modShortcut(page, 'Shift+D'));
+  await expect(details).toBeFocused();
+  await details.press('Escape');
+  await expect(composer).toBeFocused();
+
+  await composer.press(await modShortcut(page, 'k'));
+  const palette = page.getByRole('combobox', { name: 'Command Palette' });
+  await palette.fill('Review Unsent Messages');
+  await palette.press('Enter');
+  await expect(details).toBeFocused();
+  await details.press('Escape');
+  await expect(
+    page.getByRole('button', { name: 'Review Unsent (1)' }),
+  ).toBeFocused();
+  await composer.press(await modShortcut(page, 'k'));
+  await page.getByRole('option', { name: /Review Unsent Messages/ }).click();
+  await details.getByRole('button', { name: 'Close' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Review Unsent (1)' }),
+  ).toBeFocused();
+
   await page.getByRole('button', { name: 'Review Unsent (1)' }).click();
   const restore = page.getByRole('button', { name: 'Restore Draft' });
   await expect(restore).toBeDisabled();

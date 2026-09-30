@@ -49,6 +49,24 @@ describe('shortcuts', () => {
     ).toBe(true);
   });
 
+  it('matches Option-modified Mac letters by physical key code', () => {
+    // Native macOS WebKit emits the produced Option character, not `o`.
+    expect(
+      shortcutMatches(
+        event({ key: 'ø', code: 'KeyO', metaKey: false, altKey: true }),
+        'Alt+O',
+        'mac',
+      ),
+    ).toBe(true);
+    expect(
+      shortcutMatches(
+        event({ key: 'ø', code: 'KeyO', metaKey: false, altKey: true }),
+        'Alt+O',
+        'non-mac',
+      ),
+    ).toBe(false);
+  });
+
   it('rejects composition, AltGraph, and repeats unless explicitly allowed', () => {
     expect(shortcutMatches(event({ isComposing: true }), 'Mod+K', 'mac')).toBe(
       false,
@@ -57,6 +75,19 @@ describe('shortcuts', () => {
       shortcutMatches(
         event({ getModifierState: (name) => name === 'AltGraph' }),
         'Mod+K',
+        'mac',
+      ),
+    ).toBe(false);
+    expect(
+      shortcutMatches(
+        event({
+          key: 'ø',
+          code: 'KeyO',
+          metaKey: false,
+          altKey: true,
+          getModifierState: (name) => name === 'AltGraph',
+        }),
+        'Alt+O',
         'mac',
       ),
     ).toBe(false);

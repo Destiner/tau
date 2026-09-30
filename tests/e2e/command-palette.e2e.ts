@@ -255,6 +255,32 @@ test('selects model and thinking-effort options from the palette', async ({
   await expect(composer).toBeFocused();
 });
 
+test('recognizes a Mac Option-produced character for Open Remote Project', async ({
+  page,
+}) => {
+  test.skip(
+    !(await page.evaluate(() => /Mac|iPhone|iPad/.test(navigator.platform))),
+    'Mac Option layout only',
+  );
+  await page.goto('/');
+  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
+  await page.evaluate(() => {
+    document.activeElement?.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'ø',
+        code: 'KeyO',
+        metaKey: true,
+        altKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  await expect(
+    page.getByRole('dialog', { name: 'SSH Connection' }),
+  ).toBeVisible();
+});
+
 test('opens the session page with Ctrl/Meta+P from the composer', async ({
   page,
 }) => {
@@ -295,16 +321,101 @@ test('uses project identity and its location fallback when switching projects', 
   await expect(notes.locator('.command-palette-detail')).toHaveText(
     '/browser-dev/projects/notes',
   );
+  const notesGroup = page.locator(
+    '.project-group[data-project-path="/browser-dev/projects/notes"]',
+  );
+  await page.keyboard.press('Escape');
+  await notesGroup.locator('.project-toggle').click();
+  await expect(notesGroup.locator('.session-row')).toHaveCount(0);
+  await openPalette(page);
+  await openNestedPage(page, 'Switch Project');
   await notes.click();
 
-  await expect(
-    page.locator(
-      '.project-group[data-project-path="/browser-dev/projects/notes"] .project-row',
-    ),
-  ).toHaveClass(/selected/);
+  await expect(notesGroup.locator('.project-row')).toHaveClass(/selected/);
+  await expect(notesGroup.locator('.session-row').first()).toBeVisible();
   await expect(
     page.getByRole('heading', { name: 'Triage inbox' }),
   ).toBeVisible();
+});
+
+test('shows shared shortcuts for state-dependent palette and composer commands', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const composer = page.getByRole('textbox', { name: 'Message Pi' });
+  await expect(composer).toBeEnabled();
+  const mod = (await modShortcut(page, 'a')).startsWith('Meta') ? '⌘' : 'Ctrl+';
+  await openPalette(page);
+  await expect(
+    page.getByRole('option', { name: /Archive Session/ }).locator('kbd'),
+  ).toHaveText(`${mod}⇧A`.replace('Ctrl+⇧', 'Ctrl+Shift+'));
+  await expect(
+    page.getByRole('option', { name: /Mark as Unread/ }).locator('kbd'),
+  ).toHaveText(`${mod}⇧U`.replace('Ctrl+⇧', 'Ctrl+Shift+'));
+  await page.getByRole('option', { name: /Mark as Unread/ }).click();
+  await openPalette(page);
+  await expect(
+    page.getByRole('option', { name: /Mark as Read/ }).locator('kbd'),
+  ).toBeVisible();
+  await page.keyboard.press('Escape');
+  await composer.fill('Discover send');
+  await page.getByRole('button', { name: 'Send Message' }).focus();
+  await expect(
+    page.locator('.ui-tooltip', { hasText: 'Send Message' }).locator('kbd'),
+  ).toHaveText('Enter');
+});
+
+test('palette actions return focus to an editable destination, including the current session', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const composer = page.getByRole('textbox', { name: 'Message Pi' });
+  await expect(composer).toBeEnabled();
+  await openPalette(page);
+  await openNestedPage(page, 'Switch Session');
+  await page.getByRole('option', { name: 'Workspace overview' }).click();
+  await expect(composer).toBeFocused();
+
+  await openPalette(page);
+  await page.getByRole('option', { name: /Mark as Unread/ }).click();
+  await expect(composer).toBeFocused();
+});
+
+test('archived-row shortcuts use the focused cross-project identity, not the active transcript', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
+  const notes = page.locator(
+    '.project-group[data-project-path="/browser-dev/projects/notes"]',
+  );
+  const note = notes.locator('.session-row').first();
+  const title = await note.locator('.session-title').textContent();
+  expect(title).toBeTruthy();
+  await note.hover();
+  await note.getByRole('button', { name: /Archive/ }).click();
+  await page.getByRole('button', { name: 'Show Archived Sessions' }).click();
+  const archived = page
+    .locator('.archived-list .row')
+    .filter({ hasText: title! });
+  await archived.getByRole('button', { name: `Open ${title}` }).focus();
+  await page.keyboard.press(await modShortcut(page, 'Shift+a'));
+  await expect(archived).toHaveCount(0);
+  await expect(
+    page.getByRole('heading', { name: 'Workspace overview' }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Show Sessions' }).click();
+  const restored = notes.locator('.session-row').filter({ hasText: title! });
+  await expect(restored).toBeVisible();
+  await restored.locator('.session-select').focus();
+  await restored.evaluate((row) => {
+    row.dataset.sessionId = 'stale-session-id';
+  });
+  await page.keyboard.press(await modShortcut(page, 'Shift+a'));
+  await expect(
+    page.getByRole('heading', { name: 'Workspace overview' }),
+  ).toBeVisible();
+  await expect(restored).toBeVisible();
 });
 
 test('switching sessions from archived review returns to active sessions with the draft intact', async ({

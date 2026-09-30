@@ -19,6 +19,8 @@ type NormalizedShortcut = Readonly<{
 
 interface KeyboardShortcutEvent {
   key: string;
+  /** Physical key identity, independent of the active keyboard layout. */
+  code?: string;
   ctrlKey: boolean;
   metaKey: boolean;
   altKey: boolean;
@@ -141,7 +143,17 @@ function shortcutMatches(
     return false;
   }
 
-  return normalizeKey(event.key, event.shiftKey) === shortcut.key;
+  if (normalizeKey(event.key, event.shiftKey) === shortcut.key) return true;
+
+  // macOS reports the character produced by Option (for example, `ø`), while
+  // `code` retains the physical letter key. Do not use this during composition
+  // or AltGraph input (rejected above), where the character is intentional.
+  return (
+    platform === 'mac' &&
+    required.has('Alt') &&
+    /^[a-z]$/.test(shortcut.key) &&
+    event.code === `Key${shortcut.key.toUpperCase()}`
+  );
 }
 
 function formatShortcut(

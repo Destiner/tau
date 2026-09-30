@@ -16,6 +16,8 @@ interface CommandShortcut {
   shortcut: ShortcutInput;
   /** Scopes are ordered by the UI's active keyboard layer. */
   scope: string;
+  /** Mutually exclusive commands may share a chord within a scope. */
+  variantGroup?: string;
 }
 
 interface CommandDefinition<
@@ -93,7 +95,8 @@ class CommandRegistry<Context, Id extends string = string> {
         for (const binding of existing.shortcuts ?? []) {
           if (
             sameShortcut(next.shortcut, binding.shortcut) &&
-            this.scopesOverlap(next.scope, binding.scope)
+            this.scopesOverlap(next.scope, binding.scope) &&
+            !(next.variantGroup && next.variantGroup === binding.variantGroup)
           ) {
             throw new Error(
               `Shortcut collision: ${definition.id} and ${existing.id} share ${next.scope}`,
@@ -134,6 +137,19 @@ class CommandRegistry<Context, Id extends string = string> {
 
   get(id: Id): CommandDefinition<Context, unknown, Id> | undefined {
     return this.definitions.get(id);
+  }
+
+  discover(
+    id: Id,
+    context: Context,
+  ): (PaletteCommand<Context, Id> & { available: boolean }) | undefined {
+    const definition = this.definitions.get(id);
+    if (!definition) return;
+    return {
+      definition,
+      title: resolveTitle(definition, context),
+      available: this.check(definition, context).available,
+    };
   }
 
   palette(context: Context): PaletteCommand<Context, Id>[] {
@@ -177,13 +193,17 @@ class CommandRegistry<Context, Id extends string = string> {
     platform: ShortcutPlatform,
   ): Promise<DispatchResult> {
     for (const scope of activeScopes) {
-      const match = [...this.definitions.values()].find((definition) =>
+      const matches = [...this.definitions.values()].filter((definition) =>
         definition.shortcuts?.some(
           (binding) =>
             binding.scope === scope &&
             shortcutMatches(event, binding.shortcut, platform),
         ),
       );
+      const match =
+        matches.find(
+          (definition) => this.check(definition, context).available,
+        ) ?? matches[0];
       if (match) return this.dispatch(match.id, context);
     }
     return { status: 'missing' };

@@ -75,7 +75,8 @@
       <template v-if="streaming">
         <UiTooltip
           v-if="draft.trim()"
-          text="Queue Message"
+          :text="commandHint?.('composer.send')?.title ?? 'Queue Message'"
+          :shortcut="commandHint?.('composer.send')?.shortcut"
         >
           <UiIconButton
             class="send-button"
@@ -90,7 +91,8 @@
         </UiTooltip>
         <UiTooltip
           v-else
-          text="Stop Pi"
+          :text="commandHint?.('composer.stop')?.title ?? 'Stop Pi'"
+          :shortcut="commandHint?.('composer.stop')?.shortcut"
         >
           <UiIconButton
             class="send-button stop"
@@ -107,7 +109,8 @@
       </template>
       <UiTooltip
         v-else
-        text="Send Message"
+        :text="commandHint?.('composer.send')?.title ?? 'Send Message'"
+        :shortcut="commandHint?.('composer.send')?.shortcut"
       >
         <UiIconButton
           class="send-button"
@@ -136,7 +139,11 @@ import {
 } from 'vue';
 
 import useTau from '../composables/useTau';
-import { appCommandDispatchKey } from '../lib/app-commands/binding';
+import {
+  appCommandDispatchKey,
+  appCommandLookupKey,
+} from '../lib/app-commands/binding';
+import { shortcutMatches } from '../lib/app-commands/shortcut';
 import {
   type CommandMenuPlacement,
   type CommandOption,
@@ -162,6 +169,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{ send: [intent: 'steer' | 'followUp'] }>();
 const appCommandDispatch = inject(appCommandDispatchKey, undefined);
+const commandHint = inject(appCommandLookupKey, undefined);
 
 const {
   canCompose,
@@ -282,6 +290,18 @@ function updateCommandMenuLayout(): void {
   commandMenuOffset.value = layout.offset;
 }
 
+function localShortcut(event: KeyboardEvent, id: string): boolean {
+  const shortcut = commandHint?.(id)?.shortcut;
+  return Boolean(
+    shortcut &&
+    shortcutMatches(
+      event,
+      shortcut,
+      /Mac/.test(navigator.platform) ? 'mac' : 'non-mac',
+    ),
+  );
+}
+
 function handleComposerKeydown(event: KeyboardEvent): void {
   if (commandMenuActive.value && !event.isComposing) {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -300,7 +320,10 @@ function handleComposerKeydown(event: KeyboardEvent): void {
       if (selectedCommand.value) selectCommand(selectedCommand.value, true);
       return;
     }
-    if (event.key === 'Enter' && !event.shiftKey) {
+    if (
+      localShortcut(event, 'composer.send') ||
+      localShortcut(event, 'composer.followUp')
+    ) {
       event.preventDefault();
       if (selectedCommand.value)
         selectCommand(
@@ -312,9 +335,12 @@ function handleComposerKeydown(event: KeyboardEvent): void {
     }
   }
 
-  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+  if (
+    localShortcut(event, 'composer.send') ||
+    localShortcut(event, 'composer.followUp')
+  ) {
     event.preventDefault();
-    send(event.metaKey || event.ctrlKey ? 'followUp' : 'steer');
+    send(localShortcut(event, 'composer.followUp') ? 'followUp' : 'steer');
   }
 }
 

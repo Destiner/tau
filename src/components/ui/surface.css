@@ -56,6 +56,13 @@
   color: var(--faint);
 }
 
+.ui-menu-shortcut {
+  margin-left: auto;
+  padding-left: 16px;
+  color: var(--muted);
+  font: inherit;
+}
+
 /* ── Selector ───────────────────────────────────────────────────────────── */
 
 /* stylelint-disable no-descending-specificity -- focus/open outranks hover. */

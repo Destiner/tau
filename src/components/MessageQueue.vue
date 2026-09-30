@@ -76,6 +76,7 @@
     /></UiIconButton>
     <button
       v-if="failedDrafts.length"
+      ref="recoverButton"
       type="button"
       class="recover"
       @click="showFailed"
@@ -168,9 +169,11 @@ const emit = defineEmits<{
 }>();
 const details = ref<'failed' | null>(null);
 const reviewRegion = ref<HTMLElement>();
+const recoverButton = ref<HTMLButtonElement>();
 
 function openReview(): void {
   if (!props.failedDrafts.length) return;
+  rememberDetailsTrigger();
   details.value = 'failed';
   void nextTick(() => reviewRegion.value?.focus({ preventScroll: true }));
 }
@@ -187,7 +190,7 @@ let previewTrigger: HTMLElement | undefined;
 let suppressPreviewFocus = false;
 let messageShowTimer: ReturnType<typeof setTimeout> | undefined;
 let messageCloseTimer: ReturnType<typeof setTimeout> | undefined;
-let detailsTrigger: HTMLButtonElement | undefined;
+let detailsTrigger: HTMLElement | undefined;
 const count = computed(
   () => props.queue.steering.length + props.queue.followUp.length,
 );
@@ -306,9 +309,17 @@ function showFailed(): void {
   showDetails('failed');
 }
 function showDetails(kind: 'failed'): void {
-  if (document.activeElement instanceof HTMLButtonElement)
-    detailsTrigger = document.activeElement;
+  rememberDetailsTrigger();
   details.value = details.value === kind ? null : kind;
+}
+function rememberDetailsTrigger(): void {
+  const focused = document.activeElement;
+  detailsTrigger =
+    focused instanceof HTMLElement &&
+    focused !== document.body &&
+    !focused.closest('.command-palette')
+      ? focused
+      : recoverButton.value;
 }
 function handleEscape(event: KeyboardEvent): void {
   if (messagePreview.value) {
@@ -334,7 +345,12 @@ function handleEscape(event: KeyboardEvent): void {
 function closeDetails(): void {
   if (!details.value) return;
   details.value = null;
-  void nextTick(() => detailsTrigger?.isConnected && detailsTrigger.focus());
+  void nextTick(() => {
+    const target = detailsTrigger?.isConnected
+      ? detailsTrigger
+      : recoverButton.value;
+    target?.focus({ preventScroll: true });
+  });
 }
 </script>
 
