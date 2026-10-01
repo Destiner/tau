@@ -476,6 +476,7 @@ function createBrowserSandboxHandler(
     if (command === 'read_model_scope') return [];
     if (command === 'read_admin_mode') return false;
     if (command === 'get_dismissed_update_version') return null;
+    if (command === 'set_check_for_updates_menu_enabled') return null;
     if (command === 'pending_quit_request') return pendingQuitRequest;
     if (command === 'request_quit') {
       if (pendingQuitRequest) return pendingQuitRequest.intent === 'ordinary';

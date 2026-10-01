@@ -83,10 +83,10 @@
           <span>Preparing Pi</span>
         </div>
         <template v-if="workspaceIsEmpty">
-          <UpdateStatus
-            ref="firstRunUpdateStatus"
-            first-run
-          />
+          <div class="first-run-version">
+            <span class="first-run-name">tau</span>
+            <span class="first-run-version-number">{{ appVersion }}</span>
+          </div>
           <div class="first-run-actions">
             <UiButton
               ref="firstRunLocalProjectButton"
@@ -286,7 +286,6 @@ import ReconnectStatus from './components/ReconnectStatus.vue';
 import RemoteDialog from './components/RemoteDialog.vue';
 import SessionHeader from './components/SessionHeader.vue';
 import TranscriptView from './components/TranscriptView.vue';
-import UpdateStatus from './components/UpdateStatus.vue';
 import UiButton from './components/ui/UiButton.vue';
 import UiIcon from './components/ui/UiIcon.vue';
 import UiIconButton from './components/ui/UiIconButton.vue';
@@ -307,6 +306,7 @@ import {
   appCommandLookupKey,
 } from './lib/app-commands/binding';
 import { paletteLayerOpen } from './lib/app-commands/surface';
+import appVersion from './lib/app-version';
 import { loadSidebarWidth } from './lib/sidebar-width';
 import { invokeTraced } from './lib/telemetry';
 import { useUpdate } from './lib/update';
@@ -330,7 +330,6 @@ const projectSidebar = ref<InstanceType<typeof ProjectSidebar>>();
 const sessionHeader = ref<InstanceType<typeof SessionHeader>>();
 const composerBar = ref<InstanceType<typeof ComposerBar>>();
 const messageQueue = ref<InstanceType<typeof MessageQueue>>();
-const firstRunUpdateStatus = ref<InstanceType<typeof UpdateStatus>>();
 const firstRunProjectMenuOpen = ref(false);
 const firstRunLocalProjectButton = ref<InstanceType<typeof UiButton>>();
 const firstRunRemoteProjectButton = ref<InstanceType<typeof UiButton>>();
@@ -856,18 +855,15 @@ register(
   'app.updates',
   'Show Update Status',
   undefined,
-  safe,
-  () => {
-    if (projectSidebar.value) projectSidebar.value.openUpdateStatus();
-    else firstRunUpdateStatus.value?.openStatus();
-  },
+  (ctx) => safe(ctx) && !workspaceShellVisible.value,
+  () => projectSidebar.value?.openUpdateStatus(),
   'App',
 );
 register(
   'app.checkUpdates',
   'Check for Updates',
   undefined,
-  safe,
+  (ctx) => safe(ctx) && !workspaceShellVisible.value,
   () => update.check(true),
   'App',
 );
@@ -1214,6 +1210,17 @@ const remoteDirectoryOptions = computed(() => {
     return !filter || name.includes(filter);
   });
 });
+
+watch(
+  () => !workspaceShellVisible.value,
+  (available) => {
+    update.setInteractiveAvailable(available);
+    void invokeTraced('set_check_for_updates_menu_enabled', {
+      enabled: available,
+    }).catch(() => undefined);
+  },
+  { immediate: true, flush: 'sync' },
+);
 
 onMounted(() => {
   update.initialize();
@@ -1834,6 +1841,26 @@ function isTitlebarControl(target: EventTarget | null): boolean {
   padding: 24px;
   color: var(--muted);
   text-align: center;
+}
+
+.first-run-version {
+  display: flex;
+  align-items: center;
+  margin: 0 0 14px;
+  padding: 4px 6px;
+  gap: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  white-space: nowrap;
+}
+
+.first-run-name {
+  color: var(--text);
+}
+
+.first-run-version-number {
+  color: var(--faint);
 }
 
 .first-run-actions {

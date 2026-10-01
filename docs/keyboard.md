@@ -27,6 +27,11 @@ only the palette and restores valid origin focus. Commands that are unsafe in
 the current dirty, busy, or confirmation state are **not shown**; the palette
 has no disabled command rows.
 
+Home (the zero-project workspace) has the same titlebar launcher and `⌘K`
+palette as a project workspace. Its inventory contains only available
+commands; **Show Update Status** and **Check for Updates** are omitted. The local and remote project controls remain ordinary semantic
+buttons: `Activate` opens them.
+
 The palette uses a stable fuzzy filter: matching only narrows the list; results
 remain in their original order as the query changes. It searches command
 labels and reviewed aliases locally; query text is transient and is never
@@ -45,12 +50,14 @@ telemetry.
 
 The launcher is a compact ghost icon in the top-right application chrome. Its
 shortcut is available through its tooltip rather than duplicated as visible
-chrome text.
+chrome text. Home shows its Tau version as a static, informational label; it is
+not an update control and cannot open an update popover.
 
 ## Global target keymap
 
-The following are intended global commands, subject to the availability and
-safety rules above. State pairs share one binding.
+The following are intended global commands in their applicable workspace,
+subject to the availability and safety rules above. State pairs share one
+binding.
 
 | Area       | Command                           | Shortcut               |
 | ---------- | --------------------------------- | ---------------------- |

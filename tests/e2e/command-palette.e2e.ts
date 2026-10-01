@@ -204,7 +204,9 @@ test('preserves a dirty issue report and an open selector under the palette', as
   await expect(page.locator('.ui-select-filterable-list')).toBeVisible();
 });
 
-test('opens from the first-run titlebar launcher', async ({ page }) => {
+test('opens from the first-run titlebar launcher without update commands', async ({
+  page,
+}) => {
   await page.goto('/?test-scenario=empty-workspace');
 
   await page.getByRole('button', { name: 'Open Command Palette' }).click();
@@ -214,6 +216,12 @@ test('opens from the first-run titlebar launcher', async ({ page }) => {
   await expect(
     page.getByRole('option', { name: /Open Local Project/ }),
   ).toBeVisible();
+  await expect(
+    page.getByRole('option', { name: 'Show Update Status' }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('option', { name: 'Check for Updates' }),
+  ).toHaveCount(0);
   await page.getByRole('option', { name: /Open Project…/ }).click();
   await expect(page.getByRole('menuitem')).toHaveText([
     'Open Local Project',
@@ -221,6 +229,18 @@ test('opens from the first-run titlebar launcher', async ({ page }) => {
   ]);
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Open Local Project' }).click();
+});
+
+test('shows update commands in a project palette', async ({ page }) => {
+  await page.goto(scenarioUrl);
+
+  await openPalette(page);
+  await expect(
+    page.getByRole('option', { name: 'Show Update Status' }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('option', { name: 'Check for Updates' }),
+  ).toBeVisible();
 });
 
 test('selects model and thinking-effort options from the palette', async ({

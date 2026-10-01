@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
+use tauri::menu::{Menu, MenuItemKind};
 use tauri::{AppHandle, Emitter, Runtime, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
@@ -14,6 +15,7 @@ pub const CHECK_FOR_UPDATES_EVENT: &str = "tau://check-for-updates";
 pub const UPDATE_PROGRESS_EVENT: &str = "tau://update-progress";
 pub const UPDATE_STATUS_EVENT: &str = "tau://update-status";
 
+const CHECK_FOR_UPDATES_MENU_ERROR: &str = "The Check for Updates menu item could not be updated.";
 const CHECK_TIMEOUT: Duration = Duration::from_secs(15);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const UNKNOWN_TOTAL_PROGRESS_STEP: u64 = 1024 * 1024;
@@ -371,6 +373,63 @@ fn updater_public_key() -> Option<&'static str> {
     option_env!("TAU_UPDATER_PUBLIC_KEY")
         .map(str::trim)
         .filter(|key| !key.is_empty())
+}
+
+/// Enables the macOS app-menu update action once the frontend is ready to handle it.
+/// Other platforms intentionally have no such menu item.
+#[tauri::command]
+pub fn set_check_for_updates_menu_enabled<R: Runtime>(
+    app: AppHandle<R>,
+    enabled: bool,
+) -> Result<(), String> {
+    let Some(menu) = app.menu() else {
+        return Ok(());
+    };
+
+    set_menu_item_enabled(&menu, CHECK_FOR_UPDATES_MENU_ID, enabled).map(|_| ())
+}
+
+fn set_menu_item_enabled<R: Runtime>(
+    menu: &Menu<R>,
+    item_id: &str,
+    enabled: bool,
+) -> Result<bool, String> {
+    set_menu_items_enabled(
+        menu.items()
+            .map_err(|_| CHECK_FOR_UPDATES_MENU_ERROR.to_string())?,
+        item_id,
+        enabled,
+    )
+}
+
+fn set_menu_items_enabled<R: Runtime>(
+    items: Vec<MenuItemKind<R>>,
+    item_id: &str,
+    enabled: bool,
+) -> Result<bool, String> {
+    for item in items {
+        if item.id() == item_id {
+            item.as_menuitem()
+                .ok_or_else(|| CHECK_FOR_UPDATES_MENU_ERROR.to_string())?
+                .set_enabled(enabled)
+                .map_err(|_| CHECK_FOR_UPDATES_MENU_ERROR.to_string())?;
+            return Ok(true);
+        }
+
+        if let MenuItemKind::Submenu(submenu) = item {
+            if set_menu_items_enabled(
+                submenu
+                    .items()
+                    .map_err(|_| CHECK_FOR_UPDATES_MENU_ERROR.to_string())?,
+                item_id,
+                enabled,
+            )? {
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
 }
 
 #[tauri::command]
