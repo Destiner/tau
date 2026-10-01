@@ -80,6 +80,7 @@ declare global {
 
 const PROJECT_PATH = '/fixture/tau-project';
 const OTHER_PROJECT_PATH = '/fixture/other-project';
+const SECOND_PROJECT_PATH = OTHER_PROJECT_PATH;
 const REMOTE_CONNECTION = 'ssh fixture@example';
 const REMOTE_WORKING_DIRECTORY = '/remote/tau-project';
 const SESSION_ID = 'session-main';
@@ -89,6 +90,11 @@ const BACKUP_SESSION = {
   id: 'session-backup',
   path: `${PROJECT_PATH}/session-backup.jsonl`,
   name: 'Backup',
+};
+const SECOND_PROJECT_SESSION = {
+  id: 'session-other-main',
+  path: `${SECOND_PROJECT_PATH}/session-other-main.jsonl`,
+  name: 'Other Main',
 };
 const OTHER_PROJECT_SESSION = {
   id: 'session-other-project',
@@ -189,6 +195,30 @@ const REQUIRED_NATIVE_COUNTS = {
     set_active_session: 1,
   },
   'saved-session-extension-prompt': {
+    load_workspace: 1,
+    read_model_scope: 1,
+    register_session: 1,
+    set_active_session: 1,
+  },
+  'saved-session-extension-prompt-project-switching': {
+    load_workspace: 1,
+    read_model_scope: 2,
+    register_session: 2,
+    set_active_session: 2,
+  },
+  'saved-session-extension-prompt-cycling': {
+    load_workspace: 1,
+    read_model_scope: 2,
+    register_session: 2,
+    set_active_session: 2,
+  },
+  'saved-session-extension-input-navigation': {
+    load_workspace: 1,
+    read_model_scope: 1,
+    register_session: 1,
+    set_active_session: 1,
+  },
+  'saved-session-extension-editor-navigation': {
     load_workspace: 1,
     read_model_scope: 1,
     register_session: 1,
@@ -369,8 +399,30 @@ function scenarioWorkspace(scenarioName: string): WorkspaceSnapshot {
     workspace.projects = [];
     return workspace;
   }
+  if (scenarioName === 'saved-session-extension-prompt-project-switching') {
+    workspace.projects.push({
+      path: SECOND_PROJECT_PATH,
+      name: 'Other fixture',
+      workingDirectory: SECOND_PROJECT_PATH,
+      collapsed: false,
+      selected: false,
+      sessions: [
+        {
+          id: SECOND_PROJECT_SESSION.id,
+          path: SECOND_PROJECT_SESSION.path,
+          title: SECOND_PROJECT_SESSION.name,
+          lastActive: '2026-01-02T03:04:04.000Z',
+          lastUserMessageAt: 0,
+          sortAt: 0,
+          archived: false,
+          selected: false,
+        },
+      ],
+    });
+  }
   if (
     scenarioName === 'saved-session-prompt-process-exit' ||
+    scenarioName === 'saved-session-extension-prompt-cycling' ||
     scenarioName === 'cross-project-sidebar-metadata-actions' ||
     scenarioName === 'saved-session-command-replacement' ||
     scenarioName === 'plan-implement-replacement' ||
@@ -647,12 +699,10 @@ function installPiScenarioAdapter(scenarioName: string): void {
       }
       if (command === 'set_active_project') {
         count(command);
-        requireEqual(
-          requiredString(args, 'path', command),
-          PROJECT_PATH,
-          'set_active_project.path',
-        );
-        selectWorkspaceSession(workspace, '');
+        const projectPath = requiredString(args, 'path', command);
+        if (!workspace.projects.some((project) => project.path === projectPath))
+          throw new Error('set_active_project used an unknown project.');
+        selectWorkspaceSession(workspace, '', projectPath);
         return null;
       }
       if (command === 'set_active_session') {
@@ -677,7 +727,7 @@ function installPiScenarioAdapter(scenarioName: string): void {
         if (!registered) {
           throw new Error('set_active_session used an unknown session.');
         }
-        selectWorkspaceSession(workspace, value.sessionId);
+        selectWorkspaceSession(workspace, value.sessionId, value.projectPath);
         return null;
       }
       if (command === 'archive_session') {
@@ -807,6 +857,12 @@ function installPiScenarioAdapter(scenarioName: string): void {
     try {
       if (adapterFailure) throw adapterFailure;
       engine.verifyComplete();
+      if (
+        scenarioName.startsWith('saved-session-extension-') &&
+        (nativeCounts.get('stop_pi') ?? 0) !== 0
+      ) {
+        throw new Error('Navigating an extension prompt stopped its runtime.');
+      }
       for (const [command, expected] of Object.entries(
         REQUIRED_NATIVE_COUNTS[
           scenarioName as keyof typeof REQUIRED_NATIVE_COUNTS
@@ -816,8 +872,15 @@ function installPiScenarioAdapter(scenarioName: string): void {
         // Selection is persisted on navigation and registration only when it
         // changes; older scenarios counted redundant reselections as well.
         if (
-          (command === 'set_active_session' && actual > expected) ||
-          (command !== 'set_active_session' && actual !== expected)
+          command === 'set_active_session' &&
+          ![
+            'saved-session-extension-prompt-project-switching',
+            'saved-session-extension-prompt-cycling',
+            'saved-session-extension-input-navigation',
+            'saved-session-extension-editor-navigation',
+          ].includes(scenarioName)
+            ? actual > expected
+            : actual !== expected
         ) {
           throw new Error(
             `${command} invocation count: expected ${expected}, received ${actual}.`,
@@ -888,11 +951,17 @@ function startPiArgs(args: Record<string, unknown>): StartPiArgs {
     projectPath: requiredString(args, 'projectPath', 'start_pi'),
     sessionPath,
   };
-  requireEqual(value.projectPath, PROJECT_PATH, 'start_pi.projectPath');
+  if (
+    value.projectPath !== PROJECT_PATH &&
+    value.projectPath !== SECOND_PROJECT_PATH
+  ) {
+    throw new Error('start_pi.projectPath must identify a fixture project.');
+  }
   if (
     value.sessionPath !== null &&
     value.sessionPath !== SESSION_PATH &&
     value.sessionPath !== BACKUP_SESSION.path &&
+    value.sessionPath !== SECOND_PROJECT_SESSION.path &&
     value.sessionPath !== ARCHIVED_SESSION.path &&
     value.sessionPath !== PLAN_SESSION.path
   ) {
@@ -955,7 +1024,13 @@ function registerSessionArgs(
     sessionName: requiredString(args, 'sessionName', 'register_session'),
     adopted,
   };
-  requireEqual(value.projectPath, PROJECT_PATH, 'register_session.projectPath');
+  requireEqual(
+    value.projectPath,
+    expected.id === SECOND_PROJECT_SESSION.id
+      ? SECOND_PROJECT_PATH
+      : PROJECT_PATH,
+    'register_session.projectPath',
+  );
   requireEqual(value.sessionId, expected.id, 'register_session.sessionId');
   requireEqual(
     value.sessionPath,
@@ -993,7 +1068,9 @@ function setActiveSessionArgs(
   };
   requireEqual(
     value.projectPath,
-    PROJECT_PATH,
+    expected.id === SECOND_PROJECT_SESSION.id
+      ? SECOND_PROJECT_PATH
+      : PROJECT_PATH,
     'set_active_session.projectPath',
   );
   requireEqual(value.sessionId, expected.id, 'set_active_session.sessionId');
@@ -1082,6 +1159,20 @@ function expectedNativeSession(
     if (!expected) throw new Error(`${command} ran too many times.`);
     return expected;
   }
+  if (scenarioName === 'saved-session-extension-prompt-project-switching') {
+    return invocation === 2
+      ? { ...SECOND_PROJECT_SESSION, adopted: false }
+      : MAIN_SESSION;
+  }
+  if (scenarioName === 'saved-session-extension-prompt-cycling') {
+    const expected = (
+      command === 'register_session'
+        ? [MAIN_SESSION, BACKUP_SESSION]
+        : [BACKUP_SESSION, MAIN_SESSION]
+    )[invocation - 1];
+    if (!expected) throw new Error(`${command} ran too many times.`);
+    return expected;
+  }
   if (scenarioName === 'archived-sessions-review') {
     // Opening the archived session selects its record without adopting it.
     return invocation >= 2 ? ARCHIVED_SESSION : MAIN_SESSION;
@@ -1120,8 +1211,15 @@ function scenarioRuntimeKey(
     }
     return count === 1 ? 'failed-bootstrap' : 'recovered-main';
   }
+  if (scenarioName === 'saved-session-extension-prompt-project-switching') {
+    if (count > 1) throw new Error('A scenario session started twice.');
+    return sessionPath === SECOND_PROJECT_SESSION.path
+      ? 'second-project'
+      : 'main';
+  }
   if (
     scenarioName === 'saved-session-prompt-process-exit' ||
+    scenarioName === 'saved-session-extension-prompt-cycling' ||
     scenarioName === 'saved-session-command-replacement' ||
     scenarioName === 'plan-implement-replacement' ||
     scenarioName === 'delayed-successor-verification'
@@ -1137,7 +1235,9 @@ function scenarioRuntimeKey(
     return scenarioName === 'plan-implement-replacement' ||
       scenarioName === 'delayed-successor-verification'
       ? 'workflow'
-      : 'main';
+      : sessionPath === BACKUP_SESSION.path
+        ? 'backup'
+        : 'main';
   }
   if (
     scenarioName === 'phantom-command-registration' ||
@@ -1161,14 +1261,15 @@ function scenarioRuntimeKey(
 function selectWorkspaceSession(
   workspace: WorkspaceSnapshot,
   sessionId: string,
+  projectPath = PROJECT_PATH,
 ): void {
   for (const project of workspace.projects) {
-    project.selected = project.path === PROJECT_PATH;
+    project.selected = project.path === projectPath;
     for (const session of project.sessions) {
       session.selected = session.id === sessionId;
     }
   }
-  workspace.activeProjectPath = PROJECT_PATH;
+  workspace.activeProjectPath = projectPath;
 }
 
 function commandSessionWorkspace(): WorkspaceSnapshot {
