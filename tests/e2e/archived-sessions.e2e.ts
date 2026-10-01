@@ -25,7 +25,14 @@ test('finds archived work from the sidebar menu, reviews and restores it', async
   await test.step('opens the sidebar actions from empty project-list space', async () => {
     await page.goto(scenarioUrl);
     const projectList = page.locator('.projects-body');
-    await page.locator('.session-row').click({ button: 'right' });
+    const activeRow = page.locator('.session-row');
+    await activeRow.hover();
+    await activeRow.getByRole('button', { name: 'Archive Main' }).hover();
+    const archiveTooltip = page.locator('.ui-tooltip');
+    await expect(archiveTooltip.locator('.ui-tooltip-label')).toHaveText(
+      'Archive Session',
+    );
+    await activeRow.click({ button: 'right' });
     const sessionActions = page.getByRole('menuitem');
     await expect(
       sessionActions.locator('span').allTextContents(),
@@ -79,9 +86,15 @@ test('finds archived work from the sidebar menu, reviews and restores it', async
     ).toBeEnabled();
     await expect(row).toHaveClass(/selected/);
     await row.hover();
-    await row
-      .getByRole('button', { name: 'Unarchive Older archived work' })
-      .click();
+    const unarchiveButton = row.getByRole('button', {
+      name: 'Unarchive Older archived work',
+    });
+    await unarchiveButton.hover();
+    const unarchiveTooltip = page.locator('.ui-tooltip');
+    await expect(unarchiveTooltip.locator('.ui-tooltip-label')).toHaveText(
+      'Unarchive Session',
+    );
+    await unarchiveButton.click();
     await expect(row).toHaveCount(0);
     await expect(archivedList.locator('.row')).toHaveCount(60);
     await page.getByRole('button', { name: 'Show Sessions' }).click();
