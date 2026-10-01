@@ -211,7 +211,8 @@ describe('sessionTooltipStatus', () => {
   });
 
   it('prioritizes extension input and archived status, then falls back without a controller', async () => {
-    const { sessionTooltipStatus, state } = await import('./state');
+    const { sessionTooltipStatus, sessionLastActive, state } =
+      await import('./state');
     const controller = testController({ working: true, draft: 'Unsent' });
     state.controllers = [controller];
     state.extensionDialogs = [
@@ -232,6 +233,7 @@ describe('sessionTooltipStatus', () => {
     ];
 
     expect(sessionTooltipStatus(project, session)).toBe('Unread');
+    expect(sessionLastActive(project, session)).toBe('');
     expect(sessionTooltipStatus(project, { ...session, archived: true })).toBe(
       'Archived',
     );
@@ -245,6 +247,41 @@ describe('sessionTooltipStatus', () => {
     expect(state.controllers).toBe(controllers);
     expect(project).toEqual(projectBefore);
     expect(session).toEqual(sessionBefore);
+  });
+});
+
+describe('sessionLastActive', () => {
+  const session: SessionSummary = {
+    id: 'session-1',
+    path: '/tmp/project/session.jsonl',
+    title: 'Session',
+    lastActive: '2h',
+    lastUserMessageAt: 0,
+    sortAt: 100,
+    archived: false,
+    selected: false,
+  };
+  const project: ProjectSummary = {
+    path: '/tmp/project',
+    name: 'Project',
+    workingDirectory: '/tmp/project',
+    collapsed: false,
+    selected: false,
+    sessions: [session],
+  };
+
+  it('hides working recency and restores it when work ends', async () => {
+    const { sessionLastActive, state } = await import('./state');
+    const controller = testController({ working: true });
+    state.controllers = [controller];
+    state.ephemeralSessions = [];
+
+    expect(sessionLastActive(project, session)).toBe('');
+    expect(sessionLastActive(project, { ...session, lastActive: 'now' })).toBe(
+      '',
+    );
+    controller.working = false;
+    expect(sessionLastActive(project, session)).toBe('2h');
   });
 });
 

@@ -63,15 +63,17 @@ test('reads and updates a session tooltip while keeping hostile long content saf
     await expect(tooltip.locator('.session-tooltip-status')).toHaveText(
       'Working',
     );
+    await expect(row.locator('.session-time')).toHaveCount(0);
+    await expect(tooltip.locator('.session-tooltip-date')).toHaveCount(0);
+    await expect(
+      page.locator('.session-row').nth(1).locator('.session-time'),
+    ).toHaveText('1d');
     const markdown = tooltip.locator('.session-tooltip-name');
     await expect(markdown.locator('strong')).toHaveText('Markdown preview');
     await expect(markdown.locator('p code')).toHaveText('inline code');
     await expect(markdown.locator('li')).toHaveCount(2);
     await expect(markdown.locator('li li')).toHaveText('Nested item');
     await expect(markdown.locator('pre')).toContainText('const ready = true;');
-    await expect(tooltip.locator('.session-tooltip-date')).toHaveText(
-      '2 hours ago',
-    );
     await expect(tooltip).not.toContainText('working-session-opaque-7fb4d9');
     await expectBottomStartAlignment(trigger, tooltip);
     await expect(trigger).not.toHaveAttribute('title', /./);
@@ -89,7 +91,8 @@ test('reads and updates a session tooltip while keeping hostile long content saf
       fixture.setStatus('draft');
       fixture.setTitle(title);
     }, replacementTitle);
-    const row = page.locator('.session-row', { hasText: replacementTitle });
+    const row = page.locator('.session-row').first();
+    await expect(row.locator('.session-title')).toHaveText(replacementTitle);
     await row.locator('.session-select').hover();
     const tooltip = page.locator('.ui-tooltip.session-tooltip');
     await expect(tooltip).toBeVisible();
@@ -100,6 +103,10 @@ test('reads and updates a session tooltip while keeping hostile long content saf
       'Updated',
     );
     await expect(tooltip.locator('.session-tooltip-name p')).toHaveCount(2);
+    await expect(row.locator('.session-time')).toHaveText('2h');
+    await expect(tooltip.locator('.session-tooltip-date')).toHaveText(
+      '2 hours ago',
+    );
     await expect(tooltip).not.toContainText('working-session-opaque-7fb4d9');
     await page.evaluate(() => {
       window.__TAU_SESSION_TOOLTIP_FIXTURE__?.setStatus('unread');
@@ -110,6 +117,37 @@ test('reads and updates a session tooltip while keeping hostile long content saf
     );
     await expect(tooltip.locator('.session-tooltip-name')).toHaveText(
       'Changed while open',
+    );
+    await expect(tooltip.locator('.session-tooltip-date')).toHaveText(
+      '2 hours ago',
+    );
+    const positionsBefore = await page
+      .locator('.session-row')
+      .evaluateAll((rows) =>
+        rows.map((row) => row.getBoundingClientRect().top),
+      );
+    await page.evaluate(() => {
+      window.__TAU_SESSION_TOOLTIP_FIXTURE__?.setStatus('working');
+    });
+    await expect(tooltip.locator('.session-tooltip-status')).toHaveText(
+      'Working',
+    );
+    await expect(tooltip.locator('.session-tooltip-date')).toHaveCount(0);
+    await expect(row.locator('.session-time')).toHaveCount(0);
+    expect(
+      await page
+        .locator('.session-row')
+        .evaluateAll((rows) =>
+          rows.map((row) => row.getBoundingClientRect().top),
+        ),
+    ).toEqual(positionsBefore);
+    await page.evaluate(() => {
+      window.__TAU_SESSION_TOOLTIP_FIXTURE__?.setStatus('idle');
+    });
+    await expect(tooltip.locator('.session-tooltip-status')).toHaveText('Idle');
+    await expect(row.locator('.session-time')).toHaveText('2h');
+    await expect(tooltip.locator('.session-tooltip-date')).toHaveText(
+      '2 hours ago',
     );
     await expect(page.locator('.session-row').nth(1)).toContainText(
       'Prepare release notes',
@@ -242,6 +280,7 @@ test('reviews archived tooltip content and scrolls tall active and archived prev
     expect(source).toHaveLength(240);
     await page.evaluate((markdown) => {
       const fixture = window.__TAU_SESSION_TOOLTIP_FIXTURE__;
+      fixture?.setStatus('idle');
       fixture?.setMarkdown(markdown);
       fixture?.setArchivedMarkdown(markdown);
     }, source);
