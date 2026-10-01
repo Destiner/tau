@@ -27,6 +27,9 @@ only the palette and restores valid origin focus. Commands that are unsafe in
 the current dirty, busy, or confirmation state are **not shown**; the palette
 has no disabled command rows.
 
+On home (with no projects), **Show Update Status** and **Check for Updates**
+are omitted from the palette. They become available in a project workspace.
+
 The palette uses a stable fuzzy filter: matching only narrows the list; results
 remain in their original order as the query changes. It searches command
 labels and reviewed aliases locally; query text is transient and is never
@@ -45,7 +48,7 @@ telemetry.
 
 The launcher is a compact ghost icon in the top-right application chrome. Its
 shortcut is available through its tooltip rather than duplicated as visible
-chrome text.
+chrome text. Home shows the Tau version as a static label, not an update control.
 
 ## Global target keymap
 

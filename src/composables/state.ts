@@ -775,6 +775,7 @@ function sessionLastActive(
   session: SessionSummary,
 ): string {
   const controller = controllerForSession(project.path, session.id);
+  if (controller?.working) return '';
   if (
     ephemeralSession(project.path, session.id) &&
     !controller?.messages.some(

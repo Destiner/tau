@@ -105,6 +105,7 @@ const TAURI_INVOKE_COMMANDS = [
   'resolve_quit_request',
   'update_snapshot',
   'check_for_update',
+  'set_check_for_updates_menu_enabled',
   'get_dismissed_update_version',
   'set_dismissed_update_version',
   'download_update',

@@ -4,35 +4,28 @@ import { expect, test } from './fixtures';
 
 const scenarioUrl = '/?test-scenario=empty-workspace';
 
-test('keeps a first-run update failure inside the version popover', async ({
+test('keeps the home version a static informational label', async ({
   page,
 }) => {
   await page.goto(`${scenarioUrl}&test-update=first-run-failure`);
-  const trigger = page.getByRole('button', {
-    name: `Tau version ${appVersion}`,
-  });
-  await expect(trigger).toBeVisible();
-  await expect(
-    trigger.locator('.update-indicator, .update-failure-mark'),
-  ).toHaveCount(0);
-  await expect(page.locator('.update-popover')).toHaveCount(0);
-  await trigger.focus();
-  await page.keyboard.press('Enter');
-  const popover = page.locator('.update-popover');
-  await expect(popover.getByText('Update failed')).toBeVisible();
-  await expect(
-    popover.getByText(
-      'Tau could not check for updates. Check your connection and try again.',
-    ),
-  ).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(trigger).toBeFocused();
-  await trigger.click();
-  await expect(popover.getByText('Update failed')).toBeVisible();
-  await expect(trigger).toHaveAttribute(
-    'aria-label',
-    `Tau version ${appVersion}`,
+
+  const label = page.locator('.first-run-version');
+  await expect(label).toHaveText(`tau${appVersion}`);
+  await expect(page.getByRole('button', { name: /Tau version/ })).toHaveCount(
+    0,
   );
+  await expect(page.locator('.update-popover')).toHaveCount(0);
+  const background = await label.evaluate(
+    (element) => getComputedStyle(element).backgroundColor,
+  );
+  await label.hover();
+  await expect(label).toHaveCSS('background-color', background);
+  await label.click();
+  await expect(page.locator('.update-popover')).toHaveCount(0);
+  await page.keyboard.press('Tab');
+  await expect(label).not.toBeFocused();
+
+  // Satisfy the scenario's expected cancelled native chooser.
   await page.getByRole('button', { name: 'Open Local Project' }).click();
 });
 
@@ -63,15 +56,13 @@ test('prepares Pi then offers and navigates both project actions in the empty wo
     ).toBeVisible();
   });
 
-  await test.step('offers project actions across the empty workspace', async () => {
+  await test.step('returns to home after closing remote project', async () => {
     await page.keyboard.press('Escape');
     await expect(
       page.getByRole('dialog', { name: 'SSH Connection' }),
     ).toHaveCount(0);
     await page.mouse.move(0, 0);
-    await expect(page.getByLabel(`Tau version ${appVersion}`)).toBeVisible();
-    await expect(page.getByText('tau', { exact: true })).toBeVisible();
-    await expect(page.getByText(appVersion, { exact: true })).toBeVisible();
+    await expect(page.locator('.first-run-version')).toBeVisible();
     await expect(page.getByText('Open a project', { exact: true })).toHaveCount(
       0,
     );

@@ -329,11 +329,11 @@ export type CommandPaletteRow = {
   display: flex;
   position: fixed;
   z-index: 102;
-  top: 32px;
+  top: 25vh;
   left: 50%;
   flex-direction: column;
   width: min(490px, calc(100% - 28px));
-  max-height: min(520px, calc(100% - 64px));
+  max-height: min(520px, calc(75vh - 32px));
   overflow: hidden;
   transform: translateX(-50%);
   border: 1px solid var(--border);

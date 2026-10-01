@@ -3,15 +3,10 @@
     <PopoverTrigger as-child>
       <button
         class="update-trigger"
-        :class="{ 'first-run-trigger': firstRun }"
         type="button"
         :aria-label="triggerLabel"
       >
-        <template v-if="firstRun">
-          <span class="first-run-name">tau</span>
-          <span class="version-number">{{ appVersion }}</span>
-        </template>
-        <template v-else>v{{ appVersion }}</template>
+        v{{ appVersion }}
         <span
           v-if="indicator === 'accent' || indicator === 'downloading'"
           class="update-indicator"
@@ -91,8 +86,6 @@ import appVersion from '../lib/app-version';
 import { updateFailureDescription, useUpdate } from '../lib/update';
 
 import UiButton from './ui/UiButton.vue';
-
-withDefaults(defineProps<{ firstRun?: boolean }>(), { firstRun: false });
 
 const update = useUpdate();
 const state = update.state;
@@ -297,21 +290,6 @@ function runPrimaryAction(): void {
 
 .update-indicator.downloading {
   background: var(--muted);
-}
-
-.first-run-trigger {
-  top: 0;
-  margin: 0 0 14px;
-  padding: 4px 6px;
-  gap: 8px;
-}
-
-.first-run-name {
-  color: var(--text);
-}
-
-.version-number {
-  color: var(--faint);
 }
 
 :global(.update-popover) {

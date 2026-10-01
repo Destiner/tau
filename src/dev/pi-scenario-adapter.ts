@@ -672,6 +672,10 @@ function installPiScenarioAdapter(scenarioName: string): void {
         count(command);
         return null;
       }
+      if (command === 'set_check_for_updates_menu_enabled') {
+        count(command);
+        return null;
+      }
       if (command === 'update_snapshot') {
         count(command);
         if (

@@ -43,7 +43,7 @@ interface TestHarness {
   emit(event: string, payload?: unknown): void;
 }
 
-function harness(): TestHarness {
+function harness(interactiveAvailable = true): TestHarness {
   let now = 1_000;
   const listeners = new Map<string, (event: { payload: unknown }) => void>();
   const responses = new Map<string, Array<unknown>>([
@@ -79,8 +79,10 @@ function harness(): TestHarness {
       return () => listeners.delete(event);
     }),
   };
+  const service = createUpdateService(dependencies);
+  service.setInteractiveAvailable(interactiveAvailable);
   return {
-    service: createUpdateService(dependencies),
+    service,
     calls,
     respond(command: string, ...values: unknown[]): void {
       responses.set(command, values);
@@ -112,6 +114,59 @@ async function flush(): Promise<void> {
 }
 
 describe('update service', () => {
+  it('keeps home manual and native requests inert while background checks continue', async () => {
+    const test = harness(false);
+    test.respond('update_snapshot', { supported: true, status: 'idle' });
+    test.respond('check_for_update', available);
+    test.service.initialize();
+    await flush();
+    expect(test.service.state.phase).toBe('available');
+
+    await test.service.check(true);
+    test.emit(CHECK_FOR_UPDATES_EVENT);
+    await flush();
+    expect(
+      test.calls.filter(({ command }) => command === 'check_for_update'),
+    ).toHaveLength(1);
+    expect(test.service.state.revealToken).toBe(0);
+    expect(test.service.consumeReveal()).toBe(false);
+
+    test.service.setInteractiveAvailable(true);
+    test.respond('check_for_update', current);
+    test.emit(CHECK_FOR_UPDATES_EVENT);
+    await flush();
+    expect(test.service.consumeReveal()).toBe(true);
+    expect(test.calls.at(-1)).toEqual({
+      command: 'check_for_update',
+      args: { manual: true },
+    });
+  });
+
+  it('discards pending reveals on return home without cancelling an in-flight check', async () => {
+    const test = harness();
+    let resolveCheck!: (result: typeof available) => void;
+    test.respond(
+      'check_for_update',
+      new Promise<typeof available>((resolve) => (resolveCheck = resolve)),
+    );
+    test.service.initialize();
+    await flush();
+    test.emit(CHECK_FOR_UPDATES_EVENT);
+    expect(test.service.state.revealToken).toBe(1);
+
+    test.service.setInteractiveAvailable(false);
+    resolveCheck(available);
+    await flush();
+    expect(test.service.state.phase).toBe('available');
+    test.service.setInteractiveAvailable(true);
+    expect(test.service.consumeReveal()).toBe(false);
+
+    test.respond('check_for_update', current);
+    test.emit(CHECK_FOR_UPDATES_EVENT);
+    await flush();
+    expect(test.service.consumeReveal()).toBe(true);
+  });
+
   it('checks in the background without blocking initialization', async () => {
     const test = harness();
     test.respond('update_snapshot', { supported: true, status: 'idle' });
