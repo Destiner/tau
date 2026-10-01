@@ -121,6 +121,71 @@ test('switches projects from a pending extension prompt and restores its focus',
   await expect(option).toBeFocused();
 });
 
+for (const navigation of ['session', 'project', 'boundary'] as const) {
+  test(`restores prompt focus after palette ${navigation} navigation stays put`, async ({
+    page,
+  }) => {
+    await page.goto(scenarioUrl);
+    const prompt = page.getByRole('dialog', {
+      name: 'Which label should the release carry?',
+    });
+    const option = prompt.getByRole('option', { name: 'patch' });
+    await expect(option).toBeFocused();
+
+    if (navigation === 'session') {
+      await pressSessionSwitcher(page);
+      const picker = page.getByRole('dialog', { name: 'Switch Session' });
+      await picker.getByRole('option', { name: 'Main' }).press('Enter');
+    } else if (navigation === 'project') {
+      await modifiedShortcut(page, 'Shift+p');
+      const picker = page.getByRole('dialog', { name: 'Switch Project' });
+      await picker.getByRole('option', { name: /Tau fixture/ }).press('Enter');
+    } else {
+      await openPalette(page);
+      const search = page.getByRole('combobox', { name: 'Command Palette' });
+      await search.fill('Next Session');
+      await search.press('Enter');
+    }
+
+    await expect(
+      page.getByRole('dialog', { name: /Switch|Command Palette/ }),
+    ).toHaveCount(0);
+    await expect(prompt).toBeVisible();
+    await expect(option).toBeFocused();
+    const verification = await page.evaluate(() =>
+      window.__TAU_PI_SCENARIO__?.verify(),
+    );
+    expect(verification?.ok).toBe(true);
+  });
+}
+
+test('keeps a typed answer focused when reselecting its session', async ({
+  page,
+}) => {
+  await page.goto('/?test-scenario=saved-session-extension-input-navigation');
+  const input = page.getByRole('textbox', { name: 'Release note label' });
+  await expect(input).toBeFocused();
+  await input.fill('rc.2');
+
+  await emitNativeNewSession(page);
+  await pressSessionSwitcher(page);
+  await page.getByRole('option', { name: 'Main' }).press('Enter');
+  await expect(input).toBeFocused();
+
+  await pressSessionSwitcher(page);
+  await page
+    .getByRole('dialog', { name: 'Switch Session' })
+    .getByRole('option', { name: 'Main' })
+    .press('Enter');
+
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue('rc.2');
+  const verification = await page.evaluate(() =>
+    window.__TAU_PI_SCENARIO__?.verify(),
+  );
+  expect(verification?.ok).toBe(true);
+});
+
 test('opens Switch Session with Cmd+P while an extension prompt is pending', async ({
   page,
 }) => {

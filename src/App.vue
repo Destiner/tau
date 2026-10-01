@@ -1014,6 +1014,26 @@ function openPalette(): void {
   paletteSelectedId.value = null;
   paletteOpen.value = true;
 }
+function focusAfterPaletteNavigation(): void {
+  void nextTick(() => {
+    if (navigationBlockingSurface()) return;
+    const prompt = activeExtensionDialog.value
+      ? document.querySelector<HTMLElement>('.session-pane .extension-prompt')
+      : null;
+    if (prompt) {
+      const origin = paletteOrigin.value;
+      const control =
+        origin?.isConnected &&
+        prompt.contains(origin) &&
+        origin.matches(':not(:disabled)')
+          ? origin
+          : prompt.querySelector<HTMLElement>(
+              '[role="option"][aria-selected="true"]:not(:disabled), input:not(:disabled), textarea:not(:disabled), .extension-prompt-actions button:not(:disabled)',
+            );
+      control?.focus({ preventScroll: true });
+    } else composerBar.value?.focus();
+  });
+}
 function restorePaletteFocus(): void {
   void nextTick(() => {
     if (
@@ -1021,7 +1041,7 @@ function restorePaletteFocus(): void {
       paletteOrigin.value !== document.body
     )
       paletteOrigin.value.focus({ preventScroll: true });
-    else composerBar.value?.focus();
+    else focusAfterPaletteNavigation();
   });
 }
 function togglePalette(): void {
@@ -1057,8 +1077,11 @@ async function selectPaletteRow(id: string): Promise<void> {
     }
     const result = await commands.dispatch(id, ctx);
     if (result.status !== 'executed' && !nested) paletteOpen.value = true;
-    else if (!nested && id !== 'queue.review' && !context().blocked)
-      restorePaletteFocus();
+    else if (!nested && id !== 'queue.review') {
+      if (['session.new', 'session.next', 'session.previous'].includes(id))
+        focusAfterPaletteNavigation();
+      else if (!context().blocked) restorePaletteFocus();
+    }
     return;
   }
   const ctx = context(true);
@@ -1073,7 +1096,7 @@ async function selectPaletteRow(id: string): Promise<void> {
     composerBar.value?.closeSelectors();
     projectSidebar.value?.showActiveSessions();
     void selectSession(project, target);
-    void nextTick(() => composerBar.value?.focus());
+    focusAfterPaletteNavigation();
   } else if (palettePage.value === 'projects') {
     const target = state.workspace?.projects.find((p) => p.path === id);
     if (!target) return;
@@ -1086,7 +1109,7 @@ async function selectPaletteRow(id: string): Promise<void> {
     if (target.collapsed) void toggleProject(target);
     if (chosen) void selectSession(target, chosen);
     else void newSession(target);
-    void nextTick(() => composerBar.value?.focus());
+    focusAfterPaletteNavigation();
   } else if (palettePage.value === 'models') {
     if (
       ctx.blocked ||
