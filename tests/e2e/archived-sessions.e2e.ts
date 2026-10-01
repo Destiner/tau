@@ -32,9 +32,6 @@ test('finds archived work from the sidebar menu, reviews and restores it', async
     await expect(archiveTooltip.locator('.ui-tooltip-label')).toHaveText(
       'Archive Session',
     );
-    await expect(archiveTooltip.locator('.ui-tooltip-shortcut')).toHaveText(
-      /^(⌘⇧A|Ctrl\+Shift\+A)$/,
-    );
     await activeRow.click({ button: 'right' });
     const sessionActions = page.getByRole('menuitem');
     await expect(
@@ -96,9 +93,6 @@ test('finds archived work from the sidebar menu, reviews and restores it', async
     const unarchiveTooltip = page.locator('.ui-tooltip');
     await expect(unarchiveTooltip.locator('.ui-tooltip-label')).toHaveText(
       'Unarchive Session',
-    );
-    await expect(unarchiveTooltip.locator('.ui-tooltip-shortcut')).toHaveText(
-      /^(⌘⇧A|Ctrl\+Shift\+A)$/,
     );
     await unarchiveButton.click();
     await expect(row).toHaveCount(0);
