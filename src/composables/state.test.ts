@@ -248,6 +248,116 @@ describe('sessionTooltipStatus', () => {
   });
 });
 
+describe('sessionLastActive', () => {
+  const session: SessionSummary = {
+    id: 'session-1',
+    path: '/tmp/project/session.jsonl',
+    title: 'Session',
+    lastActive: '2h',
+    lastUserMessageAt: 0,
+    sortAt: 100,
+    archived: false,
+    selected: false,
+  };
+  const other = { ...session, id: 'session-2', lastActive: '1d', sortAt: 50 };
+  const project: ProjectSummary = {
+    path: '/tmp/project',
+    name: 'Project',
+    workingDirectory: '/tmp/project',
+    collapsed: false,
+    selected: false,
+    sessions: [session, other],
+  };
+
+  it('hides any working time locally and restores stored labels when work ends', async () => {
+    const { sessionLastActive, sessionSortAt, projectSessions, state } =
+      await import('./state');
+    const controller = testController({
+      working: true,
+      lastUserMessageAt: Date.now(),
+    });
+    state.controllers = [controller];
+    state.ephemeralSessions = [];
+    const before = {
+      project: structuredClone(project),
+      controllerLastUserMessageAt: controller.lastUserMessageAt,
+      order: projectSessions(project).map((entry) => entry.id),
+      sortAt: sessionSortAt(project.path, session),
+    };
+
+    expect(sessionLastActive(project, session)).toBe('');
+    expect(sessionLastActive(project, { ...session, lastActive: 'now' })).toBe(
+      '',
+    );
+    expect(sessionLastActive(project, other)).toBe('1d');
+    expect(projectSessions(project).map((entry) => entry.id)).toEqual(
+      before.order,
+    );
+    expect(sessionSortAt(project.path, session)).toBe(before.sortAt);
+    expect(controller.lastUserMessageAt).toBe(
+      before.controllerLastUserMessageAt,
+    );
+    expect(project).toEqual(before.project);
+    controller.working = false;
+    expect(sessionLastActive(project, session)).toBe('now');
+    controller.lastUserMessageAt = 0;
+    expect(sessionLastActive(project, session)).toBe('2h');
+    controller.working = true;
+    state.activeControllerKey = '';
+    expect(sessionLastActive(project, session)).toBe('');
+  });
+
+  it('uses working even when a pending dialog overrides the visible indicator', async () => {
+    const { sessionLastActive, sessionTooltipStatus, state } =
+      await import('./state');
+    const controller = testController({ working: true });
+    state.controllers = [controller];
+    state.extensionDialogs = [
+      {
+        key: 'dialog-1',
+        requestId: 'request-1',
+        method: 'confirm',
+        title: 'Continue?',
+        draft: '',
+        submitting: false,
+        error: '',
+        controllerKey: controller.key,
+        runtimeId: controller.runtimeId,
+        generation: controller.generation,
+        projectName: 'Project',
+        sessionName: 'Session',
+      },
+    ];
+    expect(sessionTooltipStatus(project, session)).toBe('Unread');
+    expect(sessionLastActive(project, session)).toBe('');
+    controller.working = false;
+    expect(sessionLastActive(project, session)).toBe('2h');
+  });
+
+  it('retains idle recency and no-controller and empty ephemeral behavior', async () => {
+    const { sessionLastActive, state } = await import('./state');
+    state.controllers = [];
+    state.ephemeralSessions = [];
+    expect(sessionLastActive(project, session)).toBe('2h');
+    for (const flags of [{ draft: 'Unsent' }, { unread: true }, {}]) {
+      state.controllers = [
+        testController({ ...flags, lastUserMessageAt: Date.now() }),
+      ];
+      expect(sessionLastActive(project, session)).toBe('now');
+    }
+    state.ephemeralSessions = [
+      {
+        ...session,
+        projectPath: project.path,
+        controllerKey: 'controller-1',
+        createdAt: 1,
+        phantom: false,
+      },
+    ];
+    expect(sessionLastActive(project, session)).toBe('');
+  });
+});
+
 describe('expandedRelativeTime', () => {
   it('expands supported relative times and preserves unknown empty input', async () => {
     const { expandedRelativeTime } = await import('./state');
