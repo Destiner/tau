@@ -425,6 +425,7 @@ export type CommandPaletteRow = {
 .command-palette-copy {
   display: flex;
   flex: 1;
+  align-items: baseline;
   min-width: 0;
   gap: 8px;
 }
