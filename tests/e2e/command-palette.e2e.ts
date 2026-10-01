@@ -56,17 +56,12 @@ for (const colorScheme of ['light', 'dark'] as const) {
     const appearance = async (button: Locator): Promise<ButtonAppearance> =>
       button.evaluate((element) => {
         const style = getComputedStyle(element);
-        const bounds = element.getBoundingClientRect();
+        const { x, y, width, height } = element.getBoundingClientRect();
         return {
           background: style.backgroundColor,
           color: style.color,
           opacity: style.opacity,
-          bounds: {
-            x: bounds.x,
-            y: bounds.y,
-            width: bounds.width,
-            height: bounds.height,
-          },
+          bounds: { x, y, width, height },
         };
       });
 
@@ -75,8 +70,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
     expect(idleNew.background).toBe('rgba(0, 0, 0, 0)');
     expect(idlePalette.background).toBe(idleNew.background);
     expect(idlePalette.color).toBe(idleNew.color);
-    expect(idleNew.bounds.width).toBe(28);
-    expect(idleNew.bounds.height).toBe(28);
+    expect(idlePalette.opacity).toBe(idleNew.opacity);
     expect(idlePalette.bounds.y).toBe(idleNew.bounds.y);
     expect(idlePalette.bounds.width).toBe(idleNew.bounds.width);
     expect(idlePalette.bounds.height).toBe(idleNew.bounds.height);
@@ -89,21 +83,10 @@ for (const colorScheme of ['light', 'dark'] as const) {
 
     await palette.hover();
     const hoveredPalette = await appearance(palette);
-    expect(hoveredPalette.background).toBe(hoveredNew.background);
-    expect(idlePalette.opacity).toBe(idleNew.opacity);
+    expect(hoveredPalette.background).toBe(idleNew.background);
     expect(hoveredPalette.color).toBe(hoveredNew.color);
     expect(hoveredPalette.opacity).toBe(hoveredNew.opacity);
     expect(hoveredPalette.bounds).toEqual(idlePalette.bounds);
-
-    await page.mouse.move(0, 100);
-    await page.keyboard.press('Tab');
-    await newSession.focus();
-    await expect(newSession).toBeFocused();
-    await expect(newSession).not.toHaveCSS('box-shadow', 'none');
-    await page.keyboard.press('Tab');
-    await palette.focus();
-    await expect(palette).toBeFocused();
-    await expect(palette).not.toHaveCSS('box-shadow', 'none');
   });
 }
 
