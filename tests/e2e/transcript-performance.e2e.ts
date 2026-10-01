@@ -1,5 +1,4 @@
 import { expect, test } from './fixtures';
-import confirmedSlowFrameRatio from './performance-sampling';
 
 const fixtureUrl = '/?fixture=long-transcript';
 
@@ -126,11 +125,11 @@ test('keeps frame delivery and mounted rows bounded during a full sweep', async 
     expect(metrics.percentile95).toBeLessThan(67);
     expect(metrics.longTaskDuration).toBeLessThan(1_000);
   }
-  expect(
-    confirmedSlowFrameRatio(
-      sweeps.map((metrics) => metrics.slowFrameRatio),
-      0.12,
-    ),
-  ).toBeLessThan(0.12);
+  const slowFrameRatios = sweeps
+    .map((metrics) => metrics.slowFrameRatio)
+    .sort((left, right) => left - right);
+  expect(slowFrameRatios[Math.floor(slowFrameRatios.length / 2)]).toBeLessThan(
+    0.12,
+  );
   await expect(page.locator('[data-index="0"]')).toBeVisible();
 });
