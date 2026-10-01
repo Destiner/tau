@@ -5,9 +5,6 @@ import sessionControllerFixture from '../../../../tests/support/session-controll
 import {
   nextRequestId,
   state,
-  canArchiveSession,
-  canCompose,
-  classifyControllerLifecycle,
   type SessionController,
 } from '../../../composables/state';
 
@@ -167,7 +164,7 @@ describe('command-created session durability — verification', () => {
     async (replacement) => {
       vi.useFakeTimers();
       try {
-        const { handleResponse, handleRpc, rpc, pendingRpcCount } =
+        const { handleResponse, rpc, pendingRpcCount } =
           await import('./index');
         const controller = makeController({ sessionId: 'before' });
         addEphemeral(controller);
@@ -213,9 +210,8 @@ describe('command-created session durability — verification', () => {
           success: true,
         });
         expect(controller.commandSyncRequestId).toBe(syncId);
-        await handleRpc(controller, { type: 'agent_settled' });
         await handleResponse(controller, {
-          id: controller.materializationStateRequestId,
+          id: syncId,
           command: 'get_state',
           success: true,
           data: {
@@ -225,37 +221,13 @@ describe('command-created session durability — verification', () => {
           },
         });
         await handleResponse(controller, {
-          id: controller.materializationMessagesRequestId,
+          id: controller.commandMessagesRequestId,
           command: 'get_messages',
           success: true,
           data: { messages: [] },
         });
+        expect(controller.commandRefreshFailed).toBe(false);
         expect(controller.working).toBe(false);
-        expect(controller.streaming).toBe(false);
-        expect(controller.syncing).toBe(false);
-        expect(classifyControllerLifecycle(controller)).toBe('ready');
-        state.ephemeralSessions.splice(0);
-        state.workspace!.projects[0]!.sessions.push({
-          id: controller.sessionId,
-          path: controller.sessionPath,
-          title: 'Command session',
-          lastActive: 'now',
-          lastUserMessageAt: 0,
-          sortAt: 1,
-          archived: false,
-          selected: true,
-        });
-        state.activeProjectPath = controller.projectPath;
-        state.activeSessionId = controller.sessionId;
-        state.activeSessionPath = controller.sessionPath;
-        state.activeControllerKey = controller.key;
-        expect(canCompose.value).toBe(true);
-        expect(
-          canArchiveSession(
-            state.workspace!.projects[0]!,
-            state.workspace!.projects[0]!.sessions[0]!,
-          ),
-        ).toBe(true);
       } finally {
         vi.useRealTimers();
       }

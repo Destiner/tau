@@ -99,19 +99,16 @@ async function handleResponse(
         response.success === true ? 'success' : 'error',
       )
     : { matched: false };
-  const commandGeneration =
-    command === 'prompt' && responseKey
-      ? takeCommandDispatch(responseKey)
-      : undefined;
-  const commandResult =
-    commandGeneration !== undefined
-      ? {
-          matched: true,
-          method: 'prompt',
-          dispatchSnapshot: { generation: commandGeneration },
-        }
-      : pendingResult;
-  if (responseId && !pendingResult.matched && commandGeneration === undefined) {
+  const retainedCommand =
+    command === 'prompt' &&
+    Boolean(responseKey) &&
+    takeCommandDispatch(responseKey);
+  const correlatedCommandPrompt =
+    retainedCommand ||
+    (pendingResult.matched &&
+      pendingResult.method === 'prompt' &&
+      pendingResult.dispatchSnapshot?.generation === controller.generation);
+  if (responseId && !pendingResult.matched && !retainedCommand) {
     recordRpcResponseAnomaly('unmatched_or_duplicate', responseId, {
       sessionId: controller.sessionId,
       controllerId: controller.key,
@@ -261,11 +258,7 @@ async function handleResponse(
   if (
     command === 'prompt' &&
     !resolvesSubmittedPrompt &&
-    !(
-      commandResult.matched &&
-      commandResult.method === 'prompt' &&
-      commandResult.dispatchSnapshot?.generation === controller.generation
-    )
+    !correlatedCommandPrompt
   ) {
     return;
   }
@@ -279,9 +272,7 @@ async function handleResponse(
     command === 'prompt' &&
     Boolean(controller.commandPromptRequestId) &&
     responseId === controller.commandPromptRequestId &&
-    commandResult.matched &&
-    commandResult.method === 'prompt' &&
-    commandResult.dispatchSnapshot?.generation === controller.generation
+    correlatedCommandPrompt
   ) {
     if (response.success === true) {
       // Establish the read watch before releasing command execution ownership.

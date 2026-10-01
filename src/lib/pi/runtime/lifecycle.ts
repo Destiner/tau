@@ -380,9 +380,6 @@ function cleanupRejectedRpcDispatch(
   }
   if (controller.commandPromptRequestId === requestId) {
     controller.commandPromptRequestId = '';
-    discardCommandDispatch(
-      rpcSpanKey(controller.runtimeId, controller.generation, requestId),
-    );
   }
   if (
     controller.commandSyncRequestId === requestId ||
@@ -525,7 +522,7 @@ async function rpc(
         method === 'prompt' &&
         controller.commandPromptRequestId === requestId
       )
-        retainCommandDispatch(key, snapshot.generation);
+        retainCommandDispatch(key);
     } else {
       // Pi consumes extension UI responses without emitting a response envelope.
       fireAndForgetSpanEnd = span.end;
