@@ -304,7 +304,9 @@ import {
 import {
   appCommandDispatchKey,
   appCommandLookupKey,
+  type AppCommandTarget,
 } from './lib/app-commands/binding';
+import controlBlocked from './lib/app-commands/control-context';
 import { paletteLayerOpen } from './lib/app-commands/surface';
 import appVersion from './lib/app-version';
 import { loadSidebarWidth } from './lib/sidebar-width';
@@ -460,11 +462,11 @@ const palettePlaceholder = computed(
       efforts: 'Search efforts…',
     })[palettePage.value],
 );
-function blockingSurface(): boolean {
+function blockingSurface(includeInlinePrompt = true): boolean {
   return Boolean(
     quitRequest.value ||
     state.remoteDialogOpen ||
-    activeExtensionDialog.value ||
+    (includeInlinePrompt && activeExtensionDialog.value) ||
     feedbackDialogOpen.value ||
     fullscreenViewerOpen.value ||
     sessionHeader.value?.renaming ||
@@ -489,19 +491,23 @@ const commandSession = (ctx: CommandContext): SessionSummary | undefined => {
   );
 };
 const commands = new CommandRegistry<CommandContext>();
+function controlContext(id: string, target?: AppCommandTarget): CommandContext {
+  return {
+    ...context(),
+    ...target,
+    blocked: controlBlocked(
+      id,
+      target,
+      Boolean(activeExtensionDialog.value),
+      blockingSurface(false),
+    ),
+  };
+}
 provide(appCommandDispatchKey, (id, target) => {
-  const ctx = { ...context(), ...target };
-  // Existing sidebar actions can open a project layer over an extension prompt.
-  // The palette remains blocked there, but the pointer flow must still work.
-  if (
-    activeExtensionDialog.value &&
-    (id === 'project.openLocal' || id === 'project.openRemote')
-  )
-    ctx.blocked = false;
-  void commands.dispatch(id, ctx);
+  void commands.dispatch(id, controlContext(id, target));
 });
 provide(appCommandLookupKey, (id, target) => {
-  const entry = commands.discover(id, { ...context(), ...target });
+  const entry = commands.discover(id, controlContext(id, target));
   return (
     entry && {
       title: entry.title,
