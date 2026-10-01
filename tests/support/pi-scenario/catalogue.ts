@@ -15,9 +15,7 @@ import savedSessionExtensionPrompt, {
   escapeCancellationPrompt,
   savedSessionExtensionPromptProjectSwitching,
 } from './saved-session-extension-prompt';
-import savedSessionExtensionPromptNavigation, {
-  savedSessionExtensionPromptCycling,
-} from './saved-session-extension-prompt-navigation';
+import savedSessionExtensionPromptCycling from './saved-session-extension-prompt-navigation';
 import {
   savedSessionExtensionEditorNavigation,
   savedSessionExtensionInputNavigation,
@@ -77,7 +75,6 @@ const scenarios = [
   savedSessionLongHistory,
   savedSessionExtensionPrompt,
   savedSessionExtensionPromptProjectSwitching,
-  savedSessionExtensionPromptNavigation,
   savedSessionExtensionPromptCycling,
   savedSessionExtensionInputNavigation,
   savedSessionExtensionEditorNavigation,

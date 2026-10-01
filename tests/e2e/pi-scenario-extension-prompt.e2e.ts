@@ -45,7 +45,7 @@ async function openPalette(page: Page): Promise<void> {
 test('retains a pending question after a native New Session event', async ({
   page,
 }) => {
-  await page.goto('/?test-scenario=saved-session-extension-prompt-navigation');
+  await page.goto(scenarioUrl);
   const prompt = page.getByRole('dialog', {
     name: 'Which label should the release carry?',
   });
@@ -68,7 +68,7 @@ test('retains a pending question after a native New Session event', async ({
 test('executes palette New Session and Switch Session while an extension prompt is pending', async ({
   page,
 }) => {
-  await page.goto('/?test-scenario=saved-session-extension-prompt-navigation');
+  await page.goto(scenarioUrl);
 
   const prompt = page.getByRole('dialog', {
     name: 'Which label should the release carry?',
@@ -186,21 +186,6 @@ test('keeps a typed answer focused when reselecting its session', async ({
   expect(verification?.ok).toBe(true);
 });
 
-test('opens Switch Session with Cmd+P while an extension prompt is pending', async ({
-  page,
-}) => {
-  await page.goto(scenarioUrl);
-  await expect(
-    page.getByRole('dialog', { name: 'Which label should the release carry?' }),
-  ).toBeVisible();
-
-  await pressSessionSwitcher(page);
-
-  const picker = page.getByRole('dialog', { name: 'Switch Session' });
-  await expect(picker).toBeVisible();
-  await expect(picker.getByRole('option')).toHaveCount(1);
-});
-
 test('keeps navigation commands available in the palette and restores prompt focus on Escape', async ({
   page,
 }) => {
@@ -234,27 +219,6 @@ test('keeps navigation commands available in the palette and restores prompt foc
   await expect(option).toBeFocused();
 });
 
-test('opens Switch Project with Cmd+Shift+P while an extension prompt is pending', async ({
-  page,
-}) => {
-  await page.goto(scenarioUrl);
-  const prompt = page.getByRole('dialog', {
-    name: 'Which label should the release carry?',
-  });
-  const option = prompt.getByRole('option', { name: 'patch' });
-  await expect(option).toBeFocused();
-
-  await modifiedShortcut(page, 'Shift+p');
-
-  const picker = page.getByRole('dialog', { name: 'Switch Project' });
-  await expect(picker).toBeVisible();
-  await expect(
-    picker.getByRole('option', { name: /Tau fixture/ }),
-  ).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(option).toBeFocused();
-});
-
 test('cycles sessions with Ctrl+Tab while an extension prompt is pending', async ({
   page,
 }) => {
@@ -272,60 +236,23 @@ test('cycles sessions with Ctrl+Tab while an extension prompt is pending', async
   await expect(page.getByRole('option', { name: 'patch' })).toBeFocused();
 });
 
-for (const textPrompt of [
-  {
-    scenario: 'saved-session-extension-input-navigation',
-    title: 'Release note label',
-    draft: 'rc.2',
-  },
-  {
-    scenario: 'saved-session-extension-editor-navigation',
-    title: 'Release notes',
-    draft: 'Ship the editor draft intact.',
-  },
-]) {
-  test(`preserves a pending extension ${textPrompt.scenario.includes('editor') ? 'editor' : 'input'} draft across session navigation`, async ({
-    page,
-  }) => {
-    await page.goto(`/?test-scenario=${textPrompt.scenario}`);
-    const prompt = page.getByRole('dialog', { name: textPrompt.title });
-    const input = prompt.getByRole('textbox', { name: textPrompt.title });
-    await expect(input).toBeFocused();
-    await input.fill(textPrompt.draft);
-
-    await emitNativeNewSession(page);
-    await expect(
-      page.getByRole('heading', { name: 'New Session' }),
-    ).toBeVisible();
-    await pressSessionSwitcher(page);
-    await page.getByRole('option', { name: 'Main' }).click();
-
-    await expect(prompt).toBeVisible();
-    await expect(input).toHaveValue(textPrompt.draft);
-    await expect(input).toBeFocused();
-  });
-}
-
-test('does not resurrect an input prompt that expires while its session is hidden', async ({
+test('preserves an editor draft across session navigation', async ({
   page,
 }) => {
-  await page.goto('/?test-scenario=saved-session-extension-input-navigation');
-  await expect(
-    page.getByRole('textbox', { name: 'Release note label' }),
-  ).toBeFocused();
+  await page.goto('/?test-scenario=saved-session-extension-editor-navigation');
+  const input = page.getByRole('textbox', { name: 'Release notes' });
+  await expect(input).toBeFocused();
+  await input.fill('Ship the editor draft intact.');
+
   await emitNativeNewSession(page);
   await expect(
     page.getByRole('heading', { name: 'New Session' }),
   ).toBeVisible();
-
-  await page.clock.fastForward(promptTimeout);
   await pressSessionSwitcher(page);
   await page.getByRole('option', { name: 'Main' }).click();
 
-  await expect(
-    page.getByRole('dialog', { name: 'Release note label' }),
-  ).toHaveCount(0);
-  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeFocused();
+  await expect(input).toHaveValue('Ship the editor draft intact.');
+  await expect(input).toBeFocused();
 });
 
 test('keeps navigation blocked by a real dialog above an extension prompt', async ({

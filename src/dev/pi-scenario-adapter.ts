@@ -190,12 +190,6 @@ const REQUIRED_NATIVE_COUNTS = {
     register_session: 1,
     set_active_session: 1,
   },
-  'saved-session-extension-prompt-navigation': {
-    load_workspace: 1,
-    read_model_scope: 1,
-    register_session: 1,
-    set_active_session: 1,
-  },
   'saved-session-extension-prompt-project-switching': {
     load_workspace: 1,
     read_model_scope: 2,
@@ -799,7 +793,6 @@ function installPiScenarioAdapter(scenarioName: string): void {
         if (
           command === 'set_active_session' &&
           ![
-            'saved-session-extension-prompt-navigation',
             'saved-session-extension-prompt-project-switching',
             'saved-session-extension-prompt-cycling',
             'saved-session-extension-input-navigation',

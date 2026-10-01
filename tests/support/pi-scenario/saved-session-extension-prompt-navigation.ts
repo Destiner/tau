@@ -27,27 +27,6 @@ const navigationPrompt = {
   },
 } as const satisfies PiScenarioStep;
 
-const savedSessionExtensionPromptNavigation = definePiScenario({
-  metadata: {
-    name: 'saved-session-extension-prompt-navigation',
-    purpose:
-      'Navigate away from a pending extension question and return to its retained runtime.',
-    qualityRule:
-      'docs/quality.md §§2 and 6: navigation preserves session-owned work and returns focus to a valid control.',
-    schemaVersion: 1,
-  },
-  runtimes: [{ key: 'main', generation: 2 }],
-  steps: [
-    ...successfulBootstrapSteps('main', 'main-bootstrap', mainSessionState).map(
-      (step) =>
-        step.kind === 'response' && step.command === 'get_messages'
-          ? { ...step, data: { messages: history } }
-          : step,
-    ),
-    navigationPrompt,
-  ],
-});
-
 const savedSessionExtensionPromptCycling = definePiScenario({
   metadata: {
     name: 'saved-session-extension-prompt-cycling',
@@ -76,5 +55,4 @@ const savedSessionExtensionPromptCycling = definePiScenario({
   ],
 });
 
-export default savedSessionExtensionPromptNavigation;
-export { savedSessionExtensionPromptCycling };
+export default savedSessionExtensionPromptCycling;
