@@ -13,7 +13,15 @@ import savedSessionCompactionNotifications from './saved-session-compaction-noti
 import savedSessionExtensionPrompt, {
   emptySessionExtensionPrompt,
   escapeCancellationPrompt,
+  savedSessionExtensionPromptProjectSwitching,
 } from './saved-session-extension-prompt';
+import savedSessionExtensionPromptNavigation, {
+  savedSessionExtensionPromptCycling,
+} from './saved-session-extension-prompt-navigation';
+import {
+  savedSessionExtensionEditorNavigation,
+  savedSessionExtensionInputNavigation,
+} from './saved-session-extension-text-prompt-navigation';
 import {
   savedSessionHistory,
   savedSessionLongHistory,
@@ -68,6 +76,11 @@ const scenarios = [
   savedSessionShortHistory,
   savedSessionLongHistory,
   savedSessionExtensionPrompt,
+  savedSessionExtensionPromptProjectSwitching,
+  savedSessionExtensionPromptNavigation,
+  savedSessionExtensionPromptCycling,
+  savedSessionExtensionInputNavigation,
+  savedSessionExtensionEditorNavigation,
   emptySessionExtensionPrompt,
   escapeCancellationPrompt,
   archivedSessionsReview,

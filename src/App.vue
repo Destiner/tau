@@ -423,6 +423,7 @@ type CommandContext = {
   projectPath: string;
   sessionId: string;
   blocked: boolean;
+  navigationBlocked: boolean;
 };
 const platform = /Mac|iPhone|iPad/.test(navigator.platform) ? 'mac' : 'non-mac';
 const paletteOpen = ref(false);
@@ -460,24 +461,29 @@ const palettePlaceholder = computed(
       efforts: 'Search efforts…',
     })[palettePage.value],
 );
-function blockingSurface(): boolean {
+function navigationBlockingSurface(): boolean {
   return Boolean(
     quitRequest.value ||
     state.remoteDialogOpen ||
-    activeExtensionDialog.value ||
     feedbackDialogOpen.value ||
     fullscreenViewerOpen.value ||
     sessionHeader.value?.renaming ||
     document.querySelector('.issue-report-popover[data-state="open"]'),
   );
 }
-const context = (pinned = false): CommandContext => ({
-  projectPath: pinned
-    ? paletteSelection.value.projectPath
-    : state.activeProjectPath,
-  sessionId: pinned ? paletteSelection.value.sessionId : state.activeSessionId,
-  blocked: blockingSurface(),
-});
+const context = (pinned = false): CommandContext => {
+  const navigationBlocked = navigationBlockingSurface();
+  return {
+    projectPath: pinned
+      ? paletteSelection.value.projectPath
+      : state.activeProjectPath,
+    sessionId: pinned
+      ? paletteSelection.value.sessionId
+      : state.activeSessionId,
+    blocked: Boolean(activeExtensionDialog.value) || navigationBlocked,
+    navigationBlocked,
+  };
+};
 const commandProject = (ctx: CommandContext): ProjectSummary | undefined =>
   state.workspace?.projects.find((project) => project.path === ctx.projectPath);
 const commandSession = (ctx: CommandContext): SessionSummary | undefined => {
@@ -542,6 +548,12 @@ function safe(ctx: CommandContext): boolean {
 function active(ctx: CommandContext): boolean {
   return safe(ctx) && Boolean(commandProject(ctx));
 }
+function navigationSafe(ctx: CommandContext): boolean {
+  return !ctx.navigationBlocked && !projectActionsDisabled.value;
+}
+function navigationActive(ctx: CommandContext): boolean {
+  return navigationSafe(ctx) && Boolean(commandProject(ctx));
+}
 function session(ctx: CommandContext): boolean {
   return active(ctx) && Boolean(commandSession(ctx));
 }
@@ -566,7 +578,7 @@ register(
   'session.new',
   'New Session',
   'Mod+N',
-  active,
+  navigationActive,
   async (ctx) => {
     const project = commandProject(ctx);
     if (project) await newSession(project);
@@ -614,7 +626,7 @@ register(
   () => openRemoteProjectDialog(),
   'Project',
 );
-register('session.switch', 'Switch Session', 'Mod+P', active, () => {
+register('session.switch', 'Switch Session', 'Mod+P', navigationActive, () => {
   if (!paletteOpen.value) openPalette();
   page('sessions');
 });
@@ -622,7 +634,7 @@ register(
   'project.switch',
   'Switch Project',
   'Mod+Shift+P',
-  (ctx) => safe(ctx) && Boolean(state.workspace?.projects.length),
+  (ctx) => navigationSafe(ctx) && Boolean(state.workspace?.projects.length),
   () => {
     if (!paletteOpen.value) openPalette();
     page('projects');
@@ -907,7 +919,7 @@ register(
   'Next Session',
   'Ctrl+Tab',
   (ctx) =>
-    active(ctx) &&
+    navigationActive(ctx) &&
     projectSessions(commandProject(ctx)!).some((s) => !s.archived),
   () => navigateSession(1),
 );
@@ -916,7 +928,7 @@ register(
   'Previous Session',
   'Ctrl+Shift+Tab',
   (ctx) =>
-    active(ctx) &&
+    navigationActive(ctx) &&
     projectSessions(commandProject(ctx)!).some((s) => !s.archived),
   () => navigateSession(-1),
 );
@@ -1045,12 +1057,12 @@ async function selectPaletteRow(id: string): Promise<void> {
     }
     const result = await commands.dispatch(id, ctx);
     if (result.status !== 'executed' && !nested) paletteOpen.value = true;
-    else if (!nested && id !== 'queue.review' && !blockingSurface())
+    else if (!nested && id !== 'queue.review' && !context().blocked)
       restorePaletteFocus();
     return;
   }
   const ctx = context(true);
-  if (ctx.blocked || projectActionsDisabled.value) return;
+  if (ctx.navigationBlocked || projectActionsDisabled.value) return;
   const project = commandProject(ctx);
   if (palettePage.value === 'sessions') {
     const target =
@@ -1077,6 +1089,7 @@ async function selectPaletteRow(id: string): Promise<void> {
     void nextTick(() => composerBar.value?.focus());
   } else if (palettePage.value === 'models') {
     if (
+      ctx.blocked ||
       !currentSession(ctx) ||
       settingsDisabled.value ||
       !models.value.some((m) => `${m.provider}/${m.id}` === id)
@@ -1088,7 +1101,13 @@ async function selectPaletteRow(id: string): Promise<void> {
     void nextTick(() => composerBar.value?.focus());
   } else {
     const effort = efforts.value.find((e) => e === id);
-    if (!effort || !currentSession(ctx) || settingsDisabled.value) return;
+    if (
+      !effort ||
+      ctx.blocked ||
+      !currentSession(ctx) ||
+      settingsDisabled.value
+    )
+      return;
     paletteOpen.value = false;
     composerBar.value?.closeSelectors();
     void selectEffort(effort);

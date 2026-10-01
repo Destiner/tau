@@ -55,6 +55,43 @@ const savedSessionExtensionPrompt = definePiScenario({
   ],
 });
 
+const secondProjectSessionState = {
+  sessionId: 'session-other-main',
+  sessionFile: '/fixture/other-project/session-other-main.jsonl',
+  sessionName: 'Other Main',
+  model: { provider: 'fixture', id: 'alpha', name: 'Alpha' },
+  thinkingLevel: 'high',
+} as const;
+
+const savedSessionExtensionPromptProjectSwitching = definePiScenario({
+  metadata: {
+    name: 'saved-session-extension-prompt-project-switching',
+    purpose:
+      'Keep an extension question focused after switching projects through the command palette.',
+    qualityRule:
+      'docs/quality.md Keyboard and focus: transient navigation restores focus to the active prompt.',
+    schemaVersion: 1,
+  },
+  runtimes: [
+    { key: runtime, generation: 2 },
+    { key: 'second-project', generation: 2 },
+  ],
+  steps: [
+    ...successfulBootstrapSteps(runtime, 'bootstrap', mainSessionState).map(
+      (step) =>
+        step.kind === 'response' && step.command === 'get_messages'
+          ? { ...step, data: { messages: history } }
+          : step,
+    ),
+    promptEvent,
+    ...successfulBootstrapSteps(
+      'second-project',
+      'second-project-bootstrap',
+      secondProjectSessionState,
+    ),
+  ],
+});
+
 /**
  * The same question asked of a session with nothing in it yet, which is where a
  * workflow phase usually asks: the transcript holds the prompt alone, and the
@@ -118,4 +155,9 @@ const emptySessionExtensionPrompt = definePiScenario({
 });
 
 export default savedSessionExtensionPrompt;
-export { emptySessionExtensionPrompt, escapeCancellationPrompt, promptTimeout };
+export {
+  emptySessionExtensionPrompt,
+  escapeCancellationPrompt,
+  promptTimeout,
+  savedSessionExtensionPromptProjectSwitching,
+};

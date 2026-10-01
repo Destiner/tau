@@ -25,7 +25,11 @@
 It preserves the underlying surface, draft, selection, and caret. Escape closes
 only the palette and restores valid origin focus. Commands that are unsafe in
 the current dirty, busy, or confirmation state are **not shown**; the palette
-has no disabled command rows.
+has no disabled command rows. An inline Pi question blocks ordinary commands,
+but New Session, Switch Session, Switch Project, and previous/next session
+navigation remain available without answering or cancelling the question. Its
+answer draft stays with its session. Global dialogs, fullscreen viewers, and
+other blocking surfaces still prevent navigation.
 
 On home (with no projects), **Show Update Status** and **Check for Updates**
 are omitted from the palette. They become available in a project workspace.
