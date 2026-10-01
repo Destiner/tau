@@ -59,6 +59,53 @@ async function openNestedPage(page: Page, command: string): Promise<void> {
   await search.press('Enter');
 }
 
+test('aligns command detail baselines without shifting rows or shortcuts', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
+  await openPalette(page);
+
+  const geometry = await page
+    .getByRole('option', { name: /Archive Session/ })
+    .evaluate(async (row) => {
+      await document.fonts.ready;
+      const title = row.querySelector('.command-palette-title')!;
+      const detail = row.querySelector('.command-palette-detail')!;
+      const baseline = (text: Element): number => {
+        const probe = document.createElement('span');
+        probe.style.cssText =
+          'display:inline-block;width:0;height:0;vertical-align:baseline';
+        text.prepend(probe);
+        const y = probe.getBoundingClientRect().bottom;
+        probe.remove();
+        return y;
+      };
+      const offset = baseline(detail) - baseline(title);
+      const bounds = row.getBoundingClientRect();
+      const shortcut = row.querySelector('kbd')!.getBoundingClientRect();
+      return {
+        offset,
+        height: bounds.height,
+        shortcutInside:
+          shortcut.left >= title.getBoundingClientRect().right &&
+          shortcut.right <= bounds.right,
+        shortcutCenterOffset:
+          shortcut.top + shortcut.height / 2 - (bounds.top + bounds.height / 2),
+      };
+    });
+
+  expect(Math.abs(geometry.offset)).toBeLessThan(0.2);
+  expect(geometry.height).toBe(28);
+  expect(geometry.shortcutInside).toBe(true);
+  expect(Math.abs(geometry.shortcutCenterOffset)).toBeLessThan(0.2);
+  expect(
+    await page
+      .getByRole('option', { name: /Choose Model/ })
+      .evaluate((row) => row.getBoundingClientRect().height),
+  ).toBe(geometry.height);
+});
+
 for (const colorScheme of ['light', 'dark'] as const) {
   test(`session header actions share fade feedback in ${colorScheme}`, async ({
     page,
