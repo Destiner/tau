@@ -432,9 +432,18 @@ export type CommandPaletteRow = {
 
 .command-palette-title,
 .command-palette-detail {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.command-palette-title {
+  flex: 0 1 auto;
+}
+
+.command-palette-detail {
+  flex: 1 1 0;
 }
 
 .command-palette-detail,

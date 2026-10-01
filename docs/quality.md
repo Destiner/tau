@@ -154,6 +154,10 @@ Concurrency bugs are the worst UX bugs.
   when blankness could be mistaken for loading, failure, or missing content;
   an action appears only when there is a useful next step. `[audit]`
 
+- In compact single-line command rows, primary action or identity labels take
+  space before secondary context. Truncate the secondary text first; ellipsize
+  the primary label only if it cannot fit on its own. `[e2e]`
+
 ## 9. Performance
 
 - Existing end-to-end performance invariants are regression guards and

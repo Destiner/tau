@@ -53,11 +53,149 @@ test('places the palette a quarter of the way down and keeps it inside short win
   ).toBeVisible();
 });
 
+async function expectPaletteRowLayout(
+  row: Locator,
+  { titleClipped = false, detailClipped = false } = {},
+): Promise<void> {
+  const geometry = await row.evaluate(async (element) => {
+    await document.fonts.ready;
+    const results = element.parentElement!;
+    const title = element.querySelector<HTMLElement>('.command-palette-title')!;
+    const detail = element.querySelector<HTMLElement>(
+      '.command-palette-detail',
+    );
+    const shortcut = element.querySelector<HTMLElement>('kbd');
+    const rowBounds = element.getBoundingClientRect();
+    const titleBounds = title.getBoundingClientRect();
+    const detailBounds = detail?.getBoundingClientRect();
+    const shortcutBounds = shortcut?.getBoundingClientRect();
+    return {
+      titleClipped: title.scrollWidth - title.clientWidth,
+      detailClipped: detail ? detail.scrollWidth - detail.clientWidth : 0,
+      titleRight: titleBounds.right,
+      detailLeft: detailBounds?.left,
+      detailRight: detailBounds?.right,
+      shortcutLeft: shortcutBounds?.left,
+      shortcutRight: shortcutBounds?.right,
+      rowRight: rowBounds.right,
+      height: rowBounds.height,
+      titleLines: getComputedStyle(title).whiteSpace,
+      detailLines: detail ? getComputedStyle(detail).whiteSpace : undefined,
+      listOverflow: results.scrollWidth - results.clientWidth,
+    };
+  });
+  if (titleClipped) expect(geometry.titleClipped).toBeGreaterThan(1);
+  else expect(geometry.titleClipped).toBeLessThanOrEqual(1);
+  if (detailClipped) expect(geometry.detailClipped).toBeGreaterThan(1);
+  expect(geometry.titleLines).toBe('nowrap');
+  if (geometry.detailLines) expect(geometry.detailLines).toBe('nowrap');
+  expect(geometry.height).toBe(28);
+  expect(geometry.listOverflow).toBeLessThanOrEqual(1);
+  if (geometry.detailLeft !== undefined) {
+    expect(geometry.titleRight).toBeLessThanOrEqual(geometry.detailLeft + 1);
+    expect(geometry.detailRight!).toBeLessThanOrEqual(
+      (geometry.shortcutLeft ?? geometry.rowRight) + 1,
+    );
+  }
+  if (geometry.shortcutLeft !== undefined) {
+    expect(geometry.titleRight).toBeLessThanOrEqual(geometry.shortcutLeft + 1);
+    expect(geometry.shortcutRight!).toBeLessThanOrEqual(geometry.rowRight + 1);
+  }
+}
+
 async function openNestedPage(page: Page, command: string): Promise<void> {
   const search = page.getByRole('combobox', { name: 'Command Palette' });
   await search.fill(command);
   await search.press('Enter');
 }
+
+test('prioritizes commands over long session details at desktop and narrow widths', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const composer = page.getByRole('textbox', { name: 'Message Pi' });
+  await expect(composer).toBeEnabled();
+  await page
+    .getByRole('button', { name: 'Workspace overview', exact: true })
+    .click();
+  const name = page.locator('input[aria-label="Session Name"]');
+  await name.fill(
+    'A long session name with many words that cannot fit beside any command label in the palette',
+  );
+  await name.press('Enter');
+  await expect(
+    page.getByRole('heading', { name: /A long session name/ }),
+  ).toBeVisible();
+
+  for (const width of [1280, 720, 360]) {
+    await page.setViewportSize({ width, height: 800 });
+    await openPalette(page);
+    for (const command of ['Mark as Unread', 'Archive Session']) {
+      await expectPaletteRowLayout(
+        page.getByRole('option', { name: new RegExp(command) }),
+        { detailClipped: true },
+      );
+    }
+    await expectPaletteRowLayout(
+      page.getByRole('option', { name: /Choose Model/ }),
+    );
+    await page.getByRole('option', { name: /Mark as Unread/ }).click();
+    await expect(composer).toBeFocused();
+    await openPalette(page);
+    await expectPaletteRowLayout(
+      page.getByRole('option', { name: /Mark as Read/ }),
+      {
+        detailClipped: true,
+      },
+    );
+    await page.getByRole('option', { name: /Mark as Read/ }).click();
+    await expect(composer).toBeFocused();
+  }
+});
+
+test('keeps project identities ahead of locations and bounds oversized session names', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
+  await page
+    .getByRole('button', { name: 'Workspace overview', exact: true })
+    .click();
+  const name = page.locator('input[aria-label="Session Name"]');
+  await name.fill(
+    'An exceptionally long primary session name that must ellipsize within a single compact picker row even when the window is narrow',
+  );
+  await name.press('Enter');
+
+  await page.setViewportSize({ width: 260, height: 800 });
+  await openPalette(page);
+  await expectPaletteRowLayout(
+    page.getByRole('option', { name: /Remove Project/ }),
+    {
+      detailClipped: true,
+    },
+  );
+  await page.setViewportSize({ width: 180, height: 800 });
+  await openNestedPage(page, 'Switch Project');
+  await expectPaletteRowLayout(page.getByRole('option', { name: /atlas/ }), {
+    detailClipped: true,
+  });
+  await page.setViewportSize({ width: 260, height: 800 });
+  await page.getByRole('button', { name: 'Back' }).click();
+  await openNestedPage(page, 'Switch Session');
+  await expectPaletteRowLayout(
+    page.getByRole('option', { name: /An exceptionally long/ }),
+    {
+      titleClipped: true,
+    },
+  );
+  await page.getByRole('button', { name: 'Back' }).click();
+  await openNestedPage(page, 'Choose Model');
+  await expectPaletteRowLayout(page.getByRole('option', { name: 'Tau Dev' }));
+  await page.getByRole('button', { name: 'Back' }).click();
+  await openNestedPage(page, 'Choose Thinking Effort');
+  await expectPaletteRowLayout(page.getByRole('option', { name: 'High' }));
+});
 
 test('aligns command detail baselines without shifting rows or shortcuts', async ({
   page,
