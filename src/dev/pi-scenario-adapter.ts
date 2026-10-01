@@ -79,6 +79,7 @@ declare global {
 }
 
 const PROJECT_PATH = '/fixture/tau-project';
+const OTHER_PROJECT_PATH = '/fixture/other-project';
 const REMOTE_CONNECTION = 'ssh fixture@example';
 const REMOTE_WORKING_DIRECTORY = '/remote/tau-project';
 const SESSION_ID = 'session-main';
@@ -89,6 +90,15 @@ const BACKUP_SESSION = {
   path: `${PROJECT_PATH}/session-backup.jsonl`,
   name: 'Backup',
 };
+const OTHER_PROJECT_SESSION = {
+  id: 'session-other-project',
+  path: `${OTHER_PROJECT_PATH}/session-other-project.jsonl`,
+  name: 'Other project',
+};
+const SIDEBAR_METADATA_ARCHIVES = [
+  { projectPath: PROJECT_PATH, session: BACKUP_SESSION },
+  { projectPath: OTHER_PROJECT_PATH, session: OTHER_PROJECT_SESSION },
+] as const;
 const REPLACEMENT_SESSION = {
   id: 'session-plan-42',
   path: `${PROJECT_PATH}/session-plan-42.jsonl`,
@@ -274,6 +284,14 @@ const REQUIRED_NATIVE_COUNTS = {
     set_active_project: 1,
     set_active_session: 2,
   },
+  'cross-project-sidebar-metadata-actions': {
+    load_workspace: 1,
+    read_model_scope: 1,
+    register_session: 1,
+    set_active_session: 1,
+    archive_session: 2,
+    unarchive_session: 1,
+  },
   'archived-sessions-review': {
     load_workspace: 1,
     read_model_scope: 2,
@@ -351,6 +369,7 @@ function scenarioWorkspace(scenarioName: string): WorkspaceSnapshot {
   }
   if (
     scenarioName === 'saved-session-prompt-process-exit' ||
+    scenarioName === 'cross-project-sidebar-metadata-actions' ||
     scenarioName === 'saved-session-command-replacement' ||
     scenarioName === 'plan-implement-replacement' ||
     scenarioName === 'delayed-successor-verification'
@@ -364,6 +383,27 @@ function scenarioWorkspace(scenarioName: string): WorkspaceSnapshot {
       sortAt: 0,
       archived: false,
       selected: false,
+    });
+  }
+  if (scenarioName === 'cross-project-sidebar-metadata-actions') {
+    workspace.projects.push({
+      path: OTHER_PROJECT_PATH,
+      name: 'Other fixture',
+      workingDirectory: OTHER_PROJECT_PATH,
+      collapsed: false,
+      selected: false,
+      sessions: [
+        {
+          id: OTHER_PROJECT_SESSION.id,
+          path: OTHER_PROJECT_SESSION.path,
+          title: OTHER_PROJECT_SESSION.name,
+          lastActive: '2026-01-02T03:04:03.000Z',
+          lastUserMessageAt: 0,
+          sortAt: 0,
+          archived: false,
+          selected: false,
+        },
+      ],
     });
   }
   if (
@@ -638,9 +678,48 @@ function installPiScenarioAdapter(scenarioName: string): void {
         selectWorkspaceSession(workspace, value.sessionId);
         return null;
       }
+      if (command === 'archive_session') {
+        const invocation = count(command);
+        if (scenarioName !== 'cross-project-sidebar-metadata-actions') {
+          throw new Error('Archived a session outside its scenario.');
+        }
+        const expected = SIDEBAR_METADATA_ARCHIVES[invocation - 1];
+        if (!expected) throw new Error('archive_session ran too many times.');
+        const projectPath = requiredString(args, 'projectPath', command);
+        const sessionId = requiredString(args, 'sessionId', command);
+        requireEqual(
+          projectPath,
+          expected.projectPath,
+          'archive_session.projectPath',
+        );
+        requireEqual(
+          sessionId,
+          expected.session.id,
+          'archive_session.sessionId',
+        );
+        const session = workspace.projects
+          .find((project) => project.path === projectPath)
+          ?.sessions.find((candidate) => candidate.id === sessionId);
+        if (!session) throw new Error(`Archived unknown session ${sessionId}.`);
+        session.archived = true;
+        session.selected = false;
+        return null;
+      }
       if (command === 'unarchive_session') {
         count(command);
         const sessionId = requiredString(args, 'sessionId', command);
+        if (scenarioName === 'cross-project-sidebar-metadata-actions') {
+          requireEqual(
+            requiredString(args, 'projectPath', command),
+            OTHER_PROJECT_PATH,
+            'unarchive_session.projectPath',
+          );
+          requireEqual(
+            sessionId,
+            OTHER_PROJECT_SESSION.id,
+            'unarchive_session.sessionId',
+          );
+        }
         const session = workspace.projects
           .flatMap((project) => project.sessions)
           .find((candidate) => candidate.id === sessionId);
