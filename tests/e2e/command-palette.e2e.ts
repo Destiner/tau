@@ -24,6 +24,28 @@ async function openPalette(page: Page): Promise<void> {
   ).toBeVisible();
 }
 
+test('places the palette a quarter of the way down and keeps it inside short windows', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(scenarioUrl);
+  await openPalette(page);
+
+  for (const height of [800, 360]) {
+    await page.setViewportSize({ width: 1280, height });
+    const bounds = await page
+      .getByRole('dialog', { name: 'Command Palette' })
+      .boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.y / height).toBeCloseTo(0.25, 2);
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(height - 31);
+  }
+
+  await expect(
+    page.getByRole('combobox', { name: 'Command Palette' }),
+  ).toBeVisible();
+});
+
 async function openNestedPage(page: Page, command: string): Promise<void> {
   const search = page.getByRole('combobox', { name: 'Command Palette' });
   await search.fill(command);
