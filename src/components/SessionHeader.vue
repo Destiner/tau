@@ -47,7 +47,7 @@
       side="bottom"
     >
       <UiIconButton
-        class="session-new-button"
+        class="session-header-action"
         size="lg"
         label="New Session"
         :disabled="projectActionsDisabled"
@@ -62,9 +62,8 @@
       side="bottom"
     >
       <UiIconButton
-        class="session-palette-button"
+        class="session-header-action session-palette-button"
         size="lg"
-        variant="fill"
         label="Open Command Palette"
         @pointerdown.prevent
         @click="handlePaletteToggle"
@@ -211,8 +210,7 @@ defineExpose({
   gap: 6px;
 }
 
-.session-new-button,
-.session-palette-button {
+.session-header-action {
   flex: none;
   width: 24px;
   height: 24px;
