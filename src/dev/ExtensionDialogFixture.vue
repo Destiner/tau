@@ -40,6 +40,8 @@ const requestedMethod = params.get('method');
 const method = isPromptMethod(requestedMethod) ? requestedMethod : 'select';
 const submitting = params.get('submitting') === 'true';
 const disabled = params.get('disabled') === 'true';
+const toolHistory = params.get('history') === 'tools';
+const compactPrompt = params.get('prompt') === 'compact';
 
 const title = [
   'Plan /home/agent/.pi/workflows/implement/RHI-6283/implementation-plan.md',
@@ -58,32 +60,57 @@ const message = [
 
   `| label-wide | ${'0123456789abcdef'.repeat(8)} | team-wide |`,
   ...Array.from(
-    { length: 40 },
+    { length: compactPrompt ? 0 : 40 },
     (_, index) => `| label-${index} | Reason number ${index} | team-${index} |`,
   ),
 ].join('\n');
 
 /** History above the prompt, so the prompt is reached by scrolling to it. */
 const messages = ref<TranscriptEntry[]>(
-  Array.from({ length: 8 }, (_, index) => index).flatMap((index) => [
-    { id: `user-${index}`, kind: 'user', text: `History prompt ${index}` },
-    {
-      id: `assistant-${index}`,
-      kind: 'assistant',
-      text: `Reply ${index}. Something the reader saw before the question.`,
-    },
-  ]),
+  toolHistory
+    ? Array.from({ length: 12 }, (_, turn): TranscriptEntry[] => [
+        { id: `user-${turn}`, kind: 'user', text: `History prompt ${turn}` },
+        ...Array.from({ length: 14 }, (_, call): TranscriptEntry => ({
+          id: `tool-${turn}-${call}`,
+          kind: 'tool',
+          text: `fixture-file-${turn}-${call}.ts`,
+          toolName: 'read',
+          toolArguments: JSON.stringify({
+            path: `fixture-file-${turn}-${call}.ts`,
+          }),
+          toolResult: `Result for tool ${turn}-${call}\n${'sample line\n'.repeat(12)}`,
+        })),
+        {
+          id: `assistant-${turn}`,
+          kind: 'assistant',
+          text:
+            turn % 3 === 0
+              ? `Reply ${turn}.\n\n${'A longer paragraph about the synthetic history. '.repeat(12)}`
+              : `Reply ${turn}. Something the reader saw before the question.`,
+        },
+      ]).flat()
+    : Array.from({ length: 8 }, (_, index) => index).flatMap((index) => [
+        { id: `user-${index}`, kind: 'user', text: `History prompt ${index}` },
+        {
+          id: `assistant-${index}`,
+          kind: 'assistant',
+          text: `Reply ${index}. Something the reader saw before the question.`,
+        },
+      ]),
 );
 
 const prompt = reactive<ExtensionDialog>({
   key: 'fixture-prompt',
   requestId: 'fixture-request',
   method,
-  title,
-  message,
+  title: compactPrompt ? 'Approve the synthetic plan?' : title,
+  message: compactPrompt ? 'The fixture is ready for review.' : message,
   options:
     method === 'select'
-      ? Array.from({ length: 12 }, (_, index) => `label-${index}`)
+      ? Array.from(
+          { length: compactPrompt ? 2 : 12 },
+          (_, index) => `label-${index}`,
+        )
       : undefined,
   draft: params.get('draft') ?? '',
   submitting,
