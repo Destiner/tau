@@ -6,10 +6,8 @@ type Geometry = {
   scrollTop: number;
   scrollHeight: number;
   clientHeight: number;
-  viewport: { top: number; bottom: number };
-  list: { top: number; bottom: number; height: number };
-  window: { top: number; bottom: number };
-  rows: { id: string; index: number; top: number; bottom: number }[];
+  list: { bottom: number; height: number };
+  rows: { id: string; bottom: number }[];
   prompt: { top: number; bottom: number };
   actionHit: boolean;
 };
@@ -21,10 +19,6 @@ async function geometry(page: Page): Promise<Geometry> {
       element.querySelector<HTMLElement>('.message-window')!;
     const prompt = element.querySelector<HTMLElement>('.message.prompt')!;
     const action = prompt.querySelector<HTMLElement>('button')!;
-    const bounds = (node: Element): { top: number; bottom: number } => {
-      const { top, bottom } = node.getBoundingClientRect();
-      return { top, bottom };
-    };
     const actionBox = action.getBoundingClientRect();
     const hit = document.elementFromPoint(
       actionBox.left + actionBox.width / 2,
@@ -34,17 +28,20 @@ async function geometry(page: Page): Promise<Geometry> {
       scrollTop: element.scrollTop,
       scrollHeight: element.scrollHeight,
       clientHeight: element.clientHeight,
-      viewport: bounds(element),
-      list: { ...bounds(list), height: list.getBoundingClientRect().height },
-      window: bounds(windowElement),
+      list: {
+        bottom: list.getBoundingClientRect().bottom,
+        height: list.getBoundingClientRect().height,
+      },
       rows: Array.from(
         windowElement.querySelectorAll<HTMLElement>('[data-message-id]'),
       ).map((row) => ({
         id: row.dataset.messageId ?? '',
-        index: Number(row.dataset.index),
-        ...bounds(row),
+        bottom: row.getBoundingClientRect().bottom,
       })),
-      prompt: bounds(prompt),
+      prompt: {
+        top: prompt.getBoundingClientRect().top,
+        bottom: prompt.getBoundingClientRect().bottom,
+      },
       actionHit: hit === action || action.contains(hit),
     };
   });
@@ -59,16 +56,13 @@ async function frame(page: Page): Promise<void> {
   );
 }
 
-async function wheelTo(
-  page: Page,
-  direction: -1 | 1,
-  samples: Geometry[],
-): Promise<void> {
+async function wheelTo(page: Page, direction: -1 | 1): Promise<void> {
   const pane = page.getByLabel('Transcript');
   const box = await pane.boundingBox();
   if (!box) throw new Error('Transcript has no bounds');
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
 
+  let last: Geometry | undefined;
   for (let step = 0; step < 160; step++) {
     const before = await geometry(page);
     const limit = Math.max(0, before.scrollHeight - before.clientHeight);
@@ -77,13 +71,13 @@ async function wheelTo(
     await page.mouse.wheel(0, direction * 420);
     await frame(page);
     const after = await geometry(page);
-    samples.push(after);
+    last = after;
     expect(after.rows.length).toBeLessThan(50);
     expect(after.prompt.top).toBeGreaterThanOrEqual(after.list.bottom - 2);
     expect(after.list.height).toBeGreaterThan(0);
   }
   throw new Error(
-    `Wheel never reached ${direction < 0 ? 'top' : 'bottom'}; last geometry: ${JSON.stringify(samples.at(-1))}`,
+    `Wheel never reached ${direction < 0 ? 'top' : 'bottom'}; last geometry: ${JSON.stringify(last)}`,
   );
 }
 
@@ -101,8 +95,7 @@ test('tool disclosure and prompt draft survive wheel unmount and direct endpoint
     node.setSelectionRange(2, 7);
   });
   const promptHandle = await page.locator('.message.prompt').elementHandle();
-  const samples: Geometry[] = [];
-  await wheelTo(page, -1, samples);
+  await wheelTo(page, -1);
   const earlyTool = pane.locator('[data-message-id="tool-0-0"]');
   await earlyTool.locator('button').click();
   await expect(earlyTool.locator('.activity-details')).toBeVisible();
@@ -120,7 +113,7 @@ test('tool disclosure and prompt draft survive wheel unmount and direct endpoint
   await expect(
     pane.locator('[data-message-id="tool-0-0"] .activity-details'),
   ).toBeVisible();
-  await wheelTo(page, 1, samples);
+  await wheelTo(page, 1);
   expect(
     await page
       .locator('.message.prompt')
@@ -133,9 +126,8 @@ test('tool disclosure and prompt draft survive wheel unmount and direct endpoint
       node.selectionEnd,
     ]),
   ).toEqual([2, 7]);
-  expect((await geometry(page)).prompt.top).toBeGreaterThanOrEqual(
-    (await geometry(page)).list.bottom - 2,
-  );
+  const end = await geometry(page);
+  expect(end.prompt.top).toBeGreaterThanOrEqual(end.list.bottom - 2);
 });
 
 for (const promptSize of ['compact', 'tall'] as const) {
@@ -156,23 +148,15 @@ for (const promptSize of ['compact', 'tall'] as const) {
         ),
       )
       .toBeLessThanOrEqual(2);
-    const samples: Geometry[] = [await geometry(page)];
     const initialPrompt = await prompt.elementHandle();
     for (let trip = 0; trip < 2; trip++) {
-      await wheelTo(page, -1, samples);
+      await wheelTo(page, -1);
       await expect(pane.locator('[data-message-id="user-0"]')).toBeVisible();
-      if (trip === 0) {
-        await test.info().attach('top', {
-          body: await pane.screenshot(),
-          contentType: 'image/png',
-        });
-      }
-      // Reverse while newly mounted rows are still being measured, as well as after settling.
+      // Reverse before and after newly mounted rows settle.
       if (trip === 1) await frame(page);
-      await wheelTo(page, 1, samples);
+      await wheelTo(page, 1);
       await frame(page);
       const end = await geometry(page);
-      samples.push(end);
       expect(
         end.scrollHeight - end.scrollTop - end.clientHeight,
       ).toBeLessThanOrEqual(2);
@@ -180,12 +164,6 @@ for (const promptSize of ['compact', 'tall'] as const) {
       expect(end.rows.at(-1)?.bottom).toBeLessThanOrEqual(end.list.bottom + 2);
       if (promptSize === 'compact') expect(end.actionHit).toBe(true);
       expect(end.rows.some((row) => row.id === 'tool-0-0')).toBe(false);
-      if (trip === 0) {
-        await test.info().attach('bottom', {
-          body: await pane.screenshot(),
-          contentType: 'image/png',
-        });
-      }
       expect(
         await prompt.evaluate(
           (node, original) => node === original,
@@ -193,10 +171,6 @@ for (const promptSize of ['compact', 'tall'] as const) {
         ),
       ).toBe(true);
     }
-    await test.info().attach('wheel-geometry', {
-      body: JSON.stringify(samples),
-      contentType: 'application/json',
-    });
     await prompt.getByRole('option').last().scrollIntoViewIfNeeded();
     await prompt.getByRole('option').last().click();
     await expect(page.getByTestId('dialog-outcome')).toHaveText(
