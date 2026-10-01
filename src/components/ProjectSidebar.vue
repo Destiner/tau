@@ -180,11 +180,10 @@
                 <UiTooltip
                   v-if="canArchiveSession(project, session)"
                   :text="
-                    (commandHint?.('session.archive', {
+                    commandHint?.('session.archive', {
                       projectPath: project.path,
                       sessionId: session.id,
-                    })?.title ?? 'Archive Session') +
-                    ' · Focus row for shortcut'
+                    })?.title ?? 'Archive Session'
                   "
                   :shortcut="
                     commandHint?.('session.archive', {

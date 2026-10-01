@@ -73,10 +73,10 @@
           <span class="time">{{ relativeTime(entry) }}</span>
           <UiTooltip
             :text="
-              (commandHint?.('session.unarchive', {
+              commandHint?.('session.unarchive', {
                 projectPath: entry.projectPath,
                 sessionId: entry.session.id,
-              })?.title ?? 'Unarchive Session') + ' · Focus row for shortcut'
+              })?.title ?? 'Unarchive Session'
             "
             :shortcut="
               commandHint?.('session.unarchive', {
