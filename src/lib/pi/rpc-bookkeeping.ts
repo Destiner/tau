@@ -16,6 +16,23 @@ interface PendingRpcSpan {
 }
 
 const pendingRpcSpans = new Map<string, PendingRpcSpan>();
+// Command execution may outlive the telemetry span. Keep only its dispatch
+// correlation until Pi replies or the owning runtime is released.
+const commandDispatches = new Map<string, number>();
+
+function retainCommandDispatch(key: string, generation: number): void {
+  commandDispatches.set(key, generation);
+}
+
+function takeCommandDispatch(key: string): number | undefined {
+  const generation = commandDispatches.get(key);
+  commandDispatches.delete(key);
+  return generation;
+}
+
+function discardCommandDispatch(key: string): void {
+  commandDispatches.delete(key);
+}
 
 function rpcSpanKey(
   runtimeId: string,
@@ -94,6 +111,10 @@ function abandonPendingRpcSpans(
   for (const key of pendingRpcSpans.keys()) {
     if (key.startsWith(prefix) && key !== `${prefix}${retainedRequestId}`)
       endPendingRpcSpan(key, outcome);
+  }
+  for (const key of commandDispatches.keys()) {
+    if (key.startsWith(prefix) && key !== `${prefix}${retainedRequestId}`)
+      commandDispatches.delete(key);
   }
 }
 
@@ -175,5 +196,8 @@ export {
   resetStreamAggregate,
   recordStreamDelta,
   flushStreamAggregate,
+  retainCommandDispatch,
+  takeCommandDispatch,
+  discardCommandDispatch,
   type RpcDispatchSnapshot,
 };

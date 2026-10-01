@@ -37,6 +37,8 @@ import {
   endPendingRpcSpan,
   abandonPendingRpcSpans,
   flushStreamAggregate,
+  retainCommandDispatch,
+  discardCommandDispatch,
   type RpcDispatchSnapshot,
 } from '../rpc-bookkeeping';
 import { stringValue } from '../transcript';
@@ -378,6 +380,9 @@ function cleanupRejectedRpcDispatch(
   }
   if (controller.commandPromptRequestId === requestId) {
     controller.commandPromptRequestId = '';
+    discardCommandDispatch(
+      rpcSpanKey(controller.runtimeId, controller.generation, requestId),
+    );
   }
   if (
     controller.commandSyncRequestId === requestId ||
@@ -516,6 +521,11 @@ async function rpc(
     );
     if (expectsResponse) {
       registerPendingRpcSpan(key, span.end, snapshot, method, span.context);
+      if (
+        method === 'prompt' &&
+        controller.commandPromptRequestId === requestId
+      )
+        retainCommandDispatch(key, snapshot.generation);
     } else {
       // Pi consumes extension UI responses without emitting a response envelope.
       fireAndForgetSpanEnd = span.end;
@@ -531,6 +541,7 @@ async function rpc(
   } catch (error) {
     if (fireAndForgetSpanEnd) fireAndForgetSpanEnd('error');
     else if (key) endPendingRpcSpan(key, 'error');
+    if (key) discardCommandDispatch(key);
     if (requestId) {
       cleanupRejectedRpcDispatch(controller, requestId, method, snapshot);
     }

@@ -16,6 +16,7 @@ import {
   rpcSpanKey,
   endPendingRpcSpan,
   abandonPendingRpcSpans,
+  takeCommandDispatch,
 } from '../rpc-bookkeeping';
 import {
   asRecord,
@@ -89,13 +90,28 @@ async function handleResponse(
 ): Promise<void> {
   const command = stringValue(response.command);
   const responseId = stringValue(response.id);
-  const pendingResult = responseId
+  const responseKey = responseId
+    ? rpcSpanKey(controller.runtimeId, controller.generation, responseId)
+    : '';
+  const pendingResult = responseKey
     ? endPendingRpcSpan(
-        rpcSpanKey(controller.runtimeId, controller.generation, responseId),
+        responseKey,
         response.success === true ? 'success' : 'error',
       )
     : { matched: false };
-  if (responseId && !pendingResult.matched) {
+  const commandGeneration =
+    command === 'prompt' && responseKey
+      ? takeCommandDispatch(responseKey)
+      : undefined;
+  const commandResult =
+    commandGeneration !== undefined
+      ? {
+          matched: true,
+          method: 'prompt',
+          dispatchSnapshot: { generation: commandGeneration },
+        }
+      : pendingResult;
+  if (responseId && !pendingResult.matched && commandGeneration === undefined) {
     recordRpcResponseAnomaly('unmatched_or_duplicate', responseId, {
       sessionId: controller.sessionId,
       controllerId: controller.key,
@@ -246,9 +262,9 @@ async function handleResponse(
     command === 'prompt' &&
     !resolvesSubmittedPrompt &&
     !(
-      pendingResult.matched &&
-      pendingResult.method === 'prompt' &&
-      pendingResult.dispatchSnapshot?.generation === controller.generation
+      commandResult.matched &&
+      commandResult.method === 'prompt' &&
+      commandResult.dispatchSnapshot?.generation === controller.generation
     )
   ) {
     return;
@@ -263,9 +279,9 @@ async function handleResponse(
     command === 'prompt' &&
     Boolean(controller.commandPromptRequestId) &&
     responseId === controller.commandPromptRequestId &&
-    pendingResult.matched &&
-    pendingResult.method === 'prompt' &&
-    pendingResult.dispatchSnapshot?.generation === controller.generation
+    commandResult.matched &&
+    commandResult.method === 'prompt' &&
+    commandResult.dispatchSnapshot?.generation === controller.generation
   ) {
     if (response.success === true) {
       // Establish the read watch before releasing command execution ownership.

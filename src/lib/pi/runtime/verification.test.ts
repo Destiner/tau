@@ -5,6 +5,9 @@ import sessionControllerFixture from '../../../../tests/support/session-controll
 import {
   nextRequestId,
   state,
+  canArchiveSession,
+  canCompose,
+  classifyControllerLifecycle,
   type SessionController,
 } from '../../../composables/state';
 
@@ -157,6 +160,174 @@ describe('command-created session durability — verification', () => {
     });
     expect(controller.working).toBe(false);
     expect(controller.commandRefreshFailed).toBe(false);
+  });
+
+  it.each([false, true])(
+    'keeps a long command correlated across span expiry (replacement: %s)',
+    async (replacement) => {
+      vi.useFakeTimers();
+      try {
+        const { handleResponse, handleRpc, rpc, pendingRpcCount } =
+          await import('./index');
+        const controller = makeController({ sessionId: 'before' });
+        addEphemeral(controller);
+        const commandId = nextRequestId('command');
+        const previousPending = pendingRpcCount();
+        controller.commandPromptRequestId = commandId;
+        await rpc(controller, {
+          id: commandId,
+          type: 'prompt',
+          message: '/long-running',
+        });
+        await vi.advanceTimersByTimeAsync(600_001);
+        expect(pendingRpcCount()).toBe(previousPending);
+        expect(controller.commandPromptRequestId).toBe(commandId);
+        expect(controller.working).toBe(false);
+        if (replacement) {
+          const stateId = nextRequestId('run-state');
+          controller.runStateRequestId = stateId;
+          await rpc(controller, { id: stateId, type: 'get_state' });
+          await handleResponse(controller, {
+            id: stateId,
+            command: 'get_state',
+            success: true,
+            data: {
+              sessionId: 'after',
+              sessionFile: '/tmp/project/after.jsonl',
+              isStreaming: false,
+            },
+          });
+          expect(controller.commandPromptRequestId).toBe(commandId);
+        }
+        await handleResponse(controller, {
+          id: commandId,
+          command: 'prompt',
+          success: true,
+        });
+        expect(controller.commandPromptRequestId).toBe('');
+        const syncId = controller.commandSyncRequestId;
+        expect(syncId).not.toBe('');
+        await handleResponse(controller, {
+          id: commandId,
+          command: 'prompt',
+          success: true,
+        });
+        expect(controller.commandSyncRequestId).toBe(syncId);
+        await handleRpc(controller, { type: 'agent_settled' });
+        await handleResponse(controller, {
+          id: controller.materializationStateRequestId,
+          command: 'get_state',
+          success: true,
+          data: {
+            sessionId: controller.sessionId,
+            sessionFile: controller.sessionPath,
+            isStreaming: false,
+          },
+        });
+        await handleResponse(controller, {
+          id: controller.materializationMessagesRequestId,
+          command: 'get_messages',
+          success: true,
+          data: { messages: [] },
+        });
+        expect(controller.working).toBe(false);
+        expect(controller.streaming).toBe(false);
+        expect(controller.syncing).toBe(false);
+        expect(classifyControllerLifecycle(controller)).toBe('ready');
+        state.ephemeralSessions.splice(0);
+        state.workspace!.projects[0]!.sessions.push({
+          id: controller.sessionId,
+          path: controller.sessionPath,
+          title: 'Command session',
+          lastActive: 'now',
+          lastUserMessageAt: 0,
+          sortAt: 1,
+          archived: false,
+          selected: true,
+        });
+        state.activeProjectPath = controller.projectPath;
+        state.activeSessionId = controller.sessionId;
+        state.activeSessionPath = controller.sessionPath;
+        state.activeControllerKey = controller.key;
+        expect(canCompose.value).toBe(true);
+        expect(
+          canArchiveSession(
+            state.workspace!.projects[0]!,
+            state.workspace!.projects[0]!.sessions[0]!,
+          ),
+        ).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it('retains active command ownership past the telemetry deadline, but rejects old generations', async () => {
+    vi.useFakeTimers();
+    try {
+      const { handleResponse, handleBridgeEvent, rpc, pendingRpcCount } =
+        await import('./index');
+      const controller = makeController({ sessionId: 'before', working: true });
+      state.controllers.push(controller);
+      const commandId = nextRequestId('command');
+      const previousPending = pendingRpcCount();
+      controller.commandPromptRequestId = commandId;
+      await rpc(controller, {
+        id: commandId,
+        type: 'prompt',
+        message: '/wait-for-dialog',
+      });
+      await vi.advanceTimersByTimeAsync(600_001);
+      expect(pendingRpcCount()).toBe(previousPending);
+      expect(controller.working).toBe(true);
+      expect(controller.commandPromptRequestId).toBe(commandId);
+      await handleBridgeEvent({
+        kind: 'started',
+        runtimeId: controller.runtimeId,
+        generation: 2,
+      });
+      controller.commandPromptRequestId = '';
+      await handleResponse(controller, {
+        id: commandId,
+        command: 'prompt',
+        success: true,
+      });
+      expect(controller.commandSyncRequestId).toBe('');
+      expect(controller.generation).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears expired command ownership on a late failure without replaying duplicates', async () => {
+    vi.useFakeTimers();
+    try {
+      const { handleResponse, rpc } = await import('./index');
+      const controller = makeController({ sessionId: 'before', working: true });
+      state.controllers.push(controller);
+      const commandId = nextRequestId('command');
+      controller.commandPromptRequestId = commandId;
+      await rpc(controller, {
+        id: commandId,
+        type: 'prompt',
+        message: '/fails-late',
+      });
+      await vi.advanceTimersByTimeAsync(600_001);
+      await handleResponse(controller, {
+        id: commandId,
+        command: 'prompt',
+        success: false,
+      });
+      expect(controller.commandPromptRequestId).toBe('');
+      await handleResponse(controller, {
+        id: commandId,
+        command: 'prompt',
+        success: true,
+      });
+      expect(controller.commandSyncRequestId).toBe('');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('transfers command reconciliation when a name refresh discovers the replacement first', async () => {
