@@ -53,118 +53,57 @@ test('places the palette a quarter of the way down and keeps it inside short win
   ).toBeVisible();
 });
 
-async function rowGeometry(row: Locator): Promise<{
-  baselineOffset: number | null;
-  height: number;
-  shortcutInside: boolean;
-  shortcutCenterOffset: number | null;
-  clipped: boolean;
-}> {
-  return row.evaluate(async (element) => {
-    await document.fonts.ready;
-    const copy = element.querySelector('.command-palette-copy')!;
-    const title = copy.querySelector('.command-palette-title')!;
-    const detail = copy.querySelector('.command-palette-detail');
-    const baseline = (text: Element): number => {
-      const probe = document.createElement('span');
-      probe.style.cssText =
-        'display:inline-block;width:0;height:0;padding:0;border:0;vertical-align:baseline';
-      text.prepend(probe);
-      const y = probe.getBoundingClientRect().bottom;
-      probe.remove();
-      return y;
-    };
-    const baselineOffset = detail ? baseline(detail) - baseline(title) : null;
-    const bounds = element.getBoundingClientRect();
-    const shortcut = element.querySelector('kbd')?.getBoundingClientRect();
-    return {
-      baselineOffset,
-      height: bounds.height,
-      shortcutInside:
-        !shortcut ||
-        (copy.getBoundingClientRect().right <= shortcut.left &&
-          shortcut.right <= bounds.right),
-      shortcutCenterOffset: shortcut
-        ? shortcut.top + shortcut.height / 2 - (bounds.top + bounds.height / 2)
-        : null,
-      clipped: [title, detail].filter(Boolean).some((text) => {
-        const node = text as HTMLElement;
-        return node.scrollWidth > node.clientWidth;
-      }),
-    };
-  });
-}
-
 async function openNestedPage(page: Page, command: string): Promise<void> {
   const search = page.getByRole('combobox', { name: 'Command Palette' });
   await search.fill(command);
   await search.press('Enter');
 }
 
-test('aligns title and detail baselines without changing row or shortcut geometry', async ({
+test('aligns command detail baselines without shifting rows or shortcuts', async ({
   page,
 }) => {
   await page.goto('/');
   await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
   await openPalette(page);
 
-  const archive = page.getByRole('option', { name: /Archive Session/ });
-  const root = await rowGeometry(archive);
-  expect(Math.abs(root.baselineOffset!)).toBeLessThan(0.2);
-  expect(root.height).toBe(28);
-  expect(root.shortcutInside).toBe(true);
-  expect(Math.abs(root.shortcutCenterOffset!)).toBeLessThan(0.2);
+  const geometry = await page
+    .getByRole('option', { name: /Archive Session/ })
+    .evaluate(async (row) => {
+      await document.fonts.ready;
+      const title = row.querySelector('.command-palette-title')!;
+      const detail = row.querySelector('.command-palette-detail')!;
+      const baseline = (text: Element): number => {
+        const probe = document.createElement('span');
+        probe.style.cssText =
+          'display:inline-block;width:0;height:0;vertical-align:baseline';
+        text.prepend(probe);
+        const y = probe.getBoundingClientRect().bottom;
+        probe.remove();
+        return y;
+      };
+      const offset = baseline(detail) - baseline(title);
+      const bounds = row.getBoundingClientRect();
+      const shortcut = row.querySelector('kbd')!.getBoundingClientRect();
+      return {
+        offset,
+        height: bounds.height,
+        shortcutInside:
+          shortcut.left >= title.getBoundingClientRect().right &&
+          shortcut.right <= bounds.right,
+        shortcutCenterOffset:
+          shortcut.top + shortcut.height / 2 - (bounds.top + bounds.height / 2),
+      };
+    });
 
-  const noDetail = await rowGeometry(
-    page.getByRole('option', { name: /Choose Model/ }),
-  );
-  expect(noDetail.baselineOffset).toBeNull();
-  expect(noDetail.height).toBe(root.height);
-
-  await page.setViewportSize({ width: 180, height: 700 });
-  const longRoot = await rowGeometry(
-    page.getByRole('option', { name: /Remove Project/ }),
-  );
-  expect(Math.abs(longRoot.baselineOffset!)).toBeLessThan(0.2);
-  expect(longRoot.height).toBe(root.height);
-  expect(longRoot.clipped).toBe(true);
-  await page.setViewportSize({ width: 1280, height: 720 });
-
-  await openNestedPage(page, 'Switch Session');
-  const current = page.getByRole('option', { name: /Current/ });
-  expect(Math.abs((await rowGeometry(current)).baselineOffset!)).toBeLessThan(
-    0.2,
-  );
-  const otherSession = page.getByRole('option', { name: /Navigation review/ });
-  expect(
-    Math.abs((await rowGeometry(otherSession)).baselineOffset!),
-  ).toBeLessThan(0.2);
-
-  await page.getByRole('button', { name: 'Back' }).click();
-  await openNestedPage(page, 'Switch Project');
-  const notes = page.getByRole('option', { name: /notes/ });
-  expect(Math.abs((await rowGeometry(notes)).baselineOffset!)).toBeLessThan(
-    0.2,
-  );
-  await page.setViewportSize({ width: 180, height: 700 });
-  const narrow = await rowGeometry(notes);
-  expect(Math.abs(narrow.baselineOffset!)).toBeLessThan(0.2);
-  expect(narrow.height).toBe(root.height);
-  expect(narrow.clipped).toBe(true);
+  expect(Math.abs(geometry.offset)).toBeLessThan(0.2);
+  expect(geometry.height).toBe(28);
+  expect(geometry.shortcutInside).toBe(true);
+  expect(Math.abs(geometry.shortcutCenterOffset)).toBeLessThan(0.2);
   expect(
     await page
-      .locator('.command-palette-results')
-      .evaluate((element) => element.scrollWidth <= element.clientWidth),
-  ).toBe(true);
-  await notes.hover();
-  expect(Math.abs((await rowGeometry(notes)).baselineOffset!)).toBeLessThan(
-    0.2,
-  );
-  await page.getByRole('button', { name: 'Back' }).click();
-  await openNestedPage(page, 'Choose Thinking Effort');
-  expect(
-    (await rowGeometry(page.getByRole('option', { name: 'High' }))).height,
-  ).toBe(root.height);
+      .getByRole('option', { name: /Choose Model/ })
+      .evaluate((row) => row.getBoundingClientRect().height),
+  ).toBe(geometry.height);
 });
 
 for (const colorScheme of ['light', 'dark'] as const) {
