@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test';
+
 import { promptTimeout } from '../support/pi-scenario/saved-session-extension-prompt';
 
 import { expect, test } from './fixtures';
@@ -5,6 +7,273 @@ import { expect, test } from './fixtures';
 const scenarioUrl = '/?test-scenario=saved-session-extension-prompt';
 
 test.use({ pausedClock: true });
+
+async function emitNativeNewSession(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    await (
+      window as typeof window & {
+        __TAURI_INTERNALS__: {
+          invoke: (command: string, args: unknown) => Promise<unknown>;
+        };
+      }
+    ).__TAURI_INTERNALS__.invoke('plugin:event|emit', {
+      event: 'tau://new-session',
+      payload: undefined,
+    });
+  });
+}
+
+async function modifiedShortcut(page: Page, key: string): Promise<void> {
+  await page.keyboard.press(
+    (await page.evaluate(() => /Mac|iPhone|iPad/.test(navigator.platform)))
+      ? `Meta+${key}`
+      : `Control+${key}`,
+  );
+}
+
+async function pressSessionSwitcher(page: Page): Promise<void> {
+  await modifiedShortcut(page, 'p');
+}
+
+async function openPalette(page: Page): Promise<void> {
+  await modifiedShortcut(page, 'k');
+  await expect(
+    page.getByRole('dialog', { name: 'Command Palette' }),
+  ).toBeVisible();
+}
+
+test('retains a pending question after a native New Session event', async ({
+  page,
+}) => {
+  await page.goto(scenarioUrl);
+  const prompt = page.getByRole('dialog', {
+    name: 'Which label should the release carry?',
+  });
+  await expect(prompt.getByRole('option', { name: 'patch' })).toBeFocused();
+
+  await emitNativeNewSession(page);
+  await expect(
+    page.getByRole('heading', { name: 'New Session' }),
+  ).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeFocused();
+
+  await pressSessionSwitcher(page);
+  await page
+    .getByRole('dialog', { name: 'Switch Session' })
+    .getByRole('option', { name: 'Main' })
+    .click();
+  await expect(prompt.getByRole('option', { name: 'patch' })).toBeFocused();
+});
+
+test('executes palette New Session and Switch Session while an extension prompt is pending', async ({
+  page,
+}) => {
+  await page.goto(scenarioUrl);
+
+  const prompt = page.getByRole('dialog', {
+    name: 'Which label should the release carry?',
+  });
+  const option = prompt.getByRole('option', { name: 'patch' });
+  await expect(option).toBeFocused();
+
+  await openPalette(page);
+  const search = page.getByRole('combobox', { name: 'Command Palette' });
+  await search.fill('New Session');
+  await search.press('Enter');
+  await expect(
+    page.getByRole('heading', { name: 'New Session' }),
+  ).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeFocused();
+
+  await openPalette(page);
+  await search.fill('Switch Session');
+  await search.press('Enter');
+  const picker = page.getByRole('dialog', { name: 'Switch Session' });
+  await expect(picker).toBeVisible();
+  await picker.getByRole('option', { name: 'Main' }).click();
+
+  await expect(prompt).toBeVisible();
+  await expect(option).toBeFocused();
+});
+
+test('switches projects from a pending extension prompt and restores its focus', async ({
+  page,
+}) => {
+  await page.goto(
+    '/?test-scenario=saved-session-extension-prompt-project-switching',
+  );
+
+  const prompt = page.getByRole('dialog', {
+    name: 'Which label should the release carry?',
+  });
+  const option = prompt.getByRole('option', { name: 'patch' });
+  await expect(option).toBeFocused();
+
+  await modifiedShortcut(page, 'Shift+p');
+  const projects = page.getByRole('dialog', { name: 'Switch Project' });
+  await expect(projects).toBeVisible();
+  await projects.getByRole('option', { name: /Other fixture/ }).click();
+  await expect(page.getByRole('heading', { name: 'Other Main' })).toBeVisible();
+
+  await modifiedShortcut(page, 'Shift+p');
+  await page.getByRole('option', { name: /Tau fixture/ }).click();
+  await expect(prompt).toBeVisible();
+  await expect(option).toBeFocused();
+});
+
+for (const navigation of ['session', 'project', 'boundary'] as const) {
+  test(`restores prompt focus after palette ${navigation} navigation stays put`, async ({
+    page,
+  }) => {
+    await page.goto(scenarioUrl);
+    const prompt = page.getByRole('dialog', {
+      name: 'Which label should the release carry?',
+    });
+    const option = prompt.getByRole('option', { name: 'patch' });
+    await expect(option).toBeFocused();
+
+    if (navigation === 'session') {
+      await pressSessionSwitcher(page);
+      const picker = page.getByRole('dialog', { name: 'Switch Session' });
+      await picker.getByRole('option', { name: 'Main' }).press('Enter');
+    } else if (navigation === 'project') {
+      await modifiedShortcut(page, 'Shift+p');
+      const picker = page.getByRole('dialog', { name: 'Switch Project' });
+      await picker.getByRole('option', { name: /Tau fixture/ }).press('Enter');
+    } else {
+      await openPalette(page);
+      const search = page.getByRole('combobox', { name: 'Command Palette' });
+      await search.fill('Next Session');
+      await search.press('Enter');
+    }
+
+    await expect(
+      page.getByRole('dialog', { name: /Switch|Command Palette/ }),
+    ).toHaveCount(0);
+    await expect(prompt).toBeVisible();
+    await expect(option).toBeFocused();
+    const verification = await page.evaluate(() =>
+      window.__TAU_PI_SCENARIO__?.verify(),
+    );
+    expect(verification?.ok).toBe(true);
+  });
+}
+
+test('keeps a typed answer focused when reselecting its session', async ({
+  page,
+}) => {
+  await page.goto('/?test-scenario=saved-session-extension-input-navigation');
+  const input = page.getByRole('textbox', { name: 'Release note label' });
+  await expect(input).toBeFocused();
+  await input.fill('rc.2');
+
+  await emitNativeNewSession(page);
+  await pressSessionSwitcher(page);
+  await page.getByRole('option', { name: 'Main' }).press('Enter');
+  await expect(input).toBeFocused();
+
+  await pressSessionSwitcher(page);
+  await page
+    .getByRole('dialog', { name: 'Switch Session' })
+    .getByRole('option', { name: 'Main' })
+    .press('Enter');
+
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue('rc.2');
+  const verification = await page.evaluate(() =>
+    window.__TAU_PI_SCENARIO__?.verify(),
+  );
+  expect(verification?.ok).toBe(true);
+});
+
+test('keeps navigation commands available in the palette and restores prompt focus on Escape', async ({
+  page,
+}) => {
+  await page.goto(scenarioUrl);
+  const prompt = page.getByRole('dialog', {
+    name: 'Which label should the release carry?',
+  });
+  const option = prompt.getByRole('option', { name: 'patch' });
+  await expect(option).toBeFocused();
+
+  await openPalette(page);
+  await expect(page.getByRole('option', { name: /New Session/ })).toBeVisible();
+  await expect(
+    page.getByRole('option', { name: /Switch Session/ }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('option', { name: /Switch Project/ }),
+  ).toBeVisible();
+  await expect(page.getByRole('option', { name: /Choose Model/ })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole('option', { name: /Archive Session/ }),
+  ).toHaveCount(0);
+
+  await page.keyboard.press('Escape');
+  await expect(
+    page.getByRole('dialog', { name: 'Command Palette' }),
+  ).toHaveCount(0);
+  await expect(prompt).toBeVisible();
+  await expect(option).toBeFocused();
+});
+
+test('cycles sessions with Ctrl+Tab while an extension prompt is pending', async ({
+  page,
+}) => {
+  await page.goto('/?test-scenario=saved-session-extension-prompt-cycling');
+  await expect(page.getByRole('option', { name: 'patch' })).toBeFocused();
+
+  await page.keyboard.press('Control+Tab');
+  await expect(page.getByRole('heading', { name: 'Backup' })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeFocused();
+
+  await page.keyboard.press('Control+Shift+Tab');
+  await expect(
+    page.getByRole('dialog', { name: 'Which label should the release carry?' }),
+  ).toBeVisible();
+  await expect(page.getByRole('option', { name: 'patch' })).toBeFocused();
+});
+
+test('preserves an editor draft across session navigation', async ({
+  page,
+}) => {
+  await page.goto('/?test-scenario=saved-session-extension-editor-navigation');
+  const input = page.getByRole('textbox', { name: 'Release notes' });
+  await expect(input).toBeFocused();
+  await input.fill('Ship the editor draft intact.');
+
+  await emitNativeNewSession(page);
+  await expect(
+    page.getByRole('heading', { name: 'New Session' }),
+  ).toBeVisible();
+  await pressSessionSwitcher(page);
+  await page.getByRole('option', { name: 'Main' }).click();
+
+  await expect(input).toHaveValue('Ship the editor draft intact.');
+  await expect(input).toBeFocused();
+});
+
+test('keeps navigation blocked by a real dialog above an extension prompt', async ({
+  page,
+}) => {
+  await page.goto(scenarioUrl);
+  await page.getByRole('button', { name: 'Open Project' }).click();
+  await page.getByRole('menuitem', { name: 'Open Remote Project' }).click();
+  await expect(
+    page.getByRole('dialog', { name: 'SSH Connection' }),
+  ).toBeVisible();
+
+  await emitNativeNewSession(page);
+
+  await expect(page.getByRole('heading', { name: 'New Session' })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole('dialog', { name: 'SSH Connection' }),
+  ).toBeVisible();
+});
 
 /**
  * A question an extension asks belongs to the turn that asked it, so it is

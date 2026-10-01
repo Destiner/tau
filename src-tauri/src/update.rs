@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
+use tauri::menu::MenuItemKind;
 use tauri::{AppHandle, Emitter, Runtime, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
@@ -14,6 +15,7 @@ pub const CHECK_FOR_UPDATES_EVENT: &str = "tau://check-for-updates";
 pub const UPDATE_PROGRESS_EVENT: &str = "tau://update-progress";
 pub const UPDATE_STATUS_EVENT: &str = "tau://update-status";
 
+const CHECK_FOR_UPDATES_MENU_ERROR: &str = "The Check for Updates menu item could not be updated.";
 const CHECK_TIMEOUT: Duration = Duration::from_secs(15);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const UNKNOWN_TOTAL_PROGRESS_STEP: u64 = 1024 * 1024;
@@ -371,6 +373,33 @@ fn updater_public_key() -> Option<&'static str> {
     option_env!("TAU_UPDATER_PUBLIC_KEY")
         .map(str::trim)
         .filter(|key| !key.is_empty())
+}
+
+#[tauri::command]
+pub fn set_check_for_updates_menu_enabled<R: Runtime>(
+    app: AppHandle<R>,
+    enabled: bool,
+) -> Result<(), String> {
+    let Some(menu) = app.menu() else {
+        return Ok(());
+    };
+
+    for item in menu
+        .items()
+        .map_err(|_| CHECK_FOR_UPDATES_MENU_ERROR.to_string())?
+    {
+        if let MenuItemKind::Submenu(submenu) = item {
+            if let Some(update_item) = submenu.get(CHECK_FOR_UPDATES_MENU_ID) {
+                update_item
+                    .as_menuitem()
+                    .ok_or_else(|| CHECK_FOR_UPDATES_MENU_ERROR.to_string())?
+                    .set_enabled(enabled)
+                    .map_err(|_| CHECK_FOR_UPDATES_MENU_ERROR.to_string())?;
+                break;
+            }
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]

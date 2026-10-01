@@ -83,10 +83,10 @@
           <span>Preparing Pi</span>
         </div>
         <template v-if="workspaceIsEmpty">
-          <UpdateStatus
-            ref="firstRunUpdateStatus"
-            first-run
-          />
+          <div class="first-run-version">
+            <span class="first-run-name">tau</span>
+            <span class="first-run-version-number">{{ appVersion }}</span>
+          </div>
           <div class="first-run-actions">
             <UiButton
               ref="firstRunLocalProjectButton"
@@ -286,7 +286,6 @@ import ReconnectStatus from './components/ReconnectStatus.vue';
 import RemoteDialog from './components/RemoteDialog.vue';
 import SessionHeader from './components/SessionHeader.vue';
 import TranscriptView from './components/TranscriptView.vue';
-import UpdateStatus from './components/UpdateStatus.vue';
 import UiButton from './components/ui/UiButton.vue';
 import UiIcon from './components/ui/UiIcon.vue';
 import UiIconButton from './components/ui/UiIconButton.vue';
@@ -305,8 +304,11 @@ import {
 import {
   appCommandDispatchKey,
   appCommandLookupKey,
+  type AppCommandTarget,
 } from './lib/app-commands/binding';
+import controlBlocked from './lib/app-commands/control-context';
 import { paletteLayerOpen } from './lib/app-commands/surface';
+import appVersion from './lib/app-version';
 import { loadSidebarWidth } from './lib/sidebar-width';
 import { invokeTraced } from './lib/telemetry';
 import { useUpdate } from './lib/update';
@@ -330,7 +332,6 @@ const projectSidebar = ref<InstanceType<typeof ProjectSidebar>>();
 const sessionHeader = ref<InstanceType<typeof SessionHeader>>();
 const composerBar = ref<InstanceType<typeof ComposerBar>>();
 const messageQueue = ref<InstanceType<typeof MessageQueue>>();
-const firstRunUpdateStatus = ref<InstanceType<typeof UpdateStatus>>();
 const firstRunProjectMenuOpen = ref(false);
 const firstRunLocalProjectButton = ref<InstanceType<typeof UiButton>>();
 const firstRunRemoteProjectButton = ref<InstanceType<typeof UiButton>>();
@@ -424,6 +425,7 @@ type CommandContext = {
   projectPath: string;
   sessionId: string;
   blocked: boolean;
+  navigationBlocked: boolean;
 };
 const platform = /Mac|iPhone|iPad/.test(navigator.platform) ? 'mac' : 'non-mac';
 const paletteOpen = ref(false);
@@ -461,24 +463,29 @@ const palettePlaceholder = computed(
       efforts: 'Search efforts…',
     })[palettePage.value],
 );
-function blockingSurface(): boolean {
+function navigationBlockingSurface(): boolean {
   return Boolean(
     quitRequest.value ||
     state.remoteDialogOpen ||
-    activeExtensionDialog.value ||
     feedbackDialogOpen.value ||
     fullscreenViewerOpen.value ||
     sessionHeader.value?.renaming ||
     document.querySelector('.issue-report-popover[data-state="open"]'),
   );
 }
-const context = (pinned = false): CommandContext => ({
-  projectPath: pinned
-    ? paletteSelection.value.projectPath
-    : state.activeProjectPath,
-  sessionId: pinned ? paletteSelection.value.sessionId : state.activeSessionId,
-  blocked: blockingSurface(),
-});
+const context = (pinned = false): CommandContext => {
+  const navigationBlocked = navigationBlockingSurface();
+  return {
+    projectPath: pinned
+      ? paletteSelection.value.projectPath
+      : state.activeProjectPath,
+    sessionId: pinned
+      ? paletteSelection.value.sessionId
+      : state.activeSessionId,
+    blocked: Boolean(activeExtensionDialog.value) || navigationBlocked,
+    navigationBlocked,
+  };
+};
 const commandProject = (ctx: CommandContext): ProjectSummary | undefined =>
   state.workspace?.projects.find((project) => project.path === ctx.projectPath);
 const commandSession = (ctx: CommandContext): SessionSummary | undefined => {
@@ -490,19 +497,23 @@ const commandSession = (ctx: CommandContext): SessionSummary | undefined => {
   );
 };
 const commands = new CommandRegistry<CommandContext>();
+function controlContext(id: string, target?: AppCommandTarget): CommandContext {
+  return {
+    ...context(),
+    ...target,
+    blocked: controlBlocked(
+      id,
+      target,
+      Boolean(activeExtensionDialog.value),
+      navigationBlockingSurface(),
+    ),
+  };
+}
 provide(appCommandDispatchKey, (id, target) => {
-  const ctx = { ...context(), ...target };
-  // Existing sidebar actions can open a project layer over an extension prompt.
-  // The palette remains blocked there, but the pointer flow must still work.
-  if (
-    activeExtensionDialog.value &&
-    (id === 'project.openLocal' || id === 'project.openRemote')
-  )
-    ctx.blocked = false;
-  void commands.dispatch(id, ctx);
+  void commands.dispatch(id, controlContext(id, target));
 });
 provide(appCommandLookupKey, (id, target) => {
-  const entry = commands.discover(id, { ...context(), ...target });
+  const entry = commands.discover(id, controlContext(id, target));
   return (
     entry && {
       title: entry.title,
@@ -543,6 +554,12 @@ function safe(ctx: CommandContext): boolean {
 function active(ctx: CommandContext): boolean {
   return safe(ctx) && Boolean(commandProject(ctx));
 }
+function navigationSafe(ctx: CommandContext): boolean {
+  return !ctx.navigationBlocked && !projectActionsDisabled.value;
+}
+function navigationActive(ctx: CommandContext): boolean {
+  return navigationSafe(ctx) && Boolean(commandProject(ctx));
+}
 function session(ctx: CommandContext): boolean {
   return active(ctx) && Boolean(commandSession(ctx));
 }
@@ -567,7 +584,7 @@ register(
   'session.new',
   'New Session',
   'Mod+N',
-  active,
+  navigationActive,
   async (ctx) => {
     const project = commandProject(ctx);
     if (project) await newSession(project);
@@ -615,7 +632,7 @@ register(
   () => openRemoteProjectDialog(),
   'Project',
 );
-register('session.switch', 'Switch Session', 'Mod+P', active, () => {
+register('session.switch', 'Switch Session', 'Mod+P', navigationActive, () => {
   if (!paletteOpen.value) openPalette();
   page('sessions');
 });
@@ -623,7 +640,7 @@ register(
   'project.switch',
   'Switch Project',
   'Mod+Shift+P',
-  (ctx) => safe(ctx) && Boolean(state.workspace?.projects.length),
+  (ctx) => navigationSafe(ctx) && Boolean(state.workspace?.projects.length),
   () => {
     if (!paletteOpen.value) openPalette();
     page('projects');
@@ -856,18 +873,15 @@ register(
   'app.updates',
   'Show Update Status',
   undefined,
-  safe,
-  () => {
-    if (projectSidebar.value) projectSidebar.value.openUpdateStatus();
-    else firstRunUpdateStatus.value?.openStatus();
-  },
+  (ctx) => safe(ctx) && !workspaceShellVisible.value,
+  () => projectSidebar.value?.openUpdateStatus(),
   'App',
 );
 register(
   'app.checkUpdates',
   'Check for Updates',
   undefined,
-  safe,
+  (ctx) => safe(ctx) && !workspaceShellVisible.value,
   () => update.check(true),
   'App',
 );
@@ -911,7 +925,7 @@ register(
   'Next Session',
   'Ctrl+Tab',
   (ctx) =>
-    active(ctx) &&
+    navigationActive(ctx) &&
     projectSessions(commandProject(ctx)!).some((s) => !s.archived),
   () => navigateSession(1),
 );
@@ -920,7 +934,7 @@ register(
   'Previous Session',
   'Ctrl+Shift+Tab',
   (ctx) =>
-    active(ctx) &&
+    navigationActive(ctx) &&
     projectSessions(commandProject(ctx)!).some((s) => !s.archived),
   () => navigateSession(-1),
 );
@@ -1006,6 +1020,26 @@ function openPalette(): void {
   paletteSelectedId.value = null;
   paletteOpen.value = true;
 }
+function focusAfterPaletteNavigation(): void {
+  void nextTick(() => {
+    if (navigationBlockingSurface()) return;
+    const prompt = activeExtensionDialog.value
+      ? document.querySelector<HTMLElement>('.session-pane .extension-prompt')
+      : null;
+    if (prompt) {
+      const origin = paletteOrigin.value;
+      const control =
+        origin?.isConnected &&
+        prompt.contains(origin) &&
+        origin.matches(':not(:disabled)')
+          ? origin
+          : prompt.querySelector<HTMLElement>(
+              '[role="option"][aria-selected="true"]:not(:disabled), input:not(:disabled), textarea:not(:disabled), .extension-prompt-actions button:not(:disabled)',
+            );
+      control?.focus({ preventScroll: true });
+    } else composerBar.value?.focus();
+  });
+}
 function restorePaletteFocus(): void {
   void nextTick(() => {
     if (
@@ -1013,7 +1047,7 @@ function restorePaletteFocus(): void {
       paletteOrigin.value !== document.body
     )
       paletteOrigin.value.focus({ preventScroll: true });
-    else composerBar.value?.focus();
+    else focusAfterPaletteNavigation();
   });
 }
 function togglePalette(): void {
@@ -1049,12 +1083,15 @@ async function selectPaletteRow(id: string): Promise<void> {
     }
     const result = await commands.dispatch(id, ctx);
     if (result.status !== 'executed' && !nested) paletteOpen.value = true;
-    else if (!nested && id !== 'queue.review' && !blockingSurface())
-      restorePaletteFocus();
+    else if (!nested && id !== 'queue.review') {
+      if (['session.new', 'session.next', 'session.previous'].includes(id))
+        focusAfterPaletteNavigation();
+      else if (!context().blocked) restorePaletteFocus();
+    }
     return;
   }
   const ctx = context(true);
-  if (ctx.blocked || projectActionsDisabled.value) return;
+  if (ctx.navigationBlocked || projectActionsDisabled.value) return;
   const project = commandProject(ctx);
   if (palettePage.value === 'sessions') {
     const target =
@@ -1065,7 +1102,7 @@ async function selectPaletteRow(id: string): Promise<void> {
     composerBar.value?.closeSelectors();
     projectSidebar.value?.showActiveSessions();
     void selectSession(project, target);
-    void nextTick(() => composerBar.value?.focus());
+    focusAfterPaletteNavigation();
   } else if (palettePage.value === 'projects') {
     const target = state.workspace?.projects.find((p) => p.path === id);
     if (!target) return;
@@ -1078,9 +1115,10 @@ async function selectPaletteRow(id: string): Promise<void> {
     if (target.collapsed) void toggleProject(target);
     if (chosen) void selectSession(target, chosen);
     else void newSession(target);
-    void nextTick(() => composerBar.value?.focus());
+    focusAfterPaletteNavigation();
   } else if (palettePage.value === 'models') {
     if (
+      ctx.blocked ||
       !currentSession(ctx) ||
       settingsDisabled.value ||
       !models.value.some((m) => `${m.provider}/${m.id}` === id)
@@ -1092,7 +1130,13 @@ async function selectPaletteRow(id: string): Promise<void> {
     void nextTick(() => composerBar.value?.focus());
   } else {
     const effort = efforts.value.find((e) => e === id);
-    if (!effort || !currentSession(ctx) || settingsDisabled.value) return;
+    if (
+      !effort ||
+      ctx.blocked ||
+      !currentSession(ctx) ||
+      settingsDisabled.value
+    )
+      return;
     paletteOpen.value = false;
     composerBar.value?.closeSelectors();
     void selectEffort(effort);
@@ -1214,6 +1258,17 @@ const remoteDirectoryOptions = computed(() => {
     return !filter || name.includes(filter);
   });
 });
+
+watch(
+  () => !workspaceShellVisible.value,
+  (available) => {
+    update.setInteractiveAvailable(available);
+    void invokeTraced('set_check_for_updates_menu_enabled', {
+      enabled: available,
+    }).catch(() => undefined);
+  },
+  { immediate: true, flush: 'sync' },
+);
 
 onMounted(() => {
   update.initialize();
@@ -1834,6 +1889,26 @@ function isTitlebarControl(target: EventTarget | null): boolean {
   padding: 24px;
   color: var(--muted);
   text-align: center;
+}
+
+.first-run-version {
+  display: flex;
+  align-items: center;
+  margin: 0 0 14px;
+  padding: 4px 6px;
+  gap: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  white-space: nowrap;
+}
+
+.first-run-name {
+  color: var(--text);
+}
+
+.first-run-version-number {
+  color: var(--faint);
 }
 
 .first-run-actions {

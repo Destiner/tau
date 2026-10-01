@@ -158,6 +158,7 @@ pub const TAURI_INVOKE_COMMANDS: &[&str] = &[
     "request_quit",
     "resolve_quit_request",
     "update_snapshot",
+    "set_check_for_updates_menu_enabled",
     "check_for_update",
     "download_update",
     "request_update_restart",

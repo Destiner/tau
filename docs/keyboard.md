@@ -25,7 +25,14 @@
 It preserves the underlying surface, draft, selection, and caret. Escape closes
 only the palette and restores valid origin focus. Commands that are unsafe in
 the current dirty, busy, or confirmation state are **not shown**; the palette
-has no disabled command rows.
+has no disabled command rows. An inline Pi question blocks ordinary commands,
+but New Session, Switch Session, Switch Project, and previous/next session
+navigation remain available without answering or cancelling the question. Its
+answer draft stays with its session. Global dialogs, fullscreen viewers, and
+other blocking surfaces still prevent navigation.
+
+On home (with no projects), **Show Update Status** and **Check for Updates**
+are omitted from the palette. They become available in a project workspace.
 
 The palette uses a stable fuzzy filter: matching only narrows the list; results
 remain in their original order as the query changes. It searches command
@@ -45,7 +52,7 @@ telemetry.
 
 The launcher is a compact ghost icon in the top-right application chrome. Its
 shortcut is available through its tooltip rather than duplicated as visible
-chrome text.
+chrome text. Home shows the Tau version as a static label, not an update control.
 
 ## Global target keymap
 
@@ -99,6 +106,12 @@ palette unless their launcher appears above.
 | Queue and unsent review       | Escape dismisses the focused status/review; `⌘Enter` restores a focused draft when eligible.                                              |
 | Feedback, quit, and update UI | `⌘Enter` activates the eligible primary action; `⌘⇧Enter` skips an update; Escape closes only a dismissible surface.                      |
 | Issue reporter                | `⌘⇧S` toggles Include Current Session within the report; `⌘Enter` submits; Escape retains unsent text.                                    |
+
+An inline Pi prompt blocks global palette and shortcut actions. Explicit sidebar
+row actions to mark a session read/unread or archive an eligible session remain
+available, including for another project; other blocking dialogs and workspace
+lockouts still apply. Escape from a row menu dismisses only the menu, not the
+prompt.
 
 ## Discovery and tooltip policy
 

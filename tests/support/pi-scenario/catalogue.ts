@@ -1,4 +1,5 @@
 import archivedSessionsReview from './archived-sessions-review';
+import crossProjectSidebarMetadataActions from './cross-project-sidebar-metadata-actions';
 import delayedSuccessorVerification from './delayed-successor-verification';
 import emptyWorkspace from './empty-workspace';
 import phantomCommandOnly from './phantom-command-only';
@@ -13,7 +14,13 @@ import savedSessionCompactionNotifications from './saved-session-compaction-noti
 import savedSessionExtensionPrompt, {
   emptySessionExtensionPrompt,
   escapeCancellationPrompt,
+  savedSessionExtensionPromptProjectSwitching,
 } from './saved-session-extension-prompt';
+import savedSessionExtensionPromptCycling from './saved-session-extension-prompt-navigation';
+import {
+  savedSessionExtensionEditorNavigation,
+  savedSessionExtensionInputNavigation,
+} from './saved-session-extension-text-prompt-navigation';
 import {
   savedSessionHistory,
   savedSessionLongHistory,
@@ -41,6 +48,7 @@ import type { PiScenario, PiScenarioMetadata } from './index';
 
 const scenarios = [
   emptyWorkspace,
+  crossProjectSidebarMetadataActions,
   delayedSuccessorVerification,
   savedSessionBootstrap,
   savedSessionAutoRetry,
@@ -68,6 +76,10 @@ const scenarios = [
   savedSessionShortHistory,
   savedSessionLongHistory,
   savedSessionExtensionPrompt,
+  savedSessionExtensionPromptProjectSwitching,
+  savedSessionExtensionPromptCycling,
+  savedSessionExtensionInputNavigation,
+  savedSessionExtensionEditorNavigation,
   emptySessionExtensionPrompt,
   escapeCancellationPrompt,
   archivedSessionsReview,

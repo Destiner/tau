@@ -1,8 +1,15 @@
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
 import { expect, test } from './fixtures';
 
 const scenarioUrl = '/?test-scenario=saved-session-bootstrap';
+
+type ButtonAppearance = {
+  background: string;
+  color: string;
+  opacity: string;
+  bounds: { x: number; y: number; width: number; height: number };
+};
 
 async function modShortcut(page: Page, key: string): Promise<string> {
   return (await page.evaluate(() => /Mac|iPhone|iPad/.test(navigator.platform)))
@@ -24,10 +31,132 @@ async function openPalette(page: Page): Promise<void> {
   ).toBeVisible();
 }
 
+test('places the palette a quarter of the way down and keeps it inside short windows', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(scenarioUrl);
+  await openPalette(page);
+
+  for (const height of [800, 360]) {
+    await page.setViewportSize({ width: 1280, height });
+    const bounds = await page
+      .getByRole('dialog', { name: 'Command Palette' })
+      .boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.y / height).toBeCloseTo(0.25, 2);
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(height - 31);
+  }
+
+  await expect(
+    page.getByRole('combobox', { name: 'Command Palette' }),
+  ).toBeVisible();
+});
+
 async function openNestedPage(page: Page, command: string): Promise<void> {
   const search = page.getByRole('combobox', { name: 'Command Palette' });
   await search.fill(command);
   await search.press('Enter');
+}
+
+test('aligns command detail baselines without shifting rows or shortcuts', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
+  await openPalette(page);
+
+  const geometry = await page
+    .getByRole('option', { name: /Archive Session/ })
+    .evaluate(async (row) => {
+      await document.fonts.ready;
+      const title = row.querySelector('.command-palette-title')!;
+      const detail = row.querySelector('.command-palette-detail')!;
+      const baseline = (text: Element): number => {
+        const probe = document.createElement('span');
+        probe.style.cssText =
+          'display:inline-block;width:0;height:0;vertical-align:baseline';
+        text.prepend(probe);
+        const y = probe.getBoundingClientRect().bottom;
+        probe.remove();
+        return y;
+      };
+      const offset = baseline(detail) - baseline(title);
+      const bounds = row.getBoundingClientRect();
+      const shortcut = row.querySelector('kbd')!.getBoundingClientRect();
+      return {
+        offset,
+        height: bounds.height,
+        shortcutInside:
+          shortcut.left >= title.getBoundingClientRect().right &&
+          shortcut.right <= bounds.right,
+        shortcutCenterOffset:
+          shortcut.top + shortcut.height / 2 - (bounds.top + bounds.height / 2),
+      };
+    });
+
+  expect(Math.abs(geometry.offset)).toBeLessThan(0.2);
+  expect(geometry.height).toBe(28);
+  expect(geometry.shortcutInside).toBe(true);
+  expect(Math.abs(geometry.shortcutCenterOffset)).toBeLessThan(0.2);
+  expect(
+    await page
+      .getByRole('option', { name: /Choose Model/ })
+      .evaluate((row) => row.getBoundingClientRect().height),
+  ).toBe(geometry.height);
+});
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  test(`session header actions share fade feedback in ${colorScheme}`, async ({
+    page,
+  }) => {
+    await page.emulateMedia({ colorScheme });
+    await page.goto(scenarioUrl);
+
+    const header = page.locator('.session-header');
+    const newSession = header.getByRole('button', { name: 'New Session' });
+    const palette = header.getByRole('button', {
+      name: 'Open Command Palette',
+    });
+    await expect(newSession).toBeEnabled();
+    await expect(palette).toBeEnabled();
+    await page.mouse.move(0, 100);
+
+    const appearance = async (button: Locator): Promise<ButtonAppearance> =>
+      button.evaluate((element) => {
+        const style = getComputedStyle(element);
+        const { x, y, width, height } = element.getBoundingClientRect();
+        return {
+          background: style.backgroundColor,
+          color: style.color,
+          opacity: style.opacity,
+          bounds: { x, y, width, height },
+        };
+      });
+
+    const idleNew = await appearance(newSession);
+    const idlePalette = await appearance(palette);
+    expect(idleNew.background).toBe('rgba(0, 0, 0, 0)');
+    expect(idlePalette.background).toBe(idleNew.background);
+    expect(idlePalette.color).toBe(idleNew.color);
+    expect(idlePalette.opacity).toBe(idleNew.opacity);
+    expect(idlePalette.bounds.y).toBe(idleNew.bounds.y);
+    expect(idlePalette.bounds.width).toBe(idleNew.bounds.width);
+    expect(idlePalette.bounds.height).toBe(idleNew.bounds.height);
+
+    await newSession.hover();
+    const hoveredNew = await appearance(newSession);
+    expect(hoveredNew.background).toBe(idleNew.background);
+    expect(hoveredNew.opacity).toBe('1');
+    expect(hoveredNew.bounds).toEqual(idleNew.bounds);
+
+    await palette.hover();
+    const hoveredPalette = await appearance(palette);
+    expect(hoveredPalette.background).toBe(idleNew.background);
+    expect(hoveredPalette.color).toBe(hoveredNew.color);
+    expect(hoveredPalette.opacity).toBe(hoveredNew.opacity);
+    expect(hoveredPalette.bounds).toEqual(idlePalette.bounds);
+  });
 }
 
 test('opens with the platform Mod+K shortcut and filters commands fuzzily in registry order', async ({
@@ -151,6 +280,37 @@ test('opening with Mod+K preserves an uncommitted session rename', async ({
   ).toHaveCount(0);
 });
 
+test('clicking the header palette preserves an uncommitted session rename', async ({
+  page,
+}) => {
+  await page.goto(scenarioUrl);
+
+  await page.getByRole('button', { name: 'Main', exact: true }).click();
+  const name = page.locator('input[aria-label="Session Name"]');
+  await name.fill('Uncommitted click rename');
+  await page
+    .locator('.session-header')
+    .getByRole('button', { name: 'Open Command Palette' })
+    .click();
+
+  await expect(
+    page.getByRole('dialog', { name: 'Command Palette' }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('combobox', { name: 'Command Palette' }),
+  ).toBeFocused();
+  await expect(name).toHaveValue('Uncommitted click rename');
+  await page.keyboard.press('Escape');
+  await expect(
+    page.getByRole('dialog', { name: 'Command Palette' }),
+  ).toHaveCount(0);
+  await expect(name).toHaveValue('Uncommitted click rename');
+  await expect(name).toBeFocused();
+  await expect(
+    page.getByRole('heading', { name: 'Uncommitted click rename' }),
+  ).toHaveCount(0);
+});
+
 test('keeps a dirty remote input when the palette dismisses first', async ({
   page,
 }) => {
@@ -204,7 +364,9 @@ test('preserves a dirty issue report and an open selector under the palette', as
   await expect(page.locator('.ui-select-filterable-list')).toBeVisible();
 });
 
-test('opens from the first-run titlebar launcher', async ({ page }) => {
+test('opens from the first-run titlebar launcher without update commands', async ({
+  page,
+}) => {
   await page.goto('/?test-scenario=empty-workspace');
 
   await page.getByRole('button', { name: 'Open Command Palette' }).click();
@@ -214,6 +376,12 @@ test('opens from the first-run titlebar launcher', async ({ page }) => {
   await expect(
     page.getByRole('option', { name: /Open Local Project/ }),
   ).toBeVisible();
+  await expect(
+    page.getByRole('option', { name: 'Show Update Status' }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('option', { name: 'Check for Updates' }),
+  ).toHaveCount(0);
   await page.getByRole('option', { name: /Open Project…/ }).click();
   await expect(page.getByRole('menuitem')).toHaveText([
     'Open Local Project',
@@ -221,6 +389,18 @@ test('opens from the first-run titlebar launcher', async ({ page }) => {
   ]);
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Open Local Project' }).click();
+});
+
+test('shows update commands in a project palette', async ({ page }) => {
+  await page.goto(scenarioUrl);
+
+  await openPalette(page);
+  await expect(
+    page.getByRole('option', { name: 'Show Update Status' }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('option', { name: 'Check for Updates' }),
+  ).toBeVisible();
 });
 
 test('selects model and thinking-effort options from the palette', async ({

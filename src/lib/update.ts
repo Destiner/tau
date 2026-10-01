@@ -133,6 +133,7 @@ interface UpdateService {
   state: Readonly<UpdateSnapshot>;
   inProgress: ComputedRef<boolean>;
   initialize(): void;
+  setInteractiveAvailable(available: boolean): void;
   dispose(): void;
   check(manual?: boolean): Promise<void>;
   handleFocus(): void;
@@ -243,6 +244,7 @@ function createUpdateService(
   let operation = 0;
   let latestNativeOperationId = 0;
   let consumedRevealToken = 0;
+  let interactiveAvailable = false;
   const unlisteners: UnlistenFn[] = [];
 
   function fail(
@@ -385,6 +387,7 @@ function createUpdateService(
   }
 
   async function check(manual = false): Promise<void> {
+    if (manual && !interactiveAvailable) return;
     if (checkFlight) return checkFlight;
     if (
       inProgress.value ||
@@ -481,6 +484,7 @@ function createUpdateService(
       .catch(() => undefined);
     void dependencies
       .listen(CHECK_FOR_UPDATES_EVENT, () => {
+        if (!interactiveAvailable || disposed) return;
         state.revealToken += 1;
         void check(true);
       })
@@ -624,8 +628,14 @@ function createUpdateService(
     }
   }
 
+  function setInteractiveAvailable(available: boolean): void {
+    interactiveAvailable = available;
+    if (!available) consumedRevealToken = state.revealToken;
+  }
+
   function consumeReveal(): boolean {
-    if (consumedRevealToken >= state.revealToken) return false;
+    if (!interactiveAvailable || consumedRevealToken >= state.revealToken)
+      return false;
     consumedRevealToken = state.revealToken;
     return true;
   }
@@ -642,6 +652,7 @@ function createUpdateService(
     state: readonly(state) as Readonly<UpdateSnapshot>,
     inProgress,
     initialize,
+    setInteractiveAvailable,
     dispose,
     check,
     handleFocus,

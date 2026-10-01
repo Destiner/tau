@@ -16,6 +16,7 @@ import {
   rpcSpanKey,
   endPendingRpcSpan,
   abandonPendingRpcSpans,
+  takeCommandDispatch,
 } from '../rpc-bookkeeping';
 import {
   asRecord,
@@ -89,13 +90,25 @@ async function handleResponse(
 ): Promise<void> {
   const command = stringValue(response.command);
   const responseId = stringValue(response.id);
-  const pendingResult = responseId
+  const responseKey = responseId
+    ? rpcSpanKey(controller.runtimeId, controller.generation, responseId)
+    : '';
+  const pendingResult = responseKey
     ? endPendingRpcSpan(
-        rpcSpanKey(controller.runtimeId, controller.generation, responseId),
+        responseKey,
         response.success === true ? 'success' : 'error',
       )
     : { matched: false };
-  if (responseId && !pendingResult.matched) {
+  const retainedCommand =
+    command === 'prompt' &&
+    Boolean(responseKey) &&
+    takeCommandDispatch(responseKey);
+  const correlatedCommandPrompt =
+    retainedCommand ||
+    (pendingResult.matched &&
+      pendingResult.method === 'prompt' &&
+      pendingResult.dispatchSnapshot?.generation === controller.generation);
+  if (responseId && !pendingResult.matched && !retainedCommand) {
     recordRpcResponseAnomaly('unmatched_or_duplicate', responseId, {
       sessionId: controller.sessionId,
       controllerId: controller.key,
@@ -245,11 +258,7 @@ async function handleResponse(
   if (
     command === 'prompt' &&
     !resolvesSubmittedPrompt &&
-    !(
-      pendingResult.matched &&
-      pendingResult.method === 'prompt' &&
-      pendingResult.dispatchSnapshot?.generation === controller.generation
-    )
+    !correlatedCommandPrompt
   ) {
     return;
   }
@@ -263,9 +272,7 @@ async function handleResponse(
     command === 'prompt' &&
     Boolean(controller.commandPromptRequestId) &&
     responseId === controller.commandPromptRequestId &&
-    pendingResult.matched &&
-    pendingResult.method === 'prompt' &&
-    pendingResult.dispatchSnapshot?.generation === controller.generation
+    correlatedCommandPrompt
   ) {
     if (response.success === true) {
       // Establish the read watch before releasing command execution ownership.
