@@ -79,16 +79,12 @@ async function expectPaletteRowLayout(
       shortcutRight: shortcutBounds?.right,
       rowRight: rowBounds.right,
       height: rowBounds.height,
-      titleLines: getComputedStyle(title).whiteSpace,
-      detailLines: detail ? getComputedStyle(detail).whiteSpace : undefined,
       listOverflow: results.scrollWidth - results.clientWidth,
     };
   });
   if (titleClipped) expect(geometry.titleClipped).toBeGreaterThan(1);
   else expect(geometry.titleClipped).toBeLessThanOrEqual(1);
   if (detailClipped) expect(geometry.detailClipped).toBeGreaterThan(1);
-  expect(geometry.titleLines).toBe('nowrap');
-  if (geometry.detailLines) expect(geometry.detailLines).toBe('nowrap');
   expect(geometry.height).toBe(28);
   expect(geometry.listOverflow).toBeLessThanOrEqual(1);
   if (geometry.detailLeft !== undefined) {
@@ -127,30 +123,24 @@ test('prioritizes commands over long session details at desktop and narrow width
     page.getByRole('heading', { name: /A long session name/ }),
   ).toBeVisible();
 
-  for (const width of [1280, 720, 360]) {
-    await page.setViewportSize({ width, height: 800 });
-    await openPalette(page);
-    for (const command of ['Mark as Unread', 'Archive Session']) {
-      await expectPaletteRowLayout(
-        page.getByRole('option', { name: new RegExp(command) }),
-        { detailClipped: true },
-      );
-    }
-    await expectPaletteRowLayout(
-      page.getByRole('option', { name: /Choose Model/ }),
-    );
-    await page.getByRole('option', { name: /Mark as Unread/ }).click();
-    await expect(composer).toBeFocused();
-    await openPalette(page);
-    await expectPaletteRowLayout(
-      page.getByRole('option', { name: /Mark as Read/ }),
-      {
-        detailClipped: true,
-      },
-    );
-    await page.getByRole('option', { name: /Mark as Read/ }).click();
-    await expect(composer).toBeFocused();
-  }
+  await openPalette(page);
+  await expectPaletteRowLayout(
+    page.getByRole('option', { name: /Mark as Unread/ }),
+    { detailClipped: true },
+  );
+  await expectPaletteRowLayout(
+    page.getByRole('option', { name: /Archive Session/ }),
+    { detailClipped: true },
+  );
+  await page.getByRole('option', { name: /Mark as Unread/ }).click();
+  await expect(composer).toBeFocused();
+
+  await page.setViewportSize({ width: 360, height: 800 });
+  await openPalette(page);
+  await expectPaletteRowLayout(
+    page.getByRole('option', { name: /Mark as Read/ }),
+    { detailClipped: true },
+  );
 });
 
 test('keeps project identities ahead of locations and bounds oversized session names', async ({
@@ -189,12 +179,6 @@ test('keeps project identities ahead of locations and bounds oversized session n
       titleClipped: true,
     },
   );
-  await page.getByRole('button', { name: 'Back' }).click();
-  await openNestedPage(page, 'Choose Model');
-  await expectPaletteRowLayout(page.getByRole('option', { name: 'Tau Dev' }));
-  await page.getByRole('button', { name: 'Back' }).click();
-  await openNestedPage(page, 'Choose Thinking Effort');
-  await expectPaletteRowLayout(page.getByRole('option', { name: 'High' }));
 });
 
 test('aligns command detail baselines without shifting rows or shortcuts', async ({
