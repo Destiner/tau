@@ -1,8 +1,15 @@
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
 import { expect, test } from './fixtures';
 
 const scenarioUrl = '/?test-scenario=saved-session-bootstrap';
+
+type ButtonAppearance = {
+  background: string;
+  color: string;
+  opacity: string;
+  bounds: { x: number; y: number; width: number; height: number };
+};
 
 async function modShortcut(page: Page, key: string): Promise<string> {
   return (await page.evaluate(() => /Mac|iPhone|iPad/.test(navigator.platform)))
@@ -28,6 +35,76 @@ async function openNestedPage(page: Page, command: string): Promise<void> {
   const search = page.getByRole('combobox', { name: 'Command Palette' });
   await search.fill(command);
   await search.press('Enter');
+}
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  test(`session header actions share fade feedback in ${colorScheme}`, async ({
+    page,
+  }) => {
+    await page.emulateMedia({ colorScheme });
+    await page.goto(scenarioUrl);
+
+    const header = page.locator('.session-header');
+    const newSession = header.getByRole('button', { name: 'New Session' });
+    const palette = header.getByRole('button', {
+      name: 'Open Command Palette',
+    });
+    await expect(newSession).toBeEnabled();
+    await expect(palette).toBeEnabled();
+    await page.mouse.move(0, 100);
+
+    const appearance = async (button: Locator): Promise<ButtonAppearance> =>
+      button.evaluate((element) => {
+        const style = getComputedStyle(element);
+        const bounds = element.getBoundingClientRect();
+        return {
+          background: style.backgroundColor,
+          color: style.color,
+          opacity: style.opacity,
+          bounds: {
+            x: bounds.x,
+            y: bounds.y,
+            width: bounds.width,
+            height: bounds.height,
+          },
+        };
+      });
+
+    const idleNew = await appearance(newSession);
+    const idlePalette = await appearance(palette);
+    expect(idleNew.background).toBe('rgba(0, 0, 0, 0)');
+    expect(idlePalette.background).toBe(idleNew.background);
+    expect(idlePalette.color).toBe(idleNew.color);
+    expect(idleNew.bounds.width).toBe(28);
+    expect(idleNew.bounds.height).toBe(28);
+    expect(idlePalette.bounds.y).toBe(idleNew.bounds.y);
+    expect(idlePalette.bounds.width).toBe(idleNew.bounds.width);
+    expect(idlePalette.bounds.height).toBe(idleNew.bounds.height);
+
+    await newSession.hover();
+    const hoveredNew = await appearance(newSession);
+    expect(hoveredNew.background).toBe(idleNew.background);
+    expect(hoveredNew.opacity).toBe('1');
+    expect(hoveredNew.bounds).toEqual(idleNew.bounds);
+
+    await palette.hover();
+    const hoveredPalette = await appearance(palette);
+    expect(hoveredPalette.background).toBe(hoveredNew.background);
+    expect(idlePalette.opacity).toBe(idleNew.opacity);
+    expect(hoveredPalette.color).toBe(hoveredNew.color);
+    expect(hoveredPalette.opacity).toBe(hoveredNew.opacity);
+    expect(hoveredPalette.bounds).toEqual(idlePalette.bounds);
+
+    await page.mouse.move(0, 100);
+    await page.keyboard.press('Tab');
+    await newSession.focus();
+    await expect(newSession).toBeFocused();
+    await expect(newSession).not.toHaveCSS('box-shadow', 'none');
+    await page.keyboard.press('Tab');
+    await palette.focus();
+    await expect(palette).toBeFocused();
+    await expect(palette).not.toHaveCSS('box-shadow', 'none');
+  });
 }
 
 test('opens with the platform Mod+K shortcut and filters commands fuzzily in registry order', async ({
@@ -148,6 +225,37 @@ test('opening with Mod+K preserves an uncommitted session rename', async ({
   await expect(name).toHaveValue('Uncommitted rename');
   await expect(
     page.getByRole('heading', { name: 'Uncommitted rename' }),
+  ).toHaveCount(0);
+});
+
+test('clicking the header palette preserves an uncommitted session rename', async ({
+  page,
+}) => {
+  await page.goto(scenarioUrl);
+
+  await page.getByRole('button', { name: 'Main', exact: true }).click();
+  const name = page.locator('input[aria-label="Session Name"]');
+  await name.fill('Uncommitted click rename');
+  await page
+    .locator('.session-header')
+    .getByRole('button', { name: 'Open Command Palette' })
+    .click();
+
+  await expect(
+    page.getByRole('dialog', { name: 'Command Palette' }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('combobox', { name: 'Command Palette' }),
+  ).toBeFocused();
+  await expect(name).toHaveValue('Uncommitted click rename');
+  await page.keyboard.press('Escape');
+  await expect(
+    page.getByRole('dialog', { name: 'Command Palette' }),
+  ).toHaveCount(0);
+  await expect(name).toHaveValue('Uncommitted click rename');
+  await expect(name).toBeFocused();
+  await expect(
+    page.getByRole('heading', { name: 'Uncommitted click rename' }),
   ).toHaveCount(0);
 });
 
