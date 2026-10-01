@@ -238,6 +238,11 @@ test('opens Switch Project with Cmd+Shift+P while an extension prompt is pending
   page,
 }) => {
   await page.goto(scenarioUrl);
+  const prompt = page.getByRole('dialog', {
+    name: 'Which label should the release carry?',
+  });
+  const option = prompt.getByRole('option', { name: 'patch' });
+  await expect(option).toBeFocused();
 
   await modifiedShortcut(page, 'Shift+p');
 
@@ -247,7 +252,7 @@ test('opens Switch Project with Cmd+Shift+P while an extension prompt is pending
     picker.getByRole('option', { name: /Tau fixture/ }),
   ).toBeVisible();
   await page.keyboard.press('Escape');
-  await expect(page.getByRole('option', { name: 'patch' })).toBeFocused();
+  await expect(option).toBeFocused();
 });
 
 test('cycles sessions with Ctrl+Tab while an extension prompt is pending', async ({
