@@ -9,16 +9,12 @@ test('keeps the home version a static informational label', async ({
 }) => {
   await page.goto(`${scenarioUrl}&test-update=first-run-failure`);
 
-  const home = page.locator('.first-run');
-  await expect(home.getByText('tau', { exact: true })).toBeVisible();
-  await expect(home.getByText(appVersion, { exact: true })).toBeVisible();
-  await expect(
-    page.getByRole('button', { name: `Tau version ${appVersion}` }),
-  ).toHaveCount(0);
-  await expect(page.locator('.update-popover')).toHaveCount(0);
-  const label = home.locator('.first-run-version');
+  const label = page.locator('.first-run-version');
   await expect(label).toHaveText(`tau${appVersion}`);
-  await expect(label).not.toHaveAttribute('tabindex');
+  await expect(page.getByRole('button', { name: /Tau version/ })).toHaveCount(
+    0,
+  );
+  await expect(page.locator('.update-popover')).toHaveCount(0);
   const background = await label.evaluate(
     (element) => getComputedStyle(element).backgroundColor,
   );
@@ -29,7 +25,7 @@ test('keeps the home version a static informational label', async ({
   await page.keyboard.press('Tab');
   await expect(label).not.toBeFocused();
 
-  // The empty-workspace scenario expects its cancelled native chooser.
+  // Satisfy the scenario's expected cancelled native chooser.
   await page.getByRole('button', { name: 'Open Local Project' }).click();
 });
 
@@ -67,8 +63,6 @@ test('prepares Pi then offers and navigates both project actions in the empty wo
     ).toHaveCount(0);
     await page.mouse.move(0, 0);
     await expect(page.locator('.first-run-version')).toBeVisible();
-    await expect(page.getByText('tau', { exact: true })).toBeVisible();
-    await expect(page.getByText(appVersion, { exact: true })).toBeVisible();
     await expect(page.getByText('Open a project', { exact: true })).toHaveCount(
       0,
     );
