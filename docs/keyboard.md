@@ -107,6 +107,12 @@ palette unless their launcher appears above.
 | Feedback, quit, and update UI | `⌘Enter` activates the eligible primary action; `⌘⇧Enter` skips an update; Escape closes only a dismissible surface.                      |
 | Issue reporter                | `⌘⇧S` toggles Include Current Session within the report; `⌘Enter` submits; Escape retains unsent text.                                    |
 
+An inline Pi prompt blocks global palette and shortcut actions. Explicit sidebar
+row actions to mark a session read/unread or archive an eligible session remain
+available, including for another project; other blocking dialogs and workspace
+lockouts still apply. Escape from a row menu dismisses only the menu, not the
+prompt.
+
 ## Discovery and tooltip policy
 
 Shortcut hints use the same formatter as the palette and accurately identify
