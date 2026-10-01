@@ -287,6 +287,8 @@ const REQUIRED_NATIVE_COUNTS = {
   'cross-project-sidebar-metadata-actions': {
     load_workspace: 1,
     read_model_scope: 1,
+    start_pi: 1,
+    stop_pi: 0,
     register_session: 1,
     set_active_session: 1,
     archive_session: 2,

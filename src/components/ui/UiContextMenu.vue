@@ -5,7 +5,10 @@
     menus used to answer that by carrying a copy of the stylesheet each.
   -->
   <ContextMenuRoot>
-    <ContextMenuTrigger as-child>
+    <ContextMenuTrigger
+      as-child
+      @contextmenu="rememberTrigger"
+    >
       <slot />
     </ContextMenuTrigger>
     <ContextMenuPortal>
@@ -14,6 +17,8 @@
         :style="
           minWidth === undefined ? undefined : { minWidth: `${minWidth}px` }
         "
+        @escape-key-down="handleEscape"
+        @close-auto-focus="handleCloseAutoFocus"
       >
         <ContextMenuItem
           v-for="(item, index) in resolveItems()"
@@ -43,6 +48,7 @@ import {
   ContextMenuRoot,
   ContextMenuTrigger,
 } from 'reka-ui';
+import { ref } from 'vue';
 
 import {
   formatShortcut,
@@ -58,6 +64,34 @@ const props = withDefaults(
   }>(),
   { minWidth: 152 },
 );
+
+const trigger = ref<HTMLElement | null>(null);
+const restoreFocusOnClose = ref(false);
+const focusable =
+  'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
+
+function rememberTrigger(event: MouseEvent): void {
+  trigger.value =
+    event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+  restoreFocusOnClose.value = false;
+}
+
+function handleEscape(): void {
+  restoreFocusOnClose.value = true;
+}
+
+function handleCloseAutoFocus(event: Event): void {
+  if (!restoreFocusOnClose.value) return;
+  restoreFocusOnClose.value = false;
+  const origin = trigger.value;
+  if (!origin?.isConnected) return;
+  const target = origin.matches(focusable)
+    ? origin
+    : origin.querySelector<HTMLElement>(focusable);
+  if (!target) return;
+  event.preventDefault();
+  target.focus({ preventScroll: true });
+}
 
 const platform: ShortcutPlatform = /Mac|iPhone|iPad/.test(navigator.platform)
   ? 'mac'

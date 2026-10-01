@@ -30,6 +30,8 @@ test('sidebar metadata actions remain targeted while an extension editor waits',
     await expect(read).toBeEnabled();
     await page.keyboard.press('Escape');
     await expect(page.getByRole('menuitem')).toHaveCount(0);
+    await page.clock.runFor(1);
+    await expect(row.locator('.session-select')).toBeFocused();
     await expect(editor).toHaveValue(answer);
     await row.click({ button: 'right' });
     await read.click();
