@@ -31,7 +31,7 @@ async function openPalette(page: Page): Promise<void> {
   ).toBeVisible();
 }
 
-test('places the palette a quarter of the way down and keeps it inside short windows', async ({
+test('places the palette 15% down and keeps it inside short windows', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
@@ -44,7 +44,7 @@ test('places the palette a quarter of the way down and keeps it inside short win
       .getByRole('dialog', { name: 'Command Palette' })
       .boundingBox();
     expect(bounds).not.toBeNull();
-    expect(bounds!.y / height).toBeCloseTo(0.25, 2);
+    expect(bounds!.y / height).toBeCloseTo(0.15, 2);
     expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(height - 31);
   }
 
