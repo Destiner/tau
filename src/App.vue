@@ -888,7 +888,7 @@ register(
 register(
   'app.reportIssue',
   'Report an Issue',
-  'Mod+Shift+I',
+  undefined,
   (ctx) => safe(ctx) && adminMode.value && Boolean(projectSidebar.value),
   () => projectSidebar.value?.openIssueReporter(),
   'App',
