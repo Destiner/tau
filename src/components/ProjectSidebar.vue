@@ -16,7 +16,7 @@
       @pointerenter="holdSessionOrder"
       @pointerleave="releaseSessionOrder"
     >
-      <ArchivedSessionsList />
+      <ArchivedSessionsList :now="relativeTimeNow" />
     </div>
     <UiContextMenu
       v-else
@@ -142,11 +142,13 @@
                       :source="tooltipTitleMarkdown(session)"
                     />
                     <span
-                      v-if="sessionLastActive(project, session)"
+                      v-if="
+                        sessionLastActive(project, session, relativeTimeNow)
+                      "
                       class="session-tooltip-date"
                       >{{
                         expandedRelativeTime(
-                          sessionLastActive(project, session),
+                          sessionLastActive(project, session, relativeTimeNow),
                         )
                       }}</span
                     >
@@ -169,10 +171,14 @@
                     <span class="session-copy">
                       <span class="session-title">{{ session.title }}</span>
                       <span
-                        v-if="sessionLastActive(project, session)"
+                        v-if="
+                          sessionLastActive(project, session, relativeTimeNow)
+                        "
                         class="session-time"
                       >
-                        {{ sessionLastActive(project, session) }}
+                        {{
+                          sessionLastActive(project, session, relativeTimeNow)
+                        }}
                       </span>
                     </span>
                   </button>
@@ -390,6 +396,16 @@ const resizeHandlePointerFocused = ref(false);
 const resizeHighlightSuppressed = ref(false);
 
 const showingArchived = ref(false);
+const relativeTimeNow = ref(Date.now());
+let relativeTimeTimer: ReturnType<typeof setInterval> | undefined;
+
+function refreshRelativeTime(): void {
+  relativeTimeNow.value = Date.now();
+}
+
+function refreshRelativeTimeWhenVisible(): void {
+  if (document.visibilityState === 'visible') refreshRelativeTime();
+}
 
 function showArchivedSessions(): void {
   if (showingArchived.value) return;
@@ -447,11 +463,21 @@ let heldOrderElement: HTMLElement | undefined;
 let projectSortable: Sortable | undefined;
 
 onMounted(() => {
+  refreshRelativeTime();
+  relativeTimeTimer = setInterval(refreshRelativeTime, 60_000);
+  window.addEventListener('focus', refreshRelativeTime);
+  document.addEventListener('visibilitychange', refreshRelativeTimeWhenVisible);
   window.addEventListener('pointermove', releaseSessionOrderOutsideList);
   window.addEventListener('blur', releaseSessionOrder);
   document.addEventListener('visibilitychange', releaseSessionOrderWhenHidden);
 });
 onBeforeUnmount(() => {
+  if (relativeTimeTimer) clearInterval(relativeTimeTimer);
+  window.removeEventListener('focus', refreshRelativeTime);
+  document.removeEventListener(
+    'visibilitychange',
+    refreshRelativeTimeWhenVisible,
+  );
   projectSortable?.destroy();
   window.removeEventListener('pointermove', releaseSessionOrderOutsideList);
   window.removeEventListener('blur', releaseSessionOrder);

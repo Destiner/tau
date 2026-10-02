@@ -281,7 +281,73 @@ describe('sessionLastActive', () => {
       '',
     );
     controller.working = false;
-    expect(sessionLastActive(project, session)).toBe('2h');
+    expect(sessionLastActive(project, session, 100 + 2 * 3_600_000)).toBe('2h');
+  });
+
+  it('ages saved labels with numeric recency, including equal controller timestamps', async () => {
+    const { sessionLastActive, state } = await import('./state');
+    const at = 1_800_000_000_000;
+    const recent = {
+      ...session,
+      lastActive: 'now',
+      lastUserMessageAt: at,
+      sortAt: at,
+    };
+    state.controllers = [];
+    expect(sessionLastActive(project, recent, at)).toBe('now');
+    expect(sessionLastActive(project, recent, at + 61_000)).toBe('1m');
+    state.controllers = [testController({ lastUserMessageAt: at })];
+    expect(sessionLastActive(project, recent, at + 3_600_000)).toBe('1h');
+    state.controllers[0]!.lastUserMessageAt = at + 120_000;
+    expect(sessionLastActive(project, recent, at + 180_000)).toBe('1m');
+    state.controllers[0]!.lastUserMessageAt = at - 120_000;
+    expect(sessionLastActive(project, recent, at + 180_000)).toBe('3m');
+  });
+
+  it('uses numeric sort fallback but preserves textual fallback and empty ephemeral guards', async () => {
+    const { createPhantomSession, sessionLastActive, state } =
+      await import('./state');
+    const at = 1_800_000_000_000;
+    state.controllers = [];
+    expect(
+      sessionLastActive(
+        project,
+        { ...session, sortAt: at, lastActive: 'now' },
+        at + 61_000,
+      ),
+    ).toBe('1m');
+    expect(sessionLastActive(project, { ...session, sortAt: 0 }, at)).toBe(
+      '2h',
+    );
+
+    const controller = testController({ lastUserMessageAt: at });
+    state.controllers = [controller];
+    const phantom = createPhantomSession(project.path, controller.key);
+    phantom.sortAt = at;
+    phantom.lastUserMessageAt = at;
+    state.ephemeralSessions = [phantom];
+    controller.sessionId = phantom.id;
+    controller.messages = [];
+    expect(sessionLastActive(project, phantom, at + 61_000)).toBe('');
+    controller.messages = [
+      { kind: 'user' } as SessionController['messages'][number],
+    ];
+    expect(sessionLastActive(project, phantom, at + 61_000)).toBe('1m');
+  });
+
+  it.each([
+    [0, 'now'],
+    [60_000, '1m'],
+    [3_600_000, '1h'],
+    [86_400_000, '1d'],
+    [604_800_000, '1w'],
+    [31_536_000_000, '1y'],
+    [-60_000, 'now'],
+  ])('formats elapsed %i ms as %s', async (elapsed, expected) => {
+    const { relativeTimestamp } = await import('./state');
+    expect(
+      relativeTimestamp(1_800_000_000_000, 1_800_000_000_000 + elapsed),
+    ).toBe(expected);
   });
 });
 
