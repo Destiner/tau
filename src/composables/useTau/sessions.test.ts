@@ -1442,82 +1442,95 @@ describe('session replacement hardening', () => {
     tau.dispose();
   });
 
-  it('keeps a hidden command through state and history reconciliation, then cleans up an empty result', async () => {
-    const { controller, otherSession, project, tau } =
-      await setupUnansweredPhantomCommand();
-    const session = tau.state.ephemeralSessions.find(
-      (candidate) => candidate.controllerKey === controller.key,
-    );
-    if (!session) throw new Error('Expected the command session');
+  it.each([false, true])(
+    'keeps a hidden command through reconciliation, then handles an empty replacement: %s',
+    async (replacement) => {
+      const { controller, otherSession, project, tau } =
+        await setupUnansweredPhantomCommand();
+      const session = tau.state.ephemeralSessions.find(
+        (candidate) => candidate.controllerKey === controller.key,
+      );
+      if (!session) throw new Error('Expected the command session');
 
-    // An unrelated idle poll cannot signal that the extension handler finished.
-    const { rpc } = await import('../../lib/pi/runtime');
-    const idleId = nextRequestId('idle-state');
-    await rpc(controller, { id: idleId, type: 'get_state' });
-    emitRpc(controller, {
-      id: idleId,
-      type: 'response',
-      command: 'get_state',
-      success: true,
-      data: {
-        sessionId: controller.sessionId,
-        sessionFile: controller.sessionPath,
-        isStreaming: false,
-      },
-    });
-    await tau.selectSession(project, otherSession);
-    expect(tau.state.ephemeralSessions).toContain(session);
-    expect(stoppedRuntimes()).not.toContain(controller.runtimeId);
+      // An unrelated idle poll cannot signal that the extension handler finished.
+      const { rpc } = await import('../../lib/pi/runtime');
+      const idleId = nextRequestId('idle-state');
+      await rpc(controller, { id: idleId, type: 'get_state' });
+      emitRpc(controller, {
+        id: idleId,
+        type: 'response',
+        command: 'get_state',
+        success: true,
+        data: {
+          sessionId: controller.sessionId,
+          sessionFile: controller.sessionPath,
+          isStreaming: false,
+        },
+      });
+      await tau.selectSession(project, otherSession);
+      expect(tau.state.ephemeralSessions).toContain(session);
+      expect(stoppedRuntimes()).not.toContain(controller.runtimeId);
 
-    emitRpc(controller, {
-      id: controller.commandPromptRequestId,
-      type: 'response',
-      command: 'prompt',
-      success: true,
-    });
-    await vi.waitFor(() =>
-      expect(controller.commandSyncRequestId).not.toBe(''),
-    );
-    await tau.selectSession(project, session);
-    await tau.selectSession(project, otherSession);
-    expect(tau.state.ephemeralSessions).toContain(session);
-    expect(stoppedRuntimes()).not.toContain(controller.runtimeId);
+      emitRpc(controller, {
+        id: controller.commandPromptRequestId,
+        type: 'response',
+        command: 'prompt',
+        success: true,
+      });
+      await vi.waitFor(() =>
+        expect(controller.commandSyncRequestId).not.toBe(''),
+      );
+      await tau.selectSession(project, session);
+      await tau.selectSession(project, otherSession);
+      expect(tau.state.ephemeralSessions).toContain(session);
+      expect(stoppedRuntimes()).not.toContain(controller.runtimeId);
 
-    emitRpc(controller, {
-      id: controller.commandSyncRequestId,
-      type: 'response',
-      command: 'get_state',
-      success: true,
-      data: {
-        sessionId: 'command-successor',
-        sessionFile: '/tmp/command-successor.jsonl',
-        isStreaming: false,
-      },
-    });
-    await vi.waitFor(() =>
-      expect(controller.commandMessagesRequestId).not.toBe(''),
-    );
-    expect(controller.sessionId).toBe('command-successor');
-    await tau.newSession(project);
-    expect(tau.state.ephemeralSessions).toContain(session);
-    expect(stoppedRuntimes()).not.toContain(controller.runtimeId);
+      emitRpc(controller, {
+        id: controller.commandSyncRequestId,
+        type: 'response',
+        command: 'get_state',
+        success: true,
+        data: {
+          sessionId: replacement ? 'command-successor' : controller.sessionId,
+          sessionFile: replacement
+            ? '/tmp/command-successor.jsonl'
+            : controller.sessionPath,
+          isStreaming: false,
+        },
+      });
+      await vi.waitFor(() =>
+        expect(controller.commandMessagesRequestId).not.toBe(''),
+      );
+      expect(controller.sessionId).toBe(
+        replacement ? 'command-successor' : session.id,
+      );
+      await tau.newSession(project);
+      expect(tau.state.ephemeralSessions).toContain(session);
+      expect(stoppedRuntimes()).not.toContain(controller.runtimeId);
 
-    emitRpc(controller, {
-      id: controller.commandMessagesRequestId,
-      type: 'response',
-      command: 'get_messages',
-      success: true,
-      data: { messages: [] },
-    });
-    await vi.waitFor(() =>
-      expect(controller.commandMessagesRequestId).toBe(''),
-    );
-    expect(tau.state.ephemeralSessions).toContain(session);
-    await tau.selectSession(project, session);
-    await tau.selectSession(project, otherSession);
-    expect(tau.state.ephemeralSessions).not.toContain(session);
-    tau.dispose();
-  });
+      emitRpc(controller, {
+        id: controller.commandMessagesRequestId,
+        type: 'response',
+        command: 'get_messages',
+        success: true,
+        data: { messages: [] },
+      });
+      await vi.waitFor(() =>
+        expect(controller.commandMessagesRequestId).toBe(''),
+      );
+      expect(tau.state.ephemeralSessions).toContain(session);
+      await tau.selectSession(project, session);
+      await tau.selectSession(project, otherSession);
+      if (replacement) {
+        expect(tau.state.ephemeralSessions).toContain(session);
+        expect(tau.state.controllers).toContain(controller);
+        expect(stoppedRuntimes()).not.toContain(controller.runtimeId);
+      } else {
+        expect(tau.state.ephemeralSessions).not.toContain(session);
+      }
+      tau.dispose();
+    },
+  );
 
   it('keeps an empty command row when its history read fails', async () => {
     const { controller, otherSession, project, tau } =
