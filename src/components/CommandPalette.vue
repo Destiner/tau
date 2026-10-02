@@ -69,6 +69,7 @@
         </header>
         <div
           :id="resultsId"
+          ref="results"
           class="command-palette-results"
           role="listbox"
           :aria-label="pageTitle"
@@ -82,7 +83,7 @@
             class="command-palette-row"
             :class="{ selected: row.id === selectedId }"
             :aria-selected="row.id === selectedId"
-            @mouseenter="() => (selectedId = row.id)"
+            @mouseenter="() => highlight(row.id)"
             @click="() => select(row.id)"
           >
             <span class="command-palette-copy">
@@ -150,6 +151,8 @@ const emit = defineEmits<{
 }>();
 
 const search = ref<HTMLInputElement>();
+const results = ref<HTMLElement>();
+let internalSelection: string | null | undefined;
 const instanceId = getCurrentInstance()?.uid ?? 'palette';
 const resultsId = `command-palette-results-${instanceId}`;
 
@@ -214,25 +217,56 @@ function optionId(id: string): string {
   return `command-palette-option-${instanceId}-${id}`;
 }
 
-function ensureSelection(): void {
+function setSelection(id: string | null): void {
+  internalSelection = id;
+  selectedId.value = id;
+}
+
+function ensureSelection(): boolean {
   if (
     filteredRows.value.length > 0 &&
     !filteredRows.value.some((row) => row.id === selectedId.value)
-  )
-    selectedId.value = filteredRows.value[0]?.id ?? null;
+  ) {
+    setSelection(filteredRows.value[0]?.id ?? null);
+    return true;
+  }
+  return false;
 }
 
-watch(filteredRows, ensureSelection, { immediate: true });
+async function reveal(id: string | null): Promise<void> {
+  if (!id) return;
+  await nextTick();
+  if (!open.value || selectedId.value !== id) return;
+  results.value
+    ?.querySelector<HTMLElement>(`[id="${CSS.escape(optionId(id))}"]`)
+    ?.scrollIntoView({ block: 'nearest' });
+}
+
+function highlight(id: string): void {
+  setSelection(id);
+}
+
+watch(
+  filteredRows,
+  () => {
+    if (ensureSelection()) void reveal(filteredRows.value[0]?.id ?? null);
+  },
+  { immediate: true },
+);
 watch(open, async (isOpen) => {
   if (!isOpen) return;
   ensureSelection();
   await nextTick();
   search.value?.focus();
+  void reveal(selectedId.value);
 });
-watch(selectedId, async (id) => {
-  if (!id) return;
-  await nextTick();
-  document.getElementById(optionId(id))?.scrollIntoView({ block: 'nearest' });
+watch(selectedId, (id) => {
+  if (internalSelection === id) {
+    internalSelection = undefined;
+    return;
+  }
+  internalSelection = undefined;
+  void reveal(id);
 });
 
 function select(id: string): void {
@@ -292,8 +326,9 @@ function onKeydown(event: KeyboardEvent): void {
     if (rows.length === 0) return;
     const current = rows.findIndex((row) => row.id === selectedId.value);
     const offset = event.key === 'ArrowDown' ? 1 : -1;
-    selectedId.value =
-      rows[(current + offset + rows.length) % rows.length]?.id ?? null;
+    const id = rows[(current + offset + rows.length) % rows.length]?.id ?? null;
+    setSelection(id);
+    void reveal(id);
     return;
   }
 

@@ -37,7 +37,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, ref } from 'vue';
 
 import type { CommandOption, CommandMenuPlacement } from '../lib/commands';
 
@@ -61,21 +61,20 @@ const menuStyle = computed(() => ({
   top: props.placement === 'below' ? `${props.offset ?? 0}px` : undefined,
 }));
 
-watch(
-  () => props.selectedIndex,
-  () => {
-    void nextTick(() => {
-      document
-        .getElementById(`command-option-${props.selectedIndex}`)
-        ?.scrollIntoView({ block: 'nearest' });
-    });
-  },
-);
+async function reveal(): Promise<void> {
+  const index = props.selectedIndex;
+  await nextTick();
+  if (!menu.value || props.selectedIndex !== index) return;
+  menu.value
+    .querySelector<HTMLElement>(`[id="command-option-${index}"]`)
+    ?.scrollIntoView({ block: 'nearest' });
+}
 
 defineExpose({
   get menu() {
     return menu.value;
   },
+  reveal,
 });
 </script>
 
