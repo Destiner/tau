@@ -40,7 +40,7 @@ const delayedSuccessorVerification = definePiScenario({
   metadata: {
     name: 'delayed-successor-verification',
     purpose:
-      'Keep an empty Implement successor alive after a completed Plan is registered and verification retries are exhausted.',
+      'Keep an empty Implement successor alive when a second Plan command completes across handoff settlement and its stale state read replies after replacement.',
     qualityRule: 'docs/quality.md §2 Input integrity and §5 State correctness',
     schemaVersion: 1,
   },
@@ -236,6 +236,22 @@ const delayedSuccessorVerification = definePiScenario({
       data: { messages: planMessages },
     },
     { kind: 'gate', name: 'plan-registered', required: true },
+    { kind: 'gate', name: 'before-handoff-settlement', required: true },
+    {
+      kind: 'request',
+      runtime,
+      capture: 'plan-handoff-command',
+      match: { type: 'prompt', message: '/mock-workflow' },
+    },
+    { kind: 'gate', name: 'before-handoff-command-completion', required: true },
+    { kind: 'response', request: 'plan-handoff-command', command: 'prompt' },
+    {
+      kind: 'request',
+      runtime,
+      capture: 'late-plan-command-sync',
+      match: { type: 'get_state' },
+    },
+    { kind: 'gate', name: 'before-late-plan-command-sync', required: true },
     { kind: 'event', runtime, event: { type: 'agent_settled' } },
     {
       kind: 'request',
@@ -291,6 +307,17 @@ const delayedSuccessorVerification = definePiScenario({
       request: 'implement-efforts',
       command: 'get_available_thinking_levels',
       data: { levels: fixtureThinkingLevels },
+    },
+    {
+      kind: 'gate',
+      name: 'implement-identity-visible-before-late-sync',
+      required: true,
+    },
+    {
+      kind: 'response',
+      request: 'late-plan-command-sync',
+      command: 'get_state',
+      data: { ...planState, isStreaming: false },
     },
     { kind: 'gate', name: 'before-implement-retry-one', required: true },
     {

@@ -31,7 +31,7 @@ async function openPalette(page: Page): Promise<void> {
   ).toBeVisible();
 }
 
-test('places the palette a quarter of the way down and keeps it inside short windows', async ({
+test('places the palette 15% down and keeps it inside short windows', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
@@ -44,7 +44,7 @@ test('places the palette a quarter of the way down and keeps it inside short win
       .getByRole('dialog', { name: 'Command Palette' })
       .boundingBox();
     expect(bounds).not.toBeNull();
-    expect(bounds!.y / height).toBeCloseTo(0.25, 2);
+    expect(bounds!.y / height).toBeCloseTo(0.15, 2);
     expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(height - 31);
   }
 
@@ -523,6 +523,24 @@ test('shows update commands in a project palette', async ({ page }) => {
   await expect(
     page.getByRole('option', { name: 'Check for Updates' }),
   ).toBeVisible();
+});
+
+test('keeps Report an Issue in the palette without a keyboard shortcut', async ({
+  page,
+}) => {
+  await page.goto(scenarioUrl);
+  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
+  await page.getByLabel('Projects and Sessions').click();
+  await page.keyboard.type('iddqd');
+  const reporter = page.getByRole('dialog', { name: 'Report an Issue' });
+  await page.keyboard.press(await modShortcut(page, 'Shift+i'));
+  await expect(reporter).toHaveCount(0);
+
+  await openPalette(page);
+  const command = page.getByRole('option', { name: 'Report an Issue' });
+  await expect(command.locator('kbd')).toHaveCount(0);
+  await command.click();
+  await expect(reporter).toBeVisible();
 });
 
 test('selects model and thinking-effort options from the palette', async ({
