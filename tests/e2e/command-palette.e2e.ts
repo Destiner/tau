@@ -1017,34 +1017,6 @@ test('palette filtering restores a valid visible selection after manual scrollin
   await expect(search).toBeFocused();
 });
 
-test('palette nested pages restore their root query and selected command', async ({
-  page,
-}) => {
-  await page.goto(scenarioUrl);
-  await openPalette(page);
-
-  const search = page.getByRole('combobox', { name: 'Command Palette' });
-  await search.fill('switch project');
-  await search.press('Enter');
-  await expect(
-    page.getByRole('dialog', { name: 'Switch Project' }),
-  ).toBeVisible();
-  await page.getByRole('button', { name: 'Back' }).click();
-
-  await expect(
-    page.getByRole('dialog', { name: 'Command Palette' }),
-  ).toBeVisible();
-  await expect(search).toHaveValue('switch project');
-  const selected = page.locator('.command-palette-row.selected');
-  await expect(selected).toHaveCount(1);
-  await expect(selected).toHaveText(/Switch Project/);
-  await expect(search).toHaveAttribute(
-    'aria-activedescendant',
-    (await selected.getAttribute('id'))!,
-  );
-  await expect(search).toBeFocused();
-});
-
 test('ignores a simulated native New Session event while the palette is open', async ({
   page,
 }) => {

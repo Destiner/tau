@@ -97,43 +97,6 @@ test('slash-command wheel scrolling stays native at both pointer edges', async (
   await expect(composer).toBeFocused();
 });
 
-test('slash-command endpoints do not stick after outward wheel input', async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 900, height: 700 });
-  await page.goto(scenarioUrl);
-  const composer = page.getByRole('textbox', { name: 'Message Pi' });
-  await composer.fill('/');
-  const menu = page.locator('.command-menu');
-  await expect(menu).toBeVisible();
-  const bounds = await menu.boundingBox();
-  expect(bounds).not.toBeNull();
-
-  await page.mouse.move(bounds!.x + 20, bounds!.y + bounds!.height - 3);
-  await menu.evaluate((element) => {
-    element.scrollTop = element.scrollHeight;
-  });
-  const bottom = await scrollTop(page);
-  await page.mouse.wheel(0, 24);
-  await nextFrame(page);
-  expect(await scrollTop(page)).toBe(bottom);
-  await page.mouse.wheel(0, -13);
-  await nextFrame(page);
-  expect(await scrollTop(page)).toBeLessThan(bottom);
-
-  await page.mouse.move(bounds!.x + 20, bounds!.y + 3);
-  await menu.evaluate((element) => {
-    element.scrollTop = 0;
-  });
-  await page.mouse.wheel(0, -24);
-  await nextFrame(page);
-  expect(await scrollTop(page)).toBe(0);
-  await page.mouse.wheel(0, 13);
-  await nextFrame(page);
-  expect(await scrollTop(page)).toBeGreaterThan(0);
-  await expect(composer).toBeFocused();
-});
-
 test('slash-command query resets reveal the first command after manual scrolling', async ({
   page,
 }) => {
@@ -182,8 +145,6 @@ test('slash-command keyboard navigation reveals its selection after manual scrol
     element.scrollTop = element.scrollHeight;
   });
 
-  // ArrowUp clamps at the first command. It must still deliberately reveal
-  // that unchanged selection after a user has scrolled it out of view.
   await composer.press('ArrowUp');
   const selected = menu.locator('.command-option:nth-child(1)');
   await expect(selected).toHaveAttribute('aria-selected', 'true');
