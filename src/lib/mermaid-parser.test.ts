@@ -26,6 +26,19 @@ const forwardDefinitions = `graph TD
   E{"final authority"}
   H --> E`;
 
+const compactDottedTopology = `flowchart TD
+  S[Start; α] --> R{Retry?}
+  R --> Q[Queue]
+  R --> P[Primary]
+  R --> F[Fallback]
+  F --> P2[Secondary] --> OK[Accepted; ✓]
+  P & P2 --> W[Wait]
+  E[External] --> W
+  W --> Z[Retry timer]
+  Z --> R
+  W --> T[Timeout]
+  R -.remaining-deadline fires.-> T`;
+
 function graph(source: string): ReturnType<typeof parseMermaid> {
   const result = adaptMermaidSource(source);
   expect(result.kind).toBe('renderable');
@@ -53,7 +66,8 @@ function edges(source: string): [string, string, string | undefined][] {
 /*
  * Patch rationale: https://github.com/lukilabs/beautiful-mermaid/issues/125.
  * Bun loads src/index.ts; ESM/Vite loads dist/index.js. Keep both patched
- * parsers and shape rendering equivalent, including both parallelograms;
+ * parsers and shape rendering equivalent, including compact dotted text
+ * arrows and both parallelograms;
  * regenerate with `bun patch --commit` and check a frozen
  * install. Verify parseMermaid with both Bun and Node, these regressions plus
  * mermaid-source/mermaid tests, and transcript browser tests. Remove the patch
@@ -61,6 +75,99 @@ function edges(source: string): [string, string, string | undefined][] {
  * flowchart subset, not the full Mermaid grammar.
  */
 describe('patched beautiful-mermaid flowchart parser', () => {
+  it('accepts dotted embedded text with every boundary-padding variant', () => {
+    for (const arrow of [
+      '-.retry-now.->',
+      '-. retry-now.->',
+      '-.retry-now .->',
+      '-. retry-now .->',
+    ]) {
+      expect(graph(`flowchart LR\n R ${arrow} T`).edges).toEqual([
+        expect.objectContaining({
+          source: 'R',
+          target: 'T',
+          label: 'retry-now',
+          style: 'dotted',
+          hasArrowStart: false,
+          hasArrowEnd: true,
+        }),
+      ]);
+    }
+    expect(edges('flowchart LR\n A -.retry; café & ready.-> B --> C')).toEqual([
+      ['A', 'B', 'retry; café & ready'],
+      ['B', 'C', undefined],
+    ]);
+    expect(edges('flowchart LR\n A -.-> B')).toEqual([['A', 'B', undefined]]);
+    expect(edges('flowchart LR\n A -->|yes| B ==> C')).toEqual([
+      ['A', 'B', 'yes'],
+      ['B', 'C', undefined],
+    ]);
+    expect(graph('flowchart LR\n A <-.backtrack.-> B').edges[0]).toMatchObject({
+      label: 'backtrack',
+      style: 'dotted',
+      hasArrowStart: true,
+      hasArrowEnd: true,
+    });
+  });
+
+  it('keeps every node and directed edge in a compact dotted-arrow topology', () => {
+    const parsed = graph(compactDottedTopology);
+    expect([...parsed.nodes.keys()]).toEqual([
+      'S',
+      'R',
+      'Q',
+      'P',
+      'F',
+      'P2',
+      'OK',
+      'W',
+      'E',
+      'Z',
+      'T',
+    ]);
+    expect(parsed.nodes.get('R')).toMatchObject({
+      label: 'Retry?',
+      shape: 'diamond',
+    });
+    expect(parsed.nodes.get('S')?.label).toBe('Start; α');
+    expect(parsed.nodes.get('OK')?.label).toBe('Accepted; ✓');
+    expect(parsed.edges.map(({ source, target }) => [source, target])).toEqual([
+      ['S', 'R'],
+      ['R', 'Q'],
+      ['R', 'P'],
+      ['R', 'F'],
+      ['F', 'P2'],
+      ['P2', 'OK'],
+      ['P', 'W'],
+      ['P2', 'W'],
+      ['E', 'W'],
+      ['W', 'Z'],
+      ['Z', 'R'],
+      ['W', 'T'],
+      ['R', 'T'],
+    ]);
+    expect(parsed.edges.at(-1)).toMatchObject({
+      source: 'R',
+      target: 'T',
+      label: 'remaining-deadline fires',
+      style: 'dotted',
+      hasArrowStart: false,
+      hasArrowEnd: true,
+    });
+  });
+
+  it('rejects unfinished dotted text links and trailing garbage', () => {
+    for (const line of [
+      'R -.label',
+      'R -.label.->',
+      'R -.label.-',
+      'R -.label.-> T garbage',
+      'R -. .-> T',
+      'R -.label.-> T &',
+    ]) {
+      expect(() => parseMermaid(`flowchart LR\n ${line}`)).toThrow();
+    }
+  });
   it('keeps the full reported topology, labels, and final parallelogram', () => {
     expect(nodes(`${reportedFlowchart}\n`)).toEqual([
       ['Plan', 'Approved plan', 'rectangle'],

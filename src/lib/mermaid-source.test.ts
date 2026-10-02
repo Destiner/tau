@@ -73,6 +73,35 @@ second]:::hot --> B`;
   A[first\\nsecond]:::hot --> B`);
   });
 
+  it('adapts multiline labels on both sides of compact dotted text arrows', () => {
+    for (const arrow of [
+      '-.retry soon.->',
+      '-. retry soon.->',
+      '-.retry soon .->',
+      '-. retry soon .->',
+      '-.retry soon-.-',
+    ]) {
+      const source = `flowchart LR
+  A[first
+second]:::hot ${arrow} B[/third
+fourth/]:::done`;
+      expect(adapted(source)).toBe(`flowchart LR
+  A[first\\nsecond]:::hot ${arrow} B[/third\\nfourth/]:::done`);
+    }
+
+    expect(
+      adapted(`graph TD
+  A[one
+two]-.retry.->B{three
+four}-.again.->C`),
+    ).toBe('graph TD\n  A[one\\ntwo]-.retry.->B{three\\nfour}-.again.->C');
+    expect(
+      adapted(`graph TD
+  A["literal -.retry.-> B
+still a label"] --> C`),
+    ).toBe('graph TD\n  A["literal -.retry.-> B\\nstill a label"] --> C');
+  });
+
   it('preserves existing multiline forms, comments and non-flowchart statements', () => {
     const source = String.raw`%% heading
 
@@ -135,11 +164,34 @@ second/] --> B[\opposite\] --> C[/wide\] --> D[\narrow/]
     );
   });
 
+  it('leaves incomplete compact arrows intact for the parser to reject', () => {
+    expect(
+      adapted(`graph TD
+  A[first
+second] -.retry.->`),
+    ).toBe('graph TD\n  A[first\\nsecond] -.retry.->');
+    expect(
+      adapted(`graph TD
+  A[first
+second] -.retry B`),
+    ).toBeNull();
+  });
+
   it('declines ambiguous or unterminated multiline labels', () => {
     for (const source of [
       `graph TD
   A[unfinished
   B --> C`,
+      `graph TD
+  A[unfinished
+  B -.retry.-> C[done]`,
+      `graph TD
+  A[unfinished
+  B -. retry .-> C[done]`,
+      `graph TD
+  A[first
+second] -.retry.-> B[third
+fourth] trailing text`,
       `graph TD
   A{"unfinished
 second}`,

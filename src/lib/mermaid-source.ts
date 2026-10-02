@@ -25,6 +25,11 @@ const NON_NODE_STATEMENT =
   /^(?:subgraph[ \t]+|end\s*$|direction[ \t]+|classDef[ \t]+|class[ \t]+|style[ \t]+|linkStyle[ \t]+)/;
 const ARROW = /^(?:<)?(?:-->|-\.->|==>|---|-\.-|===)(?:\|[^|]*\|)?/;
 const TEXT_ARROW = /^(?:<)?(?:--|-\.|==)\s+.+?\s+(?:-->|---|\.->|-\.-|==>|===)/;
+const DOTTED_TEXT_ARROW = /^(?:<)?-\.[ \t]*\S(?:.*?\S)?[ \t]*(?:\.->|-\.-)/;
+
+function textArrowAt(source: string): string | undefined {
+  return TEXT_ARROW.exec(source)?.[0] ?? DOTTED_TEXT_ARROW.exec(source)?.[0];
+}
 
 function isIdentifierCharacter(character: string | undefined): boolean {
   return character !== undefined && /[\w-]/.test(character);
@@ -76,7 +81,8 @@ function startsStatement(source: string, offset: number): boolean {
   const rest = line.slice(id.length);
   return (
     delimiterAt(rest, 0) !== null ||
-    /^\s*(?:&|<?(?:-->|-\.->|==>|---|-\.-|===))/.test(rest)
+    /^\s*(?:&|<?(?:-->|-\.->|==>|---|-\.-|===))/.test(rest) ||
+    textArrowAt(rest.trimStart()) !== undefined
   );
 }
 
@@ -141,7 +147,7 @@ function hasLinkBoundary(source: string, offset: number): boolean {
   }
 
   const rest = source.slice(offset, lineEnd(source, offset));
-  return ARROW.test(rest) || TEXT_ARROW.test(rest);
+  return ARROW.test(rest) || textArrowAt(rest) !== undefined;
 }
 
 function hasNodeBoundary(source: string, offset: number): boolean {
@@ -242,7 +248,7 @@ function adaptMermaidSource(source: string): AdaptedMermaidSource {
         }
 
         const rest = source.slice(offset, lineEnd(source, offset));
-        const arrow = ARROW.exec(rest)?.[0] ?? TEXT_ARROW.exec(rest)?.[0];
+        const arrow = ARROW.exec(rest)?.[0] ?? textArrowAt(rest);
         if (!arrow) break;
         offset += arrow.length;
         expectsNode = true;
