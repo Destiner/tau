@@ -52,17 +52,14 @@ function resolveSessionPickerTarget(
   projects: ProjectSummary[],
   sessions: (project: ProjectSummary) => SessionSummary[],
 ): { project: ProjectSummary; session: SessionSummary } | undefined {
-  // Rebuild from the current workspace instead of trusting a row from a prior render.
-  const entry = sessionPickerEntries(projects, sessions).find(
-    (item) => item.id === id,
-  );
-  const project = projects.find((item) => item.path === entry?.projectPath);
-  const session =
-    project &&
-    sessions(project).find(
-      (item) => item.id === entry?.sessionId && !item.archived,
+  for (const project of projects) {
+    if (project.collapsed) continue;
+    const session = sessions(project).find(
+      (item) => !item.archived && sessionPickerId(project.path, item.id) === id,
     );
-  return project && session ? { project, session } : undefined;
+    if (session) return { project, session };
+  }
+  return undefined;
 }
 
 export {

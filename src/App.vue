@@ -216,7 +216,6 @@
       :rows="paletteRows"
       :page-title="paletteTitle"
       :placeholder="palettePlaceholder"
-      :empty-text="palettePage === 'sessions' ? 'No sessions' : undefined"
       :nested="palettePage !== 'root'"
       @select="selectPaletteRow"
       @back="backPalette"

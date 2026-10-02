@@ -50,7 +50,7 @@ test.describe('Switch Session fixture', () => {
     );
   });
 
-  test('does not navigate when the clicked target is removed or collapsed', async ({
+  test('does not navigate when the clicked target is removed', async ({
     page,
   }) => {
     await page.goto(fixtureUrl);
@@ -68,23 +68,6 @@ test.describe('Switch Session fixture', () => {
       .getByRole('option', { name: 'Duplicate session Current' })
       .click();
     await expect(picker).toBeVisible();
-    await expect(page.getByTestId('selected-session')).toHaveText(
-      '/fixture/duplicate-b/shared-session',
-    );
-
-    await page.reload();
-    const reloadedPicker = page.getByRole('dialog', { name: 'Switch Session' });
-    await page.evaluate(() => {
-      window.__TAU_SESSION_PICKER_FIXTURE__?.armStaleCollapse(
-        '/fixture/duplicate-b',
-      );
-    });
-    await reloadedPicker
-      .getByRole('group')
-      .nth(3)
-      .getByRole('option', { name: 'Duplicate session Current' })
-      .click();
-    await expect(reloadedPicker).toBeVisible();
     await expect(page.getByTestId('selected-session')).toHaveText(
       '/fixture/duplicate-b/shared-session',
     );

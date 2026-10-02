@@ -1,4 +1,3 @@
-<!-- Exercises the picker without starting a Pi runtime. -->
 <template>
   <main class="session-picker-fixture">
     <button
@@ -35,13 +34,8 @@ import {
   sessionPickerEntries,
 } from '../lib/session-picker';
 
-type StaleAction =
-  | { kind: 'remove'; projectPath: string; sessionId: string }
-  | { kind: 'collapse'; projectPath: string };
-
 interface SessionPickerFixtureApi {
   armStaleRemoval(projectPath: string, sessionId: string): void;
-  armStaleCollapse(projectPath: string): void;
   collapseProject(projectPath: string): void;
   collapseAll(): void;
 }
@@ -124,7 +118,7 @@ const selectedId = ref(
 const selectedDestination = ref(
   `${activeProjectPath.value}/${activeSessionId.value}`,
 );
-let staleAction: StaleAction | undefined;
+let staleRemoval: { projectPath: string; sessionId: string } | undefined;
 
 const rows = computed<CommandPaletteRow[]>(() =>
   sessionPickerEntries(projects.value, (item) => item.sessions).map(
@@ -149,25 +143,17 @@ function closePicker(): void {
   open.value = false;
 }
 
-function applyStaleAction(): void {
-  if (!staleAction) return;
-  const action = staleAction;
-  staleAction = undefined;
-  const target = projects.value.find(
-    (project) => project.path === action.projectPath,
-  );
-  if (!target) return;
-  if (action.kind === 'remove') {
-    target.sessions = target.sessions.filter(
-      (session) => session.id !== action.sessionId,
-    );
-  } else {
-    target.collapsed = true;
-  }
+function applyStaleRemoval(): void {
+  if (!staleRemoval) return;
+  const { projectPath, sessionId } = staleRemoval;
+  staleRemoval = undefined;
+  const project = projects.value.find((item) => item.path === projectPath);
+  if (project)
+    project.sessions = project.sessions.filter((item) => item.id !== sessionId);
 }
 
 function select(id: string): void {
-  applyStaleAction();
+  applyStaleRemoval();
   const target = resolveSessionPickerTarget(
     id,
     projects.value,
@@ -182,10 +168,7 @@ function select(id: string): void {
 
 window.__TAU_SESSION_PICKER_FIXTURE__ = {
   armStaleRemoval(projectPath, sessionId): void {
-    staleAction = { kind: 'remove', projectPath, sessionId };
-  },
-  armStaleCollapse(projectPath): void {
-    staleAction = { kind: 'collapse', projectPath };
+    staleRemoval = { projectPath, sessionId };
   },
   collapseProject(projectPath): void {
     const project = projects.value.find((item) => item.path === projectPath);

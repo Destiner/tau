@@ -74,8 +74,8 @@
           :aria-label="pageTitle"
         >
           <div
-            v-for="(group, groupIndex) in visibleGroups"
-            :key="`${group.id}:${groupIndex}`"
+            v-for="group in visibleGroups"
+            :key="group.id"
             :role="group.label ? 'group' : undefined"
             :aria-label="group.label"
           >
@@ -148,13 +148,11 @@ const props = withDefaults(
     pageTitle?: string;
     placeholder?: string;
     nested?: boolean;
-    emptyText?: string;
   }>(),
   {
     pageTitle: 'Command Palette',
     placeholder: 'Search commands…',
     nested: false,
-    emptyText: undefined,
   },
 );
 
@@ -212,7 +210,6 @@ const visibleGroups = computed(() => {
 });
 
 const emptyLabel = computed(() => {
-  if (!query.value.trim() && props.emptyText) return props.emptyText;
   if (query.value.trim()) return 'No matches';
   switch (props.pageTitle) {
     case 'Switch Session':
