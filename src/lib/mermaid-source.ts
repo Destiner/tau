@@ -27,12 +27,8 @@ const ARROW = /^(?:<)?(?:-->|-\.->|==>|---|-\.-|===)(?:\|[^|]*\|)?/;
 const TEXT_ARROW = /^(?:<)?(?:--|-\.|==)\s+.+?\s+(?:-->|---|\.->|-\.-|==>|===)/;
 const DOTTED_TEXT_ARROW = /^(?:<)?-\.[ \t]*\S(?:.*?\S)?[ \t]*(?:\.->|-\.-)/;
 
-function hasTextArrow(source: string): boolean {
-  return TEXT_ARROW.test(source) || DOTTED_TEXT_ARROW.test(source);
-}
-
 function textArrowAt(source: string): string | undefined {
-  return DOTTED_TEXT_ARROW.exec(source)?.[0] ?? TEXT_ARROW.exec(source)?.[0];
+  return TEXT_ARROW.exec(source)?.[0] ?? DOTTED_TEXT_ARROW.exec(source)?.[0];
 }
 
 function isIdentifierCharacter(character: string | undefined): boolean {
@@ -86,7 +82,7 @@ function startsStatement(source: string, offset: number): boolean {
   return (
     delimiterAt(rest, 0) !== null ||
     /^\s*(?:&|<?(?:-->|-\.->|==>|---|-\.-|===))/.test(rest) ||
-    hasTextArrow(rest.trimStart())
+    textArrowAt(rest.trimStart()) !== undefined
   );
 }
 
@@ -151,7 +147,7 @@ function hasLinkBoundary(source: string, offset: number): boolean {
   }
 
   const rest = source.slice(offset, lineEnd(source, offset));
-  return ARROW.test(rest) || hasTextArrow(rest);
+  return ARROW.test(rest) || textArrowAt(rest) !== undefined;
 }
 
 function hasNodeBoundary(source: string, offset: number): boolean {
