@@ -8,7 +8,7 @@ export default async function waitForShowcaseRendering(
   const showcase = page.locator(
     '[data-message-id="fixture-markdown-showcase"]',
   );
-  await expect(showcase.locator('.diagram')).toHaveCount(4);
+  await expect(showcase.locator('.diagram')).toHaveCount(5);
   await expect(
     showcase.locator('.code-block[data-tau-lang="ts"] pre.shiki'),
   ).toBeVisible();

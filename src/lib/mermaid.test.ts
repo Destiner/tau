@@ -16,6 +16,19 @@ const REPORTED_FLOWCHART = `flowchart TD
   Topology -- count ≤ 7 --> Viewer[Diagram viewer]
   Viewer -- count > 7 --> Complete[/Ready to ship/]\n`;
 
+const COMPACT_DOTTED_FLOWCHART = `flowchart TD
+  S[Start; α] --> R{Retry?}
+  R --> Q[Queue]
+  R --> P[Primary]
+  R --> F[Fallback]
+  F --> P2[Secondary] --> OK[Accepted; ✓]
+  P & P2 --> W[Wait]
+  E[External] --> W
+  W --> Z[Retry timer]
+  Z --> R
+  W --> T[Timeout]
+  R -.remaining-deadline fires.-> T`;
+
 const MULTILINE_FLOWCHART = `flowchart LR
   E[Planner] --> F{Route exists
 for both sides?}
@@ -115,6 +128,55 @@ describe('drawing a fenced diagram', () => {
     expect(svg).toMatch(
       /data-shape="parallelogram"[^>]*>\s*<polygon points="[^"]+"/,
     );
+  });
+
+  it('renders the full compact dotted-arrow graph with its edge styling', async () => {
+    await ready();
+    const svg = renderDiagram(COMPACT_DOTTED_FLOWCHART, 'mermaid') ?? '';
+    const nodes = [...svg.matchAll(/<g class="node"[^>]+>/g)].map(
+      ([node]) => node,
+    );
+    const edges = [...svg.matchAll(/<polyline class="edge"[^>]*>/g)].map(
+      ([edge]) => edge,
+    );
+
+    expect(nodes).toHaveLength(11);
+    expect(edges).toHaveLength(13);
+    expect(nodes).toContainEqual(
+      expect.stringContaining(
+        'data-id="R" data-label="Retry?" data-shape="diamond"',
+      ),
+    );
+    expect(nodes).toContainEqual(
+      expect.stringContaining('data-label="Start; α"'),
+    );
+    expect(nodes).toContainEqual(
+      expect.stringContaining('data-label="Accepted; ✓"'),
+    );
+    expect(
+      edges.map((edge) => [
+        /data-from="([^"]+)"/.exec(edge)?.[1],
+        /data-to="([^"]+)"/.exec(edge)?.[1],
+      ]),
+    ).toEqual([
+      ['S', 'R'],
+      ['R', 'Q'],
+      ['R', 'P'],
+      ['R', 'F'],
+      ['F', 'P2'],
+      ['P2', 'OK'],
+      ['P', 'W'],
+      ['P2', 'W'],
+      ['E', 'W'],
+      ['W', 'Z'],
+      ['Z', 'R'],
+      ['W', 'T'],
+      ['R', 'T'],
+    ]);
+    expect(edges.at(-1)).toContain('data-label="remaining-deadline fires"');
+    expect(edges.at(-1)).toMatch(/stroke-dasharray/);
+    expect(edges.at(-1)).toMatch(/marker-end=/);
+    expect(edges.at(-1)).not.toMatch(/marker-start=/);
   });
 
   it('renders mirrored slanted polygons with room for multiline labels', async () => {
@@ -236,6 +298,9 @@ describe('drawing a fenced diagram', () => {
       'A --> B garbage',
       'A -->',
       'A[ok]:::',
+      'R -.label.-> T trailing garbage',
+      'R -.label.->',
+      'R -.label',
     ]) {
       expect(renderDiagram(`graph TD\n ${source}`, 'mermaid')).toBeNull();
     }
@@ -254,6 +319,9 @@ describe('drawing a fenced diagram', () => {
     // partial graph, so it remains the source the reader was sent.
     expect(
       renderDiagram('graph TD\n  A[unfinished\n  B --> C', 'mermaid'),
+    ).toBeNull();
+    expect(
+      renderDiagram('graph TD\n  A[unfinished\n  B -.retry.-> C', 'mermaid'),
     ).toBeNull();
     // Longer than a diagram, whatever else it is.
     expect(

@@ -187,6 +187,21 @@ flowchart TD
 \`\`\`
 
 \`\`\`mermaid
+flowchart TD
+  S[Start; α] --> R{Retry?}
+  R --> Q[Queue]
+  R --> P[Primary]
+  R --> F[Fallback]
+  F --> P2[Secondary] --> OK[Accepted; ✓]
+  P & P2 --> W[Wait]
+  E[External] --> W
+  W --> Z[Retry timer]
+  Z --> R
+  W --> T[Timeout]
+  R -.remaining-deadline fires.-> T
+\`\`\`
+
+\`\`\`mermaid
 graph TD
   Arriving[Still streaming] --> Unclosed[No closing fence yet]`;
 

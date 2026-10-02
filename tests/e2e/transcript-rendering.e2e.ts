@@ -392,7 +392,7 @@ test('draws a themed diagram and opens its pan-and-zoom viewer', async ({
       '[data-message-id="fixture-markdown-showcase"]',
     );
     const diagram = showcase.locator('.diagram svg').first();
-    await expect(showcase.locator('.diagram')).toHaveCount(4, {
+    await expect(showcase.locator('.diagram')).toHaveCount(5, {
       timeout: 20_000,
     });
     await expect(
@@ -445,6 +445,28 @@ test('draws a themed diagram and opens its pan-and-zoom viewer', async ({
     const syntheticSvg = syntheticDiagram.locator('svg');
     await expect(syntheticSvg.locator('g.node')).toHaveCount(7);
     await expect(syntheticSvg.locator('polyline.edge')).toHaveCount(8);
+    const compactDiagram = showcase.locator('.diagram').filter({
+      has: page.locator('g.node[data-id="S"][data-label="Start; α"]'),
+    });
+    await expect(compactDiagram).toHaveCount(1);
+    const compactSvg = compactDiagram.locator('svg');
+    await expect(compactSvg.locator('g.node')).toHaveCount(11);
+    await expect(compactSvg.locator('polyline.edge')).toHaveCount(13);
+    await expect(compactSvg.locator('g.node[data-id="R"]')).toHaveAttribute(
+      'data-shape',
+      'diamond',
+    );
+    const compactEdge = compactSvg.locator(
+      'polyline.edge[data-from="R"][data-to="T"]',
+    );
+    await expect(compactEdge).toHaveAttribute(
+      'data-label',
+      'remaining-deadline fires',
+    );
+    await expect(compactEdge).toHaveAttribute('stroke-dasharray', /.+/);
+    await expect(compactEdge).toHaveAttribute('marker-end', /url\(#.+\)/);
+    await expect(compactEdge).not.toHaveAttribute('marker-start', /.+/);
+    await expect(compactDiagram.locator('.diagram-expand')).toHaveCount(1);
     await expect(
       syntheticSvg.locator('g.node[data-id="Complete"]'),
     ).toHaveAttribute('data-shape', 'parallelogram');
@@ -484,8 +506,8 @@ test('draws a themed diagram and opens its pan-and-zoom viewer', async ({
     });
     const button = figure.locator('.diagram-expand');
     await expect(figure).toHaveCount(1, { timeout: 20_000 });
-    await expect(showcase.locator('.diagram')).toHaveCount(4);
-    await expect(showcase.locator('.diagram-expand')).toHaveCount(4);
+    await expect(showcase.locator('.diagram')).toHaveCount(5);
+    await expect(showcase.locator('.diagram-expand')).toHaveCount(5);
     await expect
       .poll(() =>
         button.evaluate((element) => getComputedStyle(element).opacity),
@@ -613,6 +635,26 @@ test('draws a themed diagram and opens its pan-and-zoom viewer', async ({
     expect(
       await page.evaluate(() => window.__TAU_VIEWER_ESCAPE_HANDLER_CALLS__),
     ).toBe(0);
+  });
+
+  await test.step('opens the compact dotted diagram with all edges intact', async () => {
+    const showcase = page.locator(
+      '[data-message-id="fixture-markdown-showcase"]',
+    );
+    const figure = showcase.locator('.diagram').filter({
+      has: page.locator('g.node[data-id="S"][data-label="Start; α"]'),
+    });
+    const button = figure.locator('.diagram-expand');
+    await button.click({ force: true });
+    const viewer = page.locator('.diagram-viewer');
+    await expect(viewer.locator('g.node')).toHaveCount(11);
+    await expect(viewer.locator('polyline.edge')).toHaveCount(13);
+    await expect(
+      viewer.locator('polyline.edge[data-from="R"][data-to="T"]'),
+    ).toHaveAttribute('data-label', 'remaining-deadline fires');
+    await page.keyboard.press('Escape');
+    await expect(viewer).toHaveCount(0);
+    await expect(button).toBeFocused();
   });
 });
 
