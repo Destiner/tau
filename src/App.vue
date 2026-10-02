@@ -309,6 +309,11 @@ import {
 import controlBlocked from './lib/app-commands/control-context';
 import { paletteLayerOpen } from './lib/app-commands/surface';
 import appVersion from './lib/app-version';
+import {
+  preferredSessionPickerId,
+  resolveSessionPickerTarget,
+  sessionPickerEntries,
+} from './lib/session-picker';
 import { loadSidebarWidth } from './lib/sidebar-width';
 import { invokeTraced } from './lib/telemetry';
 import { useUpdate } from './lib/update';
@@ -575,7 +580,17 @@ function page(value: PalettePage): void {
   rootSelection.value = paletteSelectedId.value;
   palettePage.value = value;
   paletteQuery.value = '';
-  paletteSelectedId.value = null;
+  paletteSelectedId.value =
+    value === 'sessions'
+      ? preferredSessionPickerId(
+          sessionPickerEntries(
+            state.workspace?.projects ?? [],
+            projectSessions,
+          ),
+          state.activeProjectPath,
+          state.activeSessionId,
+        )
+      : null;
   void nextTick(() =>
     document.querySelector<HTMLInputElement>('.command-palette input')?.focus(),
   );
@@ -632,10 +647,16 @@ register(
   () => openRemoteProjectDialog(),
   'Project',
 );
-register('session.switch', 'Switch Session', 'Mod+P', navigationActive, () => {
-  if (!paletteOpen.value) openPalette();
-  page('sessions');
-});
+register(
+  'session.switch',
+  'Switch Session',
+  'Mod+P',
+  (ctx) => navigationSafe(ctx) && Boolean(state.workspace?.projects.length),
+  () => {
+    if (!paletteOpen.value) openPalette();
+    page('sessions');
+  },
+);
 register(
   'project.switch',
   'Switch Project',
@@ -979,15 +1000,20 @@ const paletteRows = computed<CommandPaletteRow[]>(() => {
             : undefined,
     }));
   }
-  const project = commandProject(context(true));
   if (palettePage.value === 'sessions')
-    return (project ? projectSessions(project) : [])
-      .filter((s) => !s.archived)
-      .map((s) => ({
-        id: s.id,
-        title: s.title,
-        detail: s.id === state.activeSessionId ? 'Current' : s.lastActive,
-      }));
+    return sessionPickerEntries(
+      state.workspace?.projects ?? [],
+      projectSessions,
+    ).map((entry) => ({
+      id: entry.id,
+      title: entry.session.title,
+      detail:
+        entry.projectPath === state.activeProjectPath &&
+        entry.sessionId === state.activeSessionId
+          ? 'Current'
+          : entry.session.lastActive,
+      section: { id: entry.projectPath, label: entry.projectName },
+    }));
   if (palettePage.value === 'projects')
     return (state.workspace?.projects ?? []).map((p) => ({
       id: p.path,
@@ -1092,16 +1118,17 @@ async function selectPaletteRow(id: string): Promise<void> {
   }
   const ctx = context(true);
   if (ctx.navigationBlocked || projectActionsDisabled.value) return;
-  const project = commandProject(ctx);
   if (palettePage.value === 'sessions') {
-    const target =
-      project &&
-      projectSessions(project).find((s) => s.id === id && !s.archived);
+    const target = resolveSessionPickerTarget(
+      id,
+      state.workspace?.projects ?? [],
+      projectSessions,
+    );
     if (!target) return;
     paletteOpen.value = false;
     composerBar.value?.closeSelectors();
     projectSidebar.value?.showActiveSessions();
-    void selectSession(project, target);
+    void selectSession(target.project, target.session);
     focusAfterPaletteNavigation();
   } else if (palettePage.value === 'projects') {
     const target = state.workspace?.projects.find((p) => p.path === id);

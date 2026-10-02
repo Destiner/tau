@@ -69,41 +69,53 @@
         </header>
         <div
           :id="resultsId"
-          ref="results"
           class="command-palette-results"
           role="listbox"
           :aria-label="pageTitle"
         >
-          <button
-            v-for="row in filteredRows"
-            :id="optionId(row.id)"
-            :key="row.id"
-            type="button"
-            role="option"
-            class="command-palette-row"
-            :class="{ selected: row.id === selectedId }"
-            :aria-selected="row.id === selectedId"
-            @mouseenter="() => highlight(row.id)"
-            @click="() => select(row.id)"
+          <div
+            v-for="group in visibleGroups"
+            :key="group.id"
+            :role="group.label ? 'group' : undefined"
+            :aria-label="group.label"
           >
-            <span class="command-palette-copy">
-              <span class="command-palette-title">{{ row.title }}</span>
-              <span
-                v-if="row.detail"
-                class="command-palette-detail"
-                >{{ row.detail }}</span
-              >
-            </span>
-            <kbd
-              v-if="row.shortcut"
-              :title="`Shortcut: ${row.shortcut}`"
-              ><span
-                v-for="(key, index) in shortcutKeys(row.shortcut)"
-                :key="index"
-                >{{ key }}</span
-              ></kbd
+            <div
+              v-if="group.label"
+              class="command-palette-group-title"
             >
-          </button>
+              {{ group.label }}
+            </div>
+            <button
+              v-for="row in group.rows"
+              :id="optionId(row.id)"
+              :key="row.id"
+              type="button"
+              role="option"
+              class="command-palette-row"
+              :class="{ selected: row.id === selectedId }"
+              :aria-selected="row.id === selectedId"
+              @mouseenter="() => highlight(row.id)"
+              @click="() => select(row.id)"
+            >
+              <span class="command-palette-copy">
+                <span class="command-palette-title">{{ row.title }}</span>
+                <span
+                  v-if="row.detail"
+                  class="command-palette-detail"
+                  >{{ row.detail }}</span
+                >
+              </span>
+              <kbd
+                v-if="row.shortcut"
+                :title="`Shortcut: ${row.shortcut}`"
+                ><span
+                  v-for="(key, index) in shortcutKeys(row.shortcut)"
+                  :key="index"
+                  >{{ key }}</span
+                ></kbd
+              >
+            </button>
+          </div>
           <p
             v-if="filteredRows.length === 0"
             class="command-palette-empty"
@@ -151,7 +163,6 @@ const emit = defineEmits<{
 }>();
 
 const search = ref<HTMLInputElement>();
-const results = ref<HTMLElement>();
 let internalSelection: string | null | undefined;
 const instanceId = getCurrentInstance()?.uid ?? 'palette';
 const resultsId = `command-palette-results-${instanceId}`;
@@ -178,16 +189,32 @@ const filteredRows = computed(() => {
     tokens.every(
       (token) =>
         fuzzyMatch(row.title, token) ||
-        Boolean(row.searchText?.toLocaleLowerCase().includes(token)),
+        Boolean(row.searchText?.toLocaleLowerCase().includes(token)) ||
+        Boolean(row.section && fuzzyMatch(row.section.label, token)),
     ),
   );
+});
+
+const visibleGroups = computed(() => {
+  const groups: Array<{
+    id: string;
+    label?: string;
+    rows: CommandPaletteRow[];
+  }> = [];
+  for (const row of filteredRows.value) {
+    const id = row.section?.id ?? '';
+    const last = groups[groups.length - 1];
+    if (last?.id === id) last.rows.push(row);
+    else groups.push({ id, label: row.section?.label, rows: [row] });
+  }
+  return groups;
 });
 
 const emptyLabel = computed(() => {
   if (query.value.trim()) return 'No matches';
   switch (props.pageTitle) {
     case 'Switch Session':
-      return 'No sessions in this project';
+      return 'No sessions';
     case 'Switch Project':
       return 'No imported projects';
     case 'Choose Model':
@@ -214,7 +241,7 @@ function shortcutKeys(shortcut: string): string[] {
 }
 
 function optionId(id: string): string {
-  return `command-palette-option-${instanceId}-${id}`;
+  return `command-palette-option-${instanceId}-${encodeURIComponent(id)}`;
 }
 
 function setSelection(id: string | null): void {
@@ -223,23 +250,19 @@ function setSelection(id: string | null): void {
 }
 
 function ensureSelection(): boolean {
-  if (
-    filteredRows.value.length > 0 &&
-    !filteredRows.value.some((row) => row.id === selectedId.value)
-  ) {
-    setSelection(filteredRows.value[0]?.id ?? null);
-    return true;
-  }
-  return false;
+  const id = filteredRows.value.some((row) => row.id === selectedId.value)
+    ? selectedId.value
+    : (filteredRows.value[0]?.id ?? null);
+  if (id === selectedId.value) return false;
+  setSelection(id);
+  return true;
 }
 
 async function reveal(id: string | null): Promise<void> {
   if (!id) return;
   await nextTick();
   if (!open.value || selectedId.value !== id) return;
-  results.value
-    ?.querySelector<HTMLElement>(`[id="${CSS.escape(optionId(id))}"]`)
-    ?.scrollIntoView({ block: 'nearest' });
+  document.getElementById(optionId(id))?.scrollIntoView({ block: 'nearest' });
 }
 
 function highlight(id: string): void {
@@ -249,17 +272,21 @@ function highlight(id: string): void {
 watch(
   filteredRows,
   () => {
-    if (ensureSelection()) void reveal(filteredRows.value[0]?.id ?? null);
+    if (ensureSelection()) void reveal(selectedId.value);
   },
   { immediate: true },
 );
-watch(open, async (isOpen) => {
-  if (!isOpen) return;
-  ensureSelection();
-  await nextTick();
-  search.value?.focus();
-  void reveal(selectedId.value);
-});
+watch(
+  open,
+  async (isOpen) => {
+    if (!isOpen) return;
+    ensureSelection();
+    await nextTick();
+    search.value?.focus();
+    requestAnimationFrame(() => void reveal(selectedId.value));
+  },
+  { immediate: true },
+);
 watch(selectedId, (id) => {
   if (internalSelection === id) {
     internalSelection = undefined;
@@ -349,6 +376,7 @@ export type CommandPaletteRow = {
   shortcut?: string;
   detail?: string;
   searchText?: string;
+  section?: { id: string; label: string };
 };
 </script>
 
@@ -432,6 +460,18 @@ export type CommandPaletteRow = {
   padding: 6px;
   overflow: auto;
   overscroll-behavior: contain;
+}
+
+.command-palette-group-title {
+  min-width: 0;
+  margin: 5px 0 2px;
+  padding: 4px 10px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .command-palette-row {

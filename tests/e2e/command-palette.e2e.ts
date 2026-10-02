@@ -357,6 +357,144 @@ test('navigates session, project, model, and effort pages and returns from an em
   ]);
 });
 
+test('groups expanded projects in sidebar order and initially highlights the current session', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
+  await openPalette(page);
+  await openNestedPage(page, 'Switch Session');
+
+  const picker = page.getByRole('dialog', { name: 'Switch Session' });
+  const groups = picker.getByRole('group');
+  await expect(groups).toHaveCount(2);
+  await expect(
+    groups.evaluateAll((elements) =>
+      elements.map((group) => group.getAttribute('aria-label')),
+    ),
+  ).resolves.toEqual(['atlas', 'notes']);
+  await expect(
+    groups.nth(0).locator('.command-palette-title').allTextContents(),
+  ).resolves.toEqual([
+    'Workspace overview',
+    'Navigation review',
+    'Release checklist',
+  ]);
+  await expect(
+    groups.nth(1).locator('.command-palette-title').allTextContents(),
+  ).resolves.toEqual(['Triage inbox', 'Markdown export']);
+  await expect(
+    picker.getByRole('option', { name: 'Workspace overview Current' }),
+  ).toHaveAttribute('aria-selected', 'true');
+});
+
+test('searches session titles and project names together across expanded groups', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
+  await openPalette(page);
+  await openNestedPage(page, 'Switch Session');
+
+  const picker = page.getByRole('dialog', { name: 'Switch Session' });
+  const search = picker.getByRole('combobox', { name: 'Switch Session' });
+  await search.fill('notes triage');
+  await expect(picker.getByRole('group')).toHaveCount(1);
+  await expect(picker.getByRole('group')).toHaveAttribute(
+    'aria-label',
+    'notes',
+  );
+  await expect(
+    picker.locator('.command-palette-title').allTextContents(),
+  ).resolves.toEqual(['Triage inbox']);
+
+  await search.fill('  NoTeS   ');
+  await expect(picker.getByRole('group')).toHaveCount(1);
+  await expect(picker.getByRole('option')).toHaveCount(2);
+
+  await search.fill('release');
+  await expect(picker.getByRole('group')).toHaveCount(1);
+  await expect(picker.getByRole('group')).toHaveAttribute(
+    'aria-label',
+    'atlas',
+  );
+  await expect(
+    picker.locator('.command-palette-title').allTextContents(),
+  ).resolves.toEqual(['Release checklist']);
+});
+
+test('excludes collapsed projects from Switch Session, including search results', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
+  const notes = page.locator(
+    '.project-group[data-project-path="/browser-dev/projects/notes"]',
+  );
+  await notes.locator('.project-toggle').click();
+  await expect(notes.locator('.session-row')).toHaveCount(0);
+
+  await openPalette(page);
+  await openNestedPage(page, 'Switch Session');
+  const picker = page.getByRole('dialog', { name: 'Switch Session' });
+  await expect(picker.getByRole('group')).toHaveCount(1);
+  await expect(picker.getByRole('group')).toHaveAttribute(
+    'aria-label',
+    'atlas',
+  );
+  await picker.getByRole('combobox', { name: 'Switch Session' }).fill('notes');
+  await expect(picker.getByRole('group')).toHaveCount(0);
+  await expect(picker.getByText('No matches', { exact: true })).toBeVisible();
+});
+
+test('traverses session groups with the keyboard and preserves drafts when switching projects', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const composer = page.getByRole('textbox', { name: 'Message Pi' });
+  await expect(composer).toBeEnabled();
+  await composer.fill('Keep this atlas draft');
+  await openPalette(page);
+  await openNestedPage(page, 'Switch Session');
+
+  const picker = page.getByRole('dialog', { name: 'Switch Session' });
+  const search = picker.getByRole('combobox', { name: 'Switch Session' });
+  await expect(
+    picker.getByRole('option', { name: 'Workspace overview Current' }),
+  ).toHaveAttribute('aria-selected', 'true');
+  await search.press('ArrowDown');
+  await expect(
+    picker.getByRole('option', { name: 'Navigation review' }),
+  ).toHaveAttribute('aria-selected', 'true');
+  await search.press('ArrowDown');
+  await expect(
+    picker.getByRole('option', { name: 'Release checklist' }),
+  ).toHaveAttribute('aria-selected', 'true');
+  await search.press('ArrowDown');
+  const triage = picker.getByRole('option', { name: 'Triage inbox' });
+  await expect(triage).toHaveAttribute('aria-selected', 'true');
+  await search.press('Enter');
+  await expect(
+    page.getByRole('heading', { name: 'Triage inbox' }),
+  ).toBeVisible();
+
+  await openPalette(page);
+  await openNestedPage(page, 'Switch Session');
+  await expect(
+    page
+      .getByRole('dialog', { name: 'Switch Session' })
+      .getByRole('option', { name: /Triage inbox Current/ }),
+  ).toHaveAttribute('aria-selected', 'true');
+  await page
+    .getByRole('dialog', { name: 'Switch Session' })
+    .getByRole('option', { name: /Workspace overview/ })
+    .click();
+  await expect(
+    page.getByRole('heading', { name: 'Workspace overview' }),
+  ).toBeVisible();
+  await expect(composer).toHaveValue('Keep this atlas draft');
+});
+
 test('Escape closes the palette and restores focus to its origin', async ({
   page,
 }) => {

@@ -39,8 +39,13 @@ remain in their original order as the query changes. It searches command
 labels and reviewed aliases locally; query text is transient and is never
 telemetry.
 
-- **Switch Session** (`⌘P`) opens a searchable list of non-archived sessions in
-  the active project only.
+- **Switch Session** (`⌘P`) lists non-archived sessions from all expanded workspace
+  projects, grouped in sidebar order (including idle and remote projects). Collapsed
+  projects are excluded even from search. The active session is highlighted on open
+  when eligible, otherwise the first listed session. Search matches project names
+  and session titles; headings are not keyboard stops. An empty workspace list says
+  “No sessions”; a search without results says “No matches”. Project-local
+  `Ctrl+Tab` navigation is unchanged.
 - **Switch Project** (`⌘⇧P`) opens imported projects in their existing order.
 - Model and effort selection are embedded palette lists, not handoffs to
   separate selectors. Their options are filtered and chosen inside the palette.

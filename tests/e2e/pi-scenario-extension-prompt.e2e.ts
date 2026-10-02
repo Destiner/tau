@@ -96,7 +96,7 @@ test('executes palette New Session and Switch Session while an extension prompt 
   await expect(option).toBeFocused();
 });
 
-test('switches projects from a pending extension prompt and restores its focus', async ({
+test('switches sessions across projects from a pending extension prompt and restores its focus', async ({
   page,
 }) => {
   await page.goto(
@@ -109,14 +109,17 @@ test('switches projects from a pending extension prompt and restores its focus',
   const option = prompt.getByRole('option', { name: 'patch' });
   await expect(option).toBeFocused();
 
-  await modifiedShortcut(page, 'Shift+p');
-  const projects = page.getByRole('dialog', { name: 'Switch Project' });
-  await expect(projects).toBeVisible();
-  await projects.getByRole('option', { name: /Other fixture/ }).click();
+  await pressSessionSwitcher(page);
+  const picker = page.getByRole('dialog', { name: 'Switch Session' });
+  await expect(picker.getByRole('group')).toHaveCount(2);
+  await picker.getByRole('option', { name: 'Other Main' }).click();
   await expect(page.getByRole('heading', { name: 'Other Main' })).toBeVisible();
 
-  await modifiedShortcut(page, 'Shift+p');
-  await page.getByRole('option', { name: /Tau fixture/ }).click();
+  await pressSessionSwitcher(page);
+  await page
+    .getByRole('dialog', { name: 'Switch Session' })
+    .getByRole('option', { name: /^Main(?: |$)/ })
+    .click();
   await expect(prompt).toBeVisible();
   await expect(option).toBeFocused();
 });
