@@ -247,6 +247,7 @@ watch(retryPresentation, (retry, previous) => {
 
 watch([commandQuery, commands], ([query]) => {
   commandSelectedIndex.value = 0;
+  void revealCommandSelection();
   // A dismissed menu stays closed until the composer leaves the command it was
 
   if (query === null) commandMenuDismissed.value = false;
@@ -260,10 +261,33 @@ watch(effortSelectorOpen, (open) => {
   if (open) modelSelectorOpen.value = false;
 });
 
-watch([commandMenuActive, filteredCommands], () => {
-  if (!commandMenuActive.value) return;
-  void nextTick(updateCommandMenuLayout);
+watch([commandMenuActive, filteredCommands], ([active], [wasActive]) => {
+  if (!active) return;
+  void nextTick(() => {
+    updateCommandMenuLayout();
+    if (!wasActive) void revealCommandSelection();
+  });
 });
+
+async function revealCommandSelection(): Promise<void> {
+  const index = commandSelectedIndex.value;
+  const query = commandQuery.value;
+  await nextTick();
+  if (
+    !commandMenuActive.value ||
+    commandSelectedIndex.value !== index ||
+    commandQuery.value !== query
+  )
+    return;
+  updateCommandMenuLayout();
+  await nextTick();
+  if (
+    commandMenuActive.value &&
+    commandSelectedIndex.value === index &&
+    commandQuery.value === query
+  )
+    void commandMenu.value?.reveal();
+}
 
 function updateCommandMenuLayout(): void {
   const menu = commandMenu.value?.menu;
@@ -310,6 +334,7 @@ function handleComposerKeydown(event: KeyboardEvent): void {
         lastIndex,
         Math.max(0, commandSelectedIndex.value + delta),
       );
+      void revealCommandSelection();
       return;
     }
     if (event.key === 'Tab' && !event.shiftKey) {
