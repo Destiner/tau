@@ -73,6 +73,14 @@ async function mountApp(): Promise<void> {
     app.mount('#app');
     return;
   }
+  if (import.meta.env.DEV && fixture === 'session-picker') {
+    const { default: SessionPickerFixture } =
+      await import('./dev/SessionPickerFixture.vue');
+    const app = createApp(SessionPickerFixture);
+    app.config.errorHandler = vueErrorHandler;
+    app.mount('#app');
+    return;
+  }
   if (import.meta.env.DEV && fixture === 'session-order') {
     const { default: SessionOrderFixture } =
       await import('./dev/SessionOrderFixture.vue');
