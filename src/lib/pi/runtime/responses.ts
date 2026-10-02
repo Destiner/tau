@@ -644,16 +644,11 @@ async function handleResponse(
         controller.commandSyncRequestId || controller.commandMessagesRequestId,
       );
     if (sessionChanged) {
-      controller.provisionalReplacement =
-        transfersCommandRefresh ||
-        resolvesCommandSync ||
-        Boolean(controller.commandPromptRequestId)
-          ? undefined
-          : {
-              generation: controller.generation,
-              sessionId: controller.sessionId,
-              sessionPath: controller.sessionPath,
-            };
+      controller.provisionalReplacement = {
+        generation: controller.generation,
+        sessionId: controller.sessionId,
+        sessionPath: controller.sessionPath,
+      };
     }
     if (sessionChanged) {
       // The response that revealed the replacement already ended its own

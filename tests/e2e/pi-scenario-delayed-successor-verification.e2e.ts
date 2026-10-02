@@ -26,7 +26,7 @@ async function releaseGate(page: Page, gate: string): Promise<void> {
   }, gate);
 }
 
-test('keeps an empty successor alive after delayed verification and preserves navigation drafts', async ({
+test('preserves an empty successor across a second command, settlement, and a late Plan read', async ({
   page,
 }) => {
   await page.goto(scenarioUrl);
@@ -45,6 +45,8 @@ test('keeps an empty successor alive after delayed verification and preserves na
 
   await composer.fill('/mock-workflow');
   await page.getByRole('button', { name: 'Send Message' }).click();
+  await waitForGate(page, 'before-command-completion');
+  await releaseGate(page, 'before-command-completion');
   await waitForGate(page, 'plan-registered');
 
   const planRow = sidebar.locator('button.session-select').filter({
@@ -55,15 +57,27 @@ test('keeps an empty successor alive after delayed verification and preserves na
     has: page.locator('.session-title', { hasText: implementName }),
   });
   await releaseGate(page, 'plan-registered');
+  await waitForGate(page, 'before-handoff-settlement');
   await expect(page.getByRole('heading', { name: planName })).toBeVisible();
   await expect(planRow).toHaveCount(1);
   await expect(planRow).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByLabel('Transcript')).toContainText(
+    'Approved implementation plan.',
+  );
+  await releaseGate(page, 'before-handoff-settlement');
+  await composer.fill('/mock-workflow');
+  await page.getByRole('button', { name: 'Send Message' }).click();
+  await waitForGate(page, 'before-handoff-command-completion');
+  await expect(planRow).toHaveCount(1);
+  await releaseGate(page, 'before-handoff-command-completion');
+  await waitForGate(page, 'before-late-plan-command-sync');
   await composer.fill(planDraft);
   await expect(composer).toHaveValue(planDraft);
+  await releaseGate(page, 'before-late-plan-command-sync');
 
   await waitForGate(page, 'before-implement-identity');
   await releaseGate(page, 'before-implement-identity');
-  await waitForGate(page, 'before-implement-retry-one');
+  await waitForGate(page, 'implement-identity-visible-before-late-sync');
 
   await expect(
     page.getByRole('heading', { name: implementName }),
@@ -71,6 +85,15 @@ test('keeps an empty successor alive after delayed verification and preserves na
   await expect(planRow).toHaveCount(1);
   await expect(implementRow).toHaveCount(1);
   await expect(implementRow).toHaveAttribute('aria-current', 'page');
+  await releaseGate(page, 'implement-identity-visible-before-late-sync');
+  await waitForGate(page, 'before-implement-retry-one');
+  await expect(
+    page.getByRole('heading', { name: implementName }),
+  ).toBeVisible();
+  await expect(implementRow).toHaveAttribute('aria-current', 'page');
+  await expect(planRow).toHaveCount(1);
+  await expect(implementRow).toHaveCount(1);
+  await expect(page.getByLabel('Transcript')).toHaveCount(0);
 
   await releaseGate(page, 'before-implement-retry-one');
   await page.clock.runFor(1);
@@ -102,6 +125,12 @@ test('keeps an empty successor alive after delayed verification and preserves na
   await backupRow.click();
   await expect(composer).toHaveValue(backupDraft);
   await expect(implementRow).toHaveCount(1);
+  await expect(planRow).toHaveCount(1);
+  // The first agent_start remains held well beyond all verification retries.
+  await page.clock.runFor(12_000);
+  await expect(implementRow).toHaveCount(1);
+  await expect(planRow).toHaveCount(1);
+  await expect(composer).toHaveValue(backupDraft);
   expect(
     await page.evaluate(() =>
       window.__TAU_PI_SCENARIO__?.hasRegisteredSession('session-implement'),
@@ -131,6 +160,8 @@ test('keeps an empty successor alive after delayed verification and preserves na
   expect(registrations).toBe(5);
   expect(hasImplement).toBe(true);
   await expect(implementRow).toHaveCount(1);
+  await expect(planRow).toHaveCount(1);
+  await expect(backupRow).toHaveAttribute('aria-current', 'page');
   await releaseGate(page, 'implement-materialized');
   await expect(
     implementRow.getByRole('img', { name: 'Working' }),
