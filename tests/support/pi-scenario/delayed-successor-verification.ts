@@ -66,7 +66,6 @@ const delayedSuccessorVerification = definePiScenario({
       capture: 'workflow-command',
       match: { type: 'prompt', message: '/mock-workflow' },
     },
-    { kind: 'gate', name: 'before-command-completion', required: true },
     { kind: 'response', request: 'workflow-command', command: 'prompt' },
     {
       kind: 'request',

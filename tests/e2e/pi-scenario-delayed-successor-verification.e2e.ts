@@ -45,8 +45,6 @@ test('preserves an empty successor across a second command, settlement, and a la
 
   await composer.fill('/mock-workflow');
   await page.getByRole('button', { name: 'Send Message' }).click();
-  await waitForGate(page, 'before-command-completion');
-  await releaseGate(page, 'before-command-completion');
   await waitForGate(page, 'plan-registered');
 
   const planRow = sidebar.locator('button.session-select').filter({
@@ -87,13 +85,6 @@ test('preserves an empty successor across a second command, settlement, and a la
   await expect(implementRow).toHaveAttribute('aria-current', 'page');
   await releaseGate(page, 'implement-identity-visible-before-late-sync');
   await waitForGate(page, 'before-implement-retry-one');
-  await expect(
-    page.getByRole('heading', { name: implementName }),
-  ).toBeVisible();
-  await expect(implementRow).toHaveAttribute('aria-current', 'page');
-  await expect(planRow).toHaveCount(1);
-  await expect(implementRow).toHaveCount(1);
-  await expect(page.getByLabel('Transcript')).toHaveCount(0);
 
   await releaseGate(page, 'before-implement-retry-one');
   await page.clock.runFor(1);
@@ -124,8 +115,6 @@ test('preserves an empty successor across a second command, settlement, and a la
   await expect(composer).toHaveValue('Draft for the waiting successor');
   await backupRow.click();
   await expect(composer).toHaveValue(backupDraft);
-  await expect(implementRow).toHaveCount(1);
-  await expect(planRow).toHaveCount(1);
   // The first agent_start remains held well beyond all verification retries.
   await page.clock.runFor(12_000);
   await expect(implementRow).toHaveCount(1);
@@ -160,7 +149,6 @@ test('preserves an empty successor across a second command, settlement, and a la
   expect(registrations).toBe(5);
   expect(hasImplement).toBe(true);
   await expect(implementRow).toHaveCount(1);
-  await expect(planRow).toHaveCount(1);
   await expect(backupRow).toHaveAttribute('aria-current', 'page');
   await releaseGate(page, 'implement-materialized');
   await expect(

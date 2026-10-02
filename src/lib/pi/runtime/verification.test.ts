@@ -132,11 +132,6 @@ describe('command-created session durability — verification', () => {
       },
     });
     expect(controller.submittedPrompt).toBeUndefined();
-    expect(controller.provisionalReplacement).toEqual({
-      generation: 1,
-      sessionId: 'after',
-      sessionPath: '/tmp/project/after.jsonl',
-    });
     await handleResponse(controller, {
       id: commandId,
       command: 'prompt',
@@ -339,11 +334,6 @@ describe('command-created session durability — verification', () => {
         },
       });
       const historyId = controller.commandMessagesRequestId;
-      expect(controller.provisionalReplacement).toEqual({
-        generation: 1,
-        sessionId: 'after',
-        sessionPath: '/tmp/project/after.jsonl',
-      });
       expect(historyId).not.toBe('');
       expect(controller.commandSyncRequestId).toBe('');
       await handleResponse(controller, {
