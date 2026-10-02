@@ -525,6 +525,29 @@ test('shows update commands in a project palette', async ({ page }) => {
   ).toBeVisible();
 });
 
+test('keeps Report an Issue in the palette without a keyboard shortcut', async ({
+  page,
+}) => {
+  await page.goto(scenarioUrl);
+  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
+  await page.getByLabel('Projects and Sessions').click();
+  await page.keyboard.type('iddqd');
+  const reporter = page.getByRole('dialog', { name: 'Report an Issue' });
+  await expect(
+    page.getByRole('button', { name: 'Report an Issue' }),
+  ).toBeVisible();
+
+  await page.keyboard.press(await modShortcut(page, 'Shift+i'));
+  await expect(reporter).toHaveCount(0);
+
+  await openPalette(page);
+  const command = page.getByRole('option', { name: 'Report an Issue' });
+  await expect(command).toBeVisible();
+  await expect(command.locator('kbd')).toHaveCount(0);
+  await command.click();
+  await expect(reporter).toBeVisible();
+});
+
 test('selects model and thinking-effort options from the palette', async ({
   page,
 }) => {
