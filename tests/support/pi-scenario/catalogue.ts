@@ -1,4 +1,5 @@
 import archivedSessionsReview from './archived-sessions-review';
+import commandListScrolling from './command-list-scrolling';
 import crossProjectSidebarMetadataActions from './cross-project-sidebar-metadata-actions';
 import delayedSuccessorVerification from './delayed-successor-verification';
 import emptyWorkspace from './empty-workspace';
@@ -48,6 +49,7 @@ import type { PiScenario, PiScenarioMetadata } from './index';
 
 const scenarios = [
   emptyWorkspace,
+  commandListScrolling,
   crossProjectSidebarMetadataActions,
   delayedSuccessorVerification,
   savedSessionBootstrap,

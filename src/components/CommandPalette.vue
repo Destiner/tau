@@ -94,7 +94,7 @@
               class="command-palette-row"
               :class="{ selected: row.id === selectedId }"
               :aria-selected="row.id === selectedId"
-              @mouseenter="() => (selectedId = row.id)"
+              @mouseenter="() => highlight(row.id)"
               @click="() => select(row.id)"
             >
               <span class="command-palette-copy">
@@ -163,6 +163,7 @@ const emit = defineEmits<{
 }>();
 
 const search = ref<HTMLInputElement>();
+let internalSelection: string | null | undefined;
 const instanceId = getCurrentInstance()?.uid ?? 'palette';
 const resultsId = `command-palette-results-${instanceId}`;
 
@@ -243,17 +244,35 @@ function optionId(id: string): string {
   return `command-palette-option-${instanceId}-${encodeURIComponent(id)}`;
 }
 
-function ensureSelection(): void {
-  if (!filteredRows.value.some((row) => row.id === selectedId.value))
-    selectedId.value = filteredRows.value[0]?.id ?? null;
+function setSelection(id: string | null): void {
+  internalSelection = id;
+  selectedId.value = id;
+}
+
+function ensureSelection(): boolean {
+  const id = filteredRows.value.some((row) => row.id === selectedId.value)
+    ? selectedId.value
+    : (filteredRows.value[0]?.id ?? null);
+  if (id === selectedId.value) return false;
+  setSelection(id);
+  return true;
+}
+
+async function reveal(id: string | null): Promise<void> {
+  if (!id) return;
+  await nextTick();
+  if (!open.value || selectedId.value !== id) return;
+  document.getElementById(optionId(id))?.scrollIntoView({ block: 'nearest' });
+}
+
+function highlight(id: string): void {
+  setSelection(id);
 }
 
 watch(
   filteredRows,
-  async () => {
-    ensureSelection();
-    await nextTick();
-    if (open.value) revealSelected();
+  () => {
+    if (ensureSelection()) void reveal(selectedId.value);
   },
   { immediate: true },
 );
@@ -264,20 +283,17 @@ watch(
     ensureSelection();
     await nextTick();
     search.value?.focus();
-    requestAnimationFrame(revealSelected);
+    requestAnimationFrame(() => void reveal(selectedId.value));
   },
   { immediate: true },
 );
-function revealSelected(): void {
-  if (selectedId.value)
-    document
-      .getElementById(optionId(selectedId.value))
-      ?.scrollIntoView({ block: 'nearest' });
-}
-watch(selectedId, async (id) => {
-  if (!id) return;
-  await nextTick();
-  revealSelected();
+watch(selectedId, (id) => {
+  if (internalSelection === id) {
+    internalSelection = undefined;
+    return;
+  }
+  internalSelection = undefined;
+  void reveal(id);
 });
 
 function select(id: string): void {
@@ -337,8 +353,9 @@ function onKeydown(event: KeyboardEvent): void {
     if (rows.length === 0) return;
     const current = rows.findIndex((row) => row.id === selectedId.value);
     const offset = event.key === 'ArrowDown' ? 1 : -1;
-    selectedId.value =
-      rows[(current + offset + rows.length) % rows.length]?.id ?? null;
+    const id = rows[(current + offset + rows.length) % rows.length]?.id ?? null;
+    setSelection(id);
+    void reveal(id);
     return;
   }
 
@@ -375,11 +392,11 @@ export type CommandPaletteRow = {
   display: flex;
   position: fixed;
   z-index: 102;
-  top: 25vh;
+  top: 15vh;
   left: 50%;
   flex-direction: column;
   width: min(490px, calc(100% - 28px));
-  max-height: min(520px, calc(75vh - 32px));
+  max-height: min(520px, calc(85vh - 32px));
   overflow: hidden;
   transform: translateX(-50%);
   border: 1px solid var(--border);

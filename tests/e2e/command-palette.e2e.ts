@@ -31,7 +31,7 @@ async function openPalette(page: Page): Promise<void> {
   ).toBeVisible();
 }
 
-test('places the palette a quarter of the way down and keeps it inside short windows', async ({
+test('places the palette 15% down and keeps it inside short windows', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
@@ -44,7 +44,7 @@ test('places the palette a quarter of the way down and keeps it inside short win
       .getByRole('dialog', { name: 'Command Palette' })
       .boundingBox();
     expect(bounds).not.toBeNull();
-    expect(bounds!.y / height).toBeCloseTo(0.25, 2);
+    expect(bounds!.y / height).toBeCloseTo(0.15, 2);
     expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(height - 31);
   }
 
@@ -663,6 +663,24 @@ test('shows update commands in a project palette', async ({ page }) => {
   ).toBeVisible();
 });
 
+test('keeps Report an Issue in the palette without a keyboard shortcut', async ({
+  page,
+}) => {
+  await page.goto(scenarioUrl);
+  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
+  await page.getByLabel('Projects and Sessions').click();
+  await page.keyboard.type('iddqd');
+  const reporter = page.getByRole('dialog', { name: 'Report an Issue' });
+  await page.keyboard.press(await modShortcut(page, 'Shift+i'));
+  await expect(reporter).toHaveCount(0);
+
+  await openPalette(page);
+  const command = page.getByRole('option', { name: 'Report an Issue' });
+  await expect(command.locator('kbd')).toHaveCount(0);
+  await command.click();
+  await expect(reporter).toBeVisible();
+});
+
 test('selects model and thinking-effort options from the palette', async ({
   page,
 }) => {
@@ -994,6 +1012,165 @@ test('Cmd+Shift+R from the composer targets the active session, not a hovered ro
   await expect(
     page.getByRole('heading', { name: 'Renamed from composer' }),
   ).toBeVisible();
+});
+
+async function nextRenderFrame(page: Page): Promise<void> {
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+  );
+}
+
+async function paletteScrollTop(page: Page): Promise<number> {
+  return page
+    .locator('.command-palette-results')
+    .evaluate((results) => results.scrollTop);
+}
+
+test('palette hover highlights a clipped row without moving its native scroll position', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 900, height: 360 });
+  await page.goto(scenarioUrl);
+  await openPalette(page);
+
+  const results = page.locator('.command-palette-results');
+  expect(
+    await results.evaluate(
+      (element) => element.scrollHeight > element.clientHeight,
+    ),
+  ).toBe(true);
+  await nextRenderFrame(page);
+  await page.mouse.move(0, 0);
+  await results.evaluate((element) => {
+    const row = element.querySelector<HTMLElement>(
+      '.command-palette-row:nth-child(2)',
+    );
+    if (!row) throw new Error('Expected a second palette command.');
+    element.scrollTop +=
+      row.getBoundingClientRect().top - element.getBoundingClientRect().top + 8;
+  });
+
+  const before = await paletteScrollTop(page);
+  const row = results.locator('.command-palette-row:nth-child(2)');
+  const rowBounds = await row.boundingBox();
+  const resultsBounds = await results.boundingBox();
+  expect(rowBounds).not.toBeNull();
+  expect(resultsBounds).not.toBeNull();
+  const visibleTop = Math.max(resultsBounds!.y, rowBounds!.y);
+  const visibleBottom = Math.min(
+    resultsBounds!.y + resultsBounds!.height,
+    rowBounds!.y + rowBounds!.height,
+  );
+  expect(visibleBottom).toBeGreaterThan(visibleTop);
+  await page.mouse.move(rowBounds!.x + 12, (visibleTop + visibleBottom) / 2);
+  await nextRenderFrame(page);
+
+  await expect(row).toHaveAttribute('aria-selected', 'true');
+  expect(Math.abs((await paletteScrollTop(page)) - before)).toBeLessThanOrEqual(
+    1,
+  );
+  await expect(
+    page.getByRole('combobox', { name: 'Command Palette' }),
+  ).toBeFocused();
+});
+
+test('palette wheel scrolling stays native at both pointer edges', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 900, height: 360 });
+  await page.goto(scenarioUrl);
+  await openPalette(page);
+
+  const results = page.locator('.command-palette-results');
+  await results.evaluate((element) => {
+    element.scrollTop = 80;
+  });
+  const bounds = await results.boundingBox();
+  expect(bounds).not.toBeNull();
+  await page.mouse.move(bounds!.x + 20, bounds!.y + bounds!.height - 3);
+  const beforeDown = await paletteScrollTop(page);
+  await page.mouse.wheel(0, 13);
+  await nextRenderFrame(page);
+  const afterDown = await paletteScrollTop(page);
+  expect(afterDown).toBeGreaterThan(beforeDown);
+  expect(afterDown - beforeDown).toBeLessThanOrEqual(20);
+
+  await page.mouse.move(bounds!.x + 20, bounds!.y + 3);
+  await nextRenderFrame(page);
+  const beforeUp = await paletteScrollTop(page);
+  await page.mouse.wheel(0, -13);
+  await nextRenderFrame(page);
+  const afterUp = await paletteScrollTop(page);
+  expect(afterUp).toBeLessThan(beforeUp);
+  expect(beforeUp - afterUp).toBeLessThanOrEqual(20);
+  await expect(
+    page.getByRole('combobox', { name: 'Command Palette' }),
+  ).toBeFocused();
+});
+
+test('palette keyboard navigation wraps and reveals the selected row after manual scrolling', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 900, height: 360 });
+  await page.goto(scenarioUrl);
+  await openPalette(page);
+
+  const results = page.locator('.command-palette-results');
+  await results.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  const search = page.getByRole('combobox', { name: 'Command Palette' });
+  await search.press('ArrowUp');
+  const selected = results.locator('.command-palette-row.selected');
+  const selectedId = await selected.getAttribute('id');
+  expect(selectedId).not.toBeNull();
+  await expect(selected).toBeInViewport();
+  await expect(search).toHaveAttribute('aria-activedescendant', selectedId!);
+  await expect(search).toBeFocused();
+});
+
+test('palette filtering restores a valid visible selection after manual scrolling', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 900, height: 360 });
+  await page.goto(scenarioUrl);
+  await openPalette(page);
+
+  const results = page.locator('.command-palette-results');
+  const search = page.getByRole('combobox', { name: 'Command Palette' });
+  await results.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await search.fill('switch project');
+  const filtered = results.locator('.command-palette-row.selected');
+  await expect(filtered).toHaveCount(1);
+  await expect(filtered).toHaveAttribute('aria-selected', 'true');
+  expect(
+    await filtered.evaluate((row) => {
+      const list = row.parentElement!;
+      const rowBounds = row.getBoundingClientRect();
+      const listBounds = list.getBoundingClientRect();
+      return (
+        rowBounds.top >= listBounds.top && rowBounds.bottom <= listBounds.bottom
+      );
+    }),
+  ).toBe(true);
+
+  await search.fill('');
+  const restored = results.locator('.command-palette-row.selected');
+  await expect(restored).toHaveCount(1);
+  expect(
+    await restored.evaluate((row) => {
+      const list = row.parentElement!;
+      const rowBounds = row.getBoundingClientRect();
+      const listBounds = list.getBoundingClientRect();
+      return (
+        rowBounds.top >= listBounds.top && rowBounds.bottom <= listBounds.bottom
+      );
+    }),
+  ).toBe(true);
+  await expect(search).toBeFocused();
 });
 
 test('ignores a simulated native New Session event while the palette is open', async ({

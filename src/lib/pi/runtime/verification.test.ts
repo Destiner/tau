@@ -621,6 +621,124 @@ describe('command-created session durability — verification', () => {
   }
 
   it.each([undefined, 'ssh://test-host'])(
+    'retains a replacement discovered by settlement during command reconciliation (%s)',
+    async (connectionString) => {
+      vi.useFakeTimers();
+      try {
+        const {
+          handleResponse,
+          handleRpc,
+          rpc,
+          watchingMaterializationVerification,
+        } = await import('./index');
+        const controller = makeController({
+          sessionId: 'completed-plan',
+          sessionPath: '/tmp/project/plan.jsonl',
+          materializationVerified: true,
+        });
+        addEphemeral(controller, connectionString);
+        state.ephemeralSessions[0]!.selected = false;
+        state.activeControllerKey = 'another-controller';
+        state.activeSessionId = 'another-session';
+        const other = makeController({
+          key: 'another-controller',
+          sessionId: 'another-session',
+          draft: 'Keep draft',
+        });
+        state.controllers.push(other);
+        const commandId = nextRequestId('command');
+        controller.commandPromptRequestId = commandId;
+        await rpc(controller, {
+          id: commandId,
+          type: 'prompt',
+          message: '/replace',
+        });
+        await handleRpc(controller, { type: 'agent_settled' });
+        const settledStateId = controller.materializationStateRequestId;
+        await handleResponse(controller, {
+          id: commandId,
+          command: 'prompt',
+          success: true,
+        });
+        const oldCommandSyncId = controller.commandSyncRequestId;
+        expect(oldCommandSyncId).not.toBe('');
+        await handleResponse(controller, {
+          id: settledStateId,
+          command: 'get_state',
+          success: true,
+          data: {
+            sessionId: 'implementation',
+            sessionFile: '/tmp/project/implementation.jsonl',
+            isStreaming: false,
+          },
+        });
+        expect(controller.commandSyncRequestId).toBe('');
+        await handleResponse(controller, {
+          id: oldCommandSyncId,
+          command: 'get_state',
+          success: true,
+          data: {
+            sessionId: 'completed-plan',
+            sessionFile: '/tmp/project/plan.jsonl',
+          },
+        });
+        const commandHistoryId = controller.commandMessagesRequestId;
+        expect(commandHistoryId).not.toBe('');
+        await handleResponse(controller, {
+          id: commandHistoryId,
+          command: 'get_messages',
+          success: true,
+          data: { messages: [] },
+        });
+        for (const delay of [250, 750, 1_500]) {
+          await vi.advanceTimersByTimeAsync(delay);
+          await handleResponse(controller, {
+            id: controller.materializationStateRequestId,
+            command: 'get_state',
+            success: true,
+            data: {
+              sessionId: 'implementation',
+              sessionFile: '/tmp/project/implementation.jsonl',
+              isStreaming: false,
+            },
+          });
+          await handleResponse(controller, {
+            id: controller.materializationMessagesRequestId,
+            command: 'get_messages',
+            success: true,
+            data: { messages: [] },
+          });
+        }
+        await vi.advanceTimersByTimeAsync(12_000);
+        expect(watchingMaterializationVerification(controller)).toBe(false);
+        expect(controller.generation).toBe(1);
+        expect(controller.disposed).toBe(false);
+        expect(state.ephemeralSessions).toEqual([
+          expect.objectContaining({
+            id: 'implementation',
+            controllerKey: controller.key,
+          }),
+        ]);
+        expect(state.activeSessionId).toBe('another-session');
+        expect(other.draft).toBe('Keep draft');
+        const telemetry = await import('../../telemetry');
+        expect(
+          vi
+            .mocked(telemetry.invokeTraced)
+            .mock.calls.some(
+              ([name]) => name === 'stop_pi' || name === 'register_session',
+            ),
+        ).toBe(false);
+        await handleRpc(controller, { type: 'agent_start' });
+        expect(controller.generation).toBe(1);
+        expect(controller.working).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each([undefined, 'ssh://test-host'])(
     'keeps a delayed %s replacement alive after successful empty verification reads',
     async (connectionString) => {
       vi.useFakeTimers();
