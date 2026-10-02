@@ -1,6 +1,8 @@
 import { parseMermaid } from 'beautiful-mermaid';
 import { describe, expect, it } from 'vitest';
 
+import dependencyPatch from '../../patches/beautiful-mermaid@1.1.3.patch?raw';
+
 import { adaptMermaidSource } from './mermaid-source';
 
 const codeLabels = `flowchart LR
@@ -75,6 +77,10 @@ function edges(source: string): [string, string, string | undefined][] {
  * flowchart subset, not the full Mermaid grammar.
  */
 describe('patched beautiful-mermaid flowchart parser', () => {
+  it('keeps the installable dependency patch free of trailing whitespace', () => {
+    expect(dependencyPatch).not.toMatch(/[\t ]+$/m);
+  });
+
   it('accepts dotted embedded text with every boundary-padding variant', () => {
     for (const arrow of [
       '-.retry-now.->',

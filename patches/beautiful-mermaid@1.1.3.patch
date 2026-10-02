@@ -218,7 +218,8 @@ index e7e087bcb6f29d0d8f36cd558e0183bc0f162fcb..ad36b5f6b419088eac7b850a3cb70682
 @@ -2446,6 +2488,21 @@ var trapezoidAltRenderer = {
    getAttachmentPoint: getBoxAttachmentPoint
  };
- 
+-
++
 +var parallelogramRenderer = {
 +  getDimensions: getBoxDimensions,
 +  render(label, dimensions, options) {
@@ -331,7 +332,8 @@ index b070e0fa04b326979a2689072b88463f2b2fb2aa..076e995b74b3bfc7343495bb9ebc2f75
 @@ -107,6 +107,15 @@ export const SHAPE_CORNERS: Record<AsciiNodeShape, ShapeCorners> = {
      ascii: { tl: '+', tr: '+', bl: '\\', br: '/' },
    },
- 
+-
++
 +  parallelogram: {
 +    unicode: { tl: '/', tr: '┐', bl: '└', br: '/' },
 +    ascii: { tl: '/', tr: '+', bl: '+', br: '/' },
@@ -355,7 +357,8 @@ index 7f1e3aaef344be8db1709cffb07de7429156b035..05b26a0c796905be9bbf93d88702cfe1
 +  parallelogramRenderer,
 +  parallelogramAltRenderer,
  } from './special.ts'
- 
+-
++
  // Re-export types
 @@ -47,6 +49,8 @@ export const shapeRegistry: ShapeRegistry = new Map<AsciiNodeShape, ShapeRendere
    ['asymmetric', asymmetricRenderer],
@@ -363,7 +366,8 @@ index 7f1e3aaef344be8db1709cffb07de7429156b035..05b26a0c796905be9bbf93d88702cfe1
    ['trapezoid-alt', trapezoidAltRenderer],
 +  ['parallelogram', parallelogramRenderer],
 +  ['parallelogram-alt', parallelogramAltRenderer],
- 
+-
++
    // State diagram pseudo-states
    ['state-start', stateStartRenderer],
 diff --git a/src/ascii/shapes/special.ts b/src/ascii/shapes/special.ts
@@ -373,7 +377,8 @@ index e7ce95d83d1c83dcaaea862f5c26316f6beaad56..8205b5439daf7abbbd9433e004bd0507
 @@ -244,6 +244,22 @@ export const asymmetricRenderer: ShapeRenderer = {
    getAttachmentPoint: getBoxAttachmentPoint,
  }
- 
+-
++
 +export const parallelogramRenderer: ShapeRenderer = {
 +  getDimensions: getBoxDimensions,
 +  render(label, dimensions, options) {
@@ -400,12 +405,14 @@ index 8557308223e16670db3d126d9c55673b6e946598..2ed1a303cf56cc2414f1b81e7cd04e90
 @@ -86,7 +86,7 @@ function estimateNodeSize(id: string, label: string, shape: string): { width: nu
      width += NODE_PADDING.horizontal
    }
- 
+-
++
 -  if (shape === 'trapezoid' || shape === 'trapezoid-alt') {
 +  if (shape === 'trapezoid' || shape === 'trapezoid-alt' || shape === 'parallelogram' || shape === 'parallelogram-alt') {
      width += NODE_PADDING.horizontal
    }
- 
+-
++
 diff --git a/src/parser.ts b/src/parser.ts
 index 685835e3f1a9a480370ec8e1ff40b7356a3ed3c1..3246734fa5b8da30d1f9d88a58f167608acf7059 100644
 --- a/src/parser.ts
@@ -431,18 +438,21 @@ index 685835e3f1a9a480370ec8e1ff40b7356a3ed3c1..3246734fa5b8da30d1f9d88a58f16760
 @@ -161,6 +160,7 @@ function parseFlowchart(lines: string[]): MermaidGraph {
      parseEdgeLine(line, graph, subgraphStack)
    }
- 
+-
++
 +  if (subgraphStack.length > 0) throw new Error('Invalid flowchart statement')
    return graph
  }
- 
+-
++
 @@ -405,35 +405,39 @@ const ARROW_REGEX = /^(<)?(-->|-.->|==>|---|-\.-|===)(?:\|([^|]*)\|)?/
   * Based on PR #36 by @liuxiaopai-ai (https://github.com/lukilabs/beautiful-mermaid/pull/36)
   */
  const TEXT_ARROW_REGEX = /^(<)?(--|-\.|==)\s+(.+?)\s+(-->|---|\.\->|-\.\-|==>|===)/
 +// Dotted embedded labels may touch either operator; keep other text arrows unchanged.
 +const DOTTED_TEXT_ARROW_REGEX = /^(<)?(-\.)\s*(.+?)\s*(\.\->|-\.\-)/
- 
+-
++
  /**
   * Node shape patterns — ordered from most specific delimiters to least.
   * Multi-char delimiters must be tried before single-char to avoid false matches.
@@ -452,7 +462,8 @@ index 685835e3f1a9a480370ec8e1ff40b7356a3ed3c1..3246734fa5b8da30d1f9d88a58f16760
    // Triple delimiters (must be first)
 -  { regex: /^([\w-]+)\(\(\((.+?)\)\)\)/, shape: 'doublecircle' },  // A(((text)))
 +  { opener: '(((', closer: ')))', regex: /^([\w-]+)\(\(\((.+?)\)\)\)/, shape: 'doublecircle' },  // A(((text)))
- 
+-
++
    // Double delimiters with mixed brackets
 -  { regex: /^([\w-]+)\(\[(.+?)\]\)/,     shape: 'stadium' },       // A([text])
 -  { regex: /^([\w-]+)\(\((.+?)\)\)/,     shape: 'circle' },        // A((text))
@@ -462,7 +473,8 @@ index 685835e3f1a9a480370ec8e1ff40b7356a3ed3c1..3246734fa5b8da30d1f9d88a58f16760
 +  { opener: '((', closer: '))', regex: /^([\w-]+)\(\((.+?)\)\)/, shape: 'circle' },        // A((text))
 +  { opener: '[[', closer: ']]', regex: /^([\w-]+)\[\[(.+?)\]\]/, shape: 'subroutine' },    // A[[text]]
 +  { opener: '[(', closer: ')]', regex: /^([\w-]+)\[\((.+?)\)\]/, shape: 'cylinder' },      // A[(text)]
- 
+-
++
 -  // Trapezoid variants — must come before plain [text]
 -  { regex: /^([\w-]+)\[\/(.+?)\\\]/,     shape: 'trapezoid' },     // A[/text\]
 -  { regex: /^([\w-]+)\[\\(.+?)\/\]/,     shape: 'trapezoid-alt' }, // A[\text/]
@@ -471,15 +483,18 @@ index 685835e3f1a9a480370ec8e1ff40b7356a3ed3c1..3246734fa5b8da30d1f9d88a58f16760
 +  { opener: '[\\', closer: '\\]', regex: /^([\w-]+)\[\\(.+?)\\\]/, shape: 'parallelogram-alt' }, // A[\text\]
 +  { opener: '[/', closer: '\\]', regex: /^([\w-]+)\[\/(.+?)\\\]/, shape: 'trapezoid' },     // A[/text\]
 +  { opener: '[\\', closer: '/]', regex: /^([\w-]+)\[\\(.+?)\/\]/, shape: 'trapezoid-alt' }, // A[\text/]
- 
+-
++
    // Asymmetric flag shape
 -  { regex: /^([\w-]+)>(.+?)\]/,          shape: 'asymmetric' },    // A>text]
 +  { opener: '>', closer: ']', regex: /^([\w-]+)>(.+?)\]/, shape: 'asymmetric' },    // A>text]
- 
+-
++
    // Double curly braces (hexagon) — must come before single {text}
 -  { regex: /^([\w-]+)\{\{(.+?)\}\}/,     shape: 'hexagon' },       // A{{text}}
 +  { opener: '{{', closer: '}}', regex: /^([\w-]+)\{\{(.+?)\}\}/, shape: 'hexagon' },       // A{{text}}
- 
+-
++
    // Single-char delimiters (last — most common, least specific)
 -  { regex: /^([\w-]+)\[(.+?)\]/,         shape: 'rectangle' },     // A[text]
 -  { regex: /^([\w-]+)\((.+?)\)/,         shape: 'rounded' },       // A(text)
@@ -488,15 +503,18 @@ index 685835e3f1a9a480370ec8e1ff40b7356a3ed3c1..3246734fa5b8da30d1f9d88a58f16760
 +  { opener: '(', closer: ')', regex: /^([\w-]+)\((.+?)\)/, shape: 'rounded' },       // A(text)
 +  { opener: '{', closer: '}', regex: /^([\w-]+)\{(.+?)\}/, shape: 'diamond' },       // A{text}
  ]
- 
+-
++
  /** Regex for a bare node reference (just an ID, no shape brackets) */
 @@ -456,7 +460,7 @@ function parseEdgeLine(
- 
+-
++
    // Parse the first node group (possibly with & separators)
    const firstGroup = consumeNodeGroup(remaining, graph, subgraphStack)
 -  if (!firstGroup || firstGroup.ids.length === 0) return
 +  if (!firstGroup || firstGroup.ids.length === 0) throw new Error('Invalid flowchart statement')
- 
+-
++
    remaining = firstGroup.remaining.trim()
    let prevGroupIds = firstGroup.ids
 @@ -479,8 +483,8 @@ function parseEdgeLine(
@@ -511,14 +529,17 @@ index 685835e3f1a9a480370ec8e1ff40b7356a3ed3c1..3246734fa5b8da30d1f9d88a58f16760
        const rawLabel = textMatch[3]!.trim()
        edgeLabel = rawLabel ? normalizeBrTags(rawLabel) : undefined
 @@ -493,7 +497,7 @@ function parseEdgeLine(
- 
+-
++
      // Parse the next node group
      const nextGroup = consumeNodeGroup(remaining, graph, subgraphStack)
 -    if (!nextGroup || nextGroup.ids.length === 0) break
 +    if (!nextGroup || nextGroup.ids.length === 0) throw new Error('Invalid flowchart statement')
- 
+-
++
      remaining = nextGroup.remaining.trim()
- 
+-
++
 @@ -539,7 +543,7 @@ function consumeNodeGroup(
    while (remaining.startsWith('&')) {
      remaining = remaining.slice(1).trim()
@@ -531,7 +552,8 @@ index 685835e3f1a9a480370ec8e1ff40b7356a3ed3c1..3246734fa5b8da30d1f9d88a58f16760
 @@ -566,15 +570,38 @@ function consumeNode(
    let id: string | null = null
    let remaining: string = text
- 
+-
++
 -  // Try each node pattern (shape-qualified)
 -  for (const { regex, shape } of NODE_PATTERNS) {
 -    const match = text.match(regex)
@@ -575,7 +597,8 @@ index 685835e3f1a9a480370ec8e1ff40b7356a3ed3c1..3246734fa5b8da30d1f9d88a58f16760
 +      throw new Error('Invalid flowchart statement')
      }
    }
- 
+-
++
 @@ -610,11 +637,25 @@ function registerNode(
    subgraphStack: MermaidSubgraph[],
    node: MermaidNode
@@ -604,7 +627,8 @@ index 685835e3f1a9a480370ec8e1ff40b7356a3ed3c1..3246734fa5b8da30d1f9d88a58f16760
 -  trackInSubgraph(subgraphStack, node.id)
 +  return undefined
  }
- 
+-
++
  /** Add node ID to the innermost subgraph if we're inside one */
 diff --git a/src/renderer.ts b/src/renderer.ts
 index 1485041e9cb01e1a15045cb162fb64bc5167b25e..ba8e38f40b855353e327e546267ff1de4c34a118 100644
@@ -618,7 +642,8 @@ index 1485041e9cb01e1a15045cb162fb64bc5167b25e..ba8e38f40b855353e327e546267ff1de
 +import { FONT_SIZES, FONT_WEIGHTS, STROKE_WIDTHS, NODE_PADDING, ARROW_HEAD, estimateTextWidth, TEXT_BASELINE_SHIFT } from './styles.ts'
  import { measureMultilineText } from './text-metrics.ts'
  import { renderMultilineText, renderMultilineTextWithBackground, escapeXml } from './multiline-utils.ts'
- 
+-
++
 @@ -368,6 +368,9 @@ function renderNodeShape(node: PositionedNode): string {
        return renderTrapezoid(x, y, width, height, fill, stroke, sw)
      case 'trapezoid-alt':
@@ -632,7 +657,8 @@ index 1485041e9cb01e1a15045cb162fb64bc5167b25e..ba8e38f40b855353e327e546267ff1de
 @@ -538,6 +541,15 @@ function renderTrapezoidAlt(x: number, y: number, w: number, h: number, fill: st
    return `<polygon points="${points}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" />`
  }
- 
+-
++
 +/** Mirrored slanted sides; the inset is capped to retain label padding even for long labels. */
 +function renderParallelogram(x: number, y: number, w: number, h: number, mirrored: boolean, fill: string, stroke: string, sw: string): string {
 +  const inset = Math.min(w * 0.15, NODE_PADDING.horizontal)
@@ -643,7 +669,8 @@ index 1485041e9cb01e1a15045cb162fb64bc5167b25e..ba8e38f40b855353e327e546267ff1de
 +}
 +
  // --- Batch 3: State diagram pseudostates ---
- 
+-
++
  /** State start: small filled circle using primary text color */
 diff --git a/src/shape-clipping.ts b/src/shape-clipping.ts
 index e1b607fd83e154de24918ad0045b0f00eae637a0..c3e2cdf56cbfe84cc35a251a1e9093928c8c8928 100644
@@ -651,16 +678,20 @@ index e1b607fd83e154de24918ad0045b0f00eae637a0..c3e2cdf56cbfe84cc35a251a1e909392
 +++ b/src/shape-clipping.ts
 @@ -10,6 +10,7 @@
   */
- 
+-
++
  import type { Point, PositionedNode } from './types.ts'
 +import { NODE_PADDING } from './styles.ts'
- 
+-
++
  /**
   * Clip an edge endpoint to the actual shape boundary of a node.
 @@ -33,7 +34,11 @@ export function clipEdgeToShape(
- 
+-
++
    const result = [...points]
- 
+-
++
 -  if (node.shape === 'diamond') {
 +  if (node.shape === 'parallelogram' || node.shape === 'parallelogram-alt') {
 +    const endpoint = isStart ? points[0]! : points[points.length - 1]!
@@ -673,7 +704,8 @@ index e1b607fd83e154de24918ad0045b0f00eae637a0..c3e2cdf56cbfe84cc35a251a1e909392
 @@ -46,6 +51,33 @@ export function clipEdgeToShape(
    return result
  }
- 
+-
++
 +function clipToParallelogram(endpoint: Point, adjacent: Point, node: PositionedNode): Point {
 +  const { x, y, width: w, height: h } = node
 +  const inset = Math.min(w * 0.15, NODE_PADDING.horizontal)
