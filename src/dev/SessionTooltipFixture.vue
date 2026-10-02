@@ -30,6 +30,7 @@ interface SessionTooltipFixtureApi {
   setMarkdown(source: string): void;
   setArchivedMarkdown(source: string): void;
   setStatus(status: TooltipStatus): void;
+  enableTimestampRecency(): void;
 }
 
 declare global {
@@ -124,6 +125,18 @@ function primarySession(): SessionSummary {
 }
 
 window.__TAU_SESSION_TOOLTIP_FIXTURE__ = {
+  enableTimestampRecency(): void {
+    const at = Date.now();
+    const sessions = state.workspace?.projects[0]?.sessions;
+    if (!sessions) throw new Error('Expected tooltip fixture sessions.');
+    for (const session of [sessions[0], sessions[1], sessions[3]]) {
+      if (!session)
+        throw new Error('Expected timestamp-backed fixture session.');
+      session.lastUserMessageAt = at;
+      session.sortAt = at;
+      session.lastActive = 'now';
+    }
+  },
   setTitle(title): void {
     primarySession().title = title;
     primarySession().titleMarkdown = title;
