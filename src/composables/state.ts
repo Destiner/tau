@@ -773,6 +773,7 @@ function sessionSortAt(projectPath: string, session: SessionSummary): number {
 function sessionLastActive(
   project: ProjectSummary,
   session: SessionSummary,
+  now = Date.now(),
 ): string {
   const controller = controllerForSession(project.path, session.id);
   if (controller?.working) return '';
@@ -784,10 +785,8 @@ function sessionLastActive(
   ) {
     return '';
   }
-  const timestamp = sessionLastUserMessageAt(project.path, session);
-  return timestamp > session.lastUserMessageAt
-    ? relativeTimestamp(timestamp)
-    : session.lastActive;
+  const timestamp = sessionSortAt(project.path, session);
+  return timestamp > 0 ? relativeTimestamp(timestamp, now) : session.lastActive;
 }
 
 function sessionLastUserMessageAt(
@@ -1187,8 +1186,8 @@ function markUserMessageSubmitted(controller: SessionController): void {
   }
 }
 
-function relativeTimestamp(timestamp: number): string {
-  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1_000));
+function relativeTimestamp(timestamp: number, now = Date.now()): string {
+  const seconds = Math.max(0, Math.floor((now - timestamp) / 1_000));
   if (seconds < 60) return 'now';
   if (seconds < 3_600) return `${Math.floor(seconds / 60)}m`;
   if (seconds < 86_400) return `${Math.floor(seconds / 3_600)}h`;

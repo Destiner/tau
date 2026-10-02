@@ -202,6 +202,99 @@ test('reads and updates a session tooltip while keeping hostile long content saf
   });
 });
 
+test.describe('timestamp-backed session ages', () => {
+  test.use({ pausedClock: true });
+
+  test('refreshes idle and archived rows and open tooltips without changing session state', async ({
+    page,
+  }) => {
+    await page.goto(fixtureUrl);
+    await waitForFixture(page);
+    await page.evaluate(() =>
+      window.__TAU_SESSION_TOOLTIP_FIXTURE__?.enableTimestampRecency(),
+    );
+    const rows = page.locator('.session-row');
+    const row = rows.filter({ hasText: 'Prepare release notes' });
+    const ids = await rows.evaluateAll((elements) =>
+      elements.map((element) => element.getAttribute('data-session-id')),
+    );
+    await expect(row.locator('.session-time')).toHaveText('now');
+    await expect(page.locator('.session-row.selected')).toHaveCount(0);
+    await row.locator('.session-select').hover();
+    await page.clock.runFor(750);
+    const tooltip = page.locator('.ui-tooltip.session-tooltip');
+    await expect(tooltip.locator('.session-tooltip-date')).toHaveText(
+      'just now',
+    );
+
+    await page.clock.fastForward(61_000);
+    await expect(row.locator('.session-time')).toHaveText('1m');
+    await expect(tooltip.locator('.session-tooltip-date')).toHaveText(
+      '1 minute ago',
+    );
+    expect(
+      await rows.evaluateAll((elements) =>
+        elements.map((element) => element.getAttribute('data-session-id')),
+      ),
+    ).toEqual(ids);
+    await expect(page.locator('.session-row.selected')).toHaveCount(0);
+
+    // Simulate a sleeping/backgrounded app: wall time jumps without running timers.
+    await page.clock.setSystemTime(new Date('2026-01-02T14:00:00Z'));
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(row.locator('.session-time')).toHaveText('2h');
+    await expect(tooltip.locator('.session-tooltip-date')).toHaveText(
+      '2 hours ago',
+    );
+    await page.clock.setSystemTime(new Date('2026-01-02T15:00:00Z'));
+    await page.evaluate(() =>
+      document.dispatchEvent(new Event('visibilitychange')),
+    );
+    await expect(row.locator('.session-time')).toHaveText('3h');
+    await expect(tooltip.locator('.session-tooltip-date')).toHaveText(
+      '3 hours ago',
+    );
+
+    await page.getByRole('button', { name: 'Show Archived Sessions' }).click();
+    const archive = page.locator('.archived-list');
+    const archived = archive.locator('.row', { hasText: archivedTitle });
+    await expect(archived.locator('.time')).toHaveText('3h');
+    await archived.locator('.copy').hover();
+    await page.clock.runFor(750);
+    await expect(tooltip.locator('.session-tooltip-date')).toHaveText(
+      '3 hours ago',
+    );
+    const scrollBefore = await archive.evaluate((element) => element.scrollTop);
+    await page.clock.fastForward(3_600_000);
+    await expect(archived.locator('.time')).toHaveText('4h');
+    await expect(tooltip.locator('.session-tooltip-date')).toHaveText(
+      '4 hours ago',
+    );
+    expect(await archive.evaluate((element) => element.scrollTop)).toBe(
+      scrollBefore,
+    );
+    await expect(archive.locator('.row')).toHaveCount(1);
+  });
+
+  test('keeps working recency hidden and restores its elapsed age after work ends', async ({
+    page,
+  }) => {
+    await page.goto(fixtureUrl);
+    await waitForFixture(page);
+    await page.evaluate(() =>
+      window.__TAU_SESSION_TOOLTIP_FIXTURE__?.enableTimestampRecency(),
+    );
+    const row = page.locator('.session-row', { hasText: longTitle });
+    await expect(row.locator('.session-time')).toHaveCount(0);
+    await page.clock.fastForward(3_600_000);
+    await expect(row.locator('.session-time')).toHaveCount(0);
+    await page.evaluate(() =>
+      window.__TAU_SESSION_TOOLTIP_FIXTURE__?.setStatus('idle'),
+    );
+    await expect(row.locator('.session-time')).toHaveText('1h');
+  });
+});
+
 test('opens Markdown web links externally without navigating the app', async ({
   page,
 }) => {

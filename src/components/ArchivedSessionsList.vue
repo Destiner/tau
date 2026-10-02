@@ -141,6 +141,8 @@ import UiIcon from './ui/UiIcon.vue';
 import UiIconButton from './ui/UiIconButton.vue';
 import UiTooltip from './ui/UiTooltip.vue';
 
+const props = defineProps<{ now: number }>();
+
 const {
   archivedSessionEntries,
   expandedRelativeTime,
@@ -223,7 +225,7 @@ function toggleGroup(label: string): void {
 function relativeTime(entry: ArchivedSessionEntry): string {
   const timestamp = sessionSortAt(entry.projectPath, entry.session);
   return timestamp > 0
-    ? relativeTimestamp(timestamp)
+    ? relativeTimestamp(timestamp, props.now)
     : entry.session.lastActive;
 }
 
