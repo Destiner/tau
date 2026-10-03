@@ -24,6 +24,8 @@ const ids = new Set([
   'textarea-long-scroll',
   'textarea-pointer-selection',
   'textarea-wrapped-rows',
+  'textarea-line-boundaries',
+  'textarea-edge-values',
 ]);
 function selected(theme: 'light' | 'dark'): Suite {
   const s = suite(theme, 'textarea');

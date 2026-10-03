@@ -10,16 +10,16 @@ The standalone GPUI application renders a Tau-styled button, single-line input, 
 | --------- | --------: | --------------------: |
 | Button    |        21 |                    56 |
 | Input     |        44 |                    97 |
-| Textarea  |        24 |                    62 |
-| Total     |        89 |                   215 |
+| Textarea  |        25 |                    85 |
+| Total     |        90 |                   238 |
 
 Counts describe meaningful coverage, not minimum quotas. The unrelated development catalogue is not imported.
 
-- **Chromium:** all 215 behavioral checkpoints match GPUI in light and dark (430 comparisons). Each implementation is also checked against authored expectations.
+- **Chromium:** all 238 behavioral checkpoints match GPUI in light and dark (476 comparisons). Each implementation is also checked against authored expectations.
 - **WebKit:** an explicit, failing audit remains. See [review blockers](#review-blockers); Chromium agreement is not macOS acceptance.
 - **Component review:** after the visual follow-up and single-line Up/Down fix (`fcd402c`), Timur accepted both the button and single-line input as good enough for this prototype. The current presentation, including native focus styling, is retained without another general visual approval round. Every raw pixel difference is still recorded; exact-difference flags are not an approval ledger and no numerical tolerance silently approves future changes.
 - **Harness:** real-browser and real-Metal fault tests catch invisible controls, missing click handlers, lost Change events, incorrect selection, incomplete captures, and out-of-control-area rendering faults. A pixel regression also requires selections to be visibly painted in both editors.
-- **Dependency fixes:** seven focused Base patches address navigation, disabled focus, and editor presentation; two opt-in macOS text patches match the browser's antialiased policy. See [patches](patches/README.md).
+- **Dependency fixes:** eight focused Base patches address navigation, disabled focus, and editor presentation; two opt-in macOS text patches match the browser's antialiased policy. See [patches](patches/README.md).
 - **CI:** an isolated workflow is provided, but has not been executed on a remote runner. Local Metal capture does not prove hosted-runner Metal availability.
 
 Button/input component review is complete within this bounded prototype. Timur has authorized parallel multiline-input and representative hard-UI work, with independent live/report handoffs; harness decisions are engineering-owned. The multiline input and transcript await user review. Native-input and application-integration gaps remain explicit, and the existing Vue/catalogue cleanup is deferred.
@@ -39,7 +39,7 @@ bun run --cwd gpui review:transcript
 open gpui/results/transcript/report.html
 ```
 
-The multiline report selects **14 checkpoints** from **62 per theme**, with WebKit/Chromium and light/dark links. Real visible carets, wrapped/blank rows, Unicode selection, bounded wheel scrolling, history, and readonly/disabled transitions are covered. The native playground exposes theme, style, font, state, width and height without resetting the editor. Content replacement buttons are explicitly labeled. Its real-click/Space smoke test checks draft/selection preservation, full undo/redo history continuity, and in-window geometry. `height: 0` uses variant/rows sizing; positive values explicitly fix the height, including 120px. There is no native drag-resize handle or auto-growing composer yet.
+The multiline report selects **14 checkpoints** from **85 per theme**, with WebKit/Chromium and light/dark links. Real visible carets, wrapped/blank rows, Unicode selection, bounded wheel scrolling, history, and readonly/disabled transitions are covered. The native playground exposes theme, style, font, state, width and height without resetting the editor. Content replacement buttons are explicitly labeled. Its real-click/Space smoke test checks draft/selection preservation, full undo/redo history continuity, and in-window geometry. `height: 0` uses variant/rows sizing; positive values explicitly fix the height, including 120px. There is no native drag-resize handle or auto-growing composer yet.
 
 The transcript report is **native-only, not Vue parity**. It uses GPUI's measured variable-height `ListState` with stable IDs and per-message Base Markdown `TextViewState`. **16 Metal checks per theme** cover real control clicks/wheel input, same-burst append/growth, measured end pinning, reader anchoring, changes above the reader, expansion state, synthetic viewport shrink, a 1,000-message fixture, bounded streaming, pause/reset interruption, and a deliberately broken anchor. Selection retention is currently checked through a programmatically established editor selection, not a pointer-selection/paint regression. Six representative frames per theme keep the report focused.
 
@@ -145,15 +145,17 @@ The earlier antialiasing opt-in disabled luminance-dependent dilation but left C
 The backward-row selection already had the correct `[3,5]` range. Its paint now matches macOS WebKit: selected hard newlines fill the content width, and vertical alignment uses the font's half-leading. Soft wraps, partial last rows, single-line input and code-editor defaults retain their separate semantics. Pixel checks exercise forward/backward selection in both fonts/themes, including painted top/bottom edges and padding boundaries.
 
 ```sh
-bun gpui/scripts/run.ts --component textarea --out gpui/results/input-scroll
-bun gpui/scripts/run.ts --component textarea --browser webkit --skip-build --out gpui/results/input-scroll
-bun gpui/scripts/component-review.ts --feedback gpui/results/input-scroll
-open gpui/results/input-scroll/light-webkit/report/textarea-feedback.html
+bun gpui/scripts/run.ts --component textarea --out gpui/results/input-edges
+bun gpui/scripts/run.ts --component textarea --browser webkit --skip-build --out gpui/results/input-edges
+bun gpui/scripts/component-review.ts --feedback gpui/results/input-edges
+open gpui/results/input-edges/light-webkit/report/textarea-feedback.html
 ```
 
 The multiline review also requested slower scrolling and rounded scrollbars. Tau's textarea now uses half-speed wheel/trackpad movement, retaining fractional deltas; this is a deliberate sensitivity preference, not Vue scroll-speed parity. The scrollbar inherits a 4px thumb radius across normal/hover/drag states. Real dispatch/pixel tests measure scrolling distance, fractional accumulation, reversal, clamping, the painted caps, and direct (unscaled) thumb dragging. Keyboard navigation and programmatic reveal are unchanged. Real-device feel remains a hands-on check.
 
-This follow-up contains seven representative cases for scrolling, text, the 2px caret, and selection. Live probes are not automatically restarted; use the live commands above when wanted.
+Up on the first visual row now reaches the document start; Down on the last reaches the end. Reversing direction keeps the preferred column, matching both browsers. This is scoped to editable textareas: code-editor, readonly, page-key and Shift-selection policies are not rewritten. New real-key checkpoints cover mid-row edges, repeated keys, selection collapse, wrapped-row affinity, Unicode, blank rows, one-row and empty values. Before the fix, twelve checkpoints failed in both browser comparisons; the corrected sequences pass without changing their expectations.
+
+This follow-up contains nine representative cases for boundary navigation, scrolling, text, the 2px caret, and selection. Live probes are not automatically restarted; use the live commands above when wanted.
 
 ## Review blockers
 

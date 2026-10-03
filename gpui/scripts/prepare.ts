@@ -29,6 +29,7 @@ const crates = [
       'single-line-navigation.patch',
       'textarea-selection.patch',
       'input-scroll-sensitivity.patch',
+      'textarea-vertical-edges.patch',
     ],
   },
   {

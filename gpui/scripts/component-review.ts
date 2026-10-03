@@ -45,6 +45,10 @@ export const textareaNotes: Record<string, string> = {
 };
 
 export const textareaFeedbackNotes: Record<string, string> = {
+  'textarea-line-boundaries/top':
+    'Up from the middle of the first visual row now reaches the document start. Repeated Up stays there; Down retains the original preferred column. The real caret is shown.',
+  'textarea-line-boundaries/bottom':
+    'Down from the middle of the last visual row now reaches the document end. Wrapped rows, row-end affinity, emoji, one-row/empty values and reversal are also checked against both browsers. The real caret is shown.',
   'textarea-long-scroll/top':
     'Tau now uses half-speed wheel/trackpad scrolling in the multiline input. Real event-and-pixel tests verify that 32px of wheel input moves content 16 logical px, and small fractional deltas accumulate rather than getting dropped. This is a deliberate feel adjustment, not a claim of Vue scroll-speed parity.',
   'textarea-long-scroll/scrolled':
