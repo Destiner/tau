@@ -36,10 +36,10 @@ index dc36700..c4166bb 100644
      fn repeated_pauses_keep_cursor_visible_until_idle(cx: &mut TestAppContext) {
          let cursor = cx.new(|_| BlinkCursor::new());
 diff --git a/src/input/base/element.rs b/src/input/base/element.rs
-index 125fbfc..7fe988a 100644
+index 125fbfc..bb69c87 100644
 --- a/src/input/base/element.rs
 +++ b/src/input/base/element.rs
-@@ -690,9 +690,13 @@ impl<M: InputModeKind> TextElement<M> {
+@@ -690,9 +690,19 @@ impl<M: InputModeKind> TextElement<M> {
  
              // For Right alignment, clamp cursor within the right edge of bounds so it
              // stays visible without having to shift the text via scroll_offset.
@@ -47,7 +47,13 @@ index 125fbfc..7fe988a 100644
 +            let width = state.editor_style.caret_width.unwrap_or(CURSOR_WIDTH);
 +            let mut cursor_x = bounds.left() + cursor_pos.x + line_number_width + cursor_scroll_x;
 +            if state.editor_style.center_caret {
++                let insertion_visible = cursor_x >= bounds.left() && cursor_x <= bounds.right();
 +                cursor_x -= width / 2.;
++                // Centered strokes still need their full width at visible viewport boundaries.
++                if insertion_visible {
++                    cursor_x =
++                        cursor_x.clamp(bounds.left(), (bounds.right() - width).max(bounds.left()));
++                }
 +            }
              let cursor_x = if last_layout.text_align == TextAlign::Right {
 -                cursor_x.min(bounds.right() - CURSOR_WIDTH)
@@ -55,7 +61,7 @@ index 125fbfc..7fe988a 100644
              } else {
                  cursor_x
              };
-@@ -702,7 +706,7 @@ impl<M: InputModeKind> TextElement<M> {
+@@ -702,7 +712,7 @@ impl<M: InputModeKind> TextElement<M> {
                          cursor_x,
                          bounds.top() + cursor_pos.y + ((line_height - cursor_height) / 2.),
                      ),
@@ -64,7 +70,7 @@ index 125fbfc..7fe988a 100644
                  ),
                  is_active,
              });
-@@ -937,7 +941,7 @@ impl<M: InputModeKind> TextElement<M> {
+@@ -937,7 +947,7 @@ impl<M: InputModeKind> TextElement<M> {
          cx: &mut App,
      ) -> Vec<Path<Pixels>> {
          let state = self.state.read(cx);
@@ -73,7 +79,7 @@ index 125fbfc..7fe988a 100644
              return vec![];
          }
  
-@@ -2457,7 +2461,13 @@ impl<M: InputModeKind> Element for TextElement<M> {
+@@ -2457,7 +2467,13 @@ impl<M: InputModeKind> Element for TextElement<M> {
  
          let text_style = window.text_style();
          let disabled = state.disabled;
@@ -88,7 +94,7 @@ index 125fbfc..7fe988a 100644
          let fg = dim(text_style.color);
          let (display_text, text_color) = if is_empty {
              (
-@@ -3127,7 +3137,7 @@ impl<M: InputModeKind> Element for TextElement<M> {
+@@ -3127,7 +3143,7 @@ impl<M: InputModeKind> Element for TextElement<M> {
          }
  
          // Paint blinking cursors (shared blink state for all carets)

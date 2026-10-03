@@ -15,6 +15,15 @@ use gpui_kit::{
 
 use crate::model::{Observation, Props};
 
+fn monospace_family() -> &'static str {
+    // Match CSS ui-monospace, not its Menlo fallback, on macOS.
+    if cfg!(target_os = "macos") {
+        ".AppleSystemUIFontMonospaced"
+    } else {
+        "monospace"
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Palette {
     canvas: u32,
@@ -83,7 +92,7 @@ impl Palette {
             border: rgb(self.border).into(),
             selection: gpui_kit::rgba(self.selection).into(),
             caret: rgb(self.accent).into(),
-            caret_width: Some(px(1.)),
+            caret_width: Some(px(2.)),
             center_caret: true,
             caret_visible: !hide_caret,
             unfocused_selection: disabled,
@@ -503,7 +512,7 @@ impl Render for Scene {
                     .flex()
                     .items_center()
                     .text_size(px(if bare { 12. } else { 11. }))
-                    .when(mono, |this| this.font_family("Menlo"))
+                    .when(mono, |this| this.font_family(monospace_family()))
                     .bg(rgb(p.canvas))
                     .text_color(rgb(if self.props.readonly || disabled {
                         p.muted
@@ -527,11 +536,14 @@ impl Render for Scene {
                 let bare = self.props.variant == "bare";
                 let focused = state.read(cx).focus_handle(cx).is_focused(window);
                 state.update(cx, |state, _| {
-                    state.set_editor_style(p.editor_style(
-                        self.props.readonly || disabled,
-                        self.capture_mode && !self.capture_caret,
-                        disabled,
-                    ))
+                    state.set_editor_style(InputEditorStyle {
+                        macos_textarea_selection: cfg!(target_os = "macos"),
+                        ..p.editor_style(
+                            self.props.readonly || disabled,
+                            self.capture_mode && !self.capture_caret,
+                            disabled,
+                        )
+                    })
                 });
                 InputBase::new("subject")
                     .focused(focused)
@@ -544,7 +556,9 @@ impl Render for Scene {
                     } else {
                         120.
                     }))
-                    .when(self.props.monospaced, |this| this.font_family("Menlo"))
+                    .when(self.props.monospaced, |this| {
+                        this.font_family(monospace_family())
+                    })
                     .text_size(px(11.))
                     .bg(rgb(p.canvas))
                     .text_color(rgb(p.text))

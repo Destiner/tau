@@ -44,8 +44,21 @@ export const textareaNotes: Record<string, string> = {
     'Bare variant for embedded editing. The live playground also exposes mono, readonly, disabled, width and height controls.',
 };
 
-export function textareaRows(rows: Row[]): Row[] {
-  return Object.keys(textareaNotes).map((id) => {
+export const textareaFeedbackNotes: Record<string, string> = {
+  'textarea-placeholder/idle':
+    'Placeholder after explicitly disabling CoreGraphics font smoothing. The authored colour and 400 font weight are unchanged.',
+  'textarea-multiline/typed':
+    'Regular Inter text with corrected grayscale rasterization. New regression probes keep native glyph coverage within 5% of WebKit; the measured difference is currently under 1%.',
+  'textarea-wrapped-rows/visual-row-start':
+    'Monospaced text now uses the same macOS system monospace family as CSS ui-monospace, rather than its Menlo fallback.',
+  'textarea-blank-lines-and-selection/empty-row':
+    'The real native caret is now 2 logical px wide (4 physical px at this scale), centered on the insertion boundary. Vue retains its own native caret width.',
+  'textarea-blank-lines-and-selection/backward-row':
+    'The [3,5] selection is unchanged. Its selected hard-newline row now fills the content width and uses font-metric leading alignment, matching WebKit rather than Chromium’s narrow newline cell.',
+};
+
+export function textareaRows(rows: Row[], notes = textareaNotes): Row[] {
+  return Object.keys(notes).map((id) => {
     const matches = rows.filter((row) => row.id === id);
     if (matches.length !== 1)
       throw new Error(`textarea review requires exactly one ${id}`);
@@ -55,7 +68,10 @@ export function textareaRows(rows: Row[]): Row[] {
 
 export async function reviewTextarea(
   base = resolve(import.meta.dir, '../results/multiline'),
+  feedback = false,
 ): Promise<void> {
+  const filename = feedback ? 'textarea-feedback.html' : 'textarea.html';
+  const notes = feedback ? textareaFeedbackNotes : textareaNotes;
   const inputs = await renderInputsHash();
   const binary = await nativeBinaryHash();
   for (const theme of ['light', 'dark'] as const) {
@@ -97,29 +113,38 @@ export async function reviewTextarea(
       const report: { checkpoints: Row[] } = JSON.parse(
         await readFile(resolve(folder, 'report/report.json'), 'utf8'),
       );
-      const rows = textareaRows(report.checkpoints);
+      const rows = textareaRows(report.checkpoints, notes);
       const html = renderReport(suite, rows, {
-        title: `Multiline input · ${theme} · ${browser === 'webkit' ? 'Vue WebKit ↔ GPUI' : 'Vue Chromium ↔ GPUI'}`,
+        title: `${feedback ? 'Multiline rendering follow-up' : 'Multiline input'} · ${theme} · ${browser === 'webkit' ? 'Vue WebKit ↔ GPUI' : 'Vue Chromium ↔ GPUI'}`,
         intro:
           'Only multiline cases are shown. Use the live native playground to type, select, scroll and change width/height. Native drag-to-resize and OS IME/clipboard are not certified by these captures. The live dimensions are parent-controlled; this is not yet the auto-growing application composer.',
-        notes: textareaNotes,
+        notes,
         links: [
           {
             label: 'Light',
-            href: `../../light-${browser}/report/textarea.html`,
+            href: `../../light-${browser}/report/${filename}`,
           },
-          { label: 'Dark', href: `../../dark-${browser}/report/textarea.html` },
+          { label: 'Dark', href: `../../dark-${browser}/report/${filename}` },
           {
             label:
               browser === 'webkit' ? 'Chromium reference' : 'WebKit reference',
-            href: `../../${theme}-${browser === 'webkit' ? 'chromium' : 'webkit'}/report/textarea.html`,
+            href: `../../${theme}-${browser === 'webkit' ? 'chromium' : 'webkit'}/report/${filename}`,
           },
           { label: 'All multiline checkpoints', href: 'report.html' },
         ],
       });
-      await writeFile(resolve(folder, 'report/textarea.html'), html);
-      console.log(resolve(folder, 'report/textarea.html'));
+      await writeFile(resolve(folder, `report/${filename}`), html);
+      console.log(resolve(folder, `report/${filename}`));
     }
   }
 }
-if (import.meta.main) await reviewTextarea(process.argv[2]);
+if (import.meta.main) {
+  const args = process.argv.slice(2);
+  const feedback = args[0] === '--feedback';
+  if (feedback) args.shift();
+  if (args.length > 1 || args[0]?.startsWith('--'))
+    throw new Error(
+      'Usage: component-review.ts [--feedback] [output-directory]',
+    );
+  await reviewTextarea(args[0], feedback);
+}

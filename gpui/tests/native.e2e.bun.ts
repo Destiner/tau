@@ -238,7 +238,7 @@ test(
 );
 
 test(
-  'real Metal caret is a narrow centered painted insertion mark, including empty placeholder',
+  'real Metal caret is two logical pixels wide and centered, including empty placeholder',
   async () =>
     workspace(async (root) => {
       for (const theme of ['light', 'dark'] as const) {
@@ -290,8 +290,9 @@ test(
             ).toBeGreaterThan(12);
             expect(
               delta.maxX - delta.minX + 1,
-              `${theme}/${id}/${name}: one logical pixel at insertion`,
-            ).toBeLessThanOrEqual(3);
+              `${theme}/${id}/${name}: two logical pixels at insertion`,
+            ).toBeGreaterThanOrEqual(4);
+            expect(delta.maxX - delta.minX + 1).toBeLessThanOrEqual(5);
             expect(
               delta.maxY - delta.minY,
               `${theme}/${id}/${name}: vertical caret stroke`,

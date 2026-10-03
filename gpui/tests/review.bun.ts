@@ -7,7 +7,11 @@ import {
   assertCurrentCapture,
   captureArtifactsHash,
 } from '../scripts/provenance';
-import { textareaNotes, textareaRows } from '../scripts/component-review';
+import {
+  textareaNotes,
+  textareaFeedbackNotes,
+  textareaRows,
+} from '../scripts/component-review';
 import {
   transcriptChecks,
   validateTranscriptChecks,
@@ -86,6 +90,19 @@ test('multiline review selects only its curated cases and rejects missing/duplic
     rows,
   );
   expect(rows).toHaveLength(14);
+  const followup = Object.keys(textareaFeedbackNotes).map(
+    (id) => ({ id }) as Row,
+  );
+  expect(
+    textareaRows(
+      [...rows.filter((row) => !textareaFeedbackNotes[row.id]), ...followup],
+      textareaFeedbackNotes,
+    ),
+  ).toEqual(followup);
+  expect(followup).toHaveLength(5);
+  expect(() => textareaRows(followup.slice(1), textareaFeedbackNotes)).toThrow(
+    'exactly one',
+  );
   expect(() => textareaRows(rows.slice(1))).toThrow('exactly one');
   expect(() => textareaRows([...rows, rows[0]!])).toThrow('exactly one');
 });

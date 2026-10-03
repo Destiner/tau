@@ -27,6 +27,7 @@ const crates = [
       'disabled-focus.patch',
       'input-presentation.patch',
       'single-line-navigation.patch',
+      'textarea-selection.patch',
     ],
   },
   {
@@ -34,7 +35,7 @@ const crates = [
     version: '0.3.7',
     checksum:
       '5a43af845b260b09393e923c4f1e1a67a10fcfc847b4815192bbfd02ed9fe725',
-    patches: ['antialiased-text.patch'],
+    patches: ['antialiased-text.patch', 'grayscale-text.patch'],
   },
 ] as const;
 type Crate = (typeof crates)[number];

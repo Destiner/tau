@@ -19,7 +19,7 @@ Counts describe meaningful coverage, not minimum quotas. The unrelated developme
 - **WebKit:** an explicit, failing audit remains. See [review blockers](#review-blockers); Chromium agreement is not macOS acceptance.
 - **Component review:** after the visual follow-up and single-line Up/Down fix (`fcd402c`), Timur accepted both the button and single-line input as good enough for this prototype. The current presentation, including native focus styling, is retained without another general visual approval round. Every raw pixel difference is still recorded; exact-difference flags are not an approval ledger and no numerical tolerance silently approves future changes.
 - **Harness:** real-browser and real-Metal fault tests catch invisible controls, missing click handlers, lost Change events, incorrect selection, incomplete captures, and out-of-control-area rendering faults. A pixel regression also requires selections to be visibly painted in both editors.
-- **Dependency fixes:** five focused Base patches address navigation, disabled focus, and editor presentation; a separate opt-in macOS text patch matches the browser's antialiased policy. See [patches](patches/README.md).
+- **Dependency fixes:** six focused Base patches address navigation, disabled focus, and editor presentation; two opt-in macOS text patches match the browser's antialiased policy. See [patches](patches/README.md).
 - **CI:** an isolated workflow is provided, but has not been executed on a remote runner. Local Metal capture does not prove hosted-runner Metal availability.
 
 Button/input component review is complete within this bounded prototype. Timur has authorized parallel multiline-input and representative hard-UI work, with independent live/report handoffs; harness decisions are engineering-owned. The multiline input and transcript await user review. Native-input and application-integration gaps remain explicit, and the existing Vue/catalogue cleanup is deferred.
@@ -124,19 +124,34 @@ Selection offsets are **UTF-16**, converted explicitly to/from Base's byte offse
 
 The input probe covers pointer selection/replacement, insertion/deletion, Enter, single-line Up/Down boundary movement and Shift-selection reversal, line/word-independent horizontal navigation, combining marks and joined emoji, selection-anchor reversal, undo/redo and history isolation, parent value replacement, same-current-value preservation, unrelated prop rerenders, readonly/disabled transitions, and Tab entry. Multiline cases distinguish visual rows from newline-delimited lines and assert intermediate caret positions.
 
-The preview host supplies fallback focus and Tab routing; these are not a final application-wide focus manager. The native test window is explicitly activated and pending tasks are drained before rendering: an inactive window suppresses Base's selection highlight even when the observed range is correct. Checkpoints normally suppress the caret on both sides; `caret: 'visible'` explicitly captures the real caret and verifies an actual narrow pixel change against a hidden-caret frame without changing editing state. The browser waits for its actual visible blink phase (no synthetic overlay), and native capture uses an explicit visibility flag. Transparent native caret colour was not sufficient: Base resolved it to foreground, a now-regression-tested harness bug. The interactive native window retains normal blinking and the thinner centered caret. Logical focus/selection and visible selection paint are independently tested; live caret behavior still needs real-window review.
+The preview host supplies fallback focus and Tab routing; these are not a final application-wide focus manager. The native test window is explicitly activated and pending tasks are drained before rendering: an inactive window suppresses Base's selection highlight even when the observed range is correct. Checkpoints normally suppress the caret on both sides; `caret: 'visible'` explicitly captures the real caret and verifies an actual narrow pixel change against a hidden-caret frame without changing editing state. The browser waits for its actual visible blink phase (no synthetic overlay), and native capture uses an explicit visibility flag. Transparent native caret colour was not sufficient: Base resolved it to foreground, a now-regression-tested harness bug. The interactive native window retains normal blinking and the centered, 2-logical-pixel caret requested in the multiline review. Logical focus/selection and visible selection paint are independently tested; live caret behavior still needs real-window review.
 
-The bundled Latin Inter variable font is losslessly decompressed from the project's `@fontsource-variable/inter` WOFF2 asset. Its internal native family name is `Inter`; the browser CSS family is `Inter Variable`. The font license is in `assets/Inter-LICENSE.txt`. Menlo is used for deterministic macOS monospaced probes. System fallback glyphs and rasterization remain platform-dependent.
+The bundled Latin Inter variable font is losslessly decompressed from the project's `@fontsource-variable/inter` WOFF2 asset. Its internal native family name is `Inter`; the browser CSS family is `Inter Variable`. The font license is in `assets/Inter-LICENSE.txt`. Native macOS monospace uses `.AppleSystemUIFontMonospaced`, matching CSS `ui-monospace` instead of substituting its Menlo fallback. System fallback glyphs and rasterization remain platform-dependent.
 
 ## Follow-up from visual review
 
 - Disabled button colours are composited once, rather than accumulating opacity where GPUI background/border overlap. Disabled input text no longer receives both Base's dimming and the control opacity.
-- Disabled selection stays visibly painted without focus or editability. Carets are 1 logical px and centered on the insertion boundary; repeated focus notifications no longer hide their initial blink phase.
+- Disabled selection stays visibly painted without focus or editability. Carets are now 2 logical px, as requested in the multiline review, and centered on the insertion boundary, with inward clamping at viewport edges to keep the full stroke visible; repeated focus notifications no longer hide their initial blink phase.
 - Native text opts out of CoreGraphics stroke dilation, like Vue's `-webkit-font-smoothing: antialiased`. No lighter font weight or colour substitution was used. In fixed interior text regions of the saved light/dark placeholder and seeded input, mean RGB error decreased by roughly 29–46%; exact raster equality is not claimed.
 - The emoji probe matches WebKit/macOS's painted glyph size, while Chromium uses a smaller glyph. The follow-up includes the WebKit image to make that distinction explicit. A small raster/baseline difference remains; no guessed scaling or screenshot resampling was applied.
 - The accepted prototype retains GPUI's hover suppression after keyboard input until real pointer movement; Vue retains hover. The harness captures before keys, after keys, and after pointer movement rather than masking the difference with synthetic motion.
 
 The focused report has 14 representative checkpoints per theme, notes tied to the feedback, visible caret labels, and links to the full results. Equivalent disabled/focus cases are not repeated. Accepted focus styling is not presented as a new rejection simply because exact pixels differ.
+
+### Multiline rendering follow-up
+
+The earlier antialiasing opt-in disabled luminance-dependent dilation but left CoreGraphics' smoothing flag at its enabled default. It now explicitly turns smoothing off for non-emoji glyphs. The regular/placeholder Inter and system-monospace probes in both themes measure native/WebKit normalized glyph coverage ratios of **0.992–1.009**, rather than the previous excess weight. Colours and requested font weight remain unchanged. A real-render regression allows 5% coverage variation to accommodate subpixel raster differences; this is a defect detector, not a visual-diff tolerance or automatic acceptance rule.
+
+The backward-row selection already had the correct `[3,5]` range. Its paint now matches macOS WebKit: selected hard newlines fill the content width, and vertical alignment uses the font's half-leading. Soft wraps, partial last rows, single-line input and code-editor defaults retain their separate semantics. Pixel checks exercise forward/backward selection in both fonts/themes, including painted top/bottom edges and padding boundaries.
+
+```sh
+bun gpui/scripts/run.ts --component textarea --out gpui/results/input-ink
+bun gpui/scripts/run.ts --component textarea --browser webkit --skip-build --out gpui/results/input-ink
+bun gpui/scripts/component-review.ts --feedback gpui/results/input-ink
+open gpui/results/input-ink/light-webkit/report/textarea-feedback.html
+```
+
+This follow-up contains only five representative cases for text, the 2px caret, and selection. Live probes are not automatically restarted; use the live commands above when wanted.
 
 ## Review blockers
 

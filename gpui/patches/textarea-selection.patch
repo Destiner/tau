@@ -1,0 +1,187 @@
+diff --git a/src/input/base/element.rs b/src/input/base/element.rs
+index 7fe988a..9abd22f 100644
+--- a/src/input/base/element.rs
++++ b/src/input/base/element.rs
+@@ -733,7 +733,20 @@ impl<M: InputModeKind> TextElement<M> {
+         last_layout: &LastLayout,
+         bounds: &Bounds<Pixels>,
+     ) -> Option<Path<Pixels>> {
+-        let corners = Self::layout_range_corners(&range, last_layout)?;
++        Self::layout_match_range_with_newlines(range, last_layout, bounds, false)
++    }
++
++    fn layout_match_range_with_newlines(
++        range: Range<usize>,
++        last_layout: &LastLayout,
++        bounds: &Bounds<Pixels>,
++        full_row_newlines: bool,
++    ) -> Option<Path<Pixels>> {
++        let corners = if full_row_newlines {
++            Self::layout_range_corners_with_newlines(&range, last_layout, true)?
++        } else {
++            Self::layout_range_corners(&range, last_layout)?
++        };
+         let points = frame_outline_points(&corners);
+         let origin = bounds.origin + point(last_layout.line_number_width, px(0.));
+         let mut builder = gpui::PathBuilder::fill();
+@@ -751,6 +764,14 @@ impl<M: InputModeKind> TextElement<M> {
+     fn layout_range_corners(
+         range: &Range<usize>,
+         last_layout: &LastLayout,
++    ) -> Option<Vec<Corners<Point<Pixels>>>> {
++        Self::layout_range_corners_with_newlines(range, last_layout, false)
++    }
++
++    fn layout_range_corners_with_newlines(
++        range: &Range<usize>,
++        last_layout: &LastLayout,
++        full_row_newlines: bool,
+     ) -> Option<Vec<Corners<Point<Pixels>>>> {
+         let range = range.start.max(last_layout.visible_range_offset.start)
+             ..range.end.min(last_layout.visible_range_offset.end);
+@@ -780,7 +801,13 @@ impl<M: InputModeKind> TextElement<M> {
+                     let left = alignment + indent + shaped.x_for_index(start_ix.min(end) - offset);
+                     let right = alignment
+                         + indent
+-                        + if newline {
++                        + if newline && full_row_newlines {
++                            (last_layout.content_width
++                                - last_layout.line_number_width
++                                - alignment
++                                - indent)
++                                .max(shaped.width)
++                        } else if newline {
+                             shaped.width + last_layout.space_width
+                         } else {
+                             shaped.x_for_index(end_ix - offset)
+@@ -945,6 +972,21 @@ impl<M: InputModeKind> TextElement<M> {
+             return vec![];
+         }
+ 
++        let macos_textarea = state.is_multi_line()
++            && !state.is_code_editor()
++            && state.editor_style.macos_textarea_selection;
++        let mut selection_bounds = *bounds;
++        if macos_textarea {
++            let style = window.text_style();
++            let text_size = style.font_size.to_pixels(window.rem_size());
++            let system = window.text_system();
++            let font = system.resolve_font(&style.font());
++            // Align contiguous selection rows with the font's upper half-leading.
++            selection_bounds.origin.y -= (last_layout.line_height
++                - system.ascent(font, text_size)
++                - system.descent(font, text_size).abs())
++                / 2.;
++        }
+         let active_id = state.active_selection().id;
+         let mut paths = Vec::new();
+ 
+@@ -994,20 +1036,22 @@ impl<M: InputModeKind> TextElement<M> {
+                     .take_while(|s| s.range().start < range.end)
+                 {
+                     if start < span.range().start {
+-                        paths.extend(Self::layout_match_range(
++                        paths.extend(Self::layout_match_range_with_newlines(
+                             start..span.range().start,
+                             last_layout,
+-                            bounds,
++                            &selection_bounds,
++                            macos_textarea,
+                         ));
+                     }
+                     start = span.range().end.max(start);
+                 }
+             }
+             if start < range.end {
+-                paths.extend(Self::layout_match_range(
++                paths.extend(Self::layout_match_range_with_newlines(
+                     start..range.end,
+                     last_layout,
+-                    bounds,
++                    &selection_bounds,
++                    macos_textarea,
+                 ));
+             }
+         }
+@@ -3679,6 +3723,13 @@ mod tests {
+                 "a wrap end must not open the next visual row"
+             );
+             assert_eq!(first_row[0].top_right.x, first.wrapped_lines[0].width);
++            let textarea_wrap = TextElement::<EditorMode>::layout_range_corners_with_newlines(
++                &(0..boundary),
++                layout,
++                true,
++            )
++            .unwrap();
++            assert_eq!(textarea_wrap, first_row, "soft wraps are not newline cells");
+             let rest =
+                 TextElement::<EditorMode>::layout_range_corners(&(boundary..first.len()), layout)
+                     .unwrap();
+@@ -3715,6 +3766,46 @@ mod tests {
+         });
+     }
+ 
++    #[gpui::test]
++    fn textarea_selection_newline_fills_only_hard_break_rows(cx: &mut TestAppContext) {
++        let (editor, window) = decoration_editor(cx, "ab\n\ncd", false);
++        let mut cx = VisualTestContext::from_window(window.into(), cx);
++        cx.update(|window, cx| {
++            window.draw(cx).clear(cx);
++            let state = editor.read(cx);
++            let layout = state.last_layout.as_ref().unwrap();
++            let corners = |range, full| {
++                TextElement::<EditorMode>::layout_range_corners_with_newlines(range, layout, full)
++                    .unwrap()
++            };
++            let default = corners(&(3..5), false);
++            let webkit = corners(&(3..5), true);
++            assert_eq!(webkit.len(), 2);
++            assert_eq!(webkit[0].top_left.x, px(0.));
++            assert_eq!(
++                webkit[0].top_right.x,
++                layout.content_width - layout.line_number_width
++            );
++            assert_eq!(
++                webkit[0].top_left.y,
++                layout.visible_top + layout.line_height
++            );
++            assert_eq!(webkit[1].top_left.y, webkit[0].bottom_left.y);
++            assert_eq!(webkit[1].top_right.x, default[1].top_right.x);
++            assert_eq!(default[0].top_right.x, layout.space_width);
++            assert_eq!(corners(&(3..4), true).len(), 1);
++            assert_eq!(corners(&(4..6), true).len(), 1);
++            assert_eq!(
++                corners(&(0..3), true)[0].top_right.x,
++                layout.content_width - layout.line_number_width
++            );
++            assert_eq!(
++                corners(&(4..6), true)[0].top_right.x,
++                corners(&(4..6), false)[0].top_right.x
++            );
++        });
++    }
++
+     #[gpui::test]
+     fn geometric_decorations_include_crlf_boundaries(cx: &mut TestAppContext) {
+         let text = "one\r\ntwo\r\nthree";
+diff --git a/src/input/editor/highlighting.rs b/src/input/editor/highlighting.rs
+index 562f066..e5ab0a0 100644
+--- a/src/input/editor/highlighting.rs
++++ b/src/input/editor/highlighting.rs
+@@ -112,6 +112,8 @@ pub struct InputEditorStyle {
+     pub background: Hsla,
+     pub border: Hsla,
+     pub selection: Hsla,
++    /// Use full hard-newline rows and font-leading alignment for macOS textarea selection.
++    pub macos_textarea_selection: bool,
+     pub caret: Hsla,
+     pub caret_width: Option<Pixels>,
+     pub center_caret: bool,
+@@ -172,6 +174,7 @@ impl Default for InputEditorStyle {
+             background: Hsla::default(),
+             border: Hsla::default(),
+             selection: Hsla::default(),
++            macos_textarea_selection: false,
+             caret: Hsla::default(),
+             caret_width: None,
+             center_caret: false,
