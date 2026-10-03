@@ -45,6 +45,10 @@ export const textareaNotes: Record<string, string> = {
 };
 
 export const textareaFeedbackNotes: Record<string, string> = {
+  'textarea-long-scroll/top':
+    'Tau now uses half-speed wheel/trackpad scrolling in the multiline input. Real event-and-pixel tests verify that 32px of wheel input moves content 16 logical px, and small fractional deltas accumulate rather than getting dropped. This is a deliberate feel adjustment, not a claim of Vue scroll-speed parity.',
+  'textarea-long-scroll/scrolled':
+    'The scrollbar thumb now has rounded ends in normal, hover and drag states. A real pointer-drag regression checks the caps and confirms that dragging remains direct, not slowed by the wheel setting.',
   'textarea-placeholder/idle':
     'Placeholder after explicitly disabling CoreGraphics font smoothing. The authored colour and 400 font weight are unchanged.',
   'textarea-multiline/typed':

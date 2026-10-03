@@ -1,6 +1,6 @@
 # Pinned GPUI prototype patches
 
-These are prototype-only fixes, not an approved long-lived fork. The six Base patches apply to the exact published `gpui-base` 0.7.0 crate, whose SHA-256 is:
+These are prototype-only fixes, not an approved long-lived fork. The seven Base patches apply to the exact published `gpui-base` 0.7.0 crate, whose SHA-256 is:
 
 ```text
 64bb52b29a8dcdc8d3f595b8b0839c076f237572ab601ba4577d3da8ae085728
@@ -58,6 +58,14 @@ Three upstream regressions cover action dispatch, boundaries/empty/read-only val
 
 The opt-in `InputEditorStyle::macos_textarea_selection` extends selected hard-newline rows to the content edge and aligns selection paint using the font's ascent and absolute descent, not a hard-coded screenshot offset. Only Tau's macOS textarea enables it; soft-wrap boundaries, partial final rows, single-line input and code-editor defaults stay distinct. One new upstream geometry test plus an extended soft-wrap test cover the range shapes. Real WebKit/Metal pixel regressions check forward/backward painting, width, top/bottom edges and padding in both fonts/themes; logical observations still have to agree.
 
+### `input-scroll-sensitivity.patch`
+
+**Feedback:** the multiline input felt too fast. The native event path already preserves pixel units without amplification; Tau deliberately opts into **0.5× wheel sensitivity** rather than rewriting macOS events or claiming a unit-conversion fix.
+
+The setting defaults to 1.0 for upstream inputs/editors and scales after pixel/line conversion. Fractional deltas, direction changes and endpoint clamping remain intact. Only the Tau textarea opts in. Keyboard/caret reveal, programmatic movement and scrollbar dragging do not use the multiplier. Invalid settings reset to 1.0. One upstream regression checks unit conversion, defaults, invalid settings and unchanged editing state; a real Metal event-and-pixel regression verifies displacement, fractional accumulation, reversal, clamping and direct thumb dragging. Real-device feel still needs hands-on review.
+
+Rounded thumbs need no dependency patch: Tau projects a 4px radius via Base's `ScrollbarTheme`, clamped to half the thumb width and inherited by hover/active states. Metal pixel checks inspect all four corners and visible end caps in both themes.
+
 ### `antialiased-text.patch` (`gpui-pre-macos` 0.3.7)
 
 The published archive is independently SHA-256 verified:
@@ -78,7 +86,7 @@ For Tau's existing antialiasing opt-in, explicitly disable smoothing on non-emoj
 
 ## Validation and maintenance
 
-The combined patched Base library passed **1,241 upstream unit tests** locally, including the sixteen added tests. These use Base's test platform; they do not replace the native Metal and browser harness tests.
+The combined patched Base library passed **1,242 upstream unit tests** locally, including the seventeen added tests. These use Base's test platform; they do not replace the native Metal and browser harness tests.
 
 Optional upstream check, after preparation, from the repository root:
 

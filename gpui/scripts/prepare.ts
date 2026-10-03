@@ -28,6 +28,7 @@ const crates = [
       'input-presentation.patch',
       'single-line-navigation.patch',
       'textarea-selection.patch',
+      'input-scroll-sensitivity.patch',
     ],
   },
   {

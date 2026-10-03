@@ -99,7 +99,7 @@ test('multiline review selects only its curated cases and rejects missing/duplic
       textareaFeedbackNotes,
     ),
   ).toEqual(followup);
-  expect(followup).toHaveLength(5);
+  expect(followup).toHaveLength(7);
   expect(() => textareaRows(followup.slice(1), textareaFeedbackNotes)).toThrow(
     'exactly one',
   );

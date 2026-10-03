@@ -2,7 +2,7 @@ use anyhow::{Result, ensure};
 use gpui_kit::{
     App, Context, Entity, FocusHandle, Focusable, IntoElement, Render, Subscription, Window,
     base::{
-        Button,
+        Button, ScrollbarStyles, Theme,
         input::{
             Input, InputBase, InputEditorStyle, InputEvent, InputState, RopeExt, Textarea,
             TextareaState,
@@ -133,6 +133,11 @@ pub struct Scene {
 gpui_kit::actions!(tau_prototype, [NextField, PreviousField]);
 
 pub fn init(cx: &mut App) {
+    let theme = Theme::global_mut(cx);
+    theme.scrollbar = theme
+        .scrollbar
+        .clone()
+        .with_styles(ScrollbarStyles::default().thumb(|thumb| thumb.radius(px(4.))));
     cx.bind_keys([
         gpui_kit::KeyBinding::new("tab", NextField, Some("TauScene")),
         gpui_kit::KeyBinding::new("shift-tab", PreviousField, Some("TauScene")),
@@ -201,6 +206,7 @@ impl Scene {
                     state.set_readonly(props.readonly, cx);
                     let end = state.text().len();
                     state.set_selected_range(end..end, cx);
+                    state.set_scroll_sensitivity(0.5);
                     // Multi-line padding belongs inside the engine's scrolling viewport.
                     state.set_editor_paddings(gpui_kit::Edges {
                         top: px(6.),
