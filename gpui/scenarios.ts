@@ -1,6 +1,9 @@
 import type { Observation, Scenario, Step, Suite, Theme } from './contract';
 
-const check = (name: string, expected: Partial<Observation>): Step => ({
+const check = (
+  name: string,
+  expected: Partial<Observation>,
+): Extract<Step, { action: 'checkpoint' }> => ({
   action: 'checkpoint',
   name,
   expected,
@@ -127,9 +130,12 @@ export const scenarios: Scenario[] = [
       click,
       check('activated', { clicks: 1 }),
       blur,
+      check('blurred-pointer', { clicks: 1, focused: false }),
       key('Enter'),
       key('Space'),
       check('blurred-key', { clicks: 1, focused: false }),
+      pointer('move', 51, 35),
+      check('hover-restored', { clicks: 1, focused: false }),
     ],
   },
   {
@@ -418,6 +424,51 @@ export const scenarios: Scenario[] = [
     ],
   },
   {
+    id: 'input-caret-boundaries',
+    component: 'input',
+    props: { value: 'ab😀cd' },
+    steps: [
+      focus,
+      select(1, 1),
+      check('hidden', { value: 'ab😀cd', selection: [1, 1], focused: true }),
+      {
+        ...check('latin', {
+          value: 'ab😀cd',
+          selection: [1, 1],
+          focused: true,
+        }),
+        caret: 'visible',
+      },
+      select(2, 2),
+      {
+        ...check('before-emoji', { selection: [2, 2], focused: true }),
+        caret: 'visible',
+      },
+      select(4, 4),
+      {
+        ...check('after-emoji', { selection: [4, 4], focused: true }),
+        caret: 'visible',
+      },
+      select(6, 6),
+      {
+        ...check('end', { selection: [6, 6], focused: true }),
+        caret: 'visible',
+      },
+    ],
+  },
+  {
+    id: 'input-placeholder-caret',
+    component: 'input',
+    props: { placeholder: 'Placeholder' },
+    steps: [
+      focus,
+      {
+        ...check('visible', { value: '', selection: [0, 0], focused: true }),
+        caret: 'visible',
+      },
+    ],
+  },
+  {
     id: 'input-tab-focus',
     component: 'input',
     props: { value: 'Tab' },
@@ -425,9 +476,13 @@ export const scenarios: Scenario[] = [
       key('Tab'),
       check('focused', { focused: true, value: 'Tab' }),
       props({ disabled: true }),
-      check('disabled-blur', { focused: false, disabled: true }),
+      check('disabled-blur', {
+        focused: false,
+        disabled: true,
+        selection: [0, 3],
+      }),
       key('Tab'),
-      check('skipped', { focused: false, disabled: true }),
+      check('skipped', { focused: false, disabled: true, selection: [0, 3] }),
       props({ disabled: false, readonly: true }),
       key('Tab'),
       check('readonly-focus', { focused: true, readonly: true }),

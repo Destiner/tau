@@ -75,16 +75,19 @@ fn mix(a: u32, b: u32, weight: f32) -> gpui_kit::Rgba {
 }
 
 impl Palette {
-    fn editor_style(self, readonly: bool, hide_caret: bool) -> InputEditorStyle {
+    fn editor_style(self, readonly: bool, hide_caret: bool, disabled: bool) -> InputEditorStyle {
         InputEditorStyle {
             foreground: rgb(if readonly { self.muted } else { self.text }).into(),
             muted_foreground: rgb(self.faint).into(),
             background: rgb(self.canvas).into(),
             border: rgb(self.border).into(),
             selection: gpui_kit::rgba(self.selection).into(),
-            caret: rgb(self.accent)
-                .opacity(if hide_caret { 0. } else { 1. })
-                .into(),
+            caret: rgb(self.accent).into(),
+            caret_width: Some(px(1.)),
+            center_caret: true,
+            caret_visible: !hide_caret,
+            unfocused_selection: disabled,
+            disabled_opacity: 1.,
             ..Default::default()
         }
     }
@@ -108,6 +111,7 @@ pub enum TestFault {
 pub struct Scene {
     fault: TestFault,
     capture_mode: bool,
+    capture_caret: bool,
     props: Props,
     palette: Palette,
     control: Control,
@@ -217,6 +221,7 @@ impl Scene {
         Self {
             fault: TestFault::None,
             capture_mode: false,
+            capture_caret: false,
             props,
             palette: Palette::new(dark),
             control,
@@ -230,6 +235,11 @@ impl Scene {
     pub fn prepare_capture(&mut self, fault: TestFault) {
         self.fault = fault;
         self.capture_mode = true;
+    }
+
+    pub fn set_capture_caret(&mut self, visible: bool, cx: &mut Context<Self>) {
+        self.capture_caret = visible;
+        cx.notify();
     }
 
     pub fn observe(&self, window: &Window, cx: &App) -> Observation {
@@ -426,10 +436,10 @@ impl Render for Scene {
                     .text_size(px(if md { 11. } else { 10. }))
                     .font_weight(gpui_kit::FontWeight::MEDIUM)
                     .border_1()
-                    .border_color(rgb(border))
+                    .border_color(mix(border, p.canvas, if disabled { 0.45 } else { 1. }))
                     .rounded(px(4.))
-                    .bg(rgb(bg))
-                    .text_color(rgb(fg))
+                    .bg(mix(bg, p.canvas, if disabled { 0.45 } else { 1. }))
+                    .text_color(mix(fg, p.canvas, if disabled { 0.45 } else { 1. }))
                     .when(!disabled, |this| {
                         this.hover(|this| {
                             if primary {
@@ -449,7 +459,6 @@ impl Render for Scene {
                     .when(handle.is_focused(window) && !disabled, |this| {
                         this.border_color(rgb(if primary { p.on_accent } else { p.accent }))
                     })
-                    .when(disabled, |this| this.opacity(0.45))
                     .when(self.fault != TestFault::DropClicks, |this| {
                         this.on_click(move |_, _, cx| {
                             scene.update(cx, |scene, cx| {
@@ -467,7 +476,11 @@ impl Render for Scene {
                 let focused = state.read(cx).focus_handle(cx).is_focused(window);
                 let error = self.props.error;
                 state.update(cx, |state, _| {
-                    state.set_editor_style(p.editor_style(self.props.readonly, self.capture_mode))
+                    state.set_editor_style(p.editor_style(
+                        self.props.readonly || disabled,
+                        self.capture_mode && !self.capture_caret,
+                        disabled,
+                    ))
                 });
                 let border = if error {
                     p.danger
@@ -487,7 +500,11 @@ impl Render for Scene {
                     .text_size(px(if bare { 12. } else { 11. }))
                     .when(mono, |this| this.font_family("Menlo"))
                     .bg(rgb(p.canvas))
-                    .text_color(rgb(if self.props.readonly { p.muted } else { p.text }))
+                    .text_color(rgb(if self.props.readonly || disabled {
+                        p.muted
+                    } else {
+                        p.text
+                    }))
                     .rounded(px(4.))
                     .when(!bare, |this| this.border_1().border_color(rgb(border)))
                     .when(
@@ -505,7 +522,11 @@ impl Render for Scene {
                 let bare = self.props.variant == "bare";
                 let focused = state.read(cx).focus_handle(cx).is_focused(window);
                 state.update(cx, |state, _| {
-                    state.set_editor_style(p.editor_style(false, self.capture_mode))
+                    state.set_editor_style(p.editor_style(
+                        false,
+                        self.capture_mode && !self.capture_caret,
+                        disabled,
+                    ))
                 });
                 InputBase::new("subject")
                     .focused(focused)

@@ -11,6 +11,6 @@ bun gpui/scripts/run.ts --reference-only
 bun gpui/scripts/run.ts --component input --browser webkit
 ```
 
-Captures are 1280×640 physical pixels at scale 2 for a 640×320 logical viewport. Caret blinking is hidden in images; UTF-16 selection is independently observed. Setup selections inside a surrogate pair or outside the current value are rejected.
+Captures are 1280×640 physical pixels at scale 2 for a 640×320 logical viewport. Carets are hidden by default; checkpoints with `caret: 'visible'` capture the real browser caret and verify a narrow in-control pixel change without changing editing state. Chromium's manual caret animation is used where supported; other engines are sampled through the visible blink phase, never given a synthetic caret. Each capture records its caret mode. UTF-16 selection is independently observed. Setup selections inside a surrogate pair or outside the current value are rejected.
 
 Reference-only runs assert expectations and fail on mismatches. Full comparisons retain mismatching reference observations so the joint report can show Vue, GPUI, and the authored expectation; the comparator still fails. Current WebKit differences are **not waived**. See the [prototype README](../README.md) for commands, coverage, current results, review blockers, and limitations.

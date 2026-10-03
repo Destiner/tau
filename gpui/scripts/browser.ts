@@ -10,6 +10,7 @@ import {
 } from '@playwright/test';
 import { createServer } from 'vite';
 import vue from '@vitejs/plugin-vue';
+import { PNG } from 'pngjs';
 import {
   assertCaptures,
   stateDifferences,
@@ -77,6 +78,80 @@ async function action(page: Page, step: Step): Promise<void> {
       break;
   }
 }
+async function visibleCaretFrame(page: Page): Promise<Buffer> {
+  const observation = await page.evaluate(() => window.tauReference.observe());
+  if (
+    !observation.focused ||
+    observation.disabled ||
+    observation.readonly ||
+    !observation.selection ||
+    observation.selection[0] !== observation.selection[1]
+  )
+    throw new Error(
+      'visible caret requires a focused editable collapsed selection',
+    );
+  await page.locator('#subject-wrap > *').evaluate((el) => {
+    (el as HTMLElement).style.setProperty('caret-animation', 'manual');
+  });
+  const hidden = PNG.sync.read(
+    await page.screenshot({ animations: 'disabled', caret: 'hide' }),
+  );
+  const bounds = await page.locator('#subject-wrap > *').boundingBox();
+  const scale = await page.evaluate(() => window.devicePixelRatio);
+  if (!bounds) throw new Error('missing caret subject');
+  // Capture the actual browser caret, including engines without caret-animation support.
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const bytes = await page.screenshot({
+      animations: 'disabled',
+      caret: 'initial',
+    });
+    const visible = PNG.sync.read(bytes);
+    let changed = 0,
+      minX = hidden.width,
+      maxX = -1,
+      minY = hidden.height,
+      maxY = -1;
+    for (let i = 0; i < hidden.data.length; i += 4) {
+      if (
+        hidden.data[i] !== visible.data[i] ||
+        hidden.data[i + 1] !== visible.data[i + 1] ||
+        hidden.data[i + 2] !== visible.data[i + 2]
+      ) {
+        changed++;
+        const x = (i / 4) % hidden.width,
+          y = Math.floor(i / 4 / hidden.width);
+        minX = Math.min(minX, x);
+        maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y);
+        maxY = Math.max(maxY, y);
+      }
+    }
+    if (changed > 0) {
+      if (
+        maxX - minX + 1 > 3 * scale ||
+        maxY - minY < 4 * scale ||
+        minX < bounds.x * scale ||
+        maxX >= (bounds.x + bounds.width) * scale ||
+        minY < bounds.y * scale ||
+        maxY >= (bounds.y + bounds.height) * scale
+      )
+        throw new Error(
+          'visible caret capture changed pixels outside a narrow in-control stroke',
+        );
+      if (
+        JSON.stringify(observation) !==
+        JSON.stringify(await page.evaluate(() => window.tauReference.observe()))
+      )
+        throw new Error('caret capture changed editor state');
+      return bytes;
+    }
+    await page.waitForTimeout(100);
+  }
+  throw new Error(
+    'browser caret did not become visible; no synthetic cursor fallback',
+  );
+}
+
 async function runScenario(
   page: Page,
   scenario: Scenario,
@@ -103,17 +178,21 @@ async function runScenario(
     if (!bounds)
       throw new Error(`${scenario.id}/${step.name}: missing subject bounds`);
     const screenshot = `${scenario.id}--${step.name}.png`;
-    await page.screenshot({
-      path: resolve(out, screenshot),
-      animations: 'disabled',
-      caret: 'hide',
-    });
+    if (step.caret === 'visible')
+      await writeFile(resolve(out, screenshot), await visibleCaretFrame(page));
+    else
+      await page.screenshot({
+        path: resolve(out, screenshot),
+        animations: 'disabled',
+        caret: 'hide',
+      });
     results.push({
       scenario: scenario.id,
       checkpoint: step.name,
       observation: await page.evaluate(() => window.tauReference.observe()),
       bounds,
       screenshot,
+      caret: step.caret ?? 'hidden',
     });
   }
   return results;

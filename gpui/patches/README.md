@@ -1,6 +1,6 @@
-# GPUI Base 0.7.0 patches
+# Pinned GPUI prototype patches
 
-These are prototype-only fixes, not an approved long-lived fork. They apply to the exact published `gpui-base` 0.7.0 crate, whose SHA-256 is:
+These are prototype-only fixes, not an approved long-lived fork. The four Base patches apply to the exact published `gpui-base` 0.7.0 crate, whose SHA-256 is:
 
 ```text
 64bb52b29a8dcdc8d3f595b8b0839c076f237572ab601ba4577d3da8ae085728
@@ -38,9 +38,27 @@ Disabled editors no longer register focus tracking, place pointer selections, or
 
 `set_disabled` has no window argument. The owning Tau prototype therefore moves focus away when disabling a currently focused control. No broad upstream API change is made for that policy.
 
+### `input-presentation.patch`
+
+**Signals:** transparent caret colour was resolved to foreground rather than hidden; the 1.5px caret extended into the next glyph; selection disappeared when disabling a selected input; disabled text was dimmed twice. Calling public `focus()` and then processing its focus notification started blinking twice, toggling the initial caret off.
+
+Adds opt-in presentation fields for caret visibility/width/centering, unfocused selection, and disabled text opacity. Defaults preserve existing presentation. Tau enables unfocused selection only while disabled, retains the engine's selection/history, and suppresses carets through the visibility flag rather than a transparent colour. Cursor start now resets to a visible phase instead of toggling. Two upstream regressions cover presentation resolution and repeated starts; real Metal/browser tests verify visible and hidden caret pixels, disabled selection, and pale disabled controls.
+
+### `antialiased-text.patch` (`gpui-pre-macos` 0.3.7)
+
+The published archive is independently SHA-256 verified:
+
+```text
+5a43af845b260b09393e923c4f1e1a67a10fcfc847b4815192bbfd02ed9fe725
+```
+
+**Signal:** equal 400-weight text and colour tokens still looked heavier than Vue. The native backend added luminance-dependent CoreGraphics glyph dilation while the browser explicitly requested antialiased, unsmoothed text.
+
+Adds a process-local opt-in to disable that dilation, called before rendering in both interactive and headless modes. Default upstream behavior and macOS preferences are untouched. The normal bootstrap prepares this separate crate in `.cache/crates/gpui-pre-macos`; no registry source is edited. Fixed-region before/after captures demonstrate reduced text error in both themes. No emoji scale workaround or variable-weight remapping is included.
+
 ## Validation and maintenance
 
-The combined patched Base library passed **1,235 upstream unit tests** locally, including the ten added tests. These use Base's test platform; they do not replace the native Metal and browser harness tests.
+The combined patched Base library passed **1,237 upstream unit tests** locally, including the twelve added tests. These use Base's test platform; they do not replace the native Metal and browser harness tests.
 
 Optional upstream check, after preparation, from the repository root:
 

@@ -42,7 +42,12 @@ export type Step =
   | { action: 'type'; text: string }
   | { action: 'select'; start: number; end: number }
   | { action: 'props'; props: Partial<Props> }
-  | { action: 'checkpoint'; name: string; expected: Partial<Observation> };
+  | {
+      action: 'checkpoint';
+      name: string;
+      expected: Partial<Observation>;
+      caret?: 'visible';
+    };
 export type Scenario = {
   id: string;
   component: Component;
@@ -63,6 +68,7 @@ export type Capture = {
   observation: Observation;
   bounds: Bounds;
   screenshot: string;
+  caret?: 'hidden' | 'visible';
 };
 
 const propKeys = Object.keys(defaultProps);
@@ -203,7 +209,7 @@ export function validateSuite(value: unknown): asserts value is Suite {
         type: ['text'],
         select: ['start', 'end'],
         props: ['props'],
-        checkpoint: ['name', 'expected'],
+        checkpoint: ['name', 'expected', 'caret'],
       };
       keys(step, ['action', ...(fields[String(action)] || [])], s.id);
       if (
@@ -233,6 +239,8 @@ export function validateSuite(value: unknown): asserts value is Suite {
         throw new Error(`${s.id}: invalid pointer`);
       if (action === 'props') validateProps(step.props, s.id);
       if (action === 'checkpoint') {
+        if (step.caret !== undefined && step.caret !== 'visible')
+          throw new Error(`${s.id}: invalid caret capture`);
         if (
           typeof step.name !== 'string' ||
           !/^[a-z0-9-]+$/.test(step.name) ||
@@ -271,6 +279,13 @@ export function assertCaptures(
     if (!wanted.has(id) || found.has(id))
       throw new Error(`${label}: unknown or duplicate capture ${id}`);
     validateObservation(c.observation, `${label}/${id}`);
+    const checkpoint = suite.scenarios
+      .find((s) => s.id === c.scenario)!
+      .steps.find(
+        (s) => s.action === 'checkpoint' && s.name === c.checkpoint,
+      ) as Extract<Step, { action: 'checkpoint' }>;
+    if ((c.caret ?? 'hidden') !== (checkpoint.caret ?? 'hidden'))
+      throw new Error(`${label}/${id}: incorrect caret capture mode`);
     const b = object(c.bounds, `${label}/${id}/bounds`);
     keys(b, ['x', 'y', 'width', 'height'], label);
     if (

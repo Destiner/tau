@@ -40,6 +40,49 @@ async function capture(
   return result.captures;
 }
 
+async function image(dir: string, capture: Capture): Promise<PNG> {
+  return PNG.sync.read(await readFile(join(dir, capture.screenshot)));
+}
+
+function changedInterior(
+  a: PNG,
+  b: PNG,
+  bounds: Capture['bounds'],
+  scale: number,
+  inset = 5,
+): { count: number; minX: number; maxX: number; minY: number; maxY: number } {
+  expect([a.width, a.height]).toEqual([b.width, b.height]);
+  let count = 0;
+  let minX = a.width,
+    maxX = -1,
+    minY = a.height,
+    maxY = -1;
+  for (
+    let y = Math.ceil((bounds.y + inset) * scale);
+    y < Math.floor((bounds.y + bounds.height - inset) * scale);
+    y++
+  )
+    for (
+      let x = Math.ceil((bounds.x + inset) * scale);
+      x < Math.floor((bounds.x + bounds.width - inset) * scale);
+      x++
+    ) {
+      const i = (y * a.width + x) * 4;
+      if (
+        a.data[i] === b.data[i] &&
+        a.data[i + 1] === b.data[i + 1] &&
+        a.data[i + 2] === b.data[i + 2]
+      )
+        continue;
+      count++;
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    }
+  return { count, minX, maxX, minY, maxY };
+}
+
 function expectStates(
   s: Suite,
   captures: Awaited<ReturnType<typeof capture>>,
@@ -67,6 +110,8 @@ test(
           'input-pointer-selection',
           'textarea-pointer-selection',
           'input-type',
+          'input-caret-boundaries',
+          'input-placeholder-caret',
           'input-undo-group',
           'input-joined-emoji-navigation',
           'input-emoji',
@@ -185,6 +230,214 @@ test(
             `${theme}/${scenario.id}: selection highlight must be visible`,
           ).toBeGreaterThan(200);
         }
+      }
+    }),
+  60000,
+);
+
+test(
+  'real Metal caret is a narrow centered painted insertion mark, including empty placeholder',
+  async () =>
+    workspace(async (root) => {
+      for (const theme of ['light', 'dark'] as const) {
+        const s = pick(
+          theme,
+          'input-caret-boundaries',
+          'input-placeholder-caret',
+        );
+        const placeholder = s.scenarios[1]!;
+        const visible = placeholder.steps.at(-1)!;
+        if (visible.action !== 'checkpoint')
+          throw new Error('missing placeholder checkpoint');
+        placeholder.steps.splice(-1, 0, {
+          ...visible,
+          name: 'hidden',
+          caret: undefined,
+        });
+        const dir = join(root, theme);
+        const frames = await capture(s, dir);
+        expectStates(s, frames);
+        const frame = (scenario: string, checkpoint: string): Capture =>
+          frames.find(
+            (c) => c.scenario === scenario && c.checkpoint === checkpoint,
+          )!;
+        for (const id of [
+          'input-caret-boundaries',
+          'input-placeholder-caret',
+        ]) {
+          const hidden = frame(id, 'hidden');
+          expect(hidden.caret ?? 'hidden').toBe('hidden');
+          const hiddenImage = await image(dir, hidden);
+          let priorX = -1;
+          for (const name of id === 'input-caret-boundaries'
+            ? ['latin', 'before-emoji', 'after-emoji', 'end']
+            : ['visible']) {
+            const shown = frame(id, name);
+            expect(shown.caret).toBe('visible');
+            if (name === 'latin' || id === 'input-placeholder-caret')
+              expect(shown.observation).toEqual(hidden.observation);
+            const delta = changedInterior(
+              hiddenImage,
+              await image(dir, shown),
+              shown.bounds,
+              s.scale,
+            );
+            expect(
+              delta.count,
+              `${theme}/${id}/${name}: actual caret pixels`,
+            ).toBeGreaterThan(12);
+            expect(
+              delta.maxX - delta.minX + 1,
+              `${theme}/${id}/${name}: one logical pixel at insertion`,
+            ).toBeLessThanOrEqual(3);
+            expect(
+              delta.maxY - delta.minY,
+              `${theme}/${id}/${name}: vertical caret stroke`,
+            ).toBeGreaterThan(12);
+            expect(
+              delta.minX,
+              `${theme}/${id}/${name}: caret follows UTF-16 scalar boundaries`,
+            ).toBeGreaterThan(priorX);
+            priorX = delta.minX;
+          }
+        }
+      }
+    }),
+  60000,
+);
+
+test(
+  'real Metal retains disabled selection paint and primary button has a single pale border',
+  async () =>
+    workspace(async (root) => {
+      for (const theme of ['light', 'dark'] as const) {
+        const s = pick(
+          theme,
+          'input-tab-focus',
+          'button-primary-disabled',
+          'button-primary-md',
+        );
+        const tab = s.scenarios[0]!;
+        const reenable = tab.steps.findIndex(
+          (step) => step.action === 'props' && step.props.disabled === false,
+        );
+        tab.steps.splice(
+          reenable,
+          0,
+          { action: 'type', text: 'X' },
+          {
+            action: 'checkpoint',
+            name: 'typing-blocked',
+            expected: {
+              value: 'Tab',
+              changes: 0,
+              disabled: true,
+              focused: false,
+              selection: [0, 3],
+            },
+          },
+        );
+        const collapsed = structuredClone(tab);
+        collapsed.id = 'input-collapsed-disabled';
+        collapsed.steps = [
+          { action: 'focus' },
+          { action: 'select', start: 3, end: 3 },
+          { action: 'props', props: { disabled: true } },
+          {
+            action: 'checkpoint',
+            name: 'disabled',
+            expected: {
+              value: 'Tab',
+              disabled: true,
+              focused: false,
+              selection: [3, 3],
+            },
+          },
+        ];
+        s.scenarios.push(collapsed);
+        const dir = join(root, theme);
+        const frames = await capture(s, dir);
+        expectStates(s, frames);
+        const frame = (id: string, name: string): Capture =>
+          frames.find((c) => c.scenario === id && c.checkpoint === name)!;
+        const selected = frame('input-tab-focus', 'disabled-blur');
+        const skipped = frame('input-tab-focus', 'skipped');
+        expect(selected.observation).toMatchObject({
+          value: 'Tab',
+          focused: false,
+          disabled: true,
+          selection: [0, 3],
+        });
+        expect(skipped.observation).toMatchObject({
+          focused: false,
+          disabled: true,
+          selection: [0, 3],
+        });
+        expect(
+          frame('input-tab-focus', 'typing-blocked').observation,
+        ).toMatchObject({
+          value: 'Tab',
+          changes: 0,
+          disabled: true,
+          focused: false,
+          selection: [0, 3],
+        });
+        const delta = changedInterior(
+          await image(dir, selected),
+          await image(dir, frame(collapsed.id, 'disabled')),
+          selected.bounds,
+          s.scale,
+        );
+        expect(
+          delta.count,
+          `${theme}: disabled selection must remain painted without focus or caret`,
+        ).toBeGreaterThan(30);
+        const button = frame('button-primary-disabled', 'idle');
+        expect(
+          frame('button-primary-disabled', 'click').observation,
+        ).toMatchObject({ clicks: 0, disabled: true });
+        const png = await image(dir, button);
+        const y = Math.round(
+          (button.bounds.y + button.bounds.height / 2) * s.scale,
+        );
+        const left = Math.round(button.bounds.x * s.scale);
+        const rgb = (x: number): number[] => [
+          ...png.data.subarray(
+            (y * png.width + x) * 4,
+            (y * png.width + x) * 4 + 3,
+          ),
+        ];
+        const fill = rgb(
+          Math.round((button.bounds.x + button.bounds.width) * s.scale) - 12,
+        );
+        const border = rgb(left + 1);
+        const canvas = [...png.data.subarray(0, 3)];
+        const enabled = frame('button-primary-md', 'idle');
+        const enabledImage = await image(dir, enabled);
+        const enabledY = Math.round(
+          (enabled.bounds.y + enabled.bounds.height / 2) * s.scale,
+        );
+        const enabledX =
+          Math.round((enabled.bounds.x + enabled.bounds.width) * s.scale) - 12;
+        const enabledFill = [
+          ...enabledImage.data.subarray(
+            (enabledY * enabledImage.width + enabledX) * 4,
+            (enabledY * enabledImage.width + enabledX) * 4 + 3,
+          ),
+        ];
+        const distance = (color: number[]): number =>
+          color.reduce(
+            (sum, channel, i) => sum + Math.abs(channel - canvas[i]!),
+            0,
+          );
+        expect(
+          distance(fill),
+          `${theme}: disabled fill is paler than enabled`,
+        ).toBeLessThan(distance(enabledFill));
+        expect(
+          Math.max(...border.map((channel, i) => Math.abs(channel - fill[i]!))),
+          `${theme}: disabled primary border and fill should be equally pale`,
+        ).toBeLessThan(16);
       }
     }),
   60000,

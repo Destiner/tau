@@ -15,20 +15,37 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const checksum =
-  '64bb52b29a8dcdc8d3f595b8b0839c076f237572ab601ba4577d3da8ae085728';
-const crate = 'gpui-base-0.7.0';
-const patches = [
-  'grapheme-navigation.patch',
-  'textarea-rows.patch',
-  'disabled-focus.patch',
-];
+const crates = [
+  {
+    name: 'gpui-base',
+    version: '0.7.0',
+    checksum:
+      '64bb52b29a8dcdc8d3f595b8b0839c076f237572ab601ba4577d3da8ae085728',
+    patches: [
+      'grapheme-navigation.patch',
+      'textarea-rows.patch',
+      'disabled-focus.patch',
+      'input-presentation.patch',
+    ],
+  },
+  {
+    name: 'gpui-pre-macos',
+    version: '0.3.7',
+    checksum:
+      '5a43af845b260b09393e923c4f1e1a67a10fcfc847b4815192bbfd02ed9fe725',
+    patches: ['antialiased-text.patch'],
+  },
+] as const;
+type Crate = (typeof crates)[number];
 const sha = (value: Uint8Array | string): string =>
   createHash('sha256').update(value).digest('hex');
 
-export function verifyArchive(bytes: Uint8Array): void {
-  if (sha(bytes) !== checksum)
-    throw new Error('gpui-base archive checksum mismatch');
+export function verifyArchive(
+  bytes: Uint8Array,
+  config: Crate = crates[0],
+): void {
+  if (sha(bytes) !== config.checksum)
+    throw new Error(`${config.name} archive checksum mismatch`);
 }
 
 async function sourceHash(path: string): Promise<string> {
@@ -53,7 +70,8 @@ async function sourceHash(path: string): Promise<string> {
   return hash.digest('hex');
 }
 
-async function archive(): Promise<Uint8Array> {
+async function archive(config: Crate): Promise<Uint8Array> {
+  const crate = `${config.name}-${config.version}`;
   const registry = join(
     process.env.CARGO_HOME || join(homedir(), '.cargo'),
     'registry/cache',
@@ -62,26 +80,28 @@ async function archive(): Promise<Uint8Array> {
     const bytes = await readFile(
       join(registry, directory, `${crate}.crate`),
     ).catch(() => undefined);
-    if (bytes && sha(bytes) === checksum) return bytes;
+    if (bytes && sha(bytes) === config.checksum) return bytes;
   }
   const response = await fetch(
-    `https://static.crates.io/crates/gpui-base/${crate}.crate`,
+    `https://static.crates.io/crates/${config.name}/${crate}.crate`,
   );
   if (!response.ok)
-    throw new Error(`gpui-base download failed: HTTP ${response.status}`);
+    throw new Error(`${config.name} download failed: HTTP ${response.status}`);
   const bytes = new Uint8Array(await response.arrayBuffer());
-  verifyArchive(bytes);
+  verifyArchive(bytes, config);
   return bytes;
 }
 
-export async function prepare(): Promise<void> {
+async function prepareCrate(config: Crate): Promise<void> {
+  const { patches, checksum } = config;
+  const crate = `${config.name}-${config.version}`;
   const patchBytes = await Promise.all(
     patches.map((p) => readFile(join(root, 'patches', p))),
   );
   const fingerprint = sha(
     Buffer.concat([Buffer.from(`v2:${checksum}`), ...patchBytes]),
   );
-  const target = resolve(root, '.cache/crates/gpui-base');
+  const target = resolve(root, `.cache/crates/${config.name}`);
   const stamp = join(target, '.tau-patch.json');
   const previous = await readFile(stamp, 'utf8')
     .then((s) => JSON.parse(s) as { fingerprint: string; source: string })
@@ -95,8 +115,8 @@ export async function prepare(): Promise<void> {
   // git apply silently skips unprefixed paths when run inside this repository's subdirectories.
   const temporary = await mkdtemp(join(tmpdir(), 'tau-gpui-prepare-'));
   try {
-    const bytes = await archive();
-    verifyArchive(bytes);
+    const bytes = await archive(config);
+    verifyArchive(bytes, config);
     const tarball = join(temporary, `${crate}.crate`);
     await writeFile(tarball, bytes);
     execFileSync('tar', ['-xzf', tarball, '-C', temporary]);
@@ -118,17 +138,23 @@ export async function prepare(): Promise<void> {
     await cp(source, staged, { recursive: true });
     await rm(target, { recursive: true, force: true });
     await rename(staged, target);
-    // Published Base tests still include the workspace README from outside their crate.
-    await writeFile(
-      join(root, '.cache/README.md'),
-      await readFile(join(target, 'README.md')),
-    );
+    if (config.name === 'gpui-base') {
+      // Published Base tests still include the workspace README from outside their crate.
+      await writeFile(
+        join(root, '.cache/README.md'),
+        await readFile(join(target, 'README.md')),
+      );
+    }
     console.log(
       `Prepared checksum-verified ${crate} with ${patches.length} focused patches`,
     );
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
+}
+
+export async function prepare(): Promise<void> {
+  for (const config of crates) await prepareCrate(config);
 }
 
 if (import.meta.main) await prepare();

@@ -82,8 +82,16 @@ pub enum Step {
     Checkpoint {
         name: String,
         expected: serde_json::Value,
+        #[serde(default)]
+        caret: Option<CaretCapture>,
     },
 }
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum CaretCapture {
+    Visible,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum PointerPhase {

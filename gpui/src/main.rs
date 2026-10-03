@@ -1,4 +1,5 @@
 mod model;
+mod text;
 mod ui;
 
 use anyhow::{Context as _, Result, bail, ensure};
@@ -51,9 +52,11 @@ struct Capture {
     observation: Observation,
     bounds: Rect,
     screenshot: String,
+    caret: &'static str,
 }
 
 fn init(cx: &mut gpui_kit::App) {
+    text::init();
     gpui_kit::init(cx);
     ui::init(cx);
     cx.text_system()
@@ -285,11 +288,14 @@ fn run_suite(request: &Path, out: &Path, fault: TestFault) -> Result<()> {
         let mut checkpoints = HashSet::new();
         let mut pressed = false;
         for step in &scenario.steps {
-            if let Step::Checkpoint { name, .. } = step {
+            if let Step::Checkpoint { name, caret, .. } = step {
                 ensure!(
                     safe_id(name) && checkpoints.insert(name),
                     "invalid or duplicate checkpoint"
                 );
+                cx.update_window(handle, |_, _, cx| {
+                    scene.update(cx, |scene, cx| scene.set_capture_caret(caret.is_some(), cx))
+                })?;
                 render(&mut cx, handle)?;
                 let (observation, bounds) = cx.update_window(handle, |_, window, cx| {
                     let b = window.find("subject").bounds();
@@ -303,16 +309,76 @@ fn run_suite(request: &Path, out: &Path, fault: TestFault) -> Result<()> {
                         },
                     )
                 })?;
+                if caret.is_some() {
+                    ensure!(
+                        observation.focused
+                            && !observation.disabled
+                            && !observation.readonly
+                            && observation
+                                .selection
+                                .is_some_and(|range| range[0] == range[1]),
+                        "visible caret requires a focused editable collapsed selection"
+                    );
+                }
                 let screenshot = format!("{}--{name}.png", scenario.id);
-                cx.capture_screenshot(handle)
-                    .context("real Metal capture unavailable; no fake renderer fallback")?
-                    .save(out.join(&screenshot))?;
+                let image = if caret.is_some() {
+                    cx.update_window(handle, |_, _, cx| {
+                        scene.update(cx, |scene, cx| scene.set_capture_caret(false, cx))
+                    })?;
+                    render(&mut cx, handle)?;
+                    let hidden = cx.capture_screenshot(handle)?;
+                    cx.update_window(handle, |_, _, cx| {
+                        scene.update(cx, |scene, cx| scene.set_capture_caret(true, cx))
+                    })?;
+                    render(&mut cx, handle)?;
+                    let visible = cx.capture_screenshot(handle)?;
+                    ensure!(
+                        hidden.dimensions() == visible.dimensions(),
+                        "caret capture size changed"
+                    );
+                    let mut extent: Option<(u32, u32, u32, u32)> = None;
+                    for (x, y, pixel) in visible.enumerate_pixels() {
+                        if pixel != hidden.get_pixel(x, y) {
+                            extent = Some(match extent {
+                                None => (x, y, x, y),
+                                Some((left, top, right, bottom)) => {
+                                    (left.min(x), top.min(y), right.max(x), bottom.max(y))
+                                }
+                            });
+                        }
+                    }
+                    let (left, top, right, bottom) = extent
+                        .context("native caret did not paint; no synthetic cursor fallback")?;
+                    let scale = suite.scale as f32;
+                    ensure!(
+                        right - left < 3 * suite.scale
+                            && bottom - top >= 4 * suite.scale
+                            && left as f32 >= bounds.x * scale
+                            && (right as f32) < (bounds.x + bounds.width) * scale
+                            && top as f32 >= bounds.y * scale
+                            && (bottom as f32) < (bounds.y + bounds.height) * scale,
+                        "visible native caret changed pixels outside a narrow in-control stroke"
+                    );
+                    let after = cx.update_window(handle, |_, window, cx| {
+                        scene.read(cx).observe(window, cx)
+                    })?;
+                    ensure!(
+                        serde_json::to_value(&after)? == serde_json::to_value(&observation)?,
+                        "caret capture changed editor state"
+                    );
+                    visible
+                } else {
+                    cx.capture_screenshot(handle)
+                        .context("real Metal capture unavailable; no fake renderer fallback")?
+                };
+                image.save(out.join(&screenshot))?;
                 captures.push(Capture {
                     scenario: scenario.id.clone(),
                     checkpoint: name.clone(),
                     observation,
                     bounds,
                     screenshot,
+                    caret: if caret.is_some() { "visible" } else { "hidden" },
                 });
             } else {
                 action(&mut cx, handle, &scene, step, &mut pressed)
