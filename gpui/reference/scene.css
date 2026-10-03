@@ -1,0 +1,16 @@
+#canvas {
+  width: 640px;
+  height: 320px;
+  padding: 24px;
+  background: var(--canvas);
+  font-family: 'Inter Variable', sans-serif;
+  font-size: 13px;
+}
+
+#subject-wrap textarea[data-monospaced='true'] {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+#subject-wrap {
+  display: inline-block;
+}

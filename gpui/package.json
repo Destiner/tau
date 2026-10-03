@@ -1,0 +1,31 @@
+{
+  "name": "tau-gpui-comparison",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "compare": "bun scripts/run.ts",
+    "reference": "bun scripts/run.ts --reference-only",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json",
+    "lint": "eslint --config eslint.config.js *.ts scripts reference tests && stylelint reference/scene.css && prettier --check .",
+    "format": "prettier --write .",
+    "prepare:native": "bun scripts/prepare.ts",
+    "build:native": "bun scripts/prepare.ts && cargo build --locked",
+    "test:native": "bun test ./tests/native.e2e.bun.ts",
+    "test": "bun test ./tests/contract.bun.ts ./tests/compare.bun.ts",
+    "test:e2e": "bun test ./tests/browser.e2e.bun.ts ./tests/isolation.e2e.bun.ts"
+  },
+  "dependencies": {
+    "pixelmatch": "^7.1.0",
+    "pngjs": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "@types/pngjs": "^6.0.5",
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.8.1",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.11.0",
+    "prettier": "^3.9.6",
+    "typescript-eslint": "^8.67.0"
+  }
+}

@@ -1,0 +1,20 @@
+[package]
+name = "tau-gpui-prototype"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+gpui-kit = { version = "=0.7.0", default-features = false, features = ["test-support"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[patch.crates-io]
+gpui-base = { path = ".cache/crates/gpui-base" }
+
+[profile.dev]
+debug = 1
+
+[workspace]
+exclude = [".cache/crates/gpui-base"]

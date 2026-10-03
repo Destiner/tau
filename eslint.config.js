@@ -8,7 +8,7 @@ import parserVue from 'vue-eslint-parser';
 
 export default [
   {
-    ignores: ['dist/**', 'src-tauri/**', 'test-results/**'],
+    ignores: ['dist/**', 'src-tauri/**', 'gpui/**', 'test-results/**'],
   },
   js.configs.recommended,
   importX.recommended,
