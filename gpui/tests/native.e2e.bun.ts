@@ -110,6 +110,8 @@ test(
           'input-pointer-selection',
           'textarea-pointer-selection',
           'input-type',
+          'input-vertical-arrows',
+          'input-vertical-selection',
           'input-caret-boundaries',
           'input-placeholder-caret',
           'input-undo-group',

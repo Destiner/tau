@@ -1,6 +1,6 @@
 # Pinned GPUI prototype patches
 
-These are prototype-only fixes, not an approved long-lived fork. The four Base patches apply to the exact published `gpui-base` 0.7.0 crate, whose SHA-256 is:
+These are prototype-only fixes, not an approved long-lived fork. The five Base patches apply to the exact published `gpui-base` 0.7.0 crate, whose SHA-256 is:
 
 ```text
 64bb52b29a8dcdc8d3f595b8b0839c076f237572ab601ba4577d3da8ae085728
@@ -44,6 +44,14 @@ Disabled editors no longer register focus tracking, place pointer selections, or
 
 Adds opt-in presentation fields for caret visibility/width/centering, unfocused selection, and disabled text opacity. Defaults preserve existing presentation. Tau enables unfocused selection only while disabled, retains the engine's selection/history, and suppresses carets through the visibility flag rather than a transparent colour. Cursor start now resets to a visible phase instead of toggling. Two upstream regressions cover presentation resolution and repeated starts; real Metal/browser tests verify visible and hidden caret pixels, disabled selection, and pale disabled controls.
 
+### `single-line-navigation.patch`
+
+**Signal:** Up/Down left an editable single-line input's caret unchanged. Base both omitted those action listeners for single-line fields and returned early from their movement handlers. Direct movement tests alone missed the missing event wiring; real key scenarios exposed both layers.
+
+Editable single-line fields now handle Up/Down as start/end movement, including collapsing a selection. Shift variants select toward the boundary, returning to the anchor before extending in the opposite direction. Existing read-only/disabled behavior is preserved; context-menu handling still takes precedence and textarea/editor vertical movement is unchanged.
+
+Three upstream regressions cover action dispatch, boundaries/empty/read-only values, and selection-anchor reversal. Shared `input-vertical-arrows` and `input-vertical-selection` scenarios exercise 16 intermediate checkpoints with Unicode text, repeated boundary keys, selection collapse/reversal, read-only, disabled, and empty states. The original native implementation failed ten of those checkpoints; Chromium and WebKit agree on the corrected contract.
+
 ### `antialiased-text.patch` (`gpui-pre-macos` 0.3.7)
 
 The published archive is independently SHA-256 verified:
@@ -58,7 +66,7 @@ Adds a process-local opt-in to disable that dilation, called before rendering in
 
 ## Validation and maintenance
 
-The combined patched Base library passed **1,237 upstream unit tests** locally, including the twelve added tests. These use Base's test platform; they do not replace the native Metal and browser harness tests.
+The combined patched Base library passed **1,240 upstream unit tests** locally, including the fifteen added tests. These use Base's test platform; they do not replace the native Metal and browser harness tests.
 
 Optional upstream check, after preparation, from the repository root:
 

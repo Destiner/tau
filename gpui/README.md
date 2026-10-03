@@ -9,17 +9,17 @@ The standalone GPUI application renders a Tau-styled button, single-line input, 
 | Component      | Scenarios | Checkpoints per theme |
 | -------------- | --------: | --------------------: |
 | Button         |        21 |                    56 |
-| Input          |        42 |                    81 |
+| Input          |        44 |                    97 |
 | Textarea probe |        18 |                    33 |
-| Total          |        81 |                   170 |
+| Total          |        83 |                   186 |
 
 Counts describe meaningful coverage, not minimum quotas. The unrelated development catalogue is not imported.
 
-- **Chromium:** all 170 behavioral checkpoints match GPUI in light and dark (340 comparisons). Each implementation is also checked against authored expectations.
+- **Chromium:** all 186 behavioral checkpoints match GPUI in light and dark (372 comparisons). Each implementation is also checked against authored expectations.
 - **WebKit:** an explicit, failing audit remains. See [review blockers](#review-blockers); Chromium agreement is not macOS acceptance.
 - **Visuals:** the reviewed native accent focus border, thinner focus treatment, and omitted input outer ring are retained. Follow-up fixes and remaining choices still require review. Every raw pixel difference is recorded; exact-difference flags are not an approval ledger and no numerical tolerance silently approves changes.
 - **Harness:** real-browser and real-Metal fault tests catch invisible controls, missing click handlers, lost Change events, incorrect selection, incomplete captures, and out-of-control-area rendering faults. A pixel regression also requires selections to be visibly painted in both editors.
-- **Dependency fixes:** four focused Base patches address navigation, disabled focus, and editor presentation; a separate opt-in macOS text patch matches the browser's antialiased policy. See [patches](patches/README.md).
+- **Dependency fixes:** five focused Base patches address navigation, disabled focus, and editor presentation; a separate opt-in macOS text patch matches the browser's antialiased policy. See [patches](patches/README.md).
 - **CI:** an isolated workflow is provided, but has not been executed on a remote runner. Local Metal capture does not prove hosted-runner Metal availability.
 
 Do not proceed to the rest of the UI or application-logic rewrite on the strength of these results alone. Button/input and harness review remain human gates.
@@ -99,7 +99,7 @@ The prototype has its own Bun/Cargo lockfiles, lint configuration, build cache, 
 
 Selection offsets are **UTF-16**, converted explicitly to/from Base's byte offsets. Setup selections must be in-range Unicode scalar boundaries; offsets inside surrogate pairs are rejected rather than rounded. Backward selections are exercised through Shift-arrow sequences and subsequent edits. Observations contain the sorted range; direction is currently tested behaviorally, not exposed as a separate field.
 
-The input probe covers pointer selection/replacement, insertion/deletion, Enter, line/word-independent horizontal navigation, combining marks and joined emoji, selection-anchor reversal, undo/redo and history isolation, parent value replacement, same-current-value preservation, unrelated prop rerenders, readonly/disabled transitions, and Tab entry. Multiline cases distinguish visual rows from newline-delimited lines and assert intermediate caret positions.
+The input probe covers pointer selection/replacement, insertion/deletion, Enter, single-line Up/Down boundary movement and Shift-selection reversal, line/word-independent horizontal navigation, combining marks and joined emoji, selection-anchor reversal, undo/redo and history isolation, parent value replacement, same-current-value preservation, unrelated prop rerenders, readonly/disabled transitions, and Tab entry. Multiline cases distinguish visual rows from newline-delimited lines and assert intermediate caret positions.
 
 The preview host supplies fallback focus and Tab routing; these are not a final application-wide focus manager. The native test window is explicitly activated and pending tasks are drained before rendering: an inactive window suppresses Base's selection highlight even when the observed range is correct. Checkpoints normally suppress the caret on both sides; `caret: 'visible'` explicitly captures the real caret and verifies an actual narrow pixel change against a hidden-caret frame without changing editing state. The browser waits for its actual visible blink phase (no synthetic overlay), and native capture uses an explicit visibility flag. Transparent native caret colour was not sufficient: Base resolved it to foreground, a now-regression-tested harness bug. The interactive native window retains normal blinking and the thinner centered caret. Logical focus/selection and visible selection paint are independently tested; live caret behavior still needs real-window review.
 

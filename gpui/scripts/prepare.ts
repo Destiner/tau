@@ -26,6 +26,7 @@ const crates = [
       'textarea-rows.patch',
       'disabled-focus.patch',
       'input-presentation.patch',
+      'single-line-navigation.patch',
     ],
   },
   {
