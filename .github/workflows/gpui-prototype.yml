@@ -1,0 +1,97 @@
+name: GPUI prototype
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [gpui]
+    paths:
+      - 'gpui/**'
+      - 'src/components/ui/UiButton.vue'
+      - 'src/components/ui/UiInput.vue'
+      - 'src/components/ui/UiTextarea.vue'
+      - 'src/styles.css'
+      - 'package.json'
+      - 'bun.lock'
+      - 'tsconfig*.json'
+      - '*lint*'
+      - '*prettier*'
+      - '.github/workflows/gpui-prototype.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gpui-prototype-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  comparison:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+      - name: Record native environment
+        run: |
+          uname -m
+          xcodebuild -version
+          system_profiler SPDisplaysDataType
+      - name: Set up Rust
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal --component clippy --component rustfmt
+          rustup default 1.98.1
+      - name: Install tooling
+        run: |
+          bun install --frozen-lockfile
+          bun install --cwd gpui --frozen-lockfile
+          bun x playwright install chromium webkit
+      - name: Prepare local dependency patch
+        run: bun gpui/scripts/prepare.ts
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gpui -> target
+          key: gpui-${{ hashFiles('gpui/Cargo.lock', 'gpui/patches/*.patch') }}
+      - name: Harness static and browser checks
+        working-directory: gpui
+        run: |
+          bun run lint
+          bun run typecheck
+          bun run test
+          bun run test:e2e
+      - name: Native static checks
+        working-directory: gpui
+        run: |
+          bun run prepare:native
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+      - name: Real Metal self-tests and fault detection
+        working-directory: gpui
+        run: bun run test:native
+      - name: Chromium comparison
+        run: bun gpui/scripts/run.ts --skip-build
+      - name: WebKit audit
+        id: webkit
+        continue-on-error: true
+        run: bun gpui/scripts/run.ts --browser webkit --skip-build
+      - name: Explain acceptance status
+        if: always()
+        run: |
+          echo '## Prototype evidence, not design approval' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Pixel differences require review; screenshots are candidates, not goldens.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'The WebKit audit currently exposes unresolved pointer-focus, Tab-cycle, and combining-accent deletion differences. It is not waived.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'WebKit step outcome: ${{ steps.webkit.outcome }}' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gpui-comparison
+          path: gpui/results/review
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Require WebKit agreement
+        if: steps.webkit.outcome == 'failure'
+        run: exit 1
