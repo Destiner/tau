@@ -1,6 +1,7 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import {
   assertCaptures,
   validateSuite,
@@ -12,6 +13,11 @@ import { suite } from '../scenarios';
 import { runBrowser } from './browser';
 import { compare } from './compare';
 import { prepare } from './prepare';
+import {
+  nativeBinaryHash,
+  renderInputsHash,
+  type CaptureProvenance,
+} from './provenance';
 
 const projectRoot = resolve(import.meta.dir, '../..');
 function exec(command: string, args: string[]): Promise<void> {
@@ -98,6 +104,31 @@ export async function run(args: string[]): Promise<void> {
         native = resolve(folder, 'native'),
         report = resolve(folder, 'report');
       await mkdir(folder, { recursive: true });
+      const fingerprint: CaptureProvenance = {
+        runId: randomUUID(),
+        browser: o.browser,
+        renderInputs: await renderInputsHash(),
+        nativeBinary: o.referenceOnly ? '' : await nativeBinaryHash(),
+        complete: false,
+      };
+      if (o.browser === 'webkit') {
+        const prior = await readFile(
+          resolve(base, `${theme}-chromium/capture.json`),
+          'utf8',
+        )
+          .then((text) => JSON.parse(text) as CaptureProvenance)
+          .catch(() => undefined);
+        if (
+          prior?.complete &&
+          prior.renderInputs === fingerprint.renderInputs &&
+          prior.nativeBinary === fingerprint.nativeBinary
+        )
+          fingerprint.referenceRunId = prior.runId;
+      }
+      await writeFile(
+        resolve(folder, 'capture.json'),
+        JSON.stringify(fingerprint, null, 2),
+      );
       await rm(report, { recursive: true, force: true });
       await rm(resolve(native, 'observations.json'), { force: true });
       const request = resolve(folder, 'request.json');
@@ -122,7 +153,40 @@ export async function run(args: string[]): Promise<void> {
         await readFile(resolve(native, 'observations.json'), 'utf8'),
       );
       assertCaptures(s, captures, 'native');
-      await compare(s, browser, captures, vue, native, report, o.strictVisual);
+      let comparisonError: unknown;
+      try {
+        await compare(
+          s,
+          browser,
+          captures,
+          vue,
+          native,
+          report,
+          o.strictVisual,
+        );
+      } catch (error) {
+        comparisonError = error;
+      }
+      // State disagreement still produces a completed, reviewable comparison.
+      const completed = await readFile(
+        resolve(report, 'report.json'),
+        'utf8',
+      ).catch(() => undefined);
+      if (completed) {
+        if (
+          (await renderInputsHash()) !== fingerprint.renderInputs ||
+          (await nativeBinaryHash()) !== fingerprint.nativeBinary
+        )
+          throw new Error(
+            'render inputs changed during capture; rerun the comparison',
+          );
+        fingerprint.complete = true;
+        await writeFile(
+          resolve(folder, 'capture.json'),
+          JSON.stringify(fingerprint, null, 2),
+        );
+      }
+      if (comparisonError) throw comparisonError;
       console.log(`${theme}: report ${resolve(report, 'report.html')}`);
     } catch (error) {
       failures.push(`${theme}: ${String(error)}`);

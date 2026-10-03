@@ -5,6 +5,11 @@ import { join } from 'node:path';
 import { PNG } from 'pngjs';
 import { compare } from '../scripts/compare';
 import { renderReport } from '../scripts/report';
+import { feedbackNotes, feedbackRows } from '../scripts/review';
+import {
+  assertCapturePair,
+  type CaptureProvenance,
+} from '../scripts/provenance';
 import type { Capture, Suite } from '../contract';
 
 test('report escapes untrusted text and keeps image links relative', () => {
@@ -16,22 +21,93 @@ test('report escapes untrusted text and keeps image links relative', () => {
     id: 'scenario/<img src=x>',
     state: ['<bad>'],
     review: true,
-    visual: {},
+    visual: {
+      differingPixels: 1,
+      roiPixels: 100,
+      fraction: 0.01,
+      meanAbsoluteChannelError: 0.1,
+      minorPixels: 1,
+      moderatePixels: 0,
+      majorPixels: 0,
+      fullFrameDifferingPixels: 1,
+      fullFramePixels: 1000,
+      boundsDifference: 0,
+      diagnosticTranslation: { dx: 0, dy: 0, errorReductionPercent: 0 },
+    },
     browser: '../vue/image.png',
     native: '../native/image.png',
     browserCrop: 'vue--image.png',
     nativeCrop: 'gpui--image.png',
     diff: 'image.png',
+    heatmap: 'heat--image.png',
+    cropX: 48,
+    cropY: 48,
     cropWidth: 100,
     cropHeight: 40,
   } as unknown as import('../scripts/compare').Row;
-  const html = renderReport(suite, [row]);
-  expect(html).toContain('&lt;script&gt;');
+  const html = renderReport(suite, [row], {
+    title: '<Focus>',
+    intro: 'Subset & review',
+    notes: { [row.id]: '<review & note>' },
+    links: [{ label: '<Dark>', href: '../../dark/report/feedback.html' }],
+  });
+  expect(html).not.toContain('<script>alert(1)</script>');
   expect(html).toContain('&lt;img src=x&gt;');
   expect(html).toContain('&lt;bad&gt;');
+  expect(html).toContain('&lt;Focus&gt;');
+  expect(html).toContain('Subset &amp; review');
+  expect(html).toContain('&lt;review &amp; note&gt;');
+  expect(html).toContain('&lt;Dark&gt;');
+  expect(renderReport(suite, []).includes('Vue ↔ GPUI: &lt;script&gt;')).toBe(
+    true,
+  );
   expect(html).not.toContain('<bad>');
   expect(html).toContain('data-id="scenario/&lt;img src=x&gt;"');
   expect(html).toContain('width="50" height="20"');
+});
+
+test('paired review rejects stale WebKit captures even when scenarios did not change', () => {
+  const chrome: CaptureProvenance = {
+    runId: 'new',
+    browser: 'chromium',
+    renderInputs: 'source',
+    nativeBinary: 'binary',
+    complete: true,
+  };
+  const webkit: CaptureProvenance = {
+    ...chrome,
+    browser: 'webkit',
+    runId: 'wk',
+    referenceRunId: 'new',
+  };
+  expect(() => assertCapturePair(chrome, webkit)).not.toThrow();
+  for (const patch of [
+    { referenceRunId: 'old' },
+    { renderInputs: 'old-source' },
+    { nativeBinary: 'old-binary' },
+    { complete: false },
+  ]) {
+    expect(() => assertCapturePair(chrome, { ...webkit, ...patch })).toThrow(
+      'matching WebKit',
+    );
+  }
+});
+
+test('focused review requires every requested checkpoint exactly once', () => {
+  const rows = Object.keys(feedbackNotes).map(
+    (id) => ({ id }) as import('../scripts/compare').Row,
+  );
+  expect(feedbackRows(rows).map((row) => row.id)).toEqual(
+    Object.keys(feedbackNotes),
+  );
+  expect(() => feedbackRows(rows.slice(1))).toThrow('exactly one');
+  expect(() => feedbackRows([...rows, rows[0]!])).toThrow('exactly one');
+  expect(
+    feedbackRows([
+      ...rows,
+      { id: 'unrelated/idle' } as import('../scripts/compare').Row,
+    ]),
+  ).toHaveLength(rows.length);
 });
 
 test('state and visual faults are reported separately; strict visuals fail without approval', async () => {
@@ -91,8 +167,20 @@ test('state and visual faults are reported separately; strict visuals fail witho
   expect(html).toContain('id="filter"');
   expect(html).toContain('id="failures"');
   expect(html).toContain('id="zoom"');
+  expect(html).toContain('id="exact"');
+  expect(html).toContain('Magnitude heatmap');
+  expect(html).toContain('physical px');
+  expect(html).not.toContain('"differingPixels"');
   expect(rows[0]!.state).toEqual([]);
   expect(rows[0]!.visual.differingPixels).toBe(1);
+  expect(rows[0]!.visual.majorPixels).toBe(1);
+  expect(rows[0]!.cropX).toBe(40);
+  expect(rows[0]!.cropY).toBe(40);
+  const heat = PNG.sync.read(await readFile(join(report, rows[0]!.heatmap)));
+  expect(heat.data[(8 * heat.width + 8) * 4 + 1]).toBe(10);
+  expect(PNG.sync.read(await readFile(join(report, rows[0]!.diff))).width).toBe(
+    112,
+  );
   expect(rows[0]!.review).toBe(true);
   expect(rows[0]!.visual.fullFrameDifferingPixels).toBe(1);
   expect(rows[0]!.visual.fullFramePixels).toBe(1280 * 640);

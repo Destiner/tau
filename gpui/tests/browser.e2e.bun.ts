@@ -2,6 +2,8 @@ import { expect, test } from 'bun:test';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { chromium } from '@playwright/test';
 import { PNG } from 'pngjs';
 import { suite } from '../scenarios';
 import { runBrowser } from '../scripts/browser';
@@ -325,6 +327,27 @@ test('real controls: deterministic captures, reset isolation, and visible change
         true,
       ),
     ).rejects.toThrow('visual review');
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage();
+      await page.goto(pathToFileURL(join(root, 'report/report.html')).href);
+      await page.waitForFunction(() =>
+        [...document.images].every(
+          (image) => image.complete && image.naturalWidth > 0,
+        ),
+      );
+      await page.locator('#exact').check();
+      expect(await page.locator('body').isVisible()).toBe(true);
+      expect(await page.locator('.images .exact:visible').count()).toBe(2);
+      expect(await page.locator('.images .heat:visible').count()).toBe(0);
+      await page.locator('#zoom').check();
+      await page.locator('#filter').fill('seeded');
+      expect(await page.locator('article:visible').count()).toBe(1);
+      await page.locator('#exact').uncheck();
+      expect(await page.locator('.images .heat:visible').count()).toBe(1);
+    } finally {
+      await browser.close();
+    }
     await rm(join(root, 'changed', image));
     await expect(
       compare(

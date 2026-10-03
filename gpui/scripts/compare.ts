@@ -13,12 +13,21 @@ import {
 
 export type Row = {
   id: string;
+  caret?: 'hidden' | 'visible';
   state: string[];
   visual: {
     differingPixels: number;
     roiPixels: number;
     fraction: number;
     meanAbsoluteChannelError: number;
+    minorPixels: number;
+    moderatePixels: number;
+    majorPixels: number;
+    diagnosticTranslation: {
+      dx: number;
+      dy: number;
+      errorReductionPercent: number;
+    };
     boundsDifference: number;
     fullFrameDifferingPixels: number;
     fullFramePixels: number;
@@ -28,6 +37,9 @@ export type Row = {
   browser: string;
   native: string;
   diff: string;
+  heatmap: string;
+  cropX: number;
+  cropY: number;
   browserCrop: string;
   nativeCrop: string;
   cropWidth: number;
@@ -67,7 +79,11 @@ export function pixelMetrics(
   roiPixels: number;
   fraction: number;
   meanAbsoluteChannelError: number;
+  minorPixels: number;
+  moderatePixels: number;
+  majorPixels: number;
   diff: PNG;
+  heatmap: PNG;
 } {
   if (a.width !== b.width || a.height !== b.height)
     throw new Error(
@@ -79,28 +95,112 @@ export function pixelMetrics(
   const left = new PNG({ width: w, height: h });
   const right = new PNG({ width: w, height: h });
   const diff = new PNG({ width: w, height: h });
-  let error = 0;
+  const heatmap = new PNG({ width: w, height: h });
+  let error = 0,
+    minorPixels = 0,
+    moderatePixels = 0,
+    majorPixels = 0,
+    exactPixels = 0;
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
       const src = ((y + region.y) * a.width + x + region.x) * 4,
         dst = (y * w + x) * 4;
+      let magnitude = 0;
       for (let c = 0; c < 4; c++) {
         left.data[dst + c] = a.data[src + c]!;
         right.data[dst + c] = b.data[src + c]!;
-        if (c < 3) error += Math.abs(a.data[src + c]! - b.data[src + c]!);
+        const delta = Math.abs(a.data[src + c]! - b.data[src + c]!);
+        if (c < 3) error += delta;
+        magnitude = Math.max(magnitude, delta);
       }
+      if (magnitude > 0) exactPixels++;
+      if (magnitude <= 2 && magnitude > 0) minorPixels++;
+      else if (magnitude <= 8 && magnitude > 0) moderatePixels++;
+      else if (magnitude > 8) majorPixels++;
+      // White means identical; small channel rounding stays pale, large changes are vivid.
+      const intensity = Math.sqrt(magnitude / 255);
+      heatmap.data[dst] = Math.round(255 - 75 * intensity);
+      heatmap.data[dst + 1] = Math.round(255 - 245 * intensity);
+      heatmap.data[dst + 2] = Math.round(255 - 220 * intensity);
+      heatmap.data[dst + 3] = 255;
     }
-  // threshold 0 compares raw pixels; anti-aliasing differences are reported, never silently approved.
-  const differingPixels = pixelmatch(left.data, right.data, diff.data, w, h, {
+  // Keep the familiar mask backdrop, but raw RGBA differences define exactness.
+  pixelmatch(left.data, right.data, diff.data, w, h, {
     threshold: 0,
     includeAA: true,
   });
+  for (let i = 0; i < left.data.length; i += 4) {
+    if (
+      left.data[i] !== right.data[i] ||
+      left.data[i + 1] !== right.data[i + 1] ||
+      left.data[i + 2] !== right.data[i + 2] ||
+      left.data[i + 3] !== right.data[i + 3]
+    ) {
+      diff.data[i] = 255;
+      diff.data[i + 1] = 0;
+      diff.data[i + 2] = 0;
+      diff.data[i + 3] = 255;
+    }
+  }
   return {
-    differingPixels,
+    differingPixels: exactPixels,
     roiPixels: w * h,
-    fraction: differingPixels / (w * h),
+    fraction: exactPixels / (w * h),
     meanAbsoluteChannelError: error / (w * h * 3),
+    minorPixels,
+    moderatePixels,
+    majorPixels,
     diff,
+    heatmap,
+  };
+}
+// Diagnostic only: fixed interior coordinates for every candidate; no shifted image is saved or used to pass.
+export function diagnosticTranslation(
+  a: PNG,
+  b: PNG,
+  region: Bounds,
+): {
+  dx: number;
+  dy: number;
+  errorReductionPercent: number;
+} {
+  const margin = 2;
+  if (region.width <= margin * 2 || region.height <= margin * 2)
+    return { dx: 0, dy: 0, errorReductionPercent: 0 };
+  let baseline = 0,
+    best = Infinity,
+    dx = 0,
+    dy = 0;
+  for (let shiftY = -margin; shiftY <= margin; shiftY++)
+    for (let shiftX = -margin; shiftX <= margin; shiftX++) {
+      let error = 0;
+      for (
+        let y = region.y + margin;
+        y < region.y + region.height - margin;
+        y++
+      )
+        for (
+          let x = region.x + margin;
+          x < region.x + region.width - margin;
+          x++
+        ) {
+          const left = (y * a.width + x) * 4;
+          const right = ((y + shiftY) * b.width + x + shiftX) * 4;
+          for (let c = 0; c < 3; c++)
+            error += Math.abs(a.data[left + c]! - b.data[right + c]!);
+        }
+      if (shiftX === 0 && shiftY === 0) baseline = error;
+      if (error < best) {
+        best = error;
+        dx = shiftX;
+        dy = shiftY;
+      }
+    }
+  if (best >= baseline) return { dx: 0, dy: 0, errorReductionPercent: 0 };
+  return {
+    dx,
+    dy,
+    errorReductionPercent: (100 * (baseline - best)) / baseline,
   };
 }
 function crop(source: PNG, region: Bounds): PNG {
@@ -175,8 +275,8 @@ export async function compare(
         srcA.height,
         suite.scale,
       );
-      const { diff, ...metrics } = pixelMetrics(srcA, srcB, region);
-      const { diff: fullDiff, ...fullMetrics } = pixelMetrics(srcA, srcB, {
+      const { diff, heatmap, ...metrics } = pixelMetrics(srcA, srcB, region);
+      const fullMetrics = pixelMetrics(srcA, srcB, {
         x: 0,
         y: 0,
         width: srcA.width,
@@ -185,9 +285,13 @@ export async function compare(
       const diffFile = `${a.screenshot}`;
       await writeFile(
         resolve(out, `full--${diffFile}`),
-        PNG.sync.write(fullDiff),
+        PNG.sync.write(fullMetrics.diff),
       );
       await writeFile(resolve(out, diffFile), PNG.sync.write(diff));
+      await writeFile(
+        resolve(out, `heat--${diffFile}`),
+        PNG.sync.write(heatmap),
+      );
       await writeFile(
         resolve(out, `vue--${diffFile}`),
         PNG.sync.write(crop(srcA, region)),
@@ -203,9 +307,11 @@ export async function compare(
       );
       rows.push({
         id,
+        caret: step.caret ?? 'hidden',
         state,
         visual: {
           ...metrics,
+          diagnosticTranslation: diagnosticTranslation(srcA, srcB, region),
           boundsDifference,
           fullFrameDifferingPixels: fullMetrics.differingPixels,
           fullFramePixels: fullMetrics.roiPixels,
@@ -216,6 +322,9 @@ export async function compare(
         browser: `../${basename(browserDir)}/${a.screenshot}`,
         native: `../${basename(nativeDir)}/${b.screenshot}`,
         diff: diffFile,
+        heatmap: `heat--${diffFile}`,
+        cropX: region.x,
+        cropY: region.y,
         browserCrop: `vue--${diffFile}`,
         nativeCrop: `gpui--${diffFile}`,
         cropWidth: region.width,

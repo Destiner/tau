@@ -40,6 +40,12 @@ jobs:
           uname -m
           xcodebuild -version
           system_profiler SPDisplaysDataType
+      - name: Verify Metal compiler
+        run: |
+          if ! xcrun metal --version; then
+            xcodebuild -downloadComponent MetalToolchain
+            xcrun metal --version
+          fi
       - name: Set up Rust
         run: |
           rustup toolchain install 1.98.1 --profile minimal --component clippy --component rustfmt
@@ -78,6 +84,8 @@ jobs:
         id: webkit
         continue-on-error: true
         run: bun gpui/scripts/run.ts --browser webkit --skip-build
+      - name: Focused review report
+        run: bun gpui/scripts/review.ts gpui/results/review
       - name: Explain acceptance status
         if: always()
         run: |

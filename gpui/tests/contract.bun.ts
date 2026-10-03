@@ -9,7 +9,7 @@ import {
   type Suite,
 } from '../contract';
 import { scenarios, suite } from '../scenarios';
-import { pixelMetrics, roi } from '../scripts/compare';
+import { diagnosticTranslation, pixelMetrics, roi } from '../scripts/compare';
 import { options } from '../scripts/run';
 
 test('suite has authored checkpoints and distinct coverage without count quotas', () => {
@@ -123,6 +123,63 @@ test('ROI excludes canvas and deliberate visual fault registers pixels', () => {
     pixelMetrics(a, new PNG({ width: 32, height: 32 }), region),
   ).toThrow('render size mismatch');
 });
+test('magnitude is diagnostic, not a tolerance: rounding, subtle fills and invisible controls remain exact', () => {
+  const a = new PNG({ width: 24, height: 24 });
+  a.data.fill(255);
+  const b = PNG.sync.read(PNG.sync.write(a));
+  const region = { x: 0, y: 0, width: 24, height: 24 };
+  for (let y = 4; y < 20; y++)
+    for (let x = 4; x < 20; x++) b.data[(y * 24 + x) * 4] = 254;
+  const subtle = pixelMetrics(a, b, region);
+  expect(subtle.differingPixels).toBe(256);
+  expect(subtle.minorPixels).toBe(256);
+  expect(subtle.majorPixels).toBe(0);
+  expect(subtle.heatmap.data[(5 * 24 + 5) * 4 + 1]).toBeLessThan(255);
+  for (let y = 4; y < 20; y++)
+    for (let x = 4; x < 20; x++) b.data[(y * 24 + x) * 4] = 0;
+  const missing = pixelMetrics(a, b, region);
+  expect(missing.majorPixels).toBe(256);
+  expect(missing.differingPixels).toBe(256);
+  expect(missing.heatmap.data[(5 * 24 + 5) * 4 + 1]).toBeLessThan(
+    subtle.heatmap.data[(5 * 24 + 5) * 4 + 1]!,
+  );
+});
+test('diagnostic shift detects real position errors without changing raw metrics', () => {
+  const a = new PNG({ width: 32, height: 24 });
+  a.data.fill(255);
+  const b = PNG.sync.read(PNG.sync.write(a));
+  for (let y = 7; y < 15; y++)
+    for (let x = 8; x < 12; x++) {
+      a.data[(y * 32 + x) * 4] = 0;
+      b.data[(y * 32 + x + 1) * 4] = 0;
+    }
+  const region = { x: 2, y: 2, width: 26, height: 18 };
+  const raw = pixelMetrics(a, b, region);
+  expect(raw.differingPixels).toBe(16);
+  expect(diagnosticTranslation(a, b, region)).toEqual({
+    dx: 1,
+    dy: 0,
+    errorReductionPercent: 100,
+  });
+  expect(pixelMetrics(a, b, region).differingPixels).toBe(16);
+});
+test('exact RGBA includes alpha changes and identical frames do not invent a shift', () => {
+  const a = new PNG({ width: 8, height: 8 });
+  a.data.fill(255);
+  const b = PNG.sync.read(PNG.sync.write(a));
+  const region = { x: 0, y: 0, width: 8, height: 8 };
+  expect(diagnosticTranslation(a, b, region)).toEqual({
+    dx: 0,
+    dy: 0,
+    errorReductionPercent: 0,
+  });
+  b.data[3] = 254;
+  const metrics = pixelMetrics(a, b, region);
+  expect(metrics.differingPixels).toBe(1);
+  expect(metrics.minorPixels).toBe(1);
+  expect([...metrics.diff.data.subarray(0, 4)]).toEqual([255, 0, 0, 255]);
+});
+
 test('CLI rejects unknown options and components', () => {
   expect(options(['--reference-only', '--browser', 'webkit']).browser).toBe(
     'webkit',

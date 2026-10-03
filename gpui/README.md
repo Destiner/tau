@@ -8,25 +8,25 @@ The standalone GPUI application renders a Tau-styled button, single-line input, 
 
 | Component      | Scenarios | Checkpoints per theme |
 | -------------- | --------: | --------------------: |
-| Button         |        21 |                    54 |
-| Input          |        40 |                    75 |
+| Button         |        21 |                    56 |
+| Input          |        42 |                    81 |
 | Textarea probe |        18 |                    33 |
-| Total          |        79 |                   162 |
+| Total          |        81 |                   170 |
 
 Counts describe meaningful coverage, not minimum quotas. The unrelated development catalogue is not imported.
 
-- **Chromium:** all 162 behavioral checkpoints match GPUI in light and dark (324 comparisons). Each implementation is also checked against authored expectations.
+- **Chromium:** all 170 behavioral checkpoints match GPUI in light and dark (340 comparisons). Each implementation is also checked against authored expectations.
 - **WebKit:** an explicit, failing audit remains. See [review blockers](#review-blockers); Chromium agreement is not macOS acceptance.
-- **Visuals:** unapproved candidates. Every raster difference is reported, including text antialiasing and focus rings. There are no automatically accepted golden images or tolerances.
+- **Visuals:** the reviewed native accent focus border, thinner focus treatment, and omitted input outer ring are retained. Follow-up fixes and remaining choices still require review. Every raw pixel difference is recorded; exact-difference flags are not an approval ledger and no numerical tolerance silently approves changes.
 - **Harness:** real-browser and real-Metal fault tests catch invisible controls, missing click handlers, lost Change events, incorrect selection, incomplete captures, and out-of-control-area rendering faults. A pixel regression also requires selections to be visibly painted in both editors.
-- **Dependency fixes:** three focused, reproducible Base patches address grapheme navigation, wrapped-row geometry/navigation, and disabled focus. See [patches](patches/README.md).
+- **Dependency fixes:** four focused Base patches address navigation, disabled focus, and editor presentation; a separate opt-in macOS text patch matches the browser's antialiased policy. See [patches](patches/README.md).
 - **CI:** an isolated workflow is provided, but has not been executed on a remote runner. Local Metal capture does not prove hosted-runner Metal availability.
 
 Do not proceed to the rest of the UI or application-logic rewrite on the strength of these results alone. Button/input and harness review remain human gates.
 
 ## Setup and commands
 
-Tested locally on Apple Silicon macOS, Rust 1.98.1, Bun 1.4.2, and Xcode 27.0. A working Metal device and full Xcode/Metal tools are required for native capture; there is no software/fake-renderer fallback.
+Tested locally on Apple Silicon macOS, Rust 1.98.1, Bun 1.4.2, and Xcode 27.0. A working Metal device and full Xcode/Metal tools are required for native capture; there is no software/fake-renderer fallback. If `xcrun metal --version` reports a missing Metal Toolchain, install Apple's component with `xcodebuild -downloadComponent MetalToolchain`.
 
 From the repository root:
 
@@ -53,9 +53,16 @@ bun gpui/scripts/run.ts --reference-only
 
 # Review the latest local report, with filtering and 1×/2× crop views.
 open gpui/results/review/light-chromium/report/report.html
+
+# Review follow-up: full regression captures, then only the 14 relevant checkpoints.
+bun gpui/scripts/run.ts --out gpui/results/follow-up
+# This audit still exits nonzero on the documented behavioral differences, retaining captures.
+bun gpui/scripts/run.ts --browser webkit --skip-build --out gpui/results/follow-up
+bun gpui/scripts/review.ts
+open gpui/results/follow-up/light-chromium/report/feedback.html
 ```
 
-`--out <directory>` changes the output root. Each run writes `<theme>-<browser>/request.json`, `vue/`, `native/`, and `report/`. Report crops are derived from the original captures; full frames remain linked. JSON records observations and both control-area and full-frame pixel metrics.
+`--out <directory>` changes the output root. Each run writes `<theme>-<browser>/request.json`, `vue/`, `native/`, and `report/`. Report crops are derived from the original captures; full frames remain linked. JSON records observations and both control-area and full-frame pixel metrics. The default magnitude heatmap distinguishes tiny channel rounding from larger changes; an exact-mask toggle retains the original view. A bounded ±2-physical-pixel sampling-offset diagnostic never moves images or changes pass/fail. Both crops have the same origin, shown explicitly; pixel diagnostics are expandable. Completed runs record rendering-input and native-binary fingerprints. The focused report requires WebKit evidence linked to the current Chromium run, so an old WebKit image cannot be reused just because scenario JSON stayed the same.
 
 `--strict-visual` fails on any raster or bounds difference. Default success means **state assertions passed, visuals still require review**, not that a port has been accepted. Failing browser expectations are retained in full native comparisons so the report can show both implementations; reference-only runs fail directly. Console, page-loading, missing-font, and network faults always fail.
 
@@ -94,9 +101,19 @@ Selection offsets are **UTF-16**, converted explicitly to/from Base's byte offse
 
 The input probe covers pointer selection/replacement, insertion/deletion, Enter, line/word-independent horizontal navigation, combining marks and joined emoji, selection-anchor reversal, undo/redo and history isolation, parent value replacement, same-current-value preservation, unrelated prop rerenders, readonly/disabled transitions, and Tab entry. Multiline cases distinguish visual rows from newline-delimited lines and assert intermediate caret positions.
 
-The preview host supplies fallback focus and Tab routing; these are not a final application-wide focus manager. The native test window is explicitly activated and pending tasks are drained before rendering: an inactive window suppresses Base's selection highlight even when the observed range is correct. Both runners suppress only the blinking caret during capture (browser CSS and native editor styling), never the selection highlight. The interactive native window retains its normal caret. Logical focus/selection and visible selection paint are independently tested; live caret behavior still needs real-window review.
+The preview host supplies fallback focus and Tab routing; these are not a final application-wide focus manager. The native test window is explicitly activated and pending tasks are drained before rendering: an inactive window suppresses Base's selection highlight even when the observed range is correct. Checkpoints normally suppress the caret on both sides; `caret: 'visible'` explicitly captures the real caret and verifies an actual narrow pixel change against a hidden-caret frame without changing editing state. The browser waits for its actual visible blink phase (no synthetic overlay), and native capture uses an explicit visibility flag. Transparent native caret colour was not sufficient: Base resolved it to foreground, a now-regression-tested harness bug. The interactive native window retains normal blinking and the thinner centered caret. Logical focus/selection and visible selection paint are independently tested; live caret behavior still needs real-window review.
 
 The bundled Latin Inter variable font is losslessly decompressed from the project's `@fontsource-variable/inter` WOFF2 asset. Its internal native family name is `Inter`; the browser CSS family is `Inter Variable`. The font license is in `assets/Inter-LICENSE.txt`. Menlo is used for deterministic macOS monospaced probes. System fallback glyphs and rasterization remain platform-dependent.
+
+## Follow-up from visual review
+
+- Disabled button colours are composited once, rather than accumulating opacity where GPUI background/border overlap. Disabled input text no longer receives both Base's dimming and the control opacity.
+- Disabled selection stays visibly painted without focus or editability. Carets are 1 logical px and centered on the insertion boundary; repeated focus notifications no longer hide their initial blink phase.
+- Native text opts out of CoreGraphics stroke dilation, like Vue's `-webkit-font-smoothing: antialiased`. No lighter font weight or colour substitution was used. In fixed interior text regions of the saved light/dark placeholder and seeded input, mean RGB error decreased by roughly 29–46%; exact raster equality is not claimed.
+- The emoji probe matches WebKit/macOS's painted glyph size, while Chromium uses a smaller glyph. The follow-up includes the WebKit image to make that distinction explicit. A small raster/baseline difference remains; no guessed scaling or screenshot resampling was applied.
+- Hover after keyboard input remains a review choice: GPUI suppresses hover until real pointer movement; Vue retains it. The harness now captures before keys, after keys, and after pointer movement rather than masking the difference with synthetic motion.
+
+The focused report has 14 representative checkpoints per theme, notes tied to the feedback, visible caret labels, and links to the full results. Equivalent disabled/focus cases are not repeated. Accepted focus styling is not presented as a new rejection simply because exact pixels differ.
 
 ## Review blockers
 
