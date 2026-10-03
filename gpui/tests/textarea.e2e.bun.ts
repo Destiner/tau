@@ -26,9 +26,12 @@ const ids = new Set([
   'textarea-wrapped-rows',
   'textarea-line-boundaries',
   'textarea-edge-values',
+  'input-option-vertical',
+  'textarea-option-paragraphs',
+  'textarea-option-wrapping',
 ]);
 function selected(theme: 'light' | 'dark'): Suite {
-  const s = suite(theme, 'textarea');
+  const s = suite(theme);
   s.scenarios = s.scenarios.filter((scenario) => ids.has(scenario.id));
   return s;
 }
@@ -62,7 +65,7 @@ beforeAll(async () => {
   if (build.code !== 0) throw new Error(`native build failed: ${build.output}`);
 }, 600000);
 
-test('authored multiline behavior matches real Chromium, WebKit and Metal in both themes; scrolling paints and returns', async () => {
+test('authored editing behavior matches real Chromium, WebKit and Metal in both themes; scrolling paints and returns', async () => {
   const root = await mkdtemp(join(tmpdir(), 'tau-textarea-'));
   try {
     for (const theme of ['light', 'dark'] as const) {

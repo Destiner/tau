@@ -1,0 +1,229 @@
+diff --git a/src/input/base/movement.rs b/src/input/base/movement.rs
+index 3519921..be793bd 100644
+--- a/src/input/base/movement.rs
++++ b/src/input/base/movement.rs
+@@ -3,9 +3,9 @@ use gpui::{Context, Pixels, Point, Window};
+ use sum_tree::Bias;
+ 
+ use crate::input::{
+-    InputBaseState, MoveDown, MoveEnd, MoveHome, MoveLeft, MovePageDown, MovePageUp, MoveRight,
+-    MoveToEnd, MoveToNextWord, MoveToPreviousWord, MoveToStart, MoveUp, RopeExt as _,
+-    cursor::CursorSelection,
++    InputBaseState, MoveDown, MoveEnd, MoveHome, MoveLeft, MovePageDown, MovePageUp,
++    MoveParagraphDown, MoveParagraphUp, MoveRight, MoveToEnd, MoveToNextWord, MoveToPreviousWord,
++    MoveToStart, MoveUp, RopeExt as _, cursor::CursorSelection,
+ };
+ 
+ #[derive(Clone, Copy, PartialEq, Eq)]
+@@ -346,6 +346,63 @@ impl<M: InputModeKind> InputBaseState<M> {
+         );
+     }
+ 
++    fn move_paragraph(&mut self, up: bool, window: &mut Window, cx: &mut Context<Self>) {
++        if !self.is_editable() || self.is_code_editor() {
++            return;
++        }
++        self.move_all_cursors(
++            |s, sel| {
++                let offset = if sel.is_empty() {
++                    sel.cursor_offset()
++                } else if up {
++                    sel.start
++                } else {
++                    sel.end
++                };
++                let row = s.text.offset_to_point(offset).row;
++                let edge = if up {
++                    s.text.line_start_offset(row)
++                } else {
++                    s.text.line_end_offset(row)
++                };
++                let target = if !sel.is_empty() || offset != edge {
++                    edge
++                } else if up {
++                    s.text.line_start_offset(row.saturating_sub(1))
++                } else {
++                    s.text
++                        .line_end_offset((row + 1).min(s.text.lines_len() - 1))
++                };
++                (target, None, false)
++            },
++            Some(if up {
++                MoveDirection::Up
++            } else {
++                MoveDirection::Down
++            }),
++            window,
++            cx,
++        );
++    }
++
++    pub(super) fn paragraph_up(
++        &mut self,
++        _: &MoveParagraphUp,
++        window: &mut Window,
++        cx: &mut Context<Self>,
++    ) {
++        self.move_paragraph(true, window, cx);
++    }
++
++    pub(super) fn paragraph_down(
++        &mut self,
++        _: &MoveParagraphDown,
++        window: &mut Window,
++        cx: &mut Context<Self>,
++    ) {
++        self.move_paragraph(false, window, cx);
++    }
++
+     pub(super) fn up(&mut self, action: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
+         if M::handle_context_menu_action(self, Box::new(action.clone()), window, cx) {
+             return;
+diff --git a/src/input/base/state.rs b/src/input/base/state.rs
+index 71752e1..d3b7b56 100644
+--- a/src/input/base/state.rs
++++ b/src/input/base/state.rs
+@@ -83,6 +83,8 @@ actions!(
+         IndentInline,
+         OutdentInline,
+         MoveUp,
++        MoveParagraphUp,
++        MoveParagraphDown,
+         MoveDown,
+         MoveLeft,
+         MoveRight,
+@@ -176,6 +178,10 @@ pub(crate) fn init(cx: &mut App) {
+         KeyBinding::new("escape", Escape, Some(CONTEXT)),
+         KeyBinding::new("up", MoveUp, Some(CONTEXT)),
+         KeyBinding::new("down", MoveDown, Some(CONTEXT)),
++        #[cfg(target_os = "macos")]
++        KeyBinding::new("alt-up", MoveParagraphUp, Some(CONTEXT)),
++        #[cfg(target_os = "macos")]
++        KeyBinding::new("alt-down", MoveParagraphDown, Some(CONTEXT)),
+         KeyBinding::new("left", MoveLeft, Some(CONTEXT)),
+         KeyBinding::new("right", MoveRight, Some(CONTEXT)),
+         KeyBinding::new("pageup", MovePageUp, Some(CONTEXT)),
+@@ -4547,6 +4553,10 @@ impl<M: InputModeKind> Render for InputBaseState<M> {
+             .on_action(window.listener_for(&entity, InputBaseState::right))
+             .on_action(window.listener_for(&entity, InputBaseState::select_left))
+             .on_action(window.listener_for(&entity, InputBaseState::select_right))
++            .when(self.is_editable() && !self.is_code_editor(), |this| {
++                this.on_action(window.listener_for(&entity, InputBaseState::paragraph_up))
++                    .on_action(window.listener_for(&entity, InputBaseState::paragraph_down))
++            })
+             .when(self.is_multi_line() || self.is_editable(), |this| {
+                 this.on_action(window.listener_for(&entity, InputBaseState::up))
+                     .on_action(window.listener_for(&entity, InputBaseState::down))
+@@ -8477,6 +8487,112 @@ mod tests {
+         });
+     }
+ 
++    #[gpui::test]
++    fn test_paragraph_navigation(cx: &mut TestAppContext) {
++        let view = InputView::build_textarea(cx, |state| state.default_value("abc\ndef\nghi"));
++        let mut cx = VisualTestContext::from_window(view.window_handle.into(), cx);
++        cx.run_until_parked();
++        cx.update(|window, cx| {
++            view.input.update(cx, |state, cx| {
++                state.move_to(5, None, cx);
++                state.paragraph_up(&MoveParagraphUp, window, cx);
++                assert_eq!(state.cursor(), 4);
++                state.paragraph_up(&MoveParagraphUp, window, cx);
++                assert_eq!(state.cursor(), 0);
++                state.paragraph_up(&MoveParagraphUp, window, cx);
++                assert_eq!(state.cursor(), 0);
++                state.move_to(5, None, cx);
++                state.paragraph_down(&MoveParagraphDown, window, cx);
++                assert_eq!(state.cursor(), 7);
++                state.paragraph_down(&MoveParagraphDown, window, cx);
++                assert_eq!(state.cursor(), 11);
++                for (start, end, up, down) in
++                    [(4, 6, 4, 7), (4, 7, 4, 7), (3, 4, 0, 7), (1, 6, 0, 7)]
++                {
++                    state.set_selection(start, end);
++                    state.paragraph_up(&MoveParagraphUp, window, cx);
++                    assert_eq!(state.cursor(), up);
++                    state.set_selection(start, end);
++                    state.paragraph_down(&MoveParagraphDown, window, cx);
++                    assert_eq!(state.cursor(), down);
++                }
++                state.set_value("\nabc\n\n", window, cx);
++                state.move_to(3, None, cx);
++                for expected in [4, 5, 6, 6] {
++                    state.paragraph_down(&MoveParagraphDown, window, cx);
++                    assert_eq!(state.cursor(), expected);
++                }
++                state.move_to(3, None, cx);
++                for expected in [1, 0, 0] {
++                    state.paragraph_up(&MoveParagraphUp, window, cx);
++                    assert_eq!(state.cursor(), expected);
++                }
++                state.set_value("", window, cx);
++                state.paragraph_down(&MoveParagraphDown, window, cx);
++                assert_eq!(state.cursor(), 0);
++                state.set_value("é😀\n漢字\n終", window, cx);
++                state.move_to(2, None, cx);
++                state.paragraph_down(&MoveParagraphDown, window, cx);
++                assert_eq!(state.cursor(), 6);
++                state.paragraph_up(&MoveParagraphUp, window, cx);
++                assert_eq!(state.cursor(), 0);
++            });
++        });
++    }
++
++    #[cfg(target_os = "macos")]
++    #[gpui::test]
++    fn test_paragraph_key_dispatch(cx: &mut TestAppContext) {
++        let view = InputView::build_textarea(cx, |state| state.default_value("abc\ndef\nghi"));
++        let mut cx = VisualTestContext::from_window(view.window_handle.into(), cx);
++        cx.run_until_parked();
++        cx.update(|window, cx| {
++            view.input.update(cx, |state, cx| {
++                state.focus(window, cx);
++                state.move_to(5, None, cx);
++            });
++        });
++        cx.simulate_keystrokes("alt-up");
++        cx.update(|_, cx| assert_eq!(view.input.read(cx).cursor(), 4));
++        cx.simulate_keystrokes("alt-up");
++        cx.update(|_, cx| assert_eq!(view.input.read(cx).cursor(), 0));
++        cx.simulate_keystrokes("alt-down");
++        cx.update(|_, cx| assert_eq!(view.input.read(cx).cursor(), 3));
++    }
++
++    #[cfg(target_os = "macos")]
++    #[gpui::test]
++    fn test_paragraph_dispatch_controls(cx: &mut TestAppContext) {
++        fn check<M: InputModeKind>(view: InputView<M>, cx: &mut TestAppContext) {
++            let mut cx = VisualTestContext::from_window(view.window_handle.into(), cx);
++            cx.run_until_parked();
++            cx.update(|window, cx| view.input.update(cx, |state, cx| {
++                state.focus(window, cx);
++                state.set_selection(1, 5);
++            }));
++            cx.simulate_keystrokes("alt-up alt-down");
++            cx.update(|_, cx| assert_eq!(view.input.read(cx).selected_range(), 1..5));
++        }
++        let readonly = InputView::build_textarea(cx, |state| state.default_value("abc\ndef"));
++        readonly.input.update(cx, |state, cx| state.set_readonly(true, cx));
++        check(readonly, cx);
++        let disabled = InputView::build_textarea(cx, |state| state.default_value("abc\ndef"));
++        disabled.input.update(cx, |state, cx| state.set_disabled(true, cx));
++        check(disabled, cx);
++        check(InputView::build_editor(cx, |state| state.default_value("abc\ndef")), cx);
++        let single = InputView::build(cx, |state| state.default_value("abcdef"));
++        let mut cx = VisualTestContext::from_window(single.window_handle.into(), cx);
++        cx.run_until_parked();
++        cx.update(|window, cx| single.input.update(cx, |state, cx| {
++            state.focus(window, cx);
++            state.move_to(3, None, cx);
++        }));
++        cx.simulate_keystrokes("alt-up");
++        cx.update(|_, cx| assert_eq!(single.input.read(cx).cursor(), 0));
++        cx.simulate_keystrokes("alt-down");
++        cx.update(|_, cx| assert_eq!(single.input.read(cx).cursor(), 6));
++    }
++
+     #[gpui::test]
+     fn test_textarea_vertical_edges_preserve_column(cx: &mut TestAppContext) {
+         let view = InputView::build_textarea(cx, |state| state.default_value("abcdef\nuvwxyz"));

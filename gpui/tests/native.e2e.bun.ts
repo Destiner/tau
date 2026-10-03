@@ -112,6 +112,7 @@ test(
           'input-type',
           'input-vertical-arrows',
           'input-vertical-selection',
+          'input-option-vertical',
           'input-caret-boundaries',
           'input-placeholder-caret',
           'input-undo-group',

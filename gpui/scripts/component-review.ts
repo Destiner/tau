@@ -45,6 +45,10 @@ export const textareaNotes: Record<string, string> = {
 };
 
 export const textareaFeedbackNotes: Record<string, string> = {
+  'textarea-option-paragraphs/line-start':
+    'Option+Up now reaches the logical line start. As chosen in review, another press at that boundary moves to the previous logical line start; soft wraps do not add stops.',
+  'textarea-option-paragraphs/line-end':
+    'Option+Down now reaches the logical line end, then the next line end on a repeated press. Real-key regressions cover wrapping, blank rows, Unicode, selection collapse and inactive fields in both browsers and Metal.',
   'textarea-line-boundaries/top':
     'Up from the middle of the first visual row now reaches the document start. Repeated Up stays there; Down retains the original preferred column. The real caret is shown.',
   'textarea-line-boundaries/bottom':

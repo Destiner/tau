@@ -1,6 +1,6 @@
 # Pinned GPUI prototype patches
 
-These are prototype-only fixes, not an approved long-lived fork. The eight Base patches apply to the exact published `gpui-base` 0.7.0 crate, whose SHA-256 is:
+These are prototype-only fixes, not an approved long-lived fork. The nine Base patches apply to the exact published `gpui-base` 0.7.0 crate, whose SHA-256 is:
 
 ```text
 64bb52b29a8dcdc8d3f595b8b0839c076f237572ab601ba4577d3da8ae085728
@@ -72,6 +72,14 @@ Rounded thumbs need no dependency patch: Tau projects a 4px radius via Base's `S
 
 Editable plain-textarea arrow movement now reuses Base's existing document-edge target when no further visual row exists. It retains the preferred column for subsequent vertical movement and respects wrap-end affinity. Code-editor, readonly, page-key and Shift-selection policies are unchanged. Three upstream tests cover ordinary boundaries/reversal, one-row/empty values, and preservation of code-editor policy. Shared real-key scenarios add Unicode, blank rows, selection collapse and actual shaped wrap boundaries; twelve checkpoints failed against independently authored expectations and both Vue engines before this fix.
 
+### `paragraph-navigation.patch`
+
+**Signal:** Option+Up/Down did nothing because Base had neither key bindings nor logical-line movement handlers for these shortcuts. Timur explicitly chose native macOS semantics over fixed logical-line or visual-row stops.
+
+New macOS bindings target the current newline-separated line's start/end, then the neighboring line boundary on a repeated press. Soft wraps are ignored. A nonempty selection uses its directional endpoint but does not skip a line merely because that endpoint is already at a boundary. Base still owns movement, selection normalization, history boundaries and scrolling; readonly/disabled inputs and code editors do not register the new handlers. No Shift+Option or page-key behavior is added.
+
+Three upstream tests cover movement and real dispatch, Unicode, blank/empty lines, selection collapse, single-line fields, and inactive/code-editor guards. The shared browser/Metal suite checks 36 intermediate states across both control types and wrapping. Thirty native checkpoints failed before the fix; both Vue engines agreed with the authored expectations. Subsequent plain-arrow preferred-column behavior remains a separate browser-policy difference, documented in the prototype README.
+
 ### `antialiased-text.patch` (`gpui-pre-macos` 0.3.7)
 
 The published archive is independently SHA-256 verified:
@@ -92,7 +100,7 @@ For Tau's existing antialiasing opt-in, explicitly disable smoothing on non-emoj
 
 ## Validation and maintenance
 
-The combined patched Base library passed **1,245 upstream unit tests** locally, including the twenty added tests. These use Base's test platform; they do not replace the native Metal and browser harness tests.
+The combined patched Base library passed **1,248 upstream unit tests** locally, including the twenty-three added tests. These use Base's test platform; they do not replace the native Metal and browser harness tests.
 
 Optional upstream check, after preparation, from the repository root:
 
