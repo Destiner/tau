@@ -1,4 +1,5 @@
-import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createTcpServer } from 'node:net';
@@ -59,6 +60,26 @@ async function action(page: Page, step: Step): Promise<void> {
       if (step.phase === 'down') await page.mouse.down();
       if (step.phase === 'up') await page.mouse.up();
       break;
+    case 'wheel': {
+      const b = await control.boundingBox();
+      if (!b) throw new Error('missing scroll subject');
+      const { before, max } = await control.evaluate((el) => ({
+        before: el.scrollTop,
+        max: el.scrollHeight - el.clientHeight,
+      }));
+      await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+      await page.mouse.wheel(0, step.deltaY);
+      if ((step.deltaY > 0 && before < max) || (step.deltaY < 0 && before > 0))
+        await page.waitForFunction(
+          ({ before, deltaY }) => {
+            const el = document.querySelector('#subject-wrap > *');
+            if (!el) return false;
+            return deltaY > 0 ? el.scrollTop > before : el.scrollTop < before;
+          },
+          { before, deltaY: step.deltaY },
+        );
+      break;
+    }
     case 'key':
       await page.keyboard.press(step.key);
       break;
@@ -226,12 +247,23 @@ export async function runBrowser(
       socket.close(() => ok(address.port));
     });
   });
+  const cache = await mkdtemp(resolve(tmpdir(), 'tau-gpui-vite-'));
   const server = await createServer({
     configFile: false,
     root: fileURLToPath(new URL('../..', import.meta.url)),
-    cacheDir: resolve(import.meta.dir, '../.cache/vite'),
+    cacheDir: cache,
     plugins: [vue()],
-    server: { host: '127.0.0.1', port, strictPort: true },
+    // Parallel report writes must not reload a reference in the middle of editing.
+    server: {
+      host: '127.0.0.1',
+      port,
+      strictPort: true,
+      hmr: false,
+      watch: null,
+    },
+  }).catch(async (error: unknown) => {
+    await rm(cache, { recursive: true, force: true });
+    throw error;
   });
   let browser: Awaited<ReturnType<BrowserType['launch']>> | undefined;
   try {
@@ -358,7 +390,14 @@ export async function runBrowser(
       throw error;
     }
   } finally {
-    await browser?.close();
-    await server.close();
+    try {
+      await browser?.close();
+    } finally {
+      try {
+        await server.close();
+      } finally {
+        await rm(cache, { recursive: true, force: true });
+      }
+    }
   }
 }

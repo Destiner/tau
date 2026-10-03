@@ -94,6 +94,14 @@ const App = defineComponent({
                 disabled: p.disabled,
                 readonly: p.readonly,
                 rows: p.rows,
+                style:
+                  p.height === defaultProps.height
+                    ? undefined
+                    : {
+                        height: `${p.height}px`,
+                        minHeight: `${p.height}px`,
+                        maxHeight: `${p.height}px`,
+                      },
                 'data-monospaced': p.monospaced ? 'true' : undefined,
               });
       return h('div', { id: 'canvas' }, [

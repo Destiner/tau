@@ -12,6 +12,7 @@ pub struct Props {
     pub readonly: bool,
     pub error: bool,
     pub width: f32,
+    pub height: f32,
     pub rows: usize,
     pub monospaced: bool,
 }
@@ -20,6 +21,10 @@ impl Props {
         anyhow::ensure!(
             self.width.is_finite() && self.width > 0.,
             "width must be positive and finite"
+        );
+        anyhow::ensure!(
+            self.height.is_finite() && self.height >= 0.,
+            "height must be nonnegative and finite (zero uses variant sizing)"
         );
         anyhow::ensure!(self.rows > 0, "rows must be positive");
         Ok(())
@@ -38,6 +43,7 @@ impl Default for Props {
             readonly: false,
             error: false,
             width: 360.,
+            height: 0.,
             rows: 4,
             monospaced: false,
         }
@@ -68,6 +74,10 @@ pub enum Step {
     },
     Key {
         key: String,
+    },
+    Wheel {
+        #[serde(rename = "deltaY")]
+        delta_y: f32,
     },
     Type {
         text: String,

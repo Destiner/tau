@@ -10,6 +10,7 @@ export type Props = {
   readonly: boolean;
   error: boolean;
   width: number;
+  height: number;
   rows: number;
   monospaced: boolean;
 };
@@ -23,6 +24,7 @@ export const defaultProps: Props = {
   readonly: false,
   error: false,
   width: 360,
+  height: 0,
   rows: 4,
   monospaced: false,
 };
@@ -39,6 +41,7 @@ export type Step =
   | { action: 'focus' | 'blur' | 'click' | 'hover' | 'mouseDown' | 'mouseUp' }
   | { action: 'pointer'; phase: 'move' | 'down' | 'up'; x: number; y: number }
   | { action: 'key'; key: string }
+  | { action: 'wheel'; deltaY: number }
   | { action: 'type'; text: string }
   | { action: 'select'; start: number; end: number }
   | { action: 'props'; props: Partial<Props> }
@@ -89,6 +92,7 @@ const actions = [
   'mouseDown',
   'mouseUp',
   'pointer',
+  'wheel',
   'key',
   'type',
   'select',
@@ -124,6 +128,10 @@ export function validateProps(value: unknown, context: string): void {
   }
   if (p.width !== undefined && (p.width as number) <= 0)
     throw new Error(`${context}: width must be positive`);
+  if (p.height !== undefined && (p.height as number) < 0)
+    throw new Error(
+      `${context}: height must be nonnegative (zero uses variant sizing)`,
+    );
   if (p.rows !== undefined && (!integer(p.rows) || (p.rows as number) < 1))
     throw new Error(`${context}: rows must be a positive integer`);
 }
@@ -206,6 +214,7 @@ export function validateSuite(value: unknown): asserts value is Suite {
       const fields: Record<string, string[]> = {
         pointer: ['phase', 'x', 'y'],
         key: ['key'],
+        wheel: ['deltaY'],
         type: ['text'],
         select: ['start', 'end'],
         props: ['props'],
@@ -237,6 +246,11 @@ export function validateSuite(value: unknown): asserts value is Suite {
           step.y >= 320)
       )
         throw new Error(`${s.id}: invalid pointer`);
+      if (
+        action === 'wheel' &&
+        (typeof step.deltaY !== 'number' || !Number.isFinite(step.deltaY))
+      )
+        throw new Error(`${s.id}: invalid scroll delta`);
       if (action === 'props') validateProps(step.props, s.id);
       if (action === 'checkpoint') {
         if (step.caret !== undefined && step.caret !== 'visible')

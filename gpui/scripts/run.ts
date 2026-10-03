@@ -16,6 +16,7 @@ import { prepare } from './prepare';
 import {
   nativeBinaryHash,
   renderInputsHash,
+  captureArtifactsHash,
   type CaptureProvenance,
 } from './provenance';
 
@@ -180,6 +181,7 @@ export async function run(args: string[]): Promise<void> {
           throw new Error(
             'render inputs changed during capture; rerun the comparison',
           );
+        fingerprint.artifacts = await captureArtifactsHash(folder);
         fingerprint.complete = true;
         await writeFile(
           resolve(folder, 'capture.json'),

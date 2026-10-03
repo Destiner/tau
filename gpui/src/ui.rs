@@ -232,6 +232,11 @@ impl Scene {
         }
     }
 
+    pub fn set_theme(&mut self, dark: bool, cx: &mut Context<Self>) {
+        self.palette = Palette::new(dark);
+        cx.notify();
+    }
+
     pub fn prepare_capture(&mut self, fault: TestFault) {
         self.fault = fault;
         self.capture_mode = true;
@@ -523,7 +528,7 @@ impl Render for Scene {
                 let focused = state.read(cx).focus_handle(cx).is_focused(window);
                 state.update(cx, |state, _| {
                     state.set_editor_style(p.editor_style(
-                        false,
+                        self.props.readonly || disabled,
                         self.capture_mode && !self.capture_caret,
                         disabled,
                     ))
@@ -532,7 +537,9 @@ impl Render for Scene {
                     .focused(focused)
                     .disabled(disabled)
                     .w(px(self.props.width))
-                    .h(px(if bare {
+                    .h(px(if self.props.height > 0. {
+                        self.props.height
+                    } else if bare {
                         self.props.rows as f32 * 11. * 1.45 + 12.
                     } else {
                         120.

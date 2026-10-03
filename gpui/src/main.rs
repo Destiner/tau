@@ -1,4 +1,5 @@
 mod model;
+mod playground;
 mod text;
 mod ui;
 
@@ -103,6 +104,8 @@ fn keystroke(key: &str) -> Result<String> {
                 "Escape" => "escape",
                 "Home" => "home",
                 "End" => "end",
+                "PageUp" => "pageup",
+                "PageDown" => "pagedown",
                 p if p.len() == 1 && p.is_ascii() => p,
                 _ => bail!("unsupported key: {key}"),
             }
@@ -203,6 +206,21 @@ fn action(
                 pointer(window, cx, *phase, gpui_kit::point(px(*x), px(*y)), pressed);
             }
             Step::Key { key } => window.press(&keystroke(key)?, cx),
+            Step::Wheel { delta_y } => {
+                ensure!(delta_y.is_finite(), "invalid scroll delta");
+                window.dispatch_event(
+                    gpui_kit::ScrollWheelEvent {
+                        position: window.find("subject").bounds().center(),
+                        delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                            px(0.),
+                            px(-*delta_y),
+                        )),
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            }
             Step::Type { text } => window.input(text, cx),
             Step::Select { start, end } => {
                 scene.update(cx, |scene, cx| scene.select(*start, *end, cx))?
@@ -393,6 +411,13 @@ fn run_suite(request: &Path, out: &Path, fault: TestFault) -> Result<()> {
 }
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args
+        .first()
+        .is_some_and(|arg| arg == "--playground-capture")
+    {
+        ensure!(args.len() == 2, "usage: --playground-capture directory");
+        return playground::capture(Path::new(&args[1]));
+    }
     if args.first().is_some_and(|arg| arg == "--suite") {
         ensure!(
             (args.len() == 4 || args.len() == 6)
@@ -414,15 +439,19 @@ fn main() -> Result<()> {
     }
     let mut component = "button".to_string();
     let mut dark = false;
+    let mut playground = false;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
             "--dark" => dark = true,
+            "--playground" => playground = true,
             "--component" if index + 1 < args.len() => {
                 index += 1;
                 component = args[index].clone();
             }
-            _ => bail!("usage: [--component button|input|textarea] [--dark]"),
+            _ => bail!(
+                "usage: [--component button|input|textarea] [--dark] [--playground (textarea only)]"
+            ),
         }
         index += 1;
     }
@@ -430,6 +459,21 @@ fn main() -> Result<()> {
         matches!(component.as_str(), "button" | "input" | "textarea"),
         "unknown component"
     );
+    ensure!(
+        !playground || component == "textarea",
+        "playground requires --component textarea"
+    );
+    if playground {
+        gpui_kit::application().run(move |cx| {
+            init(cx);
+            gpui_kit::open_window(options(800, 650, true), cx, |window, cx| {
+                cx.new(|cx| playground::Playground::new(dark, window, cx))
+            })
+            .expect("open textarea playground");
+            cx.activate(true);
+        });
+        return Ok(());
+    }
     gpui_kit::application().run(move |cx| {
         init(cx);
         gpui_kit::open_window(options(640, 320, true), cx, |window, cx| {
