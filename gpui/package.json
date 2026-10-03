@@ -10,8 +10,12 @@
     "format": "prettier --write .",
     "prepare:native": "bun scripts/prepare.ts",
     "build:native": "bun scripts/prepare.ts && cargo build --locked",
-    "test:native": "bun test ./tests/native.e2e.bun.ts",
-    "test": "bun test ./tests/contract.bun.ts ./tests/compare.bun.ts",
+    "test:native": "bun test ./tests/native.e2e.bun.ts ./tests/textarea.e2e.bun.ts ./tests/probes.e2e.bun.ts",
+    "test": "bun test ./tests/contract.bun.ts ./tests/compare.bun.ts ./tests/review.bun.ts",
+    "live:textarea": "bun run prepare:native && cargo run --locked --bin tau-gpui-prototype -- --component textarea --playground",
+    "live:transcript": "bun run prepare:native && cargo run --locked --bin transcript-probe --",
+    "review:textarea": "bun scripts/run.ts --component textarea --out results/multiline && bun scripts/run.ts --component textarea --browser webkit --skip-build --out results/multiline && bun scripts/component-review.ts",
+    "review:transcript": "bun scripts/transcript-report.ts --capture",
     "test:e2e": "bun test ./tests/browser.e2e.bun.ts ./tests/isolation.e2e.bun.ts"
   },
   "dependencies": {

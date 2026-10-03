@@ -84,8 +84,10 @@ jobs:
         id: webkit
         continue-on-error: true
         run: bun gpui/scripts/run.ts --browser webkit --skip-build
-      - name: Focused review report
-        run: bun gpui/scripts/review.ts gpui/results/review
+      - name: Focused multiline review
+        run: bun run --cwd gpui review:textarea
+      - name: Native streaming transcript review
+        run: bun run --cwd gpui review:transcript
       - name: Explain acceptance status
         if: always()
         run: |
@@ -97,7 +99,10 @@ jobs:
         if: always()
         with:
           name: gpui-comparison
-          path: gpui/results/review
+          path: |
+            gpui/results/review
+            gpui/results/multiline
+            gpui/results/transcript
           if-no-files-found: warn
           retention-days: 7
       - name: Require WebKit agreement
