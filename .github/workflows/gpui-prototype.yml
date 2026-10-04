@@ -78,6 +78,11 @@ jobs:
       - name: Real Metal self-tests and fault detection
         working-directory: gpui
         run: bun run test:native
+      - name: Nine native component probes and fault detection
+        working-directory: gpui
+        run: bun run test:probes
+      - name: Native component review index
+        run: bun run --cwd gpui review:probes
       - name: Chromium comparison
         run: bun gpui/scripts/run.ts --skip-build
       - name: WebKit audit
@@ -103,6 +108,7 @@ jobs:
             gpui/results/review
             gpui/results/multiline
             gpui/results/transcript
+            gpui/results/ui-probes
           if-no-files-found: warn
           retention-days: 7
       - name: Require WebKit agreement

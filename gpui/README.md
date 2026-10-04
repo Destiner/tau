@@ -19,10 +19,42 @@ Counts describe meaningful coverage, not minimum quotas. The unrelated developme
 - **WebKit:** an explicit, failing audit remains. See [review blockers](#review-blockers); Chromium agreement is not macOS acceptance.
 - **Component review:** after the visual follow-up and single-line Up/Down fix (`fcd402c`), Timur accepted both the button and single-line input as good enough for this prototype. The current presentation, including native focus styling, is retained without another general visual approval round. Every raw pixel difference is still recorded; exact-difference flags are not an approval ledger and no numerical tolerance silently approves future changes.
 - **Harness:** real-browser and real-Metal fault tests catch invisible controls, missing click handlers, lost Change events, incorrect selection, incomplete captures, and out-of-control-area rendering faults. A pixel regression also requires selections to be visibly painted in both editors.
-- **Dependency fixes:** nine focused Base patches address navigation, disabled focus, and editor presentation; two opt-in macOS text patches match the browser's antialiased policy. See [patches](patches/README.md).
+- **Dependency fixes:** ten focused Base patches address navigation, disabled focus, editor presentation, and opt-in horizontal Markdown code scrolling; two opt-in macOS text patches match the browser's antialiased policy. See [patches](patches/README.md).
 - **CI:** an isolated workflow is provided, but has not been executed on a remote runner. Local Metal capture does not prove hosted-runner Metal availability.
 
-Button/input component review is complete within this bounded prototype. Timur has authorized parallel multiline-input and representative hard-UI work, with independent live/report handoffs; harness decisions are engineering-owned. The transcript's streaming/scrolling mechanics are accepted within the probe's scope. Markdown presentation, especially code blocks, is explicitly a separate spike—not a blocker to that acceptance. The multiline input remains under review. Native-input and application-integration gaps remain explicit, and the existing Vue/catalogue cleanup is deferred.
+Button, single-line input and multiline input component reviews are complete within this bounded prototype. Timur has authorized parallel multiline-input and representative hard-UI work, with independent live/report handoffs; harness decisions are engineering-owned. The transcript's streaming/scrolling mechanics are accepted within the probe's scope. Markdown presentation, especially code blocks, is explicitly a separate spike—not a blocker to that acceptance. Timur accepted the multiline input after the rendering, scrolling and keyboard refinements through `6affe97`. Native-input and application-integration gaps remain explicit, and the existing Vue/catalogue cleanup is deferred.
+
+## Nine additional native UI probes
+
+The next UI-only batch is implemented and **awaits hands-on review**. It does not change the accepted controls or transcript mechanics, migrate Pi/runtime logic, or resume Vue refactors. Each independently launchable probe has real native controls, synthetic fixtures, authored intermediate assertions, and light/dark Metal evidence. These reports are **native-only, not Vue parity or design acceptance**.
+
+| Probe                  | Live command (from repository root) | Scope / notes                                                                                                 |
+| ---------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Markdown / code blocks | `bun run --cwd gpui live:markdown`  | [Syntax colors, horizontal code scrolling, selection/copy, tables, incomplete fences](probes/markdown.md)     |
+| Menus / context menus  | `bun run --cwd gpui live:menus`     | [Keyboard/disabled rows, stacked Escape, edge placement; context menu is row-anchored](probes/menus.md)       |
+| Dialogs                | `bun run --cwd gpui live:dialogs`   | [Exact focus cycles, nested surfaces, drafts, busy/error/retry, nonmodal inline prompt](probes/dialogs.md)    |
+| Composer               | `bun run --cwd gpui live:composer`  | [Bounded auto-growth, completion, send/stop, retained draft, measured reader/end pinning](probes/composer.md) |
+| Model picker           | `bun run --cwd gpui live:models`    | [Grouped/filterable catalogue, disabled/empty states, selection visibility, failed changes](probes/models.md) |
+| Command palette        | `bun run --cwd gpui live:palette`   | [Search, nested pages, shortcuts, keyboard navigation, isolated input bindings](probes/palette.md)            |
+| Queue previews         | `bun run --cwd gpui live:queue`     | [Delayed hover, immediate keyboard reveal, interactive Markdown, stale-timer cancellation](probes/queue.md)   |
+| Activity rows          | `bun run --cwd gpui live:activity`  | [Status, expansion, selectable output, measured virtual-list re-entry](probes/activity.md)                    |
+| File viewer            | `bun run --cwd gpui live:files`     | [Text/code/image, copy, loading/error/retry, stale completion guards](probes/files.md)                        |
+
+Append `--dark` to any live command. Closing its last window exits that probe. No windows are opened by capture or validation, and none are automatically launched for review.
+
+```sh
+bun run --cwd gpui test:probes
+bun run --cwd gpui review:probes
+open gpui/results/ui-probes/index.html
+# Refresh one component independently:
+bun gpui/scripts/probe-report.ts --capture --probe markdown
+```
+
+`src/probes/common.rs` supplies real event dispatch, explicit simulated-clock advancement, Metal capture, and capture-only `hide-content` / `skip-input` faults. Reports require the exact ordered checkpoint set from the current named binary, before/after source and binary fingerprints, bounded PNG dimensions, recomputed whole-frame ink, and matching artifact hashes. Every linked HTML report is regenerated from verified evidence; altered/stale reports are removed. Hashes are verified at generation, not continuously after opening an HTML file. Fault runs must fail without reusing an earlier successful proof.
+
+Whole-frame ink only catches near-blank rendering. Additional bounded pixel regressions check syntax colors, horizontal code movement with a pinned action, and the actual bundled image paint; they are fixture-specific defect detectors, not visual acceptance tolerances. Other checks combine actual focus, Base state, geometry and screenshots for review. Headless clipboard operations use GPUI's in-memory test clipboard; an intentional Copy click in a live window writes to the real clipboard. Links stay local/inert and fixtures never open user files or contact external services.
+
+Remaining gaps include real AppKit/IME/accessibility input paths, OS-window resizing, cross-component integration, comprehensive Markdown/media parity, sustained performance, and production runtime/storage/distribution. File preview initially supports plain/code source and a bundled image, not PDF, diagrams or video; model/command/send actions are deliberately synthetic. Each probe's notes distinguish evidence from remaining scope.
 
 ## Review entry points: multiline input and streaming transcript
 
@@ -39,7 +71,7 @@ bun run --cwd gpui review:transcript
 open gpui/results/transcript/report.html
 ```
 
-The multiline report selects **14 checkpoints** from **112 per theme**, with WebKit/Chromium and light/dark links. Real visible carets, wrapped/blank rows, Unicode selection, bounded wheel scrolling, history, and readonly/disabled transitions are covered. The native playground exposes theme, style, font, state, width and height without resetting the editor. Content replacement buttons are explicitly labeled. Its real-click/Space smoke test checks draft/selection preservation, full undo/redo history continuity, and in-window geometry. `height: 0` uses variant/rows sizing; positive values explicitly fix the height, including 120px. There is no native drag-resize handle or auto-growing composer yet.
+The multiline report selects **14 checkpoints** from **112 per theme**, with WebKit/Chromium and light/dark links. Real visible carets, wrapped/blank rows, Unicode selection, bounded wheel scrolling, history, and readonly/disabled transitions are covered. The native playground exposes theme, style, font, state, width and height without resetting the editor. Content replacement buttons are explicitly labeled. Its real-click/Space smoke test checks draft/selection preservation, full undo/redo history continuity, and in-window geometry. `height: 0` uses variant/rows sizing; positive values explicitly fix the height, including 120px. This accepted textarea playground has no native drag-resize handle; bounded auto-growth is exercised separately in the new composer probe.
 
 The transcript report is **native-only, not Vue parity**. It uses GPUI's measured variable-height `ListState` with stable IDs and per-message Base Markdown `TextViewState`. **16 Metal checks per theme** cover real control clicks/wheel input, same-burst append/growth, measured end pinning, reader anchoring, changes above the reader, expansion state, synthetic viewport shrink, a 1,000-message fixture, bounded streaming, pause/reset interruption, and a deliberately broken anchor. Selection retention is currently checked through a programmatically established editor selection, not a pointer-selection/paint regression. Six representative frames per theme keep the report focused.
 
@@ -100,6 +132,7 @@ bun run --cwd gpui typecheck
 bun run --cwd gpui test
 bun run --cwd gpui test:e2e
 bun run --cwd gpui test:native
+bun run --cwd gpui test:probes
 
 bun gpui/scripts/prepare.ts
 cargo fmt --check --manifest-path gpui/Cargo.toml
@@ -151,7 +184,7 @@ bun gpui/scripts/component-review.ts --feedback gpui/results/input-option
 open gpui/results/input-option/light-webkit/report/textarea-feedback.html
 ```
 
-The multiline review also requested slower scrolling and rounded scrollbars. Tau's textarea now uses half-speed wheel/trackpad movement, retaining fractional deltas; this is a deliberate sensitivity preference, not Vue scroll-speed parity. The scrollbar inherits a 4px thumb radius across normal/hover/drag states. Real dispatch/pixel tests measure scrolling distance, fractional accumulation, reversal, clamping, the painted caps, and direct (unscaled) thumb dragging. Keyboard navigation and programmatic reveal are unchanged. Real-device feel remains a hands-on check.
+The multiline review also requested slower scrolling and rounded scrollbars. Tau's textarea now uses half-speed wheel/trackpad movement, retaining fractional deltas; this is a deliberate sensitivity preference, not Vue scroll-speed parity. The scrollbar inherits a 4px thumb radius across normal/hover/drag states. Real dispatch/pixel tests measure scrolling distance, fractional accumulation, reversal, clamping, the painted caps, and direct (unscaled) thumb dragging. Keyboard navigation and programmatic reveal are unchanged. Timur accepted the resulting feel in the live prototype; this does not certify every input device or macOS setting.
 
 Up on the first visual row now reaches the document start; Down on the last reaches the end. Reversing direction keeps the preferred column, matching both browsers. This is scoped to editable textareas: code-editor, readonly, page-key and Shift-selection policies are not rewritten. New real-key checkpoints cover mid-row edges, repeated keys, selection collapse, wrapped-row affinity, Unicode, blank rows, one-row and empty values. Before the fix, twelve checkpoints failed in both browser comparisons; the corrected sequences pass without changing their expectations.
 
@@ -179,4 +212,4 @@ Other known boundaries:
 - GPUI Base/GPUI snapshot APIs and the local patches are a maintenance risk; this is not a production dependency decision.
 - CI Metal availability, signed distribution, updater trust, and all Tau session/runtime lifecycle invariants are outside this prototype.
 
-Current user review is the multiline input; the native transcript's mechanics are accepted. Markdown/code-block rendering needs a separate focused spike, without reopening the accepted anchoring/scrolling behavior unless a regression appears. Engineering owns further harness coverage, WebKit policy accounting and CI validation. Real-window input checks, an integrated composer, nested overlays and rich-content completeness still precede a broad application rewrite. The local working checklist remains in `docs/gpui-rewrite.md` (uncommitted); broader Vue refactors remain deferred.
+The multiline input and native transcript mechanics are accepted within their prototype scope. The next UI candidates come from the remaining hard areas: Markdown, an integrated composer, overlays and richer product components. Markdown/code-block rendering needs a separate focused spike, without reopening the accepted anchoring/scrolling behavior unless a regression appears. Engineering owns further harness coverage, WebKit policy accounting and CI validation. Real-window input checks, an integrated composer, nested overlays and rich-content completeness still precede a broad application rewrite. The local working checklist remains in `docs/gpui-rewrite.md` (uncommitted); broader Vue refactors remain deferred.

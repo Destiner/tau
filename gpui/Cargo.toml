@@ -9,6 +9,7 @@ gpui-kit = { version = "=0.7.0", default-features = false, features = ["test-sup
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+syntect = { version = "=5.3.0", default-features = false, features = ["default-fancy"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 gpui_macos = { package = "gpui-pre-macos", version = "=0.3.7", features = ["font-kit"] }
