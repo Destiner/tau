@@ -1,6 +1,6 @@
 # Pinned GPUI prototype patches
 
-These are prototype-only fixes, not an approved long-lived fork. The nine Base patches apply to the exact published `gpui-base` 0.7.0 crate, whose SHA-256 is:
+These are prototype-only fixes, not an approved long-lived fork. The ten Base patches apply to the exact published `gpui-base` 0.7.0 crate, whose SHA-256 is:
 
 ```text
 64bb52b29a8dcdc8d3f595b8b0839c076f237572ab601ba4577d3da8ae085728
@@ -80,6 +80,12 @@ New macOS bindings target the current newline-separated line's start/end, then t
 
 Three upstream tests cover movement and real dispatch, Unicode, blank/empty lines, selection collapse, single-line fields, and inactive/code-editor guards. The shared browser/Metal suite checks 36 intermediate states across both control types and wrapping. Thirty native checkpoints failed before the fix; both Vue engines agreed with the authored expectations. Subsequent plain-arrow preferred-column behavior remains a separate browser-policy difference, documented in the prototype README.
 
+### `code-block-scroll.patch`
+
+**Signal:** Base rendered `Inline` directly under the code block container, so `overflow_x: scroll` on the public refinement still wrapped long code and could not provide a scrollable content width.
+
+`TextViewStyle::with_code_block_horizontal_scroll(true)` opts fenced code into a horizontal viewport; default code still wraps. The width is the maximum *shaped* hard-line width using the rendered mono family, size and highlighted runs, not a character-count estimate. The same selectable/highlighted `Inline` paints inside the track, while the copy action stays in a stationary sibling flex column. The viewport gives actions their actual laid-out width, so the last code glyph remains visible/selectable rather than sliding under an overlay. Base's existing axis-locking horizontal mask passes vertical gestures to the outer list. The scroll handle is keyed by code-block source span, so append-only updates can retain it; replacing the document can reset the position. Two upstream regressions check exact shaped mono width and hard-line handling, plus default wrap height, opt-in hard-line height and pinned action. The native Markdown probe exercises horizontal wheel, endpoint selection, reversing, syntax colors and clipboard in both appearances.
+
 ### `antialiased-text.patch` (`gpui-pre-macos` 0.3.7)
 
 The published archive is independently SHA-256 verified:
@@ -100,7 +106,7 @@ For Tau's existing antialiasing opt-in, explicitly disable smoothing on non-emoj
 
 ## Validation and maintenance
 
-The combined patched Base library passed **1,248 upstream unit tests** locally, including the twenty-three added tests. These use Base's test platform; they do not replace the native Metal and browser harness tests.
+The combined patched Base library passed **1,250 upstream unit tests** locally, including the twenty-five added tests. These use Base's test platform; they do not replace the native Metal and browser harness tests.
 
 Optional upstream check, after preparation, from the repository root:
 

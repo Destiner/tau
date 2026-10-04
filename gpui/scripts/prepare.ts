@@ -31,6 +31,7 @@ const crates = [
       'input-scroll-sensitivity.patch',
       'textarea-vertical-edges.patch',
       'paragraph-navigation.patch',
+      'code-block-scroll.patch',
     ],
   },
   {
