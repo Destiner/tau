@@ -1,3 +1,4 @@
+pub mod composer;
 pub mod dialogs;
 pub mod font;
 pub mod markdown;
