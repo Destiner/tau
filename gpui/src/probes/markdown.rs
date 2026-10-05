@@ -130,25 +130,27 @@ impl Probe for MarkdownProbe {
                 y: 245.,
             },
             Step::Check("long-selection"),
+            // Stop before the end clamp: the product track's 70px trailing inset
+            // moves the clamped text ~70px farther left than the original track.
             Step::WheelXAt {
                 x: 400.,
                 y: 245.,
-                delta: 850.,
+                delta: 450.,
             },
             Step::Check("long-scrolled"),
             Step::Pointer {
                 phase: "down",
-                x: 100.,
+                x: 110.,
                 y: 245.,
             },
             Step::Pointer {
                 phase: "move",
-                x: 335.,
+                x: 360.,
                 y: 245.,
             },
             Step::Pointer {
                 phase: "up",
-                x: 335.,
+                x: 360.,
                 y: 245.,
             },
             Step::Check("scrolled-selection"),
@@ -160,17 +162,17 @@ impl Probe for MarkdownProbe {
             Step::Check("long-end"),
             Step::Pointer {
                 phase: "down",
-                x: 689.,
+                x: 620.,
                 y: 245.,
             },
             Step::Pointer {
                 phase: "move",
-                x: 746.,
+                x: 690.,
                 y: 245.,
             },
             Step::Pointer {
                 phase: "up",
-                x: 746.,
+                x: 690.,
                 y: 245.,
             },
             Step::Check("end-selection"),
@@ -320,7 +322,8 @@ impl Probe for MarkdownProbe {
                 );
                 if name == "scrolled-selection" {
                     ensure!(
-                        state.selected_text().contains("eta_iota_kappa"),
+                        state.selected_text().starts_with("eta_iota_kappa")
+                            && state.selected_source_range().is_some(),
                         "scrolled pointer selection: {:?}",
                         state.selected_text()
                     );

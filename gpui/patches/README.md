@@ -1,6 +1,6 @@
 # Pinned GPUI prototype patches
 
-These are prototype-only fixes, not an approved long-lived fork. The ten Base patches apply to the exact published `gpui-base` 0.7.0 crate, whose SHA-256 is:
+These are prototype-only fixes, not an approved long-lived fork. The seventeen Base patches apply to the exact published `gpui-base` 0.7.0 crate, whose SHA-256 is:
 
 ```text
 64bb52b29a8dcdc8d3f595b8b0839c076f237572ab601ba4577d3da8ae085728
@@ -66,6 +66,12 @@ The setting defaults to 1.0 for upstream inputs/editors and scales after pixel/l
 
 Rounded thumbs need no dependency patch: Tau projects a 4px radius via Base's `ScrollbarTheme`, clamped to half the thumb width and inherited by hover/active states. Metal pixel checks inspect all four corners and visible end caps in both themes.
 
+### `composer-caret-reveal.patch`
+
+**Signal:** Base's auto-grow textarea always retains a full line-height between the caret's row origin and the viewport bottom. At the ten-row cap, appending to an eleven-line draft scrolled 19px while WebKit's textarea scrolled 13px, hiding the first line entirely and moving the final line 6px too high. The browser's scrollTop and Base's own scroll offset exposed the discrepancy without hardcoding a post-input scroll position.
+
+`InputEditorStyle::auto_grow_cursor_margin` opts a single auto-growing textarea into a 13px reveal inset; the default remains one shaped line. The inset is bounded between zero and half the viewport, and does not affect ordinary inputs, code editors, wheel scroll, dragging, or content/history. An upstream unit regression checks defaults and bounds; the native/browser multiline editing fixture checks the real-key path and rendered output in both themes. The composer retains Base's scrolling/idle scrollbar mode and projects the same 4px thumb radius as the accepted Tau textarea. Immediately after editing, Base still paints its thumb during the idle hold; browser overlay scrollbars are hidden in the capture.
+
 ### `textarea-vertical-edges.patch`
 
 **Signal:** Up from the middle of the first textarea row and Down from the middle of the last row retained the caret's column instead of reaching offset 0/document length. The original boundary scenario only started at the endpoints, so it did not detect this.
@@ -85,6 +91,34 @@ Three upstream tests cover movement and real dispatch, Unicode, blank/empty line
 **Signal:** Base rendered `Inline` directly under the code block container, so `overflow_x: scroll` on the public refinement still wrapped long code and could not provide a scrollable content width.
 
 `TextViewStyle::with_code_block_horizontal_scroll(true)` opts fenced code into a horizontal viewport; default code still wraps. The width is the maximum *shaped* hard-line width using the rendered mono family, size and highlighted runs, not a character-count estimate. The same selectable/highlighted `Inline` paints inside the track, while the copy action stays in a stationary sibling flex column. The viewport gives actions their actual laid-out width, so the last code glyph remains visible/selectable rather than sliding under an overlay. Base's existing axis-locking horizontal mask passes vertical gestures to the outer list. The scroll handle is keyed by code-block source span, so append-only updates can retain it; replacing the document can reset the position. Two upstream regressions check exact shaped mono width and hard-line handling, plus default wrap height, opt-in hard-line height and pinned action. The native Markdown probe exercises horizontal wheel, endpoint selection, reversing, syntax colors and clipboard in both appearances.
+
+### `product-markdown-style.patch`
+
+`TextViewStyle::with_table_fit_content(true)` bounds scrollable tables to their measured natural width; `with_table_css_cells(true)` separately opts scroll tables into 12px horizontal cell padding and horizontal-only row rules. The measured header/body font refinements are used for fitted column widths, and the viewport remains capped at its parent. Default wrap and scroll tables retain their original sizing and cell rules. The Markdown scene supplies the dark/light table surface explicitly instead of inheriting Base's default light surface.
+
+Scrollable fenced code positions hover actions in a zero-height flex sibling: its intrinsic width is reserved without increasing the block's height, and the last glyph remains scrollable instead of hiding beneath an overlay. `with_code_block_paragraph_gap` overrides only the gap before an immediately following paragraph; defaults and code-to-code spacing stay unchanged. A per-block `markdown-code` hover group keeps other copy buttons idle, and `code-{ix}` bounds are test-support-only. Four upstream regressions exercise default vs fitted table widths, header/body cell alignment and right edge, two independent real mouse hovers, and tall versus short actions without changing the next code block's position. Actual paired geometry and residual differences are in `../product-notes/markdown.md`.
+
+### `markdown-strong-style.patch`
+
+`TextViewStyle::with_strong_weight` opts a view's bold Markdown marks into an explicit weight. Default `None` still renders Base's original bold weight; Tau thinking prose uses 400 (matching the ActivityRow override) and other activity prose uses 600. The upstream unit checks default, opt-in, cloning and style equality. This patch follows the already-stable `product-markdown-style.patch` without changing it.
+
+### `markdown-list-style.patch`
+
+`TextViewStyle::with_list_style(indent, gap, marker)` opts one view into a fixed marker column, inter-item spacing, and a faint marker color. The default `None` preserves Base's inline list prefix and compact spacing, including other product scenes. The styled renderer still uses the original parsed list nodes, source selection, nested lists, and task checkboxes; it does not rewrite Markdown or place text manually. An upstream rendered regression compares the item glyph positions of styled and default lists and verifies the 5px added row spacing. Tau's queue preview opts in (16px column, 5px item gap, faint token), as does the Markdown product scene with its production CSS metrics; paired geometry is recorded in `../product-notes/queue.md` and `../product-notes/markdown.md`.
+
+### `markdown-inline-spacing.patch`
+
+`TextViewStyle::with_inline_code_padding` opts into measured horizontal code padding (Tau uses 3.432px = 0.3 × the production 11.44px code size). The default remains Base's 2px. The value travels through InlineFlow's typography/layout cache key and its wrapping, painting and intrinsic table measurements; text and selection offsets are untouched. The opt-in list renderer also gives Tau's nested ordered markers decimal numbers, matches the nested indent, and uses collapsed-list bottom/top spacing rather than Base's full paragraph gap. Unstyled views retain Base's ordered depth markers and block spacing. Rendered tests cover width/wrap/default geometry, select-all and pointer drag across code, and the existing list indent/spacing test.
+
+### `markdown-prose-measure.patch`
+
+`TextViewStyle::with_prose_max_width` limits only root paragraphs, lists, quotes, headings and horizontal rules, in both ordinary and virtual-list rendering. Nested children inherit their parent's available width; fenced code and tables retain the full message column. The default `None` leaves Base's root layout unchanged. Tau derives 80ch from eighty measured zero-glyph advances in its 13px bundled Inter face; WebKit's actual production CSS computes 80ch to 656.09375px against the 720px column. A rendered Base test checks narrower prose wrapping, unchanged wide structured content, unchanged selected text and the default setting. The patch is applied after the preceding 15 Base patches.
+
+### `fractional-text-leading.patch` (`gpui-pre` 0.3.7) and `fractional-leading-selection-test.patch` (Base)
+
+The independently verified `gpui-pre` archive has SHA-256 `0e87a42bb37c7cb4e76dd1ac0ce88851e46e976e0373a47ab3e0757abffee54d`. `TextStyleRefinement::fractional_line_height` defaults to false; only the plain-file `SelectableText` opts in via its existing `text_style` API. GPUI's `StyledText` layout and `TextStyle::line_height_in_pixels` retain their original snapping/rounding when unset, but use the exact 12px × 1.65 = 19.8px spacing for this run. The single resulting `TextLayout` drives paint, size, selection quads, point/index mapping, and scroll height. Highlighted `TextView` and all other product scenes keep their defaults.
+
+The Base patch adds only a rendered regression and a standalone-Cargo patch override for this third prepared crate. It verifies 300 hard lines: both default 20px and opted-in 19.8px row geometry at rows 1, 25, 100, 200, 299, bidirectional point/index mapping, and a real pointer selection through `SelectableText`. Base's published standalone test manifest must resolve the prepared GPUI core too; root-workspace builds use the prototype's root `[patch.crates-io]` instead. No registry source is modified.
 
 ### `antialiased-text.patch` (`gpui-pre-macos` 0.3.7)
 
@@ -106,7 +140,7 @@ For Tau's existing antialiasing opt-in, explicitly disable smoothing on non-emoj
 
 ## Validation and maintenance
 
-The combined patched Base library passed **1,250 upstream unit tests** locally, including the twenty-five added tests. These use Base's test platform; they do not replace the native Metal and browser harness tests.
+The combined patched Base library passed **1,262 upstream unit tests** locally, including the fractional-leading rendered regression, after all three crates were prepared. These use Base's test platform; they do not replace the native Metal and browser harness tests.
 
 Optional upstream check, after preparation, from the repository root:
 

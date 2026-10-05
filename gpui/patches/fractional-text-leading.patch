@@ -1,0 +1,60 @@
+diff --git a/src/elements/text.rs b/src/elements/text.rs
+index d1896ad..b60a6b5 100644
+--- a/src/elements/text.rs
++++ b/src/elements/text.rs
+@@ -640,11 +640,14 @@ impl TextLayout {
+     ) -> LayoutId {
+         let text_style = window.text_style();
+         let font_size = text_style.font_size.to_pixels(window.rem_size());
+-        let line_height = window.pixel_snap(
+-            text_style
+-                .line_height
+-                .to_pixels(font_size.into(), window.rem_size()),
+-        );
++        let raw_line_height = text_style
++            .line_height
++            .to_pixels(font_size.into(), window.rem_size());
++        let line_height = if text_style.fractional_line_height {
++            raw_line_height
++        } else {
++            window.pixel_snap(raw_line_height)
++        };
+ 
+         let runs = if let Some(runs) = runs {
+             runs
+diff --git a/src/style.rs b/src/style.rs
+index 9150fdd..ee94ed8 100644
+--- a/src/style.rs
++++ b/src/style.rs
+@@ -454,6 +454,9 @@ pub struct TextStyle {
+     /// The line height to use, in pixels or fractions
+     pub line_height: DefiniteLength,
+ 
++    /// Keep fractional line spacing instead of rounding to logical pixels.
++    pub fractional_line_height: bool,
++
+     /// The font weight, e.g. bold
+     pub font_weight: FontWeight,
+ 
+@@ -492,6 +495,7 @@ impl Default for TextStyle {
+             font_fallbacks: None,
+             font_size: rems(1.).into(),
+             line_height: phi(),
++            fractional_line_height: false,
+             font_weight: FontWeight::default(),
+             font_style: FontStyle::default(),
+             background_color: None,
+@@ -552,7 +556,12 @@ impl TextStyle {
+ 
+     /// Returns the rounded line height in pixels.
+     pub fn line_height_in_pixels(&self, rem_size: Pixels) -> Pixels {
+-        self.line_height.to_pixels(self.font_size, rem_size).round()
++        let height = self.line_height.to_pixels(self.font_size, rem_size);
++        if self.fractional_line_height {
++            height
++        } else {
++            height.round()
++        }
+     }
+ 
+     /// Convert this text style into a [`TextRun`], for the given length of the text.

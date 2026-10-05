@@ -16,10 +16,11 @@ gpui_macos = { package = "gpui-pre-macos", version = "=0.3.7", features = ["font
 
 [patch.crates-io]
 gpui-base = { path = ".cache/crates/gpui-base" }
+gpui-pre = { path = ".cache/crates/gpui-pre" }
 gpui-pre-macos = { path = ".cache/crates/gpui-pre-macos" }
 
 [profile.dev]
 debug = 1
 
 [workspace]
-exclude = [".cache/crates/gpui-base", ".cache/crates/gpui-pre-macos"]
+exclude = [".cache/crates/gpui-base", ".cache/crates/gpui-pre", ".cache/crates/gpui-pre-macos"]

@@ -1,0 +1,249 @@
+--- a/src/text/style.rs
++++ b/src/text/style.rs
+@@ -22,6 +22,7 @@
+     strong_weight: Option<FontWeight>,
+     list_style: Option<(gpui::Pixels, gpui::Pixels, Hsla)>,
+     inline_code_padding: Option<gpui::Pixels>,
++    prose_max_width: Option<gpui::Pixels>,
+     heading: Arc<dyn Fn(u8) -> StyleRefinement + Send + Sync + 'static>,
+     code_block: StyleRefinement,
+     code_block_horizontal_scroll: bool,
+@@ -40,6 +41,7 @@
+         self.strong_weight == other.strong_weight
+             && self.list_style == other.list_style
+             && self.inline_code_padding == other.inline_code_padding
++            && self.prose_max_width == other.prose_max_width
+             && self.paragraph_gap == other.paragraph_gap
+             && self.foreground == other.foreground
+             && self.muted_foreground == other.muted_foreground
+@@ -93,6 +95,7 @@
+             strong_weight: None,
+             list_style: None,
+             inline_code_padding: None,
++            prose_max_width: None,
+             heading: Arc::new(|_| StyleRefinement::default()),
+             code_block: StyleRefinement::default(),
+             code_block_horizontal_scroll: false,
+@@ -183,6 +186,16 @@
+ 
+-    /// Sets horizontal padding on inline code without changing the source or selection.
+-    /// The default retains Base’s 2px padding.
++    /// Limits only top-level Markdown prose; structured code and tables retain the viewport.
++    pub fn with_prose_max_width(mut self, width: gpui::Pixels) -> Self {
++        self.prose_max_width = Some(width.max(gpui::Pixels::ZERO));
++        self
++    }
++
++    pub fn prose_max_width(&self) -> Option<gpui::Pixels> {
++        self.prose_max_width
++    }
++
++    /// Sets horizontal padding on inline code without changing the source or selection.
++    /// The default retains Base’s 2px padding.
+     pub fn with_inline_code_padding(mut self, padding: gpui::Pixels) -> Self {
+         self.inline_code_padding = Some(padding.max(gpui::Pixels::ZERO));
+         self
+--- a/src/text/document.rs
++++ b/src/text/document.rs
+@@ -185,6 +185,34 @@
+             .map(|child| child.to_markdown())
+             .collect::<Vec<_>>()
+             .join("\n\n")
++    }
++
++    fn render_top_level(
++        node: &BlockNode,
++        options: NodeRenderOptions,
++        node_cx: &NodeContext,
++        window: &mut Window,
++        cx: &mut App,
++    ) -> gpui::AnyElement {
++        let rendered = node.render_block(options, node_cx, window, cx);
++        if let Some(width) = node_cx.style.prose_max_width().filter(|_| {
++            matches!(
++                node,
++                BlockNode::Paragraph(_)
++                    | BlockNode::Heading { .. }
++                    | BlockNode::List { .. }
++                    | BlockNode::Blockquote { .. }
++                    | BlockNode::HorizontalRule { .. }
++            )
++        }) {
++            div()
++                .w_full()
++                .max_w(width)
++                .child(rendered)
++                .into_any_element()
++        } else {
++            rendered
++        }
+     }
+ 
+     pub(super) fn render_root(
+@@ -202,7 +230,8 @@
+                     .blocks
+                     .get(ix + 1)
+                     .is_some_and(|next| matches!(next, BlockNode::Paragraph(_)));
+-                node.render_block(
++                Self::render_top_level(
++                    node,
+                     NodeRenderOptions {
+                         ix,
+                         is_last,
+@@ -235,19 +264,18 @@
+                     let following_paragraph = blocks
+                         .get(ix + 1)
+                         .is_some_and(|next| matches!(next, BlockNode::Paragraph(_)));
+-                    blocks[ix]
+-                        .render_block(
+-                            NodeRenderOptions {
+-                                ix,
+-                                is_last,
+-                                following_paragraph,
+-                                ..options
+-                            },
+-                            &node_cx,
+-                            window,
+-                            cx,
+-                        )
+-                        .into_any_element()
++                    Self::render_top_level(
++                        &blocks[ix],
++                        NodeRenderOptions {
++                            ix,
++                            is_last,
++                            following_paragraph,
++                            ..options
++                        },
++                        &node_cx,
++                        window,
++                        cx,
++                    )
+                 }
+             })
+             .size_full(),
+--- a/src/text/text_view.rs
++++ b/src/text/text_view.rs
+@@ -2693,6 +2693,122 @@
+         });
+         let selected = root.read_with(cx, |root, cx| root.text.read(cx).selected_text());
+         assert_eq!(selected.trim(), "before code after");
++    }
++
++    #[test]
++    fn prose_measure_limits_root_only_and_retains_selection() {
++        use gpui::TestApp;
++
++        const PROSE: &str = "A sequence of words repeats until the paragraph wraps at the readable measure: alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega.";
++        const FENCE: &str = "```text\na rather long code line with many words to occupy the available viewport width\n```";
++        const TABLE: &str = "| Key | Description |\n| --- | --- |\n| Alpha | long content that should not lose its table viewport |";
++        struct Root {
++            plain: Entity<TextViewState>,
++            measured: Entity<TextViewState>,
++            fence_plain: Entity<TextViewState>,
++            fence_measured: Entity<TextViewState>,
++            table_plain: Entity<TextViewState>,
++            table_measured: Entity<TextViewState>,
++        }
++        impl Render for Root {
++            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++                let measured = TextViewStyle::default().with_prose_max_width(px(175.));
++                div()
++                    .w(px(410.))
++                    .text_size(px(13.))
++                    .child(crate::TextSelectionLayer)
++                    .child(TextView::new(&self.plain).selectable(true))
++                    .child(
++                        TextView::new(&self.measured)
++                            .selectable(true)
++                            .style(measured.clone()),
++                    )
++                    .child(TextView::new(&self.fence_plain).selectable(true))
++                    .child(
++                        TextView::new(&self.fence_measured)
++                            .selectable(true)
++                            .style(measured.clone()),
++                    )
++                    .child(TextView::new(&self.table_plain).selectable(true))
++                    .child(
++                        TextView::new(&self.table_measured)
++                            .selectable(true)
++                            .style(measured),
++                    )
++            }
++        }
++        assert_eq!(TextViewStyle::default().prose_max_width(), None);
++        assert!(
++            TextViewStyle::default() != TextViewStyle::default().with_prose_max_width(px(175.))
++        );
++        let mut app = TestApp::new();
++        app.update(crate::init);
++        let mut window = app.open_window(|_, cx| Root {
++            plain: cx.new(|cx| TextViewState::markdown(PROSE, cx)),
++            measured: cx.new(|cx| TextViewState::markdown(PROSE, cx)),
++            fence_plain: cx.new(|cx| TextViewState::markdown(FENCE, cx)),
++            fence_measured: cx.new(|cx| TextViewState::markdown(FENCE, cx)),
++            table_plain: cx.new(|cx| TextViewState::markdown(TABLE, cx)),
++            table_measured: cx.new(|cx| TextViewState::markdown(TABLE, cx)),
++        });
++        window.draw();
++        app.run_until_parked();
++        window.draw();
++        window.read(|root, cx| {
++            let lines =
++                |view: &Entity<TextViewState>| view.read(cx).selection_adapter.text_bounds();
++            let plain = lines(&root.plain);
++            let measured = lines(&root.measured);
++            assert!(measured.len() > plain.len(), "root prose must wrap sooner");
++            assert!(
++                measured
++                    .iter()
++                    .filter(|bounds| bounds.size.width <= px(175.))
++                    .count()
++                    >= 9
++            );
++            for (name, default, opted) in [
++                ("fence", &root.fence_plain, &root.fence_measured),
++                ("table", &root.table_plain, &root.table_measured),
++            ] {
++                let default = lines(default);
++                let opted = lines(opted);
++                assert_eq!(default.len(), opted.len(), "{name} keeps its viewport");
++                assert!(
++                    opted.iter().any(|bounds| bounds.size.width > px(175.)),
++                    "{name} is wider than prose"
++                );
++            }
++        });
++        window.update(|root, _, cx| {
++            for view in [
++                &root.plain,
++                &root.measured,
++                &root.fence_plain,
++                &root.fence_measured,
++                &root.table_plain,
++                &root.table_measured,
++            ] {
++                view.update(cx, |state, cx| state.select_all(cx));
++            }
++        });
++        window.draw();
++        window.read(|root, cx| {
++            assert_eq!(
++                root.plain.read(cx).selected_text(),
++                root.measured.read(cx).selected_text()
++            );
++            for (default, opted) in [
++                (&root.fence_plain, &root.fence_measured),
++                (&root.table_plain, &root.table_measured),
++            ] {
++                assert_eq!(
++                    default.read(cx).selected_text(),
++                    opted.read(cx).selected_text()
++                );
++            }
++            assert!(root.measured.read(cx).selected_text().contains("omega"));
++        });
+     }
+ 
+     #[test]

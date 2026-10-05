@@ -1,0 +1,514 @@
+diff --git a/src/text/document.rs b/src/text/document.rs
+index 915c65a..6ff5dd5 100644
+--- a/src/text/document.rs
++++ b/src/text/document.rs
+@@ -28,6 +28,7 @@ pub(crate) struct NodeRenderOptions {
+     pub(crate) list_start: Option<u32>,
+     pub(crate) depth: usize,
+     pub(crate) is_last: bool,
++    pub(crate) following_paragraph: bool,
+ }
+ 
+ impl NodeRenderOptions {
+@@ -197,10 +198,15 @@ impl ParsedDocument {
+             let blocks_len = self.blocks.len();
+             return div().children(self.blocks.iter().enumerate().map(move |(ix, node)| {
+                 let is_last = ix + 1 == blocks_len;
++                let following_paragraph = self
++                    .blocks
++                    .get(ix + 1)
++                    .is_some_and(|next| matches!(next, BlockNode::Paragraph(_)));
+                 node.render_block(
+                     NodeRenderOptions {
+                         ix,
+                         is_last,
++                        following_paragraph,
+                         ..Default::default()
+                     },
+                     node_cx,
+@@ -226,11 +232,15 @@ impl ParsedDocument {
+                 let blocks = blocks.clone();
+                 move |ix, window, cx| {
+                     let is_last = ix + 1 == blocks.len();
++                    let following_paragraph = blocks
++                        .get(ix + 1)
++                        .is_some_and(|next| matches!(next, BlockNode::Paragraph(_)));
+                     blocks[ix]
+                         .render_block(
+                             NodeRenderOptions {
+                                 ix,
+                                 is_last,
++                                following_paragraph,
+                                 ..options
+                             },
+                             &node_cx,
+diff --git a/src/text/node.rs b/src/text/node.rs
+index 9044f7c..7b910db 100644
+--- a/src/text/node.rs
++++ b/src/text/node.rs
+@@ -4,6 +4,8 @@ use std::{
+     sync::{Arc, Mutex, OnceLock},
+ };
+ 
++#[cfg(feature = "test-support")]
++use crate::TestSupportExt;
+ use gpui::{
+     AnyElement, App, DefiniteLength, Div, ElementId, FontStyle, FontWeight, HighlightStyle, Hsla,
+     Image, ImageFormat, ImageSource, InteractiveElement as _, IntoElement, IsZero as _, Length,
+@@ -1954,7 +1956,11 @@ impl CodeBlock {
+                 block_element_id("code-viewport", self.span, options.ix),
+                 &scroll_handle,
+                 &StyleRefinement::default(),
+-                div().min_w_full().w(width + px(1.)).child(inline),
++                div()
++                    .min_w_full()
++                    .w(width + px(71.))
++                    .pr(px(70.))
++                    .child(inline),
+             )
+             .into_any_element()
+         } else {
+@@ -1963,6 +1969,7 @@ impl CodeBlock {
+         let block = div()
+             .w_full()
+             .min_w_0()
++            .group("markdown-code")
+             .p_3()
+             .bg(style.code_background())
+             .font_family(cx.theme().tokens.typography.mono.clone())
+@@ -1975,6 +1982,9 @@ impl CodeBlock {
+         let block = if style.code_block_horizontal_scroll() {
+             // Reserve the action's actual laid-out width rather than hiding
+             // the final code glyphs beneath an absolute overlay.
++            // The zero-height sibling reserves the actions' intrinsic width but
++            // cannot raise the code row's height. Its contents remain painted
++            // and hit-testable above the code viewport.
+             let row = div()
+                 .w_full()
+                 .min_w_0()
+@@ -1987,8 +1997,12 @@ impl CodeBlock {
+                     .child(
+                         div()
+                             .id("actions")
++                            .h(px(0.))
+                             .flex_none()
+                             .ml_2()
++                            .relative()
++                            .top(px(-6.))
++                            .left(px(7.))
+                             .bg(style.code_background())
+                             .rounded(cx.theme().tokens.radius.md)
+                             .child(actions(&self, window, cx)),
+@@ -2017,10 +2031,21 @@ impl CodeBlock {
+             }
+         };
+ 
++        #[cfg(feature = "test-support")]
++        let block = div()
++            .id(format!("code-{}", options.ix))
++            .test_support()
++            .child(block)
++            .into_any_element();
++
+         gapped(
+             block,
+             if options.is_last {
+                 rems(0.)
++            } else if options.following_paragraph {
++                style
++                    .code_block_paragraph_gap()
++                    .unwrap_or(style.paragraph_gap())
+             } else {
+                 style.paragraph_gap()
+             },
+@@ -2632,10 +2657,18 @@ fn measure_table_columns(
+     window: &mut Window,
+     cx: &mut App,
+ ) -> Vec<f32> {
+-    let text_style = window.text_style();
+-    let font_size = text_style.font_size.to_pixels(window.rem_size());
++    let css_cells = node_cx.style.table_css_cells();
+     let mut col_w = vec![CELL_MIN_PX; col_count];
+-    for row in table.children.iter() {
++    for (row_ix, row) in table.children.iter().enumerate() {
++        let mut text_style = window.text_style();
++        if css_cells {
++            text_style.refine(&node_cx.style.table().text);
++            text_style.refine(&node_cx.style.table_cell().text);
++            if row_ix == 0 {
++                text_style.refine(&node_cx.style.table_head().text);
++            }
++        }
++        let font_size = text_style.font_size.to_pixels(window.rem_size());
+         for (ix, cell) in row.children.iter().enumerate() {
+             let Some(slot) = col_w.get_mut(ix) else {
+                 continue;
+@@ -3148,8 +3181,15 @@ impl BlockNode {
+         const CELL_WRAP_MAX_PX: f32 = 480.0;
+         const TABLE_BORDER_PX: f32 = 2.0; // the track's border_1, left + right
+ 
+-        let col_w = measure_table_columns(table, col_count, node_cx, window, cx);
+         let style = &node_cx.style;
++        let mut col_w = measure_table_columns(table, col_count, node_cx, window, cx);
++        if style.table_css_cells() {
++            // Base's width already includes 8px per side and an internal rule.
++            // CSS cells use 12px per side and no vertical rules.
++            for (ix, width) in col_w.iter_mut().enumerate() {
++                *width += if ix + 1 < col_count { 7. } else { 8. };
++            }
++        }
+         // Nowrap cells (via the `table_cell` refinement, which cascades to
+         // the cell text) must never shrink below their single-line content,
+         // so their floor is the content width itself.
+@@ -3207,10 +3247,14 @@ impl BlockNode {
+                         .when(align == ColumnumnAlign::Right, |this| this.text_right())
+                         .px_2()
+                         .py_1()
+-                        .when(!is_last_col, |this| {
++                        .when(style.table_css_cells(), |this| this.px(px(12.)))
++                        .when(!is_last_col && !style.table_css_cells(), |this| {
+                             this.border_r_1().border_color(style.border())
+                         })
+                         .refine_style(&style.table_cell())
++                        .when(cfg!(test) && style.table_css_cells(), |this| {
++                            this.debug_selector(move || format!("css-cell-{row_ix}-{ix}").into())
++                        })
+                         .child(cell.children.render(fade_key, node_cx, window, cx)),
+                 );
+             }
+@@ -3236,6 +3280,12 @@ impl BlockNode {
+         div()
+             .pb(rems(1.))
+             .w_full()
++            // `col_w` already includes each cell's px_2 padding and its
++            // right border; only the viewport's two border_1 edges remain.
++            .when(style.table_fit_content(), |this| {
++                this.w(px(col_w.iter().sum::<f32>() + TABLE_BORDER_PX))
++                    .max_w_full()
++            })
+             .child(
+                 // Scroll viewport owns the visible frame, including any
+                 // caller-provided radius. Keeping the border here makes the
+diff --git a/src/text/style.rs b/src/text/style.rs
+index 603d126..2088b21 100644
+--- a/src/text/style.rs
++++ b/src/text/style.rs
+@@ -22,6 +22,9 @@ pub struct TextViewStyle {
+     heading: Arc<dyn Fn(u8) -> StyleRefinement + Send + Sync + 'static>,
+     code_block: StyleRefinement,
+     code_block_horizontal_scroll: bool,
++    code_block_paragraph_gap: Option<Rems>,
++    table_fit_content: bool,
++    table_css_cells: bool,
+     table: StyleRefinement,
+     table_head: StyleRefinement,
+     table_cell: StyleRefinement,
+@@ -41,6 +44,9 @@ impl PartialEq for TextViewStyle {
+             && (1..=6).all(|level| (self.heading)(level) == (other.heading)(level))
+             && self.code_block == other.code_block
+             && self.code_block_horizontal_scroll == other.code_block_horizontal_scroll
++            && self.code_block_paragraph_gap == other.code_block_paragraph_gap
++            && self.table_fit_content == other.table_fit_content
++            && self.table_css_cells == other.table_css_cells
+             && self.table == other.table
+             && self.table_head == other.table_head
+             && self.table_cell == other.table_cell
+@@ -81,6 +87,9 @@ impl TextViewStyle {
+             heading: Arc::new(|_| StyleRefinement::default()),
+             code_block: StyleRefinement::default(),
+             code_block_horizontal_scroll: false,
++            code_block_paragraph_gap: None,
++            table_fit_content: false,
++            table_css_cells: false,
+             table: StyleRefinement::default(),
+             table_head: StyleRefinement::default(),
+             table_cell: StyleRefinement::default(),
+@@ -173,6 +182,41 @@ impl TextViewStyle {
+         self
+     }
+ 
++    /// Overrides the trailing gap of a code block only when a paragraph follows.
++    /// The default keeps Base's regular block gap.
++    pub fn with_code_block_paragraph_gap(mut self, gap: Rems) -> Self {
++        self.code_block_paragraph_gap = Some(gap);
++        self
++    }
++
++    pub fn code_block_paragraph_gap(&self) -> Option<Rems> {
++        self.code_block_paragraph_gap
++    }
++
++    /// Opts scrollable tables into a natural-width viewport when their measured
++    /// columns fit; otherwise the viewport stays bounded by its parent.
++    /// Has no effect on the default wrapping table layout.
++    pub fn with_table_fit_content(mut self, enabled: bool) -> Self {
++        self.table_fit_content = enabled;
++        self
++    }
++
++    /// Whether scrollable tables use a natural-width viewport.
++    pub fn table_fit_content(&self) -> bool {
++        self.table_fit_content
++    }
++
++    /// Uses CSS-style 12px horizontal padding and horizontal-only row rules in
++    /// scrollable tables. The default grid retains Base's cell metrics and rules.
++    pub fn with_table_css_cells(mut self, enabled: bool) -> Self {
++        self.table_css_cells = enabled;
++        self
++    }
++
++    pub fn table_css_cells(&self) -> bool {
++        self.table_css_cells
++    }
++
+     /// Sets the style refinement for the table container (the bordered wrapper
+     /// in wrap mode, the scroll viewport in horizontal-scroll mode).
+     ///
+diff --git a/src/text/text_view.rs b/src/text/text_view.rs
+index e6ca4f9..43d6cf3 100644
+--- a/src/text/text_view.rs
++++ b/src/text/text_view.rs
+@@ -1808,6 +1808,242 @@ mod tests {
+         );
+     }
+ 
++    #[gpui::test]
++    fn scroll_table_fit_content_is_opt_in_and_bounded(cx: &mut TestAppContext) {
++        struct TableWidthRoot {
++            fit: bool,
++            scroll: bool,
++            content: &'static str,
++        }
++        impl Render for TableWidthRoot {
++            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++                let mut table = StyleRefinement::default();
++                if self.scroll {
++                    table.overflow.x = Some(Overflow::Scroll);
++                }
++                div().w(px(320.)).child(
++                    TextView::markdown("table-width", self.content)
++                        .style(
++                            TextViewStyle::default()
++                                .with_table(table)
++                                .with_table_fit_content(self.fit),
++                        )
++                        .table_actions(|_, _, _| {
++                            div()
++                                .w_full()
++                                .debug_selector(|| "table-width-action".into())
++                                .child("Copy")
++                        }),
++                )
++            }
++        }
++        let measure = |cx: &mut TestAppContext, scroll, fit, content| {
++            cx.update(crate::init);
++            let (_, window) = cx.add_window_view(move |_, _| TableWidthRoot {
++                fit,
++                scroll,
++                content,
++            });
++            let window: &mut VisualTestContext = window;
++            window.run_until_parked();
++            window.update(|window, cx| {
++                let _ = window.draw(cx);
++            });
++            window
++                .debug_bounds("table-width-action")
++                .unwrap()
++                .size
++                .width
++        };
++        let short = "| A | B |\n|---|---|\n| a | b |";
++        let long =
++            "| A | B |\n|---|---|\n| abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ | b |";
++        assert_eq!(measure(cx, false, false, short), px(320.));
++        assert_eq!(
++            measure(cx, false, true, short),
++            px(320.),
++            "wrap tables ignore fit-content"
++        );
++        let default_short = measure(cx, true, false, short);
++        let default_long = measure(cx, true, false, long);
++        let fitted_short = measure(cx, true, true, short);
++        let fitted_long = measure(cx, true, true, long);
++        assert_eq!(default_short, px(320.));
++        assert_eq!(
++            default_long, default_short,
++            "default scroll table still fills the frame"
++        );
++        assert!(
++            fitted_short < default_short,
++            "short content should fit naturally: {fitted_short:?}"
++        );
++        assert!(
++            fitted_short > px(90.),
++            "cell padding and borders must be included: {fitted_short:?}"
++        );
++        assert_eq!(
++            fitted_long, default_long,
++            "wide content must remain inside the viewport"
++        );
++    }
++
++    #[gpui::test]
++    fn css_table_cells_align_without_vertical_rules(cx: &mut TestAppContext) {
++        struct CssTable;
++        impl Render for CssTable {
++            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++                let mut table = StyleRefinement::default();
++                table.overflow.x = Some(Overflow::Scroll);
++                div().w(px(320.)).child(
++                    TextView::markdown("css-cells", "| File | Change | Status |\n|---|---|---|\n| src/App.vue | Updated | Ready |\n| src/main.ts | Added | Review |")
++                        .style(TextViewStyle::default().with_table(table)
++                            .with_table_fit_content(true).with_table_css_cells(true)),
++                )
++            }
++        }
++        cx.update(crate::init);
++        let (_, window) = cx.add_window_view(|_, _| CssTable);
++        let window: &mut VisualTestContext = window;
++        window.run_until_parked();
++        window.update(|window, cx| {
++            let _ = window.draw(cx);
++        });
++        let names = [
++            ["css-cell-0-0", "css-cell-0-1", "css-cell-0-2"],
++            ["css-cell-1-0", "css-cell-1-1", "css-cell-1-2"],
++        ];
++        let mut cell = |row: usize, col: usize| window.debug_bounds(names[row][col]).unwrap();
++        for col in 0..3 {
++            let header = cell(0, col);
++            let body = cell(1, col);
++            assert_eq!(header.left(), body.left(), "column {col} left edge");
++            assert_eq!(header.right(), body.right(), "column {col} right edge");
++            if col < 2 {
++                assert_eq!(header.right(), cell(0, col + 1).left());
++            }
++        }
++        assert!(cell(0, 2).right() <= px(320.));
++        assert!(
++            cell(0, 0).size.width > px(70.),
++            "CSS cell padding is included"
++        );
++    }
++
++    #[gpui::test]
++    fn code_action_height_does_not_push_following_block(cx: &mut TestAppContext) {
++        struct CodeHeight {
++            tall: bool,
++        }
++        impl Render for CodeHeight {
++            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++                let tall = self.tall;
++                div().w(px(320.)).child(
++                    TextView::markdown(
++                        "code-action-height",
++                        "```rust\nfirst\n```\n\n```bash\nsecond\n```",
++                    )
++                    .style(TextViewStyle::default().with_code_block_horizontal_scroll(true))
++                    .code_block_actions(move |block, _, _| {
++                        let selector = if block.code().contains("first") {
++                            "first-action"
++                        } else {
++                            "second-action"
++                        };
++                        div()
++                            .debug_selector(move || selector.into())
++                            .h(px(if tall { 80. } else { 12. }))
++                            .w(px(20.))
++                    }),
++                )
++            }
++        }
++        let mut positions = vec![];
++        for tall in [false, true] {
++            cx.update(crate::init);
++            let (_, window) = cx.add_window_view(move |_, _| CodeHeight { tall });
++            let window: &mut VisualTestContext = window;
++            window.run_until_parked();
++            window.update(|window, cx| {
++                let _ = window.draw(cx);
++            });
++            let first = window.debug_bounds("first-action").unwrap();
++            let second = window.debug_bounds("second-action").unwrap();
++            assert!(first.right() <= px(320.));
++            assert!(second.top() > first.top());
++            positions.push((first.top(), second.top()));
++        }
++        assert_eq!(
++            positions[0], positions[1],
++            "overlay action must not change either code block's placement"
++        );
++    }
++
++    #[gpui::test]
++    fn code_hover_is_scoped_to_each_block(cx: &mut TestAppContext) {
++        struct HoverRoot;
++        impl Render for HoverRoot {
++            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++                div().w(px(320.)).child(
++                    TextView::markdown("hover-blocks", "```\nfirst\n```\n\n```\nsecond\n```")
++                        .code_block_actions(move |block, _, _| {
++                            let selector = if block.code().contains("first") {
++                                "first-hover"
++                            } else {
++                                "second-hover"
++                            };
++                            div()
++                                .id("hover-indicator")
++                                .w(px(12.))
++                                .h(px(12.))
++                                .debug_selector(move || selector.into())
++                                .group_hover("markdown-code", |this| this.w(px(24.)))
++                        }),
++                )
++            }
++        }
++        cx.update(crate::init);
++        let (_, window) = cx.add_window_view(|_, _| HoverRoot);
++        let window: &mut VisualTestContext = window;
++        window.run_until_parked();
++        let bounds = |window: &mut VisualTestContext| {
++            window.update(|window, cx| {
++                let _ = window.draw(cx);
++            });
++            (
++                window.debug_bounds("first-hover").unwrap(),
++                window.debug_bounds("second-hover").unwrap(),
++            )
++        };
++        let (first, second) = bounds(window);
++        assert_eq!(first.size.width, px(12.));
++        assert_eq!(second.size.width, px(12.));
++        #[cfg(feature = "test-support")]
++        window.update(|window, _| {
++            let code = |ix| {
++                crate::test_support::find(window, &[], &format!("code-{ix}").into())
++                    .expect("each code block should expose its own observed bounds")
++                    .bounds()
++            };
++            let first_block = code(0);
++            let second_block = code(1);
++            assert!(first_block.contains(&first.center()));
++            assert!(second_block.contains(&second.center()));
++            assert!(!first_block.contains(&second.center()));
++        });
++        window.simulate_mouse_move(first.center(), None, Modifiers::default());
++        let (hovered, other) = bounds(window);
++        assert_eq!(hovered.size.width, px(24.));
++        assert_eq!(
++            other.size.width,
++            px(12.),
++            "hover must not activate another code block"
++        );
++        window.simulate_mouse_move(second.center(), None, Modifiers::default());
++        let (other, hovered) = bounds(window);
++        assert_eq!(other.size.width, px(12.));
++        assert_eq!(hovered.size.width, px(24.));
++    }
++
+     #[test]
+     fn plugin_accepts_text_view_plugins_beyond_markdown() {
+         let view = TextView::markdown("plugin-test", "").plugin(DummyTextViewPlugin);

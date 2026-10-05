@@ -1,0 +1,171 @@
+diff --git a/src/text/style.rs b/src/text/style.rs
+index 5c191cf..ac57215 100644
+--- a/src/text/style.rs
++++ b/src/text/style.rs
+@@ -20,6 +20,7 @@ pub struct TextViewStyle {
+     border: Hsla,
+     paragraph_gap: Rems,
+     strong_weight: Option<FontWeight>,
++    list_style: Option<(gpui::Pixels, gpui::Pixels, Hsla)>,
+     heading: Arc<dyn Fn(u8) -> StyleRefinement + Send + Sync + 'static>,
+     code_block: StyleRefinement,
+     code_block_horizontal_scroll: bool,
+@@ -36,6 +37,7 @@ pub struct TextViewStyle {
+ impl PartialEq for TextViewStyle {
+     fn eq(&self, other: &Self) -> bool {
+         self.strong_weight == other.strong_weight
++            && self.list_style == other.list_style
+             && self.paragraph_gap == other.paragraph_gap
+             && self.foreground == other.foreground
+             && self.muted_foreground == other.muted_foreground
+@@ -87,6 +89,7 @@ impl TextViewStyle {
+             border: colors.border,
+             paragraph_gap: rems(1.),
+             strong_weight: None,
++            list_style: None,
+             heading: Arc::new(|_| StyleRefinement::default()),
+             code_block: StyleRefinement::default(),
+             code_block_horizontal_scroll: false,
+@@ -159,6 +162,22 @@ impl TextViewStyle {
+         self.strong_weight
+     }
+ 
++    /// Opts lists into a marker column width, spacing between items and marker color.
++    /// Without this, Base retains its original inline prefix and compact rows.
++    pub fn with_list_style(
++        mut self,
++        indent: gpui::Pixels,
++        gap: gpui::Pixels,
++        marker: Hsla,
++    ) -> Self {
++        self.list_style = Some((indent, gap, marker));
++        self
++    }
++
++    pub fn list_style(&self) -> Option<(gpui::Pixels, gpui::Pixels, Hsla)> {
++        self.list_style
++    }
++
+     /// Sets the style refinement for headings, selected by heading level (1-6).
+     pub fn with_heading<F>(mut self, heading: F) -> Self
+     where
+diff --git a/src/text/node.rs b/src/text/node.rs
+index c0ac7ae..98efd82 100644
+--- a/src/text/node.rs
++++ b/src/text/node.rs
+@@ -2929,12 +2929,13 @@ impl BlockNode {
+             .items_start()
+             .content_start()
+             .when(!options.todo && checked.is_none(), |this| {
+-                this.child(list_item_prefix(
+-                    ix,
+-                    options.list_start,
+-                    options.ordered,
+-                    options.depth,
+-                ))
++                let prefix =
++                    list_item_prefix(ix, options.list_start, options.ordered, options.depth);
++                if let Some((indent, _, marker)) = style.list_style() {
++                    this.child(div().w(indent).flex_none().text_color(marker).child(prefix))
++                } else {
++                    this.child(prefix)
++                }
+             })
+             .when_some(checked, |this, checked| {
+                 // Todo list checkbox
+@@ -3513,7 +3514,7 @@ impl BlockNode {
+                     for (ix, item) in children.into_iter().enumerate() {
+                         let is_item = item.is_list_item();
+ 
+-                        items.push(Self::render_list_item(
++                        let row = Self::render_list_item(
+                             item,
+                             item_index,
+                             NodeRenderOptions {
+@@ -3525,7 +3526,16 @@ impl BlockNode {
+                             node_cx,
+                             window,
+                             cx,
+-                        ));
++                        );
++                        items.push(if is_item && item_index > 0 {
++                            if let Some((_, gap, _)) = node_cx.style.list_style() {
++                                div().mt(gap).child(row).into_any_element()
++                            } else {
++                                row
++                            }
++                        } else {
++                            row
++                        });
+ 
+                         if is_item {
+                             item_index += 1;
+diff --git a/src/text/text_view.rs b/src/text/text_view.rs
+index 43d6cf3..a1272e4 100644
+--- a/src/text/text_view.rs
++++ b/src/text/text_view.rs
+@@ -2647,6 +2647,64 @@ mod tests {
+         }
+     }
+ 
++    #[test]
++    fn opt_in_list_style_changes_rendered_indent_and_item_spacing_only() {
++        use gpui::TestApp;
++
++        struct ListRoot {
++            original: Entity<TextViewState>,
++            styled: Entity<TextViewState>,
++        }
++        impl Render for ListRoot {
++            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++                div()
++                    .w(px(300.))
++                    .text_size(px(11.))
++                    .child(crate::TextSelectionLayer)
++                    .child(TextView::new(&self.original).selectable(true))
++                    .child(TextView::new(&self.styled).selectable(true).style(
++                        TextViewStyle::default().with_list_style(
++                            px(17.),
++                            px(5.),
++                            gpui::rgb(0xa1a8b2).into(),
++                        ),
++                    ))
++            }
++        }
++
++        let mut app = TestApp::new();
++        app.update(crate::init);
++        let mut window = app.open_window(|_, cx| ListRoot {
++            original: cx.new(|cx| TextViewState::markdown("- One\n- Two", cx)),
++            styled: cx.new(|cx| TextViewState::markdown("- One\n- Two", cx)),
++        });
++        window.draw();
++        app.run_until_parked();
++        window.draw();
++        window.read(|root, cx| {
++            let rows = |view: &Entity<TextViewState>| {
++                let view = view.read(cx);
++                let bounds = view.bounds();
++                view.selection_adapter
++                    .text_bounds()
++                    .into_iter()
++                    .map(|line| (line.left() - bounds.left(), line.top() - bounds.top()))
++                    .collect::<Vec<_>>()
++            };
++            let original = rows(&root.original);
++            let styled = rows(&root.styled);
++            assert_eq!(original.len(), 2);
++            assert_eq!(styled.len(), 2);
++            assert_eq!(styled[0].0 - original[0].0, px(17.) - original[0].0);
++            assert_eq!(styled[1].0, styled[0].0);
++            assert_eq!(
++                styled[1].1 - styled[0].1,
++                original[1].1 - original[0].1 + px(5.)
++            );
++            assert_eq!(TextViewStyle::default().list_style(), None);
++        });
++    }
++
+     /// The code-bearing list item takes `InlineFlow`; the plain item takes the
+     /// ordinary text path. Their first body glyphs must begin at the same row
+     /// position relative to their own TextView origins.
