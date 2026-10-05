@@ -24,3 +24,8 @@ debug = 1
 
 [workspace]
 exclude = [".cache/crates/gpui-base", ".cache/crates/gpui-pre", ".cache/crates/gpui-pre-macos"]
+
+[[test]]
+name = "activity-paint"
+path = "tests/activity.rs"
+harness = false

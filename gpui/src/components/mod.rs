@@ -1,3 +1,4 @@
+pub mod activity;
 pub mod composer;
 pub mod dialogs;
 pub mod files;
