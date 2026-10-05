@@ -1,4 +1,5 @@
 pub mod font;
+pub mod markdown;
 pub mod support;
 pub mod syntax;
 
