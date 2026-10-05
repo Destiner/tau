@@ -5,6 +5,7 @@ pub mod markdown;
 pub mod menus;
 pub mod models;
 pub mod palette;
+pub mod queue;
 pub mod support;
 pub mod syntax;
 
