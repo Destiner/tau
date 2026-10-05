@@ -2,6 +2,7 @@ pub mod dialogs;
 pub mod font;
 pub mod markdown;
 pub mod menus;
+pub mod models;
 pub mod support;
 pub mod syntax;
 
