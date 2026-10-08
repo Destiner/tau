@@ -37,6 +37,7 @@ pub enum PaletteEvent {
 }
 
 pub struct Palette {
+    editor_style: gpui_kit::base::input::InputEditorStyle,
     dark: bool,
     open: bool,
     pages: Vec<PalettePage>,
@@ -47,6 +48,35 @@ pub struct Palette {
 }
 impl gpui_kit::EventEmitter<PaletteEvent> for Palette {}
 impl Palette {
+    pub fn set_theme(&mut self, dark: bool, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.dark == dark {
+            return;
+        }
+        // Palette placeholders use muted rather than faint ink.
+        let muted = rgb(support::tokens(self.dark).muted).into();
+        if self.editor_style.muted_foreground == muted {
+            self.editor_style.muted_foreground = rgb(support::tokens(dark).muted).into();
+        }
+        super::composer::retheme_input_style(&mut self.editor_style, self.dark, dark);
+        self.dark = dark;
+        self.search.update(cx, |editor, cx| {
+            editor.set_editor_style(self.editor_style.clone());
+            cx.notify();
+        });
+        cx.notify();
+    }
+
+    pub fn set_editor_style(
+        &mut self,
+        style: gpui_kit::base::input::InputEditorStyle,
+        cx: &mut Context<Self>,
+    ) {
+        self.editor_style = style.clone();
+        self.search.update(cx, |editor, cx| {
+            editor.set_editor_style(style);
+            cx.notify();
+        });
+    }
     pub fn new(
         dark: bool,
         pages: Vec<PalettePage>,
@@ -79,6 +109,10 @@ impl Palette {
         .detach();
         let selected = (!pages[0].items.is_empty()).then_some(0);
         Self {
+            editor_style: gpui_kit::base::input::InputEditorStyle {
+                muted_foreground: rgb(support::tokens(dark).muted).into(),
+                ..support::input_style(dark)
+            },
             dark,
             open: false,
             pages,
@@ -137,8 +171,16 @@ impl Palette {
         pages
     }
     pub fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_page(&self.pages[0].id.clone(), window, cx);
+    }
+    /// Open a host-supplied page without changing which page is the root.
+    pub fn open_page(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.open = true;
-        self.page = 0;
+        self.page = self
+            .pages
+            .iter()
+            .position(|page| page.id == id)
+            .unwrap_or(0);
         self.reset_search(window, cx);
     }
     pub fn dismiss(&mut self, cx: &mut Context<Self>) {

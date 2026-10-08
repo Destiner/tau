@@ -31,6 +31,7 @@ pub enum Event {
 impl gpui_kit::EventEmitter<Event> for ModelSelector {}
 
 pub struct ModelSelector {
+    editor_style: gpui_kit::base::input::InputEditorStyle,
     options: Vec<ModelOption>,
     dark: bool,
     open: bool,
@@ -41,6 +42,30 @@ pub struct ModelSelector {
     trigger_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
 }
 impl ModelSelector {
+    pub fn set_theme(&mut self, dark: bool, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.dark == dark {
+            return;
+        }
+        super::composer::retheme_input_style(&mut self.editor_style, self.dark, dark);
+        self.dark = dark;
+        self.search.update(cx, |editor, cx| {
+            editor.set_editor_style(self.editor_style.clone());
+            cx.notify();
+        });
+        cx.notify();
+    }
+
+    pub fn set_editor_style(
+        &mut self,
+        style: gpui_kit::base::input::InputEditorStyle,
+        cx: &mut Context<Self>,
+    ) {
+        self.editor_style = style.clone();
+        self.search.update(cx, |editor, cx| {
+            editor.set_editor_style(style);
+            cx.notify();
+        });
+    }
     fn visible(&self) -> Vec<usize> {
         let q = self.query.trim().to_lowercase();
         (0..self.options.len())
@@ -262,6 +287,7 @@ impl ModelSelector {
         })
         .detach();
         Self {
+            editor_style: support::input_style(dark),
             options,
             dark,
             open: false,

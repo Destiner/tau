@@ -1,12 +1,12 @@
 //! Native anchored and context menus.
 use super::support;
 use gpui_kit::{
-    Anchor, Bounds, Context, FocusHandle, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
-    Pixels, Render, Window,
-    base::{Button, ElementExt, Popup, TestSupportExt},
-    div,
+    Anchor, Bounds, BoxShadow, Context, FocusHandle, IntoElement, KeyDownEvent, MouseButton,
+    MouseDownEvent, Pixels, Point, Render, WeakFocusHandle, Window,
+    base::{Align, Button, ElementExt, Placement, Popup, Positioner, TestSupportExt},
+    deferred, div,
     prelude::*,
-    px, rgb,
+    px, rgb, rgba, size,
 };
 use std::{cell::Cell, rc::Rc};
 
@@ -28,6 +28,10 @@ pub enum MenuEvent {
 pub struct Menu {
     dark: bool,
     context: bool,
+    triggerless: bool,
+    min_width: Pixels,
+    origin: Option<WeakFocusHandle>,
+    pointer: Point<Pixels>,
     trigger_label: String,
     context_position: (f32, f32),
     root_origin: Rc<Cell<(f32, f32)>>,
@@ -44,6 +48,10 @@ impl Menu {
         Self {
             dark,
             context,
+            triggerless: false,
+            min_width: px(152.),
+            origin: None,
+            pointer: Point::default(),
             trigger_label: String::new(),
             context_position: (0., 0.),
             root_origin: Rc::new(Cell::new((0., 0.))),
@@ -53,6 +61,41 @@ impl Menu {
             selected: None,
             focus: cx.focus_handle(),
             menu_focus: cx.focus_handle(),
+        }
+    }
+    pub fn set_theme(&mut self, dark: bool, _: &mut Window, cx: &mut Context<Self>) {
+        self.dark = dark;
+        cx.notify();
+    }
+    pub fn new_context(dark: bool, items: Vec<MenuItem>, cx: &mut Context<Self>) -> Self {
+        let mut menu = Self::new(dark, true, items, cx);
+        menu.triggerless = true;
+        menu.min_width = px(176.);
+        menu
+    }
+    pub fn open_at(
+        &mut self,
+        position: Point<Pixels>,
+        origin: Option<FocusHandle>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pointer = position;
+        self.origin = origin.map(|focus| focus.downgrade());
+        self.open(window, cx);
+    }
+    pub fn set_min_width(&mut self, width: Pixels, cx: &mut Context<Self>) {
+        self.min_width = width;
+        cx.notify();
+    }
+    pub fn items(&self) -> &[MenuItem] {
+        &self.items
+    }
+    fn restore_origin(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(origin) = self.origin.as_ref().and_then(|origin| origin.upgrade())
+            && origin.contains(&origin, window)
+        {
+            origin.focus(window, cx);
         }
     }
     pub fn set_trigger(&mut self, label: impl Into<String>, cx: &mut Context<Self>) {
@@ -80,12 +123,15 @@ impl Menu {
             cx.notify();
         }
     }
-    fn key(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if !self.open {
             return;
         }
         match event.keystroke.key.as_str() {
-            "escape" => self.dismiss(cx),
+            "escape" => {
+                self.restore_origin(window, cx);
+                self.dismiss(cx);
+            }
             "down" | "up" => {
                 let enabled: Vec<_> = self
                     .items
@@ -111,16 +157,20 @@ impl Menu {
             }
             "enter" | "space" => {
                 if let Some(i) = self.selected {
-                    self.activate(i, cx);
+                    self.activate(i, window, cx);
                 }
             }
             _ => return,
         }
         cx.stop_propagation();
     }
-    fn activate(&mut self, index: usize, cx: &mut Context<Self>) {
+    fn activate(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(item) = self.items.get(index).filter(|item| !item.disabled) {
             let event = MenuEvent::Selected(item.id.clone());
+            if !self.open {
+                return;
+            }
+            self.restore_origin(window, cx);
             cx.emit(event);
             self.open = false;
             cx.notify();
@@ -132,20 +182,34 @@ impl Menu {
         div()
             .id("menu-surface")
             .test_support()
-            .w(px(152.))
+            .when(!self.triggerless, |d| d.w(px(152.)))
+            .when(self.triggerless, |d| {
+                d.min_w(self.min_width).flex().flex_col()
+            })
             .p(px(4.))
             .rounded(px(8.))
             .border_1()
             .border_color(rgb(t.border))
             .bg(rgb(t.panel_raised))
-            .shadow_lg()
+            .when(!self.triggerless, |d| d.shadow_lg())
+            .when(self.triggerless, |d| {
+                d.shadow(vec![
+                    BoxShadow::new(
+                        px(0.),
+                        px(8.),
+                        rgba(if self.dark { 0x00000073 } else { 0x0000001f }).into(),
+                    )
+                    .blur_radius(px(10.)),
+                ])
+            })
             .track_focus(&self.menu_focus)
             .occlude()
             .on_mouse_down_out(cx.listener(move |s, event: &MouseDownEvent, _, cx| {
                 if s.open
-                    && !trigger_bounds
-                        .get()
-                        .is_some_and(|bounds| bounds.contains(&event.position))
+                    && (s.triggerless
+                        || !trigger_bounds
+                            .get()
+                            .is_some_and(|bounds| bounds.contains(&event.position)))
                 {
                     s.dismiss(cx);
                 }
@@ -156,9 +220,9 @@ impl Menu {
                     .w_full()
                     .h(px(24.))
                     .px(px(8.))
-                    .rounded(px(5.))
+                    .rounded(px(if self.triggerless { 6. } else { 5. }))
                     .bg(rgb(if selected { t.hover } else { t.panel_raised }))
-                    .text_size(px(12.))
+                    .text_size(px(if self.triggerless { 11. } else { 12. }))
                     .text_color(rgb(if item.disabled { t.faint } else { t.text }))
                     .disabled(item.disabled)
                     .focusable(false)
@@ -169,7 +233,7 @@ impl Menu {
                             cx.notify();
                         }
                     }))
-                    .on_click(cx.listener(move |s, _, _, cx| s.activate(i, cx)))
+                    .on_click(cx.listener(move |s, _, window, cx| s.activate(i, window, cx)))
                     .child(
                         div()
                             .w_full()
@@ -180,7 +244,7 @@ impl Menu {
                             .when_some(item.shortcut.clone(), |d, shortcut| {
                                 d.child(
                                     div()
-                                        .ml(px(6.))
+                                        .ml(px(if self.triggerless { 16. } else { 6. }))
                                         .text_size(px(11.))
                                         .text_color(rgb(t.muted))
                                         .child(shortcut),
@@ -192,6 +256,25 @@ impl Menu {
 }
 impl Render for Menu {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.triggerless {
+            return div()
+                .on_key_down(cx.listener(Self::key))
+                .when(self.open, |d| {
+                    d.child(
+                        deferred(
+                            Positioner::side(Bounds::new(self.pointer, size(px(0.), px(0.))))
+                                .placement(Placement::Right)
+                                .align(Align::Start)
+                                .offset(px(2.))
+                                .margin(px(0.))
+                                .occlude()
+                                .child(self.content(cx)),
+                        )
+                        .with_priority(100),
+                    )
+                })
+                .into_any_element();
+        }
         let t = support::tokens(self.dark);
         let trigger = Button::new("trigger")
             .px(px(12.))
@@ -258,6 +341,7 @@ impl Render for Menu {
                         .child(self.content(cx)),
                 )
             })
+            .into_any_element()
     }
 }
 
@@ -380,6 +464,38 @@ mod tests {
         assert_eq!(*received.borrow(), vec![MenuEvent::Dismissed]);
     }
     #[test]
+    fn triggerless_popup_clamps_and_reflows_intrinsically() {
+        use gpui_kit::{point, test::TestWindowExt};
+        let mut app = gpui_kit::TestApp::new();
+        app.update(gpui_kit::init);
+        let mut window = app.open_window(|_, cx| {
+            Menu::new_context(false, vec![item("first", false), item("second", true)], cx)
+        });
+        window.draw();
+        let viewport = window.update(|menu, window, cx| {
+            let viewport = window.viewport_size();
+            menu.open_at(
+                point(viewport.width - px(2.), viewport.height - px(2.)),
+                None,
+                window,
+                cx,
+            );
+            viewport
+        });
+        window.draw();
+        let before = window.update(|_, window, _| window.find("menu-surface").bounds());
+        assert_eq!(before.size.width, px(176.));
+        assert_eq!(before.size.height, px(58.));
+        assert_eq!(before.right(), viewport.width - px(4.));
+        assert_eq!(before.bottom(), viewport.height);
+        window.update(|menu, _, cx| menu.set_items(vec![item("first", false)], cx));
+        window.draw();
+        let after = window.update(|_, window, _| window.find("menu-surface").bounds());
+        assert_eq!(after.size.height, px(34.));
+        assert!(after.right() <= viewport.width && after.bottom() <= viewport.height);
+    }
+
+    #[test]
     fn toggle_escape_and_disabled_policy() {
         use gpui_kit::{point, test::TestWindowExt};
         let mut app = gpui_kit::TestApp::new();
@@ -406,8 +522,8 @@ mod tests {
         window.simulate_click(trigger.center(), MouseButton::Left);
         window.draw();
         assert!(window.read(|menu, _| menu.is_open()));
-        window.update(|menu, _, cx| {
-            menu.activate(1, cx);
+        window.update(|menu, window, cx| {
+            menu.activate(1, window, cx);
             assert!(received.borrow().is_empty());
         });
         window.simulate_keystroke("escape");

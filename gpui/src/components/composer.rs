@@ -1,11 +1,14 @@
-use super::support;
+use super::{
+    menus::{Menu, MenuEvent, MenuItem},
+    support,
+};
 use gpui_kit::{
-    Anchor, Bounds, BoxShadow, Context, Entity, FocusHandle, IntoElement, KeyDownEvent,
+    Anchor, Bounds, BoxShadow, Context, Entity, FocusHandle, Focusable, IntoElement, KeyDownEvent,
     MouseDownEvent, Pixels, Render, Subscription, TestSupportExt, Window,
     base::{
-        Button as BaseButton, ElementExt, Input, InputBase, Popup, ScrollbarStyles, Textarea,
-        Theme,
-        input::{InputEvent, InputState, TextareaState},
+        Button as BaseButton, ElementExt, Input, InputBase, Placement, Popup, Positioner,
+        ScrollbarStyles, Textarea, Theme, Tooltip,
+        input::{Copy, Cut, InputEvent, InputState, Paste, TextareaState},
     },
     div,
     prelude::*,
@@ -45,15 +48,49 @@ pub enum Event {
 
 impl gpui_kit::EventEmitter<Event> for Composer {}
 
+// Base exposes no projected-style getter; adapters must project overrides through the owner.
+pub(super) fn retheme_input_style(
+    style: &mut gpui_kit::base::input::InputEditorStyle,
+    old_dark: bool,
+    dark: bool,
+) {
+    let old = support::input_style(old_dark);
+    let new = support::input_style(dark);
+    for (current, before, after) in [
+        (&mut style.foreground, old.foreground, new.foreground),
+        (
+            &mut style.muted_foreground,
+            old.muted_foreground,
+            new.muted_foreground,
+        ),
+        (&mut style.background, old.background, new.background),
+        (&mut style.border, old.border, new.border),
+        (&mut style.selection, old.selection, new.selection),
+        (&mut style.caret, old.caret, new.caret),
+    ] {
+        if *current == before {
+            *current = after;
+        }
+    }
+}
+
 pub struct Composer {
+    hint_hovered: bool,
+    hint_visible: bool,
+    hint_task: Option<gpui_kit::Task<()>>,
+    hint_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    editor_style: gpui_kit::base::input::InputEditorStyle,
+    search_style: gpui_kit::base::input::InputEditorStyle,
     models: Vec<Choice>,
     model_heading: String,
     efforts: Vec<Choice>,
     dark: bool,
     editor: Entity<TextareaState>,
+    editor_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     streaming: bool,
     disabled: bool,
     stopped: bool,
+    fill_height: bool,
     selector: Option<&'static str>,
     model: usize,
     effort: usize,
@@ -64,16 +101,108 @@ pub struct Composer {
     suppress_effort_click: bool,
     model_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     effort_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    context_menu: Entity<Menu>,
+    menu_target: Option<(String, std::ops::Range<usize>)>,
+    _menu_events: Subscription,
     _events: Subscription,
     _search_events: Subscription,
 }
 impl Composer {
+    pub fn set_theme(&mut self, dark: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dark == dark {
+            return;
+        }
+        retheme_input_style(&mut self.editor_style, self.dark, dark);
+        retheme_input_style(&mut self.search_style, self.dark, dark);
+        self.dark = dark;
+        self.editor.update(cx, |editor, cx| {
+            editor.set_editor_style(self.editor_style.clone());
+            cx.notify();
+        });
+        self.search.update(cx, |editor, cx| {
+            editor.set_editor_style(self.search_style.clone());
+            cx.notify();
+        });
+        self.context_menu
+            .update(cx, |menu, cx| menu.set_theme(dark, window, cx));
+        cx.notify();
+    }
+
+    pub fn set_editor_style(
+        &mut self,
+        style: gpui_kit::base::input::InputEditorStyle,
+        cx: &mut Context<Self>,
+    ) {
+        self.editor_style = style.clone();
+        self.editor.update(cx, |editor, cx| {
+            editor.set_editor_style(style);
+            cx.notify();
+        });
+    }
+
+    pub fn set_search_style(
+        &mut self,
+        style: gpui_kit::base::input::InputEditorStyle,
+        cx: &mut Context<Self>,
+    ) {
+        self.search_style = style.clone();
+        self.search.update(cx, |editor, cx| {
+            editor.set_editor_style(style);
+            cx.notify();
+        });
+    }
+
+    pub fn context_menu(&self) -> Entity<Menu> {
+        self.context_menu.clone()
+    }
     pub fn search_editor(&self) -> Entity<InputState> {
         self.search.clone()
     }
     pub fn editor(&self) -> Entity<TextareaState> {
         self.editor.clone()
     }
+    fn initial_editor_style(dark: bool, disabled: bool) -> gpui_kit::base::input::InputEditorStyle {
+        gpui_kit::base::input::InputEditorStyle {
+            macos_textarea_selection: true,
+            unfocused_selection: disabled,
+            disabled_opacity: 0.45,
+            auto_grow_cursor_margin: Some(px(13.)),
+            ..support::input_style(dark)
+        }
+    }
+
+    pub fn tooltip_label(&self, cx: &gpui_kit::App) -> Option<&'static str> {
+        self.hint_visible.then(|| self.hint_content(cx).0)
+    }
+
+    fn hint_content(&self, cx: &gpui_kit::App) -> (&'static str, &'static str) {
+        if self.streaming && self.editor.read(cx).value().trim().is_empty() {
+            ("Stop Pi", "⌘.")
+        } else if self.streaming {
+            ("Queue Steering Message", "Enter")
+        } else {
+            ("Send Message", "Enter")
+        }
+    }
+
+    fn hover_hint(&mut self, hovered: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.hint_hovered = hovered;
+        self.hint_task = None;
+        self.hint_visible = false;
+        if hovered {
+            self.hint_task = Some(cx.spawn_in(window, async move |owner, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(450))
+                    .await;
+                let _ = owner.update_in(cx, |this, _, cx| {
+                    this.hint_visible = this.hint_hovered;
+                    cx.notify();
+                });
+            }));
+        }
+        cx.notify();
+    }
+
     pub fn is_stopped(&self) -> bool {
         self.stopped
     }
@@ -110,7 +239,25 @@ impl Composer {
             .then(|| self.efforts.get(self.cursor))
             .flatten()
     }
+    pub fn set_fill_height(&mut self, fill: bool, cx: &mut Context<Self>) {
+        if self.fill_height == fill {
+            return;
+        }
+        self.fill_height = fill;
+        self.editor.update(cx, |editor, cx| {
+            editor.set_editor_paddings(gpui_kit::Edges {
+                top: px(if fill { 16. } else { 4. }),
+                right: px(4.),
+                bottom: px(3.),
+                left: px(4.),
+            });
+            cx.notify();
+        });
+        cx.notify();
+    }
     pub fn set_status(&mut self, disabled: bool, streaming: bool, cx: &mut Context<Self>) {
+        self.context_menu.update(cx, |menu, cx| menu.dismiss(cx));
+        self.menu_target = None;
         self.disabled = disabled;
         self.streaming = streaming;
         if !streaming {
@@ -432,13 +579,7 @@ impl Composer {
             e.set_readonly(disabled, cx);
             e.set_value(&options.draft, window, cx);
             e.set_scroll_sensitivity(0.5);
-            e.set_editor_style(gpui_kit::base::input::InputEditorStyle {
-                macos_textarea_selection: true,
-                unfocused_selection: disabled,
-                disabled_opacity: 0.45,
-                auto_grow_cursor_margin: Some(px(13.)),
-                ..support::input_style(dark)
-            });
+            e.set_editor_style(Self::initial_editor_style(dark, disabled));
         });
         let events = cx.subscribe_in(
             &editor,
@@ -466,6 +607,74 @@ impl Composer {
                 cx.notify();
             }
         });
+        let context_menu = cx.new(|cx| {
+            let mut menu = Menu::new_context(dark, vec![], cx);
+            menu.set_min_width(px(152.), cx);
+            menu
+        });
+        let owner = cx.entity().downgrade();
+        editor.update(cx, |editor, _| {
+            editor.on_context_menu(Rc::new(move |_, capabilities, position, window, cx| {
+                let owner = owner.clone();
+                // Base invokes this hook while leasing the editor entity.
+                window.defer(cx, move |window, cx| {
+                    _ = owner.update(cx, |this, cx| {
+                        this.close(cx);
+                        let editor = this.editor.read(cx);
+                        this.menu_target =
+                            Some((editor.value().to_string(), editor.selected_range()));
+                        let origin = editor.focus_handle(cx);
+                        let items = [
+                            (
+                                "cut",
+                                "Cut",
+                                !capabilities.is_editable() || !capabilities.has_selection(),
+                            ),
+                            ("copy", "Copy", !capabilities.is_copyable()),
+                            ("paste", "Paste", !capabilities.is_editable()),
+                        ]
+                        .into_iter()
+                        .map(|(id, label, disabled)| MenuItem {
+                            id: id.into(),
+                            label: label.into(),
+                            element_id: format!("composer-{id}"),
+                            shortcut: None,
+                            disabled,
+                        })
+                        .collect();
+                        this.context_menu.update(cx, |menu, cx| {
+                            menu.set_items(items, cx);
+                            menu.open_at(position, Some(origin), window, cx);
+                        });
+                    });
+                });
+            }));
+        });
+        let menu_events = cx.subscribe_in(
+            &context_menu,
+            window,
+            |this, _, event: &MenuEvent, window, cx| {
+                let target = this.menu_target.take();
+                if let MenuEvent::Selected(id) = event {
+                    let editor = this.editor.read(cx);
+                    // A menu belongs to the selection that opened it, not a replaced draft.
+                    if target != Some((editor.value().to_string(), editor.selected_range())) {
+                        return;
+                    }
+                    let focus = editor.focus_handle(cx);
+                    match id.as_str() {
+                        "cut" if editor.is_editable() && !editor.selected_range().is_empty() => {
+                            focus.dispatch_action(&Cut, window, cx)
+                        }
+                        "copy" if editor.is_copyable() => focus.dispatch_action(&Copy, window, cx),
+                        "paste" if editor.is_editable() => {
+                            focus.dispatch_action(&Paste, window, cx)
+                        }
+                        _ => {}
+                    }
+                }
+            },
+        );
         let model = options
             .models
             .iter()
@@ -477,14 +686,22 @@ impl Composer {
             .position(|o| o.id == options.effort)
             .unwrap_or(0);
         Self {
+            hint_hovered: false,
+            hint_visible: false,
+            hint_task: None,
+            hint_bounds: Rc::new(Cell::new(None)),
+            editor_style: Self::initial_editor_style(dark, disabled),
+            search_style: support::input_style(dark),
             dark,
             models: options.models,
             model_heading: options.model_heading,
             efforts: options.efforts,
             editor,
+            editor_bounds: Rc::new(Cell::new(None)),
             streaming,
             disabled,
             stopped: false,
+            fill_height: false,
             selector: None,
             model,
             effort,
@@ -495,6 +712,9 @@ impl Composer {
             suppress_effort_click: false,
             model_bounds: Rc::new(Cell::new(None)),
             effort_bounds: Rc::new(Cell::new(None)),
+            context_menu,
+            menu_target: None,
+            _menu_events: menu_events,
             _events: events,
             _search_events: search_events,
         }
@@ -524,7 +744,6 @@ impl Render for Composer {
         };
         let send = BaseButton::new("send")
             .disabled(send_disabled)
-            .ml_auto()
             .w(px(22.))
             .h(px(22.))
             .rounded(px(4.))
@@ -551,6 +770,74 @@ impl Render for Composer {
                     t.muted
                 },
             ));
+        let hint_bounds = self.hint_bounds.clone();
+        let send = div()
+            .id("send-tooltip-trigger")
+            .test_support()
+            .ml_auto()
+            .w(px(22.))
+            .h(px(22.))
+            .on_prepaint(move |bounds, _, _| hint_bounds.set(Some(bounds)))
+            .on_hover(cx.listener(|s, hovered, window, cx| s.hover_hint(*hovered, window, cx)))
+            .child(send);
+        let hint = self
+            .hint_visible
+            .then(|| self.hint_bounds.get())
+            .flatten()
+            .map(|bounds| {
+                let (label, shortcut) = self.hint_content(cx);
+                gpui_kit::deferred(
+                    Positioner::side(bounds)
+                        .placement(Placement::Top)
+                        .offset(px(6.))
+                        .margin(px(6.))
+                        .child(
+                            Tooltip::new("composer-tooltip")
+                                .max_w(px(260.))
+                                .px(px(7.))
+                                .py(px(3.))
+                                .border_1()
+                                .border_color(rgb(t.border))
+                                .rounded(px(4.))
+                                .bg(rgb(t.panel_raised))
+                                .text_color(rgb(t.text))
+                                .text_size(px(10.))
+                                .line_height(gpui_kit::relative(1.25))
+                                .shadow(vec![
+                                    BoxShadow::new(
+                                        px(0.),
+                                        px(8.),
+                                        rgba(if self.dark { 0x00000073 } else { 0x0000001f })
+                                            .into(),
+                                    )
+                                    .blur_radius(px(10.)),
+                                ])
+                                .flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .child(label)
+                                .child(
+                                    div()
+                                        .id("composer-tooltip-shortcut")
+                                        .test_support()
+                                        .flex_shrink_0()
+                                        .px(px(4.))
+                                        .py(px(1.))
+                                        .border_1()
+                                        .border_color(gpui_kit::Rgba {
+                                            a: 0.35,
+                                            ..rgb(t.muted)
+                                        })
+                                        .rounded(px(3.))
+                                        .text_color(rgb(t.muted))
+                                        .text_size(px(10.))
+                                        .line_height(gpui_kit::relative(1.2))
+                                        .child(shortcut),
+                                ),
+                        ),
+                )
+                .with_priority(200)
+            });
         let model_bounds = self.model_bounds.clone();
         let model =
             Popup::new(
@@ -691,17 +978,34 @@ impl Render for Composer {
             .id("footer-gap")
             .test_support()
             .w_full()
+            .flex_shrink_0()
             .flex()
             .items_center()
             .gap(px(2.))
             .child(model)
             .child(effort)
             .child(send);
+        let editor_bounds = self.editor_bounds.clone();
         let input = InputBase::new("editor")
+            .relative()
+            .on_prepaint(move |bounds, _, _| editor_bounds.set(Some(bounds)))
+            .on_mouse_down_out(cx.listener(|s, event: &MouseDownEvent, window, cx| {
+                // Capture runs even when blank chrome consumes the target's mouse down.
+                // Only release our own focus; menus and other editors own theirs independently.
+                if s.editor_bounds
+                    .get()
+                    .is_some_and(|bounds| !bounds.contains(&event.position))
+                    && s.editor.read(cx).focus_handle(cx).is_focused(window)
+                {
+                    window.blur(cx);
+                }
+            }))
             .w_full()
             .min_w_0()
-            .min_h(px(83.))
-            .max_h(px(196.))
+            .when(self.fill_height, |input| input.flex_1().min_h_0())
+            .when(!self.fill_height, |input| {
+                input.min_h(px(83.)).max_h(px(196.))
+            })
             .flex()
             .flex_col()
             .text_size(px(13.))
@@ -709,17 +1013,22 @@ impl Render for Composer {
             .child(Textarea::new(&self.editor));
         div()
             .w_full()
+            .when(self.fill_height, |composer| {
+                composer.h_full().min_h_0().flex().flex_col()
+            })
             .occlude()
             .opacity(if self.disabled { 0.68 } else { 1. })
             .child(input)
             .child(toolbar)
+            .child(self.context_menu.clone())
+            .when_some(hint, |composer, hint| composer.child(hint))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui_kit::{MouseButton, TestApp, TestAppWindow, test::TestWindowExt};
+    use gpui_kit::{Focusable, MouseButton, TestApp, TestAppWindow, test::TestWindowExt};
     use std::{cell::RefCell, rc::Rc};
 
     fn options(disabled: bool, streaming: bool) -> ComposerOptions {
@@ -764,6 +1073,530 @@ mod tests {
         window.draw();
     }
 
+    fn right_click_editor(window: &mut TestAppWindow<Composer>) {
+        window.draw();
+        let position = window.update(|_, window, _| {
+            let bounds = window.find("editor").bounds();
+            gpui_kit::point(bounds.left() + px(20.), bounds.top() + px(12.))
+        });
+        window.simulate_click(position, MouseButton::Right);
+        window.draw();
+    }
+
+    #[test]
+    fn tooltip_real_hover_delay_leave_disabled_and_role_transitions() {
+        use std::time::Duration;
+        for disabled in [false, true] {
+            let (app, mut window) = fixture(disabled, false);
+            let editor = window.read(|composer, _| composer.editor());
+            let position =
+                window.update(|_, w, _| w.find("send-tooltip-trigger").bounds().center());
+            window.simulate_mouse_move(position);
+            window.draw();
+            app.advance_clock(Duration::from_millis(449));
+            window.draw();
+            assert!(window.read(|s, cx| s.tooltip_label(cx).is_none()));
+            app.advance_clock(Duration::from_millis(1));
+            window.draw();
+            assert_eq!(
+                window.read(|s, cx| s.tooltip_label(cx)),
+                Some("Send Message")
+            );
+            window.update(|s, _, cx| s.set_status(disabled, true, cx));
+            window.draw();
+            assert_eq!(
+                window.read(|s, cx| s.tooltip_label(cx)),
+                Some("Queue Steering Message")
+            );
+            window.update(|s, w, cx| s.editor.update(cx, |e, cx| e.set_value("", w, cx)));
+            window.draw();
+            assert_eq!(window.read(|s, cx| s.tooltip_label(cx)), Some("Stop Pi"));
+            for dark in [true, false] {
+                window.update(|s, w, cx| s.set_theme(dark, w, cx));
+                window.draw();
+                window.update(|_, w, _| {
+                    assert!(w.try_find("composer-tooltip-shortcut").is_some());
+                    assert!(w.painted_quads().iter().any(|q| q.background == rgb(support::tokens(dark).panel_raised).into()));
+                });
+                assert_eq!(window.read(|s, _| s.editor()), editor);
+            }
+            window.simulate_mouse_move(gpui_kit::point(px(1.), px(1.)));
+            window.draw();
+            assert!(window.read(|s, cx| s.tooltip_label(cx).is_none()));
+            window.simulate_mouse_move(position);
+            window.draw();
+            app.advance_clock(Duration::from_millis(200));
+            window.simulate_mouse_move(gpui_kit::point(px(1.), px(1.)));
+            window.draw();
+            app.advance_clock(Duration::from_millis(500));
+            window.draw();
+            assert!(window.read(|s, cx| s.tooltip_label(cx).is_none()));
+        }
+    }
+
+    #[test]
+    fn theme_round_trip_preserves_editor_popup_and_history() {
+        let (_app, mut window) = fixture(false, false);
+        click(&mut window, "editor");
+        window.simulate_keystroke("cmd-a");
+        window.simulate_keystroke("cmd-x");
+        window.simulate_keystroke("cmd-z");
+        window.draw();
+        let editor = window.read(|composer, _| composer.editor.clone());
+        let search = window.read(|composer, _| composer.search.clone());
+        window.update(|composer, _, cx| {
+            let mut style = composer.editor_style.clone();
+            style.caret_visible = false;
+            style.unfocused_selection = true;
+            style.caret_width = Some(px(3.));
+            composer.set_editor_style(style, cx);
+        });
+        window.simulate_keystroke("cmd-a");
+        right_click_editor(&mut window);
+        let before = window.read(|composer, cx| {
+            let state = composer.editor.read(cx);
+            (state.value(), state.selected_range(), state.scroll_offset())
+        });
+        let focus = window.update(|_, window, cx| window.focused(cx));
+        for dark in [true, false] {
+            window.update(|composer, window, cx| composer.set_theme(dark, window, cx));
+            window.draw();
+            window.read(|composer, cx| {
+                assert_eq!(composer.editor, editor);
+                assert_eq!(composer.search, search);
+                let state = composer.editor.read(cx);
+                assert_eq!(
+                    (state.value(), state.selected_range(), state.scroll_offset()),
+                    before
+                );
+                assert!(composer.context_menu.read(cx).is_open());
+                assert!(!composer.editor_style.caret_visible);
+                assert!(composer.editor_style.unfocused_selection);
+                assert_eq!(composer.editor_style.caret_width, Some(px(3.)));
+                assert_eq!(
+                    composer.editor_style.foreground,
+                    rgb(support::tokens(dark).text).into()
+                );
+                assert_eq!(
+                    composer.search_style.selection,
+                    support::input_style(dark).selection
+                );
+            });
+            window.update(|_, window, cx| {
+                assert_eq!(window.focused(cx), focus);
+                assert!(
+                    window.painted_quads().iter().any(|quad| {
+                        quad.background == rgb(support::tokens(dark).canvas).into()
+                    })
+                );
+            });
+        }
+        window.update(|composer, _, cx| {
+            composer
+                .context_menu
+                .update(cx, |menu, cx| menu.dismiss(cx))
+        });
+        click(&mut window, "editor");
+        window.simulate_keystroke("cmd-shift-z");
+        assert_eq!(
+            window.read(|composer, cx| composer.editor.read(cx).value().to_string()),
+            ""
+        );
+        window.simulate_keystroke("cmd-z");
+        assert_eq!(
+            window.read(|composer, cx| composer.editor.read(cx).value().to_string()),
+            before.0.to_string()
+        );
+    }
+
+    #[test]
+    fn context_menu_uses_real_selection_clipboard_and_history() {
+        let (_app, mut window) = fixture(false, false);
+        click(&mut window, "editor");
+        window.simulate_keystroke("cmd-a");
+        let selection = window.read(|composer, cx| composer.editor.read(cx).selected_range());
+        assert_eq!(selection, 0..13);
+        right_click_editor(&mut window);
+        assert!(window.read(|composer, cx| composer.context_menu.read(cx).is_open()));
+        assert_eq!(
+            window.read(|composer, cx| composer.editor.read(cx).selected_range()),
+            selection
+        );
+        assert!(window.read(|composer, cx| {
+            composer
+                .context_menu
+                .read(cx)
+                .items()
+                .iter()
+                .all(|item| !item.disabled && item.shortcut.is_none())
+        }));
+        click(&mut window, "composer-copy");
+        assert_eq!(
+            window.update(|_, _, cx| cx.read_from_clipboard().unwrap().text().unwrap()),
+            "keep my draft"
+        );
+        right_click_editor(&mut window);
+        window.simulate_keystroke("down");
+        window.simulate_keystroke("enter");
+        window.draw();
+        assert_eq!(
+            window.read(|composer, cx| composer.editor.read(cx).value().to_string()),
+            ""
+        );
+        window.simulate_keystroke("cmd-z");
+        window.draw();
+        assert_eq!(
+            window.read(|composer, cx| composer.editor.read(cx).value().to_string()),
+            "keep my draft"
+        );
+        window.simulate_keystroke("cmd-shift-z");
+        window.draw();
+        assert_eq!(
+            window.read(|composer, cx| composer.editor.read(cx).value().to_string()),
+            ""
+        );
+        right_click_editor(&mut window);
+        assert!(window.read(|composer, cx| composer.context_menu.read(cx).items()[0].disabled));
+        click(&mut window, "composer-paste");
+        assert_eq!(
+            window.read(|composer, cx| composer.editor.read(cx).value().to_string()),
+            "keep my draft"
+        );
+    }
+
+    #[test]
+    fn context_menu_empty_clipboard_preserves_selection() {
+        let (_app, mut window) = fixture(false, false);
+        click(&mut window, "editor");
+        window.simulate_keystroke("cmd-a");
+        window.update(|_, _, cx| {
+            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(String::new()))
+        });
+        right_click_editor(&mut window);
+        click(&mut window, "composer-paste");
+        assert_eq!(
+            window.read(|composer, cx| composer.editor.read(cx).value().to_string()),
+            "keep my draft"
+        );
+        assert_eq!(
+            window.read(|composer, cx| composer.editor.read(cx).selected_range()),
+            0..13
+        );
+    }
+
+    #[test]
+    fn context_menu_readonly_escape_outside_focus_and_stale_draft() {
+        let (_app, mut window) = fixture(false, false);
+        click(&mut window, "editor");
+        window.simulate_keystroke("cmd-a");
+        window.update(|composer, _, cx| {
+            composer
+                .editor
+                .update(cx, |editor, cx| editor.set_readonly(true, cx))
+        });
+        right_click_editor(&mut window);
+        assert_eq!(
+            window.read(|composer, cx| composer
+                .context_menu
+                .read(cx)
+                .items()
+                .iter()
+                .map(|item| item.disabled)
+                .collect::<Vec<_>>()),
+            vec![true, false, true]
+        );
+        window.simulate_keystroke("down");
+        window.simulate_keystroke("enter");
+        assert_eq!(
+            window.update(|_, _, cx| cx.read_from_clipboard().unwrap().text().unwrap()),
+            "keep my draft"
+        );
+        right_click_editor(&mut window);
+        window.simulate_keystroke("escape");
+        assert!(window.update(|composer, window, cx| {
+            composer.editor.read(cx).focus_handle(cx).is_focused(window)
+        }));
+        right_click_editor(&mut window);
+        click(&mut window, "model");
+        assert!(!window.read(|composer, cx| composer.context_menu.read(cx).is_open()));
+        assert!(window.update(|composer, window, cx| {
+            composer.search.read(cx).focus_handle(cx).is_focused(window)
+        }));
+        window.simulate_keystroke("escape");
+        window.update(|composer, _, cx| {
+            composer
+                .editor
+                .update(cx, |editor, cx| editor.set_readonly(false, cx))
+        });
+        right_click_editor(&mut window);
+        window.update(|composer, window, cx| {
+            composer
+                .editor
+                .update(cx, |editor, cx| editor.set_value("replacement", window, cx))
+        });
+        click(&mut window, "composer-cut");
+        assert_eq!(
+            window.read(|composer, cx| composer.editor.read(cx).value().to_string()),
+            "replacement"
+        );
+        window.update(|composer, _, cx| composer.set_status(true, false, cx));
+        right_click_editor(&mut window);
+        assert!(!window.read(|composer, cx| composer.context_menu.read(cx).is_open()));
+    }
+
+    struct PointerHost {
+        composer: Entity<Composer>,
+        other: Entity<InputState>,
+    }
+
+    impl Render for PointerHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .id("blank-chrome")
+                        .test_support()
+                        .h(px(80.))
+                        .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                            window.prevent_default();
+                            cx.stop_propagation();
+                        }),
+                )
+                .child(
+                    div()
+                        .id("other-input")
+                        .test_support()
+                        .child(Input::new(&self.other)),
+                )
+                .child(div().flex_1().min_h_0().child(self.composer.clone()))
+        }
+    }
+
+    fn pointer_fixture(
+        fill: bool,
+    ) -> (
+        TestApp,
+        TestAppWindow<gpui_kit::base::Root>,
+        Entity<PointerHost>,
+    ) {
+        let mut app = TestApp::new();
+        app.update(|cx| super::super::init(cx, false));
+        let mut host = None;
+        let mut window = app.open_window_with_options(
+            gpui_kit::WindowOptions {
+                window_bounds: Some(gpui_kit::WindowBounds::Windowed(Bounds {
+                    origin: Default::default(),
+                    size: gpui_kit::size(px(640.), px(650.)),
+                })),
+                ..Default::default()
+            },
+            |window, cx| {
+                let view = cx.new(|cx| PointerHost {
+                    composer: cx.new(|cx| {
+                        let mut options = options(false, false);
+                        if fill {
+                            options.draft.clear();
+                        }
+                        let mut composer = Composer::new(options, window, cx);
+                        composer.set_fill_height(fill, cx);
+                        composer
+                    }),
+                    other: cx.new(|cx| InputState::new(window, cx)),
+                });
+                host = Some(view.clone());
+                gpui_kit::base::Root::new(view, window, cx)
+            },
+        );
+        window.draw();
+        (app, window, host.unwrap())
+    }
+
+    fn root_click(window: &mut TestAppWindow<gpui_kit::base::Root>, id: &str) {
+        window.draw();
+        let position = window.update(|_, w, _| w.find(id.to_owned()).bounds().center());
+        window.simulate_click(position, MouseButton::Left);
+        window.draw();
+    }
+
+    #[test]
+    fn outside_capture_blurs_only_editor_and_preserves_draft_selection_history() {
+        let (_app, mut window, host) = pointer_fixture(false);
+        let (composer, other) = window.read(|_, cx| {
+            let host = host.read(cx);
+            (host.composer.clone(), host.other.clone())
+        });
+        let editor = window.read(|_, cx| composer.read(cx).editor());
+        root_click(&mut window, "editor");
+        window.simulate_keystroke("cmd-a");
+        window.update(|_, _, cx| {
+            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("edited draft".into()));
+        });
+        window.simulate_keystroke("cmd-v");
+        window.simulate_keystroke("cmd-a");
+        let selection = window.read(|_, cx| editor.read(cx).selected_range());
+        for dark in [true, false] {
+            window.update(|_, w, cx| composer.update(cx, |s, cx| s.set_theme(dark, w, cx)));
+            window.draw();
+            root_click(&mut window, "blank-chrome");
+            assert!(!window.update(|_, w, cx| editor.read(cx).focus_handle(cx).is_focused(w)));
+            window.read(|_, cx| {
+                assert_eq!(editor.read(cx).value().as_str(), "edited draft");
+                assert_eq!(editor.read(cx).selected_range(), selection);
+                assert_eq!(composer.read(cx).editor(), editor);
+            });
+            window.update(|_, w, cx| editor.read(cx).focus_handle(cx).focus(w, cx));
+        }
+        root_click(&mut window, "other-input");
+        assert!(window.update(|_, w, cx| other.read(cx).focus_handle(cx).is_focused(w)));
+        root_click(&mut window, "blank-chrome");
+        assert!(window.update(|_, w, cx| other.read(cx).focus_handle(cx).is_focused(w)));
+        window.update(|_, w, cx| editor.read(cx).focus_handle(cx).focus(w, cx));
+        window.simulate_keystroke("cmd-z");
+        assert_eq!(
+            window.read(|_, cx| editor.read(cx).value().to_string()),
+            "keep my draft"
+        );
+        window.simulate_keystroke("cmd-shift-z");
+        assert_eq!(
+            window.read(|_, cx| editor.read(cx).value().to_string()),
+            "edited draft"
+        );
+
+        root_click(&mut window, "effort");
+        assert!(window.update(|_, w, cx| composer.read(cx).effort_focus.is_focused(w)));
+        root_click(&mut window, "model");
+        assert!(window.update(|_, w, cx| {
+            composer
+                .read(cx)
+                .search
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(w)
+        }));
+        root_click(&mut window, "blank-chrome");
+        assert!(window.update(|_, w, cx| {
+            composer
+                .read(cx)
+                .search
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(w)
+        }));
+        root_click(&mut window, "editor");
+        let toolbar_blank = window.update(|_, w, _| {
+            let bounds = w.find("footer-gap").bounds();
+            gpui_kit::point(bounds.right() - px(40.), bounds.center().y)
+        });
+        window.simulate_click(toolbar_blank, MouseButton::Left);
+        assert!(!window.update(|_, w, cx| editor.read(cx).focus_handle(cx).is_focused(w)));
+    }
+
+    #[test]
+    fn root_replaced_composer_cannot_blur_another_sessions_editor() {
+        let (_app, mut window, host) = pointer_fixture(false);
+        let first = window.read(|_, cx| host.read(cx).composer.clone());
+        let first_editor = window.read(|_, cx| first.read(cx).editor());
+        root_click(&mut window, "editor");
+        window.simulate_keystroke("cmd-a");
+        let second = window.update(|_, w, cx| {
+            let second = cx.new(|cx| Composer::new(options(false, false), w, cx));
+            host.update(cx, |host, cx| {
+                host.composer = second.clone();
+                cx.notify();
+            });
+            second
+        });
+        window.draw();
+        let second_editor = window.read(|_, cx| second.read(cx).editor());
+        root_click(&mut window, "editor");
+        assert!(window.update(|_, w, cx| second_editor.read(cx).focus_handle(cx).is_focused(w)));
+        window.update(|_, _, cx| {
+            host.update(cx, |host, cx| {
+                host.composer = first.clone();
+                cx.notify();
+            })
+        });
+        window.draw();
+        root_click(&mut window, "blank-chrome");
+        // The visible composer must not blur an editor belonging to the inactive session.
+        assert!(window.update(|_, w, cx| second_editor.read(cx).focus_handle(cx).is_focused(w)));
+        window.read(|_, cx| {
+            assert_eq!(first_editor.read(cx).selected_range(), 0..13);
+            assert_eq!(first_editor.read(cx).value().as_str(), "keep my draft");
+        });
+        root_click(&mut window, "editor");
+        root_click(&mut window, "blank-chrome");
+        assert!(!window.update(|_, w, cx| first_editor.read(cx).focus_handle(cx).is_focused(w)));
+    }
+
+    #[test]
+    fn root_empty_full_height_inside_pointer_keeps_focus_and_places_caret() {
+        let (_app, mut window, host) = pointer_fixture(true);
+        let composer = window.read(|_, cx| host.read(cx).composer.clone());
+        let editor = window.read(|_, cx| composer.read(cx).editor());
+        let lower = window.update(|_, w, cx| {
+            let bounds = w.find("editor").bounds();
+            assert!(bounds.size.height > px(450.));
+            assert_eq!(composer.read(cx).editor_bounds.get(), Some(bounds));
+            gpui_kit::point(bounds.center().x, bounds.bottom() - px(20.))
+        });
+        window.simulate_click(lower, MouseButton::Left);
+        assert!(window.update(|_, w, cx| editor.read(cx).focus_handle(cx).is_focused(w)));
+        window.simulate_input("caret here");
+        window.draw();
+        window.simulate_click(lower, MouseButton::Left);
+        assert!(window.update(|_, w, cx| editor.read(cx).focus_handle(cx).is_focused(w)));
+        assert_eq!(
+            window.read(|_, cx| editor.read(cx).selected_range()),
+            10..10
+        );
+        root_click(&mut window, "blank-chrome");
+        assert!(!window.update(|_, w, cx| editor.read(cx).focus_handle(cx).is_focused(w)));
+        assert_eq!(
+            window.read(|_, cx| editor.read(cx).value().to_string()),
+            "caret here"
+        );
+    }
+
+    #[test]
+    fn root_context_menu_pointer_copy_cut_paste_and_undo_survive_outside_capture() {
+        let (_app, mut window, host) = pointer_fixture(false);
+        let composer = window.read(|_, cx| host.read(cx).composer.clone());
+        let editor = window.read(|_, cx| composer.read(cx).editor());
+        root_click(&mut window, "editor");
+        window.simulate_keystroke("cmd-a");
+        for id in ["composer-copy", "composer-cut", "composer-paste"] {
+            window.draw();
+            let position = window.update(|_, w, _| {
+                let bounds = w.find("editor").bounds();
+                gpui_kit::point(bounds.left() + px(20.), bounds.top() + px(12.))
+            });
+            window.simulate_click(position, MouseButton::Right);
+            window.draw();
+            assert!(window.read(|_, cx| composer.read(cx).context_menu.read(cx).is_open()));
+            root_click(&mut window, id);
+            let expected = if id == "composer-cut" {
+                ""
+            } else {
+                "keep my draft"
+            };
+            assert_eq!(
+                window.read(|_, cx| editor.read(cx).value().to_string()),
+                expected
+            );
+        }
+        window.simulate_keystroke("cmd-z");
+        assert_eq!(window.read(|_, cx| editor.read(cx).value().to_string()), "");
+        window.simulate_keystroke("cmd-z");
+        assert_eq!(
+            window.read(|_, cx| editor.read(cx).value().to_string()),
+            "keep my draft"
+        );
+    }
+
     struct BottomHost {
         composer: Entity<Composer>,
     }
@@ -777,6 +1610,206 @@ mod tests {
                 .justify_end()
                 .child(self.composer.clone())
         }
+    }
+
+    struct FillHeightRoot {
+        composer: Entity<Composer>,
+    }
+
+    impl Render for FillHeightRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .justify_end()
+                .child(self.composer.clone())
+        }
+    }
+
+    fn fill_height_fixture() -> (TestApp, TestAppWindow<FillHeightRoot>) {
+        let mut app = TestApp::new();
+        app.update(|cx| super::super::init(cx, false));
+        let mut window = app.open_window_with_options(
+            gpui_kit::WindowOptions {
+                window_bounds: Some(gpui_kit::WindowBounds::Windowed(gpui_kit::Bounds {
+                    origin: Default::default(),
+                    size: gpui_kit::size(px(640.), px(650.)),
+                })),
+                ..Default::default()
+            },
+            |window, cx| FillHeightRoot {
+                composer: cx.new(|cx| {
+                    let mut options = options(false, false);
+                    options.draft = "".into();
+                    Composer::new(options, window, cx)
+                }),
+            },
+        );
+        window.draw();
+        (app, window)
+    }
+
+    fn set_fill_height(window: &mut TestAppWindow<FillHeightRoot>, fill: bool) {
+        window.update(|root, _, cx| {
+            root.composer
+                .update(cx, |composer, cx| composer.set_fill_height(fill, cx));
+        });
+        window.draw();
+    }
+
+    fn assert_fill_height_layout(window: &mut TestAppWindow<FillHeightRoot>, fill: bool) {
+        window.update(|_, window, _| {
+            let editor = window.find("editor").bounds();
+            let toolbar = window.find("footer-gap").bounds();
+            if fill {
+                assert!(editor.size.height > px(500.), "editor viewport: {editor:?}");
+                assert_eq!(editor.top(), px(0.));
+            } else {
+                assert_eq!(editor.size.height, px(83.));
+            }
+            assert_eq!(editor.bottom(), toolbar.top());
+            assert_eq!(toolbar.bottom(), px(650.));
+            for id in ["model", "effort", "send"] {
+                let control = window.find(id).bounds();
+                assert!(control.top() >= toolbar.top());
+                assert!(control.bottom() <= toolbar.bottom());
+            }
+        });
+    }
+
+    #[test]
+    fn fill_height_uses_real_editor_viewport_and_keeps_controls_at_bottom() {
+        let (_app, mut window) = fill_height_fixture();
+        let editor = window.read(|root, cx| root.composer.read(cx).editor());
+        assert_fill_height_layout(&mut window, false);
+        set_fill_height(&mut window, true);
+        assert_fill_height_layout(&mut window, true);
+
+        let lower_editor = window.update(|_, window, _| {
+            let bounds = window.find("editor").bounds();
+            gpui_kit::point(bounds.center().x, bounds.bottom() - px(30.))
+        });
+        assert!(lower_editor.y > px(500.));
+        window.simulate_click(lower_editor, MouseButton::Left);
+        assert!(window.update(|_, window, cx| editor.read(cx).focus_handle(cx).is_focused(window)));
+        window.simulate_input("typed in the lower editor");
+        window.draw();
+        assert_eq!(
+            window.read(|_, cx| editor.read(cx).value().to_string()),
+            "typed in the lower editor"
+        );
+
+        for fill in [false, true] {
+            set_fill_height(&mut window, fill);
+            assert_fill_height_layout(&mut window, fill);
+            assert_eq!(
+                window.read(|root, cx| root.composer.read(cx).editor().entity_id()),
+                editor.entity_id()
+            );
+            assert_eq!(
+                window.read(|_, cx| editor.read(cx).value().to_string()),
+                "typed in the lower editor"
+            );
+        }
+        window.simulate_keystroke("cmd-z");
+        window.draw();
+        assert_eq!(window.read(|_, cx| editor.read(cx).value().to_string()), "");
+        window.simulate_keystroke("cmd-shift-z");
+        window.draw();
+        assert_eq!(
+            window.read(|_, cx| editor.read(cx).value().to_string()),
+            "typed in the lower editor"
+        );
+    }
+
+    #[test]
+    fn fill_height_long_draft_scroll_selection_and_history_survive_mode_changes() {
+        let (_app, mut window) = fill_height_fixture();
+        let editor = window.read(|root, cx| root.composer.read(cx).editor());
+        set_fill_height(&mut window, true);
+        let position = window.update(|_, window, _| window.find("editor").bounds().center());
+        window.simulate_click(position, MouseButton::Left);
+        let draft = (0..120)
+            .map(|line| format!("Draft line {line}\n"))
+            .collect::<String>();
+        window.simulate_input(&draft);
+        window.draw();
+        assert_eq!(
+            window.read(|_, cx| editor.read(cx).value().to_string()),
+            draft
+        );
+        assert_fill_height_layout(&mut window, true);
+        assert!(window.read(|_, cx| editor.read(cx).scroll_offset().y < px(-1.)));
+        let visible = window.read(|_, cx| editor.read(cx).visible_row_range().unwrap());
+        assert!(
+            visible.start > 0,
+            "typing must scroll the actual editor: {visible:?}"
+        );
+        assert!(
+            visible.len() > 20,
+            "full mode must expand the editor's own visible rows: {visible:?}"
+        );
+
+        window.simulate_keystroke("shift-left");
+        window.simulate_keystroke("shift-left");
+        window.draw();
+        let selection = window.read(|_, cx| editor.read(cx).selected_range());
+        assert_eq!(selection, draft.len() - 2..draft.len());
+        for fill in [false, true] {
+            set_fill_height(&mut window, fill);
+            assert_eq!(
+                window.read(|root, cx| root.composer.read(cx).editor().entity_id()),
+                editor.entity_id()
+            );
+            assert_eq!(
+                window.read(|_, cx| editor.read(cx).value().to_string()),
+                draft
+            );
+            assert_eq!(
+                window.read(|_, cx| editor.read(cx).selected_range()),
+                selection
+            );
+            assert!(
+                window.update(|_, window, cx| editor.read(cx).focus_handle(cx).is_focused(window))
+            );
+            assert!(window.read(|_, cx| editor.read(cx).scroll_offset().y < px(-1.)));
+            window.update(|_, window, _| {
+                let bounds = window.find("editor").bounds();
+                let toolbar = window.find("footer-gap").bounds();
+                if fill {
+                    assert!(bounds.size.height > px(500.));
+                } else {
+                    assert!(bounds.size.height <= px(196.));
+                }
+                assert_eq!(bounds.bottom(), toolbar.top());
+                assert_eq!(toolbar.bottom(), px(650.));
+            });
+        }
+
+        window.simulate_input("X");
+        window.draw();
+        let replaced = format!("{}X", &draft[..selection.start]);
+        assert_eq!(
+            window.read(|_, cx| editor.read(cx).value().to_string()),
+            replaced
+        );
+        window.simulate_keystroke("cmd-z");
+        window.draw();
+        assert_eq!(
+            window.read(|_, cx| editor.read(cx).value().to_string()),
+            draft
+        );
+        assert_eq!(
+            window.read(|_, cx| editor.read(cx).selected_range()),
+            selection
+        );
+        window.simulate_keystroke("cmd-shift-z");
+        window.draw();
+        assert_eq!(
+            window.read(|_, cx| editor.read(cx).value().to_string()),
+            replaced
+        );
     }
 
     #[test]

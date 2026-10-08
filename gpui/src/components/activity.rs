@@ -217,6 +217,13 @@ pub struct ActivityRow {
 }
 impl EventEmitter<ActivityEvent> for ActivityRow {}
 impl ActivityRow {
+    pub fn set_theme(&mut self, dark: bool, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.dark == dark {
+            return;
+        }
+        self.dark = dark;
+        cx.notify();
+    }
     pub fn new(
         id: impl Into<String>,
         content: ActivityContent,
