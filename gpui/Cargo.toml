@@ -39,3 +39,8 @@ exclude = [".cache/crates/gpui-base", ".cache/crates/gpui-pre", ".cache/crates/g
 name = "activity-paint"
 path = "tests/activity.rs"
 harness = false
+
+[[test]]
+name = "diagram-paint"
+path = "tests/diagram-paint.rs"
+harness = false

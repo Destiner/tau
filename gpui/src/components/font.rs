@@ -5,6 +5,7 @@ use gpui_kit::App;
 /// Static instances of the same bundled Inter variable source. GPUI's macOS
 /// font-kit matcher selects a face, not a position on its variable `wght` axis.
 pub fn init(cx: &mut App) {
+    gpui_kit::base::Theme::global_mut(cx).tokens.typography.mono = super::support::mono().into();
     cx.text_system()
         .add_fonts(vec![
             Cow::Borrowed(include_bytes!(
