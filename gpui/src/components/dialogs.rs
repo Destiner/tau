@@ -36,8 +36,10 @@ pub struct DialogProps {
 }
 
 pub struct NativeDialog {
+    editor_style: gpui_kit::base::input::InputEditorStyle,
     props: DialogProps,
     dark: bool,
+    embedded: bool,
     open: bool,
     busy: bool,
     readonly: bool,
@@ -50,6 +52,30 @@ pub struct NativeDialog {
 }
 impl gpui_kit::EventEmitter<DialogEvent> for NativeDialog {}
 impl NativeDialog {
+    pub fn set_theme(&mut self, dark: bool, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.dark == dark {
+            return;
+        }
+        super::composer::retheme_input_style(&mut self.editor_style, self.dark, dark);
+        self.dark = dark;
+        self.input.update(cx, |editor, cx| {
+            editor.set_editor_style(self.editor_style.clone());
+            cx.notify();
+        });
+        cx.notify();
+    }
+
+    pub fn set_editor_style(
+        &mut self,
+        style: gpui_kit::base::input::InputEditorStyle,
+        cx: &mut Context<Self>,
+    ) {
+        self.editor_style = style.clone();
+        self.input.update(cx, |editor, cx| {
+            editor.set_editor_style(style);
+            cx.notify();
+        });
+    }
     pub fn new(
         props: DialogProps,
         dark: bool,
@@ -77,8 +103,10 @@ impl NativeDialog {
             action_focus.focus(window, cx);
         }
         Self {
+            editor_style: support::input_style(dark),
             props,
             dark,
+            embedded: false,
             open: true,
             busy: false,
             readonly: false,
@@ -89,6 +117,11 @@ impl NativeDialog {
             action_focus,
             _input_events,
         }
+    }
+    /// The caller owns the canvas; this host must neither consume flex space nor cover it.
+    pub fn embedded(mut self) -> Self {
+        self.embedded = true;
+        self
     }
     pub fn editor(&self) -> Entity<InputState> {
         self.input.clone()
@@ -124,7 +157,7 @@ impl NativeDialog {
             .update(cx, |input, cx| input.set_readonly(readonly, cx));
     }
     pub fn cancel(&mut self, cx: &mut Context<Self>) {
-        if !self.busy {
+        if self.open && !self.busy {
             self.open = false;
             cx.emit(DialogEvent::Cancelled);
             cx.notify();
@@ -326,6 +359,16 @@ impl NativeDialog {
                 )
             }
         };
+        if kind == DialogKind::Ssh {
+            // Only the panel may occlude the backdrop's mouse-down handler.
+            let width = (viewport.width - px(36.)).max(px(0.)).min(px(440.));
+            return DialogPopup::new()
+                .absolute()
+                .top(px(68.))
+                .left((viewport.width - width) / 2.)
+                .w(width)
+                .child(panel);
+        }
         DialogPopup::new()
             .absolute()
             .top_0()
@@ -475,6 +518,12 @@ impl Render for NativeDialog {
         );
         let mut page = if inline {
             div().w_full()
+        } else if self.embedded {
+            support::root(self.dark)
+                .absolute()
+                .top_0()
+                .left_0()
+                .bg(rgba(0x00000000))
         } else {
             support::root(self.dark)
         };
@@ -501,7 +550,7 @@ impl Render for NativeDialog {
                     Dialog::new(cx)
                         .focus_handle(self.focus.clone())
                         .close_on_escape(!self.busy)
-                        .close_on_backdrop_press(false)
+                        .close_on_backdrop_press(self.props.kind == DialogKind::Ssh && !self.busy)
                         .on_cancel(move |_, _, cx| {
                             weak.update(cx, |s, cx| s.cancel(cx)).ok();
                             false
@@ -608,30 +657,212 @@ mod tests {
             assert!(!dialog.input.read(cx).presentation().is_readonly());
         });
     }
-    #[test]
-    fn popup_centers_on_resize_and_backdrop_respects_busy_state() {
-        use gpui_kit::{MouseButton, point, size, test::TestWindowExt};
-        let mut app = gpui_kit::TestApp::new();
-        app.update(gpui_kit::init);
-        let mut window = app
-            .open_window(|window, cx| NativeDialog::new(props(DialogKind::Ssh), false, window, cx));
-        for (width, height) in [(900., 700.), (620., 510.)] {
-            window.simulate_resize(size(px(width), px(height)));
+    struct PointerHost {
+        dialog: Entity<NativeDialog>,
+        downs: usize,
+        clicks: usize,
+    }
+
+    impl Render for PointerHost {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            support::root(false)
+                .child(
+                    div()
+                        .id("underlay")
+                        .size_full()
+                        .on_mouse_down(
+                            gpui_kit::MouseButton::Left,
+                            cx.listener(|s, _, _, _| s.downs += 1),
+                        )
+                        .on_click(cx.listener(|s, _, _, _| s.clicks += 1)),
+                )
+                .child(self.dialog.clone())
+        }
+    }
+
+    struct Fixture {
+        window: gpui_kit::TestAppWindow<gpui_kit::base::Root>,
+        host: Entity<PointerHost>,
+        dialog: Entity<NativeDialog>,
+        events: Rc<RefCell<Vec<DialogEvent>>>,
+        _subscription: Subscription,
+        _app: gpui_kit::TestApp,
+    }
+
+    impl Fixture {
+        fn new(kind: DialogKind) -> Self {
+            let mut app = gpui_kit::TestApp::new();
+            app.update(gpui_kit::init);
+            let mut entities = None;
+            let mut window = app.open_window(|window, cx| {
+                let dialog =
+                    cx.new(|cx| NativeDialog::new(props(kind), false, window, cx).embedded());
+                let host = cx.new(|_| PointerHost {
+                    dialog: dialog.clone(),
+                    downs: 0,
+                    clicks: 0,
+                });
+                entities = Some((host.clone(), dialog));
+                gpui_kit::base::Root::new(host, window, cx)
+            });
+            let (host, dialog) = entities.unwrap();
+            let events = Rc::new(RefCell::new(Vec::new()));
+            let received = events.clone();
+            let subscription = window.update(|_, _, cx| {
+                dialog.update(cx, |_, cx| {
+                    cx.subscribe(&cx.entity(), move |_, _, event: &DialogEvent, _| {
+                        received.borrow_mut().push(event.clone());
+                    })
+                })
+            });
+            window.simulate_resize(gpui_kit::size(px(900.), px(700.)));
             window.update(|_, window, cx| window.bounds_changed(cx));
             window.draw();
-            let bounds = window.update(|_, window, _| window.find("dialog").bounds());
-            assert!(
-                (f32::from(bounds.left()) - (width - 440.) / 2.).abs() < 1.,
-                "{width}x{height}: {bounds:?}"
-            );
-            assert_eq!(f32::from(bounds.top()), 68.);
-            window.simulate_click(point(px(5.), px(5.)), MouseButton::Left);
-            assert!(window.read(|dialog, _| dialog.is_open()));
+            Self {
+                _app: app,
+                window,
+                host,
+                dialog,
+                events,
+                _subscription: subscription,
+            }
         }
-        window.update(|dialog, _, cx| dialog.set_busy(true, cx));
-        window.draw();
-        window.simulate_keystroke("escape");
-        assert!(window.read(|dialog, _| dialog.is_open()));
+
+        fn open(&mut self) -> bool {
+            self.window
+                .update(|_, _, cx| self.dialog.read(cx).is_open())
+        }
+
+        fn busy(&mut self, busy: bool) {
+            self.window
+                .update(|_, _, cx| self.dialog.update(cx, |s, cx| s.set_busy(busy, cx)));
+            self.window.draw();
+        }
+
+        fn assert_no_clickthrough(&mut self) {
+            self.window.update(|_, _, cx| {
+                let host = self.host.read(cx);
+                assert_eq!((host.downs, host.clicks), (0, 0));
+            });
+        }
+    }
+
+    #[test]
+    fn ssh_popup_bounds_follow_panel_on_resize() {
+        use gpui_kit::{size, test::TestWindowExt};
+        let mut f = Fixture::new(DialogKind::Ssh);
+        for (width, height) in [(900., 700.), (620., 510.), (360., 400.)] {
+            f.window.simulate_resize(size(px(width), px(height)));
+            f.window.update(|_, window, cx| window.bounds_changed(cx));
+            f.window.draw();
+            let panel = f
+                .window
+                .update(|_, window, _| window.find("dialog").bounds());
+            let expected_width = 440_f32.min(width - 36.);
+            assert!((f32::from(panel.left()) - (width - expected_width) / 2.).abs() < 1.);
+            assert!((f32::from(panel.size.width) - expected_width).abs() < 1.);
+            assert_eq!(f32::from(panel.top()), 68.);
+        }
+    }
+
+    #[test]
+    fn ssh_idle_outside_dismisses_on_down_once_on_every_side() {
+        use gpui_kit::{MouseButton, point, test::TestWindowExt};
+        for side in 0..4 {
+            let mut f = Fixture::new(DialogKind::Ssh);
+            let b = f.window.update(|_, w, _| w.find("dialog").bounds());
+            let outside = match side {
+                0 => point(b.left() - px(1.), b.center().y),
+                1 => point(b.right() + px(1.), b.center().y),
+                2 => point(b.center().x, b.top() - px(1.)),
+                _ => point(b.center().x, b.bottom() + px(1.)),
+            };
+            f.window.simulate_mouse_down(outside, MouseButton::Left);
+            assert!(!f.open(), "side {side} must dismiss on down, not release");
+            f.window.draw();
+            f.window.simulate_mouse_up(outside, MouseButton::Left);
+            f.window.draw();
+            assert_eq!(*f.events.borrow(), vec![DialogEvent::Cancelled]);
+            f.assert_no_clickthrough();
+            // A stale callback must not emit a second cancellation.
+            f.window
+                .update(|_, _, cx| f.dialog.update(cx, |s, cx| s.cancel(cx)));
+            assert_eq!(*f.events.borrow(), vec![DialogEvent::Cancelled]);
+        }
+    }
+
+    #[test]
+    fn ssh_inside_clicks_and_inside_to_outside_release_do_not_dismiss() {
+        use gpui_kit::{MouseButton, point, test::TestWindowExt};
+        let mut f = Fixture::new(DialogKind::Ssh);
+        let b = f.window.update(|_, w, _| w.find("dialog").bounds());
+        let field = f.window.update(|_, w, _| w.find("input").bounds().center());
+        let header = point(b.center().x, b.top() + px(15.));
+        for inside in [header, field] {
+            f.window.simulate_click(inside, MouseButton::Left);
+            assert!(f.open());
+            f.window.simulate_mouse_down(inside, MouseButton::Left);
+            f.window
+                .simulate_mouse_move(point(b.left() - px(1.), inside.y));
+            f.window
+                .simulate_mouse_up(point(b.left() - px(1.), inside.y), MouseButton::Left);
+            assert!(f.open());
+        }
+        f.window.simulate_click(field, MouseButton::Left);
+        f.window.simulate_keystroke("x");
+        f.window
+            .update(|_, _, cx| assert_eq!(f.dialog.read(cx).value(cx), "x"));
+        assert!(f.events.borrow().is_empty());
+        f.assert_no_clickthrough();
+        f.window.simulate_keystroke("escape");
+        assert!(!f.open());
+        assert_eq!(*f.events.borrow(), vec![DialogEvent::Cancelled]);
+    }
+
+    #[test]
+    fn ssh_busy_outside_and_escape_stay_open_then_idle_cancel_works() {
+        use gpui_kit::{MouseButton, point, test::TestWindowExt};
+        for escape in [false, true] {
+            let mut f = Fixture::new(DialogKind::Ssh);
+            f.busy(true);
+            let b = f.window.update(|_, w, _| w.find("dialog").bounds());
+            for outside in [
+                point(b.left() - px(1.), b.center().y),
+                point(b.right() + px(1.), b.center().y),
+                point(b.center().x, b.top() - px(1.)),
+                point(b.center().x, b.bottom() + px(1.)),
+            ] {
+                f.window.simulate_click(outside, MouseButton::Left);
+                assert!(f.open());
+            }
+            f.window.simulate_keystroke("escape");
+            assert!(f.open());
+            assert!(f.events.borrow().is_empty());
+            f.assert_no_clickthrough();
+            f.busy(false);
+            if escape {
+                f.window.simulate_keystroke("escape");
+            } else {
+                f.window
+                    .simulate_click(point(b.left() - px(1.), b.center().y), MouseButton::Left);
+            }
+            assert!(!f.open());
+            assert_eq!(*f.events.borrow(), vec![DialogEvent::Cancelled]);
+            f.assert_no_clickthrough();
+        }
+    }
+
+    #[test]
+    fn feedback_and_quit_keep_their_outside_dismissal_policy() {
+        use gpui_kit::{MouseButton, point};
+        for kind in [DialogKind::Feedback, DialogKind::Quit] {
+            let mut f = Fixture::new(kind);
+            f.window
+                .simulate_click(point(px(5.), px(5.)), MouseButton::Left);
+            assert!(f.open());
+            assert!(f.events.borrow().is_empty());
+            f.assert_no_clickthrough();
+        }
     }
     #[test]
     fn extension_select_exposes_value_without_ssh_busy_state() {
