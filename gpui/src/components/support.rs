@@ -94,15 +94,119 @@ fn mix(a: u32, b: u32, weight: f32) -> gpui_kit::Rgba {
     }
 }
 
+/// Styled button; BaseButton still owns disabled pointer/keyboard policy.
+#[derive(gpui_kit::IntoElement)]
+pub struct NativeButton {
+    base: BaseButton,
+    disabled: bool,
+    variant: ButtonVariant,
+    dark: bool,
+    backdrop: u32,
+}
+
+impl NativeButton {
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self.base = self.base.disabled(disabled);
+        self
+    }
+
+    /// Opaque surface behind this button, used for CSS group-opacity compositing.
+    pub fn backdrop(mut self, backdrop: u32) -> Self {
+        self.backdrop = backdrop;
+        self
+    }
+
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&gpui_kit::ClickEvent, &mut gpui_kit::Window, &mut gpui_kit::App) + 'static,
+    ) -> Self {
+        self.base = self.base.on_click(handler);
+        self
+    }
+
+    pub fn track_focus(mut self, handle: &gpui_kit::FocusHandle) -> Self {
+        self.base = self.base.track_focus(handle);
+        self
+    }
+
+    fn styled_base(self) -> BaseButton {
+        let t = tokens(self.dark);
+        let primary = self.variant == ButtonVariant::Primary;
+        let variant = self.variant;
+        if self.disabled {
+            // GPUI opacity fades each primitive separately, not the CSS group.
+            // Preblend once so the primary border and fill remain identical.
+            let fill = mix(t.accent, self.backdrop, 0.45);
+            self.base
+                .bg(if primary { fill } else { rgba(0) })
+                .border_color(match variant {
+                    ButtonVariant::Primary => fill,
+                    ButtonVariant::Secondary => mix(t.border, self.backdrop, 0.45),
+                    ButtonVariant::Ghost => rgba(0),
+                })
+                .text_color(mix(
+                    if primary { t.on_accent } else { t.muted },
+                    self.backdrop,
+                    0.45,
+                ))
+        } else {
+            self.base
+                .hover(move |this| {
+                    if primary {
+                        let accent = mix(t.accent, t.on_accent, 0.88);
+                        this.bg(accent).border_color(accent)
+                    } else {
+                        let this = this.bg(rgb(t.hover)).text_color(rgb(t.text));
+                        if variant == ButtonVariant::Secondary {
+                            this.border_color(rgb(t.hover_border))
+                        } else {
+                            this
+                        }
+                    }
+                })
+                .focus_visible(move |this| {
+                    this.border_color(rgb(if primary { t.on_accent } else { t.accent }))
+                })
+        }
+    }
+}
+
+impl Styled for NativeButton {
+    fn style(&mut self) -> &mut gpui_kit::StyleRefinement {
+        self.base.style()
+    }
+}
+
+impl InteractiveElement for NativeButton {
+    fn interactivity(&mut self) -> &mut gpui_kit::Interactivity {
+        self.base.interactivity()
+    }
+}
+
+impl StatefulInteractiveElement for NativeButton {}
+
+impl ParentElement for NativeButton {
+    fn extend(&mut self, elements: impl IntoIterator<Item = gpui_kit::AnyElement>) {
+        self.base.extend(elements);
+    }
+}
+
+impl RenderOnce for NativeButton {
+    fn render(self, _: &mut gpui_kit::Window, _: &mut gpui_kit::App) -> impl IntoElement {
+        self.styled_base()
+    }
+}
+
 pub fn button(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
     variant: ButtonVariant,
     dark: bool,
-) -> BaseButton {
+) -> NativeButton {
     let t = tokens(dark);
     let primary = variant == ButtonVariant::Primary;
-    BaseButton::new(id)
+    let base = BaseButton::new(id)
         .h(px(24.))
         .px(px(9.))
         .text_size(px(11.))
@@ -122,24 +226,14 @@ pub fn button(
             rgba(0x00000000)
         })
         .text_color(rgb(if primary { t.on_accent } else { t.muted }))
-        .hover(move |this| {
-            if primary {
-                let accent = mix(t.accent, t.on_accent, 0.88);
-                this.bg(accent).border_color(accent)
-            } else {
-                let this = this.bg(rgb(t.hover)).text_color(rgb(t.text));
-                if variant == ButtonVariant::Secondary {
-                    this.border_color(rgb(t.hover_border))
-                } else {
-                    this
-                }
-            }
-        })
-        .focus_visible(move |this| {
-            this.border_color(rgb(if primary { t.on_accent } else { t.accent }))
-        })
-        .styles(|styles| styles.disabled(|this| this.opacity(0.45)))
-        .child(label.into())
+        .child(label.into());
+    NativeButton {
+        base,
+        disabled: false,
+        variant,
+        dark,
+        backdrop: t.canvas,
+    }
 }
 
 /// UiButton's compact `sm` size; the promised `button` entry point is `md`.
@@ -148,7 +242,7 @@ pub fn button_sm(
     label: impl Into<SharedString>,
     variant: ButtonVariant,
     dark: bool,
-) -> BaseButton {
+) -> NativeButton {
     button(id, label, variant, dark)
         .h(px(22.))
         .px(px(7.))
@@ -255,6 +349,195 @@ pub fn asset(path: &str) -> Option<Cow<'static, [u8]>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui_kit::{
+        Context, MouseButton, Refineable, Render, Style, TestApp, Window, test::TestWindowExt,
+    };
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
+
+    struct ButtonHost {
+        empty: bool,
+        busy: bool,
+        dark: bool,
+        variant: ButtonVariant,
+        clicks: Rc<Cell<usize>>,
+        visual_style: Rc<RefCell<Option<Style>>>,
+    }
+
+    impl ButtonHost {
+        fn control(&self) -> NativeButton {
+            button_sm("styled-button", "Submit", self.variant, self.dark)
+                .backdrop(tokens(self.dark).panel_raised)
+                // Also cover toggling the builder state back to enabled.
+                .disabled(true)
+                .disabled(self.empty || self.busy)
+        }
+    }
+
+    impl Render for ButtonHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let clicks = self.clicks.clone();
+            let visual_style = self.visual_style.clone();
+            let mut probe = self.control().styled_base();
+            let style = probe.style().clone();
+            probe.interactivity().base_style.refine(&style);
+            div()
+                .size_full()
+                .bg(rgb(tokens(self.dark).panel_raised))
+                .child(
+                    self.control()
+                        .on_click(move |_, _, _| clicks.set(clicks.get() + 1)),
+                )
+                .child(gpui_kit::canvas(
+                    |_, window, _| {
+                        let bounds = window.find("styled-button").bounds();
+                        window.insert_hitbox(bounds, gpui_kit::HitboxBehavior::Normal)
+                    },
+                    move |_, hitbox, window, cx| {
+                        // Use actual pointer input over the painted button bounds.
+                        let style =
+                            probe
+                                .interactivity()
+                                .compute_style(None, Some(&hitbox), window, cx);
+                        *visual_style.borrow_mut() = Some(style);
+                    },
+                ))
+        }
+    }
+
+    #[test]
+    fn disabled_variants_preblend_once_against_the_owned_surface() {
+        for dark in [false, true] {
+            let t = tokens(dark);
+            for backdrop in [t.canvas, t.panel_raised] {
+                for variant in [
+                    ButtonVariant::Primary,
+                    ButtonVariant::Secondary,
+                    ButtonVariant::Ghost,
+                ] {
+                    let mut base = button("button", "Label", variant, dark)
+                        .disabled(true)
+                        .backdrop(backdrop)
+                        .styled_base();
+                    let style = base.style();
+                    assert_eq!(style.opacity, None, "never fade GPUI primitives twice");
+                    let fill = mix(t.accent, backdrop, 0.45);
+                    let border = match variant {
+                        ButtonVariant::Primary => fill,
+                        ButtonVariant::Secondary => mix(t.border, backdrop, 0.45),
+                        ButtonVariant::Ghost => rgba(0),
+                    };
+                    assert_eq!(style.border_color, Some(border.into()));
+                    assert_eq!(
+                        style.background.as_ref().and_then(gpui_kit::Fill::color),
+                        Some(
+                            if variant == ButtonVariant::Primary {
+                                fill
+                            } else {
+                                rgba(0)
+                            }
+                            .into()
+                        )
+                    );
+                    assert_eq!(
+                        style.text.color,
+                        Some(
+                            mix(
+                                if variant == ButtonVariant::Primary {
+                                    t.on_accent
+                                } else {
+                                    t.muted
+                                },
+                                backdrop,
+                                0.45,
+                            )
+                            .into()
+                        )
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn actual_hover_and_activation_follow_empty_busy_enabled_disabled_transitions() {
+        for dark in [false, true] {
+            for variant in [
+                ButtonVariant::Primary,
+                ButtonVariant::Secondary,
+                ButtonVariant::Ghost,
+            ] {
+                let clicks = Rc::new(Cell::new(0));
+                let mut app = TestApp::new();
+                app.update(gpui_kit::init);
+                let mut window = app.open_window({
+                    let clicks = clicks.clone();
+                    move |_, _| ButtonHost {
+                        empty: true,
+                        busy: false,
+                        dark,
+                        variant,
+                        clicks,
+                        visual_style: Rc::new(RefCell::new(None)),
+                    }
+                });
+                window.draw();
+                for (empty, busy) in [
+                    (true, false),
+                    (false, true),
+                    (false, false),
+                    (true, false),
+                    (false, false),
+                    (false, true),
+                ] {
+                    window.update(|host, _, cx| {
+                        host.empty = empty;
+                        host.busy = busy;
+                        cx.notify();
+                    });
+                    window.draw();
+                    let bounds = window.update(|_, w, _| w.find("styled-button").bounds());
+                    window.simulate_mouse_move(gpui_kit::point(
+                        bounds.right() + px(20.),
+                        bounds.bottom() + px(20.),
+                    ));
+                    window.draw();
+                    let rest =
+                        window.update(|host, _, _| host.visual_style.borrow().clone().unwrap());
+                    window.simulate_mouse_move(bounds.center());
+                    window.draw();
+                    let hover =
+                        window.update(|host, _, _| host.visual_style.borrow().clone().unwrap());
+                    if empty || busy {
+                        assert_eq!(rest.background, hover.background);
+                        assert_eq!(rest.border_color, hover.border_color);
+                        assert_eq!(rest.text.color, hover.text.color);
+                    } else {
+                        assert_ne!(
+                            rest.background, hover.background,
+                            "enabled hover must still work"
+                        );
+                    }
+                    let before = clicks.get();
+                    window.simulate_click(bounds.center(), MouseButton::Left);
+                    window.draw();
+                    for key in ["enter", "space"] {
+                        let keystroke = gpui_kit::Keystroke::parse(key).unwrap();
+                        window.simulate_event(gpui_kit::KeyDownEvent {
+                            keystroke: keystroke.clone(),
+                            is_held: false,
+                            prefer_character_input: false,
+                        });
+                        window.simulate_event(gpui_kit::KeyUpEvent { keystroke });
+                        window.draw();
+                    }
+                    assert_eq!(clicks.get() - before, if empty || busy { 0 } else { 3 });
+                }
+            }
+        }
+    }
 
     #[test]
     fn palettes_keep_distinct_surfaces_and_alpha_scrims() {
