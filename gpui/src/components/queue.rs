@@ -1,11 +1,14 @@
-use super::support::{self, ButtonVariant};
+use super::{
+    markdown::{self, MarkdownPresentation},
+    support::{self, ButtonVariant},
+};
 use gpui_kit::{
     Bounds, BoxShadow, Context, FocusHandle, IntoElement, KeyDownEvent, Pixels, Render, Task,
     TestSupportExt, TextRun, Window,
-    base::{Button, ElementExt, TextView, TextViewState, TextViewStyle},
+    base::{Button, ElementExt, TextViewState},
     div, font,
     prelude::*,
-    px, relative, rems, rgb, rgba,
+    px, relative, rgb, rgba,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -34,6 +37,8 @@ pub struct MessageQueue {
     timer: Option<Task<()>>,
     close_timer: Option<Task<()>>,
     markdown: gpui_kit::Entity<TextViewState>,
+    presentation: gpui_kit::Entity<MarkdownPresentation>,
+    _presentation_changed: gpui_kit::Subscription,
     chip_focus: Vec<FocusHandle>,
     preview_focus: FocusHandle,
 }
@@ -46,6 +51,7 @@ impl MessageQueue {
         self.trigger = Some(id);
         self.markdown
             .update(cx, |view, cx| view.set_text(&text, cx));
+        self.presentation.update(cx, |p, cx| p.source_changed(cx));
         self.preview = Some((kind, text));
         cx.notify();
     }
@@ -74,6 +80,7 @@ impl MessageQueue {
                         scene
                             .markdown
                             .update(cx, |view, cx| view.set_text(&text, cx));
+                        scene.presentation.update(cx, |p, cx| p.source_changed(cx));
                         scene.preview = Some((kind, text));
                         cx.notify();
                     }
@@ -158,6 +165,15 @@ pub enum QueueEvent {
 impl gpui_kit::EventEmitter<QueueEvent> for MessageQueue {}
 
 impl MessageQueue {
+    pub fn set_theme(&mut self, dark: bool, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.dark == dark {
+            return;
+        }
+        self.dark = dark;
+        self.presentation.update(cx, |p, cx| p.set_theme(dark, cx));
+        cx.notify();
+    }
+
     pub fn new(
         id: impl Into<String>,
         props: QueueProps,
@@ -167,6 +183,20 @@ impl MessageQueue {
         let chip_focus = (0..props.steering.len() + props.follow_up.len())
             .map(|_| cx.focus_handle())
             .collect();
+        let markdown =
+            cx.new(|cx| TextViewState::markdown_with_extensions("", markdown::extensions(), cx));
+        let owner = cx.entity().downgrade();
+        let presentation = cx.new(|cx| {
+            MarkdownPresentation::new(
+                markdown.clone(),
+                dark,
+                move |cx| {
+                    let _ = owner.update(cx, |_, cx| cx.notify());
+                },
+                cx,
+            )
+        });
+        let changed = cx.observe(&presentation, |_, _, cx| cx.notify());
         Self {
             id: id.into(),
             dark,
@@ -182,7 +212,9 @@ impl MessageQueue {
             pending: 0,
             timer: None,
             close_timer: None,
-            markdown: cx.new(|cx| TextViewState::markdown("", cx)),
+            markdown,
+            presentation,
+            _presentation_changed: changed,
             chip_focus,
             preview_focus: cx.focus_handle(),
         }
@@ -423,11 +455,16 @@ impl Render for MessageQueue {
                     .items_center()
                     .justify_center()
                     .rounded(px(4.))
-                    .hover(move |s| s.bg(rgb(t.hover)))
+                    .when(!self.props.busy, |button| {
+                        button.hover(move |s| s.bg(rgb(t.hover)))
+                    })
                     .on_click(cx.listener(|_, _, _, cx| {
                         cx.emit(QueueEvent::Clear);
                     }))
-                    .child(support::icon("cross", 12., t.muted)),
+                    .child(
+                        support::icon("cross", 12., t.muted)
+                            .when(self.props.busy, |icon| icon.opacity(0.45)),
+                    ),
             );
         }
         bar = bar.child(rail);
@@ -527,6 +564,7 @@ impl Render for MessageQueue {
                                 ButtonVariant::Ghost,
                                 self.dark,
                             )
+                            .backdrop(t.panel_raised)
                             .disabled(!self.props.can_recover)
                             .on_click(cx.listener(
                                 move |s, _, _, cx| {
@@ -634,36 +672,21 @@ impl Render for MessageQueue {
                     )
                     .child(
                         div().line_height(relative(1.62)).child(
-                            TextView::new(&self.markdown)
-                                .on_link_click({
-                                    let entity = cx.entity().downgrade();
-                                    move |url, _, _, cx| {
-                                        let _ = entity.update(cx, |_, cx| {
-                                            cx.emit(QueueEvent::OpenLink(url.to_string()))
-                                        });
-                                    }
-                                })
-                                .style(
-                                    TextViewStyle::default()
-                                        .with_paragraph_gap(rems(0.4))
-                                        .with_strong_weight(gpui_kit::FontWeight::SEMIBOLD)
-                                        .with_list_style(px(15.4), px(3.1), rgb(t.faint).into())
-                                        .with_heading(|level| {
-                                            gpui_kit::StyleRefinement::default()
-                                                .text_size(px(match level {
-                                                    1 => 15.,
-                                                    2 => 13.2,
-                                                    _ => 11.9,
-                                                }))
-                                                .font_weight(gpui_kit::FontWeight(650.))
-                                                .line_height(relative(1.25))
-                                                .pb(px(8.25))
-                                        })
-                                        .with_foreground(rgb(t.text).into())
-                                        .with_link(
-                                            rgb(if self.dark { 0x59c2ff } else { 0x22a4e6 }).into(),
-                                        ),
-                                ),
+                            MarkdownPresentation::decorate(
+                                &self.presentation,
+                                11.,
+                                self.dark,
+                                window,
+                                cx,
+                            )
+                            .on_link_click({
+                                let entity = cx.entity().downgrade();
+                                move |url, _, _, cx| {
+                                    let _ = entity.update(cx, |_, cx| {
+                                        cx.emit(QueueEvent::OpenLink(url.to_string()))
+                                    });
+                                }
+                            }),
                         ),
                     ),
             );
@@ -740,6 +763,35 @@ mod tests {
         window.draw();
         app.run_until_parked();
     }
+    #[test]
+    fn clear_activation_tracks_busy_enabled_busy_again() {
+        let (_app, mut window) = fixture();
+        let clears = Rc::new(std::cell::Cell::new(0));
+        let _subscription = window.update(|host, _, cx| {
+            let clears = clears.clone();
+            cx.subscribe(&host.queue, move |_, _, event: &QueueEvent, _| {
+                if matches!(event, QueueEvent::Clear) {
+                    clears.set(clears.get() + 1);
+                }
+            })
+        });
+        for busy in [true, false, true, false] {
+            window.update(|host, _, cx| {
+                host.queue.update(cx, |queue, cx| {
+                    let mut props = queue.props().clone();
+                    props.busy = busy;
+                    queue.set_props(props, cx);
+                });
+            });
+            window.draw();
+            let center = window.update(|_, window, _| window.find("clear").bounds().center());
+            window.simulate_mouse_move(center);
+            let before = clears.get();
+            window.simulate_click(center, gpui_kit::MouseButton::Left);
+            assert_eq!(clears.get() - before, usize::from(!busy));
+        }
+    }
+
     #[test]
     fn slow_exit_through_each_chip_border_closes_preview() {
         for id in ["steer", "follow-up", "follow-up-2", "follow-up-3"] {
