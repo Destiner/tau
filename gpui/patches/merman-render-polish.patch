@@ -1,0 +1,1471 @@
+diff --git a/src/class/presentation.rs b/src/class/presentation.rs
+index 2b8fd06..ac424ba 100644
+--- a/src/class/presentation.rs
++++ b/src/class/presentation.rs
+@@ -32,7 +32,7 @@ pub(crate) fn member_style(config: &Value) -> TextStyle {
+ 
+ pub(crate) fn title_style(config: &Value) -> TextStyle {
+     let mut style = super::config::ClassConfigView::new(config).render_text_style(13.0);
+-    style.font_weight = Some("500".into());
++    style.font_weight = Some("700".into());
+     style
+ }
+ 
+@@ -167,7 +167,7 @@ mod tests {
+             "presentationProfile":"compact", "memberFontFamily":"Requested Mono"
+         }});
+         assert_eq!(title_style(&config).font_size, 13.0);
+-        assert_eq!(title_style(&config).font_weight.as_deref(), Some("500"));
++        assert_eq!(title_style(&config).font_weight.as_deref(), Some("700"));
+         assert_eq!(
+             member_style(&config).font_family.as_deref(),
+             Some("Requested Mono")
+diff --git a/src/er/config.rs b/src/er/config.rs
+index 14a6a9e..a196929 100644
+--- a/src/er/config.rs
++++ b/src/er/config.rs
+@@ -146,7 +146,7 @@ impl<'a> ErConfigView<'a> {
+             return TextStyle {
+                 font_family: Some(self.font_family_css()),
+                 font_size: 13.0,
+-                font_weight: Some("500".into()),
++                font_weight: Some("700".into()),
+                 font_style: None,
+             };
+         }
+diff --git a/src/er/presentation.rs b/src/er/presentation.rs
+index 8d9d93d..00f870f 100644
+--- a/src/er/presentation.rs
++++ b/src/er/presentation.rs
+@@ -35,7 +35,7 @@ pub(crate) fn attr_style(config: &Value) -> TextStyle {
+ pub(crate) fn key_style(title_style: &TextStyle) -> TextStyle {
+     TextStyle {
+         font_size: 9.0,
+-        font_weight: Some("600".into()),
++        font_weight: Some("700".into()),
+         ..title_style.clone()
+     }
+ }
+@@ -135,7 +135,7 @@ mod tests {
+         }});
+         let settings = ErConfigView::new(&config).render_settings();
+         assert_eq!(settings.label_style.font_size, 13.0);
+-        assert_eq!(settings.label_style.font_weight.as_deref(), Some("500"));
++        assert_eq!(settings.label_style.font_weight.as_deref(), Some("700"));
+         assert_eq!(
+             settings.attr_style.font_family.as_deref(),
+             Some("Requested Mono")
+diff --git a/src/flowchart/native_profile.rs b/src/flowchart/native_profile.rs
+index 8016be5..69bf882 100644
+--- a/src/flowchart/native_profile.rs
++++ b/src/flowchart/native_profile.rs
+@@ -2,6 +2,12 @@
+ use crate::text::TextStyle;
+ use serde_json::Value;
+ 
++pub(crate) fn enabled(config: &Value) -> bool {
++    config
++        .pointer("/flowchart/nativeLabelProfile")
++        .is_some_and(Value::is_object)
++}
++
+ pub(crate) fn label_style(config: &Value, base: &TextStyle, role: &str) -> TextStyle {
+     let mut style = base.clone();
+     if let Some(profile) = config
+diff --git a/src/flowchart/node.rs b/src/flowchart/node.rs
+index bafff1f..895caf7 100644
+--- a/src/flowchart/node.rs
++++ b/src/flowchart/node.rs
+@@ -167,6 +167,28 @@ pub(crate) struct OddGeometry {
+ }
+ 
+ impl OddGeometry {
++    /// beautiful-mermaid renderer.ts: a convex left point with a fixed 12px shoulder.
++    /// Native ELK measurement already reserves those 12px in the node width.
++    pub(crate) fn native_from_bounds(width: f64, height: f64) -> Self {
++        let w = width.max(0.0);
++        let h = height.max(0.0);
++        let x = -w / 2.0;
++        let y = -h / 2.0;
++        let shoulder = 12.0_f64.min(w);
++        Self {
++            width: w,
++            height: h,
++            points: [
++                (x + shoulder, y),
++                (-x, y),
++                (-x, -y),
++                (x + shoulder, -y),
++                (x, 0.0),
++            ],
++            shift_x: 0.0,
++        }
++    }
++
+     pub(crate) fn from_label(label_width: f64, label_height: f64, padding: f64, neo: bool) -> Self {
+         let p = padding.max(0.0);
+         let w = label_width.max(0.0) + if neo { 42.0 } else { p };
+diff --git a/src/svg/parity.rs b/src/svg/parity.rs
+index 74b52d4..ce5b2a3 100644
+--- a/src/svg/parity.rs
++++ b/src/svg/parity.rs
+@@ -44,6 +44,25 @@ mod block;
+ mod c4;
+ #[cfg(feature = "diagram-class")]
+ mod class;
++#[cfg(any(
++    feature = "diagram-flowchart",
++    feature = "diagram-agentflow",
++    feature = "diagram-swimlane",
++    feature = "diagram-state",
++    feature = "diagram-er"
++))]
++mod compact_style;
++#[cfg(all(
++    test,
++    any(
++        feature = "diagram-flowchart",
++        feature = "diagram-state",
++        feature = "diagram-sequence",
++        feature = "diagram-class",
++        feature = "diagram-er"
++    )
++))]
++mod compact_style_tests;
+ #[cfg_attr(
+     not(feature = "all-diagrams"),
+     allow(
+diff --git a/src/svg/parity/class/defs.rs b/src/svg/parity/class/defs.rs
+index 703db8e..d7718ce 100644
+--- a/src/svg/parity/class/defs.rs
++++ b/src/svg/parity/class/defs.rs
+@@ -33,6 +33,74 @@ pub(super) fn class_marker_name(ty: i32, is_start: bool) -> Option<&'static str>
+     }
+ }
+ 
++pub(super) fn compact_class_markers(
++    out: &mut String,
++    diagram_id: SvgDiagramId<'_>,
++    diagram_type: &str,
++    config: &serde_json::Value,
++) {
++    let canvas = theme_token(config, "background", "#ffffff");
++    let arrow = theme_token(config, "arrowheadColor", "#333333");
++    for (kind, points, width, height, stroke_width) in [
++        ("extension", "0,0 12,5 0,10", 12, 10, 1.5),
++        ("aggregation", "6,0 12,5 6,10 0,5", 12, 10, 1.5),
++        ("composition", "6,0 12,5 6,10 0,5", 12, 10, 1.0),
++        ("dependency", "0,0 8,3 0,6", 8, 6, 1.5),
++    ] {
++        for start in [true, false] {
++            for margin in [false, true] {
++                let end = if start { "Start" } else { "End" };
++                let suffix = if margin { "-margin" } else { "" };
++                let hollow = matches!(kind, "extension" | "aggregation");
++                let fill = if hollow {
++                    canvas.as_str()
++                } else if kind == "dependency" {
++                    "none"
++                } else {
++                    arrow.as_str()
++                };
++                let shape = if kind == "dependency" {
++                    "polyline"
++                } else {
++                    "polygon"
++                };
++                let _ = write!(
++                    out,
++                    r#"<defs><marker id="{diagram_id}_{}-{kind}{end}{suffix}" class="marker {kind} {}" markerUnits="userSpaceOnUse" markerWidth="{width}" markerHeight="{height}" refX="{}" refY="{}" orient="auto" overflow="visible"><{shape} points="{points}" transform="{}" style="fill:{};stroke:{};stroke-width:{};stroke-dasharray:0"/></marker></defs>"#,
++                    escape_xml(diagram_type),
++                    escape_xml(diagram_type),
++                    if start { width } else { 0 },
++                    fmt(height as f64 / 2.0),
++                    if start {
++                        format!("translate({width},0) scale(-1,1)")
++                    } else {
++                        String::new()
++                    },
++                    escape_xml(fill),
++                    escape_xml(&arrow),
++                    fmt(stroke_width)
++                );
++            }
++        }
++    }
++    // Lollipop relationships retain their distinct circle semantics.
++    for start in [true, false] {
++        for margin in [false, true] {
++            let end = if start { "Start" } else { "End" };
++            let suffix = if margin { "-margin" } else { "" };
++            let _ = write!(
++                out,
++                r#"<defs><marker id="{diagram_id}_{}-lollipop{end}{suffix}" class="marker lollipop {}" markerUnits="userSpaceOnUse" markerWidth="14" markerHeight="14" refX="{}" refY="7" orient="auto"><circle cx="7" cy="7" r="6" style="fill:{};stroke:{};stroke-width:1"/></marker></defs>"#,
++                escape_xml(diagram_type),
++                escape_xml(diagram_type),
++                if start { "13" } else { "1" },
++                escape_xml(&canvas),
++                escape_xml(&arrow)
++            );
++        }
++    }
++}
++
+ pub(super) fn class_markers(
+     out: &mut String,
+     diagram_id: SvgDiagramId<'_>,
+diff --git a/src/svg/parity/class/edge.rs b/src/svg/parity/class/edge.rs
+index 108cfd6..75a1929 100644
+--- a/src/svg/parity/class/edge.rs
++++ b/src/svg/parity/class/edge.rs
+@@ -31,6 +31,7 @@ pub(super) struct ClassEdgeGroupsRenderState<'a> {
+ }
+ 
+ pub(super) struct ClassEdgeGroupsRenderContext<'a> {
++    pub compact: bool,
+     pub edges: &'a [LayoutEdge],
+     pub missing_section_points: &'a FxHashMap<&'a str, Vec<LayoutPoint>>,
+     pub work_meter: &'a crate::resources::OperationWorkMeter,
+@@ -63,8 +64,19 @@ pub(super) fn class_line_with_marker_offset_points_into(
+     relation: Option<&ClassSvgRelation>,
+     out: &mut Vec<LayoutPoint>,
+ ) {
+-    fn marker_offset_for(arrow_type: Option<&str>) -> Option<f64> {
++    class_line_with_profile_marker_offset_points_into(input, relation, out, false);
++}
++
++fn class_line_with_profile_marker_offset_points_into(
++    input: &[LayoutPoint],
++    relation: Option<&ClassSvgRelation>,
++    out: &mut Vec<LayoutPoint>,
++    compact: bool,
++) {
++    fn marker_offset_for(arrow_type: Option<&str>, compact: bool) -> Option<f64> {
+         match arrow_type {
++            Some("dependency") if compact => Some(8.0),
++            Some("aggregation" | "extension" | "composition") if compact => Some(12.0),
+             Some("dependency") => Some(6.0),
+             Some("lollipop") => Some(13.5),
+             Some("aggregation" | "extension" | "composition") => Some(17.25),
+@@ -95,8 +107,8 @@ pub(super) fn class_line_with_marker_offset_points_into(
+     let x_direction_is_left = start.x < end.x;
+     let y_direction_is_down = start.y < end.y;
+     let extra_room = 1.0;
+-    let start_marker_height = marker_offset_for(arrow_type_start);
+-    let end_marker_height = marker_offset_for(arrow_type_end);
++    let start_marker_height = marker_offset_for(arrow_type_start, compact);
++    let end_marker_height = marker_offset_for(arrow_type_end, compact);
+ 
+     for (idx, point) in input.iter().enumerate() {
+         let mut offset_x = 0.0;
+@@ -210,7 +222,14 @@ pub(super) fn render_class_edge_groups(
+         } else {
+             ctx.relations_by_id.get(e.id.as_str()).copied()
+         };
+-        if ctx.uses_elk_adapter_dom && missing_section.is_none() {
++        if ctx.compact {
++            class_line_with_profile_marker_offset_points_into(
++                &edge_raw_points,
++                relation,
++                &mut edge_marker_points,
++                true,
++            );
++        } else if ctx.uses_elk_adapter_dom && missing_section.is_none() {
+             // ELK selects rounded routing after clipping and offsets only the endpoints.
+             edge_marker_points = super::super::edge_path::rounded_line_with_marker_offsets_points(
+                 &edge_raw_points,
+diff --git a/src/svg/parity/class/groups.rs b/src/svg/parity/class/groups.rs
+index cad032e..fdbbc16 100644
+--- a/src/svg/parity/class/groups.rs
++++ b/src/svg/parity/class/groups.rs
+@@ -29,6 +29,7 @@ pub(super) struct ClassSplitEdgeGroupsRenderContext<'a> {
+     pub(super) edge_use_html_labels: bool,
+     pub(super) text_measurer: &'a dyn TextMeasurer,
+     pub(super) terminal_text_style: &'a TextStyle,
++    pub(super) compact: bool,
+     pub(super) mermaid_config: Option<&'a merman_core::MermaidConfig>,
+     pub(super) math_renderer: Option<&'a (dyn crate::math::MathRenderer + Send + Sync)>,
+     pub(super) look: &'a str,
+@@ -65,6 +66,7 @@ pub(super) fn render_class_split_edge_groups(
+             detail,
+         },
+         &ClassEdgeGroupsRenderContext {
++            compact: ctx.compact,
+             edges: ctx.edges,
+             missing_section_points: ctx.missing_section_points,
+             work_meter: ctx.work_meter,
+diff --git a/src/svg/parity/class/nodes.rs b/src/svg/parity/class/nodes.rs
+index 27cf2e1..e9fb95d 100644
+--- a/src/svg/parity/class/nodes.rs
++++ b/src/svg/parity/class/nodes.rs
+@@ -586,6 +586,7 @@ fn render_class_split_edges_for_namespace(
+     in_namespace_root: bool,
+ ) -> Result<super::groups::ClassSplitEdgeGroups> {
+     let local_ctx = ClassSplitEdgeGroupsRenderContext {
++        compact: edge_ctx.compact,
+         edges,
+         missing_section_points: edge_ctx.missing_section_points,
+         work_meter: edge_ctx.work_meter,
+diff --git a/src/svg/parity/class/presentation.rs b/src/svg/parity/class/presentation.rs
+index e1727b1..fb201f0 100644
+--- a/src/svg/parity/class/presentation.rs
++++ b/src/svg/parity/class/presentation.rs
+@@ -45,7 +45,7 @@ pub(super) fn body(
+     let title_y = y + header / 2.0 + node.annotations.len() as f64 * 6.0;
+     let _ = write!(
+         out,
+-        r#"<text x="0" y="{}" text-anchor="middle" dominant-baseline="central" style="font-family:{};font-size:13px;font-weight:500;fill:{}">"#,
++        r#"<text x="0" y="{}" text-anchor="middle" dominant-baseline="central" style="font-family:{};font-size:13px;font-weight:700;fill:{}">"#,
+         fmt(title_y),
+         escape_xml(title_family),
+         escape_xml(&fg)
+@@ -119,6 +119,6 @@ mod tests {
+         assert!(svg.contains(">First</tspan>"));
+         assert!(svg.contains(">Second</tspan>"));
+         assert!(!svg.contains("&lt;br"));
+-        assert!(svg.contains("font-family:Requested Sans;font-size:13px;font-weight:500"));
++        assert!(svg.contains("font-family:Requested Sans;font-size:13px;font-weight:700"));
+     }
+ }
+diff --git a/src/svg/parity/class/render.rs b/src/svg/parity/class/render.rs
+index beed3be..ec0bf95 100644
+--- a/src/svg/parity/class/render.rs
++++ b/src/svg/parity/class/render.rs
+@@ -111,7 +111,16 @@ fn render_class_diagram_svg_model_inner(
+     // Mermaid wraps diagram content (defs + root) in a single `<g>` element.
+     out.push_str("<g>");
+     // Mermaid 12 shares the host marker definitions across registered layouts.
+-    class_markers(&mut out, diagram_id, aria_roledescription, true);
++    if crate::class::presentation::enabled(effective_config) {
++        super::defs::compact_class_markers(
++            &mut out,
++            diagram_id,
++            aria_roledescription,
++            effective_config,
++        );
++    } else {
++        class_markers(&mut out, diagram_id, aria_roledescription, true);
++    }
+     emit.checkpoint()?;
+ 
+     let ClassRenderLookups {
+@@ -193,6 +202,7 @@ fn render_class_diagram_svg_model_inner(
+         options.work_meter(),
+     )?;
+     let group_ctx = ClassSplitEdgeGroupsRenderContext {
++        compact: crate::class::presentation::enabled(effective_config),
+         edges: &paint_edges,
+         missing_section_points: &missing_section_points,
+         work_meter: options.work_meter(),
+diff --git a/src/svg/parity/compact_style.rs b/src/svg/parity/compact_style.rs
+new file mode 100644
+index 0000000..5101751
+--- /dev/null
++++ b/src/svg/parity/compact_style.rs
+@@ -0,0 +1,69 @@
++//! Paint-only primitives for the opt-in compact/native presentations.
++use super::*;
++
++pub(super) fn label_backplate(
++    config: &serde_json::Value,
++    width: f64,
++    height: f64,
++    padding: (f64, f64),
++    stroke_width: f64,
++) -> String {
++    let width = width.max(0.0) + padding.0 * 2.0;
++    let height = height.max(0.0) + padding.1 * 2.0;
++    let fill = theme_token(config, "background", "#ffffff");
++    let fallback_stroke = theme_token(config, "nodeBorder", "#9370DB");
++    let stroke = theme_token(config, "edgeLabelBorderColor", &fallback_stroke);
++    format!(
++        r#"<rect class="native-edge-label-background" x="{}" y="{}" width="{}" height="{}" rx="2" ry="2" style="fill:{};stroke:{};stroke-width:{};opacity:1"/>"#,
++        fmt(-width / 2.0),
++        fmt(-height / 2.0),
++        fmt(width),
++        fmt(height),
++        escape_xml(&fill),
++        escape_xml(&stroke),
++        fmt(stroke_width)
++    )
++}
++
++#[cfg(any(
++    feature = "diagram-flowchart",
++    feature = "diagram-agentflow",
++    feature = "diagram-swimlane"
++))]
++pub(super) fn flow_enabled(config: &serde_json::Value) -> bool {
++    config
++        .pointer("/flowchart/nativeLabelProfile")
++        .is_some_and(serde_json::Value::is_object)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    #[test]
++    fn backplates_are_centered_and_preserve_family_padding() {
++        for (padding, stroke, expected) in [
++            ((8.0, 8.0), 1.0, (36.0, 30.0)),
++            ((4.0, 3.0), 0.5, (28.0, 20.0)),
++        ] {
++            let svg = label_backplate(
++                &serde_json::json!({"themeVariables":{"background":"#151515","nodeBorder":"#444444"}}),
++                20.0,
++                14.0,
++                padding,
++                stroke,
++            );
++            assert!(svg.contains(&format!(
++                "width=\"{}\" height=\"{}\"",
++                fmt(expected.0),
++                fmt(expected.1)
++            )));
++            assert!(svg.contains(&format!(
++                "x=\"{}\" y=\"{}\"",
++                fmt(-expected.0 / 2.0),
++                fmt(-expected.1 / 2.0)
++            )));
++            assert!(svg.contains("rx=\"2\" ry=\"2\""));
++            assert!(svg.contains("fill:#151515;stroke:#444444"));
++        }
++    }
++}
+diff --git a/src/svg/parity/compact_style_tests.rs b/src/svg/parity/compact_style_tests.rs
+new file mode 100644
+index 0000000..37d26ef
+--- /dev/null
++++ b/src/svg/parity/compact_style_tests.rs
+@@ -0,0 +1,495 @@
++use crate::{
++    LayoutOptions,
++    environment::RenderEnvironment,
++    family,
++    svg::{SvgDebugOptions, SvgRenderOptions},
++};
++use futures::executor::block_on;
++use merman_core::{Engine, MermaidConfig, ParseOptions};
++use serde_json::{Value, json};
++
++#[test]
++#[cfg(all(feature = "diagram-flowchart", feature = "layout-elk"))]
++fn aligned_flow_retains_provider_extent_in_both_palettes() {
++    let source = "flowchart TD\nS[Start; α] --> R{Retry?}\nR --> Q[Queue]\nR --> P[Primary]\nR --> F[Fallback]\nF --> P2[Secondary] --> OK[Accepted; ✓]\nP & P2 --> W[Wait]\nE[External] --> W\nW --> Z[Retry timer]\nZ --> R\nW --> T[Timeout]\nR -.remaining-deadline fires.-> T";
++    for dark in [false, true] {
++        let mut cfg = config(dark);
++        cfg["layout"] = json!("elk");
++        cfg["flowchart"]["nativePostCompaction"] = json!("LEFT_RIGHT_CONSTRAINT_LOCKING");
++        cfg["flowchart"]["nativeAlignLayers"] = json!(true);
++        let (layout, svg) = render(source, cfg.clone());
++        let bounds = &layout["layout"]["FlowchartV2"]["bounds"];
++        let doc = roxmltree::Document::parse(&svg).unwrap();
++        let viewport: Vec<f64> = doc
++            .root_element()
++            .attribute("viewBox")
++            .unwrap()
++            .split_whitespace()
++            .map(|v| v.parse().unwrap())
++            .collect();
++        assert!(viewport[0] <= bounds["min_x"].as_f64().unwrap());
++        assert!(viewport[1] <= bounds["min_y"].as_f64().unwrap());
++        assert!(viewport[0] + viewport[2] >= bounds["max_x"].as_f64().unwrap());
++        assert!(viewport[1] + viewport[3] >= bounds["max_y"].as_f64().unwrap());
++
++        cfg["flowchart"]
++            .as_object_mut()
++            .unwrap()
++            .remove("nativeAlignLayers");
++        let stock = render(source, cfg.clone());
++        for disabled in [json!(false), json!("true"), json!(1), Value::Null] {
++            cfg["flowchart"]["nativeAlignLayers"] = disabled;
++            let disabled = render(source, cfg.clone());
++            assert_eq!(stock.0["layout"], disabled.0["layout"]);
++            assert_eq!(stock.1, disabled.1);
++        }
++    }
++}
++
++#[test]
++#[cfg(all(feature = "diagram-flowchart", feature = "layout-elk"))]
++fn native_asymmetric_is_convex_and_connected_in_both_directions() {
++    for direction in ["LR", "RL", "TD", "BT"] {
++        for dark in [false, true] {
++            let source =
++                format!("flowchart {direction}\nL[Left] --- A>\"Readable α\"] --- R[Right]");
++            let mut cfg = config(dark);
++            cfg["layout"] = json!("elk");
++            cfg["look"] = json!("classic");
++            cfg["handDrawnSeed"] = json!(1);
++            cfg["flowchart"]["nativeNodePaddingHorizontal"] = json!(16);
++            cfg["flowchart"]["nativeNodePaddingVertical"] = json!(12);
++            cfg["flowchart"]["nativeNodeLineHeight"] = json!(1.3);
++            let (layout, svg) = render(&source, cfg.clone());
++            let doc = roxmltree::Document::parse(&svg).unwrap();
++            let polygon = doc
++                .descendants()
++                .find(|n| {
++                    n.has_tag_name("polygon")
++                        && n.attribute("class") == Some("label-container outer-path")
++                })
++                .unwrap();
++            let coordinates: Vec<f64> = polygon
++                .attribute("points")
++                .unwrap()
++                .split(|c: char| c == ',' || c.is_whitespace())
++                .filter(|s| !s.is_empty())
++                .map(|s| s.parse().unwrap())
++                .collect();
++            assert_eq!(coordinates.len(), 10);
++            assert_eq!(coordinates[0] - coordinates[8], 12.0);
++            assert_eq!(coordinates[6] - coordinates[8], 12.0);
++            assert_eq!(coordinates[9], 0.0);
++            assert_eq!(polygon.attribute("transform"), Some("translate(0,0)"));
++            let flow = &layout["layout"]["FlowchartV2"];
++            assert_eq!(flow["nodes"].as_array().unwrap().len(), 3);
++            assert_eq!(flow["edges"].as_array().unwrap().len(), 2);
++            assert!(svg.contains("Readable α"));
++            let node = flow["nodes"]
++                .as_array()
++                .unwrap()
++                .iter()
++                .find(|n| n["id"] == "A")
++                .unwrap();
++            let cx = node["x"].as_f64().unwrap();
++            let cy = node["y"].as_f64().unwrap();
++            let points: Vec<(f64, f64)> = (0..5)
++                .map(|i| (coordinates[2 * i], coordinates[2 * i + 1]))
++                .collect();
++            let on_boundary = |x: f64, y: f64| {
++                (0..5).any(|i| {
++                    let (ax, ay) = points[i];
++                    let (bx, by) = points[(i + 1) % 5];
++                    let cross = (x - ax) * (by - ay) - (y - ay) * (bx - ax);
++                    cross.abs() < 1e-5
++                        && x >= ax.min(bx) - 1e-5
++                        && x <= ax.max(bx) + 1e-5
++                        && y >= ay.min(by) - 1e-5
++                        && y <= ay.max(by) + 1e-5
++                })
++            };
++            for edge in flow["edges"].as_array().unwrap() {
++                assert!(matches!(
++                    (edge["from"].as_str().unwrap(), edge["to"].as_str().unwrap()),
++                    ("L", "A") | ("A", "R")
++                ));
++                let path = doc
++                    .descendants()
++                    .find(|n| {
++                        n.attribute("data-id") == edge["id"].as_str() && n.has_tag_name("path")
++                    })
++                    .unwrap();
++                let values: Vec<f64> = path
++                    .attribute("d")
++                    .unwrap()
++                    .split(|c: char| c.is_ascii_alphabetic() || c == ',' || c.is_whitespace())
++                    .filter(|s| !s.is_empty())
++                    .map(|s| s.parse().unwrap())
++                    .collect();
++                let endpoint = if edge["from"] == "A" {
++                    &values[..2]
++                } else {
++                    &values[values.len() - 2..]
++                };
++                assert!(
++                    on_boundary(endpoint[0] - cx, endpoint[1] - cy),
++                    "{direction}: painted edge must terminate on the convex polygon, not the old notch"
++                );
++            }
++            // A conservative rectangle inside the convex polygon contains the measured label.
++            use crate::text::{DeterministicTextMeasurer, TextMeasurer, TextStyle};
++            let metrics = DeterministicTextMeasurer::default().measure(
++                "Readable α",
++                &TextStyle {
++                    font_family: Some("TauInter".into()),
++                    font_size: 13.0,
++                    font_weight: Some("500".into()),
++                    font_style: None,
++                },
++            );
++            assert!(-metrics.width / 2.0 > coordinates[0]);
++            assert!(metrics.width / 2.0 < coordinates[2]);
++            assert!(metrics.height < node["height"].as_f64().unwrap());
++            let label = polygon
++                .parent()
++                .unwrap()
++                .children()
++                .find(|n| n.attribute("class") == Some("label"))
++                .unwrap();
++            assert!(
++                label
++                    .attribute("transform")
++                    .unwrap()
++                    .starts_with("translate(0,")
++            );
++            // Non-object values cannot enable the native silhouette.
++            cfg["flowchart"]
++                .as_object_mut()
++                .unwrap()
++                .remove("nativeLabelProfile");
++            let stock = render(&source, cfg.clone());
++            assert_ne!(svg, stock.1);
++            for disabled in [
++                Value::Null,
++                json!(false),
++                json!("compact"),
++                json!(1),
++                json!([]),
++            ] {
++                cfg["flowchart"]["nativeLabelProfile"] = disabled;
++                let disabled = render(&source, cfg.clone());
++                assert_eq!(stock.0["layout"], disabled.0["layout"]);
++                let doc = roxmltree::Document::parse(&disabled.1).unwrap();
++                assert!(!doc.descendants().any(|n| n.has_tag_name("polygon")
++                    && n.attribute("class") == Some("label-container outer-path")));
++            }
++        }
++    }
++}
++
++fn config(dark: bool) -> Value {
++    json!({"htmlLabels":false,"fontFamily":"TauInter","fontSize":false,"themeVariables":{
++        "fontFamily":"TauInter","fontSize":"11px","background":if dark {"#151515"} else {"#ffffff"},
++        "textColor":"#777777","arrowheadColor":"#777777","lineColor":"#888888","nodeBorder":"#444444","edgeLabelBorderColor":"#333333"
++    },"class":{"presentationProfile":"compact","memberFontFamily":"Menlo"},
++    "er":{"presentationProfile":"compact","attributeFontFamily":"Menlo"},
++    "state":{"presentationProfile":"compact"},"sequence":{"presentationProfile":"compact"},
++    "flowchart":{"htmlLabels":false,"nativeEdgeLineHeight":1.3,"nativeLabelProfile":{
++        "node":{"fontSize":13,"fontWeight":500},"edge":{"fontSize":11,"fontWeight":400}
++    }}})
++}
++fn render(source: &str, config: Value) -> (Value, String) {
++    render_in(source, config, RenderEnvironment::deterministic())
++}
++fn render_in(source: &str, config: Value, environment: RenderEnvironment) -> (Value, String) {
++    let parsed = block_on(
++        Engine::new()
++            .with_site_config(MermaidConfig::from_value(config))
++            .parse_diagram_for_render_model(source, ParseOptions::default()),
++    )
++    .unwrap()
++    .unwrap();
++    let artifact = family::prepare(
++        parsed,
++        &LayoutOptions::default(),
++        environment.begin_session().unwrap(),
++    )
++    .unwrap();
++    (
++        artifact.layout_json().unwrap(),
++        artifact
++            .render_svg(&SvgRenderOptions::default(), &SvgDebugOptions::default())
++            .unwrap()
++            .svg()
++            .to_owned(),
++    )
++}
++#[cfg(all(
++    feature = "diagram-flowchart",
++    feature = "diagram-state",
++    feature = "diagram-er"
++))]
++fn dimension(node: roxmltree::Node<'_, '_>, attr: &str) -> f64 {
++    node.attribute(attr).unwrap().parse().unwrap()
++}
++#[cfg(all(
++    feature = "diagram-flowchart",
++    feature = "diagram-state",
++    feature = "diagram-er"
++))]
++fn label_box(layout: &Value) -> &Value {
++    &layout["layout"]
++        .as_object()
++        .unwrap()
++        .values()
++        .next()
++        .unwrap()["edges"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .find(|edge| edge["label"].is_object())
++        .unwrap()["label"]
++}
++
++#[test]
++#[cfg(all(
++    feature = "diagram-flowchart",
++    feature = "diagram-state",
++    feature = "diagram-er"
++))]
++fn measured_label_rectangles_keep_family_padding_and_ids_in_both_palettes() {
++    for dark in [false, true] {
++        for (source, padding, inset, stroke) in [
++            ("flowchart TD\nA -->|two<br/>lines| B", (8.0, 8.0), 4.0, "1"),
++            (
++                "stateDiagram-v2\nIdle --> Active: two<br/>lines",
++                (8.0, 8.0),
++                0.0,
++                "1",
++            ),
++            (
++                "erDiagram\nA ||--o{ B : \"two<br/>lines\"",
++                (4.0, 3.0),
++                0.0,
++                "0.5",
++            ),
++        ] {
++            let (layout, svg) = render(source, config(dark));
++            let doc = roxmltree::Document::parse(&svg).unwrap();
++            let rect = doc
++                .descendants()
++                .find(|n| n.attribute("class") == Some("native-edge-label-background"))
++                .unwrap();
++            let label = label_box(&layout);
++            let w = label["width"].as_f64().unwrap() - inset + 2.0 * padding.0;
++            let h = label["height"].as_f64().unwrap() - inset + 2.0 * padding.1;
++            assert!((dimension(rect, "width") - w).abs() < 0.01, "{source}");
++            assert!((dimension(rect, "height") - h).abs() < 0.01, "{source}");
++            assert!((dimension(rect, "x") + w / 2.0).abs() < 0.01);
++            assert!((dimension(rect, "y") + h / 2.0).abs() < 0.01);
++            assert_eq!(rect.attribute("rx"), Some("2"));
++            assert!(
++                rect.attribute("style")
++                    .unwrap()
++                    .contains(&format!("stroke-width:{stroke}"))
++            );
++            assert!(rect.attribute("style").unwrap().contains("stroke:#333333"));
++            assert!(rect.attribute("style").unwrap().contains(if dark {
++                "fill:#151515"
++            } else {
++                "fill:#ffffff"
++            }));
++            assert!(svg.contains("two") && svg.contains("lines"));
++            if !source.starts_with("state") {
++                assert!(
++                    rect.parent()
++                        .unwrap()
++                        .descendants()
++                        .any(|n| n.attribute("data-id").is_some())
++                );
++            }
++        }
++    }
++}
++
++#[test]
++#[cfg(feature = "diagram-flowchart")]
++fn flow_points_and_colored_clones_are_eight_by_five_only_when_opted_in() {
++    let source = "flowchart TD\nA --> B\nlinkStyle 0 stroke:#123456";
++    let (_, svg) = render(source, config(false));
++    let doc = roxmltree::Document::parse(&svg).unwrap();
++    let points: Vec<_> = doc
++        .descendants()
++        .filter(|n| n.has_tag_name("marker") && n.attribute("id").unwrap_or("").contains("point"))
++        .collect();
++    assert!(points.len() > 4);
++    for marker in points {
++        assert_eq!(marker.attribute("markerHeight"), Some("5"));
++        assert_eq!(marker.attribute("markerWidth"), Some("8"));
++        assert!(marker.descendants().any(|n| {
++            n.attribute("style")
++                .is_some_and(|s| s.contains("stroke:none"))
++        }));
++    }
++    let (_, stock) = render(source, json!({"htmlLabels":false}));
++    assert!(stock.contains("markerWidth=\"8\" markerHeight=\"8\""));
++    assert!(!stock.contains("native-edge-label-background"));
++}
++
++#[test]
++#[cfg(feature = "diagram-sequence")]
++fn sequence_filled_and_open_heads_and_message_strokes_are_compact_only() {
++    for dark in [false, true] {
++        let (_, svg) = render(
++            "sequenceDiagram\nA->>B: filled\nB-->>A: reply\nA->B: open",
++            config(dark),
++        );
++        let doc = roxmltree::Document::parse(&svg).unwrap();
++        for suffix in ["-arrowhead", "-filled-head"] {
++            let marker = doc
++                .descendants()
++                .find(|n| {
++                    n.has_tag_name("marker") && n.attribute("id").unwrap_or("").ends_with(suffix)
++                })
++                .unwrap();
++            assert_eq!(marker.attribute("markerWidth"), Some("8"));
++            assert_eq!(marker.attribute("markerHeight"), Some("5"));
++            if suffix == "-filled-head" {
++                assert!(marker.descendants().any(|n| {
++                    n.attribute("style")
++                        .is_some_and(|s| s.contains("fill:none !important"))
++                }));
++            }
++        }
++        assert!(svg.contains(".messageLine0,#merman .messageLine1{stroke-width:1;}"));
++    }
++    let (_, stock) = render("sequenceDiagram\nA->>B: filled", json!({}));
++    assert!(stock.contains("markerWidth=\"12\" markerHeight=\"12\""));
++}
++
++#[test]
++#[cfg(feature = "diagram-er")]
++fn er_markers_are_straight_with_canvas_filled_four_pixel_optional_circles() {
++    for dark in [false, true] {
++        let (_, svg) = render(
++            "erDiagram\nA ||--o{ B : contains\nB |o--|{ C : owns",
++            config(dark),
++        );
++        let doc = roxmltree::Document::parse(&svg).unwrap();
++        let markers: Vec<_> = doc
++            .descendants()
++            .filter(|n| {
++                n.has_tag_name("marker") && n.attribute("class").unwrap_or("").ends_with(" er")
++            })
++            .collect();
++        assert_eq!(markers.len(), 8);
++        for marker in markers {
++            assert_eq!(marker.attribute("markerUnits"), Some("userSpaceOnUse"));
++            for path in marker.descendants().filter(|n| n.has_tag_name("path")) {
++                assert!(!path.attribute("d").unwrap().contains('Q'));
++            }
++            for circle in marker.descendants().filter(|n| n.has_tag_name("circle")) {
++                assert_eq!(circle.attribute("r"), Some("4"));
++                assert!(circle.attribute("style").unwrap().contains(if dark {
++                    "fill:#151515"
++                } else {
++                    "fill:#ffffff"
++                }));
++            }
++        }
++    }
++}
++
++#[test]
++#[cfg(feature = "diagram-class")]
++fn class_marker_semantics_and_margin_ids_survive_compact_geometry() {
++    for dark in [false, true] {
++        let (_, svg) = render("classDiagram\nA <|-- B\nA o-- C\nA *-- D", config(dark));
++        let doc = roxmltree::Document::parse(&svg).unwrap();
++        for kind in ["extension", "aggregation", "composition"] {
++            let markers: Vec<_> = doc
++                .descendants()
++                .filter(|n| {
++                    n.has_tag_name("marker") && n.attribute("class").unwrap_or("").contains(kind)
++                })
++                .collect();
++            assert_eq!(markers.len(), 4);
++            for marker in markers {
++                assert_eq!(marker.attribute("markerWidth"), Some("12"));
++                assert_eq!(marker.attribute("markerHeight"), Some("10"));
++                let polygon = marker
++                    .children()
++                    .find(|n| n.has_tag_name("polygon"))
++                    .unwrap();
++                assert!(
++                    polygon
++                        .attribute("style")
++                        .unwrap()
++                        .contains(if kind == "composition" {
++                            "fill:#777777"
++                        } else if dark {
++                            "fill:#151515"
++                        } else {
++                            "fill:#ffffff"
++                        })
++                );
++            }
++        }
++    }
++}
++
++#[test]
++#[cfg(all(feature = "diagram-class", feature = "diagram-er"))]
++fn header_measurement_and_paint_request_the_same_seven_hundred_weight() {
++    use crate::{
++        environment::{
++            MeasurementProfileId, TextMeasurementPolicy, TextMeasurementProfile,
++            TextMeasurementProfileIdentity,
++        },
++        text::{TextMeasurer, TextMetrics, TextStyle},
++    };
++    use std::sync::{Arc, Mutex};
++    #[derive(Default)]
++    struct Measure(Mutex<Vec<TextStyle>>);
++    impl TextMeasurer for Measure {
++        fn measure(&self, text: &str, style: &TextStyle) -> TextMetrics {
++            self.0.lock().unwrap().push(style.clone());
++            TextMetrics {
++                width: text.len() as f64 * 6.0,
++                height: style.font_size,
++                line_count: 1,
++            }
++        }
++    }
++    for source in [
++        "classDiagram\nclass Example {\n+String member\n}",
++        "erDiagram\nExample {\nstring member PK\n}",
++    ] {
++        let measurer = Arc::new(Measure::default());
++        let identity = TextMeasurementProfileIdentity::new(
++            MeasurementProfileId::new("test.compact-header").unwrap(),
++            "v1",
++        )
++        .unwrap();
++        let env = RenderEnvironment::deterministic().with_text_measurement_policy(
++            TextMeasurementPolicy::uniform(TextMeasurementProfile::new(identity, measurer.clone())),
++        );
++        let (_, svg) = render_in(source, config(false), env);
++        assert!(svg.contains("font-family:TauInter;font-size:13px;font-weight:700"));
++        let calls = measurer.0.lock().unwrap();
++        assert!(
++            calls
++                .iter()
++                .any(|s| s.font_family.as_deref() == Some("TauInter")
++                    && s.font_size == 13.0
++                    && s.font_weight.as_deref() == Some("700"))
++        );
++        assert!(
++            calls
++                .iter()
++                .any(|s| s.font_family.as_deref() == Some("Menlo")
++                    && s.font_size == 11.0
++                    && s.font_weight.as_deref() == Some("400"))
++        );
++    }
++}
+diff --git a/src/svg/parity/er/presentation.rs b/src/svg/parity/er/presentation.rs
+index d2c1237..492f7f2 100644
+--- a/src/svg/parity/er/presentation.rs
++++ b/src/svg/parity/er/presentation.rs
+@@ -1,6 +1,42 @@
+ use super::super::*;
+ use crate::er::presentation as profile;
+ 
++pub(super) fn markers(
++    out: &mut String,
++    diagram_id: SvgDiagramId<'_>,
++    diagram_type: &str,
++    config: &serde_json::Value,
++) {
++    let canvas = theme_token(config, "background", "#ffffff");
++    let line = theme_token(config, "lineColor", "#333333");
++    for kind in ["onlyOne", "zeroOrOne", "oneOrMore", "zeroOrMore"] {
++        for start in [true, false] {
++            let end = if start { "Start" } else { "End" };
++            let _ = write!(
++                out,
++                r#"<defs><marker id="{diagram_id}_{}-{kind}{end}" class="marker {kind} er" markerUnits="userSpaceOnUse" markerWidth="24" markerHeight="16" viewBox="-24 -8 24 16" refX="0" refY="0" orient="auto" overflow="visible"><g transform="scale({},1)" style="stroke:{};stroke-width:1.25;fill:none">"#,
++                escape_xml(diagram_type),
++                if start { "-1" } else { "1" },
++                escape_xml(&line)
++            );
++            if matches!(kind, "onlyOne" | "zeroOrOne") {
++                out.push_str(r#"<path d="M -4,-6 V 6 M -8,-6 V 6"/>"#);
++            } else {
++                out.push_str(r#"<path d="M -4,-7 L -16,0 L -4,7 M -4,0 L -16,0"/>"#);
++            }
++            if matches!(kind, "zeroOrOne" | "zeroOrMore") {
++                let _ = write!(
++                    out,
++                    r#"<circle cx="{}" cy="0" r="4" style="fill:{}"/>"#,
++                    if kind == "zeroOrMore" { "-20" } else { "-12" },
++                    escape_xml(&canvas)
++                );
++            }
++            out.push_str("</g></marker></defs>");
++        }
++    }
++}
++
+ pub(super) struct EntityContext<'a> {
+     pub config: &'a serde_json::Value,
+     pub measurer: &'a dyn crate::text::TextMeasurer,
+@@ -42,7 +78,7 @@ pub(super) fn entity(
+     let id = format!("{}-{}", ctx.diagram_id, model.id);
+     let _ = write!(
+         out,
+-        r#"<g class="node compact-er {}" id="{}" transform="translate({},{})"><rect x="{}" y="{}" width="{}" height="{}" style="fill:{};stroke:{};stroke-width:1;{rect_styles}"/><rect x="{}" y="{}" width="{}" height="{}" style="fill:{};fill-opacity:0.05;stroke:none"/><line x1="{}" x2="{}" y1="{}" y2="{}" style="stroke:{};stroke-opacity:0.12;stroke-width:1"/><text x="0" y="{}" text-anchor="middle" dominant-baseline="central" style="font-family:{};font-size:13px;font-weight:500;fill:{};{text_styles}">{}</text>"#,
++        r#"<g class="node compact-er {}" id="{}" transform="translate({},{})"><rect x="{}" y="{}" width="{}" height="{}" style="fill:{};stroke:{};stroke-width:1;{rect_styles}"/><rect x="{}" y="{}" width="{}" height="{}" style="fill:{};fill-opacity:0.05;stroke:none"/><line x1="{}" x2="{}" y1="{}" y2="{}" style="stroke:{};stroke-opacity:0.12;stroke-width:1"/><text x="0" y="{}" text-anchor="middle" dominant-baseline="central" style="font-family:{};font-size:13px;font-weight:700;fill:{};{text_styles}">{}</text>"#,
+         escape_xml(&model.css_classes),
+         escape_xml(&id),
+         fmt(node.x + tx),
+diff --git a/src/svg/parity/er/render.rs b/src/svg/parity/er/render.rs
+index 569113e..40dd6f3 100644
+--- a/src/svg/parity/er/render.rs
++++ b/src/svg/parity/er/render.rs
+@@ -801,9 +801,12 @@ pub(crate) fn render_er_diagram_svg_model(
+     let zero_more_start_x = if neo_markers { "45.5" } else { "48" };
+     let zero_more_end_x = if neo_markers { "11" } else { "9" };
+ 
+-    let _ = writeln!(
+-        &mut out,
+-        r#"<defs><marker id="{diagram_id}_{diagram_type_esc}-onlyOneStart" class="marker onlyOne er" refX="0" refY="9" markerWidth="18" markerHeight="18" orient="auto"{marker_units}><path d="M9,0 L9,18 M15,0 L15,18"{marker_stroke}/></marker></defs>
++    if crate::er::presentation::enabled(effective_config) {
++        super::presentation::markers(&mut out, diagram_id, diagram_type, effective_config);
++    } else {
++        let _ = writeln!(
++            &mut out,
++            r#"<defs><marker id="{diagram_id}_{diagram_type_esc}-onlyOneStart" class="marker onlyOne er" refX="0" refY="9" markerWidth="18" markerHeight="18" orient="auto"{marker_units}><path d="M9,0 L9,18 M15,0 L15,18"{marker_stroke}/></marker></defs>
+ <defs><marker id="{diagram_id}_{diagram_type_esc}-onlyOneEnd" class="marker onlyOne er" refX="18" refY="9" markerWidth="18" markerHeight="18" orient="auto"{marker_units}><path d="M3,0 L3,18 M9,0 L9,18"{marker_stroke}/></marker></defs>
+ <defs><marker id="{diagram_id}_{diagram_type_esc}-zeroOrOneStart" class="marker zeroOrOne er" refX="0" refY="9" markerWidth="30" markerHeight="18" orient="auto"{marker_units}><circle fill="{marker_background}" cx="21" cy="9" r="6"{marker_stroke}/><path d="M9,0 L9,18"{marker_stroke}/></marker></defs>
+ <defs><marker id="{diagram_id}_{diagram_type_esc}-zeroOrOneEnd" class="marker zeroOrOne er" refX="30" refY="9" markerWidth="30" markerHeight="18" orient="auto"{marker_units}><circle fill="{marker_background}" cx="9" cy="9" r="6"{marker_stroke}/><path d="M21,0 L21,18"{marker_stroke}/></marker></defs>
+@@ -811,7 +814,8 @@ pub(crate) fn render_er_diagram_svg_model(
+ <defs><marker id="{diagram_id}_{diagram_type_esc}-oneOrMoreEnd" class="marker oneOrMore er" refX="27" refY="18" markerWidth="45" markerHeight="36" orient="auto"{marker_units}><path d="M3,9 L3,27 M9,18 Q27,0 45,18 Q27,36 9,18"{marker_stroke}/></marker></defs>
+ <defs><marker id="{diagram_id}_{diagram_type_esc}-zeroOrMoreStart" class="marker zeroOrMore er" refX="18" refY="18" markerWidth="57" markerHeight="36" orient="auto"{marker_units}><circle fill="{marker_background}" cx="{zero_more_start_x}" cy="18" r="6"{marker_stroke}/><path d="M0,18 Q18,0 36,18 Q18,36 0,18"{marker_stroke}/></marker></defs>
+ <defs><marker id="{diagram_id}_{diagram_type_esc}-zeroOrMoreEnd" class="marker zeroOrMore er" refX="39" refY="18" markerWidth="57" markerHeight="36" orient="auto"{marker_units}><circle fill="{marker_background}" cx="{zero_more_end_x}" cy="18" r="6"{marker_stroke}/><path d="M21,18 Q39,0 57,18 Q39,36 21,18"{marker_stroke}/></marker></defs>"#
+-    );
++        );
++    }
+     options.checkpoint_emit()?;
+ 
+     let mut entity_by_id: std::collections::HashMap<&str, &crate::er::ErEntity> =
+@@ -1078,6 +1082,41 @@ pub(crate) fn render_er_diagram_svg_model(
+                 cy = position.y;
+             }
+ 
++            if has_label_text
++                && w > 0.0
++                && h > 0.0
++                && crate::er::presentation::enabled(effective_config)
++                && !edge_html_labels
++            {
++                let background = super::super::compact_style::label_backplate(
++                    effective_config,
++                    w,
++                    h,
++                    (4.0, 3.0),
++                    0.5,
++                );
++                let _ = write!(
++                    &mut out,
++                    r#"<g class="edgeLabel" transform="translate({}, {})">{}<g class="label" data-id="{}">"#,
++                    fmt(cx),
++                    fmt(cy),
++                    background,
++                    escape_xml_display(&edge_dom_id)
++                );
++                let lines = crate::text::split_html_br_lines(rel_text);
++                for (i, line) in lines.iter().enumerate() {
++                    let _ = write!(
++                        &mut out,
++                        r#"<text text-anchor="middle" y="{}" style="font-size:11px;font-weight:400">{}</text>"#,
++                        fmt((i as f64 - (lines.len() as f64 - 1.0) / 2.0) * 14.3 + 3.85),
++                        escape_xml_display(
++                            crate::entities::decode_svg_text_content_entities(line).as_ref()
++                        )
++                    );
++                }
++                out.push_str("</g></g>");
++                continue;
++            }
+             if has_label_text && w > 0.0 && h > 0.0 {
+                 // Mermaid ER relationship labels follow Mermaid's effective HTML-label
+                 // resolution: root `htmlLabels`, then `flowchart.htmlLabels`, then default
+@@ -1089,6 +1128,15 @@ pub(crate) fn render_er_diagram_svg_model(
+                     fmt(cx),
+                     fmt(cy)
+                 );
++                if crate::er::presentation::enabled(effective_config) {
++                    out.push_str(&super::super::compact_style::label_backplate(
++                        effective_config,
++                        w,
++                        h,
++                        (4.0, 3.0),
++                        0.5,
++                    ));
++                }
+                 let _ = write!(
+                     &mut out,
+                     r#"<g class="label" data-id="{}" transform="translate({}, {})">"#,
+diff --git a/src/svg/parity/flowchart/defs.rs b/src/svg/parity/flowchart/defs.rs
+index f3807ad..435f1ec 100644
+--- a/src/svg/parity/flowchart/defs.rs
++++ b/src/svg/parity/flowchart/defs.rs
+@@ -23,6 +23,7 @@ pub(in crate::svg::parity::flowchart) struct FlowchartDefs<'a> {
+     diagram_type: &'a str,
+     extra_markers: Vec<ColoredMarker>,
+     security_level_loose: bool,
++    native: bool,
+ }
+ 
+ pub(in crate::svg::parity::flowchart) fn prepare_flowchart_defs<'a>(
+@@ -35,18 +36,50 @@ pub(in crate::svg::parity::flowchart) fn prepare_flowchart_defs<'a>(
+         diagram_type,
+         extra_markers: collect_edge_markers(ctx),
+         security_level_loose: ctx.security_level_loose,
++        native: super::super::compact_style::flow_enabled(ctx.config.as_value()),
+     }
+ }
+ 
+ impl FlowchartDefs<'_> {
+     pub(in crate::svg::parity::flowchart) fn push_base_markers(&self, out: &mut String) {
+-        push_base_edge_markers(out, self.diagram_id, self.diagram_type);
++        if self.native {
++            for ends in [
++                ["pointEnd", "pointStart"],
++                ["circleEnd", "circleStart"],
++                ["crossEnd", "crossStart"],
++            ] {
++                for margin in [false, true] {
++                    for base in ends {
++                        super::super::markers::push_native_edge_marker(
++                            out,
++                            self.diagram_id,
++                            self.diagram_type,
++                            base,
++                            margin,
++                            None,
++                        );
++                    }
++                }
++            }
++            if self.diagram_type == "agentflow" {
++                for base in ["hierarchyEnd", "hierarchyStart"] {
++                    push_edge_marker(out, self.diagram_id, self.diagram_type, base, false, None);
++                }
++            }
++        } else {
++            push_base_edge_markers(out, self.diagram_id, self.diagram_type);
++        }
+     }
+ 
+     pub(in crate::svg::parity::flowchart) fn push_extra_markers(&self, out: &mut String) {
+         for marker in &self.extra_markers {
+             let color = marker_paint_value(&marker.color, self.security_level_loose);
+-            push_edge_marker(
++            let push = if self.native {
++                super::super::markers::push_native_edge_marker
++            } else {
++                push_edge_marker
++            };
++            push(
+                 out,
+                 self.diagram_id,
+                 self.diagram_type,
+diff --git a/src/svg/parity/flowchart/edge_geom/intersect.rs b/src/svg/parity/flowchart/edge_geom/intersect.rs
+index 4fa202b..e325bc5 100644
+--- a/src/svg/parity/flowchart/edge_geom/intersect.rs
++++ b/src/svg/parity/flowchart/edge_geom/intersect.rs
+@@ -1612,6 +1612,16 @@ pub(in crate::svg::parity::flowchart) fn intersect_for_layout_shape(
+     }
+ 
+     match layout_shape {
++        Some("odd" | "rect_left_inv_arrow")
++            if crate::flowchart::native_profile::enabled(ctx.config.as_value()) =>
++        {
++            let points = crate::flowchart::OddGeometry::native_from_bounds(node.width, node.height)
++                .points
++                .into_iter()
++                .map(|(x, y)| crate::model::LayoutPoint { x, y })
++                .collect::<Vec<_>>();
++            intersect_polygon(node, &points, point)
++        }
+         Some(shape @ ("brace" | "brace-l" | "comment" | "brace-r" | "braces")) => {
+             let Some(metrics) = compute_node_label_metrics_for_intersection(ctx, node_id) else {
+                 return intersect_rect(node, point);
+diff --git a/src/svg/parity/flowchart/render/edge_label.rs b/src/svg/parity/flowchart/render/edge_label.rs
+index 7184679..9026e07 100644
+--- a/src/svg/parity/flowchart/render/edge_label.rs
++++ b/src/svg/parity/flowchart/render/edge_label.rs
+@@ -186,6 +186,57 @@ pub(in crate::svg::parity) fn render_flowchart_edge_label(
+         },
+         |prepared| Cow::Borrowed(prepared.plain_text()),
+     );
++    if !ctx.edge_html_labels
++        && super::super::super::compact_style::flow_enabled(ctx.config.as_value())
++        && !label_text_plain.trim().is_empty()
++        && let Some(le) = ctx.layout_edges_by_id.get(edge.id.as_str())
++        && let Some(lbl) = le.label.as_ref()
++    {
++        let position = resolve_flowchart_edge_label_position(
++            ctx, le, lbl, origin_x, origin_y, edge_cache, false,
++        );
++        let background = super::super::super::compact_style::label_backplate(
++            ctx.config.as_value(),
++            (lbl.width - 4.0).max(0.0),
++            (lbl.height - 4.0).max(0.0),
++            (8.0, 8.0),
++            1.0,
++        );
++        let _ = write!(
++            out,
++            r#"<g class="edgeLabel" transform="translate({},{})">{}<g class="label" data-id="{}">"#,
++            fmt_display(position.x),
++            fmt_display(position.y),
++            background,
++            escape_xml_display(&edge.id)
++        );
++        if let Some(prepared) = &prepared_svg_label {
++            let ratio = crate::flowchart::native_profile::number(
++                ctx.config.as_value(),
++                "nativeEdgeLineHeight",
++            )
++            .unwrap_or(1.3);
++            crate::svg::parity::flowchart::label::write_native_profile_lines(
++                out,
++                &prepared.wrapped_lines(),
++                edge_metrics_style.font_size,
++                ratio,
++                0.0,
++                svg_edge_label_text_style.as_ref(),
++            );
++        } else {
++            write_flowchart_svg_text_markdown_wrapped_centered(
++                out,
++                label_text,
++                true,
++                ctx.measurer,
++                &edge_metrics_style,
++                Some(FLOWCHART_EDGE_LABEL_WRAP_WIDTH),
++            );
++        }
++        out.push_str("</g></g>");
++        return;
++    }
+     let span_style_attr = OptionalStyleXmlAttr(compiled_label_styles.label_style.as_str());
+     let div_style_prefix = crate::svg::parity::flowchart::style::flowchart_label_div_style_prefix(
+         &compiled_label_styles,
+diff --git a/src/svg/parity/flowchart/render/node/shapes/dispatch.rs b/src/svg/parity/flowchart/render/node/shapes/dispatch.rs
+index 5e43819..3c533f7 100644
+--- a/src/svg/parity/flowchart/render/node/shapes/dispatch.rs
++++ b/src/svg/parity/flowchart/render/node/shapes/dispatch.rs
+@@ -160,7 +160,7 @@ pub(in super::super) fn render_flowchart_shape(
+             super::render_note(out, ctx, common, details);
+         }
+         FlowchartShape::Odd => {
+-            super::render_odd(out, common, label, details);
++            super::render_odd(out, ctx, common, label, details);
+         }
+         FlowchartShape::PaperTape => {
+             super::render_paper_tape(out, ctx, common, label, details);
+diff --git a/src/svg/parity/flowchart/render/node/shapes/odd.rs b/src/svg/parity/flowchart/render/node/shapes/odd.rs
+index 27e6420..4132610 100644
+--- a/src/svg/parity/flowchart/render/node/shapes/odd.rs
++++ b/src/svg/parity/flowchart/render/node/shapes/odd.rs
+@@ -10,14 +10,38 @@ use super::super::roughjs::roughjs_paths_for_svg_path;
+ 
+ pub(in crate::svg::parity::flowchart::render::node) fn render_odd(
+     out: &mut String,
++    ctx: &crate::svg::parity::flowchart::types::FlowchartRenderCtx<'_>,
+     common: &super::super::FlowchartNodeRenderCommon<'_>,
+     label: &mut super::super::FlowchartNodeLabelState<'_>,
+     details: &mut crate::svg::parity::flowchart::types::FlowchartRenderDetails,
+ ) {
+-    let geometry = crate::flowchart::OddGeometry::from_bounds(
+-        common.layout_node.width,
+-        common.layout_node.height,
+-    );
++    let geometry = if crate::flowchart::native_profile::enabled(ctx.config.as_value()) {
++        crate::flowchart::OddGeometry::native_from_bounds(
++            common.layout_node.width,
++            common.layout_node.height,
++        )
++    } else {
++        crate::flowchart::OddGeometry::from_bounds(
++            common.layout_node.width,
++            common.layout_node.height,
++        )
++    };
++    if crate::flowchart::native_profile::enabled(ctx.config.as_value()) {
++        let points = geometry
++            .points
++            .iter()
++            .map(|(x, y)| format!("{},{}", fmt(*x), fmt(*y)))
++            .collect::<Vec<_>>()
++            .join(" ");
++        let _ = write!(
++            out,
++            r#"<polygon points="{}" class="label-container outer-path" transform="translate(0,0)"{} />"#,
++            points,
++            OptionalStyleAttr(common.style)
++        );
++        label.dx = 0.0;
++        return;
++    }
+     let dx = geometry.shift_x;
+     label.dx = dx;
+     let path_data = path_from_points(&geometry.points);
+diff --git a/src/svg/parity/flowchart/viewbox.rs b/src/svg/parity/flowchart/viewbox.rs
+index 42c60c9..cdd4765 100644
+--- a/src/svg/parity/flowchart/viewbox.rs
++++ b/src/svg/parity/flowchart/viewbox.rs
+@@ -87,6 +87,19 @@ where
+         }
+     };
+ 
++    // Source retains the provider extent before layer alignment moves painted geometry.
++    if ctx.uses_elk_adapter_dom
++        && ctx
++            .config
++            .as_value()
++            .pointer("/flowchart/nativeAlignLayers")
++            .and_then(serde_json::Value::as_bool)
++            == Some(true)
++        && let Some(bounds) = &layout.bounds
++    {
++        include_rect(bounds.min_x, bounds.min_y, bounds.max_x, bounds.max_y);
++    }
++
+     for c in &layout.clusters {
+         let root = if ctx.recursive_clusters.contains(c.id.as_str()) {
+             Some(c.id.as_str())
+diff --git a/src/svg/parity/markers.rs b/src/svg/parity/markers.rs
+index 75b2686..61fc535 100644
+--- a/src/svg/parity/markers.rs
++++ b/src/svg/parity/markers.rs
+@@ -32,6 +32,55 @@ pub(in crate::svg::parity) fn push_base_edge_markers(
+     }
+ }
+ 
++#[cfg(any(
++    feature = "diagram-flowchart",
++    feature = "diagram-agentflow",
++    feature = "diagram-swimlane"
++))]
++pub(in crate::svg::parity) fn push_native_edge_marker(
++    out: &mut String,
++    diagram_id: SvgDiagramId<'_>,
++    diagram_type: &str,
++    base: &str,
++    margin: bool,
++    color: Option<(&str, Option<&str>)>,
++) {
++    if !matches!(base, "pointStart" | "pointEnd") {
++        push_edge_marker(out, diagram_id, diagram_type, base, margin, color);
++        return;
++    }
++    let start = base == "pointStart";
++    let ref_x = if margin {
++        if start { 0.0 } else { 8.0 }
++    } else {
++        4.0
++    };
++    let _ = write!(
++        out,
++        r#"<marker id="{diagram_id}_{}-{base}{}"#,
++        escape_xml_display(diagram_type),
++        if margin { "-margin" } else { "" }
++    );
++    if let Some((id, _)) = color {
++        let _ = write!(out, "_{}", escape_xml_display(id));
++    }
++    let _ = write!(
++        out,
++        r#"" class="marker {}" viewBox="0 0 8 5" refX="{}" refY="2.5" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="5" orient="auto"><path d="{}" class="arrowMarkerPath" style="stroke:none !important;stroke-dasharray:0""#,
++        escape_xml_display(diagram_type),
++        ref_x,
++        if start {
++            "M 8 0 L 0 2.5 L 8 5 z"
++        } else {
++            "M 0 0 L 8 2.5 L 0 5 z"
++        }
++    );
++    if let Some((_, Some(paint))) = color {
++        let _ = write!(out, r#" fill="{}""#, escape_xml_display(paint));
++    }
++    out.push_str("/></marker>");
++}
++
+ /// `color` carries the raw-token ID suffix and the sanitized SVG color value separately.
+ pub(in crate::svg::parity) fn push_edge_marker(
+     out: &mut String,
+diff --git a/src/svg/parity/sequence/css.rs b/src/svg/parity/sequence/css.rs
+index 0edb43b..6185f19 100644
+--- a/src/svg/parity/sequence/css.rs
++++ b/src/svg/parity/sequence/css.rs
+@@ -205,6 +205,12 @@ pub(super) fn sequence_css(
+         id,
+         &crate::config::config_root_font_family_css(effective_config),
+     );
++    if crate::sequence::config::SequenceConfigView::new(effective_config).compact() {
++        let _ = write!(
++            out,
++            r#"#{diagram_id} .messageLine0,#{diagram_id} .messageLine1{{stroke-width:1;}}"#
++        );
++    }
+     out
+ }
+ 
+diff --git a/src/svg/parity/sequence/render.rs b/src/svg/parity/sequence/render.rs
+index 0ac8efd..69bc69c 100644
+--- a/src/svg/parity/sequence/render.rs
++++ b/src/svg/parity/sequence/render.rs
+@@ -177,7 +177,21 @@ fn render_sequence_diagram_svg_inner(
+ 
+     // Mermaid's sequence output includes a shared set of <defs> for icons/markers.
+     checkpoints.checkpoint()?;
+-    write_scoped_sequence_base_defs(&mut out, diagram_id);
++    if crate::sequence::config::SequenceConfigView::new(effective_config).compact() {
++        let defs = PINNED_MERMAID_SEQUENCE_BASE_DEFS
++            .replace(r#"<marker id="arrowhead" refX="7.9" refY="5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto-start-reverse"><path d="M -1 0 L 10 5 L 0 10 z"/></marker>"#,
++                r#"<marker id="arrowhead" refX="8" refY="2.5" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="5" orient="auto-start-reverse"><path d="M 0 0 L 8 2.5 L 0 5 z" style="stroke:none !important"/></marker>"#)
++            .replace(r#"<marker id="filled-head" refX="15.5" refY="7" markerWidth="20" markerHeight="28" orient="auto"><path d="M 18,7 L9,13 L14,7 L9,1 Z"/></marker>"#,
++                r#"<marker id="filled-head" refX="8" refY="2.5" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="5" orient="auto"><path d="M 0 0 L 8 2.5 L 0 5" style="fill:none !important;stroke-width:1"/></marker>"#);
++        write_scoped_sequence_base_defs_fragment(&mut out, &defs, diagram_id);
++        write_scoped_sequence_base_defs_fragment(
++            &mut out,
++            MERMAID_SEQUENCE_EXTRA_MARKER_DEFS_PINNED,
++            diagram_id,
++        );
++    } else {
++        write_scoped_sequence_base_defs(&mut out, diagram_id);
++    }
+     if crate::config::config_diagram_look(effective_config).as_str() == "neo" {
+         let theme = effective_config
+             .get("theme")
+diff --git a/src/svg/parity/state/edge.rs b/src/svg/parity/state/edge.rs
+index e03f9a4..cf1ae9c 100644
+--- a/src/svg/parity/state/edge.rs
++++ b/src/svg/parity/state/edge.rs
+@@ -789,22 +789,20 @@ pub(super) fn render_state_edge_label(
+     let h = lbl.height.max(0.0);
+ 
+     if ctx.compact {
+-        let w = w + 8.0;
+-        let h = h + 10.0;
++        let background =
++            super::super::compact_style::label_backplate(ctx.config, w, h, (8.0, 8.0), 1.0);
+         let style = &ctx.edge_text_style;
+         let lines = crate::text::split_html_br_lines(label_text);
+         let _ = write!(
+             out,
+-            r#"<g class="edgeLabel" transform="translate({}, {})" style="font-family:{};font-size:{}px;font-weight:{}"><rect class="background" x="{}" y="{}" width="{}" height="{}"/>"#,
++            r#"<g class="edgeLabel" data-id="{}" transform="translate({}, {})" style="font-family:{};font-size:{}px;font-weight:{}">{}"#,
++            escape_xml_display(&edge.id),
+             fmt_display(label_position.x),
+             fmt_display(label_position.y),
+             escape_xml_display(style.font_family.as_deref().unwrap_or("sans-serif")),
+             fmt_display(style.font_size),
+             escape_xml_display(style.font_weight.as_deref().unwrap_or("400")),
+-            fmt_display(-w / 2.0),
+-            fmt_display(-h / 2.0),
+-            fmt_display(w),
+-            fmt_display(h)
++            background
+         );
+         for (i, line) in lines.iter().enumerate() {
+             let y = (i as f64 - (lines.len() as f64 - 1.0) / 2.0) * style.font_size * 1.3;
+diff --git a/src/svg/parity/state/mod.rs b/src/svg/parity/state/mod.rs
+index b47e7d3..6673952 100644
+--- a/src/svg/parity/state/mod.rs
++++ b/src/svg/parity/state/mod.rs
+@@ -33,6 +33,7 @@ type StateSvgLinks = merman_core::diagrams::state::StateDiagramRenderLinks;
+ type StateSvgNode = merman_core::diagrams::state::StateDiagramRenderNode;
+ type StateSvgEdge = merman_core::diagrams::state::StateDiagramRenderEdge;
+ struct StateRenderCtx<'a> {
++    config: &'a serde_json::Value,
+     diagram_id: SvgDiagramId<'a>,
+     diagram_look: String,
+     palette_size: usize,
+diff --git a/src/svg/parity/state/render.rs b/src/svg/parity/state/render.rs
+index 2de484e..d1c1b78 100644
+--- a/src/svg/parity/state/render.rs
++++ b/src/svg/parity/state/render.rs
+@@ -106,6 +106,7 @@ pub(in crate::svg::parity) fn render_state_diagram_svg_model(
+     let node_order: Vec<&str> = model.nodes.iter().map(|n| n.id.as_str()).collect();
+ 
+     let mut ctx = StateRenderCtx {
++        config: effective_config,
+         diagram_id,
+         uses_elk_adapter_dom: layout.uses_elk_adapter_dom,
+         elk_edge_paths: &layout.elk_edge_paths,

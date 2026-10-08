@@ -1,0 +1,2078 @@
+diff --git a/src/flowchart/BEAUTIFUL-MERMAID-LICENSE.md b/src/flowchart/BEAUTIFUL-MERMAID-LICENSE.md
+new file mode 100644
+index 0000000..d223453
+--- /dev/null
++++ b/src/flowchart/BEAUTIFUL-MERMAID-LICENSE.md
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2026 Craft Docs
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+diff --git a/src/flowchart/ELK-COMPACTION-LICENSE.md b/src/flowchart/ELK-COMPACTION-LICENSE.md
+new file mode 100644
+index 0000000..2849d27
+--- /dev/null
++++ b/src/flowchart/ELK-COMPACTION-LICENSE.md
+@@ -0,0 +1,264 @@
++# Eclipse Public License - v 2.0
++
++THE ACCOMPANYING PROGRAM IS PROVIDED UNDER THE TERMS OF THIS ECLIPSE
++PUBLIC LICENSE (“AGREEMENT”). ANY USE, REPRODUCTION OR DISTRIBUTION OF
++THE PROGRAM CONSTITUTES RECIPIENT'S ACCEPTANCE OF THIS AGREEMENT.
++
++## 1. DEFINITIONS
++
++“Contribution” means:
++
++-   a\) in the case of the initial Contributor, the initial content
++    Distributed under this Agreement, and
++-   b\) in the case of each subsequent Contributor:
++    -   i\) changes to the Program, and
++    -   ii\) additions to the Program;
++
++    where such changes and/or additions to the Program originate from
++    and are Distributed by that particular Contributor. A Contribution
++    “originates” from a Contributor if it was added to the Program by
++    such Contributor itself or anyone acting on such Contributor's
++    behalf. Contributions do not include changes or additions to the
++    Program that are not Modified Works.
++
++“Contributor” means any person or entity that Distributes the Program.
++
++“Licensed Patents” mean patent claims licensable by a Contributor which
++are necessarily infringed by the use or sale of its Contribution alone
++or when combined with the Program.
++
++“Program” means the Contributions Distributed in accordance with this
++Agreement.
++
++“Recipient” means anyone who receives the Program under this Agreement
++or any Secondary License (as applicable), including Contributors.
++
++“Derivative Works” shall mean any work, whether in Source Code or other
++form, that is based on (or derived from) the Program and for which the
++editorial revisions, annotations, elaborations, or other modifications
++represent, as a whole, an original work of authorship.
++
++“Modified Works” shall mean any work in Source Code or other form that
++results from an addition to, deletion from, or modification of the
++contents of the Program, including, for purposes of clarity any new file
++in Source Code form that contains any contents of the Program. Modified
++Works shall not include works that contain only declarations,
++interfaces, types, classes, structures, or files of the Program solely
++in each case in order to link to, bind by name, or subclass the Program
++or Modified Works thereof.
++
++“Distribute” means the acts of a) distributing or b) making available in
++any manner that enables the transfer of a copy.
++
++“Source Code” means the form of a Program preferred for making
++modifications, including but not limited to software source code,
++documentation source, and configuration files.
++
++“Secondary License” means either the GNU General Public License, Version
++2.0, or any later versions of that license, including any exceptions or
++additional permissions as identified by the initial Contributor.
++
++## 2. GRANT OF RIGHTS
++
++-   a\) Subject to the terms of this Agreement, each Contributor hereby
++    grants Recipient a non-exclusive, worldwide, royalty-free copyright
++    license to reproduce, prepare Derivative Works of, publicly display,
++    publicly perform, Distribute and sublicense the Contribution of such
++    Contributor, if any, and such Derivative Works.
++-   b\) Subject to the terms of this Agreement, each Contributor hereby
++    grants Recipient a non-exclusive, worldwide, royalty-free patent license
++    under Licensed Patents to make, use, sell, offer to sell, import and
++    otherwise transfer the Contribution of such Contributor, if any, in
++    Source Code or other form. This patent license shall apply to the
++    combination of the Contribution and the Program if, at the time the
++    Contribution is added by the Contributor, such addition of the
++    Contribution causes such combination to be covered by the
++    Licensed Patents. The patent license shall not apply to any other
++    combinations which include the Contribution. No hardware per se is
++    licensed hereunder.
++-   c\) Recipient understands that although each Contributor grants the
++    licenses to its Contributions set forth herein, no assurances are
++    provided by any Contributor that the Program does not infringe the
++    patent or other intellectual property rights of any other entity. Each
++    Contributor disclaims any liability to Recipient for claims brought by
++    any other entity based on infringement of intellectual property rights
++    or otherwise. As a condition to exercising the rights and licenses
++    granted hereunder, each Recipient hereby assumes sole responsibility to
++    secure any other intellectual property rights needed, if any. For
++    example, if a third party patent license is required to allow Recipient
++    to Distribute the Program, it is Recipient's responsibility to acquire
++    that license before distributing the Program.
++-   d\) Each Contributor represents that to its knowledge it has sufficient
++    copyright rights in its Contribution, if any, to grant the copyright
++    license set forth in this Agreement.
++-   e\) Notwithstanding the terms of any Secondary License, no Contributor
++    makes additional grants to any Recipient (other than those set forth in
++    this Agreement) as a result of such Recipient's receipt of the Program
++    under the terms of a Secondary License (if permitted under the terms of
++    Section 3).
++
++## 3. REQUIREMENTS
++
++3.1 If a Contributor Distributes the Program in any form, then:
++
++-   a\) the Program must also be made available as Source Code, in accordance
++    with section 3.2, and the Contributor must accompany the Program with a
++    statement that the Source Code for the Program is available under this
++    Agreement, and informs Recipients how to obtain it in a reasonable
++    manner on or through a medium customarily used for software exchange;
++    and
++-   b\) the Contributor may Distribute the Program under a license different
++    than this Agreement, provided that such license:
++    -   i\) effectively disclaims on behalf of all other Contributors all
++        warranties and conditions, express and implied, including warranties or
++        conditions of title and non-infringement, and implied warranties or
++        conditions of merchantability and fitness for a particular purpose;
++    -   ii\) effectively excludes on behalf of all other Contributors all
++        liability for damages, including direct, indirect, special, incidental
++        and consequential damages, such as lost profits;
++    -   iii\) does not attempt to limit or alter the recipients' rights in the
++        Source Code under section 3.2; and
++    -   iv\) requires any subsequent distribution of the Program by any party to
++        be under a license that satisfies the requirements of this section 3.
++
++3.2 When the Program is Distributed as Source Code:
++
++-   a\) it must be made available under this Agreement, or if the Program (i)
++    is combined with other material in a separate file or files made
++    available under a Secondary License, and (ii) the initial Contributor
++    attached to the Source Code the notice described in Exhibit A of this
++    Agreement, then the Program may be made available under the terms of
++    such Secondary Licenses, and
++-   b\) a copy of this Agreement must be included with each copy of
++    the Program.
++
++3.3 Contributors may not remove or alter any copyright, patent,
++trademark, attribution notices, disclaimers of warranty, or limitations
++of liability (‘notices’) contained within the Program from any copy of
++the Program which they Distribute, provided that Contributors may add
++their own appropriate notices.
++
++## 4. COMMERCIAL DISTRIBUTION
++
++Commercial distributors of software may accept certain responsibilities
++with respect to end users, business partners and the like. While this
++license is intended to facilitate the commercial use of the Program, the
++Contributor who includes the Program in a commercial product offering
++should do so in a manner which does not create potential liability for
++other Contributors. Therefore, if a Contributor includes the Program in
++a commercial product offering, such Contributor (“Commercial
++Contributor”) hereby agrees to defend and indemnify every other
++Contributor (“Indemnified Contributor”) against any losses, damages and
++costs (collectively “Losses”) arising from claims, lawsuits and other
++legal actions brought by a third party against the Indemnified
++Contributor to the extent caused by the acts or omissions of such
++Commercial Contributor in connection with its distribution of the
++Program in a commercial product offering. The obligations in this
++section do not apply to any claims or Losses relating to any actual or
++alleged intellectual property infringement. In order to qualify, an
++Indemnified Contributor must: a) promptly notify the Commercial
++Contributor in writing of such claim, and b) allow the Commercial
++Contributor to control, and cooperate with the Commercial Contributor
++in, the defense and any related settlement negotiations. The Indemnified
++Contributor may participate in any such claim at its own expense.
++
++For example, a Contributor might include the Program in a commercial
++product offering, Product X. That Contributor is then a Commercial
++Contributor. If that Commercial Contributor then makes performance
++claims, or offers warranties related to Product X, those performance
++claims and warranties are such Commercial Contributor's responsibility
++alone. Under this section, the Commercial Contributor would have to
++defend claims against the other Contributors related to those
++performance claims and warranties, and if a court requires any other
++Contributor to pay any damages as a result, the Commercial Contributor
++must pay those damages.
++
++## 5. NO WARRANTY {#warranty}
++
++EXCEPT AS EXPRESSLY SET FORTH IN THIS AGREEMENT, AND TO THE EXTENT
++PERMITTED BY APPLICABLE LAW, THE PROGRAM IS PROVIDED ON AN “AS IS”
++BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR
++IMPLIED INCLUDING, WITHOUT LIMITATION, ANY WARRANTIES OR CONDITIONS OF
++TITLE, NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR
++PURPOSE. Each Recipient is solely responsible for determining the
++appropriateness of using and distributing the Program and assumes all
++risks associated with its exercise of rights under this Agreement,
++including but not limited to the risks and costs of program errors,
++compliance with applicable laws, damage to or loss of data, programs or
++equipment, and unavailability or interruption of operations.
++
++## 6. DISCLAIMER OF LIABILITY {#disclaimer}
++
++EXCEPT AS EXPRESSLY SET FORTH IN THIS AGREEMENT, AND TO THE EXTENT
++PERMITTED BY APPLICABLE LAW, NEITHER RECIPIENT NOR ANY CONTRIBUTORS
++SHALL HAVE ANY LIABILITY FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
++EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING WITHOUT LIMITATION LOST
++PROFITS), HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ARISING IN ANY WAY OUT OF THE USE OR DISTRIBUTION OF THE PROGRAM OR THE
++EXERCISE OF ANY RIGHTS GRANTED HEREUNDER, EVEN IF ADVISED OF THE
++POSSIBILITY OF SUCH DAMAGES.
++
++## 7. GENERAL
++
++If any provision of this Agreement is invalid or unenforceable under
++applicable law, it shall not affect the validity or enforceability of
++the remainder of the terms of this Agreement, and without further action
++by the parties hereto, such provision shall be reformed to the minimum
++extent necessary to make such provision valid and enforceable.
++
++If Recipient institutes patent litigation against any entity (including
++a cross-claim or counterclaim in a lawsuit) alleging that the Program
++itself (excluding combinations of the Program with other software or
++hardware) infringes such Recipient's patent(s), then such Recipient's
++rights granted under Section 2(b) shall terminate as of the date such
++litigation is filed.
++
++All Recipient's rights under this Agreement shall terminate if it fails
++to comply with any of the material terms or conditions of this Agreement
++and does not cure such failure in a reasonable period of time after
++becoming aware of such noncompliance. If all Recipient's rights under
++this Agreement terminate, Recipient agrees to cease use and distribution
++of the Program as soon as reasonably practicable. However, Recipient's
++obligations under this Agreement and any licenses granted by Recipient
++relating to the Program shall continue and survive.
++
++Everyone is permitted to copy and distribute copies of this Agreement,
++but in order to avoid inconsistency the Agreement is copyrighted and may
++only be modified in the following manner. The Agreement Steward reserves
++the right to publish new versions (including revisions) of this
++Agreement from time to time. No one other than the Agreement Steward has
++the right to modify this Agreement. The Eclipse Foundation is the
++initial Agreement Steward. The Eclipse Foundation may assign the
++responsibility to serve as the Agreement Steward to a suitable separate
++entity. Each new version of the Agreement will be given a distinguishing
++version number. The Program (including Contributions) may always be
++Distributed subject to the version of the Agreement under which it was
++received. In addition, after a new version of the Agreement is
++published, Contributor may elect to Distribute the Program (including
++its Contributions) under the new version.
++
++Except as expressly stated in Sections 2(a) and 2(b) above, Recipient
++receives no rights or licenses to the intellectual property of any
++Contributor under this Agreement, whether expressly, by implication,
++estoppel or otherwise. All rights in the Program not expressly granted
++under this Agreement are reserved. Nothing in this Agreement is intended
++to be enforceable by any entity that is not a Contributor or Recipient.
++No third-party beneficiary rights are created under this Agreement.
++
++## Exhibit A – Form of Secondary Licenses Notice {#exhibit-a}
++
++“This Source Code may also be made available under the following
++Secondary Licenses when the conditions for such availability set forth
++in the Eclipse Public License, v. 2.0 are satisfied: {name license(s),
++version(s), and exceptions or additional permissions here}.”
++
++> Simply including a copy of this Agreement, including this Exhibit A is
++> not sufficient to license the Source Code under Secondary Licenses.
++>
++> If it is not possible or desirable to put the notice in a particular
++> file, then You may include the notice in a location (such as a LICENSE
++> file in a relevant directory) where a recipient would be likely to
++> look for such a notice.
++>
++> You may add additional accurate notices of copyright ownership.
+diff --git a/src/flowchart/bundle.rs b/src/flowchart/bundle.rs
+new file mode 100644
+index 0000000..526bf30
+--- /dev/null
++++ b/src/flowchart/bundle.rs
+@@ -0,0 +1,255 @@
++//! Opt-in post-layout trunks; adapted from beautiful-mermaid 1.1.3 layout-engine.ts.
++//! See BEAUTIFUL-MERMAID-LICENSE.md. ELK mergeEdges remains independent.
++use super::FlowchartModel;
++use crate::model::{LayoutCluster, LayoutEdge, LayoutNode, LayoutPoint};
++use crate::{Error, Result};
++use std::collections::{HashMap, HashSet};
++
++pub(super) fn bundle(
++    model: &FlowchartModel,
++    nodes: &[LayoutNode],
++    clusters: &[LayoutCluster],
++    edges: &mut [LayoutEdge],
++    mut charge: impl FnMut(usize) -> Result<()>,
++) -> Result<()> {
++    let horizontal = matches!(model.direction.as_deref(), Some("LR" | "RL"));
++    let reverse = matches!(model.direction.as_deref(), Some("RL" | "BT"));
++    let sign = if reverse { -1.0 } else { 1.0 };
++    let node_map: HashMap<_, _> = nodes.iter().map(|n| (n.id.as_str(), n)).collect();
++    let source_map: HashMap<_, _> = model.edges.iter().map(|e| (e.id.as_str(), e)).collect();
++    let mut processed = HashSet::new();
++    let mut ordinal = 0usize;
++    let mut tick = || -> Result<()> {
++        ordinal += 1;
++        if ordinal > 32_000 {
++            return Err(Error::InvalidModel {
++                message: "flowchart bundling work limit exceeded".into(),
++            });
++        }
++        charge(1)
++    };
++    let main = |n: &LayoutNode| if horizontal { n.x } else { n.y };
++    let cross = |n: &LayoutNode| if horizontal { n.y } else { n.x };
++    let half = |n: &LayoutNode| {
++        if horizontal {
++            n.width / 2.0
++        } else {
++            n.height / 2.0
++        }
++    };
++    let point = |m, c| {
++        if horizontal {
++            LayoutPoint { x: m, y: c }
++        } else {
++            LayoutPoint { x: c, y: m }
++        }
++    };
++    for fan_in in [false, true] {
++        let mut group_index = HashMap::new();
++        let mut groups: Vec<(&str, Vec<usize>)> = Vec::new();
++        for (i, edge) in edges.iter().enumerate() {
++            tick()?;
++            if edge.from == edge.to || (fan_in && processed.contains(&i)) {
++                continue;
++            }
++            let id = if fan_in {
++                edge.to.as_str()
++            } else {
++                edge.from.as_str()
++            };
++            let index = *group_index.entry(id).or_insert_with(|| {
++                groups.push((id, Vec::new()));
++                groups.len() - 1
++            });
++            groups[index].1.push(i);
++        }
++        // Preserve Source Map insertion order, then own keys before replacing paths.
++        let groups: Vec<_> = groups
++            .into_iter()
++            .map(|(id, group)| (id.to_owned(), group))
++            .collect();
++        for (id, group) in groups {
++            tick()?;
++            if group.len() < 2 {
++                continue;
++            }
++            let Some(reference) = node_map.get(id.as_str()).copied() else {
++                continue;
++            };
++            let first = source_map[edges[group[0]].id.as_str()];
++            let mut eligible = true;
++            for &i in &group {
++                tick()?;
++                let e = source_map[edges[i].id.as_str()];
++                if edges[i].label.is_some()
++                    || e.stroke != first.stroke
++                    || e.style != first.style
++                    || e.classes != first.classes
++                {
++                    eligible = false;
++                }
++            }
++            if !eligible {
++                continue;
++            }
++            let mut forward = Vec::new();
++            for i in group {
++                tick()?;
++                let e = &edges[i];
++                let Some(other) = node_map
++                    .get(if fan_in {
++                        e.from.as_str()
++                    } else {
++                        e.to.as_str()
++                    })
++                    .copied()
++                else {
++                    continue;
++                };
++                let gap = if fan_in {
++                    main(reference) * sign - half(reference) - (main(other) * sign + half(other))
++                } else {
++                    main(other) * sign - half(other) - (main(reference) * sign + half(reference))
++                };
++                if gap > 0.0 {
++                    forward.push((i, other));
++                }
++            }
++            if forward.len() < 2 {
++                continue;
++            }
++            let boundary = main(reference)
++                + if fan_in {
++                    -sign * half(reference)
++                } else {
++                    sign * half(reference)
++                };
++            let mut nearest = if fan_in {
++                f64::NEG_INFINITY
++            } else {
++                f64::INFINITY
++            };
++            for (_, other) in &forward {
++                tick()?;
++                let b = main(other) * sign + if fan_in { half(other) } else { -half(other) };
++                nearest = if fan_in {
++                    nearest.max(b)
++                } else {
++                    nearest.min(b)
++                };
++            }
++            let mut junction = (boundary + nearest * sign) / 2.0;
++            let contains = |c: &LayoutCluster, x: f64, y: f64| {
++                x >= c.x - c.width / 2.0
++                    && x <= c.x + c.width / 2.0
++                    && y >= c.y - c.height / 2.0
++                    && y <= c.y + c.height / 2.0
++            };
++            let probe = point(junction, cross(reference));
++            // Largest enclosing foreign group is the outer boundary that must be cleared.
++            let mut crossing: Option<&LayoutCluster> = None;
++            for c in clusters {
++                tick()?;
++                if contains(c, probe.x, probe.y)
++                    && !contains(c, reference.x, reference.y)
++                    && crossing.is_none_or(|old| c.width * c.height > old.width * old.height)
++                {
++                    crossing = Some(c);
++                }
++            }
++            if let Some(c) = crossing {
++                junction = if horizontal {
++                    c.x - sign * (c.width / 2.0 + 12.0)
++                } else {
++                    c.y - sign * (c.height / 2.0 + 12.0)
++                };
++            }
++            for (i, other) in forward {
++                tick()?;
++                let (src, dst) = if fan_in {
++                    (other, reference)
++                } else {
++                    (reference, other)
++                };
++                let exit = main(src) + sign * half(src);
++                let entry = main(dst) - sign * half(dst);
++                edges[i].points = vec![
++                    point(exit, cross(src)),
++                    point(junction, cross(src)),
++                    point(junction, cross(dst)),
++                    point(entry, cross(dst)),
++                ];
++                if !fan_in {
++                    processed.insert(i);
++                }
++            }
++        }
++    }
++    Ok(())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use serde_json::json;
++
++    fn fixture() -> (FlowchartModel, Vec<LayoutNode>, Vec<LayoutEdge>) {
++        let model: FlowchartModel =
++            serde_json::from_value(json!({"direction":"TD","nodes":[],"edges":[
++                {"id":"e1","from":"A","to":"B","label":null,"length":1},
++                {"id":"e2","from":"A","to":"C","label":null,"length":1}
++            ]}))
++            .unwrap();
++        let nodes = [("A", 0.0, 0.0), ("B", -40.0, 100.0), ("C", 40.0, 100.0)]
++            .into_iter()
++            .map(|(id, x, y)| {
++                serde_json::from_value(
++                    json!({"id":id,"x":x,"y":y,"width":40,"height":30,"is_cluster":false}),
++                )
++                .unwrap()
++            })
++            .collect();
++        let edges = model
++            .edges
++            .iter()
++            .map(|e| {
++                serde_json::from_value(
++                    json!({"id":e.id,"from":e.from,"to":e.to,"points":[],"label":null}),
++                )
++                .unwrap()
++            })
++            .collect();
++        (model, nodes, edges)
++    }
++
++    #[test]
++    fn shared_trunks_are_post_layout_and_orthogonal() {
++        let (model, nodes, mut edges) = fixture();
++        bundle(&model, &nodes, &[], &mut edges, |_| Ok(())).unwrap();
++        for i in 0..2 {
++            assert_eq!(edges[0].points[i].x, edges[1].points[i].x);
++            assert_eq!(edges[0].points[i].y, edges[1].points[i].y);
++        }
++        for e in edges {
++            for p in e.points.windows(2) {
++                assert!(p[0].x == p[1].x || p[0].y == p[1].y);
++            }
++        }
++    }
++
++    #[test]
++    fn bundling_charges_the_shared_budget_and_has_one_graph_ordinal_guard() {
++        let (model, nodes, mut edges) = fixture();
++        assert!(
++            bundle(&model, &nodes, &[], &mut edges, |_| Err(
++                Error::InvalidModel {
++                    message: "exhausted".into()
++                }
++            ))
++            .is_err()
++        );
++        let mut edges = vec![edges[0].clone(); 32_001];
++        let error = bundle(&model, &[], &[], &mut edges, |_| Ok(())).unwrap_err();
++        assert!(error.to_string().contains("bundling work limit"));
++    }
++}
+diff --git a/src/flowchart/config.rs b/src/flowchart/config.rs
+index a03ec15..fbd2dbc 100644
+--- a/src/flowchart/config.rs
++++ b/src/flowchart/config.rs
+@@ -136,12 +136,16 @@ impl<'a> FlowchartConfigView<'a> {
+     }
+ 
+     pub(crate) fn render_text_style(&self, font_family: &str, font_size: f64) -> TextStyle {
+-        TextStyle {
+-            font_family: Some(font_family.to_string()),
+-            font_size,
+-            font_weight: None,
+-            font_style: None,
+-        }
++        super::native_profile::label_style(
++            self.effective_config,
++            &TextStyle {
++                font_family: Some(font_family.to_string()),
++                font_size,
++                font_weight: None,
++                font_style: None,
++            },
++            "node",
++        )
+     }
+ 
+     pub(crate) fn node_html_labels(&self) -> bool {
+@@ -206,12 +210,16 @@ impl<'a> FlowchartConfigView<'a> {
+     }
+ 
+     fn layout_text_style(&self) -> TextStyle {
+-        TextStyle {
+-            font_family: Some(self.font_family()),
+-            font_size: self.theme_font_size_px().unwrap_or(16.0),
+-            font_weight: self.root_string("fontWeight"),
+-            font_style: None,
+-        }
++        super::native_profile::label_style(
++            self.effective_config,
++            &TextStyle {
++                font_family: Some(self.font_family()),
++                font_size: self.theme_font_size_px().unwrap_or(16.0),
++                font_weight: self.root_string("fontWeight"),
++                font_style: None,
++            },
++            "node",
++        )
+     }
+ 
+     fn dagre_spacing_or_default(&self, key: &str, default: f64) -> f64 {
+diff --git a/src/flowchart/elk.rs b/src/flowchart/elk.rs
+index aab7313..1f8794d 100644
+--- a/src/flowchart/elk.rs
++++ b/src/flowchart/elk.rs
+@@ -435,6 +435,81 @@ fn flowchart_layout_from_elk_with_render_labels_and_work_control(
+         });
+     }
+ 
++    let mut post_ordinal = 0usize;
++    let mut charge_post_work = |units: usize| {
++        post_ordinal = post_ordinal
++            .checked_add(units)
++            .ok_or_else(|| Error::InvalidModel {
++                message: "flowchart post-layout work limit exceeded".into(),
++            })?;
++        if post_ordinal > 32_000 {
++            return Err(Error::InvalidModel {
++                message: "flowchart post-layout work limit exceeded".into(),
++            });
++        }
++        charge_adapter_work(&mut work_control, units)
++    };
++    let post_axis = super::post_layout::Axis::new(model.direction.as_deref());
++    if effective_config_value
++        .pointer("/flowchart/nativePostCompaction")
++        .and_then(|v| v.as_str())
++        == Some("LEFT_RIGHT_CONSTRAINT_LOCKING")
++        && clusters.is_empty()
++        && let Some(profile) = graph.spacing.layered_profile
++    {
++        super::post_layout::compact(
++            &mut out_nodes,
++            &mut out_edges,
++            post_axis,
++            super::post_layout::Spacing {
++                node_node: graph.spacing.node_node,
++                rank: graph.spacing.layer_layer,
++                edge_edge: profile.edge_edge,
++                edge_edge_between: profile.edge_edge_between_layers,
++                edge_node_between: profile.edge_node_between_layers,
++            },
++            &mut charge_post_work,
++        )?;
++    }
++    // Source preserves the compacted provider extent even when alignment moves
++    // an outermost node inward; alignment is not a cropping operation.
++    let provider_bounds = if effective_config_value
++        .pointer("/flowchart/nativeAlignLayers")
++        .and_then(|v| v.as_bool())
++        == Some(true)
++    {
++        charge_post_work(out_nodes.len() * 2)?;
++        compute_bounds(&out_nodes, &[])
++    } else {
++        None
++    };
++    if effective_config_value
++        .pointer("/flowchart/nativeAlignLayers")
++        .and_then(|v| v.as_bool())
++        == Some(true)
++    {
++        super::post_layout::align_layers(
++            &mut out_nodes,
++            &mut out_edges,
++            post_axis,
++            &mut charge_post_work,
++        )?;
++    }
++
++    if effective_config_value
++        .pointer("/flowchart/nativeBundleEdges")
++        .and_then(|v| v.as_bool())
++        == Some(true)
++    {
++        super::bundle::bundle(
++            model,
++            &out_nodes,
++            &clusters,
++            &mut out_edges,
++            &mut charge_post_work,
++        )?;
++    }
++
+     let bounds_points = out_edges.iter().try_fold(
+         checked_adapter_mul(&work_control, out_nodes.len(), 2)?,
+         |total, edge| {
+@@ -448,7 +523,11 @@ fn flowchart_layout_from_elk_with_render_labels_and_work_control(
+     )?;
+     let bounds_work = checked_adapter_mul(&work_control, bounds_points, 2)?;
+     charge_adapter_work(&mut work_control, bounds_work)?;
+-    let bounds = compute_bounds(&out_nodes, &out_edges);
++    let mut bounds = compute_bounds(&out_nodes, &out_edges);
++    if let (Some(bounds), Some(provider)) = (&mut bounds, provider_bounds) {
++        bounds.max_x = bounds.max_x.max(provider.max_x);
++        bounds.max_y = bounds.max_y.max(provider.max_y);
++    }
+     let dom_work = checked_adapter_add(
+         &work_control,
+         checked_adapter_mul(&work_control, graph.nodes.len(), 2)?,
+@@ -892,6 +971,19 @@ fn build_flowchart_elk_graph_with_render_labels_and_work_control_inner(
+         &text_style
+     };
+ 
++    let node_profile_style =
++        super::native_profile::label_style(effective_config_value, node_label_base_style, "node");
++    let group_profile_style = super::native_profile::label_style(
++        effective_config_value,
++        cluster_label_base_style,
++        "group",
++    );
++    let edge_profile_style =
++        super::native_profile::label_style(effective_config_value, edge_label_base_style, "edge");
++    let node_label_base_style = &node_profile_style;
++    let cluster_label_base_style = &group_profile_style;
++    let edge_label_base_style = &edge_profile_style;
++
+     let mut graph = elk::Graph {
+         id: "root".to_string(),
+         direction: diagram_direction,
+@@ -900,6 +992,45 @@ fn build_flowchart_elk_graph_with_render_labels_and_work_control_inner(
+             layer_layer: ranksep,
+             group_padding_x: cluster_padding,
+             group_padding_y: cluster_padding,
++            layered_profile: effective_config_value
++                .pointer("/flowchart/nativeElkProfile")
++                .filter(|v| v.is_object())
++                .map(|profile| {
++                    let defaults = elk::LayeredProfile::default();
++                    let number = |key: &str, fallback: f64| {
++                        profile
++                            .get(key)
++                            .and_then(|v| v.as_f64())
++                            .filter(|v| v.is_finite() && (0.0..=10_000.0).contains(v))
++                            .unwrap_or(fallback)
++                    };
++                    elk::LayeredProfile {
++                        edge_edge: number("edgeEdge", defaults.edge_edge),
++                        edge_node: number("edgeNode", defaults.edge_node),
++                        edge_edge_between_layers: number(
++                            "edgeEdgeBetweenLayers",
++                            defaults.edge_edge_between_layers,
++                        ),
++                        edge_node_between_layers: number(
++                            "edgeNodeBetweenLayers",
++                            defaults.edge_node_between_layers,
++                        ),
++                        edge_label: number("edgeLabel", defaults.edge_label),
++                        thoroughness: profile
++                            .get("thoroughness")
++                            .and_then(|v| v.as_u64())
++                            .unwrap_or(defaults.thoroughness as u64)
++                            .clamp(1, 32) as usize,
++                        center_content: profile
++                            .get("centerContent")
++                            .and_then(|v| v.as_bool())
++                            .unwrap_or(defaults.center_content),
++                        inline_center_labels: profile
++                            .get("inlineCenterLabels")
++                            .and_then(|v| v.as_bool())
++                            .unwrap_or(defaults.inline_center_labels),
++                    }
++                }),
+             ..Default::default()
+         },
+         options: elk_layout_options(effective_config_value),
+@@ -1390,6 +1521,66 @@ fn node_dimensions_and_label(
+         node_asset_height: node.asset_height,
+     });
+ 
++    let shape = node.layout_shape.as_deref().unwrap_or("squareRect");
++    let config = ctx.effective_config.as_value();
++    let horizontal = super::native_profile::number(config, "nativeNodePaddingHorizontal");
++    let vertical = super::native_profile::number(config, "nativeNodePaddingVertical");
++    let box_label_height = super::native_profile::number(config, "nativeNodeLineHeight")
++        .map(|ratio| ratio * node_text_style.font_size * metrics.line_count as f64)
++        .unwrap_or(label.height);
++    let (width, height) = match (horizontal, vertical) {
++        (Some(x), Some(y))
++            if matches!(
++                shape,
++                "squareRect"
++                    | "rect"
++                    | "roundedRect"
++                    | "stadium"
++                    | "circle"
++                    | "doublecircle"
++                    | "diamond"
++                    | "question"
++                    | "diam"
++                    | "decision"
++                    | "hexagon"
++                    | "lean_right"
++                    | "lean_left"
++                    | "trapezoid"
++                    | "inv_trapezoid"
++                    | "cylinder"
++                    | "odd"
++                    | "subroutine"
++            ) =>
++        {
++            let mut w = label.width + 2.0 * x;
++            let mut h = box_label_height + 2.0 * y;
++            match shape {
++                "diamond" | "question" | "diam" | "decision" => {
++                    let side = w.max(h)
++                        + super::native_profile::number(config, "nativeDiamondExtra")
++                            .unwrap_or(0.0);
++                    w = side;
++                    h = side;
++                }
++                "circle" | "doublecircle" => {
++                    let diameter = (w * w + h * h).sqrt().ceil()
++                        + 8.0
++                        + if shape == "doublecircle" { 12.0 } else { 0.0 };
++                    w = diameter;
++                    h = diameter;
++                }
++                "hexagon" | "lean_right" | "lean_left" | "trapezoid" | "inv_trapezoid" => w += x,
++                "odd" => w += 12.0,
++                "cylinder" => h += 14.0,
++                _ => {}
++            }
++            (
++                w.max(super::native_profile::number(config, "nativeMinNodeWidth").unwrap_or(0.0)),
++                h.max(super::native_profile::number(config, "nativeMinNodeHeight").unwrap_or(0.0)),
++            )
++        }
++        _ => (width, height),
++    };
+     (width, height, label)
+ }
+ 
+@@ -1471,6 +1662,18 @@ fn edge_label(
+         )
+     };
+ 
++    let config = ctx.effective_config.as_value();
++    let width = super::native_profile::number(config, "nativeEdgeLabelPaddingHorizontal")
++        .map(|padding| metrics.width + 2.0 * padding)
++        .unwrap_or(width);
++    let height = super::native_profile::number(config, "nativeEdgeLineHeight")
++        .map(|ratio| {
++            ratio * edge_text_style.font_size * metrics.line_count as f64
++                + 2.0
++                    * super::native_profile::number(config, "nativeEdgeLabelPaddingVertical")
++                        .unwrap_or(0.0)
++        })
++        .unwrap_or(height);
+     Some(elk::Label { width, height })
+ }
+ 
+@@ -1570,6 +1773,35 @@ mod tests {
+ 
+     const NON_LATTICE_COMPUTED_LENGTH_PX: f64 = 73.123_456_789;
+ 
++    #[test]
++    fn flowchart_elk_label_anchor_is_half_box_or_half_path_length() {
++        let label = edge_label_layout(&elk::EdgeLabelLayout {
++            x: 10.0,
++            y: 20.0,
++            width: 40.0,
++            height: 12.0,
++            terminal: None,
++        });
++        assert_eq!((label.x, label.y), (30.0, 26.0));
++        // Half-length is not the endpoint average or the middle vertex.
++        let points = [
++            LayoutPoint { x: 0.0, y: 0.0 },
++            LayoutPoint { x: 0.0, y: 0.0 },
++            LayoutPoint { x: 80.0, y: 0.0 },
++            LayoutPoint { x: 80.0, y: 20.0 },
++        ];
++        let label = edge_label_position(
++            &points,
++            elk::Label {
++                width: 40.0,
++                height: 12.0,
++            },
++        )
++        .unwrap();
++        assert_eq!((label.x, label.y), (50.0, 0.0));
++        assert!(polyline_midpoint(&[]).is_none());
++    }
++
+     #[test]
+     fn elk_subgraph_algorithm_metadata_survives_parse_and_measurement() {
+         for (requested, expected) in [
+diff --git a/src/flowchart/mod.rs b/src/flowchart/mod.rs
+index 3269e11..6e8c0b2 100644
+--- a/src/flowchart/mod.rs
++++ b/src/flowchart/mod.rs
+@@ -1,6 +1,11 @@
++#[cfg(feature = "layout-elk")]
++mod bundle;
+ mod config;
+ #[cfg(feature = "layout-elk")]
+ pub mod elk;
++pub(crate) mod native_profile;
++#[cfg(feature = "layout-elk")]
++mod post_layout;
+ use crate::graph_label as label;
+ mod layout;
+ mod node;
+diff --git a/src/flowchart/native_profile.rs b/src/flowchart/native_profile.rs
+new file mode 100644
+index 0000000..8016be5
+--- /dev/null
++++ b/src/flowchart/native_profile.rs
+@@ -0,0 +1,35 @@
++//! Optional host typography, shared by ELK measurement and SVG painting.
++use crate::text::TextStyle;
++use serde_json::Value;
++
++pub(crate) fn label_style(config: &Value, base: &TextStyle, role: &str) -> TextStyle {
++    let mut style = base.clone();
++    if let Some(profile) = config
++        .pointer("/flowchart/nativeLabelProfile")
++        .and_then(|p| p.get(role))
++    {
++        if let Some(size) = profile
++            .get("fontSize")
++            .and_then(Value::as_f64)
++            .filter(|n| n.is_finite() && *n >= 1.0 && *n <= 256.0)
++        {
++            style.font_size = size;
++        }
++        if let Some(weight) = profile
++            .get("fontWeight")
++            .and_then(Value::as_str)
++            .filter(|w| w.parse::<u16>().is_ok_and(|n| (1..=1000).contains(&n)))
++        {
++            style.font_weight = Some(weight.into());
++        }
++    }
++    style
++}
++
++pub(crate) fn number(config: &Value, key: &str) -> Option<f64> {
++    config
++        .get("flowchart")?
++        .get(key)?
++        .as_f64()
++        .filter(|n| n.is_finite() && *n >= 0.0 && *n <= 4096.0)
++}
+diff --git a/src/flowchart/post_layout.rs b/src/flowchart/post_layout.rs
+new file mode 100644
+index 0000000..863fddc
+--- /dev/null
++++ b/src/flowchart/post_layout.rs
+@@ -0,0 +1,612 @@
++// SPDX-License-Identifier: EPL-2.0
++//! Opt-in flow-axis compaction and layer alignment.
++//!
++//! Compaction provenance: Eclipse ELK, elkjs 0.11.1 elk-worker.js,
++//! HorizontalGraphCompactor / EdgeAwareScanlineConstraintCalculation /
++//! OneDimensionalCompactor. See ELK-COMPACTION-LICENSE.md; corresponding
++//! modified Rust source is this file. Alignment retains its MIT attribution.
++//!
++//! Alignment follows beautiful-mermaid 1.1.3 layout-engine.ts (MIT; see
++//! BEAUTIFUL-MERMAID-LICENSE.md). Compaction implements ELK's orthogonal
++//! scanline constraints and two longest-path passes with constraint locking.
++//! It operates on projected rectangles, inline label boxes and routing channels,
++//! without relying on model IDs, label text, or expected diagram coordinates.
++use crate::model::{LayoutEdge, LayoutNode};
++use crate::{Error, Result};
++use std::collections::{HashMap, HashSet, VecDeque};
++
++#[cfg(test)]
++#[path = "post_layout_tests.rs"]
++mod tests;
++
++const EPS: f64 = 1e-4;
++
++struct Work<F> {
++    charge: F,
++    ordinal: usize,
++}
++impl<F: FnMut(usize) -> Result<()>> Work<F> {
++    fn tick(&mut self, units: usize) -> Result<()> {
++        self.ordinal = self.ordinal.checked_add(units).ok_or_else(limit_error)?;
++        if self.ordinal > 32_000 {
++            return Err(limit_error());
++        }
++        (self.charge)(units)
++    }
++}
++fn limit_error() -> Error {
++    Error::InvalidModel {
++        message: "flowchart post-layout work limit exceeded".into(),
++    }
++}
++
++#[derive(Clone, Copy)]
++pub(super) struct Axis {
++    horizontal: bool,
++    sign: f64,
++}
++impl Axis {
++    pub(super) fn new(direction: Option<&str>) -> Self {
++        Self {
++            horizontal: matches!(direction, Some("LR" | "RL")),
++            sign: if matches!(direction, Some("RL" | "BT")) {
++                -1.0
++            } else {
++                1.0
++            },
++        }
++    }
++    fn main(self, x: f64, y: f64) -> f64 {
++        self.sign * if self.horizontal { x } else { y }
++    }
++    fn cross(self, x: f64, y: f64) -> f64 {
++        if self.horizontal { y } else { x }
++    }
++    fn size(self, width: f64, height: f64) -> f64 {
++        if self.horizontal { width } else { height }
++    }
++    fn shift(self, x: &mut f64, y: &mut f64, delta: f64) {
++        if self.horizontal {
++            *x += self.sign * delta;
++        } else {
++            *y += self.sign * delta;
++        }
++    }
++}
++
++#[derive(Clone, Copy, PartialEq)]
++enum Kind {
++    Node,
++    Label,
++    Segment,
++}
++#[derive(Clone)]
++struct BoxItem {
++    main: f64,
++    cross: f64,
++    size: f64,
++    span: f64,
++    kind: Kind,
++    edges: HashSet<usize>,
++    points: Vec<(usize, usize)>,
++    owner: Option<usize>,
++    group: usize,
++    ignore_low: bool,
++    ignore_high: bool,
++}
++impl BoxItem {
++    fn rect(axis: Axis, x: f64, y: f64, width: f64, height: f64, kind: Kind, owner: usize) -> Self {
++        let size = axis.size(width, height);
++        let span = axis.size(height, width);
++        Self {
++            main: axis.main(x, y) - size / 2.0,
++            cross: axis.cross(x, y) - span / 2.0,
++            size,
++            span,
++            kind,
++            owner: Some(owner),
++            group: 0,
++            edges: HashSet::new(),
++            points: Vec::new(),
++            ignore_low: false,
++            ignore_high: false,
++        }
++    }
++    fn expand_cross(&mut self, delta: f64) {
++        if self.kind == Kind::Segment {
++            if self.ignore_low {
++                if !self.ignore_high {
++                    self.span += delta + 0.01;
++                }
++            } else {
++                self.cross -= delta + 0.01;
++                self.span += delta + 0.01;
++            }
++        } else {
++            self.cross -= delta;
++            self.span += 2.0 * delta;
++        }
++    }
++}
++
++#[derive(Clone, Copy)]
++pub(super) struct Spacing {
++    pub node_node: f64,
++    pub rank: f64,
++    pub edge_edge: f64,
++    pub edge_edge_between: f64,
++    pub edge_node_between: f64,
++}
++impl Spacing {
++    fn main(self, a: &BoxItem, b: &BoxItem) -> f64 {
++        if a.kind == Kind::Segment && b.kind == Kind::Segment {
++            if !a.edges.is_disjoint(&b.edges) {
++                0.0
++            } else {
++                self.edge_edge_between
++            }
++        } else if a.kind == Kind::Segment || b.kind == Kind::Segment {
++            self.edge_node_between
++        } else if a.kind == Kind::Label && b.kind == Kind::Label {
++            self.edge_edge
++        } else {
++            self.rank
++        }
++    }
++}
++
++// Scanline keeps only adjacent constraints; all-pairs overlap constraints would
++// unnecessarily pin nodes behind obstacles that are hidden by nearer channels.
++fn sweep<F: FnMut(usize) -> Result<()>>(
++    boxes: &[BoxItem],
++    selected: &[usize],
++    constraints: &mut HashSet<(usize, usize)>,
++    work: &mut Work<F>,
++) -> Result<()> {
++    work.tick(boxes.len() + selected.len().saturating_mul(2))?;
++    let mut events = Vec::with_capacity(selected.len() * 2);
++    for &i in selected {
++        events.push((boxes[i].cross, true, i));
++        events.push((boxes[i].cross + boxes[i].span, false, i));
++    }
++    work.tick(
++        events
++            .len()
++            .saturating_mul(events.len().max(1).ilog2() as usize + 1),
++    )?;
++    events.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
++    let mut active: Vec<usize> = Vec::new();
++    let mut candidates = vec![None; boxes.len()];
++    for (_, low, i) in events {
++        work.tick(1)?;
++        let center = |j: usize| boxes[j].main + boxes[j].size / 2.0;
++        let position = active.partition_point(|&j| center(j) < center(i));
++        work.tick(active.len().max(1).ilog2() as usize + 1)?;
++        if low {
++            // Projected zero-size runs can coincide; their geometry was merged
++            // beforehand. Stable ordinal ties also preserve provider model order.
++            let position = active
++                .partition_point(|&j| center(j).total_cmp(&center(i)).then(j.cmp(&i)).is_lt());
++            work.tick(active.len() - position + 1)?;
++            active.insert(position, i);
++            candidates[i] = position.checked_sub(1).map(|p| active[p]);
++            if position + 1 < active.len() {
++                candidates[active[position + 1]] = Some(i);
++            }
++        } else {
++            work.tick(active.len() - position + 1)?;
++            let position = active[position..]
++                .iter()
++                .position(|&j| j == i)
++                .map(|p| p + position)
++                .ok_or_else(|| Error::InvalidModel {
++                    message: "invalid flowchart compaction sweep".into(),
++                })?;
++            work.tick(active.len() - position + 1)?;
++            if let Some(p) = position.checked_sub(1) {
++                let left = active[p];
++                if candidates[i] == Some(left) && boxes[left].group != boxes[i].group {
++                    constraints.insert((left, i));
++                }
++            }
++            if let Some(&right) = active.get(position + 1)
++                && candidates[right] == Some(i)
++                && boxes[right].group != boxes[i].group
++            {
++                constraints.insert((i, right));
++            }
++            active.remove(position);
++        }
++    }
++    Ok(())
++}
++
++fn longest_path<F: FnMut(usize) -> Result<()>>(
++    boxes: &mut [BoxItem],
++    constraints: &[(usize, usize)],
++    spacing: Spacing,
++    reverse: bool,
++    work: &mut Work<F>,
++) -> Result<()> {
++    work.tick(boxes.len().saturating_mul(7) + constraints.len())?;
++    let groups = boxes.iter().map(|b| b.group).max().map_or(0, |g| g + 1);
++    let mut reference = vec![f64::INFINITY; groups];
++    for b in boxes.iter() {
++        reference[b.group] = reference[b.group].min(b.main);
++    }
++    let offset: Vec<_> = boxes.iter().map(|b| b.main - reference[b.group]).collect();
++    let minimum = boxes.iter().map(|b| b.main).fold(f64::INFINITY, f64::min);
++    let mut start = vec![minimum; groups];
++    let mut degree = vec![0usize; groups];
++    let mut adjacent = vec![Vec::new(); groups];
++    for &(a, b) in constraints {
++        degree[boxes[b].group] += 1;
++        adjacent[boxes[a].group].push((a, b));
++    }
++    let locked: Vec<_> = degree.iter().map(|&d| reverse && d == 0).collect();
++    let mut queue: VecDeque<_> = degree
++        .iter()
++        .enumerate()
++        .filter_map(|(i, &d)| (d == 0).then_some(i))
++        .collect();
++    let mut visited = 0;
++    while let Some(group) = queue.pop_front() {
++        work.tick(1)?;
++        visited += 1;
++        if locked[group] {
++            start[group] = start[group].max(reference[group]);
++        }
++        for &(a, b) in &adjacent[group] {
++            work.tick(1 + boxes[a].edges.len().min(boxes[b].edges.len()))?;
++            let target = boxes[b].group;
++            start[target] = start[target].max(
++                start[group] + offset[a] + boxes[a].size + spacing.main(&boxes[a], &boxes[b])
++                    - offset[b],
++            );
++            degree[target] -= 1;
++            if degree[target] == 0 {
++                queue.push_back(target);
++            }
++        }
++    }
++    if visited != groups {
++        return Err(Error::InvalidModel {
++            message: "cyclic flowchart compaction constraints".into(),
++        });
++    }
++    work.tick(boxes.len())?;
++    for (b, offset) in boxes.iter_mut().zip(offset) {
++        b.main = start[b.group] + offset;
++    }
++    Ok(())
++}
++
++pub(super) fn compact(
++    nodes: &mut [LayoutNode],
++    edges: &mut [LayoutEdge],
++    axis: Axis,
++    spacing: Spacing,
++    mut charge: impl FnMut(usize) -> Result<()>,
++) -> Result<()> {
++    let mut work = Work {
++        charge: &mut charge,
++        ordinal: 0,
++    };
++    work.tick(nodes.len() + edges.len())?;
++    let node_map: HashMap<_, _> = nodes
++        .iter()
++        .enumerate()
++        .map(|(i, n)| (n.id.clone(), i))
++        .collect();
++    let mut boxes: Vec<_> = nodes
++        .iter()
++        .enumerate()
++        .map(|(i, n)| BoxItem::rect(axis, n.x, n.y, n.width, n.height, Kind::Node, i))
++        .collect();
++    // ELK compacts label dummies before removing them. Reconstruct their measured
++    // inline rectangles, not a new label anchor chosen from endpoint names.
++    for (i, e) in edges.iter().enumerate() {
++        work.tick(1)?;
++        if e.from != e.to
++            && let Some(l) = &e.label
++        {
++            let mut b = BoxItem::rect(axis, l.x, l.y, l.width, l.height, Kind::Label, i);
++            b.edges.insert(i);
++            boxes.push(b);
++        }
++    }
++    let rectangles = boxes.len();
++    let mut segments: Vec<BoxItem> = Vec::new();
++    for (ei, e) in edges.iter().enumerate() {
++        work.tick(e.points.len())?;
++        if e.from == e.to || e.points.len() < 4 {
++            continue;
++        }
++        let mut found = Vec::new();
++        for pi in 1..e.points.len() - 2 {
++            let a = &e.points[pi];
++            let b = &e.points[pi + 1];
++            if (axis.main(a.x, a.y) - axis.main(b.x, b.y)).abs() <= EPS
++                && (axis.cross(a.x, a.y) - axis.cross(b.x, b.y)).abs() > EPS
++            {
++                found.push(segments.len());
++                let lo = axis.cross(a.x, a.y).min(axis.cross(b.x, b.y));
++                let hi = axis.cross(a.x, a.y).max(axis.cross(b.x, b.y));
++                segments.push(BoxItem {
++                    main: axis.main(a.x, a.y),
++                    cross: lo,
++                    size: 0.0,
++                    span: hi - lo,
++                    kind: Kind::Segment,
++                    edges: HashSet::from([ei]),
++                    points: vec![(ei, pi), (ei, pi + 1)],
++                    owner: None,
++                    group: 0,
++                    ignore_low: false,
++                    ignore_high: false,
++                });
++            }
++        }
++        for (si, ni, pi) in found
++            .first()
++            .zip(node_map.get(e.from.as_str()))
++            .map(|(&si, &ni)| (si, ni, segments[si].points[1].1))
++            .into_iter()
++            .chain(
++                found
++                    .last()
++                    .zip(node_map.get(e.to.as_str()))
++                    .map(|(&si, &ni)| (si, ni, segments[si].points[0].1)),
++            )
++        {
++            let n = &boxes[ni];
++            let cross = axis.cross(e.points[pi].x, e.points[pi].y);
++            if cross < n.cross {
++                segments[si].ignore_high = true;
++            } else if cross > n.cross + n.span {
++                segments[si].ignore_low = true;
++            } else {
++                segments[si].ignore_low = true;
++                segments[si].ignore_high = true;
++            }
++        }
++    }
++    work.tick(
++        segments
++            .len()
++            .saturating_mul(segments.len().max(1).ilog2() as usize + 1),
++    )?;
++    segments.sort_by(|a, b| a.main.total_cmp(&b.main).then(a.cross.total_cmp(&b.cross)));
++    for segment in segments {
++        work.tick(segment.points.len() + segment.edges.len() + 1)?;
++        if boxes.len() > rectangles
++            && let Some(last) = boxes.last_mut()
++            && (last.main - segment.main).abs() <= EPS
++            && segment.cross <= last.cross + last.span + EPS
++        {
++            last.span = (last.cross + last.span).max(segment.cross + segment.span) - last.cross;
++            last.edges.extend(segment.edges);
++            last.points.extend(segment.points);
++            last.ignore_low |= segment.ignore_low;
++            last.ignore_high |= segment.ignore_high;
++        } else {
++            boxes.push(segment);
++        }
++    }
++    for (i, b) in boxes.iter_mut().enumerate() {
++        b.group = i;
++    }
++    let original: Vec<_> = boxes.iter().map(|b| b.main).collect();
++    let mut constraints = HashSet::new();
++    let edge_expansion = (spacing.edge_edge / 2.0 - 0.5).max(0.0);
++    let min_expansion = edge_expansion.min((spacing.node_node / 2.0 - 0.5).max(0.0));
++    for pass in 0..3 {
++        work.tick(
++            boxes
++                .iter()
++                .map(|b| 2 + b.points.len() + b.edges.len())
++                .sum(),
++        )?;
++        let selected: Vec<_> = boxes
++            .iter()
++            .enumerate()
++            .filter_map(|(i, b)| {
++                (pass == 2 || (b.kind == Kind::Segment) == (pass == 0)).then_some(i)
++            })
++            .collect();
++        let mut expanded = boxes.clone();
++        for &i in &selected {
++            expanded[i].expand_cross(if pass == 2 {
++                min_expansion
++            } else {
++                edge_expansion
++            });
++        }
++        sweep(&expanded, &selected, &mut constraints, &mut work)?;
++    }
++    // Sort constraints for reproducibility independent of HashSet's random seed.
++    work.tick(
++        constraints
++            .len()
++            .saturating_mul(constraints.len().max(1).ilog2() as usize + 1),
++    )?;
++    let mut constraints: Vec<_> = constraints.into_iter().collect();
++    constraints.sort_unstable();
++    longest_path(&mut boxes, &constraints, spacing, false, &mut work)?;
++    work.tick(boxes.len() + constraints.len())?;
++    for b in &mut boxes {
++        b.main = -b.main - b.size;
++    }
++    for pair in &mut constraints {
++        *pair = (pair.1, pair.0);
++    }
++    longest_path(&mut boxes, &constraints, spacing, true, &mut work)?;
++    for b in &mut boxes {
++        b.main = -b.main - b.size;
++    }
++    work.tick(nodes.len() + edges.len())?;
++    let mut deltas = vec![0.0; nodes.len()];
++    for (b, old) in boxes.iter().zip(original) {
++        let delta = b.main - old;
++        match b.kind {
++            Kind::Node => {
++                let i = b.owner.unwrap();
++                deltas[i] = delta;
++                axis.shift(&mut nodes[i].x, &mut nodes[i].y, delta);
++            }
++            Kind::Label => {
++                let l = edges[b.owner.unwrap()].label.as_mut().unwrap();
++                axis.shift(&mut l.x, &mut l.y, delta);
++            }
++            Kind::Segment => {
++                work.tick(b.points.len())?;
++                for &(ei, pi) in &b.points {
++                    let p = &mut edges[ei].points[pi];
++                    axis.shift(&mut p.x, &mut p.y, delta);
++                }
++            }
++        }
++    }
++    for e in edges.iter_mut() {
++        work.tick(e.points.len())?;
++        if e.from == e.to {
++            if let Some(&i) = node_map.get(e.from.as_str()) {
++                for p in &mut e.points {
++                    axis.shift(&mut p.x, &mut p.y, deltas[i]);
++                }
++                if let Some(l) = &mut e.label {
++                    axis.shift(&mut l.x, &mut l.y, deltas[i]);
++                }
++            }
++        } else {
++            if let Some(&i) = node_map.get(e.from.as_str())
++                && let Some(p) = e.points.first_mut()
++            {
++                axis.shift(&mut p.x, &mut p.y, deltas[i]);
++            }
++            if let Some(&i) = node_map.get(e.to.as_str())
++                && let Some(p) = e.points.last_mut()
++            {
++                axis.shift(&mut p.x, &mut p.y, deltas[i]);
++            }
++        }
++    }
++    Ok(())
++}
++
++pub(super) fn align_layers(
++    nodes: &mut [LayoutNode],
++    edges: &mut [LayoutEdge],
++    axis: Axis,
++    mut charge: impl FnMut(usize) -> Result<()>,
++) -> Result<()> {
++    let mut work = Work {
++        charge: &mut charge,
++        ordinal: 0,
++    };
++    work.tick(nodes.len() + edges.len())?;
++    let mut connected = HashSet::new();
++    for e in edges.iter() {
++        connected.insert((e.from.as_str(), e.to.as_str()));
++        connected.insert((e.to.as_str(), e.from.as_str()));
++    }
++    let position = |n: &LayoutNode| {
++        if axis.horizontal {
++            n.x - n.width / 2.0
++        } else {
++            n.y - n.height / 2.0
++        }
++    };
++    let mut sorted: Vec<_> = nodes
++        .iter()
++        .enumerate()
++        .filter_map(|(i, n)| (!n.is_cluster).then_some(i))
++        .collect();
++    work.tick(
++        sorted
++            .len()
++            .saturating_mul(sorted.len().max(1).ilog2() as usize + 1),
++    )?;
++    sorted.sort_by(|&a, &b| position(&nodes[a]).total_cmp(&position(&nodes[b])));
++    let mut layers: Vec<Vec<usize>> = Vec::new();
++    for &i in &sorted {
++        work.tick(1)?;
++        let join = if let Some(layer) = layers.last() {
++            work.tick(layer.len())?;
++            position(&nodes[i]) - position(&nodes[*layer.last().unwrap()]) <= 48.0 * 0.6
++                && !layer
++                    .iter()
++                    .any(|&j| connected.contains(&(nodes[j].id.as_str(), nodes[i].id.as_str())))
++        } else {
++            false
++        };
++        if join {
++            layers.last_mut().unwrap().push(i);
++        } else {
++            layers.push(vec![i]);
++        }
++    }
++    let mut deltas = HashMap::new();
++    for layer in layers {
++        work.tick(layer.len())?;
++        let low = layer
++            .iter()
++            .map(|&i| position(&nodes[i]))
++            .fold(f64::INFINITY, f64::min);
++        let high = layer
++            .iter()
++            .map(|&i| position(&nodes[i]))
++            .fold(f64::NEG_INFINITY, f64::max);
++        if high - low <= 1.0 {
++            continue;
++        }
++        let target = (low + high) / 2.0;
++        for i in layer {
++            let delta = target - position(&nodes[i]);
++            if delta.abs() > 0.5 {
++                if axis.horizontal {
++                    nodes[i].x += delta;
++                } else {
++                    nodes[i].y += delta;
++                }
++                deltas.insert(nodes[i].id.as_str(), delta);
++            }
++        }
++    }
++    for e in edges.iter_mut() {
++        work.tick(1)?;
++        if e.points.len() < 2 {
++            continue;
++        }
++        for (id, first, adjacent) in [
++            (&e.from, 0, 1),
++            (&e.to, e.points.len() - 1, e.points.len() - 2),
++        ] {
++            if let Some(&delta) = deltas.get(id.as_str()) {
++                let old = if axis.horizontal {
++                    e.points[first].x
++                } else {
++                    e.points[first].y
++                };
++                let adj = if axis.horizontal {
++                    e.points[adjacent].x
++                } else {
++                    e.points[adjacent].y
++                };
++                if axis.horizontal {
++                    e.points[first].x += delta;
++                } else {
++                    e.points[first].y += delta;
++                }
++                if adj == old {
++                    if axis.horizontal {
++                        e.points[adjacent].x += delta;
++                    } else {
++                        e.points[adjacent].y += delta;
++                    }
++                }
++            }
++        }
++    }
++    Ok(())
++}
+diff --git a/src/flowchart/post_layout_tests.rs b/src/flowchart/post_layout_tests.rs
+new file mode 100644
+index 0000000..70544a9
+--- /dev/null
++++ b/src/flowchart/post_layout_tests.rs
+@@ -0,0 +1,207 @@
++use super::*;
++use crate::model::{LayoutLabel, LayoutPoint};
++
++fn node(id: &str, x: f64, y: f64, width: f64, height: f64) -> LayoutNode {
++    LayoutNode {
++        id: id.into(),
++        x,
++        y,
++        width,
++        height,
++        is_cluster: false,
++        label_width: None,
++        label_height: None,
++    }
++}
++fn edge(from: &str, to: &str, points: &[(f64, f64)]) -> LayoutEdge {
++    LayoutEdge {
++        id: format!("{from}-{to}"),
++        from: from.into(),
++        to: to.into(),
++        from_cluster: None,
++        to_cluster: None,
++        points: points.iter().map(|&(x, y)| LayoutPoint { x, y }).collect(),
++        label: None,
++        start_label_left: None,
++        start_label_right: None,
++        end_label_left: None,
++        end_label_right: None,
++        start_marker: None,
++        end_marker: None,
++        stroke_dasharray: None,
++    }
++}
++fn spacing() -> Spacing {
++    Spacing {
++        node_node: 28.0,
++        rank: 48.0,
++        edge_edge: 12.0,
++        edge_edge_between: 12.0,
++        edge_node_between: 12.0,
++    }
++}
++
++#[test]
++fn alignment_uses_top_left_and_preserves_connected_layers_and_labels() {
++    let mut nodes = vec![
++        node("a", 0.0, 20.0, 40.0, 40.0),
++        node("b", 80.0, 32.0, 40.0, 40.0),
++        node("c", 0.0, 110.0, 40.0, 40.0),
++    ];
++    let mut edges = vec![edge("a", "c", &[(0.0, 40.0), (0.0, 60.0), (0.0, 90.0)])];
++    edges[0].label = Some(LayoutLabel {
++        x: 0.0,
++        y: 70.0,
++        width: 20.0,
++        height: 12.0,
++    });
++    align_layers(&mut nodes, &mut edges, Axis::new(Some("TB")), |_| Ok(())).unwrap();
++    assert_eq!(nodes[0].y, nodes[1].y);
++    assert_eq!(nodes[2].y, 110.0);
++    assert_eq!(edges[0].points[0].y, 46.0);
++    assert_eq!(edges[0].points[1].y, 60.0);
++    assert_eq!(edges[0].label.as_ref().unwrap().y, 70.0);
++    let mut adjacent = vec![
++        node("a", 0.0, 20.0, 40.0, 40.0),
++        node("b", 80.0, 32.0, 40.0, 40.0),
++    ];
++    align_layers(
++        &mut adjacent,
++        &mut [edge("a", "b", &[])],
++        Axis::new(Some("TB")),
++        |_| Ok(()),
++    )
++    .unwrap();
++    assert_ne!(adjacent[0].y, adjacent[1].y);
++}
++
++#[test]
++fn alignment_does_not_cluster_container_boxes() {
++    let mut nodes = vec![
++        node("a", 0.0, 20.0, 40.0, 40.0),
++        node("container", 0.0, 30.0, 60.0, 40.0),
++    ];
++    nodes[1].is_cluster = true;
++    align_layers(&mut nodes, &mut [], Axis::new(Some("TB")), |_| Ok(())).unwrap();
++    assert_eq!(nodes[0].y, 20.0);
++    assert_eq!(nodes[1].y, 30.0);
++}
++
++#[test]
++fn alignment_snap_is_top_left_not_center_for_unequal_sizes() {
++    let mut nodes = vec![
++        node("a", 20.0, 0.0, 40.0, 40.0),
++        node("b", 48.0, 80.0, 72.0, 40.0),
++    ];
++    align_layers(&mut nodes, &mut [], Axis::new(Some("LR")), |_| Ok(())).unwrap();
++    assert_eq!(
++        nodes[0].x - nodes[0].width / 2.0,
++        nodes[1].x - nodes[1].width / 2.0
++    );
++    assert_ne!(nodes[0].x, nodes[1].x);
++}
++
++#[test]
++fn constraint_locking_packs_a_chain_and_locks_an_isolated_rectangle() {
++    // The second pass locks groups without incoming reversed constraints,
++    // including isolated rectangles. Routing channels constrain non-isolated sinks.
++    let mut nodes = vec![
++        node("left", 0.0, 20.0, 40.0, 40.0),
++        node("right", 0.0, 140.0, 40.0, 40.0),
++        node("free", 100.0, 20.0, 40.0, 40.0),
++    ];
++    compact(
++        &mut nodes,
++        &mut [],
++        Axis::new(Some("TB")),
++        spacing(),
++        |_| Ok(()),
++    )
++    .unwrap();
++    assert_eq!(nodes[0].y, 20.0);
++    assert_eq!(nodes[1].y - nodes[0].y, 88.0);
++    assert_eq!(nodes[2].y, 20.0);
++}
++
++#[test]
++fn compaction_is_rotation_and_reflection_equivariant() {
++    let original = vec![
++        node("a", 0.0, 20.0, 40.0, 40.0),
++        node("b", 0.0, 140.0, 40.0, 40.0),
++        node("c", 100.0, 20.0, 40.0, 40.0),
++    ];
++    let mut down = original.clone();
++    compact(&mut down, &mut [], Axis::new(Some("TB")), spacing(), |_| {
++        Ok(())
++    })
++    .unwrap();
++    for direction in ["LR", "RL", "BT"] {
++        let axis = Axis::new(Some(direction));
++        let mut transformed = original.clone();
++        for n in &mut transformed {
++            if axis.horizontal {
++                std::mem::swap(&mut n.x, &mut n.y);
++            }
++            if axis.horizontal {
++                n.x *= axis.sign;
++            } else {
++                n.y *= axis.sign;
++            }
++        }
++        compact(&mut transformed, &mut [], axis, spacing(), |_| Ok(())).unwrap();
++        for (a, b) in down.iter().zip(&transformed) {
++            assert!((a.y - axis.main(b.x, b.y)).abs() < EPS);
++            assert_eq!(a.x, axis.cross(b.x, b.y));
++        }
++    }
++}
++
++#[test]
++fn work_rejection_and_ordinal_limit_fail_closed_before_publication() {
++    let mut nodes = vec![node("a", 0.0, 20.0, 40.0, 40.0)];
++    let err = compact(
++        &mut nodes,
++        &mut [],
++        Axis::new(Some("TB")),
++        spacing(),
++        |_| Err(limit_error()),
++    )
++    .unwrap_err();
++    assert!(err.to_string().contains("work limit"));
++    assert_eq!(nodes[0].y, 20.0);
++    let mut many: Vec<_> = (0..512)
++        .map(|i| node(&i.to_string(), i as f64 * 80.0, 20.0, 40.0, 40.0))
++        .collect();
++    let err = compact(&mut many, &mut [], Axis::new(Some("TB")), spacing(), |_| {
++        Ok(())
++    })
++    .unwrap_err();
++    assert!(err.to_string().contains("work limit"));
++    assert!(many.iter().all(|n| n.y == 20.0));
++}
++
++#[test]
++fn sweep_constraints_are_deterministic() {
++    let input = vec![
++        node("a", 0.0, 20.0, 40.0, 40.0),
++        node("b", 0.0, 140.0, 40.0, 40.0),
++        node("c", 100.0, 20.0, 40.0, 40.0),
++    ];
++    let mut previous = None;
++    for _ in 0..16 {
++        let mut nodes = input.clone();
++        compact(
++            &mut nodes,
++            &mut [],
++            Axis::new(Some("TB")),
++            spacing(),
++            |_| Ok(()),
++        )
++        .unwrap();
++        let positions: Vec<_> = nodes.iter().map(|n| (n.x, n.y)).collect();
++        if let Some(ref old) = previous {
++            assert_eq!(*old, positions);
++        }
++        previous = Some(positions);
++    }
++}
+diff --git a/src/svg/parity/flowchart/css.rs b/src/svg/parity/flowchart/css.rs
+index 19a3b40..0105311 100644
+--- a/src/svg/parity/flowchart/css.rs
++++ b/src/svg/parity/flowchart/css.rs
+@@ -199,6 +199,29 @@ fn flowchart_css_for_id(
+         checkpoint()?;
+     }
+ 
++    if effective_config
++        .pointer("/flowchart/nativeLabelProfile")
++        .is_some()
++    {
++        for (role, selector) in [
++            ("node", ".node .label"),
++            ("edge", ".edgeLabel"),
++            ("group", ".cluster-label"),
++        ] {
++            let style = crate::flowchart::native_profile::label_style(
++                effective_config,
++                &crate::text::TextStyle::default(),
++                role,
++            );
++            let weight = style.font_weight.as_deref().unwrap_or("400");
++            let _ = write!(
++                &mut out,
++                "#{id} {selector},#{id} {selector} text{{font-size:{}px;font-weight:{weight};}}#{id} {selector} tspan[font-weight=\"normal\"]{{font-weight:{weight};}}",
++                fmt(style.font_size)
++            );
++        }
++        checkpoint()?;
++    }
+     Ok(out)
+ }
+ 
+diff --git a/src/svg/parity/flowchart/label.rs b/src/svg/parity/flowchart/label.rs
+index ef3d205..ee5797f 100644
+--- a/src/svg/parity/flowchart/label.rs
++++ b/src/svg/parity/flowchart/label.rs
+@@ -403,6 +403,37 @@ pub(in crate::svg::parity) fn write_flowchart_svg_source_word_lines_centered_wit
+     crate::svg::parity::label::write_svg_text_source_word_lines_with_style(out, lines, style, true);
+ }
+ 
++/// Emits already-wrapped plain lines with the profile's measured line advance.
++pub(in crate::svg::parity) fn write_native_profile_lines(
++    out: &mut String,
++    lines: &[Vec<String>],
++    font_size: f64,
++    ratio: f64,
++    center_y: f64,
++    style: &str,
++) {
++    use std::fmt::Write as _;
++    let _ = write!(
++        out,
++        r#"<text text-anchor="middle" style="{}">"#,
++        crate::svg::parity::escape_xml_display(style)
++    );
++    let advance = font_size * ratio;
++    let first =
++        center_y - (lines.len().saturating_sub(1) as f64) * advance / 2.0 + font_size * 0.35;
++    for (i, words) in lines.iter().enumerate() {
++        let _ = write!(
++            out,
++            r#"<tspan class="text-outer-tspan row" x="0" y="{}">{}</tspan>"#,
++            crate::svg::parity::fmt_display(first + i as f64 * advance),
++            crate::svg::parity::escape_xml_display(
++                crate::entities::decode_svg_text_content_entities(&words.join(" ")).as_ref()
++            )
++        );
++    }
++    out.push_str("</text>");
++}
++
+ #[cfg(test)]
+ pub(in crate::svg::parity) fn wrap_flowchart_svg_source_word_lines(
+     measurer: &dyn crate::text::TextMeasurer,
+diff --git a/src/svg/parity/flowchart/render/cluster.rs b/src/svg/parity/flowchart/render/cluster.rs
+index 6c600a6..9233e89 100644
+--- a/src/svg/parity/flowchart/render/cluster.rs
++++ b/src/svg/parity/flowchart/render/cluster.rs
+@@ -219,12 +219,17 @@ pub(in crate::svg::parity) fn render_flowchart_cluster(
+ 
+     let label_type = sg.label_type.as_deref().unwrap_or("text");
+     let render_title = ctx.model.subgraph_title_for_render(subgraph_index, sg);
+-    let title_text_style = crate::flowchart::flowchart_effective_text_style_for_classes(
++    let group_base_style = crate::flowchart::native_profile::label_style(
++        ctx.config.as_value(),
+         if ctx.edge_html_labels {
+             &ctx.html_label_text_style
+         } else {
+             &ctx.text_style
+         },
++        "group",
++    );
++    let title_text_style = crate::flowchart::flowchart_effective_text_style_for_classes(
++        &group_base_style,
+         ctx.class_defs,
+         classes,
+         styles,
+diff --git a/src/svg/parity/flowchart/render/edge_label.rs b/src/svg/parity/flowchart/render/edge_label.rs
+index ccb2b78..7184679 100644
+--- a/src/svg/parity/flowchart/render/edge_label.rs
++++ b/src/svg/parity/flowchart/render/edge_label.rs
+@@ -142,8 +142,13 @@ pub(in crate::svg::parity) fn render_flowchart_edge_label(
+         &ctx.default_edge_style,
+         &edge.style,
+     );
+-    let edge_metrics_style = crate::flowchart::flowchart_effective_edge_label_text_style(
++    let edge_base_style = crate::flowchart::native_profile::label_style(
++        ctx.config.as_value(),
+         &ctx.text_style,
++        "edge",
++    );
++    let edge_metrics_style = crate::flowchart::flowchart_effective_edge_label_text_style(
++        &edge_base_style,
+         ctx.class_defs,
+         &edge.classes,
+         &ctx.default_edge_style,
+@@ -164,7 +169,7 @@ pub(in crate::svg::parity) fn render_flowchart_edge_label(
+             owner,
+             label_text,
+             ctx.measurer,
+-            &ctx.text_style,
++            &edge_base_style,
+             edge_metrics_style.as_ref(),
+             Some(FLOWCHART_EDGE_LABEL_WRAP_WIDTH),
+             true,
+@@ -253,11 +258,25 @@ pub(in crate::svg::parity) fn render_flowchart_edge_label(
+                                 .as_ref()
+                                 .expect("non-Markdown SVG edge labels are prepared before emission")
+                                 .wrapped_lines();
+-                            write_flowchart_svg_source_word_lines_centered_with_style(
+-                                out,
+-                                &wrapped,
+-                                svg_edge_label_text_style.as_ref(),
+-                            );
++                            if let Some(ratio) = crate::flowchart::native_profile::number(
++                                ctx.config.as_value(),
++                                "nativeEdgeLineHeight",
++                            ) {
++                                crate::svg::parity::flowchart::label::write_native_profile_lines(
++                                    out,
++                                    &wrapped,
++                                    edge_metrics_style.font_size,
++                                    ratio,
++                                    -label_box.translate_y,
++                                    svg_edge_label_text_style.as_ref(),
++                                );
++                            } else {
++                                write_flowchart_svg_source_word_lines_centered_with_style(
++                                    out,
++                                    &wrapped,
++                                    svg_edge_label_text_style.as_ref(),
++                                );
++                            }
+                         }
+                         out.push_str("</g></g></g>");
+                         return;
+@@ -298,11 +317,25 @@ pub(in crate::svg::parity) fn render_flowchart_edge_label(
+                             .as_ref()
+                             .expect("non-Markdown SVG edge labels are prepared before emission")
+                             .wrapped_lines();
+-                        write_flowchart_svg_source_word_lines_centered_with_style(
+-                            out,
+-                            &wrapped,
+-                            svg_edge_label_text_style.as_ref(),
+-                        );
++                        if let Some(ratio) = crate::flowchart::native_profile::number(
++                            ctx.config.as_value(),
++                            "nativeEdgeLineHeight",
++                        ) {
++                            crate::svg::parity::flowchart::label::write_native_profile_lines(
++                                out,
++                                &wrapped,
++                                edge_metrics_style.font_size,
++                                ratio,
++                                -label_box.translate_y,
++                                svg_edge_label_text_style.as_ref(),
++                            );
++                        } else {
++                            write_flowchart_svg_source_word_lines_centered_with_style(
++                                out,
++                                &wrapped,
++                                svg_edge_label_text_style.as_ref(),
++                            );
++                        }
+                     }
+                     out.push_str("</g></g></g>");
+                     return;
+@@ -352,11 +385,25 @@ pub(in crate::svg::parity) fn render_flowchart_edge_label(
+                         .as_ref()
+                         .expect("non-Markdown SVG edge labels are prepared before emission")
+                         .wrapped_lines();
+-                    write_flowchart_svg_source_word_lines_centered_with_style(
+-                        out,
+-                        &wrapped,
+-                        svg_edge_label_text_style.as_ref(),
+-                    );
++                    if let Some(ratio) = crate::flowchart::native_profile::number(
++                        ctx.config.as_value(),
++                        "nativeEdgeLineHeight",
++                    ) {
++                        crate::svg::parity::flowchart::label::write_native_profile_lines(
++                            out,
++                            &wrapped,
++                            edge_metrics_style.font_size,
++                            ratio,
++                            -label_box.translate_y,
++                            svg_edge_label_text_style.as_ref(),
++                        );
++                    } else {
++                        write_flowchart_svg_source_word_lines_centered_with_style(
++                            out,
++                            &wrapped,
++                            svg_edge_label_text_style.as_ref(),
++                        );
++                    }
+                 }
+                 out.push_str("</g></g></g>");
+                 return;
+diff --git a/src/svg/parity/flowchart/render/node/label.rs b/src/svg/parity/flowchart/render/node/label.rs
+index cb224d3..643b8e6 100644
+--- a/src/svg/parity/flowchart/render/node/label.rs
++++ b/src/svg/parity/flowchart/render/node/label.rs
+@@ -192,7 +192,21 @@ fn render_flowchart_node_label_with_wrapper(
+                 .as_ref()
+                 .expect("non-Markdown SVG labels are prepared before emission")
+                 .wrapped_lines();
+-            write_flowchart_svg_source_word_lines(out, &wrapped, true);
++            if let Some(ratio) = crate::flowchart::native_profile::number(
++                ctx.config.as_value(),
++                "nativeNodeLineHeight",
++            ) {
++                crate::svg::parity::flowchart::label::write_native_profile_lines(
++                    out,
++                    &wrapped,
++                    node_text_style.font_size,
++                    ratio,
++                    metrics.height / 2.0,
++                    &compiled_styles.label_style,
++                );
++            } else {
++                write_flowchart_svg_source_word_lines(out, &wrapped, true);
++            }
+         }
+         out.push_str("</g></g>");
+     } else {
+diff --git a/src/svg/parity/flowchart/viewbox.rs b/src/svg/parity/flowchart/viewbox.rs
+index a4fef14..42c60c9 100644
+--- a/src/svg/parity/flowchart/viewbox.rs
++++ b/src/svg/parity/flowchart/viewbox.rs
+@@ -420,6 +420,22 @@ where
+             let Some(layout_edge) = ctx.layout_edges_by_id.get(edge.id.as_str()) else {
+                 continue;
+             };
++            // Source's layout-engine expands right/bottom bounds independently of the
++            // caller's outer padding. Keep this asymmetric policy opt-in, not a transform.
++            let config = ctx.config.as_value();
++            let outer = config
++                .pointer("/flowchart/diagramPadding")
++                .and_then(|v| v.as_f64())
++                .unwrap_or(8.0);
++            if let Some(padding) =
++                crate::flowchart::native_profile::number(config, "nativeEdgeBoundsPadding")
++            {
++                ctx.work_meter.charge(layout_edge.points.len())?;
++                for point in &layout_edge.points {
++                    bbox_max_x = bbox_max_x.max(point.x + padding + 8.0 - outer);
++                    bbox_max_y = bbox_max_y.max(point.y + padding + 8.0 - outer);
++                }
++            }
+             let Some(label) = layout_edge.label.as_ref() else {
+                 continue;
+             };
+@@ -443,6 +459,20 @@ where
+             bbox_min_y = bbox_min_y.min(anchor.y - half_height);
+             bbox_max_x = bbox_max_x.max(anchor.x + half_width);
+             bbox_max_y = bbox_max_y.max(anchor.y + half_height);
++            if let Some(padding) =
++                crate::flowchart::native_profile::number(config, "nativeEdgeBoundsPadding")
++            {
++                if let Some(right) =
++                    crate::flowchart::native_profile::number(config, "nativeEdgeLabelBoundsRight")
++                {
++                    bbox_max_x = bbox_max_x.max(anchor.x + right + padding - outer);
++                }
++                if let Some(bottom) =
++                    crate::flowchart::native_profile::number(config, "nativeEdgeLabelBoundsBottom")
++                {
++                    bbox_max_y = bbox_max_y.max(anchor.y + bottom + padding - outer);
++                }
++            }
+         }
+     }
+ 

@@ -1,2 +1,5 @@
-# Unified diffs require a single space on empty context lines.
-patches/*.patch whitespace=-blank-at-eol
+# Preserve unified-diff context, including trailing empty context lines.
+patches/*.patch -text whitespace=-blank-at-eol,-blank-at-eof
+# Copied third-party licence text must remain byte-for-byte upstream.
+src/components/diagram/licenses/** -text -whitespace
+assets/product-syntax/two-face-0.4.5-* -text -whitespace

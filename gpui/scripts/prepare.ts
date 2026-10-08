@@ -39,6 +39,8 @@ const crates = [
       'markdown-inline-spacing.patch',
       'markdown-prose-measure.patch',
       'fractional-leading-selection-test.patch',
+      'virtualized-text-selection.patch',
+      'markdown-parity.patch',
     ],
   },
   {
@@ -46,7 +48,7 @@ const crates = [
     version: '0.3.7',
     checksum:
       '0e87a42bb37c7cb4e76dd1ac0ce88851e46e976e0373a47ab3e0757abffee54d',
-    patches: ['fractional-text-leading.patch'],
+    patches: ['fractional-text-leading.patch', 'estimated-list-height.patch'],
   },
   {
     name: 'gpui-pre-macos',
@@ -54,6 +56,42 @@ const crates = [
     checksum:
       '5a43af845b260b09393e923c4f1e1a67a10fcfc847b4815192bbfd02ed9fe725',
     patches: ['antialiased-text.patch', 'grayscale-text.patch'],
+  },
+  {
+    name: 'merman-core',
+    version: '0.8.0',
+    checksum:
+      'c8375d78a1c09f5ad1c847d8d18658f5dbe4221c31b9eb56d4a3dc121184f9d4',
+    patches: [
+      'merman-core-parser-version.patch',
+      'merman-core-er-direction.patch',
+    ],
+  },
+  {
+    name: 'merman-analysis',
+    version: '0.8.0',
+    checksum:
+      '9359567480a01600cfe8f17811ffcf7d51df17697e95f6e37bd1ba7d5aefbdde',
+    patches: ['merman-analysis-parser-version.patch'],
+  },
+  {
+    name: 'merman-render',
+    version: '0.8.0',
+    checksum:
+      'bbb640e1bb9e614384724f9f9efae431a6faf464c34b95e74d56200fcbfd6c7b',
+    patches: [
+      'merman-render-class-er.patch',
+      'merman-render-state-sequence.patch',
+      'merman-render-flowchart.patch',
+      'merman-render-polish.patch',
+    ],
+  },
+  {
+    name: 'merman-layout-elk',
+    version: '0.8.0',
+    checksum:
+      '4ce75a18461574fd6a20c13dafdc0f865250ad4423e13d1274eff0f41295d8b0',
+    patches: ['merman-layout-elk-options.patch'],
   },
 ] as const;
 type Crate = (typeof crates)[number];

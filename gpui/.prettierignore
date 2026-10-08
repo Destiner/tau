@@ -7,3 +7,5 @@ Cargo.lock
 bun.lock
 patches
 assets
+# Preserve copied third-party license texts verbatim.
+src/components/diagram/licenses
