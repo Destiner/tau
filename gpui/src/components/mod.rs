@@ -1,5 +1,6 @@
 pub mod activity;
 pub mod composer;
+pub mod diagram;
 pub mod dialogs;
 pub mod files;
 pub mod font;
