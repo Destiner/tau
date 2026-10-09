@@ -748,6 +748,11 @@ impl Render for Composer {
             "triangle"
         };
         let send = BaseButton::new("send")
+            .accessibility_label(if self.streaming {
+                if filled { "Queue" } else { "Stop" }
+            } else {
+                "Send"
+            })
             .disabled(send_disabled)
             .w(px(22.))
             .h(px(22.))
@@ -852,6 +857,10 @@ impl Render for Composer {
                     .on_prepaint(move |bounds, _, _| model_bounds.set(Some(bounds)))
                     .child(
                         BaseButton::new("model")
+                            .accessibility_label(format!(
+                                "Model: {}",
+                                self.model().map(|o| o.label.as_str()).unwrap_or_default()
+                            ))
                             .disabled(settings_disabled)
                             .h(px(22.))
                             .relative()
@@ -910,6 +919,10 @@ impl Render for Composer {
                     .on_prepaint(move |bounds, _, _| effort_bounds.set(Some(bounds)))
                     .child(
                         BaseButton::new("effort")
+                            .accessibility_label(format!(
+                                "Effort: {}",
+                                self.effort().map(|o| o.label.as_str()).unwrap_or_default()
+                            ))
                             .disabled(settings_disabled)
                             .track_focus(&self.effort_focus)
                             .on_key_down(cx.listener(|s, event: &KeyDownEvent, window, cx| {
@@ -992,6 +1005,7 @@ impl Render for Composer {
             .child(send);
         let editor_bounds = self.editor_bounds.clone();
         let input = InputBase::new("editor")
+            .accessibility_label("Message")
             // Base propagates submit actions; do not let fallback text delivery
             // insert a newline before the deferred PressEnter subscriber sends.
             .on_action(|_: &gpui_kit::base::input::Enter, _, cx| cx.stop_propagation())

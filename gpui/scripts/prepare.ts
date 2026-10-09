@@ -43,6 +43,7 @@ const crates = [
       'markdown-parity.patch',
       'native-menu-base.patch',
       'ime-composition.patch',
+      'focus-trap-accessibility.patch',
     ],
   },
   {
@@ -55,6 +56,7 @@ const crates = [
       'estimated-list-height.patch',
       'native-menu-core.patch',
       'window-close-request.patch',
+      'accessibility-test-platform.patch',
     ],
   },
   {

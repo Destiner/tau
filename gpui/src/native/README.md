@@ -51,6 +51,11 @@ while text remains marked. Normal Enter immediately after commitment still
 works; composer Shift+Enter remains a newline. This guards fallback delivery,
 not the platform's candidate-window implementation.
 
+Accessibility regressions activate the actual platform callback and inspect
+rendered AccessKit updates. They verify control names, changing Send/Queue/Stop
+labels and semantics surviving focus-trap wrappers. These are not full editable
+text/value/selection projection or modal background-isolation guarantees.
+
 These tests do not establish AppKit selector behavior, native displayed enabled
 states, system-clipboard exchange, IME candidate/dead-key hardware behavior, or
 VoiceOver editing. Those require separate real-window verification; roles and

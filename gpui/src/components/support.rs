@@ -204,9 +204,11 @@ pub fn button(
     variant: ButtonVariant,
     dark: bool,
 ) -> NativeButton {
+    let label = label.into();
     let t = tokens(dark);
     let primary = variant == ButtonVariant::Primary;
     let base = BaseButton::new(id)
+        .accessibility_label(label.clone())
         .h(px(24.))
         .px(px(9.))
         .text_size(px(11.))
@@ -226,7 +228,7 @@ pub fn button(
             rgba(0x00000000)
         })
         .text_color(rgb(if primary { t.on_accent } else { t.muted }))
-        .child(label.into());
+        .child(label);
     NativeButton {
         base,
         disabled: false,

@@ -1,0 +1,272 @@
+diff --git a/src/focus_trap.rs b/src/focus_trap.rs
+index 48b3bf1..e1b28a5 100644
+--- a/src/focus_trap.rs
++++ b/src/focus_trap.rs
+@@ -173,6 +173,22 @@ impl<E: InteractiveElement + ParentElement + Styled + Element + 'static> Element
+         None
+     }
+ 
++    fn a11y_role(&self) -> Option<gpui::Role> {
++        self.base.a11y_role()
++    }
++
++    fn write_a11y_info(&self, node: &mut gpui::accesskit::Node) {
++        self.base.write_a11y_info(node);
++    }
++
++    fn a11y_synthetic_children(
++        &mut self,
++        prepaint: &mut Self::PrepaintState,
++        builder: &mut gpui::A11ySubtreeBuilder,
++    ) {
++        self.base.a11y_synthetic_children(prepaint, builder);
++    }
++
+     fn request_layout(
+         &mut self,
+         global_id: Option<&gpui::GlobalElementId>,
+@@ -221,6 +237,10 @@ impl<E: InteractiveElement + ParentElement + Styled + Element + 'static> Element
+     }
+ }
+ 
++#[cfg(all(test, target_os = "macos"))]
++#[path = "focus_trap_accessibility_tests.rs"]
++mod accessibility_tests;
++
+ /// Returns the focus handle for the active focus trap, if any.
+ #[doc(hidden)]
+ pub fn active_focus_trap(window: &Window, cx: &App) -> Option<FocusHandle> {
+diff --git a/src/focus_trap_accessibility_tests.rs b/src/focus_trap_accessibility_tests.rs
+new file mode 100644
+index 0000000..2228633
+--- /dev/null
++++ b/src/focus_trap_accessibility_tests.rs
+@@ -0,0 +1,228 @@
++//! Rendered AccessKit tests using the permanent permission-free TestPlatform adapter.
++use crate::{
++    Button, Dialog, FocusTrapElement, Input, Root,
++    input::{InputBase, InputState},
++};
++use core::prelude::v1::test;
++use gpui::*;
++use std::{cell::Cell, rc::Rc};
++
++struct Host {
++    trap: bool,
++    dialog: bool,
++    focus: FocusHandle,
++    input: Entity<InputState>,
++    button_focus: FocusHandle,
++    clicks: Rc<Cell<usize>>,
++}
++impl Render for Host {
++    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
++        let clicks = self.clicks.clone();
++        let content = div().flex().flex_col().w(px(300.)).children([
++            InputBase::new("project-name")
++                .accessibility_label("Project name")
++                .track_focus(&self.input.read(cx).focus_handle(cx))
++                .h(px(40.))
++                .child(Input::new(&self.input))
++                .into_any_element(),
++            Button::new("save")
++                .accessibility_label("Save")
++                .track_focus(&self.button_focus)
++                .size(px(80.))
++                .on_click(move |_, _, _| clicks.set(clicks.get() + 1))
++                .into_any_element(),
++        ]);
++        if self.dialog {
++            return Dialog::new(cx)
++                .focus_handle(self.focus.clone())
++                .popup(content)
++                .into_any_element();
++        }
++        let surface = div()
++            .id("surface")
++            .size_full()
++            .role(Role::Dialog)
++            .aria_label("Settings")
++            .aria_description("Project settings")
++            .accessibility_id("settings-surface")
++            .track_focus(&self.focus)
++            .a11y_synthetic_children(|builder| {
++                builder.parent_node().set_modal();
++                let id = builder.synthetic_node_id("status");
++                let mut node = accesskit::Node::new(Role::Label);
++                node.set_label("Ready");
++                builder.push_child(id, node);
++            })
++            .child(content);
++        if self.trap {
++            surface
++                .focus_trap("surface", &self.focus)
++                .into_any_element()
++        } else {
++            surface.into_any_element()
++        }
++    }
++}
++
++struct Fixture {
++    window: TestAppWindow<Root>,
++    host: Entity<Host>,
++    clicks: Rc<Cell<usize>>,
++    _app: TestApp,
++}
++impl Fixture {
++    fn new(dialog: bool) -> Self {
++        let mut app = TestApp::new();
++        app.update(crate::init);
++        let clicks = Rc::new(Cell::new(0));
++        let mut host = None;
++        let mut window = app.open_window(|w, cx| {
++            let view = cx.new(|cx| Host {
++                trap: false,
++                dialog,
++                focus: cx.focus_handle(),
++                input: cx.new(|cx| InputState::new(w, cx).default_value("tau")),
++                button_focus: cx.focus_handle(),
++                clicks: clicks.clone(),
++            });
++            host = Some(view.clone());
++            Root::new(view, w, cx)
++        });
++        assert!(window.accessibility_tree().is_none());
++        window.activate_accessibility();
++        let mut fixture = Self {
++            window,
++            host: host.unwrap(),
++            clicks,
++            _app: app,
++        };
++        fixture.draw();
++        fixture
++    }
++    fn update<R>(&mut self, f: impl FnOnce(&mut Window, &mut App) -> R) -> R {
++        self.window.update(|_, w, cx| f(w, cx))
++    }
++    fn draw(&mut self) {
++        self.update(|w, _| w.refresh());
++        self.window.draw();
++    }
++    fn tree(&self) -> accesskit::TreeUpdate {
++        self.window
++            .accessibility_tree()
++            .expect("delivered rendered tree")
++    }
++    fn action(&mut self, action: accesskit::Action, id: accesskit::NodeId) {
++        self.window
++            .dispatch_accessibility_action(accesskit::ActionRequest {
++                action,
++                target_tree: accesskit::TreeId::ROOT,
++                target_node: id,
++                data: None,
++            });
++        self.draw();
++    }
++    fn named(&self, label: &str) -> (accesskit::NodeId, accesskit::Node) {
++        self.tree()
++            .nodes
++            .into_iter()
++            .find(|(_, node)| node.label() == Some(label))
++            .unwrap()
++    }
++    fn input_node(&self) -> (accesskit::NodeId, accesskit::Node) {
++        self.tree()
++            .nodes
++            .into_iter()
++            .find(|(_, node)| node.role() == Role::TextInput)
++            .unwrap_or_else(|| panic!("missing input: {:#?}", self.tree()))
++    }
++    fn assert_controls_activate(&mut self) {
++        let (input, node) = self.input_node();
++        assert_eq!(node.role(), Role::TextInput);
++        assert!(node.supports_action(accesskit::Action::Focus));
++        assert_eq!(node.label(), Some("Project name"));
++        self.action(accesskit::Action::Focus, input);
++        let host = self.host.clone();
++        self.update(|w, cx| assert!(host.read(cx).input.read(cx).focus_handle(cx).is_focused(w)));
++        assert_eq!(self.tree().focus, input);
++        let (button, node) = self.named("Save");
++        assert_eq!(node.role(), Role::Button);
++        assert!(node.supports_action(accesskit::Action::Click));
++        self.action(accesskit::Action::Focus, button);
++        let host = self.host.clone();
++        self.update(|w, cx| assert!(host.read(cx).button_focus.is_focused(w)));
++        self.action(accesskit::Action::Click, button);
++        assert_eq!(
++            self.clicks.get(),
++            1,
++            "the real on_click handler runs exactly once"
++        );
++    }
++}
++
++#[test]
++fn focus_trap_preserves_rendered_accesskit_tree_and_ids() {
++    let mut f = Fixture::new(false);
++    let before = f.tree();
++    let (surface, node) = f.named("Settings");
++    assert_eq!(node.role(), Role::Dialog);
++    assert!(node.is_modal());
++    assert_eq!(node.description(), Some("Project settings"));
++    assert_eq!(node.author_id(), Some("settings-surface"));
++    let (status, _) = f.named("Ready");
++    assert!(node.children().contains(&status));
++    let host = f.host.clone();
++    f.update(|_, cx| {
++        host.update(cx, |host, cx| {
++            host.trap = true;
++            cx.notify();
++        })
++    });
++    f.draw();
++    let after = f.tree();
++    assert_eq!(
++        before.nodes, after.nodes,
++        "same roles, fields, actions, synthetic children and IDs"
++    );
++    assert_eq!(f.named("Settings").0, surface);
++    f.assert_controls_activate();
++    let stable = f.tree();
++    f.draw();
++    assert_eq!(
++        stable.nodes,
++        f.tree().nodes,
++        "IDs remain stable across redraws"
++    );
++}
++
++#[test]
++fn base_dialog_under_root_keeps_accessible_descendants_and_actions() {
++    let mut f = Fixture::new(true);
++    let tree = f.tree();
++    let (_, dialog) = tree
++        .nodes
++        .iter()
++        .find(|(_, node)| node.role() == Role::Dialog)
++        .expect("Base Dialog host must survive its focus_trap wrapper");
++    // Stock Dialog supplies neither a name nor the AccessKit modal flag.
++    assert_eq!(dialog.label(), None);
++    assert!(!dialog.is_modal());
++    let input = f.input_node().0;
++    let button = f.named("Save").0;
++    fn contains(
++        tree: &accesskit::TreeUpdate,
++        node: &accesskit::Node,
++        id: accesskit::NodeId,
++    ) -> bool {
++        node.children().iter().any(|child| {
++            *child == id
++                || tree
++                    .nodes
++                    .iter()
++                    .find(|(candidate, _)| candidate == child)
++                    .is_some_and(|(_, node)| contains(tree, node, id))
++        })
++    }
++    assert!(contains(&tree, dialog, input));
++    assert!(contains(&tree, dialog, button));
++    f.assert_controls_activate();
++}

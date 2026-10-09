@@ -333,6 +333,7 @@ impl Render for FileViewer {
             );
         let close_focused = self.close_focus.is_focused(window);
         let close = gpui_kit::base::Button::new("close")
+            .accessibility_label("Close file viewer")
             .absolute()
             .top(px(9.))
             .right(px(12.))
