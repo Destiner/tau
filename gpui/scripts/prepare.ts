@@ -41,6 +41,7 @@ const crates = [
       'fractional-leading-selection-test.patch',
       'virtualized-text-selection.patch',
       'markdown-parity.patch',
+      'native-menu-base.patch',
     ],
   },
   {
@@ -48,7 +49,11 @@ const crates = [
     version: '0.3.7',
     checksum:
       '0e87a42bb37c7cb4e76dd1ac0ce88851e46e976e0373a47ab3e0757abffee54d',
-    patches: ['fractional-text-leading.patch', 'estimated-list-height.patch'],
+    patches: [
+      'fractional-text-leading.patch',
+      'estimated-list-height.patch',
+      'native-menu-core.patch',
+    ],
   },
   {
     name: 'gpui-pre-macos',
