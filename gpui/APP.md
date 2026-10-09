@@ -39,8 +39,12 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
 - Real local workspace import, session selection and new sessions; existing remote
   project configurations are recognized and can use the shared SSH transport.
   Real SSH smoke acceptance and new remote import UI remain outstanding.
-- Retained composer/transcript entities, model/effort choices, prompt submission,
-  streaming prose and activity, Stop, queue submission and clear.
+- Retained composer/transcript entities, full-height empty composer, model/effort
+  choices, visibly rendered prompts/streaming prose/activity, Stop, queue submission
+  and clear.
+- Click-to-rename saved sessions through Pi, with bounded names, rollback and registry
+  persistence. Archive idle saved sessions; browsing archives does not restore them,
+  and Restore is explicit. Drafts and session files are retained.
 - Extension input/select/confirm, notifications and editor-text requests. The extension
   multiline editor still needs its dedicated control.
 - Application menus, theme settings, owned folder chooser, guarded close/quit,
@@ -48,7 +52,7 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
 - Bounded presentation cache and incremental changed-row projection. Streaming does
   not hash or clone unchanged historical text.
 
-The current slice does **not** finish archive/restore/remove/rename, palette, remote
+The current slice does **not** finish session removal, palette, remote
 import UI, file previews/media, admin reporter, full history/replacement recovery,
 idle eviction, updater or release packaging. Unavailable actions report that boundary;
 they are not simulated successes. See [controller limits](../crates/tau-session/README.md).
@@ -98,7 +102,7 @@ Pi start/partial/end events and abort acknowledgement through the rendered Stop
 button. This does not prove interruption during provider token streaming, populated
 queue preservation, SSH or full runtime parity. Hovered sidebar membership now
 reconciles arriving/removing sessions without losing its held order, with an
-old-code negative control. The native library (249 tests), editor integration tests
+old-code negative control. The native library (263 tests), editor integration tests
 (13), strict all-target/all-feature Clippy,
 and actual `tau` build passed. The full Rust run timed out in the existing Metal
 activity runner, so it is not reported as an all-suite pass. Historical curated
@@ -106,3 +110,10 @@ counts and the unsigned Tauri bundle are not GPUI release proof. No signed/notar
 GPUI distribution or updater is available yet. A separate, locally ad-hoc-signed
 `Tau Native.app` preview can be built using [PACKAGING.md](PACKAGING.md); it neither
 replaces Tauri nor isolates data unless explicitly launched with `--isolated`.
+
+The reported layout/title/action regressions have production-root layout and paint
+coverage, plus inspected native Metal images. Real Pi acceptance passed rename and
+registry persistence, Escape cancellation, archive/browse/restore, and composer
+geometry. That extended model run later timed out at Cmd-W after the window lost
+native activation; it is not a complete smoke PASS. The final credential-free
+native run passed, including close/reopen and gated shutdown.
