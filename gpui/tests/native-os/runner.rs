@@ -175,6 +175,29 @@ mod macos {
     async fn poll(cx: &AsyncApp, label: &str, mut ready: impl FnMut() -> bool) {
         let deadline = Instant::now() + Duration::from_secs(5);
         while !ready() {
+            if Instant::now() >= deadline {
+                unsafe {
+                    let application = app();
+                    let active: BOOL = msg_send![application, isActive];
+                    let windows: Id = msg_send![application, windows];
+                    let count: usize = msg_send![windows, count];
+                    eprintln!("AppKit timeout: active={active}, owned_windows={count}");
+                    for index in 0..count.min(8) {
+                        let w: Id = msg_send![windows, objectAtIndex: index];
+                        let key: BOOL = msg_send![w, isKeyWindow];
+                        let visible: BOOL = msg_send![w, isVisible];
+                        let minimized: BOOL = msg_send![w, isMiniaturized];
+                        let style: usize = msg_send![w, styleMask];
+                        eprintln!(
+                            "window {index}: key={key}, visible={visible}, minimized={minimized}, style={style}"
+                        );
+                    }
+                }
+                eprintln!(
+                    "GPUI active window present={}",
+                    cx.update(|cx| cx.active_window().is_some())
+                );
+            }
             assert!(
                 Instant::now() < deadline,
                 "blocked or failed: {label} (5s deadline)"
@@ -401,7 +424,6 @@ mod macos {
         eprintln!(
             "PASS allowed native performClose removes only owned window, same guard once; explicit quit policy remains host-owned"
         );
-        cx.update(|cx| cx.quit());
     }
     pub fn run() {
         std::panic::set_hook(Box::new(|p| {
@@ -418,8 +440,16 @@ mod macos {
             std::process::exit(2);
         });
         eprintln!("START native-os real Application");
-        gpui_kit::application().with_assets(Assets).run(|cx| {
+        let completed = Rc::new(Cell::new(false));
+        let result = completed.clone();
+        gpui_kit::application().with_assets(Assets).run(move |cx| {
             eprintln!("START AppKit launch callback");
+            let finished = result.clone();
+            cx.on_app_quit(move |_| {
+                assert!(finished.get(), "native-os quit before completion");
+                std::future::ready(())
+            })
+            .detach();
             init(cx, false);
             native::install_window_commands(cx);
             cx.on_action(|_: &SafeQuit, _| {
@@ -466,10 +496,13 @@ mod macos {
                     allow,
                     closed,
                 )
-                .await
+                .await;
+                result.set(true);
+                cx.update(|cx| cx.quit());
             })
             .detach();
         });
+        assert!(completed.get(), "native-os interrupted before completion");
     }
 }
 #[cfg(target_os = "macos")]

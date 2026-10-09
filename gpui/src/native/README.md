@@ -84,6 +84,28 @@ An unavailable active/key window fails explicitly rather than silently skipping.
 Only the test's own window is changed. Copy, Cut and Paste are validated but never
 invoked; the system clipboard is neither read nor overwritten.
 
+A second opt-in test queries the actual NSAccessibility provider for its own
+synthetic controls and sends native Focus requests:
+
+```sh
+cargo test --locked --manifest-path gpui/Cargo.toml \
+  --features native-os-tests --test native-accessibility
+```
+
+It checks native field names, single/multiline roles, secure-field subroles,
+enabled state and focus delivery to the existing editor handles. An actual
+queued Focus action serves as a completion barrier for rejected requests; no
+fixed observation delay stands in for delivery. It verifies active-trap
+containment and rejection through a retained provider object after disabling
+its editor. The provider may already reflect the new state in that last case.
+
+These are normal provider calls inside the test's own process, not an external
+AX client: no Accessibility permission, VoiceOver setting or other application
+is accessed. The observer does not query text values or selections. The pinned
+macOS adapter has no dedicated readonly getter, so the readonly editing guard
+remains a source/headless contract rather than an independently observed OS
+attribute. Premature app termination fails both desktop tests.
+
 System-clipboard exchange, physical keyboard/menu tracking, IME candidate/dead-key
 hardware behavior, and VoiceOver editing remain separate verification gates.
 Roles, synthetic input and direct AppKit delegate calls are not acceptance of

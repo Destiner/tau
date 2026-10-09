@@ -57,3 +57,9 @@ name = "native-os"
 path = "tests/native-os/runner.rs"
 harness = false
 required-features = ["native-os-tests"]
+
+[[test]]
+name = "native-accessibility"
+path = "tests/native-os/accessibility.rs"
+harness = false
+required-features = ["native-os-tests"]
