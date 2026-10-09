@@ -1,8 +1,10 @@
 //! Native OS descriptors for host applications to compose and install.
 
 mod menus;
+mod window;
 
 pub use menus::edit_menu;
+pub use window::{CloseWindow, MinimizeWindow, install_window_commands, window_menu};
 
 #[cfg(test)]
 mod ime_controls_tests;

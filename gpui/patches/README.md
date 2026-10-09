@@ -25,9 +25,10 @@ for permission. Actual Paste retains the existing clipboard and stale-target
 policy. Native displayed key equivalents and AppKit menu validation still need
 real-window verification.
 
-Application quit, window closing, reopening, settings, file dialogs, runtime
-shutdown and persistence remain host-owned. A quit cleanup callback is not a
-cancellable confirmation hook.
+`install_window_commands` and `window_menu` provide explicit host-owned close
+and minimize integration; see [window.md](window.md). Application quit, reopening,
+settings, file dialogs, runtime shutdown and persistence remain host-owned. A
+quit cleanup callback is not a cancellable confirmation hook.
 
 ## Regression coverage
 

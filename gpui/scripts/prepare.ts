@@ -54,6 +54,7 @@ const crates = [
       'fractional-text-leading.patch',
       'estimated-list-height.patch',
       'native-menu-core.patch',
+      'window-close-request.patch',
     ],
   },
   {

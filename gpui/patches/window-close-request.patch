@@ -1,0 +1,202 @@
+diff --git a/src/app/test_app.rs b/src/app/test_app.rs
+index bf265fd..25d194b 100644
+--- a/src/app/test_app.rs
++++ b/src/app/test_app.rs
+@@ -117,6 +117,17 @@ impl TestApp {
+         result
+     }
+ 
++    /// Simulate application deactivation, including native activation callbacks.
++    pub fn simulate_deactivation(&mut self) {
++        self.platform.set_active_window(None);
++        self.background_executor.run_until_parked();
++    }
++
++    /// Inspect the automatic quit policy (TestPlatform itself does not terminate).
++    pub fn quit_mode(&self) -> crate::QuitMode {
++        self.app.borrow().quit_mode
++    }
++
+     /// Run a closure with read-only access to the App context.
+     pub fn read<R>(&self, f: impl FnOnce(&App) -> R) -> R {
+         let app = self.app.borrow();
+@@ -380,6 +391,35 @@ impl<V: 'static + Render> TestAppWindow<V> {
+         .unwrap()
+     }
+ 
++    fn platform_window(&self) -> crate::TestWindow {
++        let mut app = self.app.borrow_mut();
++        app.windows
++            .get_mut(self.handle.window_id())
++            .and_then(|window| window.as_mut())
++            .and_then(|window| window.platform_window.as_test())
++            .expect("test window not found")
++            .clone()
++    }
++
++    /// Simulate activation or application deactivation, including native callbacks.
++    pub fn simulate_activation(&mut self, active: bool) {
++        let window = self.platform_window();
++        self.platform.set_active_window(active.then_some(window));
++        self.background_executor.run_until_parked();
++    }
++
++    /// Simulate a native close control, including its veto and close callbacks.
++    pub fn simulate_close(&mut self) -> bool {
++        let allowed = self.platform_window().simulate_close();
++        self.background_executor.run_until_parked();
++        allowed
++    }
++
++    /// Number of minimize requests, not evidence of OS minimization.
++    pub fn minimize_requests(&self) -> usize {
++        self.platform_window().minimize_requests()
++    }
++
+     /// Simulate a keystroke.
+     pub fn simulate_keystroke(&mut self, keystroke: &str) {
+         let keystroke = Keystroke::parse(keystroke).unwrap();
+diff --git a/src/platform/test/window.rs b/src/platform/test/window.rs
+index 14fb889..dff6455 100644
+--- a/src/platform/test/window.rs
++++ b/src/platform/test/window.rs
+@@ -29,6 +29,8 @@ pub(crate) struct TestWindowState {
+     sprite_atlas: Arc<dyn PlatformAtlas>,
+     renderer: Option<Box<dyn PlatformHeadlessRenderer>>,
+     pub(crate) should_close_handler: Option<Box<dyn FnMut() -> bool>>,
++    close_handler: Option<Box<dyn FnOnce()>>,
++    minimize_requests: usize,
+     hit_test_window_control_callback: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
+     input_callback: Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
+     active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
+@@ -102,6 +104,8 @@ impl TestWindow {
+             edited: false,
+             document_path: None,
+             should_close_handler: None,
++            close_handler: None,
++            minimize_requests: 0,
+             hit_test_window_control_callback: None,
+             input_callback: None,
+             active_status_change_callback: None,
+@@ -231,6 +235,29 @@ impl TestWindow {
+         self.simulate_resize(size);
+     }
+ 
++    /// Simulate native close control ordering, without holding the platform lock.
++    pub fn simulate_close(&self) -> bool {
++        let handler = self.0.lock().should_close_handler.take();
++        let allowed = if let Some(mut handler) = handler {
++            let allowed = handler();
++            self.0.lock().should_close_handler.get_or_insert(handler);
++            allowed
++        } else {
++            true
++        };
++        if allowed {
++            let close = self.0.lock().close_handler.take();
++            if let Some(close) = close {
++                close();
++            }
++        }
++        allowed
++    }
++
++    pub fn minimize_requests(&self) -> usize {
++        self.0.lock().minimize_requests
++    }
++
+     pub(crate) fn simulate_active_status_change(&self, active: bool) {
+         let mut lock = self.0.lock();
+         let Some(mut callback) = lock.active_status_change_callback.take() else {
+@@ -445,7 +472,7 @@ impl PlatformWindow for TestWindow {
+     }
+ 
+     fn minimize(&self) {
+-        unimplemented!()
++        self.0.lock().minimize_requests += 1;
+     }
+ 
+     fn zoom(&self) {
+@@ -514,7 +541,9 @@ impl PlatformWindow for TestWindow {
+         self.0.lock().should_close_handler = Some(callback);
+     }
+ 
+-    fn on_close(&self, _callback: Box<dyn FnOnce()>) {}
++    fn on_close(&self, callback: Box<dyn FnOnce()>) {
++        self.0.lock().close_handler = Some(callback);
++    }
+ 
+     fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
+         self.0.lock().hit_test_window_control_callback = Some(callback);
+diff --git a/src/window.rs b/src/window.rs
+index 645f9db..b0bef9a 100644
+--- a/src/window.rs
++++ b/src/window.rs
+@@ -1153,11 +1153,15 @@ enum InputModality {
+     Touch,
+ }
+ 
++type WindowShouldClose = Rc<dyn Fn(&mut Window, &mut App) -> bool>;
++
+ /// Holds the state for a specific window.
+ pub struct Window {
+     pub(crate) handle: AnyWindowHandle,
+     pub(crate) invalidator: WindowInvalidator,
+     pub(crate) removed: bool,
++    should_close: RefCell<Option<WindowShouldClose>>,
++    checking_close: Cell<bool>,
+     pub(crate) platform_window: Box<dyn PlatformWindow>,
+     display_id: Option<DisplayId>,
+     is_resizable: bool,
+@@ -2022,6 +2026,8 @@ impl Window {
+             handle,
+             invalidator,
+             removed: false,
++            should_close: RefCell::new(None),
++            checking_close: Cell::new(false),
+             platform_window,
+             display_id,
+             is_resizable,
+@@ -6660,12 +6666,41 @@ impl Window {
+         cx: &App,
+         f: impl Fn(&mut Window, &mut App) -> bool + 'static,
+     ) {
++        *self.should_close.borrow_mut() = Some(Rc::new(f));
+         let mut cx = self.to_async(cx);
+         self.platform_window.on_should_close(Box::new(move || {
+-            cx.update(|window, cx| f(window, cx)).unwrap_or(true)
++            cx.update(|window, cx| window.should_close(cx))
++                .unwrap_or(true)
+         }))
+     }
+ 
++    /// Request closing this window through the same veto used by native close controls.
++    /// Returns whether closing was allowed. Unlike `remove_window`, this invokes
++    /// `on_window_should_close`. The guard is synchronous; hosts waiting for an
++    /// asynchronous decision must return false and request again after approval.
++    pub fn request_close(&mut self, cx: &mut App) -> bool {
++        if self.removed {
++            return false;
++        }
++        if self.should_close(cx) {
++            self.remove_window();
++            true
++        } else {
++            false
++        }
++    }
++
++    fn should_close(&mut self, cx: &mut App) -> bool {
++        if self.removed || self.checking_close.replace(true) {
++            return false;
++        }
++        // Clone before calling: a guard can replace itself or request close again.
++        let guard = self.should_close.borrow().clone();
++        let allowed = guard.is_none_or(|guard| guard(self, cx));
++        self.checking_close.set(false);
++        allowed
++    }
++
+     /// Register an action listener on this node for the next frame. The type of action
+     /// is determined by the first parameter of the given listener. When the next frame is rendered
+     /// the listener will be cleared.
