@@ -570,6 +570,7 @@ fn title(live: &LiveSession) -> String {
 }
 impl Render for Shell {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        use gpui_kit::TestSupportExt;
         let t = support::tokens(self.dark);
         let mut body = div()
             .capture_key_down(cx.listener(|s, event: &gpui_kit::KeyDownEvent, _, _| {
@@ -592,7 +593,22 @@ impl Render for Shell {
             main = main.child(header.clone());
         }
         if let Some(live) = self.sessions.get(&self.active) {
-            main = main.child(div().flex_1().min_h_0().child(live.transcript.clone()));
+            let empty = live.transcript.read(cx).is_empty();
+            live.composer.update(cx, |composer, cx| {
+                composer.set_fill_height(empty, cx);
+            });
+            if !empty {
+                main = main.child(
+                    div()
+                        .id("shell-transcript-slot")
+                        .test_support()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_h_0()
+                        .child(live.transcript.clone()),
+                );
+            }
             if live.starting {
                 main = main.child(div().px(px(24.)).child("Starting Pi…"));
             }
@@ -656,7 +672,22 @@ impl Render for Shell {
             if let Some((_, dialog)) = &live.extension {
                 main = main.child(dialog.clone());
             } else {
-                main = main.child(live.composer.clone());
+                main = main.child(
+                    div()
+                        .id("shell-composer-area")
+                        .test_support()
+                        .flex()
+                        .flex_col()
+                        .min_h_0()
+                        .flex_shrink_0()
+                        .pt(px(6.))
+                        .pr(px(8.))
+                        .pb(px(8.))
+                        .pl(px(6.))
+                        .when(empty, |area| area.flex_1())
+                        .when(!empty, |area| area.border_t_1().border_color(rgb(t.border)))
+                        .child(live.composer.clone()),
+                );
             }
         } else {
             main = main.child(div().flex_1()).child(div().p(px(24.)).child(
@@ -728,3 +759,7 @@ impl Render for Shell {
         body
     }
 }
+
+#[cfg(test)]
+#[path = "layout_tests.rs"]
+mod layout_tests;

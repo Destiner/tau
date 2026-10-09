@@ -3,7 +3,7 @@ use gpui_kit::TestApp;
 use serde_json::json;
 use tau_core::pi::PiEvent;
 
-fn shell(commands: async_channel::Sender<Command>) -> Shell {
+pub(super) fn shell(commands: async_channel::Sender<Command>) -> Shell {
     Shell {
         commands,
         workspace: None,
@@ -32,7 +32,7 @@ fn shell(commands: async_channel::Sender<Command>) -> Shell {
         restored: false,
     }
 }
-fn project() -> ProjectSummary {
+pub(super) fn project() -> ProjectSummary {
     ProjectSummary {
         path: "/test/project".into(),
         name: "Project".into(),
@@ -43,7 +43,7 @@ fn project() -> ProjectSummary {
         sessions: vec![],
     }
 }
-fn app() -> TestApp {
+pub(super) fn app() -> TestApp {
     let mut app = TestApp::new();
     app.update(|cx| components::init(cx, false));
     app
