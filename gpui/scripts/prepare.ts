@@ -42,6 +42,7 @@ const crates = [
       'virtualized-text-selection.patch',
       'markdown-parity.patch',
       'native-menu-base.patch',
+      'ime-composition.patch',
     ],
   },
   {

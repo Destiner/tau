@@ -42,6 +42,14 @@ independent histories, dialog focus, source-selection Copy, readonly/disabled
 controls, and no-focus/no-window behavior. The clipboard is TestPlatform's
 isolated clipboard.
 
+Additional tests deliver marked text through the same `EntityInputHandler`
+methods as the OS input bridge. They cover UTF-16 replacement, multi-update
+composition, atomic undo/redo, cancellation/unmarking and combining characters.
+Tau's editable controls opt into consuming application-delivered Enter/Escape
+while text remains marked. Normal Enter immediately after commitment still
+works; composer Shift+Enter remains a newline. This guards fallback delivery,
+not the platform's candidate-window implementation.
+
 These tests do not establish AppKit selector behavior, native displayed enabled
 states, system-clipboard exchange, IME candidate/dead-key hardware behavior, or
 VoiceOver editing. Those require separate real-window verification; roles and

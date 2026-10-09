@@ -84,7 +84,8 @@ impl NativeDialog {
     ) -> Self {
         let input = cx.new(|cx| InputState::new(window, cx).placeholder(props.placeholder.clone()));
         input.update(cx, |state, _| {
-            state.set_editor_style(support::input_style(dark))
+            state.set_protect_ime_keys(true);
+            state.set_editor_style(support::input_style(dark));
         });
         let _input_events =
             cx.subscribe_in(&input, window, |dialog, _, event: &InputEvent, _, cx| {

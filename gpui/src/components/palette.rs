@@ -91,6 +91,7 @@ impl Palette {
         let search =
             cx.new(|cx| InputState::new(window, cx).placeholder(pages[0].placeholder.clone()));
         search.update(cx, |s, _| {
+            s.set_protect_ime_keys(true);
             s.set_editor_paddings(gpui_kit::Edges::all(px(1.)));
             s.set_editor_style(gpui_kit::base::input::InputEditorStyle {
                 muted_foreground: rgb(support::tokens(dark).muted).into(),

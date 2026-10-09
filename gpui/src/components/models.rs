@@ -274,7 +274,10 @@ impl ModelSelector {
             gpui_kit::KeyBinding::new("up", PreviousModel, Some("NativeModelsSearch > Input")),
         ]);
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
-        search.update(cx, |s, _| s.set_editor_style(support::input_style(dark)));
+        search.update(cx, |s, _| {
+            s.set_protect_ime_keys(true);
+            s.set_editor_style(support::input_style(dark));
+        });
         cx.subscribe(&search, |this, input, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
                 this.query = input.read(cx).value().to_string();

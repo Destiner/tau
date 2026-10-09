@@ -565,6 +565,7 @@ impl Composer {
             scrollbar.with_styles(ScrollbarStyles::default().thumb(|thumb| thumb.radius(px(4.))));
         let editor = cx.new(|cx| {
             TextareaState::new(window, cx)
+                .submit_on_enter(true)
                 .placeholder("Message π")
                 .auto_grow(4, 10)
         });
@@ -577,6 +578,7 @@ impl Composer {
             });
             e.set_disabled(disabled, cx);
             e.set_readonly(disabled, cx);
+            e.set_protect_ime_keys(true);
             e.set_value(&options.draft, window, cx);
             e.set_scroll_sensitivity(0.5);
             e.set_editor_style(Self::initial_editor_style(dark, disabled));
@@ -596,7 +598,10 @@ impl Composer {
             gpui_kit::KeyBinding::new("up", PreviousChoice, Some("NativeComposerSearch > Input")),
         ]);
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
-        search.update(cx, |s, _| s.set_editor_style(support::input_style(dark)));
+        search.update(cx, |s, _| {
+            s.set_editor_style(support::input_style(dark));
+            s.set_protect_ime_keys(true);
+        });
         let search_events = cx.subscribe(&search, |this, input, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
                 this.query = input.read(cx).value().to_string();
@@ -987,6 +992,9 @@ impl Render for Composer {
             .child(send);
         let editor_bounds = self.editor_bounds.clone();
         let input = InputBase::new("editor")
+            // Base propagates submit actions; do not let fallback text delivery
+            // insert a newline before the deferred PressEnter subscriber sends.
+            .on_action(|_: &gpui_kit::base::input::Enter, _, cx| cx.stop_propagation())
             .relative()
             .on_prepaint(move |bounds, _, _| editor_bounds.set(Some(bounds)))
             .on_mouse_down_out(cx.listener(|s, event: &MouseDownEvent, window, cx| {
