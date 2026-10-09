@@ -801,6 +801,20 @@ impl Sidebar {
             self.group_slides.retain(|id, _| ids.contains(id));
             self.header_slides.retain(|id, _| ids.contains(id));
             self.header_hover.retain(|id| ids.contains(id));
+            if let Some(held) = &mut self.held_session_ids {
+                // Hover freezes relative order, not membership.
+                let live: BTreeSet<_> = projects
+                    .iter()
+                    .flat_map(|project| project.sessions.iter().map(|session| &session.id))
+                    .collect();
+                held.retain(|id| live.contains(id));
+                let mut seen: BTreeSet<_> = held.iter().cloned().collect();
+                for session in projects.iter().flat_map(|project| &project.sessions) {
+                    if seen.insert(session.id.clone()) {
+                        held.push(session.id.clone());
+                    }
+                }
+            }
             self.projects = projects;
             self.hint.dismiss();
             cx.notify();

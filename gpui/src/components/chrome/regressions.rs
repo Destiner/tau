@@ -241,6 +241,143 @@ fn caller_projects_and_version_have_no_fixture_fallback() {
     });
 }
 
+fn session_projects(ids: &[&str]) -> Vec<ProjectItem> {
+    let mut items = projects();
+    items[0].sessions = ids
+        .iter()
+        .map(|id| SessionItem {
+            id: (*id).into(),
+            title: (*id).into(),
+            time: "now".into(),
+            status: None,
+            unread: false,
+            can_archive: true,
+        })
+        .collect();
+    items
+}
+
+fn session_anchor(sidebar: &Sidebar, id: &str) -> Bounds<Pixels> {
+    sidebar
+        .hint
+        .anchors
+        .iter()
+        .find(|(key, _)| key == &format!("session-{id}"))
+        .and_then(|(_, anchor)| anchor.get())
+        .unwrap_or_else(|| panic!("missing session anchor {id}"))
+}
+
+#[test]
+fn hovered_empty_sidebar_renders_and_selects_arriving_sessions() {
+    for initial in [vec![], projects()] {
+        let mut app = gpui_kit::TestApp::new();
+        app.update(gpui_kit::init);
+        let mut window = app.open_window(|_, cx| {
+            Sidebar::new(
+                SidebarProps {
+                    sessions: vec![],
+                    active: String::new(),
+                    collapsed: false,
+                    present: true,
+                    archived: false,
+                },
+                initial.clone(),
+                "1.2.3".into(),
+                false,
+                cx,
+            )
+        });
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let received = events.clone();
+        let _subscription = window.update(|_, _, cx| {
+            cx.subscribe(&cx.entity(), move |_, _, e: &Action, _| {
+                received.borrow_mut().push(e.clone());
+            })
+        });
+        window.draw();
+        let pointer = window.update(|_, w, _| bounds(w, "sidebar-body").center());
+        window.simulate_mouse_move(pointer);
+        window.draw();
+        window.update(|s, _, cx| {
+            assert_eq!(s.held_session_ids, Some(vec![]));
+            s.set_projects(session_projects(&["arrival"]), cx);
+        });
+        window.draw();
+        let row = window.update(|s, w, _| {
+            let row = session_anchor(s, "arrival");
+            assert!(bounds(w, "sidebar-body").contains(&row.center()));
+            assert!(row.size.height > px(0.));
+            bounds(w, "session-status-arrival");
+            assert_eq!(s.held_session_ids, Some(vec!["arrival".into()]));
+            row.center()
+        });
+        window.simulate_click(row, MouseButton::Left);
+        window.draw();
+        assert_eq!(*events.borrow(), vec![Action::Select("arrival".into())]);
+    }
+}
+
+#[test]
+fn hovered_sidebar_reconciles_membership_without_releasing_order() {
+    let mut app = gpui_kit::TestApp::new();
+    app.update(gpui_kit::init);
+    let mut window = app.open_window(|_, cx| {
+        Sidebar::new(
+            SidebarProps {
+                sessions: vec![],
+                active: String::new(),
+                collapsed: false,
+                present: true,
+                archived: false,
+            },
+            session_projects(&["a", "b", "c"]),
+            "1.2.3".into(),
+            false,
+            cx,
+        )
+    });
+    window.draw();
+    let pointer = window.update(|_, w, _| bounds(w, "sidebar-body").center());
+    window.simulate_mouse_move(pointer);
+    window.draw();
+    window.update(|s, _, cx| {
+        assert_eq!(
+            s.held_session_ids,
+            Some(vec!["a".into(), "b".into(), "c".into()])
+        );
+        s.set_projects(session_projects(&["c", "new-2", "b", "new-1", "a"]), cx);
+    });
+    window.draw();
+    window.update(|s, w, cx| {
+        let held = ["a", "b", "c", "new-2", "new-1"];
+        assert_eq!(s.held_session_ids, Some(held.map(String::from).to_vec()));
+        for pair in held.windows(2) {
+            assert!(session_anchor(s, pair[0]).top() < session_anchor(s, pair[1]).top());
+        }
+        bounds(w, "session-status-new-2");
+        bounds(w, "session-status-new-1");
+        s.set_projects(session_projects(&["new-1", "c", "new-2", "a"]), cx);
+    });
+    window.draw();
+    window.update(|s, w, _| {
+        let held = ["a", "c", "new-2", "new-1"];
+        assert_eq!(s.held_session_ids, Some(held.map(String::from).to_vec()));
+        for pair in held.windows(2) {
+            assert!(session_anchor(s, pair[0]).top() < session_anchor(s, pair[1]).top());
+        }
+        assert!(gpui_kit::base::test_support::find(w, &[], &"session-status-b".into()).is_none());
+    });
+    let outside = window.update(|_, w, _| bounds(w, "sidebar-footer").center());
+    window.simulate_mouse_move(outside);
+    window.draw();
+    window.update(|s, _, _| {
+        assert!(s.held_session_ids.is_none());
+        for pair in ["new-1", "c", "new-2", "a"].windows(2) {
+            assert!(session_anchor(s, pair[0]).top() < session_anchor(s, pair[1]).top());
+        }
+    });
+}
+
 #[test]
 fn relative_times_and_project_status_preserve_existing_copy_and_priority() {
     assert_eq!(expanded_relative_time("now"), "just now");
