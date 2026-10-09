@@ -34,7 +34,33 @@ fn settings_menu() {
 }
 
 const EXTENSION: &str = r#"
+import { Type } from "@earendil-works/pi-ai";
+
 export default function(pi) {
+  if (process.env.TAU_NATIVE_MODEL_SMOKE === "1") {
+    pi.registerTool({
+      name: "tau_native_wait",
+      label: "Invented wait",
+      description: "Safe native cancellation fixture. Takes no arguments, emits invented partial output, then waits only for cancellation. No filesystem, network, subprocesses or nested tools.",
+      parameters: Type.Object({}, { additionalProperties: false }),
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      async execute(_id, _params, signal, onUpdate) {
+        if (!signal) throw new Error("Cancellation signal required");
+        onUpdate?.({ content: [{ type: "text", text: "TAU_NATIVE_PARTIAL" }], details: { ready: true } });
+        await new Promise(resolve => {
+          if (signal.aborted) resolve();
+          else signal.addEventListener("abort", resolve, { once: true });
+        });
+        return { content: [{ type: "text", text: "TAU_NATIVE_PARTIAL\nTAU_NATIVE_ABORTED" }], details: { aborted: true }, terminate: true };
+      }
+    });
+    // --no-tools removes extension tools from Pi 0.99.2's registry entirely.
+    pi.on("session_start", () => {
+      pi.setActiveTools(["tau_native_wait"]);
+      const active = pi.getActiveTools();
+      if (active.length !== 1 || active[0] !== "tau_native_wait") throw new Error("Fixture-only loadout required");
+    });
+  }
   pi.registerCommand("tau-native-smoke", {
     description: "Credential-free native acceptance",
     handler: async (_args, ctx) => {
@@ -51,14 +77,16 @@ export default function(pi) {
 "#;
 
 // The proxy forwards actual installed-Pi bytes unchanged. Its only journal is
-// event kind/role, to prove real streaming without exposing provider payloads.
+// allowlisted event markers/booleans; call IDs remain only in proxy memory.
 const WRAPPER: &str = r#"#!/usr/bin/env python3
 import json, os, signal, subprocess, sys
 root = os.path.dirname(os.path.realpath(__file__))
 args = [os.environ['TAU_NATIVE_INSTALLED_PI']] + sys.argv[1:]
 if os.environ.get('TAU_NATIVE_MODEL_SMOKE') != '1':
-    args += ['--offline']
-args += ['--no-extensions', '--no-skills', '--no-prompt-templates', '--no-themes', '--no-context-files', '--no-tools', '--no-approve', '--extension', os.path.join(root, 'smoke.ts')]
+    args += ['--offline', '--no-tools']
+else:
+    args += ['--no-builtin-tools']
+args += ['--no-extensions', '--no-skills', '--no-prompt-templates', '--no-themes', '--no-context-files', '--no-approve', '--extension', os.path.join(root, 'smoke.ts')]
 child = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 def stop(signum, _frame):
     child.terminate()
@@ -69,6 +97,9 @@ def stop(signum, _frame):
     sys.exit(128 + signum)
 signal.signal(signal.SIGTERM, stop)
 signal.signal(signal.SIGINT, stop)
+calls = set()
+def mark(marker):
+    with open(os.path.join(root, 'events.jsonl'), 'a') as journal: journal.write(marker + '\n')
 try:
     for line in child.stdout:
         try:
@@ -79,7 +110,24 @@ try:
                 # RPC updates omit the cumulative SDK message; identify the wire delta itself.
                 delta = record.get('assistantMessageEvent', {}).get('type')
                 marker = kind + (':text_delta' if kind == 'message_update' and delta == 'text_delta' else ':assistant' if role == 'assistant' else '')
-                with open(os.path.join(root, 'events.jsonl'), 'a') as journal: journal.write(marker + '\n')
+                mark(marker)
+                if role == 'assistant' and record.get('message', {}).get('stopReason') in ('error', 'aborted'):
+                    mark('assistant_terminal:' + record['message']['stopReason'])
+            elif kind == 'tool_execution_start' and record.get('toolName') == 'tau_native_wait':
+                calls.add(record.get('toolCallId'))
+                mark('tool_execution_start:fixture')
+            elif kind in ('tool_execution_update', 'tool_execution_end') and record.get('toolCallId') in calls:
+                result = record.get('partialResult' if kind == 'tool_execution_update' else 'result', {})
+                if kind == 'tool_execution_update' and result.get('details', {}).get('ready') is True:
+                    mark('tool_execution_update:ready')
+                elif kind == 'tool_execution_end' and result.get('details', {}).get('aborted') is True:
+                    mark('tool_execution_end:aborted')
+            elif kind == 'response' and record.get('command') == 'abort' and record.get('success') is True:
+                mark('response:abort:success')
+            elif kind == 'agent_settled':
+                mark('agent_settled')
+            elif kind == 'extension_error' or (kind == 'response' and record.get('success') is False):
+                mark('protocol_or_extension_error')
         except (ValueError, TypeError): pass
         sys.stdout.buffer.write(line)
         sys.stdout.buffer.flush()
@@ -87,7 +135,10 @@ try:
 finally:
     if child.poll() is None:
         child.terminate()
-        child.wait()
+        try: child.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.wait()
 "#;
 
 #[cfg(target_os = "macos")]
@@ -153,10 +204,19 @@ fn main() -> anyhow::Result<()> {
     );
     // The entire owned Pi tree inherits this fresh process group. Clean it even
     // when an assertion/watchdog exits before GPUI can await worker shutdown.
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    let slice = if model { "model" } else { "credential-free" };
+    let log = format!(
+        "/tmp/tau-native-real-tool-run-{slice}-{}-{stamp}.log",
+        std::process::id()
+    );
+    eprintln!("EVIDENCE native-app early phase log: {log}");
     command
         .process_group(0)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+        .stdout(std::process::Stdio::null())
+        .stderr(std::fs::File::create(&log)?);
     let child = command.spawn()?;
     let group = child.id();
     let result = child.wait_with_output();
@@ -184,18 +244,13 @@ fn main() -> anyhow::Result<()> {
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
     let output = result?;
-    // Keep failed evidence outside the owned temp tree, with no payloads or raw stderr.
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_nanos();
-    let slice = if model { "model" } else { "credential-free" };
-    let log = format!(
-        "/tmp/tau-native-app-reopen-{slice}-{}-{stamp}.log",
-        std::process::id()
-    );
-    std::fs::write(&log, &output.stderr)?;
-    std::io::stderr().write_all(&output.stderr)?;
-    let markers = String::from_utf8_lossy(&output.stderr)
+    // Preserve only the content-free journal, never the temporary session payloads.
+    if root.path().join("events.jsonl").is_file() {
+        std::fs::copy(root.path().join("events.jsonl"), format!("{log}.events"))?;
+    }
+    let phases = std::fs::read(&log)?;
+    std::io::stderr().write_all(&phases)?;
+    let markers = String::from_utf8_lossy(&phases)
         .matches("PASS native-app completion-gated quit")
         .count();
     anyhow::ensure!(

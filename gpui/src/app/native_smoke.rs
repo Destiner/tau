@@ -14,7 +14,8 @@ pub fn run_native_smoke(root: PathBuf, project: String, settings_menu: fn()) -> 
         std::process::exit(1);
     }));
     std::thread::spawn(|| {
-        std::thread::sleep(Duration::from_secs(100));
+        // Reserve four seconds for the parent's bounded process-group cleanup.
+        std::thread::sleep(Duration::from_secs(96));
         eprintln!("FAIL native-app watchdog");
         std::process::exit(2);
     });
@@ -106,11 +107,26 @@ fn insert_composer(shell: &Entity<Shell>, cx: &AsyncApp, text: &str) {
     });
 }
 async fn click(shell: &Entity<Shell>, cx: &AsyncApp, id: &str) {
-    poll(cx, "painted control", 5, |cx| {
+    let label = if id.starts_with("session-status-") {
+        "painted sidebar session"
+    } else {
+        id
+    };
+    let mut previous = None;
+    poll(cx, label, 5, |cx| {
         window(shell, cx)
             .update(cx, |_, w, _| {
-                gpui_kit::base::test_support::find(w, &[], &id.to_string().into())
-                    .is_some_and(|s| s.visible())
+                let control = gpui_kit::base::test_support::find(w, &[], &id.to_string().into());
+                let status = (
+                    w.is_window_active(),
+                    control.is_some(),
+                    control.as_ref().is_some_and(|s| s.visible()),
+                );
+                if previous != Some(status) {
+                    eprintln!("OBSERVED {label} active/found/visible={status:?}");
+                    previous = Some(status);
+                }
+                status.2
             })
             .unwrap()
     })
@@ -207,6 +223,23 @@ async fn exercise(
     ready(&shell, &cx).await;
     let second = cx.update(|cx| shell.read(cx).active.clone());
     assert_ne!(first, second);
+    cx.update(|cx| {
+        let s = shell.read(cx);
+        eprintln!(
+            "OBSERVED initial sidebar first/second/draft/projects/collapsed={:?}",
+            (
+                s.sessions.contains_key(&first),
+                s.sessions.contains_key(&second),
+                s.sessions
+                    .get(&first)
+                    .is_some_and(|l| l.controller.state().draft == "Owned draft café 😀"),
+                s.workspace.as_ref().map(|w| w.projects.len()),
+                s.workspace
+                    .as_ref()
+                    .is_some_and(|w| w.projects.iter().any(|p| p.collapsed)),
+            )
+        );
+    });
     click(&shell, &cx, &format!("session-status-{first}")).await;
     poll(&cx, "sidebar selects first retained draft", 5, |cx| {
         let s = shell.read(cx);
@@ -339,6 +372,139 @@ async fn exercise(
         }).await;
         eprintln!(
             "PASS native-app real model message_update + assistant message_end + durable assistant transcript"
+        );
+        let (queue, journal_offset) = cx.update(|cx| {
+            let s = shell.read(cx);
+            (
+                s.sessions[&second].controller.state().queue.clone(),
+                std::fs::read_to_string(root.join("events.jsonl"))
+                    .unwrap()
+                    .len(),
+            )
+        });
+        focus_composer(&shell, &cx);
+        insert_composer(
+            &shell,
+            &cx,
+            "Write exactly TAU_NATIVE_TOOL_OK as assistant text, then call tau_native_wait exactly once with {}. This is an invented cancellation acceptance fixture; wait for its result. Do not call any other tool.",
+        );
+        key(&shell, &cx, "enter");
+        poll(
+            &cx,
+            "real model tool start and partial while busy",
+            30,
+            |cx| {
+                let s = shell.read(cx);
+                let live = &s.sessions[&second];
+                let state = live.controller.state();
+                assert!(s.error.is_none() && state.error.is_none());
+                let records =
+                    std::fs::read_to_string(root.join("events.jsonl")).unwrap_or_default();
+                let records = records.get(journal_offset..).unwrap_or_default();
+                assert!(!records.lines().any(|s| s == "protocol_or_extension_error"));
+                state.working
+                    && live.composer.read(cx).is_streaming()
+                    && live.composer.read(cx).editor().read(cx).value().is_empty()
+                    && records.lines().any(|s| s == "tool_execution_start:fixture")
+                    && records.lines().any(|s| s == "tool_execution_update:ready")
+                    && state
+                        .transcript
+                        .iter()
+                        .any(|e| e.kind == "assistant" && e.text.trim() == "TAU_NATIVE_TOOL_OK")
+                    && state.transcript.iter().any(|e| {
+                        e.tool_name.as_deref() == Some("tau_native_wait")
+                            && e.activity
+                            && e.result == "TAU_NATIVE_PARTIAL"
+                    })
+            },
+        )
+        .await;
+        let tool_id = cx.update(|cx| {
+            let s = shell.read(cx);
+            let tools: Vec<_> = s.sessions[&second]
+                .controller
+                .state()
+                .transcript
+                .iter()
+                .filter(|e| e.tool_name.as_deref() == Some("tau_native_wait"))
+                .collect();
+            assert_eq!(tools.len(), 1);
+            tools[0].id.clone()
+        });
+        let stops = Rc::new(Cell::new(0));
+        let observed = stops.clone();
+        let _stop_observer = cx.update(|cx| {
+            let composer = shell.read(cx).sessions[&second].composer.clone();
+            cx.subscribe(&composer, move |_, event: &ComposerEvent, _| {
+                if matches!(event, ComposerEvent::Stop) {
+                    observed.set(observed.get() + 1);
+                    eprintln!("OBSERVED native rendered composer Stop event");
+                }
+            })
+        });
+        eprintln!(
+            "PASS native-app real model tool execution start/update and live partial row while busy"
+        );
+        // Empty, streaming composer renders Stop at this existing control ID.
+        click(&shell, &cx, "send").await;
+        let mut last_stop_invariants = None;
+        poll(
+            &cx,
+            "native Stop abort response and real tool settlement",
+            10,
+            |cx| {
+                let s = shell.read(cx);
+                let live = &s.sessions[&second];
+                let state = live.controller.state();
+                let invariants = [
+                    s.error.is_none(),
+                    state.error.is_none(),
+                    state.queue == queue,
+                    s.sessions[&first].controller.state().draft == "Owned draft café 😀",
+                    !state.transcript.iter().any(|e| e.kind == "error"),
+                ];
+                if last_stop_invariants != Some(invariants) {
+                    eprintln!("OBSERVED Stop shell/session/queue/draft/no-error={invariants:?}");
+                    last_stop_invariants = Some(invariants);
+                }
+                assert!(invariants.into_iter().all(|ok| ok));
+                let records =
+                    std::fs::read_to_string(root.join("events.jsonl")).unwrap_or_default();
+                let records = records.get(journal_offset..).unwrap_or_default();
+                assert!(!records.lines().any(|s| s == "protocol_or_extension_error"));
+                let markers: Vec<_> = records.lines().collect();
+                let ended = markers
+                    .iter()
+                    .position(|s| *s == "tool_execution_end:aborted");
+                let settled = markers.iter().rposition(|s| *s == "agent_settled");
+                stops.get() == 1
+                    && ended.zip(settled).is_some_and(|(end, settle)| end < settle)
+                    && markers.contains(&"response:abort:success")
+                    && !state.working
+                    && !state.stopping
+                    && live.controller.pending_count() == 0
+                    && !live.composer.read(cx).is_streaming()
+                    && state.transcript.iter().any(|e| {
+                        e.id == tool_id
+                            && !e.activity
+                            && !e.pending
+                            && !e.is_error
+                            && e.result == "TAU_NATIVE_PARTIAL\nTAU_NATIVE_ABORTED"
+                    })
+                    && state.transcript.iter().any(|e| {
+                        e.kind == "assistant"
+                            && e.text.trim() == "TAU_NATIVE_TOOL_OK"
+                            && !e.activity
+                    })
+                    && state
+                        .transcript
+                        .iter()
+                        .any(|e| e.kind == "assistant" && e.text.trim() == "TAU_NATIVE_OK")
+            },
+        )
+        .await;
+        eprintln!(
+            "PASS native-app measured rendered Stop click -> genuine ComposerEvent::Stop -> real Pi abort/tool end/agent_settled; retained assistant/tool partial, unrelated draft and unchanged empty queue; idle/pending-free"
         );
     }
     click(&shell, &cx, &format!("session-status-{first}")).await;
