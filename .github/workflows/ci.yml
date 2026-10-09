@@ -73,13 +73,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
-          key: macos-15-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/rust-toolchain*') }}
+          key: macos-15-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/rust-toolchain*', 'crates/*/Cargo.lock') }}
       - run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
       # Tauri embeds frontendDist even during Cargo checks and tests.
       # Typechecking runs in the frontend lane; native Pi fakes also need Bun.
       - run: bun x vite build
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - name: Shared native services and session contracts
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target
+        run: |
+          for manifest in crates/tau-core/Cargo.toml crates/tau-session/Cargo.toml; do
+            cargo fmt --check --manifest-path "$manifest"
+            cargo clippy --locked --manifest-path "$manifest" --all-targets -- -D warnings
+            cargo test --locked --manifest-path "$manifest"
+          done
+      - run: bun test ./gpui/tests/package.bun.ts
 
   check:
     if: always()

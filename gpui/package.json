@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "package:native": "bun scripts/package.ts",
+    "test:package": "bun test ./tests/package.bun.ts",
     "compare": "bun scripts/run.ts",
     "reference": "bun scripts/run.ts --reference-only",
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",
