@@ -9,6 +9,10 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(unexpected_cfgs)]
+mod window_trace;
+
+#[cfg(target_os = "macos")]
 #[allow(unexpected_cfgs)] // objc 0.2.7 macros test the legacy cargo-clippy feature.
 mod macos {
     use gpui_kit::{
@@ -34,6 +38,8 @@ mod macos {
         components::{Assets, init},
         native,
     };
+
+    use super::window_trace;
 
     type Id = *mut Object;
     const NIL: Id = std::ptr::null_mut();
@@ -176,6 +182,7 @@ mod macos {
         let deadline = Instant::now() + Duration::from_secs(5);
         while !ready() {
             if Instant::now() >= deadline {
+                window_trace::summary();
                 unsafe {
                     let application = app();
                     let active: BOOL = msg_send![application, isActive];
@@ -241,6 +248,7 @@ mod macos {
         .await;
         eprintln!("READY own native window exists");
         let w = unsafe { owned_window(&title) };
+        let _trace = window_trace::WindowTrace::install(w);
         // Keep the native object alive for post-close inspection only.
         unsafe {
             let _: Id = msg_send![w, retain];
@@ -379,6 +387,7 @@ mod macos {
         poll(&cx, "native menu close guard", || checks.get() >= 2).await;
         assert_eq!(checks.get(), 2);
         assert_eq!(closed.get(), 0);
+        assert!(active(w));
         assert_input(&cx, window, &input, TEXT);
         cx.update(|cx| {
             window
@@ -386,6 +395,9 @@ mod macos {
                 .unwrap()
         });
         assert_eq!(checks.get(), 3);
+        assert_eq!(closed.get(), 0);
+        assert!(active(w));
+        assert_input(&cx, window, &input, TEXT);
         unsafe {
             let _: () = msg_send![w, performClose: NIL];
         }
@@ -401,15 +413,30 @@ mod macos {
             "PASS vetoed Cmd-W, native menu, request_close, NSWindow.performClose: same guard exactly once each, text/focus retained"
         );
 
+        window_trace::snapshot("before Minimize menu invocation", w);
+        let minimize_started = Instant::now();
         invoke("Window", "Minimize");
+        window_trace::snapshot("after Minimize menu invocation", w);
+        let mut previous = None;
         poll(&cx, "actual NSWindow miniaturized flag", || unsafe {
-            let b: BOOL = msg_send![w, isMiniaturized];
-            b == YES
+            let minimized: BOOL = msg_send![w, isMiniaturized];
+            let key: BOOL = msg_send![w, isKeyWindow];
+            let visible: BOOL = msg_send![w, isVisible];
+            let state = (minimized, key, visible);
+            if previous != Some(state) {
+                window_trace::snapshot("minimize poll transition", w);
+                previous = Some(state);
+            }
+            minimized == YES
         })
         .await;
         assert_eq!(checks.get(), 4);
         assert_eq!(closed.get(), 0);
-        eprintln!("PASS production Minimize -> native isMiniaturized");
+        eprintln!(
+            "PASS production Minimize -> native isMiniaturized ({:.3}s)",
+            minimize_started.elapsed().as_secs_f64()
+        );
+        window_trace::summary();
         // Do not reactivate after minimizing. Native close needs no forced focus.
         allow.set(true);
         unsafe {

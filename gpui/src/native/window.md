@@ -61,3 +61,12 @@ Real macOS verification remains separate: Cmd-W and the red close control must
 both respect a veto, Cmd-M must minimize the active window, and closing the last
 window must leave the process alive when the host retains the explicit policy.
 No zoom/fullscreen or custom window geometry behavior is introduced.
+
+The opt-in `native-os` runner logs public state transitions and window-scoped
+AppKit miniaturization/key/main/close notifications. It checks draft and input
+focus after each veto path. Minimize still issues one command and requires
+`NSWindow.isMiniaturized` within the original five-second deadline; it never
+reactivates or retries a failed window. Notifications and the post-invocation
+snapshot help distinguish an animation in progress from no native transition,
+but do not by themselves prove entry into `miniaturize:` or identify a timeout's
+cause. No platform workaround is implied by these diagnostics.
