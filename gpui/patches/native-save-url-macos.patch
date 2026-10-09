@@ -1,0 +1,91 @@
+--- a/src/platform.rs
++++ b/src/platform.rs
+@@ -70,6 +70,51 @@
+ #[allow(non_upper_case_globals)]
+ const NSUTF8StringEncoding: NSUInteger = 4;
+ 
++// Preserve the panel's destination: guessing a different filename could bypass
++// overwrite consent for that different path.
++fn save_destination_from_url(url: &objc2_foundation::NSURL) -> Option<PathBuf> {
++    if url.isFileURL() {
++        url.to_file_path()
++    } else {
++        None
++    }
++}
++
++#[cfg(test)]
++mod save_destination_tests {
++    use super::save_destination_from_url;
++    use objc2_foundation::{NSString, NSURL};
++    use std::path::Path;
++
++    #[test]
++    fn preserves_native_url_filenames() {
++        for filename in [
++            "a.sql.s",
++            "a.txtx.txt",
++            "archive.tar.gz",
++            "a.sql.sql",
++            "a.s.s",
++            "résumé.日本語.日",
++            "cafe\u{301}.sql.s",
++            "name with spaces.#%.s",
++        ] {
++            let expected = Path::new("/tau-save-url-regression").join(filename);
++            let url = NSURL::from_file_path(&expected).expect("synthetic absolute file URL");
++            assert_eq!(
++                save_destination_from_url(&url).as_deref(),
++                Some(expected.as_path())
++            );
++        }
++    }
++
++    #[test]
++    fn rejects_non_file_url() {
++        let url = NSURL::URLWithString(&NSString::from_str("https://example.invalid/a.sql.s"))
++            .expect("synthetic HTTPS URL");
++        assert_eq!(save_destination_from_url(&url), None);
++    }
++}
++
+ const MAC_PLATFORM_IVAR: &str = "platform";
+ static mut APP_CLASS: *const Class = ptr::null();
+ static mut APP_DELEGATE_CLASS: *const Class = ptr::null();
+@@ -890,35 +935,7 @@
+                         };
+ 
+                         let result = if response == NSModalResponseOK {
+-                            panel
+-                                .URL()
+-                                .filter(|url| url.isFileURL())
+-                                .and_then(|url| url.to_file_path())
+-                                .map(|mut path| {
+-                                    let Some(filename) = path.file_name() else {
+-                                        return path;
+-                                    };
+-                                    let chunks = filename
+-                                        .as_bytes()
+-                                        .split(|&b| b == b'.')
+-                                        .collect::<Vec<_>>();
+-
+-                                    // https://github.com/zed-industries/zed/issues/16969
+-                                    // Workaround a bug in macOS Sequoia that adds an extra file-extension
+-                                    // sometimes. e.g. `a.sql` becomes `a.sql.s` or `a.txtx` becomes `a.txtx.txt`
+-                                    //
+-                                    // This is conditional on OS version because I'd like to get rid of it, so that
+-                                    // you can manually create a file called `a.sql.s`. That said it seems better
+-                                    // to break that use-case than breaking `a.sql`.
+-                                    if let &[_, second, third] = chunks.as_slice()
+-                                        && second.starts_with(third)
+-                                        && Self::os_version() >= Version::new(15, 0, 0)
+-                                    {
+-                                        path.set_extension("");
+-                                    }
+-
+-                                    path
+-                                })
++                            panel.URL().and_then(|url| save_destination_from_url(&url))
+                         } else {
+                             None
+                         };

@@ -3,6 +3,7 @@
 mod host;
 mod lifecycle;
 mod menus;
+mod paths;
 mod window;
 
 pub use host::{
@@ -10,6 +11,7 @@ pub use host::{
 };
 pub use lifecycle::{Intent, Lifecycle, LifecycleCallbacks, Outcome, Request};
 pub use menus::edit_menu;
+pub use paths::{PathChooser, PathFailure, PathOperation, PathOutcome, PathStart};
 pub use window::{CloseWindow, MinimizeWindow, install_window_commands, window_menu};
 
 #[cfg(test)]

@@ -65,6 +65,7 @@ const crates = [
       'disabled-control-accessibility-core.patch',
       'input-editor-accessibility-core.patch',
       'native-host-quit-core.patch',
+      'native-paths-test-support-core.patch',
     ],
   },
   {
@@ -76,6 +77,7 @@ const crates = [
       'antialiased-text.patch',
       'grayscale-text.patch',
       'native-host-quit-macos.patch',
+      'native-save-url-macos.patch',
     ],
   },
   {

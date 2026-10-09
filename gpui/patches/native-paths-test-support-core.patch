@@ -1,0 +1,52 @@
+--- a/src/platform/test/platform.rs
++++ b/src/platform/test/platform.rs
+@@ -213,6 +213,33 @@
+         tx.send(Ok(selection)).ok();
+     }
+ 
++    /// Resolve an existing chooser with a platform error, or drop its sender.
++    #[cfg(any(test, feature = "test-support"))]
++    pub(crate) fn simulate_path_prompt_failure(&self, new_path: bool, disconnect: bool) {
++        let error = || anyhow::anyhow!("synthetic chooser failure");
++        if new_path {
++            let (_, tx) = self
++                .prompts
++                .borrow_mut()
++                .new_path
++                .pop_front()
++                .expect("no pending new path prompt");
++            if !disconnect {
++                tx.send(Err(error())).ok();
++            }
++        } else {
++            let (_, tx) = self
++                .prompts
++                .borrow_mut()
++                .paths
++                .pop_front()
++                .expect("no pending paths prompt");
++            if !disconnect {
++                tx.send(Err(error())).ok();
++            }
++        }
++    }
++
+     #[cfg(any(test, feature = "test-support"))]
+     pub(crate) fn did_prompt_for_paths(&self) -> bool {
+         !self.prompts.borrow().paths.is_empty()
+--- a/src/app/test_context.rs
++++ b/src/app/test_context.rs
+@@ -394,6 +394,13 @@
+         select_path: impl FnOnce(&std::path::Path) -> Option<std::path::PathBuf>,
+     ) {
+         self.test_platform.simulate_new_path_selection(select_path);
++    }
++
++    /// Fails a queued chooser without launching an OS panel. `new_path` selects
++    /// the Save queue; `disconnect` drops the sender rather than returning an error.
++    pub fn simulate_path_prompt_failure(&self, new_path: bool, disconnect: bool) {
++        self.test_platform
++            .simulate_path_prompt_failure(new_path, disconnect);
+     }
+ 
+     /// Simulates responding to a `prompt_for_paths` ("Open") dialog.

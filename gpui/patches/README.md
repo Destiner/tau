@@ -2,8 +2,8 @@
 
 ## Prepared dependency set
 
-`gpui/scripts/prepare.ts` registers **27 Base patches**, **eight Core patches**,
-and **three macOS patches**, including the native interaction and accessibility
+`gpui/scripts/prepare.ts` registers **27 Base patches**, **nine Core patches**,
+and **four macOS patches**, including the native interaction and accessibility
 fixes below; **two merman-core patches** (parser manifest and ER
 semantic default direction); **one merman-analysis manifest patch**; **four
 merman-render family patches** (class/ER, state/sequence, flowchart and polish);
@@ -93,6 +93,10 @@ Extraction outside the checkout is intentional: `git apply` run in a nested depe
   cleanup plus explicit reopen delivery and TestPlatform callback hooks.
   `native-host-quit-macos.patch` uses the existing AppKit delegate's
   `applicationShouldTerminate:` so native termination can actually be vetoed.
+- `native-paths-test-support-core.patch` exercises chooser failure/disconnection
+  through the existing platform fake. `native-save-url-macos.patch` preserves
+  the selected native URL, removing an extension-stripping heuristic that could
+  redirect Save to a different filename than the one the user approved.
 
 These patches are registered per crate with the ordinary preparation path. See
 `src/native/` for production host contracts and lasting native integration tests.

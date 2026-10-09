@@ -4,6 +4,7 @@ This is an opt-in host API, not a Pi-backed application. Component initializatio
 and the prototype executables do not install it. Tauri still owns the operational
 Pi processes, session files, persistence, settings, updates, and project import.
 No session/runtime model, clipboard access or user-data write is introduced here.
+The separate [PathChooser](paths.md) adapter owns native file-dialog requests.
 
 ## Installation
 

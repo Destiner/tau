@@ -28,8 +28,8 @@ selection/history enabled states, and command delivery without clipboard access.
 `install_window_commands` and `window_menu` provide explicit host-owned close
 and minimize integration; see [window.md](window.md). [NativeHost](host.md)
 explicitly composes application menus, settings callbacks, guarded close/quit
-and reopen policy. File dialogs remain host-owned. Runtime shutdown,
-persistence, confirmation presentation and the real
+and reopen policy. [PathChooser](paths.md) provides owned native file-dialog
+requests. Runtime shutdown, persistence, confirmation presentation and the real
 Pi-backed root remain injected host responsibilities. A quit cleanup callback
 is not a cancellable confirmation hook.
 
