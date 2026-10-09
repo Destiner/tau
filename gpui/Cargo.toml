@@ -3,11 +3,17 @@ name = "tau-gpui-prototype"
 version = "0.1.0"
 edition = "2024"
 publish = false
+default-run = "tau"
 
 [features]
 native-os-tests = []
 
 [dependencies]
+tau-core = { path = "../crates/tau-core" }
+tau-session = { path = "../crates/tau-session" }
+async-channel = "2"
+uuid = { version = "1", features = ["v4"] }
+tempfile = "3"
 gpui-kit = { version = "=0.7.0", default-features = false, features = ["test-support"] }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
@@ -61,6 +67,12 @@ required-features = ["native-os-tests"]
 [[test]]
 name = "native-host"
 path = "tests/native-os/host.rs"
+harness = false
+required-features = ["native-os-tests"]
+
+[[test]]
+name = "native-app"
+path = "tests/native-os/app.rs"
 harness = false
 required-features = ["native-os-tests"]
 
