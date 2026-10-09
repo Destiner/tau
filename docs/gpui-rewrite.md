@@ -1,172 +1,165 @@
 # GPUI rewrite: current status and delivery plan
 
-Updated 9 October 2026. This plan supersedes the historical prototype checklist.
-The requested delivery/decision window is 9–10 October: finish a usable native Tau
-or explicitly decide to revert. This is not a guaranteed delivery date.
+Updated 9 October 2026. This supersedes the historical prototype checklist.
+The delivery/decision window remains **9–10 October**: finish usable native Tau or
+make an explicit continue/revert decision. This is not a guaranteed delivery date.
 
-## Current boundary
+## Current boundary: first real native application implemented
 
-- The operational Vue/Tauri application and its Pi integration remain unchanged.
-- Native rendering and reusable controls are accepted within their reviewed scope.
-- Markdown, code, document previews and Mermaid are accepted; no known new rendering issue
-  currently justifies reopening those reviews.
-- The synthetic conversation demonstrates composition, not a real GPUI application.
-- `gpui/src/main.rs` still launches component/playground or capture scenes.
-  `gpui/src/lib.rs` exposes components and native adapters, not production application state.
-- `src-tauri/src/main.rs` and `src-tauri/src/lib.rs` remain the operational entrypoint
-  and assembly for Pi, storage, SSH, settings, shutdown and updates.
-- There is no claimed shipping GPUI bundle or completed runtime migration.
+`gpui/src/bin/tau.rs` now launches the production application in `gpui/src/app.rs`.
+`tau` is Cargo's default run target; the older `src/main.rs` playground remains a
+reference tool, not the application runtime. The real shell reuses accepted
+chrome, transcript, composer, selectors, dialogs and native host adapters. It owns
+workspace/session/settings state, retained editors and lifecycle requests; it does
+not use synthetic projects, timers or fixture transcripts.
 
-The next work is a **real GPUI production shell with application-owned state and UI
-composition**, reusing accepted components. Do not promote synthetic timers, fake projects,
-fixture messages or a synthetic protocol into the product architecture.
+Framework-independent process, storage, profile and SSH services were extracted
+into `tau-core` in `af98b6d`, preserving existing Tauri service compatibility.
+`tau-session` supplies real Pi JSONL RPC orchestration; the shell (`63cba9c`) routes effects
+through those shared services. Local and SSH backends are available, including
+existing remote-project configuration. **Real SSH acceptance and new remote import
+UI are not implemented/proven.** Pi still owns extensions and session files.
 
-## Native batch: committed and validated
+Implemented first-slice behavior includes local project import, existing/new
+sessions, model/effort selection, prompt/stream/activity/Stop and queue controls,
+extension input/select/confirm and custom output, theme Settings, owned folder
+selection, drafts, guarded close/quit, last-window survival and reopen. See
+[APP.md](../gpui/APP.md) for launch and profile safety instructions and
+[controller limits](../crates/tau-session/README.md) for exact protocol boundaries.
 
-Five independently buildable logical commits extend checkpoint `dd6be86`:
+**This is an operational native slice, not whole runtime parity or cutover.**
+Tauri remains the operational fallback. A standalone, locally ad-hoc-signed
+**Tau Native.app** preview now packages the actual GPUI executable (`4366e27`),
+with a separate bundle identity and verified metadata/linkage. It has not replaced
+Tauri or been certified for distribution. There is no Developer ID signed/notarized
+GPUI release or GPUI updater. See [packaging](../gpui/PACKAGING.md).
 
-| Boundary            | Implemented scope                                                              | Final checkpoint |
-| ------------------- | ------------------------------------------------------------------------------ | ---------------- |
-| Modal ownership     | Innermost focus containment, bounded Tab traversal and topmost Escape handling | `a94bc18`        |
-| Accessible editing  | Bounded accessible values and guarded SetValue                                 | `d9c3ee6`        |
-| Passive diagnostics | Minimal passive observation of the unresolved minimize reproduction            | `bbe7bce`        |
-| Native host         | Menus, guarded Close/Quit, Settings, New Session and reopen                    | `7bd44fa`        |
-| Owned path chooser  | Root/window-owned native selection and preserved Save URL                      | `27d96be`        |
+## Evidence and limits
 
-Accessible values are bounded to 64 KiB. SetValue is limited to plain inputs and textareas;
-password, readonly and IME/composition guards remain enforced. This is not authorization
-for broader accessibility expansion before delivery.
+- Core extraction: **57 unit + 2 integration tests passed**, one explicit canary
+  ignored. Existing Tauri compatibility tests and unsigned Tauri bundle passed;
+  that bundle is not GPUI packaging.
+- `tau-session` (`b58ddd9`): **23 tests passed** (2 unit, 14 contract, 7 race),
+  one opt-in installed-Pi canary ignored in the default run.
+- Native credential-free acceptance passed with installed **Pi 0.99.2** in an
+  isolated profile: command bootstrap, actual extension input/Enter/custom output,
+  session switching and drafts, Settings, close/reopen, busy-close cancellation,
+  restored dialog focus, and completion-gated quit/process cleanup.
+- Reopen now presents a fresh per-window surface only after remount. The regression
+  clicks actual measured controls and includes a negative control reproducing the
+  stale first-paint listener failure. Targeted application tests: **12 passed**;
+  application build and application-scoped strict Clippy passed.
+- Command-only custom output remains ephemeral: credential-free acceptance is
+  **not assistant streaming/durable-session proof**.
+- The first optional model run failed the unchanged **60-second** compound gate.
+  The test bug was identified: Pi `message_update` is delta-only, not
+  `message_update.message.role`. The corrected recorder reads
+  `assistantMessageEvent.text_delta`; acceptance still requires actual assistant
+  text, assistant end, idle, on-disk durability and registry persistence. Corrected
+  validation **passed**. It also passed subsequent reopen/switch, busy-close
+  cancellation and gated quit cleanup.
+  Earlier failed evidence remains; no deadline widening. This proves the small
+  local assistant slice, not SSH acceptance or full runtime parity.
+- Real model-issued tool/Stop acceptance passed (`6d947ff`): fixture tool
+  start/partial, measured native Stop click, Pi abort acknowledgement, aborted tool
+  end and settlement; partial output and unrelated draft retained. Built-in tools
+  and discovered extensions stayed disabled. Populated queues and interruption
+  during provider token streaming are not covered by this slice.
+- Hovering during asynchronous session loading exposed a separate hidden-row bug.
+  Membership now reconciles without discarding held order (`4eaf6ee`); old-code
+  negative controls fail and genuine pointer regressions pass.
+- GPUI library: **249 passed, 0 failed, 1 ignored**, plus **13 passed** editor
+  integration tests; all-target/all-feature strict Clippy and the actual `tau`
+  build passed. The broader Rust run passed its unit binaries but timed out in
+  the existing activity Metal runner; the full suite is not reported green.
+- Frontend: **894 tests**, lint, typecheck and build passed. GPUI TypeScript/lint
+  passed; its Bun suite had **97 passes / 1 browser-clock failure**. The unchanged
+  failing file subsequently passed all four tests. Earlier failure is retained.
 
-The host provides App/File/Edit/Window menus, guarded close and quit, Settings dispatch,
-Cmd-N through the application's New Session callback, last-window survival and reopen.
-It does not invent settings, sessions, confirmation state or runtime shutdown policy.
-The real root must own those callbacks, confirmation presentation and persistence.
+Native acceptance is own-process, renderer-measured evidence, not a full hardware,
+Dock/Spaces or repeated reliability campaign. Intermediate timing failures remain
+preserved; the final credential-free PASS does not erase them.
 
-`PathChooser` owns asynchronous delivery to the original root/window and rejects stale
-workflow results. It does not import projects, read/write files or authorize access.
-Native Save preserves the selected URL instead of guessing away filename extensions.
-Logical invalidation does not dismiss an OS panel; shell close/quit policy must account
-for that existing platform boundary.
+## Accepted native foundation
 
-### Evidence and residuals
+The five logical native commits after `dd6be86` remain valid within their reviewed
+scope: modal ownership `a94bc18`, accessible editing `d9c3ee6`, passive diagnostics
+`bbe7bce`, native host `7bd44fa`, and owned path chooser `27d96be`. Their historical
+validation is not a current application-suite count. Accessible values remain
+bounded to 64 KiB, with password/readonly/IME guards. Path selection remains
+root/window-owned; stale results are rejected, Save preserves the selected URL,
+and logical invalidation does not dismiss an OS panel.
 
-- Final working-tree Rust suite: **671 passed, 0 failed, 1 existing manual benchmark
-  ignored**; both Metal runners passed. All five curated commit boundaries built and
-  passed library tests without excluded comparison/synthetic application sources.
-- Final curated tree passed all-target/all-feature strict Clippy, formatting,
-  typecheck and lint. GPUI Bun tests: **98 passed**. Native GPUI and frontend builds,
-  plus the existing unsigned Tauri `Tau.app` build, passed.
-- All three opt-in native targets (`native-os`, `native-accessibility`, `native-host`)
-  passed against the final curated source. Own-process AppKit host checks include
-  Quit veto/approval, close, Settings and reopen/reveal. The corrected termination
-  hook is `applicationShouldTerminate:`, not `applicationWillTerminate:`.
-- Legacy minimize testing remains flaky: **5 timeouts in 200 runs**, alongside
-  **4 early Undo failures**. Neither is a clean full-OS acceptance result.
-- The passive reproduction still observes AppKit ignoring minimize in some cases.
-  Keep that unresolved; do not add speculative activation/focus repairs.
-- Own-process tests do not certify hardware shortcuts, Dock delivery, all Spaces/fullscreen
-  configurations, production persistence or real Pi shutdown.
-- Existing immutable visual-review snapshots predate the latest fixes. Preserve their
-  provenance; do not relabel them as evidence for current sources.
+Rendering, Markdown/code/document/Mermaid and reusable controls remain accepted;
+do not reopen rendering or expand accessibility diagnostics on the critical path.
+Legacy minimize evidence remains unresolved (5 timeouts/200 runs and 4 early Undo
+failures); no speculative activation/focus repair or relabelled visual snapshots.
 
-**Checkpoint complete.** The final native smoke run passed; it does not erase the
-preserved intermittent failures above. This batch supplies reusable native adapters,
-not a production GPUI shell or a Pi-backed application.
+## Remaining delivery gates, in priority order
 
-## Immediate next step: real shell, not another prototype
+### 1. Finish essential runtime and workflow parity
 
-Build the production GPUI entrypoint and real root/state ownership first. Compose the
-accepted sidebar/header/transcript/composer, selectors, overlays and native adapters.
-Keep component probes as tests/reference tools, not as the application runtime.
+- [x] Prove the small local assistant stream/end/idle/durable-file/registration
+      slice with the corrected predicate and unchanged deadline.
+- [x] Prove real model-issued tool execution and Stop through the native composer;
+      retain earlier failures and distinguish the remaining cancellation/queue cases.
+- [ ] Finish archive/restore/remove/rename and palette workflows; add new remote
+      import UI and real SSH smoke coverage using existing configuration contracts.
+- [ ] Complete file/media previews, multiline extension editing and applicable
+      extension presentation; preserve local/remote preview security.
+- [ ] Finish history/tree/branch/navigation and compaction parity, replacement
+      watching/materialization, recovery/reconnect and idle eviction. Preserve
+      drafts, optimistic prompts, reading position and workflow context.
+- [ ] Preserve per-session runtime/generation/request ownership and stale-result
+      fencing. Never auto-replay uncertain prompts or invent a parallel Pi runtime
+      or session format. Reuse repository-owned contracts and deterministic fakes.
+- [ ] Restore required admin reporting/diagnostics only behind `iddqd`, bounded,
+      content-free and best-effort; never log content, paths, credentials or raw errors.
 
-The user selected the real shell as the next task. These are its delivery gates,
-not a claim that runtime migration has already been implemented.
+### 2. Produce an actual installable GPUI application
 
-### Gate 1 — Real application shell
+- [x] Package the production `tau` entrypoint as a standalone native preview, not a
+      renamed playground or the existing Tauri bundle. Debug bundle, Info.plist,
+      architecture/linkage, ad-hoc signature and five packaging regressions passed.
+- [ ] Verify release-profile packaging and actual packaged local/SSH workflows.
+- [ ] Complete applicable signing, notarization, updater trust and release recovery
+      contracts before shipping. Do not advertise those as implemented today.
+- [ ] Finish relevant automated native/controller/backend checks and fix concrete
+      regressions; record final counts only after validation finishes.
 
-- [ ] Add a production GPUI entrypoint distinct from component and synthetic scene launchers.
-- [ ] Establish application-owned workspace/session/settings state and stable root entities.
-- [ ] Reuse accepted controls and rendering rather than duplicate editors or redesign surfaces.
-- [ ] Wire menus, New Session, Settings, reopen, confirmation and path selection to real owners.
-- [ ] Preserve editor/draft identity across overlays, session switches and cancelled close/quit.
-- [ ] Keep Tauri operational while this shell is incomplete; label incomplete flows honestly.
+### 3. Local/SSH data-safe acceptance and GO/NO-GO
 
-A composed empty shell is progress, not delivery. The same-day next-work checkpoint must
-include the first **real Pi vertical slice**, not merely an attractive window.
+- [ ] Verify existing projects, sessions, drafts/settings and restart recovery with
+      isolated data first, without destructive conversion or concurrent profile writers.
+- [ ] In the packaged app, accept local and SSH send/stream/tools/Stop, session
+      switching/drafts, restart, close/cancel/quit/reopen and owned async cleanup.
+- [ ] Confirm captured lifecycle identities, essential persistence and runtime
+      shutdown before exit approval; preserve work on cancellation or failure.
+- [ ] Make an explicit ship/continue/revert decision in the 9–10 October window,
+      with concrete blockers and safe rollback. Existing Tau remains the fallback.
 
-### Gate 2 — First real Pi vertical slice, then orchestration parity
+**Next checkpoint: remaining workflow/recovery parity and packaged local/SSH
+acceptance**, then release/cutover—not another prototype visual shell.
 
-- [ ] Reuse Rust process, storage and SSH services; strip Tauri-specific handle/event/command
-      coupling behind framework-independent boundaries only where migration requires it.
-- [ ] Port remaining TypeScript orchestration from `src/composables/state.ts`,
-      `src/composables/useTau/` and `src/lib/pi/` into application-owned Rust state/services.
-- [ ] Demonstrate a real project/session, prompt submission and live Pi streaming in the shell,
-      with tool activity and Stop working end-to-end.
-- [ ] Preserve extension requests, queues, model/effort selection and failure/recovery behavior.
-- [ ] Retain per-session runtime isolation and generation/request identity checks: stale replies,
-      replaced runtimes and cross-session events cannot mutate another session's state.
-- [ ] Preserve drafts, optimistic prompts, reading position and workflow context during switching,
-      reconnect, failure and idle eviction.
-- [ ] Adapt deterministic Pi scenarios for regression coverage; keep the installed-Pi contract
-      check an explicit canary rather than a default test dependency.
+## Scope and repository safety
 
-Pi continues to own extension execution and session files. Do not introduce a parallel
-extension runtime, session format or synthetic protocol as a migration shortcut.
+No general prototype polish, accessibility expansion, catalogue consolidation or
+benchmark infrastructure on the critical path. Use focused regressions and existing
+checks, not a new full-OS manual matrix. Report missed gates promptly rather than
+implying that UI readiness guarantees runtime or release readiness.
 
-### Gate 3 — Persistence and safe lifecycle
-
-- [ ] Load existing projects, sessions, drafts and settings without destructive conversion.
-- [ ] Persist real changes and verify restart recovery against isolated test data first.
-- [ ] Bind close/quit confirmation to captured request identities and complete essential
-      persistence/runtime cleanup before approval; cancellation must preserve current work.
-- [ ] Keep late picker, runtime and asynchronous results bound to their original owners.
-- [ ] Preserve local/remote preview security and storage/profile boundaries.
-- [ ] Retain bounded, content-free, best-effort diagnostics behind the existing admin switch;
-      never record prompts, paths, drafts, credentials, transcripts or raw errors.
-
-### Gate 4 — Installable native app and cutover decision
-
-- [ ] Produce an actual installable native application, not a prototype launcher renamed Tau.
-- [ ] Build and run the existing relevant automated native checks and orchestration regressions.
-- [ ] Smoke-test launch, existing-data loading, real Pi send/stream/tools/Stop, session switching,
-      draft retention, restart, close/quit and reopen in the packaged app.
-- [ ] Perform basic targeted manual native checks only where needed; do not invent a massive
-      full-OS manual matrix as another prerequisite to moving forward.
-- [ ] Satisfy applicable release signing, updater trust and packaging contracts before shipping.
-- [ ] Make an explicit ship/continue/revert decision with concrete blockers and a safe rollback.
-
-**Next checkpoint:** real GPUI shell, followed by the first real Pi vertical slice.
-Do not treat another synthetic composition as satisfying either gate.
-
-## Timebox and scope discipline
-
-No more general prototype polish, accessibility expansion, catalogue consolidation or
-benchmark infrastructure on the critical path. Fix concrete product regressions with focused
-regressions; accepted rendering is not an invitation to restart visual exploration.
-Use existing automated checks and focused evidence rather than growing comparison tooling.
-
-If the real Pi slice or installable application cannot reach the required gates in the
-requested delivery/decision window, report that promptly and choose explicitly whether to
-continue or revert. Do not imply that UI readiness guarantees runtime or release readiness.
-
-Durable code and necessary tests normally belong in logical commits; migration/review tools
-and catalogue/comparison infrastructure remain local unless separately authorized.
-The user explicitly authorized **this plan/status document** as an exception,
-kept in a separate documentation commit.
-
-A broad rewrite rollback requires an explicit decision. Preserve work refs, unrelated dirty
-files, local data and backups; never use a broad reset/revert or destructive data migration
-as an automatic cleanup step. Existing operational Tau remains the fallback until cutover.
+Durable code/tests normally belong in logical commits. This plan/status document
+has a separately authorized documentation-commit exception; `gpui/APP.md` is the
+durable host usage document. Keep the plan update in a separate documentation commit.
+Preserve unrelated work, refs, data and backups. A broad rewrite rollback requires
+an explicit decision; never automatically reset/revert or destructively migrate data.
 
 ## Maintained contracts
 
-- [Quality](quality.md): product behavior and regression requirements.
-- [Pi integration](pi.md): extension/session ownership and runtime lifetime.
-- [Development storage](development-storage.md): isolated profiles and protected data.
-- [Releases](releases.md): packaging, signing, updater trust and recovery.
-- [CI/testing](ci-testing.md) and [reproduction](reproduction.md): existing validation paths.
-- [Observability](observability.md): admin gating and diagnostic privacy limits.
-- [Native host contract](../gpui/src/native/host.md): callbacks, lifecycle and evidence boundaries.
-- [Native path contract](../gpui/src/native/paths.md): chooser ownership and platform limitations.
-- [Native prototype README](../gpui/README.md): implementation entrypoints and scoped historical
-  evidence; its older next-step wording does not supersede this plan.
+- [Quality](quality.md), [Pi integration](pi.md) and [reproduction](reproduction.md).
+- [Development storage](development-storage.md) and [CI/testing](ci-testing.md).
+- [Releases](releases.md) and [observability](observability.md).
+- [Native host](../gpui/src/native/host.md) and [path chooser](../gpui/src/native/paths.md).
+- [Native application](../gpui/APP.md) and [controller limits](../crates/tau-session/README.md).
+- [Prototype README](../gpui/README.md): historical scoped evidence; older next-step
+  wording does not supersede this plan.
