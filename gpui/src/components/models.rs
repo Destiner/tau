@@ -273,7 +273,11 @@ impl ModelSelector {
             gpui_kit::KeyBinding::new("down", NextModel, Some("NativeModelsSearch > Input")),
             gpui_kit::KeyBinding::new("up", PreviousModel, Some("NativeModelsSearch > Input")),
         ]);
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
+        let search = cx.new(|cx| {
+            InputState::new(window, cx)
+                .accessibility_label("Search Models")
+                .placeholder("Search")
+        });
         search.update(cx, |s, _| {
             s.set_protect_ime_keys(true);
             s.set_editor_style(support::input_style(dark));

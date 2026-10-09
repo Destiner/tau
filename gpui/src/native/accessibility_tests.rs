@@ -107,7 +107,10 @@ fn rendered_root_labels_follow_actual_composer_action_without_hover() {
         ] {
             assert_eq!(labeled(&tree, label).role(), accesskit::Role::Button);
         }
-        assert_eq!(labeled(&tree, "Message").role(), accesskit::Role::TextInput);
+        assert_eq!(
+            labeled(&tree, "Message").role(),
+            accesskit::Role::MultilineTextInput
+        );
         for other in ["Send", "Queue", "Stop"] {
             if other != action {
                 assert!(

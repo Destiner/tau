@@ -54,10 +54,19 @@ not the platform's candidate-window implementation.
 Accessibility regressions activate the actual platform callback and inspect
 rendered AccessKit updates. They verify control names, changing Send/Queue/Stop
 labels, disabled states matching actual control editability/activation, and
-semantics surviving focus-trap wrappers. Disabled metadata does not itself
-block events; the owning control remains responsible for interaction policy.
-These are not full editable text/value/selection projection or modal
-background-isolation guarantees.
+semantics surviving focus-trap wrappers. Tau fields opt into editor-owned names,
+single-line/multiline/password roles and read-only status. Focus targets the
+existing editor handle, checks live disabled state, and cannot leave the
+currently active Base focus trap. Wrappers suppress duplicate textbox roles.
+Disabled/read-only metadata does not itself block events; the owning editor
+remains responsible for interaction policy.
+
+Tests cover Focus within an ordinary dialog, rejecting background-editor Focus
+until Escape dismisses it, and preserving readonly/disabled editing guards.
+They do not establish nested-trap ordering, rejection of all background actions,
+or full modal tree isolation. Text/value/selection projection remains a separate
+gap; these metadata and focus checks do not certify reading or editing with
+VoiceOver.
 
 The default tests do not establish OS behavior. The following opt-in test opens
 and closes its own synthetic window on an unlocked macOS desktop:

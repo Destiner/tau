@@ -88,8 +88,11 @@ impl Palette {
             gpui_kit::KeyBinding::new("down", NextRow, Some("NativePaletteSearch > Input")),
             gpui_kit::KeyBinding::new("up", PreviousRow, Some("NativePaletteSearch > Input")),
         ]);
-        let search =
-            cx.new(|cx| InputState::new(window, cx).placeholder(pages[0].placeholder.clone()));
+        let search = cx.new(|cx| {
+            InputState::new(window, cx)
+                .accessibility_label("Search")
+                .placeholder(pages[0].placeholder.clone())
+        });
         search.update(cx, |s, _| {
             s.set_protect_ime_keys(true);
             s.set_editor_paddings(gpui_kit::Edges::all(px(1.)));

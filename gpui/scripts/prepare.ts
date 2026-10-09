@@ -45,6 +45,7 @@ const crates = [
       'ime-composition.patch',
       'focus-trap-accessibility.patch',
       'disabled-control-accessibility.patch',
+      'input-editor-accessibility.patch',
     ],
   },
   {
@@ -59,6 +60,7 @@ const crates = [
       'window-close-request.patch',
       'accessibility-test-platform.patch',
       'disabled-control-accessibility-core.patch',
+      'input-editor-accessibility-core.patch',
     ],
   },
   {

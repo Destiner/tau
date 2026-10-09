@@ -82,7 +82,11 @@ impl NativeDialog {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder(props.placeholder.clone()));
+        let input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .accessibility_label(props.title.clone())
+                .placeholder(props.placeholder.clone())
+        });
         input.update(cx, |state, _| {
             state.set_protect_ime_keys(true);
             state.set_editor_style(support::input_style(dark));
@@ -306,6 +310,7 @@ impl NativeDialog {
                     div().p(px(12.)).child(
                         div().id("input").test_support().w_full().child(
                             InputBase::new("field")
+                                .role(None)
                                 .w_full()
                                 .h(px(28.))
                                 .rounded(px(4.))
@@ -476,6 +481,7 @@ impl NativeDialog {
             box_ = box_.child(
                 div().id("input").test_support().w_full().child(
                     InputBase::new("field")
+                        .role(None)
                         .w_full()
                         .h(px(28.))
                         .border_1()
@@ -865,6 +871,86 @@ mod tests {
             f.assert_no_clickthrough();
         }
     }
+    #[test]
+    fn ordinary_dialog_editor_accessibility_focus_and_readonly_guard() {
+        use gpui_kit::accesskit::{Action, ActionRequest, Role, TreeId};
+        let mut app = gpui_kit::TestApp::new();
+        app.update(gpui_kit::init);
+        let mut window =
+            app.open_window(|w, cx| NativeDialog::new(props(DialogKind::Ssh), false, w, cx));
+        window.activate_accessibility();
+        for readonly in [false, true, false] {
+            window.update(|s, w, cx| {
+                s.input
+                    .update(cx, |s, cx| s.set_value("host sentinel", w, cx));
+                s.set_readonly(readonly, cx);
+            });
+            window.draw();
+            let tree = window.accessibility_tree().unwrap();
+            let fields: Vec<_> = tree
+                .nodes
+                .iter()
+                .filter(|(_, n)| n.role() == Role::TextInput)
+                .collect();
+            assert_eq!(fields.len(), 1);
+            let (id, n) = fields[0];
+            assert_eq!(n.label(), Some("Title"));
+            assert_eq!(n.is_read_only(), readonly);
+            assert!(n.supports_action(Action::Focus));
+            let id = *id;
+            let bounds = n.bounds().unwrap();
+            let dialog_id = tree
+                .nodes
+                .iter()
+                .find(|(_, n)| n.role() == Role::Dialog)
+                .unwrap()
+                .0;
+            let at = gpui_kit::point(
+                px(((bounds.x0 + bounds.x1) / 2.) as f32),
+                px(((bounds.y0 + bounds.y1) / 2.) as f32),
+            );
+            // Genuine pointer interaction first; then move away through the platform action.
+            window.simulate_click(at, gpui_kit::MouseButton::Left);
+            window.dispatch_accessibility_action(ActionRequest {
+                action: Action::Focus,
+                target_tree: TreeId::ROOT,
+                target_node: dialog_id,
+                data: None,
+            });
+            window.update(|s, w, cx| {
+                assert!(!s.input.read(cx).focus_handle(cx).is_focused(w));
+                assert!(gpui_kit::base::active_focus_trap(w, cx).is_some());
+            });
+            window.dispatch_accessibility_action(ActionRequest {
+                action: Action::Focus,
+                target_tree: TreeId::ROOT,
+                target_node: id,
+                data: None,
+            });
+            window.update(|s, w, cx| assert!(s.input.read(cx).focus_handle(cx).is_focused(w)));
+            window.draw();
+            assert_eq!(window.accessibility_tree().unwrap().focus, id);
+            window.simulate_input("X");
+            window.read(|s, cx| {
+                let value = s.input.read(cx).value();
+                if readonly {
+                    assert_eq!(value.as_ref(), "host sentinel");
+                } else {
+                    assert_ne!(value.as_ref(), "host sentinel");
+                    assert!(value.contains('X'));
+                }
+            });
+            if readonly {
+                window.simulate_keystroke("right");
+                window.read(|s, cx| assert!(s.input.read(cx).selected_range().start > 0));
+            }
+            window.simulate_keystroke("backspace");
+            window.read(|s, cx| assert_eq!(s.input.read(cx).value().as_ref(), "host sentinel"));
+        }
+        drop(window);
+        app.update(|cx| cx.shutdown());
+    }
+
     #[test]
     fn extension_select_exposes_value_without_ssh_busy_state() {
         let mut app = gpui_kit::TestApp::new();

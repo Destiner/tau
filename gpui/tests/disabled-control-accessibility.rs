@@ -188,9 +188,10 @@ fn composer_wrapper_disabled_matches_actual_editor_status() {
         window.draw();
         let tree = window.accessibility_tree().unwrap();
         let (_, node) = named(&tree, "Message");
-        assert_eq!(node.role(), Role::TextInput);
+        assert_eq!(node.role(), Role::MultilineTextInput);
         assert_eq!(node.is_disabled(), disabled);
-        assert!(!node.is_read_only());
+        assert_eq!(node.is_read_only(), disabled);
+        assert_eq!(node.supports_action(Action::Focus), !disabled);
         assert!(!node.supports_action(Action::Click));
         window.read(|s, cx| {
             assert_eq!(s.is_disabled(), disabled);

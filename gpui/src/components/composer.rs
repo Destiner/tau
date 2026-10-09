@@ -565,6 +565,7 @@ impl Composer {
             scrollbar.with_styles(ScrollbarStyles::default().thumb(|thumb| thumb.radius(px(4.))));
         let editor = cx.new(|cx| {
             TextareaState::new(window, cx)
+                .accessibility_label("Message")
                 .submit_on_enter(true)
                 .placeholder("Message π")
                 .auto_grow(4, 10)
@@ -597,7 +598,11 @@ impl Composer {
             gpui_kit::KeyBinding::new("down", NextChoice, Some("NativeComposerSearch > Input")),
             gpui_kit::KeyBinding::new("up", PreviousChoice, Some("NativeComposerSearch > Input")),
         ]);
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
+        let search = cx.new(|cx| {
+            InputState::new(window, cx)
+                .accessibility_label("Search Models")
+                .placeholder("Search")
+        });
         search.update(cx, |s, _| {
             s.set_editor_style(support::input_style(dark));
             s.set_protect_ime_keys(true);
@@ -1005,8 +1010,8 @@ impl Render for Composer {
             .child(send);
         let editor_bounds = self.editor_bounds.clone();
         let input = InputBase::new("editor")
+            .role(None)
             .disabled(self.disabled)
-            .accessibility_label("Message")
             // Base propagates submit actions; do not let fallback text delivery
             // insert a newline before the deferred PressEnter subscriber sends.
             .on_action(|_: &gpui_kit::base::input::Enter, _, cx| cx.stop_propagation())

@@ -2,7 +2,7 @@
 
 ## Prepared dependency set
 
-`gpui/scripts/prepare.ts` registers **23 Base patches** and **six Core patches**,
+`gpui/scripts/prepare.ts` registers **24 Base patches** and **seven Core patches**,
 including the native interaction and accessibility fixes below; **two merman-core patches** (parser manifest and ER
 semantic default direction); **one merman-analysis manifest patch**; **four
 merman-render family patches** (class/ER, state/sequence, flowchart and polish);
@@ -69,6 +69,12 @@ Extraction outside the checkout is intentional: `git apply` run in a nested depe
   to AccessKit. The metadata builder does not change interaction policy; inputs
   still require their owning controller to disable the actual editor. Read-only
   state is not inferred from appearance or an unrelated wrapper.
+- `input-editor-accessibility-core.patch` and `input-editor-accessibility.patch`
+  add opt-in editor-owned names, single/multiline/password roles, read-only and
+  disabled state, and Focus through the existing editor handle. Focus checks
+  live disabled state and the currently active Base focus trap. Caller wrappers
+  explicitly suppress duplicate textbox roles. Generic input callers retain
+  their defaults. No text/value/selection projection is added.
 
 These patches are registered per crate with the ordinary preparation path. See
 `src/native/` for production host contracts and lasting native integration tests.

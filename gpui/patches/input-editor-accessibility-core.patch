@@ -1,0 +1,33 @@
+--- a/src/elements/div.rs
++++ b/src/elements/div.rs
+@@ -1349,6 +1349,12 @@
+         self
+     }
+ 
++    /// Set read-only accessibility metadata; editing policy remains with the control.
++    fn aria_readonly(mut self, readonly: bool) -> Self {
++        self.interactivity().aria.readonly = readonly;
++        self
++    }
++
+     /// Set the accessible description for this element. Unlike the label (which
+     /// names the element), the description provides supplementary information
+     /// that assistive technology announces after the name, role, and value -
+@@ -2120,6 +2126,7 @@
+ #[derive(Default)]
+ pub(crate) struct AriaProperties {
+     pub(crate) disabled: bool,
++    pub(crate) readonly: bool,
+     pub(crate) author_id: Option<SharedString>,
+     pub(crate) label: Option<SharedString>,
+     pub(crate) description: Option<SharedString>,
+@@ -3554,6 +3561,9 @@
+         if self.aria.disabled {
+             node.set_disabled();
+         }
++        if self.aria.readonly {
++            node.set_read_only();
++        }
+         if let Some(id) = &self.aria.author_id {
+             node.set_author_id(id.to_string());
+         }
