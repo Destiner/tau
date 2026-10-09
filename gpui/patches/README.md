@@ -2,7 +2,7 @@
 
 ## Prepared dependency set
 
-`gpui/scripts/prepare.ts` registers **22 Base patches** and **five Core patches**,
+`gpui/scripts/prepare.ts` registers **23 Base patches** and **six Core patches**,
 including the native interaction and accessibility fixes below; **two merman-core patches** (parser manifest and ER
 semantic default direction); **one merman-analysis manifest patch**; **four
 merman-render family patches** (class/ER, state/sequence, flowchart and polish);
@@ -64,6 +64,11 @@ Extraction outside the checkout is intentional: `git apply` run in a nested depe
   and synthetic children. Rendered-tree regressions also exercise accessible
   Focus and Click. It does not establish modal background isolation or full
   editable-text accessibility.
+- `disabled-control-accessibility-core.patch` and
+  `disabled-control-accessibility.patch` expose existing disabled control state
+  to AccessKit. The metadata builder does not change interaction policy; inputs
+  still require their owning controller to disable the actual editor. Read-only
+  state is not inferred from appearance or an unrelated wrapper.
 
 These patches are registered per crate with the ordinary preparation path. See
 `src/native/` for production host contracts and lasting native integration tests.

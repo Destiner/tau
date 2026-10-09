@@ -1,0 +1,34 @@
+--- a/src/elements/div.rs
++++ b/src/elements/div.rs
+@@ -1342,6 +1342,13 @@
+         self
+     }
+ 
++    /// Set the disabled state exposed to accessibility clients.
++    /// This is metadata only; the control still owns its interaction policy.
++    fn aria_disabled(mut self, disabled: bool) -> Self {
++        self.interactivity().aria.disabled = disabled;
++        self
++    }
++
+     /// Set the accessible description for this element. Unlike the label (which
+     /// names the element), the description provides supplementary information
+     /// that assistive technology announces after the name, role, and value -
+@@ -2112,6 +2119,7 @@
+ 
+ #[derive(Default)]
+ pub(crate) struct AriaProperties {
++    pub(crate) disabled: bool,
+     pub(crate) author_id: Option<SharedString>,
+     pub(crate) label: Option<SharedString>,
+     pub(crate) description: Option<SharedString>,
+@@ -3543,6 +3551,9 @@
+     }
+ 
+     pub(crate) fn write_a11y_info(&self, node: &mut accesskit::Node) {
++        if self.aria.disabled {
++            node.set_disabled();
++        }
+         if let Some(id) = &self.aria.author_id {
+             node.set_author_id(id.to_string());
+         }

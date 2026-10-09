@@ -10,7 +10,7 @@ impl Global for Installed {}
 ///
 /// Closing the last window leaves the application running. This installs no Quit
 /// action: application termination needs a separate, cancellable host policy.
-/// Requires the `window-close-request.patch` and `native-menu-availability.patch` Core APIs.
+/// Requires the `window-close-request.patch` and `native-menu-core.patch` Core APIs.
 pub fn install_window_commands(cx: &mut App) {
     if cx.has_global::<Installed>() {
         return;

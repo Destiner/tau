@@ -44,6 +44,7 @@ const crates = [
       'native-menu-base.patch',
       'ime-composition.patch',
       'focus-trap-accessibility.patch',
+      'disabled-control-accessibility.patch',
     ],
   },
   {
@@ -57,6 +58,7 @@ const crates = [
       'native-menu-core.patch',
       'window-close-request.patch',
       'accessibility-test-platform.patch',
+      'disabled-control-accessibility-core.patch',
     ],
   },
   {

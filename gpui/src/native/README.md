@@ -53,8 +53,11 @@ not the platform's candidate-window implementation.
 
 Accessibility regressions activate the actual platform callback and inspect
 rendered AccessKit updates. They verify control names, changing Send/Queue/Stop
-labels and semantics surviving focus-trap wrappers. These are not full editable
-text/value/selection projection or modal background-isolation guarantees.
+labels, disabled states matching actual control editability/activation, and
+semantics surviving focus-trap wrappers. Disabled metadata does not itself
+block events; the owning control remains responsible for interaction policy.
+These are not full editable text/value/selection projection or modal
+background-isolation guarantees.
 
 These tests do not establish AppKit selector behavior, native displayed enabled
 states, system-clipboard exchange, IME candidate/dead-key hardware behavior, or

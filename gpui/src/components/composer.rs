@@ -1005,6 +1005,7 @@ impl Render for Composer {
             .child(send);
         let editor_bounds = self.editor_bounds.clone();
         let input = InputBase::new("editor")
+            .disabled(self.disabled)
             .accessibility_label("Message")
             // Base propagates submit actions; do not let fallback text delivery
             // insert a newline before the deferred PressEnter subscriber sends.
