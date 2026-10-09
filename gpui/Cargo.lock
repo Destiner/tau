@@ -7193,6 +7193,7 @@ dependencies = [
  "gpui-kit",
  "gpui-pre-macos",
  "merman",
+ "objc",
  "resvg 0.47.0",
  "roxmltree 0.21.1",
  "rustybuzz",
@@ -7200,6 +7201,7 @@ dependencies = [
  "serde-saphyr",
  "serde_json",
  "syntect",
+ "tempfile",
  "two-face",
 ]
 

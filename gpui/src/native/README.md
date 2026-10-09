@@ -22,8 +22,8 @@ projection fails closed when Copy is activated.
 
 Paste validation checks editability only: it never reads the clipboard or asks
 for permission. Actual Paste retains the existing clipboard and stale-target
-policy. Native displayed key equivalents and AppKit menu validation still need
-real-window verification.
+policy. The opt-in AppKit test below checks native selectors, key equivalents,
+selection/history enabled states, and command delivery without clipboard access.
 
 `install_window_commands` and `window_menu` provide explicit host-owned close
 and minimize integration; see [window.md](window.md). Application quit, reopening,
@@ -59,7 +59,23 @@ block events; the owning control remains responsible for interaction policy.
 These are not full editable text/value/selection projection or modal
 background-isolation guarantees.
 
-These tests do not establish AppKit selector behavior, native displayed enabled
-states, system-clipboard exchange, IME candidate/dead-key hardware behavior, or
-VoiceOver editing. Those require separate real-window verification; roles and
-headless input alone are not accessibility acceptance.
+The default tests do not establish OS behavior. The following opt-in test opens
+and closes its own synthetic window on an unlocked macOS desktop:
+
+```sh
+cargo test --locked --manifest-path gpui/Cargo.toml \
+  --features native-os-tests --test native-os
+```
+
+It inspects real `NSMenuItem` selectors, key equivalents and enabled states;
+activates Select All, Undo and Redo through AppKit; and verifies guarded close
+requests, native `performClose:`, and actual minimization. It uses a temporary
+copy of its executable to avoid HIToolbox scanning Cargo's large build directory.
+An unavailable active/key window fails explicitly rather than silently skipping.
+Only the test's own window is changed. Copy, Cut and Paste are validated but never
+invoked; the system clipboard is neither read nor overwritten.
+
+System-clipboard exchange, physical keyboard/menu tracking, IME candidate/dead-key
+hardware behavior, and VoiceOver editing remain separate verification gates.
+Roles, synthetic input and direct AppKit delegate calls are not acceptance of
+those behaviors.
