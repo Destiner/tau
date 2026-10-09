@@ -1,4 +1,5 @@
 pub mod activity;
+pub mod chrome;
 pub mod composer;
 pub mod diagram;
 pub mod diagram_view;
@@ -12,6 +13,7 @@ pub mod palette;
 pub mod queue;
 pub mod support;
 pub mod syntax;
+pub mod transcript;
 
 use std::borrow::Cow;
 

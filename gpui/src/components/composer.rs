@@ -556,6 +556,67 @@ impl Composer {
     }
 }
 impl Composer {
+    /// Move window-bound routes without replacing editing state or undo history.
+    pub fn reattach_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close(cx);
+        self.hint_task = None;
+        self.hint_hovered = false;
+        self.hint_visible = false;
+        self.context_menu.update(cx, |menu, cx| menu.dismiss(cx));
+        self.menu_target = None;
+        self._events = cx.subscribe_in(
+            &self.editor,
+            window,
+            |this, _, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::PressEnter { shift: false, .. }) {
+                    this.send(window, cx);
+                }
+                cx.notify();
+            },
+        );
+        self._search_events = cx.subscribe(&self.search, |this, input, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.query = input.read(cx).value().to_string();
+                let visible = this.visible_model_indices();
+                if !visible.contains(&this.cursor) {
+                    this.cursor = visible.first().copied().unwrap_or(0);
+                }
+                cx.notify();
+            }
+        });
+        self._menu_events = cx.subscribe_in(
+            &self.context_menu,
+            window,
+            |this, _, event: &MenuEvent, window, cx| {
+                this.context_menu_event(event, window, cx);
+            },
+        );
+    }
+
+    fn context_menu_event(
+        &mut self,
+        event: &MenuEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let target = self.menu_target.take();
+        if let MenuEvent::Selected(id) = event {
+            let editor = self.editor.read(cx);
+            if target != Some((editor.value().to_string(), editor.selected_range())) {
+                return;
+            }
+            let focus = editor.focus_handle(cx);
+            match id.as_str() {
+                "cut" if editor.is_editable() && !editor.selected_range().is_empty() => {
+                    focus.dispatch_action(&Cut, window, cx)
+                }
+                "copy" if editor.is_copyable() => focus.dispatch_action(&Copy, window, cx),
+                "paste" if editor.is_editable() => focus.dispatch_action(&Paste, window, cx),
+                _ => {}
+            }
+        }
+    }
+
     pub fn new(options: ComposerOptions, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let dark = options.dark;
         let disabled = options.disabled;
@@ -664,25 +725,7 @@ impl Composer {
             &context_menu,
             window,
             |this, _, event: &MenuEvent, window, cx| {
-                let target = this.menu_target.take();
-                if let MenuEvent::Selected(id) = event {
-                    let editor = this.editor.read(cx);
-                    // A menu belongs to the selection that opened it, not a replaced draft.
-                    if target != Some((editor.value().to_string(), editor.selected_range())) {
-                        return;
-                    }
-                    let focus = editor.focus_handle(cx);
-                    match id.as_str() {
-                        "cut" if editor.is_editable() && !editor.selected_range().is_empty() => {
-                            focus.dispatch_action(&Cut, window, cx)
-                        }
-                        "copy" if editor.is_copyable() => focus.dispatch_action(&Copy, window, cx),
-                        "paste" if editor.is_editable() => {
-                            focus.dispatch_action(&Paste, window, cx)
-                        }
-                        _ => {}
-                    }
-                }
+                this.context_menu_event(event, window, cx);
             },
         );
         let model = options

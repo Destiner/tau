@@ -40,6 +40,7 @@ pub struct NativeDialog {
     props: DialogProps,
     dark: bool,
     embedded: bool,
+    keyboard_submission: bool,
     open: bool,
     busy: bool,
     readonly: bool,
@@ -94,7 +95,9 @@ impl NativeDialog {
         let _input_events =
             cx.subscribe_in(&input, window, |dialog, _, event: &InputEvent, _, cx| {
                 if matches!(event, InputEvent::PressEnter { .. })
-                    && dialog.props.kind == DialogKind::Ssh
+                    && (dialog.props.kind == DialogKind::Ssh
+                        || (dialog.props.kind == DialogKind::ExtensionInput
+                            && dialog.keyboard_submission))
                     && !dialog.busy
                     && !dialog.readonly
                 {
@@ -104,7 +107,10 @@ impl NativeDialog {
         let action_focus = cx.focus_handle();
         if matches!(props.kind, DialogKind::Ssh | DialogKind::ExtensionInput) {
             input.read(cx).focus_handle(cx).focus(window, cx);
-        } else if matches!(props.kind, DialogKind::Feedback | DialogKind::Quit) {
+        } else if matches!(
+            props.kind,
+            DialogKind::Feedback | DialogKind::Quit | DialogKind::ExtensionSelect
+        ) {
             action_focus.focus(window, cx);
         }
         Self {
@@ -112,6 +118,7 @@ impl NativeDialog {
             props,
             dark,
             embedded: false,
+            keyboard_submission: false,
             open: true,
             busy: false,
             readonly: false,
@@ -128,8 +135,26 @@ impl NativeDialog {
         self.embedded = true;
         self
     }
+    /// Opt into inline keyboard routing and pending-response duplicate protection.
+    pub fn keyboard_submission(mut self) -> Self {
+        self.keyboard_submission = true;
+        self
+    }
     pub fn editor(&self) -> Entity<InputState> {
         self.input.clone()
+    }
+    pub fn focus(&self, window: &mut Window, cx: &mut gpui_kit::App) {
+        if !self.open || self.busy {
+            return;
+        }
+        if matches!(
+            self.props.kind,
+            DialogKind::Ssh | DialogKind::ExtensionInput
+        ) {
+            self.input.read(cx).focus_handle(cx).focus(window, cx);
+        } else {
+            self.action_focus.focus(window, cx);
+        }
     }
     pub fn is_open(&self) -> bool {
         self.open
@@ -157,7 +182,8 @@ impl NativeDialog {
         cx.notify();
     }
     fn sync_input_readonly(&mut self, cx: &mut Context<Self>) {
-        let readonly = self.readonly || (self.props.kind == DialogKind::Ssh && self.busy);
+        let readonly = self.readonly
+            || ((self.props.kind == DialogKind::Ssh || self.keyboard_submission) && self.busy);
         self.input
             .update(cx, |input, cx| input.set_readonly(readonly, cx));
     }
@@ -169,7 +195,7 @@ impl NativeDialog {
         }
     }
     pub fn submit(&mut self, cx: &mut Context<Self>) {
-        if self.busy || self.readonly {
+        if !self.open || self.busy || self.readonly {
             return;
         }
         let value = if self.props.kind == DialogKind::ExtensionSelect {
@@ -178,7 +204,7 @@ impl NativeDialog {
             self.input.read(cx).value().to_string()
         };
         cx.emit(DialogEvent::Submitted(value));
-        if self.props.kind == DialogKind::Ssh {
+        if self.props.kind == DialogKind::Ssh || self.keyboard_submission {
             self.set_busy(true, cx);
         }
         cx.notify();
@@ -402,6 +428,38 @@ impl NativeDialog {
         let mut box_ = div()
             .id("extension")
             .test_support()
+            .track_focus(&self.action_focus)
+            .on_key_down(cx.listener(|s, event: &gpui_kit::KeyDownEvent, _, cx| {
+                if !s.keyboard_submission || s.busy {
+                    return;
+                }
+                match event.keystroke.key.as_str() {
+                    "escape" => {
+                        s.cancel(cx);
+                        cx.stop_propagation();
+                    }
+                    "up" | "down"
+                        if s.props.kind == DialogKind::ExtensionSelect
+                            && !s.props.options.is_empty() =>
+                    {
+                        s.cursor = if event.keystroke.key == "up" {
+                            s.cursor.saturating_sub(1)
+                        } else {
+                            (s.cursor + 1).min(s.props.options.len() - 1)
+                        };
+                        cx.notify();
+                        cx.stop_propagation();
+                    }
+                    "enter" if s.props.kind == DialogKind::ExtensionSelect => {
+                        if let Some(option) = s.props.options.get(s.cursor) {
+                            s.selected = option.label.clone();
+                            s.submit(cx);
+                        }
+                        cx.stop_propagation();
+                    }
+                    _ => {}
+                }
+            }))
             .w_full()
             .px(px(10.))
             .py(px(9.))
@@ -592,6 +650,61 @@ mod tests {
                 },
             ],
         }
+    }
+    #[test]
+    fn inline_input_enter_submits_once_and_escape_cancels_after_retry() {
+        let mut app = gpui_kit::TestApp::new();
+        app.update(gpui_kit::init);
+        let mut window = app.open_window(|w, cx| {
+            NativeDialog::new(props(DialogKind::ExtensionInput), false, w, cx)
+                .embedded()
+                .keyboard_submission()
+        });
+        let received = Rc::new(RefCell::new(Vec::new()));
+        let events = received.clone();
+        let _subscription = window.update(|dialog, w, cx| {
+            dialog
+                .input
+                .update(cx, |input, cx| input.set_value("reply café", w, cx));
+            cx.subscribe(&cx.entity(), move |_, _, event: &DialogEvent, _| {
+                events.borrow_mut().push(event.clone())
+            })
+        });
+        window.draw();
+        window.simulate_keystroke("enter");
+        window.simulate_keystroke("enter");
+        assert_eq!(
+            *received.borrow(),
+            vec![DialogEvent::Submitted("reply café".into())]
+        );
+        window.update(|dialog, _, cx| dialog.set_busy(false, cx));
+        window.draw();
+        window.simulate_keystroke("escape");
+        assert_eq!(received.borrow().last(), Some(&DialogEvent::Cancelled));
+    }
+    #[test]
+    fn inline_select_owns_arrow_and_enter_routing() {
+        let mut app = gpui_kit::TestApp::new();
+        app.update(gpui_kit::init);
+        let mut window = app.open_window(|w, cx| {
+            NativeDialog::new(props(DialogKind::ExtensionSelect), false, w, cx)
+                .embedded()
+                .keyboard_submission()
+        });
+        let received = Rc::new(RefCell::new(Vec::new()));
+        let events = received.clone();
+        let _subscription = window.update(|_, _, cx| {
+            cx.subscribe(&cx.entity(), move |_, _, event: &DialogEvent, _| {
+                events.borrow_mut().push(event.clone())
+            })
+        });
+        window.draw();
+        window.simulate_keystroke("down");
+        window.simulate_keystroke("enter");
+        assert_eq!(
+            *received.borrow(),
+            vec![DialogEvent::Submitted("Second".into())]
+        );
     }
     #[test]
     fn ssh_busy_and_readonly_block_cancel_and_duplicate_submit() {
