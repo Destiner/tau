@@ -67,7 +67,7 @@ cargo test --manifest-path crates/tau-session/Cargo.toml
 # Own native window + installed Pi, isolated and credential-free, no model call:
 CARGO_BUILD_JOBS=2 cargo test --manifest-path gpui/Cargo.toml --features native-os-tests --test native-app
 
-# Explicit small model call using existing Pi authentication, with tools disabled:
+# Explicit model calls using existing Pi auth and only an invented cancellable tool:
 TAU_NATIVE_MODEL_SMOKE=1 CARGO_BUILD_JOBS=2 cargo test --manifest-path gpui/Cargo.toml --features native-os-tests --test native-app
 ```
 
@@ -76,7 +76,10 @@ handlers in its own process. It does not use clipboard access, cross-app automat
 permission prompts or fabricated Pi events. Command-only custom output must remain
 ephemeral; it is not proof of assistant streaming or transcript durability. The model
 variant separately requires actual assistant text deltas, assistant end, idle state,
-a durable session file and successful registry persistence.
+a durable session file and successful registry persistence. It then asks the model
+to invoke one fixture-only tool with no filesystem, network or process access,
+clicks the measured native Stop button, and requires real abort/tool-end/settlement
+with partial output and unrelated draft preservation.
 
 Credential-free native acceptance with Pi 0.99.2 passed, including actual extension
 input/Enter, custom output, drafts/session switching, Settings, close/reopen,
@@ -90,9 +93,16 @@ The corrected recorder uses `assistantMessageEvent.text_delta`. Corrected model
 validation **passed**: stream/end/text/idle/durability/file/registry all observed,
 followed by reopen/switch, busy-close cancellation and gated quit cleanup. Earlier
 failures are retained, with no widened deadline. This proves the small local
-assistant slice, not real tools/Stop, SSH or full runtime parity. The native library
-(247 tests), editor integration tests (13), strict all-target/all-feature Clippy,
+assistant slice. The subsequent real-tool/Stop slice also passed, including actual
+Pi start/partial/end events and abort acknowledgement through the rendered Stop
+button. This does not prove interruption during provider token streaming, populated
+queue preservation, SSH or full runtime parity. Hovered sidebar membership now
+reconciles arriving/removing sessions without losing its held order, with an
+old-code negative control. The native library (249 tests), editor integration tests
+(13), strict all-target/all-feature Clippy,
 and actual `tau` build passed. The full Rust run timed out in the existing Metal
 activity runner, so it is not reported as an all-suite pass. Historical curated
 counts and the unsigned Tauri bundle are not GPUI release proof. No signed/notarized
-GPUI distribution or updater is available yet.
+GPUI distribution or updater is available yet. A separate, locally ad-hoc-signed
+`Tau Native.app` preview can be built using [PACKAGING.md](PACKAGING.md); it neither
+replaces Tauri nor isolates data unless explicitly launched with `--isolated`.

@@ -16,7 +16,7 @@ Run from the repository root on macOS with Bun, Cargo and Xcode command-line too
 bun gpui/scripts/package.ts
 ```
 
-Default: release `cargo build --bin tau`, output
+Default: release `cargo build --locked --bin tau`, output
 `gpui/target/bundle/macos/Tau Native.app` (generated files stay under the existing
 ignored target directory). Uses normal `CARGO_HOME`, sets `CARGO_BUILD_JOBS=2`,
 and explicitly uses `gpui/target`. Does not run prepare, copy sources, rebuild
@@ -88,4 +88,5 @@ bun test ./gpui/tests/package.bun.ts
 ```
 
 These test paths, metadata, fresh-only destination handling and mocked inspection
-commands without any OS GUI. Full-app/GUI tests remain owned by the parent task.
+commands without any OS GUI. See [APP.md](APP.md) for the separately opted-in
+native application acceptance target.
