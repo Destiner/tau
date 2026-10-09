@@ -4,20 +4,19 @@ use super::process::{
     PiProcess,
 };
 use super::transport::{
-    emit_pi_event, io_error_kind_category, line_drop_reason, pi_exit_message, spawn_stderr_reader,
-    PiEvent, StderrTail, MAX_RPC_LINE_BYTES, STDERR_TAIL_LINES,
+    emit_current_event, emit_pi_event, io_error_kind_category, line_drop_reason, pi_exit_message,
+    read_bounded_line, spawn_stderr_reader, PiEvent, StderrTail, MAX_RPC_LINE_BYTES,
+    STDERR_TAIL_LINES,
 };
-use crate::telemetry::Telemetry;
-use opentelemetry::Value as TelemetryValue;
+use super::{PiDiagnostic, PiSink};
 use serde_json::Value;
 use std::{
     collections::{HashMap, VecDeque},
-    io::{BufRead, BufReader},
+    io::BufReader,
     process::{Child, Command},
     sync::{atomic::AtomicBool, Arc, Mutex},
     thread,
 };
-use tauri::{AppHandle, Manager, Runtime};
 
 #[derive(Default)]
 pub struct PiState {
@@ -83,31 +82,33 @@ impl PiManager {
         }
     }
 }
-pub(super) struct PiReaderContext<R: Runtime> {
-    pub(super) app: AppHandle<R>,
+pub(super) struct PiReaderContext {
+    pub(super) sink: PiSink,
     pub(super) manager: Arc<Mutex<PiManager>>,
     pub(super) child: Arc<Mutex<Child>>,
+    pub(super) usable: Arc<AtomicBool>,
+    pub(super) output_current: Arc<AtomicBool>,
     pub(super) runtime_id: String,
     pub(super) generation: u64,
 }
 
 #[derive(Debug)]
-pub(super) struct StoppedRuntime {
-    pub(super) runtime_id: String,
-    pub(super) generation: u64,
+pub struct StoppedRuntime {
+    pub runtime_id: String,
+    pub generation: u64,
 }
 
 #[derive(Debug)]
-pub(super) struct ClaimOutcome {
-    pub(super) stopped: Vec<StoppedRuntime>,
-    pub(super) replacement: bool,
+pub struct ClaimOutcome {
+    pub stopped: Vec<StoppedRuntime>,
+    pub replacement: bool,
 }
 
 #[derive(Debug)]
-pub(super) struct ClaimFailure {
-    pub(super) kind: &'static str,
-    pub(super) message: String,
-    pub(super) stopped: Vec<StoppedRuntime>,
+pub struct ClaimFailure {
+    pub kind: &'static str,
+    pub message: String,
+    pub stopped: Vec<StoppedRuntime>,
 }
 pub(super) fn claim_pi_frontend_inner(
     inner: &Arc<Mutex<PiManager>>,
@@ -190,11 +191,9 @@ pub(super) fn validate_owner_id(owner_id: &str) -> Result<(), String> {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn spawn_command<R: Runtime>(
-    app: AppHandle<R>,
+pub(super) fn spawn_command(
     state: &PiState,
-    telemetry: &Telemetry,
-    span_context: Option<&opentelemetry::trace::SpanContext>,
+    sink: PiSink,
     owner_id: String,
     runtime_id: String,
     mut command: Command,
@@ -206,63 +205,55 @@ pub(super) fn spawn_command<R: Runtime>(
     manager.require_owner(&owner_id)?;
     let replaced_generation = manager.processes.get(&runtime_id).map(|p| p.generation);
     stop_runtime_process(&mut manager, &runtime_id)?;
-    if let Some(generation) = replaced_generation {
-        telemetry.record_process_lifecycle(
-            "pi.process.stopped",
-            &runtime_id,
-            Some(generation),
-            span_context,
-            &[(
-                "tau.process.stop_reason",
-                TelemetryValue::String("replaced".into()),
-            )],
-        );
-        telemetry.record_pi_process_exit(true);
-    }
     manager.generation = manager.generation.wrapping_add(1).max(1);
     let generation = manager.generation;
 
-    let (child, writer, stdout, stderr) = spawn_child(&mut command)?;
+    let (child, writer, stdout, stderr) = match spawn_child(&mut command) {
+        Ok(child) => child,
+        Err(error) => {
+            drop(manager);
+            if let Some(generation) = replaced_generation {
+                sink.record(
+                    &runtime_id,
+                    Some(generation),
+                    PiDiagnostic::Stopped { reason: "replaced" },
+                );
+            }
+            return Err(error);
+        }
+    };
     let stderr_tail = Arc::new(Mutex::new(VecDeque::with_capacity(STDERR_TAIL_LINES)));
 
+    let usable = Arc::new(AtomicBool::new(true));
+    // A failed stdin write must not discard buffered final stdout from this generation.
+    let output_current = Arc::new(AtomicBool::new(true));
     manager.processes.insert(
         runtime_id.clone(),
         PiProcess {
             owner_id,
             generation,
+            sink: sink.clone(),
             child: Arc::clone(&child),
             writer,
-            usable: Arc::new(AtomicBool::new(true)),
+            usable: Arc::clone(&usable),
+            output_current: Arc::clone(&output_current),
         },
     );
 
-    let reader_context = PiReaderContext {
-        app: app.clone(),
-        manager: Arc::clone(&state.inner),
-        child,
-        runtime_id: runtime_id.clone(),
-        generation,
-    };
-    let stderr_reader = spawn_stderr_reader(
-        app.clone(),
-        runtime_id.clone(),
-        generation,
-        stderr,
-        Arc::clone(&stderr_tail),
-    );
-    spawn_stdout_reader(reader_context, stdout, stderr_tail, stderr_reader);
-    telemetry.record_process_lifecycle(
-        "pi.process.started",
-        &runtime_id,
-        Some(generation),
-        span_context,
-        &[],
-    );
-    telemetry.record_pi_process_start();
-    emit_pi_event(
-        &app,
+    drop(manager);
+    if let Some(generation) = replaced_generation {
+        sink.record(
+            &runtime_id,
+            Some(generation),
+            PiDiagnostic::Stopped { reason: "replaced" },
+        );
+    }
+    sink.record(&runtime_id, Some(generation), PiDiagnostic::Started);
+    emit_current_event(
+        &output_current,
+        &sink,
         PiEvent {
-            runtime_id: &runtime_id,
+            runtime_id: runtime_id.clone(),
             generation,
             kind: "started",
             line: None,
@@ -270,6 +261,24 @@ pub(super) fn spawn_command<R: Runtime>(
             code: None,
         },
     );
+    let reader_context = PiReaderContext {
+        sink: sink.clone(),
+        manager: Arc::clone(&state.inner),
+        child,
+        usable,
+        output_current: Arc::clone(&output_current),
+        runtime_id: runtime_id.clone(),
+        generation,
+    };
+    let stderr_reader = spawn_stderr_reader(
+        sink.clone(),
+        output_current,
+        runtime_id.clone(),
+        generation,
+        stderr,
+        Arc::clone(&stderr_tail),
+    );
+    spawn_stdout_reader(reader_context, stdout, stderr_tail, stderr_reader);
     Ok(generation)
 }
 
@@ -321,17 +330,19 @@ pub(super) fn stop_stale_processes(
         None => Ok(stopped),
     }
 }
-pub(super) fn spawn_stdout_reader<R: Runtime>(
-    context: PiReaderContext<R>,
+pub(super) fn spawn_stdout_reader(
+    context: PiReaderContext,
     stdout: impl std::io::Read + Send + 'static,
     stderr_tail: StderrTail,
     stderr_reader: thread::JoinHandle<()>,
 ) {
     thread::spawn(move || {
         let PiReaderContext {
-            app,
+            sink,
             manager,
             child,
+            usable,
+            output_current,
             runtime_id,
             generation,
         } = context;
@@ -339,9 +350,19 @@ pub(super) fn spawn_stdout_reader<R: Runtime>(
         let mut bytes = Vec::new();
         loop {
             bytes.clear();
-            match reader.read_until(b'\n', &mut bytes) {
-                Ok(0) => break,
-                Ok(_) => {
+            match read_bounded_line(&mut reader, &mut bytes, MAX_RPC_LINE_BYTES + 2) {
+                Ok((false, _)) => break,
+                Ok((true, overflow)) => {
+                    if overflow {
+                        sink.record(
+                            &runtime_id,
+                            Some(generation),
+                            PiDiagnostic::LineDropped {
+                                reason: "oversized",
+                            },
+                        );
+                        continue;
+                    }
                     if bytes.last() == Some(&b'\n') {
                         bytes.pop();
                     }
@@ -352,25 +373,22 @@ pub(super) fn spawn_stdout_reader<R: Runtime>(
                         continue;
                     }
                     if let Some(reason) = line_drop_reason(&bytes) {
-                        app.state::<Telemetry>().record_reader_event(
-                            "pi.reader.line_dropped",
+                        sink.record(
                             &runtime_id,
                             Some(generation),
-                            &[(
-                                "tau.reader.drop_reason",
-                                TelemetryValue::String(reason.into()),
-                            )],
+                            PiDiagnostic::LineDropped { reason },
                         );
                         continue;
                     }
                     let line = String::from_utf8_lossy(&bytes);
-                    emit_pi_event(
-                        &app,
+                    emit_current_event(
+                        &output_current,
+                        &sink,
                         PiEvent {
-                            runtime_id: &runtime_id,
+                            runtime_id: runtime_id.clone(),
                             generation,
                             kind: "rpc",
-                            line: Some(&line),
+                            line: Some(line.into_owned()),
                             message: None,
                             code: None,
                         },
@@ -378,25 +396,22 @@ pub(super) fn spawn_stdout_reader<R: Runtime>(
                 }
                 Err(error) => {
                     let message = error.to_string();
-                    let telemetry = app.state::<Telemetry>();
-                    telemetry.record_reader_event(
-                        "pi.reader.failed",
+                    sink.record(
                         &runtime_id,
                         Some(generation),
-                        &[(
-                            "tau.reader.error_kind",
-                            TelemetryValue::String(io_error_kind_category(error.kind()).into()),
-                        )],
+                        PiDiagnostic::ReaderFailed {
+                            category: io_error_kind_category(error.kind()),
+                        },
                     );
-                    telemetry.force_flush_logs();
-                    emit_pi_event(
-                        &app,
+                    emit_current_event(
+                        &output_current,
+                        &sink,
                         PiEvent {
-                            runtime_id: &runtime_id,
+                            runtime_id: runtime_id.clone(),
                             generation,
                             kind: "error",
                             line: None,
-                            message: Some(&message),
+                            message: Some(message),
                             code: None,
                         },
                     );
@@ -406,6 +421,8 @@ pub(super) fn spawn_stdout_reader<R: Runtime>(
         }
 
         let status = wait_for_child(&child);
+        usable.store(false, std::sync::atomic::Ordering::Release);
+        output_current.store(false, std::sync::atomic::Ordering::Release);
         // Descendants may inherit stderr after Pi exits. The tail is
         // best-effort, so they must not delay process cleanup or failure UI.
         drop(stderr_reader);
@@ -431,27 +448,15 @@ pub(super) fn spawn_stdout_reader<R: Runtime>(
             .map(|tail| tail.iter().cloned().collect::<Vec<_>>().join("\n"))
             .unwrap_or_default();
         let message = (!succeeded).then(|| pi_exit_message(code, &stderr));
-        let exit_attributes: Vec<(&'static str, TelemetryValue)> = code
-            .map(|code| vec![("tau.process.exit_code", TelemetryValue::I64(code as i64))])
-            .unwrap_or_default();
-        let telemetry = app.state::<Telemetry>();
-        telemetry.record_process_lifecycle(
-            "pi.process.exited",
-            &runtime_id,
-            Some(generation),
-            None,
-            &exit_attributes,
-        );
-        telemetry.record_pi_process_exit(false);
-        telemetry.force_flush_logs();
+        sink.record(&runtime_id, Some(generation), PiDiagnostic::Exited { code });
         emit_pi_event(
-            &app,
+            &sink,
             PiEvent {
-                runtime_id: &runtime_id,
+                runtime_id: runtime_id.clone(),
                 generation,
                 kind: "exited",
                 line: None,
-                message: message.as_deref(),
+                message,
                 code,
             },
         );

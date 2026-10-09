@@ -6,19 +6,14 @@ fn replacing_a_runtime_waits_for_eof_before_starting_its_successor() {
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     let fixture = NativePiFixture::new(None);
-    let (app, _events) = fixture.app_and_events();
-    let handle = app.handle().clone();
-    let state = handle.state::<PiState>();
-    let telemetry = handle.state::<Telemetry>();
+    let (state, sink, _events) = fixture.state_and_events();
     claim_for_test(&state, "owner-a");
     let start = || {
         let mut command = Command::new("sh");
         command.args(["-c", "while IFS= read -r line; do :; done; exit 0"]);
         spawn_command(
-            handle.clone(),
             &state,
-            &telemetry,
-            None,
+            sink.clone(),
             "owner-a".into(),
             "runtime-a".into(),
             command,

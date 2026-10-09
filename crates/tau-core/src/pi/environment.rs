@@ -182,7 +182,7 @@ fn login_shell_path() -> Option<&'static OsString> {
     login_shell_environment().path.as_ref()
 }
 
-pub(crate) fn login_shell_pi_agent_dir() -> Option<&'static OsString> {
+pub fn login_shell_pi_agent_dir() -> Option<&'static OsString> {
     login_shell_environment().agent_dir.as_ref()
 }
 

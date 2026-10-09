@@ -272,6 +272,7 @@ mod tests {
     use std::ffi::{OsStr, OsString};
     #[test]
     fn default_session_path_matches_pi_encoding() {
+        crate::profile::initialize_test_profile();
         let path = default_session_dir("/Users/timur/code/tau").expect("session path");
         assert!(path.ends_with("sessions/--Users-timur-code-tau--"));
 

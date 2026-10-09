@@ -2,7 +2,7 @@ use crate::models::{
     ProjectRecord, ProjectRegistry, RemoteProjectRecord, RemoteSessionRecord, TauSessionRecord,
     TauSessionRegistry,
 };
-use crate::profile::{StorageProfile, SESSION_REGISTRY_FILENAME};
+use crate::profile::StorageProfile;
 use serde::Deserialize;
 use serde_json::json;
 use std::fs;
@@ -87,7 +87,10 @@ pub fn seed(profile: &StorageProfile) -> Result<(), String> {
             });
             index += 1;
         }
-        write_json(&sessions_dir.join(SESSION_REGISTRY_FILENAME), &sessions)?;
+        write_json(
+            &sessions_dir.join(profile.session_registry_filename()),
+            &sessions,
+        )?;
         if registry.active_project_path.is_empty() {
             registry.active_project_path = project_path.clone();
         }
@@ -195,7 +198,10 @@ fn seed_performance(profile: &StorageProfile) -> Result<(), String> {
                 });
             }
         }
-        write_json(&sessions_dir.join(SESSION_REGISTRY_FILENAME), &sessions)?;
+        write_json(
+            &sessions_dir.join(profile.session_registry_filename()),
+            &sessions,
+        )?;
         if registry.active_project_path.is_empty() {
             registry.active_project_path = path.clone();
         }

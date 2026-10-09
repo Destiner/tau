@@ -6,31 +6,19 @@ fn frontend_takeover_stops_stale_runtime_before_replacement_starts() {
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     let fixture = NativePiFixture::new(None);
-    let (app, events) = fixture.app_and_events();
-    let handle = app.handle().clone();
-    let state = handle.state::<PiState>();
-    let telemetry = handle.state::<Telemetry>();
+    let (state, sink, events) = fixture.state_and_events();
     claim_for_test(&state, "owner-a");
 
-    let first_generation = start_pi_with(
-        handle.clone(),
-        &state,
-        &telemetry,
-        None,
-        "owner-a".into(),
-        "runtime-a".into(),
-        fixture.project_string(),
-        Some(fixture.session_string()),
-    )
-    .expect("start first frontend runtime");
+    let first_generation = fixture
+        .start(&state, sink.clone(), "owner-a", "runtime-a")
+        .expect("start first frontend runtime");
     expect_outer_event(&events, "started", first_generation);
     let old_child =
         Arc::clone(&state.inner.lock().expect("Pi manager").processes["runtime-a"].child);
 
     let outcome =
         claim_pi_frontend_inner(&state.inner, "owner-b".into(), 1).expect("replace frontend owner");
-    record_ownership_cleanup(&telemetry, None, &outcome.stopped);
-    telemetry.record_ownership_event("replacement", "success", outcome.stopped.len(), None);
+    assert_eq!(outcome.stopped.len(), 1);
     assert!(old_child
         .lock()
         .expect("old child")
@@ -39,17 +27,9 @@ fn frontend_takeover_stops_stale_runtime_before_replacement_starts() {
         .is_some());
     assert!(state.inner.lock().expect("Pi manager").processes.is_empty());
 
-    let second_generation = start_pi_with(
-        handle.clone(),
-        &state,
-        &telemetry,
-        None,
-        "owner-b".into(),
-        "runtime-b".into(),
-        fixture.project_string(),
-        Some(fixture.session_string()),
-    )
-    .expect("start replacement frontend runtime");
+    let second_generation = fixture
+        .start(&state, sink, "owner-b", "runtime-b")
+        .expect("start replacement frontend runtime");
     assert!(second_generation > first_generation);
     let deadline = Instant::now() + EVENT_TIMEOUT;
     loop {

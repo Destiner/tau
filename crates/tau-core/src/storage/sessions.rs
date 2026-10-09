@@ -12,7 +12,7 @@ use crate::{
         ProjectRegistry, RemoteProjectRecord, RemoteSessionRecord, SessionMutationResult,
         SessionSummary, TauSessionRecord, TauSessionRegistry,
     },
-    profile::SESSION_REGISTRY_FILENAME,
+    profile,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -68,7 +68,6 @@ pub(super) fn mutate_session_archive(
     })
 }
 
-#[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn register_session_inner(
     project_path: String,
@@ -161,7 +160,7 @@ fn register_local_session_in(
             return Err("The project is not imported in Tau.".into());
         }
     }
-    let registry_path = directory.join(SESSION_REGISTRY_FILENAME);
+    let registry_path = directory.join(profile::session_registry_filename()?);
     let mut registry: TauSessionRegistry = read_json_or_default(&registry_path)?;
     let before = serde_json::to_vec(&registry).map_err(|error| error.to_string())?;
     let adopt = adopted
@@ -376,7 +375,7 @@ pub(super) fn list_project_sessions(project_path: &str) -> Result<Vec<SessionSum
     list_sessions_in(&default_session_dir(project_path)?)
 }
 
-pub(crate) fn list_sessions_in(session_dir: &Path) -> Result<Vec<SessionSummary>, String> {
+pub fn list_sessions_in(session_dir: &Path) -> Result<Vec<SessionSummary>, String> {
     list_sessions_in_with(session_dir, parse_session_file)
 }
 
@@ -385,7 +384,7 @@ fn list_sessions_in_with(
     mut parse: impl FnMut(&Path) -> Result<Option<ParsedSession>, String>,
 ) -> Result<Vec<SessionSummary>, String> {
     let registry: TauSessionRegistry =
-        read_json_or_default(&session_dir.join(SESSION_REGISTRY_FILENAME))?;
+        read_json_or_default(&session_dir.join(profile::session_registry_filename()?))?;
     let mut legacy = HashMap::new();
     let mut scanned = HashMap::new();
     if registry.sessions.iter().any(|record| record.path.is_none()) && session_dir.is_dir() {
@@ -579,10 +578,14 @@ mod tests {
         },
     };
     use super::*;
-    use crate::models::ProjectRecord;
+    use crate::{
+        models::ProjectRecord,
+        profile::ISOLATED_SESSION_REGISTRY_FILENAME as SESSION_REGISTRY_FILENAME,
+    };
     use std::{fs::File, io::Write};
     #[test]
     fn external_registered_transcript_is_discovered_after_reload() {
+        profile::initialize_test_profile();
         let root = tempfile::tempdir().expect("temporary directory");
         let project = root.path().join("project");
         let external = root.path().join("mission");
@@ -1007,6 +1010,7 @@ mod tests {
     }
     #[test]
     fn session_titles_prefer_the_name_pi_recorded() {
+        profile::initialize_test_profile();
         assert_eq!(
             session_title("Renamed in Pi", Some("Stale Tau title"), "Port Tau"),
             "Renamed in Pi"
@@ -1132,6 +1136,7 @@ mod tests {
     }
     #[test]
     fn local_sessions_register_into_the_registry_the_project_lists() {
+        profile::initialize_test_profile();
         // Pi may open a session under another working directory; the row still
         // belongs to the project, so both sides must use one registry file.
         let registry = local_registry_path("/Users/timur/code/tau").expect("registry path");
@@ -1235,6 +1240,7 @@ mod tests {
     }
     #[test]
     fn registration_checks_only_the_candidate_file_and_its_identity() {
+        profile::initialize_test_profile();
         let directory = tempfile::tempdir().expect("temporary directory");
         let unrelated = directory.path().join("unrelated.jsonl");
         fs::write(&unrelated, b"not a transcript").expect("unrelated file");

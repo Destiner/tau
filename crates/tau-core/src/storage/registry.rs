@@ -1,7 +1,7 @@
 use crate::{
     models::{ProjectRegistry, RemoteProjectRecord},
     pi::login_shell_pi_agent_dir,
-    profile::{self, SESSION_REGISTRY_FILENAME},
+    profile,
 };
 use serde::de::DeserializeOwned;
 use std::{
@@ -16,7 +16,7 @@ static STORAGE_WRITE_LOCK: Mutex<()> = Mutex::new(());
 static ARCHIVE_INTENTS: LazyLock<Mutex<HashMap<(String, String), u64>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-pub(super) fn archive_revision(project: &str, session: &str) -> Result<u64, String> {
+pub fn archive_revision(project: &str, session: &str) -> Result<u64, String> {
     ARCHIVE_INTENTS
         .lock()
         .map(|intents| {
@@ -36,7 +36,7 @@ pub(super) fn adoption_is_current(
     Ok(archive_revision(project, session)? == revision)
 }
 
-pub(super) fn mark_archive_intent(project: &str, session: &str) -> Result<(), String> {
+pub fn mark_archive_intent(project: &str, session: &str) -> Result<(), String> {
     let mut intents = ARCHIVE_INTENTS
         .lock()
         .map_err(|_| "Tau storage is unavailable.".to_string())?;
@@ -70,7 +70,7 @@ pub(super) fn project_registry_path() -> Result<PathBuf, String> {
     Ok(profile::current()?.data_dir().join("projects.json"))
 }
 
-pub(crate) fn remote_project(project_path: &str) -> Result<RemoteProjectRecord, String> {
+pub fn remote_project(project_path: &str) -> Result<RemoteProjectRecord, String> {
     load_project_registry()?
         .projects
         .into_iter()
@@ -111,10 +111,10 @@ pub(super) fn configured_pi_agent_dir(
 }
 
 pub(super) fn local_registry_path(project_path: &str) -> Result<PathBuf, String> {
-    Ok(default_session_dir(project_path)?.join(SESSION_REGISTRY_FILENAME))
+    Ok(default_session_dir(project_path)?.join(profile::session_registry_filename()?))
 }
 
-pub(crate) fn default_session_dir(project_path: &str) -> Result<PathBuf, String> {
+pub fn default_session_dir(project_path: &str) -> Result<PathBuf, String> {
     Ok(profile::current()?.session_dir(project_path, &pi_agent_dir()?))
 }
 

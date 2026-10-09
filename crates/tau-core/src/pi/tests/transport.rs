@@ -6,23 +6,11 @@ fn fake_pi_round_trips_jsonl_and_cleans_up_after_successful_exit() {
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     let fixture = NativePiFixture::new(None);
-    let (app, events) = fixture.app_and_events();
-    let handle = app.handle().clone();
-    let state = handle.state::<PiState>();
-    let telemetry = handle.state::<Telemetry>();
+    let (state, sink, events) = fixture.state_and_events();
     claim_for_test(&state, "owner-a");
-
-    let generation = start_pi_with(
-        handle.clone(),
-        &state,
-        &telemetry,
-        None,
-        "owner-a".into(),
-        "native-main".into(),
-        fixture.project_string(),
-        Some(fixture.session_string()),
-    )
-    .expect("start fake Pi");
+    let generation = fixture
+        .start(&state, sink, "owner-a", "native-main")
+        .expect("start fake Pi");
     assert_eq!(generation, 1);
     let started = expect_outer_event(&events, "started", generation);
     assert_eq!(started["runtimeId"], "native-main");
@@ -110,30 +98,21 @@ fn fake_pi_malformed_stdout_is_dropped_and_lifecycle_is_cleaned_up() {
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     let fixture = NativePiFixture::new(Some(OsStr::new("malformed-stdout")));
-    let (app, events) = fixture.app_and_events();
-    let handle = app.handle().clone();
-    let state = handle.state::<PiState>();
-    let telemetry = handle.state::<Telemetry>();
+    let (state, sink, events) = fixture.state_and_events();
     claim_for_test(&state, "owner-a");
-
-    let generation = start_pi_with(
-        handle.clone(),
-        &state,
-        &telemetry,
-        None,
-        "owner-a".into(),
-        "native-malformed".into(),
-        fixture.project_string(),
-        Some(fixture.session_string()),
-    )
-    .expect("start fake Pi");
+    let generation = fixture
+        .start(&state, sink, "owner-a", "native-malformed")
+        .expect("start fake Pi");
     let started = expect_outer_event(&events, "started", generation);
     assert_eq!(started["runtimeId"], "native-malformed");
     let exited = expect_outer_event(&events, "exited", generation);
     assert_eq!(exited["runtimeId"], "native-malformed");
     assert_eq!(exited["code"], 0);
     assert!(state.inner.lock().expect("Pi manager").processes.is_empty());
-    assert_eq!(events.try_recv(), Err(TryRecvError::Empty));
+    assert!(matches!(
+        events.try_recv(),
+        Err(TryRecvError::Empty | TryRecvError::Disconnected)
+    ));
 }
 
 #[test]
@@ -142,28 +121,22 @@ fn fake_pi_nonzero_exit_forwards_bounded_failure_and_cleans_up() {
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     let fixture = NativePiFixture::new(Some(OsStr::new("nonzero-exit")));
-    let (app, events) = fixture.app_and_events();
-    let handle = app.handle().clone();
-    let state = handle.state::<PiState>();
-    let telemetry = handle.state::<Telemetry>();
+    let (state, sink, events) = fixture.state_and_events();
     claim_for_test(&state, "owner-a");
-
-    let generation = start_pi_with(
-        handle.clone(),
-        &state,
-        &telemetry,
-        None,
-        "owner-a".into(),
-        "native-failure".into(),
-        fixture.project_string(),
-        Some(fixture.session_string()),
-    )
-    .expect("start fake Pi");
+    let generation = fixture
+        .start(&state, sink, "owner-a", "native-failure")
+        .expect("start fake Pi");
     let started = expect_outer_event(&events, "started", generation);
     assert_eq!(started["runtimeId"], "native-failure");
-    let stderr = expect_outer_event(&events, "stderr", generation);
-    assert_eq!(stderr["message"], "scripted transport failure");
-    let exited = expect_outer_event(&events, "exited", generation);
+    let next = events.recv_timeout(EVENT_TIMEOUT).expect("failure event");
+    assert_eq!(next["generation"], generation);
+    let exited = if next["kind"] == "stderr" {
+        assert_eq!(next["message"], "scripted transport failure");
+        expect_outer_event(&events, "exited", generation)
+    } else {
+        next
+    };
+    assert_eq!(exited["kind"], "exited");
     assert_eq!(exited["runtimeId"], "native-failure");
     assert_eq!(exited["code"], 23);
     // The stderr reader may emit its event after the exit reader snapshots

@@ -18,14 +18,17 @@ use std::{
 pub(super) struct PiProcess {
     pub(super) owner_id: String,
     pub(super) generation: u64,
+    pub(super) sink: super::PiSink,
     pub(super) child: Arc<Mutex<Child>>,
     pub(super) writer: PiWriter,
     pub(super) usable: Arc<AtomicBool>,
+    pub(super) output_current: Arc<AtomicBool>,
 }
 
 impl PiProcess {
     pub(super) fn close_stdin(&self) {
         self.usable.store(false, Ordering::Release);
+        self.output_current.store(false, Ordering::Release);
         // Closing the shared sender also fences retained process handles. The
         // writer owns stdin and releases it without holding a process lock.
         self.writer

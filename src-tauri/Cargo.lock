@@ -3837,6 +3837,7 @@ dependencies = [
  "serde_json",
  "shell-words",
  "tar",
+ "tau-core",
  "tauri",
  "tauri-build",
  "tauri-plugin-clipboard-manager",
@@ -3847,6 +3848,18 @@ dependencies = [
  "tempfile",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "tau-core"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "libc",
+ "serde",
+ "serde_json",
+ "shell-words",
+ "tempfile",
 ]
 
 [[package]]
