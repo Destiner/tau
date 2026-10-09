@@ -1,0 +1,92 @@
+--- a/src/dialog.rs
++++ b/src/dialog.rs
+@@ -16,6 +16,8 @@
+ use crate::{FocusTrapElement as _, StyledExt as _};
+ 
+ const CONTEXT: &str = "Dialog";
++const DISMISS_CONTEXT: &str = "DialogDismiss";
++gpui::actions!(dialog, [Dismiss]);
+ type Decision = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) -> bool>;
+ type Closed = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+ type CloseRequest = Rc<dyn Fn(bool, &mut Window, &mut App)>;
+@@ -88,7 +90,7 @@
+ 
+ pub fn init(cx: &mut App) {
+     cx.bind_keys([
+-        KeyBinding::new("escape", Cancel, Some(CONTEXT)),
++        KeyBinding::new("escape", Dismiss, Some(DISMISS_CONTEXT)),
+         KeyBinding::new("enter", Confirm { secondary: false }, Some(CONTEXT)),
+     ]);
+ }
+@@ -544,6 +546,27 @@
+         let confirm_change = self.on_open_change.clone();
+         let backdrop_change = self.on_open_change.clone();
+         let viewport = window.viewport_size();
++        let topmost = self.topmost;
++        let keyboard = self.keyboard;
++        let request_cancel: Rc<dyn Fn(&mut Window, &mut App)> = {
++            let request_close = request_close.clone();
++            let closed = closed.clone();
++            Rc::new(move |window, cx| {
++                let event = ClickEvent::default();
++                if topmost && cancel(&event, window, cx) {
++                    request_open_change(
++                        &escape_handle,
++                        &escape_change,
++                        false,
++                        DialogChangeReason::Cancel,
++                        window,
++                        cx,
++                    );
++                    request_close(false, window, cx);
++                    closed(&event, window, cx);
++                }
++            })
++        };
+ 
+         deferred(
+             anchored().position(point(px(0.), px(0.))).child(
+@@ -563,27 +586,28 @@
+                     .role(self.role)
+                     .track_focus(&self.focus)
+                     .focus_trap(format!("dialog-{}", self.layer), &self.focus)
+-                    .when(self.keyboard, |this| this.key_context(CONTEXT))
++                    // Even a nondismissible child must intercept Escape rather
++                    // than letting an ancestor's Dialog context dismiss it.
++                    .key_context(if keyboard {
++                        "Dialog DialogDismiss"
++                    } else {
++                        DISMISS_CONTEXT
++                    })
+                     .map(|this| {
+-                        let request_cancel = request_close.clone();
+                         let request_confirm = request_close.clone();
+-                        let closed_cancel = closed.clone();
++                        let dismiss = request_cancel.clone();
+                         this.on_action(move |_: &Cancel, window, cx| {
+-                            let event = ClickEvent::default();
+-                            if cancel(&event, window, cx) {
+-                                request_open_change(
+-                                    &escape_handle,
+-                                    &escape_change,
+-                                    false,
+-                                    DialogChangeReason::Cancel,
+-                                    window,
+-                                    cx,
+-                                );
+-                                request_cancel(false, window, cx);
+-                                closed_cancel(&event, window, cx);
++                            request_cancel(window, cx);
++                        })
++                        .on_action(move |_: &Dismiss, window, cx| {
++                            if keyboard {
++                                dismiss(window, cx);
+                             }
+                         })
+                         .on_action(move |_: &Confirm, window, cx| {
++                            if !topmost {
++                                return;
++                            }
+                             let event = ClickEvent::default();
+                             if confirm(&event, window, cx) {
+                                 request_open_change(

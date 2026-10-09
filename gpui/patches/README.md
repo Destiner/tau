@@ -2,8 +2,9 @@
 
 ## Prepared dependency set
 
-`gpui/scripts/prepare.ts` registers **24 Base patches** and **seven Core patches**,
-including the native interaction and accessibility fixes below; **two merman-core patches** (parser manifest and ER
+`gpui/scripts/prepare.ts` registers **26 Base patches**, **seven Core patches**,
+and **two macOS patches**, including the native interaction and accessibility
+fixes below; **two merman-core patches** (parser manifest and ER
 semantic default direction); **one merman-analysis manifest patch**; **four
 merman-render family patches** (class/ER, state/sequence, flowchart and polish);
 and **one merman-layout-elk adapter patch**. Cargo has four Merman path
@@ -75,6 +76,15 @@ Extraction outside the checkout is intentional: `git apply` run in a nested depe
   live disabled state and the currently active Base focus trap. Caller wrappers
   explicitly suppress duplicate textbox roles. Generic input callers retain
   their defaults. No text/value/selection projection is added.
+- `bounded-modal-focus.patch` chooses the innermost trap on the focused dispatch
+  path, independently of HashMap order, and restores the previous in-trap focus
+  if Root's bounded Tab search exhausts its budget. It uses the existing
+  `active_focus_trap` API for both keyboard and editor AX Focus containment.
+- `dialog-top-layer-dismissal.patch` gives Escape its own dialog action, so a
+  nondismissible child consumes it without inheriting an ancestor's dismissal.
+  Explicit Cancel/Close still uses the caller veto; Cancel and Confirm are inert
+  on layers marked non-topmost. Direct regressions live in
+  `src/native/modal_tests.rs`; no semantic-tree isolation is added.
 
 These patches are registered per crate with the ordinary preparation path. See
 `src/native/` for production host contracts and lasting native integration tests.

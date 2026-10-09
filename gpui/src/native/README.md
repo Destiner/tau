@@ -63,10 +63,21 @@ remains responsible for interaction policy.
 
 Tests cover Focus within an ordinary dialog, rejecting background-editor Focus
 until Escape dismisses it, and preserving readonly/disabled editing guards.
-They do not establish nested-trap ordering, rejection of all background actions,
-or full modal tree isolation. Text/value/selection projection remains a separate
-gap; these metadata and focus checks do not certify reading or editing with
-VoiceOver.
+Direct Base modal regressions also exercise three nested traps through real
+TestPlatform pointer, Tab/Shift-Tab and editor AccessKit Focus delivery. The
+innermost focused trap wins independently of registry iteration order; removing
+it permits the enclosing layer, and a bounded Tab search cannot finish outside
+the trap. Nested Escape respects disabled dismissal, explicit Close remains
+available, and lower-layer Cancel cannot close an ancestor behind the top layer.
+Two synthetic windows retain independent trap identity as a nonregression check.
+
+These checks use the existing focus-dependent `active_focus_trap` contract, not
+a new global modal shield. They do not establish rejection of all background
+actions or full modal tree isolation. Hosts still own opening focus, top-layer
+metadata, and restoration to a weak, still-mounted origin or active composer;
+Base does not introduce another restoration owner. Text/value/selection
+projection remains a separate gap; these metadata and focus checks do not
+certify reading or editing with VoiceOver.
 
 The default tests do not establish OS behavior. The following opt-in test opens
 and closes its own synthetic window on an unlocked macOS desktop:

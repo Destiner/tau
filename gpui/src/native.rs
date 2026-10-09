@@ -15,4 +15,6 @@ mod ime_tests;
 #[cfg(test)]
 mod menu_availability_tests;
 #[cfg(test)]
+mod modal_tests;
+#[cfg(test)]
 mod tests;
