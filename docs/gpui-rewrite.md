@@ -39,8 +39,8 @@ GPUI release or GPUI updater. See [packaging](../gpui/PACKAGING.md).
 - Core extraction: **57 unit + 2 integration tests passed**, one explicit canary
   ignored. Existing Tauri compatibility tests and unsigned Tauri bundle passed;
   that bundle is not GPUI packaging.
-- `tau-session` (`b58ddd9`): **23 tests passed** (2 unit, 14 contract, 7 race),
-  one opt-in installed-Pi canary ignored in the default run.
+- `tau-session`: **27 tests passed**, including rename correlation, rollback and
+  name bounds; one opt-in installed-Pi canary ignored in the default run.
 - Native credential-free acceptance passed with installed **Pi 0.99.2** in an
   isolated profile: command bootstrap, actual extension input/Enter/custom output,
   session switching and drafts, Settings, close/reopen, busy-close cancellation,
@@ -68,7 +68,16 @@ GPUI release or GPUI updater. See [packaging](../gpui/PACKAGING.md).
 - Hovering during asynchronous session loading exposed a separate hidden-row bug.
   Membership now reconciles without discarding held order (`4eaf6ee`); old-code
   negative controls fail and genuine pointer regressions pass.
-- GPUI library: **249 passed, 0 failed, 1 ignored**, plus **13 passed** editor
+- Reported application regressions fixed: full-height empty composer, visible
+  sent/streamed messages, bottom toolbar insets and unclipped title descenders.
+  Production-root paint/selection regressions and inspected native Metal images
+  now cover the composition that component-only tests missed.
+- Saved-session header rename and archive/browse/restore are wired through Pi and
+  existing storage, with identity/name-write fencing and preserved drafts. Real
+  Pi acceptance passed these interactions; that extended run later hit an inactive
+  window at Cmd-W and is not a full smoke PASS. A final credential-free native
+  run passed close/reopen and shutdown.
+- GPUI library: **263 passed, 0 failed, 1 ignored**, plus **13 passed** editor
   integration tests; all-target/all-feature strict Clippy and the actual `tau`
   build passed. The broader Rust run passed its unit binaries but timed out in
   the existing activity Metal runner; the full suite is not reported green.
@@ -103,8 +112,9 @@ failures); no speculative activation/focus repair or relabelled visual snapshots
       slice with the corrected predicate and unchanged deadline.
 - [x] Prove real model-issued tool execution and Stop through the native composer;
       retain earlier failures and distinguish the remaining cancellation/queue cases.
-- [ ] Finish archive/restore/remove/rename and palette workflows; add new remote
-      import UI and real SSH smoke coverage using existing configuration contracts.
+- [x] Wire saved-session rename and archive/browse/restore using existing contracts.
+- [ ] Finish session removal and palette workflows; add new remote import UI and
+      real SSH smoke coverage using existing configuration contracts.
 - [ ] Complete file/media previews, multiline extension editing and applicable
       extension presentation; preserve local/remote preview security.
 - [ ] Finish history/tree/branch/navigation and compaction parity, replacement
