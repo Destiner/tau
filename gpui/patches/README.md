@@ -2,7 +2,7 @@
 
 ## Prepared dependency set
 
-`gpui/scripts/prepare.ts` registers **26 Base patches**, **seven Core patches**,
+`gpui/scripts/prepare.ts` registers **27 Base patches**, **seven Core patches**,
 and **two macOS patches**, including the native interaction and accessibility
 fixes below; **two merman-core patches** (parser manifest and ER
 semantic default direction); **one merman-analysis manifest patch**; **four
@@ -85,6 +85,10 @@ Extraction outside the checkout is intentional: `git apply` run in a nested depe
   Explicit Cancel/Close still uses the caller veto; Cancel and Confirm are inert
   on layers marked non-topmost. Direct regressions live in
   `src/native/modal_tests.rs`; no semantic-tree isolation is added.
+- `editor-values.patch` exposes complete, bounded non-password values for named
+  editors and routes SetValue through existing input/history machinery for plain
+  inputs and textareas. Code-editor pairing, IME, readonly/disabled, masked,
+  oversized and outside-trap requests fail closed; no range/layout API is added.
 
 These patches are registered per crate with the ordinary preparation path. See
 `src/native/` for production host contracts and lasting native integration tests.

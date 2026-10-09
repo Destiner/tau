@@ -75,9 +75,10 @@ These checks use the existing focus-dependent `active_focus_trap` contract, not
 a new global modal shield. They do not establish rejection of all background
 actions or full modal tree isolation. Hosts still own opening focus, top-layer
 metadata, and restoration to a weak, still-mounted origin or active composer;
-Base does not introduce another restoration owner. Text/value/selection
-projection remains a separate gap; these metadata and focus checks do not
-certify reading or editing with VoiceOver.
+Base does not introduce another restoration owner. Named editors additionally
+provide [bounded plain-text values and SetValue](editor-accessibility.md), using
+the existing input handler. Password values are never exposed. Cursor/selection
+APIs and VoiceOver certification remain outside this bounded implementation.
 
 The default tests do not establish OS behavior. The following opt-in test opens
 and closes its own synthetic window on an unlocked macOS desktop:

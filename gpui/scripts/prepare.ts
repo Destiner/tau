@@ -48,6 +48,7 @@ const crates = [
       'input-editor-accessibility.patch',
       'bounded-modal-focus.patch',
       'dialog-top-layer-dismissal.patch',
+      'editor-values.patch',
     ],
   },
   {
