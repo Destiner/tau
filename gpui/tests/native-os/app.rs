@@ -185,6 +185,15 @@ fn main() -> anyhow::Result<()> {
             .env("HOME", root.path().join("home"))
             .env("PI_CODING_AGENT_DIR", root.path().join("agent"));
     }
+    if let Some(directory) = std::env::var_os("TAU_NATIVE_CAPTURE_DIR") {
+        let directory = PathBuf::from(directory);
+        anyhow::ensure!(
+            directory.is_absolute() && directory.starts_with("/tmp"),
+            "native invented-data captures require an absolute /tmp directory"
+        );
+        std::fs::create_dir_all(&directory)?;
+        command.env("TAU_NATIVE_CAPTURE_DIR", directory);
+    }
     command
         .arg("--owned-app")
         .arg(root.path())

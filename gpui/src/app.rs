@@ -5,6 +5,7 @@ mod native_smoke;
 pub use native_smoke::run_native_smoke;
 mod projection;
 mod service;
+mod session_actions;
 #[cfg(test)]
 mod tests;
 mod view;
@@ -109,6 +110,7 @@ pub struct Shell {
     register_retries: Vec<Command>,
     pending_saves: BTreeMap<u64, Preferences>,
     restored: bool,
+    session_actions: session_actions::SessionActions,
 }
 
 pub fn run() -> anyhow::Result<()> {
@@ -195,6 +197,7 @@ fn run_with(
                 register_retries: vec![],
                 pending_saves: BTreeMap::new(),
                 restored: false,
+                session_actions: session_actions::SessionActions::default(),
             };
             cx.spawn(async move |weak, cx| {
                 while let Ok(first) = events.recv().await {
@@ -488,6 +491,29 @@ impl Shell {
                 command @ (Command::Register { .. } | Command::CancelStart { .. }) => {
                     self.register_retries.push(command)
                 }
+                Command::Archive {
+                    project,
+                    id,
+                    revision,
+                    archived,
+                } => {
+                    self.finish_archive(project, id, revision, archived, false);
+                    self.refresh_window(cx);
+                    return;
+                }
+                Command::StoreName {
+                    runtime,
+                    generation,
+                    revision,
+                    id,
+                    path,
+                    name,
+                    ..
+                } => {
+                    self.finish_name(runtime, generation, revision, id, path, name, false);
+                    self.refresh_window(cx);
+                    return;
+                }
                 _ => {}
             }
             self.error = Some("Tau is busy saving changes. Try again.".into());
@@ -521,14 +547,22 @@ impl Shell {
         self.subscriptions.push(cx.subscribe_in(
             &sidebar,
             window,
-            |s, _, action: &Action, w, cx| s.action(action.clone(), w, cx),
+            |s, _, action: &Action, w, cx| {
+                if !s.session_action(action, w, cx) {
+                    s.action(action.clone(), w, cx);
+                }
+            },
         ));
         let header = self.header.as_ref().unwrap().clone();
         header.update(cx, |h, cx| h.set_renamable(false, cx));
         self.subscriptions.push(cx.subscribe_in(
             &header,
             window,
-            |s, _, action: &Action, w, cx| s.action(action.clone(), w, cx),
+            |s, _, action: &Action, w, cx| {
+                if !s.session_action(action, w, cx) {
+                    s.action(action.clone(), w, cx);
+                }
+            },
         ));
         self.subscriptions
             .push(cx.observe_window_appearance(window, |s, w, cx| s.sync(w, cx)));
@@ -835,7 +869,16 @@ impl Shell {
                         cx,
                     );
                 }
+                Effect::SessionNameChanged { identity } => {
+                    self.sync_session_name(key, generation, identity, cx);
+                }
                 Effect::IdentityChanged { current, .. } => {
+                    if self.active == key
+                        && let Some(header) = &self.header
+                    {
+                        header.update(cx, |h, cx| h.set_renamable(false, cx));
+                    }
+                    self.clear_session_action_identity(key);
                     if let Some(live) = self.sessions.get_mut(key) {
                         live.source_id = current.id;
                         live.source_path = current.path;
@@ -849,10 +892,13 @@ impl Shell {
         match event {
             Event::Loaded(Ok((workspace, preferences))) => { self.workspace = Some(workspace); self.preferences = preferences; self.loaded = true; }
             Event::Loaded(Err(())) => self.error = Some("Tau could not load its workspace. Reopen Tau to retry; saved data was not changed.".into()),
-            Event::Workspace(Ok(workspace)) => {
+            Event::Workspace(Ok(mut workspace)) => {
+                self.reconcile_archive(&mut workspace);
                 for live in self.sessions.values_mut() { if let Some(project) = workspace.projects.iter().find(|p| p.path == live.project.path) { live.project = project.clone(); } }
                 self.workspace = Some(workspace);
             }
+            Event::NameStored { runtime, generation, revision, id, path, name, success } => self.finish_name(runtime, generation, revision, id, path, name, success),
+            Event::Archived { project, id, revision, archived, success } => self.finish_archive(project, id, revision, archived, success),
             Event::RegistrationFailed(command) => {
                 self.register_retries.push(command);
                 self.error = Some("A completed session could not be added to the workspace. Retry saving it.".into());

@@ -1623,6 +1623,9 @@ impl Render for Sidebar {
                                                         .whitespace_nowrap()
                                                         .text_ellipsis()
                                                         .text_size(px(12.))
+                                                        .line_height(chrome_title_leading(
+                                                            window, 12.,
+                                                        ))
                                                         .text_color(rgb(t.text))
                                                         .child(title),
                                                 )
@@ -2633,7 +2636,7 @@ impl Header {
         };
         let was_focused = self.input.read(cx).focus_handle(cx).is_focused(window);
         if commit {
-            let title = self.input.read(cx).value().trim().to_owned();
+            let title = tau_session::session::normalize_session_name(&self.input.read(cx).value());
             if !title.is_empty() && id == self.active && title != self.title {
                 cx.emit(Action::Rename {
                     session_id: id,
@@ -2679,6 +2682,21 @@ impl Header {
         }
     }
 }
+// Button's neutral 1em line box is smaller than Inter's ascent + descent.
+// Clipped labels need a complete typographic box, not a shifted baseline.
+fn chrome_title_leading(window: &Window, size: f32) -> Pixels {
+    let system = window.text_system();
+    let face = system.resolve_font(&gpui_kit::font(font::family()));
+    title_leading(
+        system.ascent(face, px(size)),
+        system.descent(face, px(size)),
+    )
+}
+
+fn title_leading(ascent: Pixels, descent: Pixels) -> Pixels {
+    ascent + descent.abs()
+}
+
 impl Render for Header {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = support::tokens(self.dark);
@@ -2743,6 +2761,7 @@ impl Render for Header {
                         .bg(rgba(0x00000000))
                         .text_color(rgb(t.text))
                         .text_size(px(13.))
+                        .line_height(chrome_title_leading(window, 13.))
                         .hover(move |b| b.bg(wash(dark)))
                         .on_hover(cx.listener(|s, h, w, cx| s.hover("session-name", *h, w, cx)))
                         .on_click(cx.listener(|s, _, w, cx| s.begin_rename(w, cx)))
@@ -2852,6 +2871,9 @@ impl Render for Header {
 #[cfg(test)]
 #[path = "chrome/regressions.rs"]
 mod regressions;
+
+#[cfg(all(test, target_os = "macos"))]
+mod text_tests;
 
 #[cfg(test)]
 #[path = "chrome/resize_tests.rs"]

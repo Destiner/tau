@@ -115,8 +115,22 @@ async fn click(shell: &Entity<Shell>, cx: &AsyncApp, id: &str) {
     let mut previous = None;
     poll(cx, label, 5, |cx| {
         window(shell, cx)
-            .update(cx, |_, w, _| {
+            .update(cx, |_, w, cx| {
                 let control = gpui_kit::base::test_support::find(w, &[], &id.to_string().into());
+                // Row actions are revealed by real hover, not eligibility overrides.
+                if let Some(control) = control.as_ref()
+                    && !control.visible()
+                    && (id.starts_with("archive-") || id.starts_with("restore-"))
+                {
+                    w.dispatch_event(
+                        PlatformInput::MouseMove(MouseMoveEvent {
+                            position: control.bounds().center(),
+                            pressed_button: None,
+                            modifiers: Default::default(),
+                        }),
+                        cx,
+                    );
+                }
                 let status = (
                     w.is_window_active(),
                     control.is_some(),
@@ -176,6 +190,81 @@ fn registry_exists(live: &LiveSession) -> bool {
         .zip(profile::session_registry_filename().ok())
         .is_some_and(|(directory, filename)| directory.join(filename).is_file())
 }
+fn registry_record(live: &LiveSession) -> Option<serde_json::Value> {
+    let path = tau_core::storage::default_session_dir(&live.project.path)
+        .ok()?
+        .join(profile::session_registry_filename().ok()?);
+    let registry: serde_json::Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+    registry["sessions"]
+        .as_array()?
+        .iter()
+        .find(|record| record["id"] == live.controller.state().identity.id)
+        .cloned()
+}
+
+async fn capture(shell: &Entity<Shell>, cx: &AsyncApp, name: &str, empty: bool) {
+    let painted = Rc::new(Cell::new(false));
+    let observed = painted.clone();
+    let name = name.to_owned();
+    cx.update(|cx| {
+        window(shell, cx).update(cx, |_, w, _| {
+            // GPUI drains frame callbacks before drawing. A second callback
+            // observes the scene painted by the first normal platform frame.
+            w.on_next_frame(move |w, _| w.on_next_frame(move |w, _| {
+                let bounds = |id: &str| gpui_kit::base::test_support::find(w, &[], &id.to_owned().into()).unwrap().bounds();
+                let area = bounds("shell-composer-area");
+                let editor = bounds("editor");
+                let footer = bounds("footer-gap");
+                assert_eq!(area.bottom(), w.viewport_size().height);
+                assert_eq!(area.bottom() - footer.bottom(), px(8.));
+                assert_eq!(footer.left() - area.left(), px(6.));
+                assert_eq!(area.right() - footer.right(), px(8.));
+                if empty {
+                    assert!(gpui_kit::base::test_support::find(w, &[], &"shell-transcript-slot".into()).is_none());
+                    assert_eq!(editor.top(), area.top() + px(6.));
+                    assert_eq!(editor.bottom(), footer.top());
+                    assert!(editor.size.height > w.viewport_size().height * 0.75);
+                } else {
+                    let slot = bounds("shell-transcript-slot");
+                    assert!(slot.size.height > px(200.));
+                    assert!(slot.bottom() <= area.top());
+                    assert_eq!(editor.size.height, px(83.));
+                }
+                eprintln!("PASS native-app {name} actual frame composer/editor/footer bounds={area:?}/{editor:?}/{footer:?}");
+                if let Some(directory) = std::env::var_os("TAU_NATIVE_CAPTURE_DIR") {
+                    let destination = PathBuf::from(directory).join(format!("{name}.png"));
+                    let image = w.render_to_image().unwrap_or_else(|_| {
+                        eprintln!("FAIL native-app owned Metal scene capture unsupported or renderer failed");
+                        panic!("native capture failed")
+                    });
+                    let (width, height) = image.dimensions();
+                    image.save(&destination).expect("save actual renderer PNG");
+                    eprintln!("PASS native-app owned Metal scene PNG {width}x{height}: {}", destination.display());
+                }
+                observed.set(true);
+            }));
+        }).unwrap();
+    });
+    poll(cx, "normal native painted frame and capture", 5, |_| {
+        painted.get()
+    })
+    .await;
+}
+
+fn insert_rename(shell: &Entity<Shell>, cx: &AsyncApp, text: &str) {
+    cx.update(|cx| {
+        window(shell, cx)
+            .update(cx, |_, w, cx| {
+                let editor = shell.read(cx).header.as_ref().unwrap().read(cx).editor();
+                assert!(editor.read(cx).focus_handle(cx).is_focused(w));
+                editor.update(cx, |input, cx| {
+                    input.replace_text_in_range(None, text, w, cx)
+                });
+            })
+            .unwrap();
+    });
+}
+
 async fn ready(shell: &Entity<Shell>, cx: &AsyncApp) {
     poll(cx, "real Pi bootstrap", 12, |cx| {
         let s = shell.read(cx);
@@ -213,6 +302,7 @@ async fn exercise(
     cx.update(|cx| cx.dispatch_action(&crate::native::NewSession));
     ready(&shell, &cx).await;
     let first = cx.update(|cx| shell.read(cx).active.clone());
+    capture(&shell, &cx, "empty", true).await;
     focus_composer(&shell, &cx);
     insert_composer(&shell, &cx, "Owned draft café 😀");
     poll(&cx, "draft delivered through real editor", 5, |cx| {
@@ -506,6 +596,109 @@ async fn exercise(
         eprintln!(
             "PASS native-app measured rendered Stop click -> genuine ComposerEvent::Stop -> real Pi abort/tool end/agent_settled; retained assistant/tool partial, unrelated draft and unchanged empty queue; idle/pending-free"
         );
+        click(&shell, &cx, "session-name").await;
+        insert_rename(&shell, &cx, "Tau invented gypq");
+        key(&shell, &cx, "enter");
+        poll(
+            &cx,
+            "rename actual Pi state and persisted registry echo",
+            5,
+            |cx| {
+                let s = shell.read(cx);
+                let live = &s.sessions[&second];
+                assert!(s.error.is_none() && live.controller.state().error.is_none());
+                !s.header.as_ref().unwrap().read(cx).renaming()
+                    && !live.controller.rename_pending()
+                    && live.controller.state().identity.name == "Tau invented gypq"
+                    && registry_record(live).is_some_and(|r| r["name"] == "Tau invented gypq")
+                    && s.workspace.as_ref().unwrap().projects.iter().any(|p| {
+                        p.sessions.iter().any(|r| {
+                            r.id == live.controller.state().identity.id
+                                && r.title == "Tau invented gypq"
+                        })
+                    })
+            },
+        )
+        .await;
+        eprintln!(
+            "PASS native-app measured header click -> focused real InputHandler/Enter -> Pi name + registry + workspace echo gypq"
+        );
+        click(&shell, &cx, "session-name").await;
+        insert_rename(&shell, &cx, "Cancelled invented title");
+        key(&shell, &cx, "escape");
+        poll(&cx, "rename Escape cancellation", 5, |cx| {
+            let s = shell.read(cx);
+            !s.header.as_ref().unwrap().read(cx).renaming()
+                && s.sessions[&second].controller.state().identity.name == "Tau invented gypq"
+                && registry_record(&s.sessions[&second])
+                    .is_some_and(|r| r["name"] == "Tau invented gypq")
+        })
+        .await;
+        eprintln!("PASS native-app focused rename Escape preserves Pi and persisted name");
+        capture(&shell, &cx, "nonempty-renamed", false).await;
+        click(&shell, &cx, &format!("archive-{second}")).await;
+        poll(
+            &cx,
+            "archive persisted and removed from normal view retaining draft",
+            5,
+            |cx| {
+                let s = shell.read(cx);
+                assert!(s.error.is_none());
+                s.sessions[&first].controller.state().draft == "Owned draft café 😀"
+                    && registry_record(&s.sessions[&second]).is_some_and(|r| r["archived"] == true)
+                    && window(&shell, cx)
+                        .update(cx, |_, w, _| {
+                            gpui_kit::base::test_support::find(
+                                w,
+                                &[],
+                                &format!("session-status-{second}").into(),
+                            )
+                            .is_none()
+                        })
+                        .unwrap()
+            },
+        )
+        .await;
+        click(&shell, &cx, "archived").await;
+        click(&shell, &cx, &format!("archived-select-{second}")).await;
+        poll(&cx, "archived browse selects without restoring", 5, |cx| {
+            let s = shell.read(cx);
+            s.active == second
+                && s.session_actions.archived
+                && s.sessions[&second].controller.pending_count() == 0
+                && registry_record(&s.sessions[&second]).is_some_and(|r| r["archived"] == true)
+                && s.archived_items().iter().any(|r| r.id == second)
+        })
+        .await;
+        eprintln!(
+            "PASS native-app measured Archive -> normal row absent + retained draft; archived browse/select remains persisted archived"
+        );
+        click(&shell, &cx, &format!("restore-{second}")).await;
+        poll(&cx, "explicit restore persisted false", 5, |cx| {
+            let s = shell.read(cx);
+            assert!(s.error.is_none());
+            registry_record(&s.sessions[&second]).is_some_and(|r| r["archived"] == false)
+                && !s.archived_items().iter().any(|r| r.id == second)
+        })
+        .await;
+        click(&shell, &cx, "archived").await;
+        click(&shell, &cx, &format!("session-status-{second}")).await;
+        poll(
+            &cx,
+            "restored normal row selects retained session",
+            5,
+            |cx| {
+                let s = shell.read(cx);
+                !s.session_actions.archived
+                    && s.active == second
+                    && s.sessions[&first].controller.state().draft == "Owned draft café 😀"
+                    && registry_record(&s.sessions[&second]).is_some_and(|r| r["archived"] == false)
+            },
+        )
+        .await;
+        eprintln!(
+            "PASS native-app explicit measured Restore -> registry false -> normal rendered row selects; unrelated draft retained"
+        );
     }
     click(&shell, &cx, &format!("session-status-{first}")).await;
     poll(&cx, "draft persisted before close", 5, |cx| {
@@ -539,7 +732,7 @@ async fn exercise(
     })
     .await;
     eprintln!(
-        "PASS native-app save/close/reopen retains selected draft; own native renderer painted controls (no pixel capture)"
+        "PASS native-app save/close/reopen retains selected draft; own native renderer painted measured controls"
     );
     let observed_selects = Rc::new(Cell::new(0usize));
     let observed = observed_selects.clone();

@@ -76,7 +76,7 @@ impl Host {
                     }
                 }
                 Effect::RegisterSession { .. } => self.registrations += 1,
-                Effect::IdentityChanged { .. } => {}
+                Effect::IdentityChanged { .. } | Effect::SessionNameChanged { .. } => {}
             }
         }
         Ok(())

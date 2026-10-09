@@ -30,6 +30,7 @@ pub(super) fn shell(commands: async_channel::Sender<Command>) -> Shell {
         register_retries: vec![],
         pending_saves: BTreeMap::new(),
         restored: false,
+        session_actions: session_actions::SessionActions::default(),
     }
 }
 pub(super) fn project() -> ProjectSummary {
@@ -48,7 +49,7 @@ pub(super) fn app() -> TestApp {
     app.update(|cx| components::init(cx, false));
     app
 }
-fn with_shell(
+pub(super) fn with_shell(
     capacity: usize,
     test: impl FnOnce(&mut Shell, &mut Window, &mut Context<Shell>, async_channel::Receiver<Command>),
 ) {
@@ -65,7 +66,7 @@ fn with_shell(
             .unwrap()
     });
 }
-fn create(s: &mut Shell, id: &str, text: &str, w: &mut Window, cx: &mut Context<Shell>) {
+pub(super) fn create(s: &mut Shell, id: &str, text: &str, w: &mut Window, cx: &mut Context<Shell>) {
     s.create_live(
         id.into(),
         project(),
@@ -76,7 +77,7 @@ fn create(s: &mut Shell, id: &str, text: &str, w: &mut Window, cx: &mut Context<
         cx,
     );
 }
-fn started(s: &mut Shell, id: &str, generation: u64, cx: &mut Context<Shell>) {
+pub(super) fn started(s: &mut Shell, id: &str, generation: u64, cx: &mut Context<Shell>) {
     s.ingest(
         Event::Started {
             runtime: id.into(),
@@ -86,7 +87,7 @@ fn started(s: &mut Shell, id: &str, generation: u64, cx: &mut Context<Shell>) {
         cx,
     );
 }
-fn rpc(runtime: &str, generation: u64, value: serde_json::Value) -> Event {
+pub(super) fn rpc(runtime: &str, generation: u64, value: serde_json::Value) -> Event {
     Event::Pi(PiEvent {
         runtime_id: runtime.into(),
         generation,

@@ -121,7 +121,9 @@ impl Shell {
                                         id: live
                                             .map(|(k, _)| k.clone())
                                             .unwrap_or_else(|| s.id.clone()),
-                                        title: s.title.clone(),
+                                        title: live
+                                            .map(|(_, l)| title(l))
+                                            .unwrap_or_else(|| s.title.clone()),
                                         time: s.last_active.clone(),
                                         status: live.and_then(|(_, l)| {
                                             l.controller.state().working.then_some(
@@ -129,7 +131,7 @@ impl Shell {
                                             )
                                         }),
                                         unread: false,
-                                        can_archive: false,
+                                        can_archive: self.can_archive(&s.id),
                                     }
                                 })
                                 .collect();
@@ -168,6 +170,10 @@ impl Shell {
         if let Some(sidebar) = &self.sidebar {
             let mut props = sidebar_props();
             props.active = self.active.clone();
+            props.archived = self.session_actions.archived;
+            if props.archived {
+                props.sessions = self.archived_items();
+            }
             sidebar.update(cx, |s, cx| {
                 s.set_props(props, cx);
                 s.set_projects(projects, cx);
@@ -184,6 +190,7 @@ impl Shell {
                 .unwrap_or_else(|| "Tau".into());
             header.update(cx, |h, cx| {
                 h.set_session(self.active.clone(), heading, window, cx);
+                h.set_renamable(self.can_rename(), cx);
                 if changed {
                     h.set_theme(dark, window, cx);
                 }
@@ -469,6 +476,17 @@ impl Shell {
             .map(|(key, _)| key.clone())
         {
             self.sessions.get_mut(&key).unwrap().dirty = true;
+            if let Some((project, session, _)) = self.saved_session(&key)
+                && !session.archived
+            {
+                self.dispatch(
+                    Command::Select {
+                        project: project.path,
+                        session: session.id,
+                    },
+                    cx,
+                );
+            }
             self.active = key.clone();
             self.start_live(&key, cx);
             self.persist(false, cx);
@@ -483,13 +501,15 @@ impl Shell {
                     .map(|s| (p.clone(), s.clone()))
             })
         }) {
-            self.dispatch(
-                Command::Select {
-                    project: project.path.clone(),
-                    session: session.id.clone(),
-                },
-                cx,
-            );
+            if !session.archived {
+                self.dispatch(
+                    Command::Select {
+                        project: project.path.clone(),
+                        session: session.id.clone(),
+                    },
+                    cx,
+                );
+            }
             self.create_live(
                 uuid::Uuid::new_v4().to_string(),
                 project,
@@ -502,6 +522,9 @@ impl Shell {
         }
     }
     pub(super) fn action(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if self.session_action(&action, window, cx) {
+            return;
+        }
         match action {
             Action::Select(id) => self.select(&id, window, cx),
             Action::NewSession => self.new_session(None, window, cx),
@@ -591,6 +614,17 @@ impl Render for Shell {
         let mut main = div().flex().flex_col().flex_1().min_w_0().h_full();
         if let Some(header) = &self.header {
             main = main.child(header.clone());
+        }
+        if let Some(error) = self.session_action_error() {
+            main = main.child(
+                div().px(px(24.)).child(error.to_owned()).child(
+                    Button::new("retry-session-action")
+                        .child("Retry")
+                        .on_click(cx.listener(|s, _, window, cx| {
+                            s.retry_session_action(window, cx);
+                        })),
+                ),
+            );
         }
         if let Some(live) = self.sessions.get(&self.active) {
             let empty = live.transcript.read(cx).is_empty();

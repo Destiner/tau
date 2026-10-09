@@ -55,6 +55,21 @@ pub enum Command {
         path: String,
         name: String,
     },
+    StoreName {
+        runtime: String,
+        generation: u64,
+        revision: u64,
+        project: String,
+        id: String,
+        path: String,
+        name: String,
+    },
+    Archive {
+        project: String,
+        id: String,
+        revision: u64,
+        archived: bool,
+    },
     Select {
         project: String,
         session: String,
@@ -91,6 +106,22 @@ pub enum Event {
         success: bool,
         stopped: Vec<(String, u64)>,
     },
+    NameStored {
+        runtime: String,
+        generation: u64,
+        revision: u64,
+        id: String,
+        path: String,
+        name: String,
+        success: bool,
+    },
+    Archived {
+        project: String,
+        id: String,
+        revision: u64,
+        archived: bool,
+        success: bool,
+    },
     StorageFailed,
     RegistrationFailed(Command),
 }
@@ -112,6 +143,8 @@ fn worker(data: PathBuf, commands: Receiver<Command>, events: Sender<Event>) {
     let mut generations = HashMap::new();
     let mut registry_generations = HashMap::new();
     let mut start_attempts = HashMap::new();
+    let mut archive_intents = std::collections::HashSet::new();
+    let mut session_names = SessionNames::default();
     let sink_events = events.clone();
     let sink = PiSink::new(Arc::new(move |mut event: PiEvent| {
         // stderr is untrusted content, not a user-visible failure or diagnostic.
@@ -226,20 +259,60 @@ fn worker(data: PathBuf, commands: Receiver<Command>, events: Sender<Event>) {
                     path: path.clone(),
                     name: name.clone(),
                 };
-                if storage::register_session(
-                    project,
-                    id,
-                    path,
-                    (!name.is_empty()).then_some(name),
-                    None,
-                    Some(true),
-                )
-                .is_err()
+                let adopted = registration_is_adoption(&archive_intents, &project, &id);
+                if session_names
+                    .register(project, id, path, name, adopted)
+                    .is_err()
                 {
                     Some(Event::RegistrationFailed(retry))
                 } else {
                     Some(Event::Workspace(storage::load_workspace().map_err(|_| ())))
                 }
+            }
+            Command::StoreName {
+                runtime,
+                generation,
+                revision,
+                project,
+                id,
+                path,
+                name,
+            } => {
+                let success = registry_generations.get(&runtime) == Some(&generation)
+                    && session_names
+                        .store(project, id.clone(), path.clone(), name.clone())
+                        .is_ok_and(|row| row.is_some());
+                Some(Event::NameStored {
+                    runtime,
+                    generation,
+                    revision,
+                    id,
+                    path,
+                    name,
+                    success,
+                })
+            }
+            Command::Archive {
+                project,
+                id,
+                revision,
+                archived,
+            } => {
+                // Retries and delayed durability callbacks are not new adoption intent.
+                archive_intents.insert((project.clone(), id.clone()));
+                let success = if archived {
+                    storage::archive_session(project.clone(), id.clone())
+                } else {
+                    storage::unarchive_session(project.clone(), id.clone())
+                }
+                .is_ok();
+                Some(Event::Archived {
+                    project,
+                    id,
+                    revision,
+                    archived,
+                    success,
+                })
             }
             Command::Select { project, session } => {
                 let success = storage::set_active_project(project.clone())
@@ -300,6 +373,54 @@ fn worker(data: PathBuf, commands: Receiver<Command>, events: Sender<Event>) {
     }
     pi.shutdown();
 }
+#[derive(Default)]
+struct SessionNames {
+    authoritative: HashMap<(String, String, String), String>,
+}
+impl SessionNames {
+    fn register(
+        &self,
+        project: String,
+        id: String,
+        path: String,
+        captured_name: String,
+        adopted: bool,
+    ) -> Result<Option<tau_core::models::SessionSummary>, String> {
+        let name = self
+            .authoritative
+            .get(&(project.clone(), id.clone(), path.clone()))
+            .cloned()
+            .unwrap_or(captured_name);
+        storage::register_session(
+            project,
+            id,
+            path,
+            (!name.is_empty()).then_some(name),
+            None,
+            Some(adopted),
+        )
+    }
+    fn store(
+        &mut self,
+        project: String,
+        id: String,
+        path: String,
+        name: String,
+    ) -> Result<Option<tau_core::models::SessionSummary>, String> {
+        // Fence captured registration names even when this write needs retrying.
+        // The binding survives runtime replacement; predecessor registration still runs.
+        self.authoritative
+            .insert((project.clone(), id.clone(), path.clone()), name.clone());
+        storage::register_session(project, id, path, Some(name), None, Some(false))
+    }
+}
+fn registration_is_adoption(
+    intents: &std::collections::HashSet<(String, String)>,
+    project: &str,
+    id: &str,
+) -> bool {
+    !intents.contains(&(project.into(), id.into()))
+}
 fn read_preferences(data: &std::path::Path) -> Result<Preferences, String> {
     match std::fs::read(data.join("native-ui.json")) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|_| "preferences".into()),
@@ -318,8 +439,21 @@ fn write_preferences(data: &std::path::Path, preferences: &Preferences) -> Resul
 }
 
 #[cfg(test)]
+#[path = "service_name_tests.rs"]
+mod name_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn delayed_registration_does_not_undo_explicit_archive_or_restore_intent() {
+        let mut intents = std::collections::HashSet::new();
+        assert!(registration_is_adoption(&intents, "project", "session"));
+        intents.insert(("project".into(), "session".into()));
+        assert!(!registration_is_adoption(&intents, "project", "session"));
+        assert!(registration_is_adoption(&intents, "other", "session"));
+        assert!(registration_is_adoption(&intents, "project", "replacement"));
+    }
     #[test]
     fn preferences_are_distinct_and_recover_drafts() {
         let dir = tempfile::tempdir().unwrap();

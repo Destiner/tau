@@ -5,6 +5,18 @@ use std::collections::{BTreeMap, HashSet};
 
 pub const REQUEST_TIMEOUT_MS: u64 = 10_000;
 pub const STOP_TIMEOUT_MS: u64 = 10_000;
+
+pub fn normalize_session_name(name: &str) -> String {
+    let normalized = name.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut units = 0;
+    normalized
+        .chars()
+        .take_while(|ch| {
+            units += ch.len_utf16();
+            units <= 240
+        })
+        .collect()
+}
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Identity {
     pub id: String,
@@ -28,6 +40,9 @@ pub enum Effect {
         id: String,
         path: String,
         name: String,
+    },
+    SessionNameChanged {
+        identity: Identity,
     },
     IdentityChanged {
         previous: Identity,
@@ -100,6 +115,7 @@ struct Pending {
     draft: Option<String>,
     optimistic: Option<String>,
     accepted: bool,
+    previous_name: Option<String>,
 }
 /// Pure protocol state. The host owns IO, persistence, rendering and scheduling.
 pub struct Controller {
@@ -199,6 +215,7 @@ impl Controller {
                 draft: None,
                 optimistic: None,
                 accepted: false,
+                previous_name: None,
             },
         );
         if command != "prompt" && !barrier {
@@ -376,9 +393,14 @@ impl Controller {
             return vec![];
         }
         if v["success"] != true {
+            let rename = p.command == "set_session_name";
             self.reject(p, false);
             self.update_status();
-            return vec![];
+            return if rename {
+                vec![self.send("get_state", json!({}), false)]
+            } else {
+                vec![]
+            };
         }
         let d = &v["data"];
         let mut effects = vec![];
@@ -425,7 +447,12 @@ impl Controller {
                         self.fail("Pi opened a new identity at the requested path. The old session may not have been saved.");
                     }
                 } else {
-                    self.state.identity.name = current.name;
+                    if !self.rename_pending() {
+                        self.state.identity.name = current.name;
+                        effects.push(Effect::SessionNameChanged {
+                            identity: self.state.identity.clone(),
+                        });
+                    }
                 }
                 self.state.model = d["model"].clone();
                 self.state.effort = string(&d["thinkingLevel"]);
@@ -523,7 +550,7 @@ impl Controller {
                 }
                 effects.push(self.send("get_state", json!({}), false));
             }
-            "set_model" | "set_thinking_level" => {
+            "set_model" | "set_thinking_level" | "set_session_name" => {
                 effects.push(self.send("get_state", json!({}), false))
             }
             "set_steering_mode" | "set_follow_up_mode" => effects.extend(self.continue_queue()),
@@ -555,6 +582,35 @@ impl Controller {
                 name: identity.name.clone(),
             });
         }
+    }
+    pub fn rename_pending(&self) -> bool {
+        self.pending
+            .values()
+            .any(|p| p.command == "set_session_name")
+    }
+    pub fn rename(&mut self, name: &str) -> Vec<Effect> {
+        let name = normalize_session_name(name);
+        if !self.state.ready
+            || !self.connected
+            || self.rename_pending()
+            || name.is_empty()
+            || name == self.state.identity.name
+        {
+            return vec![];
+        }
+        let previous = std::mem::replace(&mut self.state.identity.name, name.clone());
+        self.state.error = None;
+        let effect = self.send("set_session_name", json!({"name": name}), false);
+        self.state_serial = self.sequence;
+        if let Effect::Send(request) = &effect {
+            if let Some(pending) = request["id"]
+                .as_str()
+                .and_then(|id| self.pending.get_mut(id))
+            {
+                pending.previous_name = Some(previous);
+            }
+        }
+        vec![effect]
     }
     pub fn submit(&mut self, text: impl Into<String>) -> Vec<Effect> {
         self.submit_inner(text.into(), None)
@@ -898,6 +954,9 @@ impl Controller {
     fn recover_pending(&mut self) {
         let ps: Vec<_> = self.pending.values().cloned().collect();
         for p in ps {
+            if let Some(previous) = &p.previous_name {
+                self.state.identity.name = previous.clone();
+            }
             if !p.accepted {
                 if let Some(draft) = p.draft {
                     self.restore(draft);
@@ -912,6 +971,9 @@ impl Controller {
         }
     }
     fn reject(&mut self, p: Pending, timeout: bool) {
+        if let Some(previous) = &p.previous_name {
+            self.state.identity.name = previous.clone();
+        }
         if p.command == "prompt" {
             self.admission = None;
         }
@@ -950,6 +1012,9 @@ impl Controller {
             "prompt" => "The message was not accepted. Review the draft and try again.",
             "abort" => "Stop was not confirmed. Pi may still be working. Try Stop again.",
             "clear_queue" => "Could not clear the queue. Check the Pi version and retry.",
+            "set_session_name" => {
+                "The session could not be renamed. Choose another name and try again."
+            }
             "set_model" | "set_thinking_level" => {
                 "The setting was not confirmed. Refresh the session and try again."
             }
@@ -957,6 +1022,7 @@ impl Controller {
         });
     }
     pub fn request_failed(&mut self, id: &str) -> Vec<Effect> {
+        let mut effects = vec![];
         if let Some(p) = self.pending.remove(id) {
             if p.epoch == self.epoch
                 && p.identity.binding_eq(&self.state.identity)
@@ -967,11 +1033,15 @@ impl Controller {
                         .get(&p.command)
                         .is_some_and(|latest| latest == id))
             {
+                let rename = p.command == "set_session_name";
                 self.reject(p, false);
+                if rename {
+                    effects.push(self.send("get_state", json!({}), false));
+                }
             }
         }
         self.update_status();
-        vec![]
+        effects
     }
     pub fn transport_failed(&mut self, generation: u64) -> Vec<Effect> {
         if generation != self.generation {
@@ -998,6 +1068,7 @@ impl Controller {
     /// Nondecreasing caller-supplied logical milliseconds; no wall clock or timers inside the crate.
     pub fn tick(&mut self, now_ms: u64) -> Vec<Effect> {
         self.now = self.now.max(now_ms);
+        let mut refresh_name = false;
         let expired: Vec<_> = self
             .pending
             .iter()
@@ -1011,6 +1082,7 @@ impl Controller {
                         || p.command == "prompt"
                         || self.latest.get(&p.command) == Some(&id))
                 {
+                    refresh_name |= p.command == "set_session_name";
                     self.reject(p, true);
                 }
             }
@@ -1042,7 +1114,11 @@ impl Controller {
             self.fail("Stop was not confirmed. Pi may still be working. Try Stop again.");
         }
         self.update_status();
-        vec![]
+        if refresh_name && self.connected {
+            vec![self.send("get_state", json!({}), false)]
+        } else {
+            vec![]
+        }
     }
     fn finalize_partial(&mut self) {
         for r in &mut self.state.transcript {
