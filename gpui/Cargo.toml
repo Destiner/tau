@@ -59,6 +59,12 @@ harness = false
 required-features = ["native-os-tests"]
 
 [[test]]
+name = "native-host"
+path = "tests/native-os/host.rs"
+harness = false
+required-features = ["native-os-tests"]
+
+[[test]]
 name = "native-accessibility"
 path = "tests/native-os/accessibility.rs"
 harness = false

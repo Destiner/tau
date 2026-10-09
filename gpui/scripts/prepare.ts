@@ -64,6 +64,7 @@ const crates = [
       'accessibility-test-platform.patch',
       'disabled-control-accessibility-core.patch',
       'input-editor-accessibility-core.patch',
+      'native-host-quit-core.patch',
     ],
   },
   {
@@ -71,7 +72,11 @@ const crates = [
     version: '0.3.7',
     checksum:
       '5a43af845b260b09393e923c4f1e1a67a10fcfc847b4815192bbfd02ed9fe725',
-    patches: ['antialiased-text.patch', 'grayscale-text.patch'],
+    patches: [
+      'antialiased-text.patch',
+      'grayscale-text.patch',
+      'native-host-quit-macos.patch',
+    ],
   },
   {
     name: 'merman-core',

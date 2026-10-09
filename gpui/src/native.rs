@@ -1,8 +1,14 @@
 //! Native OS descriptors for host applications to compose and install.
 
+mod host;
+mod lifecycle;
 mod menus;
 mod window;
 
+pub use host::{
+    HostCallbacks, NativeHost, NewSession, NewWindow, Quit, Settings, host_menus, reveal_window,
+};
+pub use lifecycle::{Intent, Lifecycle, LifecycleCallbacks, Outcome, Request};
 pub use menus::edit_menu;
 pub use window::{CloseWindow, MinimizeWindow, install_window_commands, window_menu};
 
