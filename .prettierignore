@@ -1,10 +1,13 @@
 dist
 node_modules
+.worktrees
 playwright-report
 test-results
 src-tauri/gen
 src-tauri/target
 src-tauri/Cargo.lock
+crates/**/target
+crates/**/Cargo.lock
 # Independent prototype tooling and generated captures use gpui's own checks.
 gpui
 bun.lock
