@@ -118,7 +118,16 @@ GPUI release or GPUI updater. See [packaging](../gpui/PACKAGING.md).
   shadowing the durability identity flag, and a real report pointer-dismissal focus steal.
   These are fixed. The native checkbox test now exercises toggles instead of requiring an
   explicit false disabled snapshot value. Original failure logs remain preserved.
-- GPUI library: **370 passed, 0 failed, 1 ignored**, plus **13 passed** editor
+- Session-switch follow-up: Cmd-P → switch → immediate Cmd-K now retains mounted
+  keyboard routing through destination paint; new sessions focus their composer when
+  ready. Blank unregistered sessions retire on navigation, or after pending reads prove
+  them empty. Captured registration acknowledgements, cleanup fences and retained drafts,
+  history, queues and extension work prevent destructive cleanup; Pi files are untouched.
+  Empty composer text starts 12px higher with unchanged outer/footer geometry.
+  Credential-free and model-enabled native acceptance passed the new sequence and
+  cleanup acknowledgement alongside existing workflow/shutdown checks. Negative controls
+  and early native focus failures remain recorded; no reactivation or widened gates.
+- GPUI library: **393 passed, 0 failed, 1 ignored**, plus **13 passed** editor
   integration tests; all-target/all-feature strict Clippy and the actual `tau`
   build passed. The broader Rust run passed its unit binaries but timed out in
   the existing activity Metal runner; the full suite is not reported green.
@@ -156,7 +165,7 @@ failures); no speculative activation/focus repair or relabelled visual snapshots
 - [x] Wire saved-session rename and archive/browse/restore using existing contracts.
 - [x] Implement the command palette for supported native workflows, remote import UI,
       scoped model choices and Vue-aligned transcript activity presentation.
-- [ ] Finish session removal and remaining unsupported palette actions; prove real
+- [ ] Finish saved-session removal and remaining unsupported palette actions; prove real
       SSH workflows using existing configuration contracts.
 - [ ] Complete file/media previews, multiline extension editing and applicable
       extension presentation; preserve local/remote preview security.
