@@ -12,9 +12,12 @@ After component initialization, call `NativeHost::install(cx, "Tau", timeout,
 HostCallbacks { ... })` once. It installs App / File / Edit / Window menus,
 Cmd-Q, Cmd-N (New Session), and the existing Cmd-W / Cmd-M
 helpers. Close appears in File, Minimize in Window; Edit uses the existing focused
-Base responders. The host explicitly selects `QuitMode::Explicit`, keeping the
-process alive after the last window closes. Reinstallation retains the first
-callbacks and does not reset subsequent host policy changes.
+Base responders. The host explicitly selects `QuitMode::Explicit`. By default a
+generic host survives last-window close and supports reopen. Production Tau instead
+calls `host.lifecycle().set_quit_on_last_window_close(true)` before opening its first
+window. This promotes last close to guarded Quit **before removing the window**;
+it does not enable platform auto-quit. Reinstallation retains the first callbacks
+and does not reset subsequent host policy changes.
 
 `host_menus` is also available as a pure descriptor function. Calling it has no
 side effects. A product host can compose extra App commands (About, updates,
@@ -63,6 +66,16 @@ supersedes pending closes and blocks new close requests. `settled` informs the
 host when a request is approved, cancelled, expired, superseded, or its target
 was removed, so its confirmation surface can retire the matching presentation.
 Callbacks run without coordinator borrows and may resolve synchronously.
+
+With quit-on-last-close enabled, red close, Cmd-W and File Close all deliver
+`Intent::Quit` for the final owned window. The production callback must therefore
+run its full confirmation, all-draft persistence and acknowledged runtime shutdown
+path, not its non-final Close path. If two closes race, the remaining Close is
+promoted at approval or deferred dispatch, before native removal. Promotion obtains
+fresh request identity, supersedes pending closes, coalesces with Quit and retains
+the original deadline (no extra timeout budget). A prior Close approval cannot
+approve this Quit. The remaining root survives cancellation/expiration, including
+when both Close approvals were queued in the same event turn.
 
 The host presents its own existing `NativeDialog` (Quit kind where appropriate),
 or another product confirmation surface. Bind its `DialogEvent::Submitted` and
@@ -163,7 +176,11 @@ two-window close isolation/coalescing, cancelled/repeated requests, preserved
 editor identity/drafts, Quit supersession, delayed stale approval after timeout,
 foreign-host decisions, target removal, native callback gating while AppCell is
 borrowed, guard replacement, synchronous host cancellation, exactly-once cleanup,
-last-window survival, reopen reuse, factory failure/retry, and explicit New Window.
+generic last-window survival, reopen reuse, factory failure/retry, and explicit New
+Window. Opt-in production policy tests additionally cover last red close/Cmd-W/File
+Close as Quit, changed drafts and focus on cancellation/failure/timeout, blocked
+window/session creation during Quit, concurrent close promotion with preserved
+deadline, same-turn approval dispatch races, and all-draft save/runtime-ack gating.
 
 ## Opt-in AppKit acceptance
 

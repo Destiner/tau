@@ -53,7 +53,9 @@ pub fn host_menus(app_name: &str) -> Vec<Menu> {
 
 impl NativeHost {
     /// Call after component initialization. Owns menu composition, Cmd-Q,
-    /// Cmd-N (New Session), explicit last-window policy, termination, and reopen.
+    /// Cmd-N (New Session), explicit termination, and reopen. Generic hosts survive
+    /// last-window close; production opts into guarded last-close Quit through
+    /// `host.lifecycle().set_quit_on_last_window_close(true)` before opening.
     /// Repeated installation is inert and retains the original callbacks.
     pub fn install(
         cx: &mut App,

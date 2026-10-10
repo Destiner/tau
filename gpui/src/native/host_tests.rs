@@ -8,6 +8,9 @@ use gpui_kit::{
 };
 use std::cell::{Cell, RefCell};
 
+#[path = "host_policy_tests.rs"]
+mod policy;
+
 const DRAFT: &str = "Draft café 😀 第二行";
 struct View {
     input: Entity<InputState>,

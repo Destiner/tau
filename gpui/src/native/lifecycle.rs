@@ -53,6 +53,7 @@ struct State {
     pending: HashMap<Intent, Request>,
     close_authorized: HashSet<AnyWindowHandle>,
     quit_authorized: bool,
+    quit_on_last_window_close: bool,
     exiting: bool,
     windows: Vec<AnyWindowHandle>,
     callbacks: LifecycleCallbacks,
@@ -75,6 +76,7 @@ impl Lifecycle {
             pending: HashMap::new(),
             close_authorized: HashSet::new(),
             quit_authorized: false,
+            quit_on_last_window_close: false,
             exiting: false,
             windows: Vec::new(),
             callbacks,
@@ -136,6 +138,18 @@ impl Lifecycle {
         });
     }
 
+    /// Production opts in before opening its first window. Generic hosts retain
+    /// explicit quit/reopen behavior; platform auto-quit must remain disabled.
+    pub fn set_quit_on_last_window_close(&self, enabled: bool) {
+        self.0.borrow_mut().quit_on_last_window_close = enabled;
+    }
+
+    fn is_last_close(&self, intent: Intent) -> bool {
+        let state = self.0.borrow();
+        state.quit_on_last_window_close
+            && matches!(intent, Intent::Close(target) if state.windows.as_slice() == [target])
+    }
+
     pub fn windows(&self) -> Vec<AnyWindowHandle> {
         self.0.borrow().windows.clone()
     }
@@ -148,6 +162,15 @@ impl Lifecycle {
     }
 
     fn request(&self, intent: Intent, cx: &mut App) {
+        let intent = if self.is_last_close(intent) {
+            Intent::Quit
+        } else {
+            intent
+        };
+        self.request_until(intent, None, cx);
+    }
+
+    fn request_until(&self, intent: Intent, deadline: Option<Instant>, cx: &mut App) {
         let expired = {
             let state = self.0.borrow();
             let now = state.clock.now();
@@ -187,10 +210,13 @@ impl Lifecycle {
             let request = Request {
                 id: id + 1,
                 intent,
-                deadline: state.clock.now() + state.timeout,
+                deadline: deadline.unwrap_or_else(|| state.clock.now() + state.timeout),
             };
             state.pending.insert(intent, request);
-            (request, superseded, state.timeout)
+            let remaining = request
+                .deadline
+                .saturating_duration_since(state.clock.now());
+            (request, superseded, remaining)
         };
         for old in superseded {
             self.settle(old, Outcome::Superseded, cx);
@@ -235,6 +261,15 @@ impl Lifecycle {
     }
 
     fn finish(&self, request: Request, outcome: Outcome, cx: &mut App) -> bool {
+        // A concurrent close may have removed the other window while this
+        // callback was saving. Never spend a Close approval on quitting.
+        if outcome == Outcome::Approved
+            && self.is_pending(request)
+            && self.is_last_close(request.intent)
+        {
+            self.request_until(Intent::Quit, Some(request.deadline), cx);
+            return false;
+        }
         let requested_outcome = outcome;
         let outcome = {
             let mut state = self.0.borrow_mut();
@@ -264,6 +299,14 @@ impl Lifecycle {
                         || host.0.borrow().pending.contains_key(&Intent::Quit)
                         || host.0.borrow().pending.contains_key(&Intent::Close(target))
                     {
+                        return;
+                    }
+                    // Two approvals can be queued in the same event turn. Recheck
+                    // at dispatch, before authorizing native removal of the root.
+                    if host.is_last_close(request.intent) {
+                        if host.0.borrow().clock.now() < request.deadline {
+                            host.request_until(Intent::Quit, Some(request.deadline), cx);
+                        }
                         return;
                     }
                     host.0.borrow_mut().close_authorized.insert(target);
