@@ -3831,13 +3831,12 @@ dependencies = [
  "flate2",
  "libc",
  "opentelemetry",
- "opentelemetry-semantic-conventions",
- "opentelemetry_sdk",
  "serde",
  "serde_json",
  "shell-words",
  "tar",
  "tau-core",
+ "tau-observability",
  "tauri",
  "tauri-build",
  "tauri-plugin-clipboard-manager",
@@ -3860,6 +3859,19 @@ dependencies = [
  "serde_json",
  "shell-words",
  "tempfile",
+]
+
+[[package]]
+name = "tau-observability"
+version = "0.2.1"
+dependencies = [
+ "opentelemetry",
+ "opentelemetry-semantic-conventions",
+ "opentelemetry_sdk",
+ "serde",
+ "serde_json",
+ "tau-core",
+ "uuid",
 ]
 
 [[package]]

@@ -14,6 +14,22 @@ When admin mode is on, Tau continuously writes content-free OpenTelemetry JSONL 
 
 Retention is bounded to seven days and 256 MiB. Telemetry failure does not fail product operations. Records contain operation names, lifecycle state, timings, outcomes, counts, sanitized source basenames, and relevant session/runtime identifiers. Pi frontend ownership records distinguish initial claims, replacements, rejected claims, and cleanup failures, including only the stale direct-child count. Children stopped during replacement have a matching `pi.process.stopped` record with the fixed `ownership_replaced` reason. Owner tokens and native failure text are never recorded. Records do not contain prompts, transcripts, drafts, tool or extension payloads, file/clipboard contents, paths, SSH commands, connection strings, stderr, credentials, or raw errors.
 
+## Shared native services
+
+`crates/tau-observability` owns preferences, feedback append, telemetry validation,
+retention, and optional OTLP export for both shells. Tauri retains thin command
+adapters; the GPUI service worker uses the same profile and formats. Initialize an
+explicit `tau-core` profile before `Telemetry::init`; initialization never silently
+opens production storage. Native operation helpers accept only reviewed catalog
+names and fixed outcomes, and disabling invalidates outstanding measurement tokens.
+
+The GPUI reporter waits for actual append acknowledgement, including when hidden or
+admin mode is disabled while the write is queued. A delay is not proof of failure and
+must not enable a duplicate retry. Preferences-write failures report a fixed error
+while reconciling the reporter with the backend's actual live admin gate. No telemetry
+viewer or separate reporting/storage schema is introduced. Native application/admin
+command instrumentation does not claim coverage of every Vue milestone below.
+
 ## Action milestones
 
 `startActionMilestones(name, scope?)` from `src/lib/telemetry` returns `{ span, mark, afterRender, cancel }`. Use `span.context` for child invokes/RPCs and end `span` as usual. Selection/new-session actions watch the originating controller for `ready`, `readable_memory`/`readable_saved`/`readable_rpc`, and `hydrated`; they mark `persisted` only when their selection write settles successfully, or `persistence_failed` on failure. Superseded views cancel pending measurements, including frames and delayed writes. After applying the UI mutation, `await nextTick(); milestones.afterRender()` schedules two animation frames. Do not await frames to show a hidden window. Call `cancel()` on replacement/unmount/failure to discard pending frame work; it does not end the action span.

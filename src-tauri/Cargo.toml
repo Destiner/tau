@@ -16,6 +16,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tau-core = { path = "../crates/tau-core" }
+tau-observability = { path = "../crates/tau-observability" }
 # WKWebView background colors otherwise silently do nothing on macOS.
 # This uses private WebKit API; Tau is distributed outside the Mac App Store.
 tauri = { version = "2", features = ["macos-private-api", "protocol-asset"] }
@@ -23,8 +24,6 @@ tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 dirs = "6"
 opentelemetry = "0.32"
-opentelemetry-semantic-conventions = { version = "0.32", features = ["semconv_experimental"] }
-opentelemetry_sdk = "0.32"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 shell-words = "1"
@@ -50,4 +49,4 @@ tauri = { version = "2", features = ["test"] }
 # OTEL_EXPORTER_OTLP_* environment variables, reusing the same OTLP JSON this
 # module already produces for local storage — no new crate, since it is a
 # raw std::net::TcpStream HTTP/1.1 client, not a full HTTP stack.
-otlp_export = []
+otlp_export = ["tau-observability/otlp_export"]
