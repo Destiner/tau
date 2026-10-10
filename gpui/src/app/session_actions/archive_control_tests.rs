@@ -11,7 +11,8 @@ fn mounted_idle_shell_archives_with_models_and_commands_reads_pending() {
         shell.update(cx, |s, cx| {
             super::tests::fixture_with_pending_reads(s, w, cx, true);
             assert!(!s.sessions["live"].controller.state().working);
-            assert_eq!(s.sessions["live"].controller.pending_count(), 2);
+            assert!(s.sessions["live"].controller.pending_count() >= 2);
+            assert!(!s.sessions["live"].controller.setting_pending());
             assert!(s.can_archive("live"));
             s.restored = true;
             s.mount(w, cx);

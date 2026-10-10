@@ -67,6 +67,7 @@ fn bootstrap_uses_real_rpc_commands_and_namespaces_requests() {
         "get_state",
         "get_messages",
         "get_available_models",
+        "get_scoped_models",
         "get_commands",
     ] {
         assert!(command(&e, typ)["id"]
@@ -74,7 +75,7 @@ fn bootstrap_uses_real_rpc_commands_and_namespaces_requests() {
             .unwrap()
             .starts_with("tau:r:g7:"));
     }
-    assert_eq!(c.pending_count(), 4);
+    assert_eq!(c.pending_count(), 5);
     assert!(c.begin_generation(7).is_empty());
     c.tick(REQUEST_TIMEOUT_MS);
     assert_eq!(c.state().status, Status::Error);

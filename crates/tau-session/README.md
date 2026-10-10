@@ -27,11 +27,13 @@ Use ordinary persistent RPC mode for saved work; **`--no-session` means in-memor
 
 - `new(runtime_id)`, `runtime_id()`, `generation()`, `state()`, `pending_count()`.
 - `bind_source(id, path)` **before bootstrap**, not a live session-switch API.
-- `begin_generation(generation) -> Vec<Effect>` accepts strictly increasing generations, recovers unconfirmed prompts and bootstraps `get_state`, `get_messages`, `get_available_models`, `get_commands`. Old/duplicate starts are no-ops.
+- `begin_generation(generation) -> Vec<Effect>` accepts strictly increasing generations, recovers unconfirmed prompts and bootstraps `get_state`, `get_messages`, `get_available_models`, `get_commands`, and an optional `get_scoped_models` capability probe. Old/duplicate starts are no-ops.
 - **`ingest(runtime_id, generation, Value)`** is the safe entry for process stdout. `handle(Value)` is only for records already fenced by the caller. Both return effects; inspect `state()` afterward for changes.
 - `set_draft(text)`, `submit(text)`, `submit_queued(text, QueueKind::{Steer, FollowUp})`.
 - `abort()`: Stop current work, never clear queues. `queue_snapshot()`, `clear_queue()`.
-- `set_model(provider, model_id)`, `set_thinking(level)`, `refresh()`.
+- `set_model(provider, model_id)`, `set_thinking(level)`, `refresh()`, `refresh_models()`.
+- `setting_pending()`, `submission_pending()`, `queue_busy()` expose action-specific admission instead of treating pending read requests as blocked work.
+- `begin_model_scope_read() -> ModelScopeToken`, `apply_model_scope(&token, Option<Value>)`: fence host-owned async settings reads by generation, identity and refresh/read revision. The value is an array of scope patterns, not the entire settings file.
 - `extension_response(id, ExtensionResponse::{Value(String), Confirmed(bool), Cancelled})`. Dialog remains `submitting` until the host calls **`extension_sent(id, success)`** after writing the response. Pi does not emit a normal response to this record. On write failure the dialog is retryable. Fence host callbacks by captured runtime/generation, just like stdout.
 - `request_failed(request_id)` for failed transport writes of ordinary requests. `transport_failed(generation)` for process loss; preserves partial transcript and recoverable drafts, fences further output until a newer generation.
 - `tick(now_ms)` using a **nondecreasing logical/monotonic clock** supplied by the host; defaults to zero before the first tick. Feed a tick before dispatching startup/actions, then periodically while connected. Startup, requests, accepted-but-not-started prompts, and Stop are bounded at 10 seconds. This is not a maximum duration for an active model/tool run.
@@ -42,6 +44,20 @@ All action/effect APIs return `Vec<Effect>`; empty effects mean no request was d
 `State` exposes identity (`id`, `path`, `name`), opaque Pi `model`, `effort`, `status`, readiness/working/stopping/history-loading flags, `transcript`, draft/recovered drafts, queue snapshots, `extension_dialogs`, opaque commands/models, thinking levels, reviewed `error`, and `durable`.
 
 `Entry` exposes stable UI `id`, `kind`, `text`, `activity`, `pending`, `interrupted`, tool ID/name/arguments/result/error and a source reconciliation key. These IDs are **controller-local UI IDs**, not Pi session-entry IDs or durable history cursors. Actual Pi message timestamps plus occurrence order bind streamed rows to hydration; tool rows use actual `toolCallId`. Final `message_end` text replaces deltas without changing row identity. Render/sanitize content in the host; this crate has no DOM or markdown renderer.
+
+### Scoped models
+
+`State::models` retains the available catalogue; `State::selectable_models()` narrows
+choices using an optional runtime scope or Vue-compatible `enabledModels` patterns.
+Configured order and deduplication are preserved. Empty, invalid or unmatched scopes
+fall back to the available catalogue. An unavailable or out-of-scope current model is
+not injected into the choices; the host uses `State::model` for its display label.
+
+Installed Pi 0.99.2 does not implement `get_scoped_models`. Rejection/timeout of that
+optional probe does not block readiness or create a session error. The host must read
+patterns through existing local/remote settings services, using a fresh token after
+startup, identity replacement or model refresh. Stale completions are ignored. This
+controller never opens settings, authentication or transcript files.
 
 ### Effects and durability
 

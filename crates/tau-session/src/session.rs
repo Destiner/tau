@@ -1,3 +1,4 @@
+use crate::model_scope::{resolved_scope, scope_models, valid_model};
 use crate::transcript::{content_text, message_key, project, string, Entry};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -97,11 +98,49 @@ pub struct State {
     pub queue: QueueSnapshot,
     pub extension_dialogs: Vec<ExtensionDialog>,
     pub models: Vec<Value>,
+    #[serde(default)]
+    model_scope: Vec<String>,
+    #[serde(default)]
+    scoped_models: Option<Vec<Value>>,
     pub commands: Vec<Value>,
     pub thinking_levels: Vec<String>,
     pub error: Option<String>,
     pub durable: bool,
 }
+impl State {
+    /// Selectable catalogue, in scope order. The current model remains display-only
+    /// when unavailable or outside the scope, matching Vue's fallback label.
+    pub fn selectable_models(&self) -> Vec<&Value> {
+        if let Some(scope) = &self.scoped_models {
+            let selected: Vec<_> = scope
+                .iter()
+                .filter_map(|scoped| {
+                    self.models.iter().find(|model| {
+                        model["provider"] == scoped["provider"] && model["id"] == scoped["id"]
+                    })
+                })
+                .fold(Vec::new(), |mut selected, model| {
+                    if !selected.contains(&model) {
+                        selected.push(model);
+                    }
+                    selected
+                });
+            if !selected.is_empty() {
+                return selected;
+            }
+        }
+        scope_models(&self.models, &self.model_scope)
+    }
+}
+
+/// Capture before a host settings read; stale completion cannot mutate scope.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelScopeToken {
+    generation: u64,
+    epoch: u64,
+    revision: u64,
+}
+
 #[derive(Clone, Debug)]
 struct Pending {
     command: String,
@@ -138,6 +177,7 @@ pub struct Controller {
     queue_version: u64,
     state_serial: u64,
     connected: bool,
+    scope_revision: u64,
 }
 impl Controller {
     pub fn new(runtime_id: impl Into<String>) -> Self {
@@ -161,6 +201,7 @@ impl Controller {
             queue_version: 0,
             state_serial: 0,
             connected: false,
+            scope_revision: 0,
         }
     }
     pub fn runtime_id(&self) -> &str {
@@ -174,6 +215,11 @@ impl Controller {
     }
     pub fn pending_count(&self) -> usize {
         self.pending.len()
+    }
+    pub fn setting_pending(&self) -> bool {
+        self.pending
+            .values()
+            .any(|p| matches!(p.command.as_str(), "set_model" | "set_thinking_level"))
     }
     pub fn set_draft(&mut self, text: impl Into<String>) {
         self.state.draft = text.into();
@@ -189,6 +235,41 @@ impl Controller {
             name: String::new(),
         };
         self.epoch += 1;
+    }
+    /// Begin a host settings read. Only the latest read may complete.
+    pub fn begin_model_scope_read(&mut self) -> ModelScopeToken {
+        self.scope_revision += 1;
+        self.model_scope_token()
+    }
+    pub fn model_scope_token(&self) -> ModelScopeToken {
+        ModelScopeToken {
+            generation: self.generation,
+            epoch: self.epoch,
+            revision: self.scope_revision,
+        }
+    }
+    /// `None` is a failed settings read; non-array values are ignored like Vue.
+    pub fn apply_model_scope(&mut self, token: &ModelScopeToken, patterns: Option<Value>) -> bool {
+        if !self.connected || *token != self.model_scope_token() {
+            return false;
+        }
+        match patterns {
+            None => self.state.model_scope.clear(),
+            Some(Value::Array(patterns)) => {
+                self.state.model_scope = patterns
+                    .iter()
+                    .filter_map(|p| p.as_str().map(str::to_owned))
+                    .collect();
+            }
+            Some(_) => return false,
+        }
+        true
+    }
+    fn reset_model_scope(&mut self) {
+        self.scope_revision += 1;
+        self.state.models.clear();
+        self.state.model_scope.clear();
+        self.state.scoped_models = None;
     }
     fn next_id(&mut self) -> String {
         self.sequence += 1;
@@ -231,6 +312,7 @@ impl Controller {
         self.finalize_partial();
         self.generation = generation;
         self.epoch += 1;
+        self.reset_model_scope();
         self.pending.clear();
         self.latest.clear();
         self.message_occurrences.clear();
@@ -253,6 +335,7 @@ impl Controller {
             self.send("get_state", json!({}), false),
             self.send("get_messages", json!({}), false),
             self.send("get_available_models", json!({}), false),
+            self.send("get_scoped_models", json!({}), false),
             self.send("get_commands", json!({}), false),
         ]
     }
@@ -440,8 +523,10 @@ impl Controller {
                     self.lose_queue();
                     self.state.durable = false;
                     self.state.identity = current.clone();
+                    self.reset_model_scope();
                     effects.push(Effect::IdentityChanged { previous, current });
                     effects.push(self.send("get_available_models", json!({}), false));
+                    effects.push(self.send("get_scoped_models", json!({}), false));
                     effects.push(self.send("get_commands", json!({}), false));
                     if missing_source {
                         self.fail("Pi opened a new identity at the requested path. The old session may not have been saved.");
@@ -519,7 +604,13 @@ impl Controller {
                     self.reject(p, false);
                 }
             }
-            "get_available_models" => self.state.models = array(&d["models"]),
+            "get_available_models" => {
+                self.state.models = array(&d["models"])
+                    .into_iter()
+                    .filter(valid_model)
+                    .collect();
+            }
+            "get_scoped_models" => self.state.scoped_models = resolved_scope(d),
             "get_commands" => self.state.commands = array(&d["commands"]),
             "get_available_thinking_levels" => {
                 self.state.thinking_levels = strings(&d["levels"]).unwrap_or_default()
@@ -550,7 +641,11 @@ impl Controller {
                 }
                 effects.push(self.send("get_state", json!({}), false));
             }
-            "set_model" | "set_thinking_level" | "set_session_name" => {
+            "set_model" => {
+                effects.push(self.send("get_state", json!({}), false));
+                effects.extend(self.refresh_models());
+            }
+            "set_thinking_level" | "set_session_name" => {
                 effects.push(self.send("get_state", json!({}), false))
             }
             "set_steering_mode" | "set_follow_up_mode" => effects.extend(self.continue_queue()),
@@ -735,10 +830,29 @@ impl Controller {
             return vec![];
         }
         self.state.error = None;
-        vec![self.send("get_state", json!({}), false)]
+        let mut effects = vec![self.send("get_state", json!({}), false)];
+        effects.extend(self.refresh_models());
+        effects
+    }
+    /// Refresh catalogue and optional runtime scope after settings changes.
+    pub fn refresh_models(&mut self) -> Vec<Effect> {
+        if self.generation == 0 || !self.connected {
+            return vec![];
+        }
+        self.scope_revision += 1;
+        vec![
+            self.send("get_available_models", json!({}), false),
+            self.send("get_scoped_models", json!({}), false),
+        ]
     }
     pub fn queue_snapshot(&self) -> &QueueSnapshot {
         &self.state.queue
+    }
+    pub fn submission_pending(&self) -> bool {
+        self.queue_submission.is_some() || self.pending.values().any(|p| p.command == "prompt")
+    }
+    pub fn queue_busy(&self) -> bool {
+        self.submission_pending() || self.pending.values().any(|p| p.command == "clear_queue")
     }
     pub fn clear_queue(&mut self) -> Vec<Effect> {
         if !self.state.ready
@@ -971,6 +1085,11 @@ impl Controller {
         }
     }
     fn reject(&mut self, p: Pending, timeout: bool) {
+        // Optional capability: old Pi versions reject this correlated probe.
+        if p.command == "get_scoped_models" {
+            self.state.scoped_models = None;
+            return;
+        }
         if let Some(previous) = &p.previous_name {
             self.state.identity.name = previous.clone();
         }
