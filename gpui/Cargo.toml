@@ -11,6 +11,8 @@ native-os-tests = []
 [dependencies]
 tau-core = { path = "../crates/tau-core" }
 tau-session = { path = "../crates/tau-session" }
+tau-observability = { path = "../crates/tau-observability" }
+chrono = "0.4"
 async-channel = "2"
 uuid = { version = "1", features = ["v4"] }
 tempfile = "3"

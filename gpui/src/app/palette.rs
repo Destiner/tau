@@ -56,6 +56,8 @@ enum Target {
     Stop,
     ClearQueue,
     Quit,
+    ReportIssue,
+    DisableAdmin,
     Model(String, String),
     Effort(String),
 }
@@ -226,6 +228,7 @@ impl Shell {
         if let Some(v) = self.palette.view.clone() {
             v.update(cx, |p, cx| p.open_page(page, w, cx));
         }
+        self.sync_admin(w, cx);
         cx.notify();
     }
     pub(super) fn sync_palette(&mut self, w: &mut Window, cx: &mut Context<Self>) {
@@ -244,6 +247,11 @@ impl Shell {
         }
     }
     fn palette_restore_focus(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        self.sync_admin(w, cx);
+        if self.admin_reporter_open(cx) {
+            self.open_admin_reporter(w, cx);
+            return;
+        }
         if self.palette_modal_blocked() || self.palette.is_open(cx) {
             return;
         }
@@ -316,6 +324,12 @@ impl Shell {
             Target::Remote => self.action(Action::OpenRemoteProject, w, cx),
             Target::Archived => self.action(Action::ToggleArchived, w, cx),
             Target::Quit => cx.dispatch_action(&crate::native::Quit),
+            Target::ReportIssue => self.open_admin_reporter(w, cx),
+            Target::DisableAdmin => {
+                let command = self.admin.set_mode(false);
+                self.dispatch_admin(command, cx);
+                self.sync_admin(w, cx);
+            }
             target => {
                 if self.palette.binding != self.palette_binding() {
                     self.palette_restore_focus(w, cx);
@@ -540,6 +554,15 @@ impl Shell {
             Target::Remote,
         );
         root("app.quit", "Quit Tau", "⌘Q", Target::Quit);
+        if self.admin.enabled() {
+            root("app.reportIssue", "Report Issue", "", Target::ReportIssue);
+            root(
+                "app.disableAdminMode",
+                "Disable Admin Mode",
+                "",
+                Target::DisableAdmin,
+            );
+        }
         root(
             "sidebar.toggleArchived",
             if self.session_actions.archived {

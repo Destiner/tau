@@ -7,11 +7,14 @@ use gpui_kit::{
 };
 use std::cell::Cell;
 
-pub const COMPLETE: &str = "PASS native-app completion-gated quit";
+pub const COMPLETE: &str = "PASS native-app completion-gated last CmdW quit";
 
 pub fn run_native_smoke(root: PathBuf, project: String, check_menus: fn()) -> anyhow::Result<()> {
-    std::panic::set_hook(Box::new(|_| {
-        eprintln!("FAIL native-app assertion (no transcript or raw error logged)");
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!(
+            "FAIL native-app assertion at line/column {:?} (no transcript or raw error logged)",
+            info.location().map(|p| (p.line(), p.column()))
+        );
         std::process::exit(1);
     }));
     std::thread::spawn(|| {
@@ -511,6 +514,306 @@ async fn palette_remote(shell: &Entity<Shell>, cx: &AsyncApp, first: &str) {
     );
 }
 
+fn admin_code(shell: &Entity<Shell>, cx: &AsyncApp) {
+    for binding in ["i", "d", "d", "q", "d"] {
+        key(shell, cx, binding);
+    }
+}
+
+fn persisted_admin(root: &std::path::Path) -> Option<bool> {
+    let bytes = std::fs::read(root.join("tau/preferences.json")).ok()?;
+    serde_json::from_slice::<serde_json::Value>(&bytes).ok()?["adminMode"].as_bool()
+}
+
+async fn sidebar_focus(shell: &Entity<Shell>, cx: &AsyncApp, first: &str) {
+    click(shell, cx, &format!("session-status-{first}")).await;
+    poll(cx, "natural dirty-dot click focuses sidebar row", 5, |cx| {
+        window(shell, cx)
+            .update(cx, |_, w, cx| {
+                let s = shell.read(cx);
+                let dot = gpui_kit::base::test_support::find(
+                    w,
+                    &[],
+                    &format!("session-status-{first}").into(),
+                )
+                .unwrap();
+                assert_eq!(dot.bounds().size, gpui_kit::size(px(6.), px(6.)));
+                assert_eq!(
+                    s.sessions[first].controller.state().draft,
+                    "Owned draft café 😀"
+                );
+                assert_eq!(
+                    s.sessions[first]
+                        .composer
+                        .read(cx)
+                        .editor()
+                        .read(cx)
+                        .value()
+                        .as_ref(),
+                    "Owned draft café 😀"
+                );
+                s.active == first
+                    && !s.sessions[first]
+                        .composer
+                        .read(cx)
+                        .editor()
+                        .read(cx)
+                        .focus_handle(cx)
+                        .is_focused(w)
+                    && gpui_kit::base::test_support::find(
+                        w,
+                        &[],
+                        &format!("session-{first}").into(),
+                    )
+                    .is_some_and(|row| row.visible() && row.focused() == Some(true))
+            })
+            .unwrap()
+    })
+    .await;
+}
+
+async fn report_editor_focus(shell: &Entity<Shell>, cx: &AsyncApp) {
+    poll(
+        cx,
+        "report opens with actual checkbox or editor focus",
+        5,
+        |cx| {
+            window(shell, cx)
+                .update(cx, |_, w, cx| {
+                    let view = shell.read(cx).admin.view.as_ref().unwrap().read(cx);
+                    view.is_open()
+                        && (view.editor().read(cx).focus_handle(cx).is_focused(w)
+                            || gpui_kit::base::test_support::find(
+                                w,
+                                &[],
+                                &"report-include-session".into(),
+                            )
+                            .is_some_and(|checkbox| {
+                                checkbox.visible() && checkbox.focused() == Some(true)
+                            }))
+                })
+                .unwrap()
+        },
+    )
+    .await;
+    let checkbox_focused = cx.update(|cx| {
+        window(shell, cx)
+            .update(cx, |_, w, _| {
+                gpui_kit::base::test_support::find(w, &[], &"report-include-session".into())
+                    .is_some_and(|checkbox| checkbox.focused() == Some(true))
+            })
+            .unwrap()
+    });
+    if checkbox_focused {
+        key(shell, cx, "tab");
+    }
+    poll(
+        cx,
+        "report Tab reaches retained textarea naturally",
+        5,
+        |cx| {
+            window(shell, cx)
+                .update(cx, |_, w, cx| {
+                    shell
+                        .read(cx)
+                        .admin
+                        .view
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .editor()
+                        .read(cx)
+                        .focus_handle(cx)
+                        .is_focused(w)
+                })
+                .unwrap()
+        },
+    )
+    .await;
+}
+
+async fn capture_report(shell: &Entity<Shell>, cx: &AsyncApp) {
+    let painted = Rc::new(Cell::new(false));
+    let observed = painted.clone();
+    cx.update(|cx| {
+        let view = shell.read(cx).admin.view.as_ref().unwrap().clone();
+        window(shell, cx).update(cx, |_, w, _| {
+            w.on_next_frame(move |w, _| w.on_next_frame(move |w, cx| {
+                assert!(view.read(cx).editor().read(cx).focus_handle(cx).is_focused(w));
+                for id in ["issue-report-popover", "report-description-field", "report-trigger"] {
+                    let control = gpui_kit::base::test_support::find(w, &[], &id.into()).unwrap();
+                    assert!(control.visible());
+                    assert!(control.bounds().size.width > px(0.) && control.bounds().size.height > px(0.));
+                }
+                let checkbox = gpui_kit::base::test_support::find(w, &[], &"report-include-session".into()).unwrap();
+                eprintln!("OBSERVED report checkbox checked/disabled={:?}/{:?}", checkbox.checked(), checkbox.disabled());
+                assert_eq!(checkbox.checked(), Some(false));
+                assert_ne!(checkbox.disabled(), Some(true));
+                if let Some(directory) = std::env::var_os("TAU_NATIVE_CAPTURE_DIR") {
+                    w.render_to_image().expect("owned report renderer capture")
+                        .save(PathBuf::from(directory).join("issue-report.png"))
+                        .expect("save owned report PNG");
+                }
+                eprintln!("PASS native-app measured issue-report-popover + focused retained textarea + unchecked session");
+                observed.set(true);
+            }));
+        }).unwrap();
+    });
+    poll(cx, "owned issue reporter painted capture", 5, |_| {
+        painted.get()
+    })
+    .await;
+}
+
+async fn admin_report(shell: &Entity<Shell>, cx: &AsyncApp, root: &std::path::Path, first: &str) {
+    const DESCRIPTION: &str = "Invented native smoke issue café 😀 iddqd";
+    let issues = root.join("tau/feedback/issues.jsonl");
+    assert!(
+        !issues.exists(),
+        "isolated fixture must start without reports"
+    );
+    assert!(!cx.update(|cx| shell.read(cx).admin.enabled()));
+    sidebar_focus(shell, cx, first).await;
+    admin_code(shell, cx);
+    poll(
+        cx,
+        "raw sidebar iddqd enables shared persisted admin",
+        5,
+        |cx| {
+            let s = shell.read(cx);
+            s.admin.enabled() && !s.admin.mode_failed() && persisted_admin(root) == Some(true)
+        },
+    )
+    .await;
+    click(shell, cx, "report-trigger").await;
+    for expected in [true, false] {
+        click(shell, cx, "report-include-session").await;
+        poll(
+            cx,
+            "real report checkbox toggles optional attachment",
+            5,
+            |cx| {
+                window(shell, cx)
+                    .update(cx, |_, w, _| {
+                        gpui_kit::base::test_support::find(w, &[], &"report-include-session".into())
+                            .is_some_and(|checkbox| checkbox.checked() == Some(expected))
+                    })
+                    .unwrap()
+            },
+        )
+        .await;
+    }
+    report_editor_focus(shell, cx).await;
+    capture_report(shell, cx).await;
+    let view = cx.update(|cx| shell.read(cx).admin.view.as_ref().unwrap().clone());
+    let editor = cx.update(|cx| view.read(cx).editor());
+    cx.update(|cx| {
+        window(shell, cx)
+            .update(cx, |_, w, cx| {
+                assert!(editor.read(cx).focus_handle(cx).is_focused(w));
+                editor.update(cx, |input, cx| {
+                    input.replace_text_in_range(None, "iddqd", w, cx)
+                });
+            })
+            .unwrap();
+    });
+    admin_code(shell, cx);
+    cx.update(|cx| {
+        assert!(
+            shell.read(cx).admin.enabled(),
+            "editor must refuse admin code"
+        );
+        assert!(editor.read(cx).value().contains("iddqd"));
+    });
+    key(shell, cx, "cmd-a");
+    cx.update(|cx| {
+        window(shell, cx)
+            .update(cx, |_, w, cx| {
+                assert!(
+                    shell.read(cx).admin.enabled(),
+                    "editor must refuse admin code"
+                );
+                assert!(editor.read(cx).focus_handle(cx).is_focused(w));
+                editor.update(cx, |input, cx| {
+                    input.replace_text_in_range(None, DESCRIPTION, w, cx)
+                });
+            })
+            .unwrap();
+    });
+    key(shell, cx, "escape");
+    poll(cx, "report Escape retains unsent editor", 5, |cx| {
+        !view.read(cx).is_open() && editor.read(cx).value().as_ref() == DESCRIPTION
+    })
+    .await;
+    click(shell, cx, "report-trigger").await;
+    report_editor_focus(shell, cx).await;
+    cx.update(|cx| {
+        assert_eq!(
+            shell.read(cx).admin.view.as_ref().unwrap().entity_id(),
+            view.entity_id()
+        );
+        assert_eq!(view.read(cx).editor().entity_id(), editor.entity_id());
+        assert_eq!(editor.read(cx).value().as_ref(), DESCRIPTION);
+    });
+    click(shell, cx, "report-submit").await;
+    poll(
+        cx,
+        "queued shared report saved indicator and exactly one isolated record",
+        5,
+        |cx| {
+            window(shell, cx)
+                .update(cx, |_, w, cx| {
+                    let saved = gpui_kit::base::test_support::find(w, &[], &"report-sent".into())
+                        .is_some_and(|indicator| indicator.visible());
+                    if !saved {
+                        return false;
+                    }
+                    assert!(editor.read(cx).value().is_empty());
+                    let contents =
+                        std::fs::read_to_string(&issues).expect("isolated shared issues file");
+                    let lines: Vec<_> = contents.lines().collect();
+                    assert_eq!(lines.len(), 1);
+                    let record: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+                    assert_eq!(record["description"], DESCRIPTION);
+                    assert!(record.get("sessionId").is_none());
+                    true
+                })
+                .unwrap()
+        },
+    )
+    .await;
+    sidebar_focus(shell, cx, first).await;
+    admin_code(shell, cx);
+    poll(
+        cx,
+        "real sidebar iddqd disables persisted admin and reporter",
+        5,
+        |cx| {
+            window(shell, cx)
+                .update(cx, |_, w, cx| {
+                    let s = shell.read(cx);
+                    !s.admin.enabled()
+                        && !s.admin.mode_failed()
+                        && persisted_admin(root) == Some(false)
+                        && gpui_kit::base::test_support::find(w, &[], &"report-trigger".into())
+                            .is_none()
+                        && gpui_kit::base::test_support::find(
+                            w,
+                            &[],
+                            &"issue-report-popover".into(),
+                        )
+                        .is_none()
+                        && s.sessions[first].controller.state().draft == "Owned draft café 😀"
+                })
+                .unwrap()
+        },
+    )
+    .await;
+    eprintln!(
+        "PASS native-app dirty-dot natural focus + raw admin unlock/editor refusal + retained report Escape/reopen + shared isolated save + persisted admin off"
+    );
+}
+
 fn insert_rename(shell: &Entity<Shell>, cx: &AsyncApp, text: &str) {
     cx.update(|cx| {
         window(shell, cx)
@@ -570,6 +873,7 @@ async fn exercise(
     })
     .await;
     palette_remote(&shell, &cx, &first).await;
+    admin_report(&shell, &cx, &root, &first).await;
     cx.update(|cx| cx.dispatch_action(&crate::native::NewSession));
     ready(&shell, &cx).await;
     let second = cx.update(|cx| shell.read(cx).active.clone());
@@ -963,53 +1267,15 @@ async fn exercise(
             && s.pending_saves.is_empty()
     })
     .await;
-    key(&shell, &cx, "cmd-w");
-    poll(&cx, "save and close owned window", 5, |cx| {
-        cx.windows().is_empty()
-    })
-    .await;
-    cx.update(|cx| cx.global::<NativeHost>().clone().reopen(cx));
-    poll(&cx, "reopened retained editor and draft", 5, |cx| {
-        let target = shell.read(cx).window;
-        let active =
-            target.is_some_and(|target| target.update(cx, |_, w, _| w.is_window_active()).unwrap());
-        let s = shell.read(cx);
-        active
-            && s.active == first
-            && s.sessions[&first]
-                .composer
-                .read(cx)
-                .editor()
-                .read(cx)
-                .value()
-                .as_ref()
-                == "Owned draft café 😀"
-    })
-    .await;
-    eprintln!(
-        "PASS native-app save/close/reopen retains selected draft; own native renderer painted measured controls"
-    );
-    let observed_selects = Rc::new(Cell::new(0usize));
-    let observed = observed_selects.clone();
-    let _click_observer = cx.update(|cx| {
-        let sidebar = shell.read(cx).sidebar.as_ref().unwrap().clone();
-        cx.subscribe(&sidebar, move |_, action: &Action, _| {
-            if matches!(action, Action::Select(_)) {
-                observed.set(observed.get() + 1);
-                eprintln!(
-                    "OBSERVED reopened sidebar Select emitted count={}",
-                    observed.get()
-                );
-            }
-        })
-    });
     click(&shell, &cx, &format!("session-status-{second}")).await;
-    poll(&cx, "reopened sidebar selects second session", 5, |cx| {
-        shell.read(cx).active == second
-    })
+    poll(
+        &cx,
+        "sidebar selects second session before busy close",
+        5,
+        |cx| shell.read(cx).active == second,
+    )
     .await;
-    assert_eq!(observed_selects.get(), 1);
-    eprintln!("PASS native-app reopened measured sidebar click emits Select and switches session");
+    eprintln!("PASS native-app measured sidebar click switches session before busy close");
     ready(&shell, &cx).await;
     focus_composer(&shell, &cx);
     insert_composer(&shell, &cx, "/tau-native-smoke");
@@ -1042,9 +1308,13 @@ async fn exercise(
             && s.confirmation.is_none()
             && s.window == Some(identities.0)
             && s.sessions[&second].composer.read(cx).editor().entity_id() == identities.1
+            && s.sessions[&first].controller.state().draft == "Owned draft café 😀"
+            && cx.windows().len() == 1
     })
     .await;
-    eprintln!("PASS native-app busy close cancel retains actual root and composer identities");
+    eprintln!(
+        "PASS native-app busy last CmdW cancel retains actual root/composer and unrelated draft"
+    );
     poll(
         &cx,
         "extension focus restored after close cancel",
@@ -1102,6 +1372,13 @@ async fn exercise(
         },
     )
     .await;
+    cx.update(|cx| {
+        assert_eq!(cx.windows().len(), 1);
+        assert_eq!(
+            shell.read(cx).sessions[&first].controller.state().draft,
+            "Owned draft café 😀"
+        );
+    });
     complete.set(true);
-    key(&shell, &cx, "cmd-q");
+    key(&shell, &cx, "cmd-w");
 }

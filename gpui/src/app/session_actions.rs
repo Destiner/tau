@@ -41,36 +41,7 @@ impl Shell {
         })
     }
     pub(super) fn archived_items(&self) -> Vec<SessionItem> {
-        self.workspace
-            .as_ref()
-            .map(|w| {
-                w.projects
-                    .iter()
-                    .flat_map(|p| {
-                        p.sessions.iter().filter(|s| s.archived).map(|s| {
-                            let live = self.sessions.iter().find(|(_, live)| {
-                                live.project.path == p.path
-                                    && (live.source_id == s.id
-                                        || live.controller.state().identity.id == s.id)
-                            });
-                            SessionItem {
-                                id: live
-                                    .map(|(key, _)| key.clone())
-                                    .unwrap_or_else(|| s.id.clone()),
-                                title: live
-                                    .map(|(_, live)| live.controller.state().identity.name.clone())
-                                    .filter(|name| !name.is_empty())
-                                    .unwrap_or_else(|| s.title.clone()),
-                                time: s.last_active.clone(),
-                                status: None,
-                                unread: false,
-                                can_archive: false,
-                            }
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
+        self.project_archived_items()
     }
     pub(super) fn can_archive(&self, id: &str) -> bool {
         self.lifecycle.is_none()
@@ -145,6 +116,7 @@ impl Shell {
                 let retry = self.session_actions.errors.remove(session_id).is_some();
                 let live = self.sessions.get_mut(session_id).unwrap();
                 let effects = live.controller.rename(title);
+                self.sidebar_state.invalidate_metadata();
                 live.dirty = true;
                 let identity = live.controller.state().identity.clone();
                 let generation = live.controller.generation();
@@ -215,6 +187,7 @@ impl Shell {
         true
     }
     fn set_archived(&mut self, project: &str, id: &str, archived: bool) {
+        self.sidebar_state.invalidate_metadata();
         if let Some(w) = &mut self.workspace {
             for p in &mut w.projects {
                 if p.path == project {
@@ -289,6 +262,7 @@ impl Shell {
         identity: Identity,
         cx: &mut Context<Self>,
     ) {
+        self.sidebar_state.invalidate_metadata();
         if self
             .saved_session(runtime)
             .is_some_and(|(_, session, _)| session.title == identity.name)
@@ -375,6 +349,7 @@ impl Shell {
             );
         }
         live.dirty = true;
+        self.sidebar_state.invalidate_metadata();
     }
 }
 

@@ -4,7 +4,7 @@ use gpui_kit::Focusable;
 use std::{cell::RefCell, rc::Rc};
 
 #[test]
-fn shell_rows_use_workspace_and_never_offer_unimplemented_or_admin_actions() {
+fn shell_rows_use_workspace_and_hide_admin_actions_while_disabled() {
     with_shell(64, |s, w, cx, _| {
         s.workspace = Some(WorkspaceSnapshot {
             projects: vec![project()],
@@ -23,6 +23,45 @@ fn shell_rows_use_workspace_and_never_offer_unimplemented_or_admin_actions() {
         assert!(s.palette_pages().0.iter().all(|p| p.items.is_empty()));
         s.palette_selected("session.new", w, cx);
         assert!(s.sessions.is_empty());
+    });
+}
+
+#[test]
+fn admin_palette_actions_follow_actual_gate_and_handoff_to_retained_reporter() {
+    with_shell(64, |s, w, cx, requests| {
+        s.mount_palette(w, cx);
+        s.mount_admin(w, cx);
+        requests.try_recv().unwrap();
+        let super::super::admin::Command::SetMode { revision, .. } = s.admin.set_mode(true) else {
+            unreachable!()
+        };
+        s.admin_event(
+            super::super::admin::Reply::ModeSet {
+                revision,
+                enabled: true,
+                saved: true,
+            },
+            cx,
+        );
+        s.toggle_palette(w, cx);
+        let (_, targets) = s.palette_pages();
+        assert_eq!(targets.get("app.reportIssue"), Some(&Target::ReportIssue));
+        assert_eq!(
+            targets.get("app.disableAdminMode"),
+            Some(&Target::DisableAdmin)
+        );
+        s.palette_selected("app.reportIssue", w, cx);
+        assert!(!s.palette.is_open(cx));
+        assert!(s.admin_reporter_open(cx));
+        s.toggle_palette(w, cx);
+        s.palette_selected("app.disableAdminMode", w, cx);
+        assert!(!s.admin.enabled());
+        assert!(!s.admin_reporter_open(cx));
+        assert!(!s.palette_pages().1.contains_key("app.reportIssue"));
+        assert!(matches!(
+            requests.try_recv().unwrap(),
+            Command::Admin(super::super::admin::Command::SetMode { enabled: false, .. })
+        ));
     });
 }
 

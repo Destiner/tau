@@ -47,23 +47,38 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   and shortcuts, search, keyboard navigation, and modal-aware focus restoration.
 - Model choices use Pi's scoped-model settings for local or remote sessions, following
   Vue's matching/order/fallback behavior. An out-of-scope current model remains a
-  display label, not an extra selectable option.
+  display label, not an extra selectable option. Provider-grouped, searchable menus
+  scroll within the viewport; thinking labels are human-readable (including Extra High).
+  Choice revisions avoid rebuilding or serializing the catalogue during streaming.
 - Thinking/tool adjacency uses Vue's compact spacing; tool headers include argument
   summaries such as `read  gpui/APP.md`, with unchanged raw source and results.
+  Expanded details own wheel scrolling, including at either edge, and retain their
+  offset across updates/cache eviction. The transient Working/Stopping tail follows
+  Vue's assistant/compaction rules and is excluded from transcript data and Copy.
 - Click-to-rename saved sessions through Pi, with bounded names, rollback and registry
   persistence. Archive idle saved sessions; browsing archives does not restore them,
-  and Restore is explicit. Drafts and session files are retained.
+  and Restore is explicit. Drafts and session files are retained. Archives are
+  virtualized, globally sorted within local-calendar groups and include project/model
+  subtitles. Sidebar projections are invalidated at data/status boundaries rather than
+  rebuilt for every text chunk; relative times and groups also age while idle.
+- Draft/unread indicators, rich session status/message/time tooltips, SSH project
+  alias/directory tooltips, and animated edge-reveal drag handles.
+- `iddqd` outside text fields unlocks the persisted shared admin/telemetry gate and
+  retained issue reporter. Reports use the existing local feedback service, with an
+  unchecked session attachment option. Palette reporting is available only in admin mode.
+  Accepted report writes settle even when hidden; no timer invents a retryable failure.
 - Extension input/select/confirm, notifications and editor-text requests. The extension
   multiline editor still needs its dedicated control.
 - Application menus without a Settings surface or Cmd-comma shortcut, owned folder
-  chooser, guarded close/quit,
-  draft persistence, warm runtimes while the last window is closed, and reopen.
+  chooser, guarded close/quit and draft persistence. Closing the last production
+  window quits only after confirmation (when busy), all-draft persistence and
+  runtime shutdown acknowledgement. Closing one of multiple windows keeps the app alive.
 - Bounded presentation cache and incremental changed-row projection. Streaming does
   not hash or clone unchanged historical text.
 
 The current slice does **not** finish session removal, unsupported palette commands
-(such as removal, queue recovery or update/reporting actions), file previews/media,
-admin reporter, full history/replacement recovery,
+(such as removal, queue recovery or update actions), file previews/media,
+full history/replacement recovery,
 idle eviction, updater or release packaging. Unavailable actions report that boundary;
 they are not simulated successes. See [controller limits](../crates/tau-session/README.md).
 
@@ -80,7 +95,52 @@ the connection step while retaining its draft. Errors are local and retryable; b
 imports cannot be repeated or discarded by approving Quit. Storage imports are serialized
 with other workspace writes and merge the returned project instead of a stale snapshot.
 
+## Last-window close policy
+
+Production opts into `host.lifecycle().set_quit_on_last_window_close(true)` before
+opening its first window. The generic NativeHost retains explicit quit and last-window
+reopen for independent host tests. GPUI's platform quit mode stays Explicit: automatic
+last-window quitting would remove the root before persistence/shutdown could veto it.
+Red close, Cmd-W and File → Close Window all enter the same guard; last close becomes
+`Intent::Quit` before the production callback runs. Cmd-Q keeps its existing guard.
+
+If concurrent Close requests leave one owner, approval is promoted to a fresh guarded
+Quit request, superseding pending Close ownership and retaining the original monotonic
+deadline. Dispatch rechecks too, covering two approvals queued in one event turn.
+A Close approval never authorizes Quit. Cancellation, failed persistence and expiration
+leave the remaining root and editor intact; late approvals cannot remove it.
+
+Native-app acceptance no longer closes/reopens the last production window. It preserves
+the palette/remote, assistant/tool, rename/archive and session-switch sequence, cancels
+a busy last Cmd-W with root/editor/draft/focus assertions, completes the extension, then
+finishes with last Cmd-W. The harness requires completion-gated app exit and every
+installed-Pi child exit acknowledgement before harness process-group cleanup. Generic
+host reopen coverage remains separate. Historical close/reopen results below predate
+this production policy. Both credential-free and model-enabled native acceptance
+passed the new guarded last-Cmd-W policy on 10 October 2026.
+
 ## Verification
+
+The sidebar/admin batch passed **370 library tests** (one ignored timing benchmark),
+**13 editor integration tests**, **48 controller tests** (one opt-in Pi canary ignored),
+strict checks and the actual native build. Both native acceptance variants passed:
+measured dirty-dot focus, raw admin unlock outside editors, refusal inside the reporter,
+retained Escape/reopen, real optional-checkbox toggles, exactly one isolated shared
+report without a session attachment, persisted admin disable, and guarded last-window
+quit after all Pi child exit acknowledgements. The model variant also passed real
+assistant/tool/Stop, rename and archive/restore. Owned report/transcript images were
+inspected; this is not a fresh full Vue/native screenshot campaign or SSH acceptance.
+
+Initial integrated archive failures exposed width/start-anchor problems and an
+uninitialized test viewport. Native acceptance first exposed an invalid explicit-false
+checkbox predicate (absence means enabled), then a real pointer-dismissal focus steal.
+The corrected test exercises both checkbox states; pointer dismissal now preserves the
+clicked control. Original failures remain recorded, without reactivation or gate changes.
+A model-choice refactor also briefly shadowed the identity-change flag; the existing
+predecessor-durability regression caught it and passed after the correction.
+
+The older acceptance results below are checkpoint-specific, not current failures or
+release certification.
 
 Production-root keyboard regressions check follow-up versus steering in the actual RPC
 request after queue-mode acknowledgments, including remounts, session isolation and idle

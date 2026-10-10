@@ -291,6 +291,7 @@ impl Shell {
         cx.notify();
     }
     fn merge_imported_project(&mut self, project: ProjectSummary) {
+        self.sidebar_state.invalidate_metadata();
         let Some(workspace) = &mut self.workspace else {
             return;
         };
@@ -474,7 +475,6 @@ impl RemoteDialog {
             _input_events: events,
         }
     }
-    #[cfg(feature = "native-os-tests")]
     pub(super) fn editor(&self) -> Entity<InputState> {
         self.input.clone()
     }

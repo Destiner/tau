@@ -24,6 +24,10 @@ impl Shell {
                             owner.update(cx, |s, cx| s.focus_remote(window, cx));
                             return;
                         }
+                        if shell.admin_reporter_open(cx) {
+                            owner.update(cx, |s, cx| s.open_admin_reporter(window, cx));
+                            return;
+                        }
                         let Some(live) = shell.sessions.get(&shell.active) else {
                             return;
                         };
@@ -106,88 +110,7 @@ impl Shell {
                 self.error = Some("The requested session is not registered in this workspace. Select a saved session or import its project.".into());
             }
         }
-        let projects = self
-            .workspace
-            .as_ref()
-            .map(|w| {
-                w.projects
-                    .iter()
-                    .map(|p| {
-                        let mut sessions: Vec<_> =
-                            p.sessions
-                                .iter()
-                                .filter(|s| !s.archived)
-                                .map(|s| {
-                                    let live = self.sessions.iter().find(|(_, l)| {
-                                        l.project.path == p.path
-                                            && (l.controller.state().identity.id == s.id
-                                                || l.source_id == s.id)
-                                    });
-                                    SessionItem {
-                                        id: live
-                                            .map(|(k, _)| k.clone())
-                                            .unwrap_or_else(|| s.id.clone()),
-                                        title: live
-                                            .map(|(_, l)| title(l))
-                                            .unwrap_or_else(|| s.title.clone()),
-                                        time: s.last_active.clone(),
-                                        status: live.and_then(|(_, l)| {
-                                            l.controller.state().working.then_some(
-                                                components::chrome::SessionStatus::Working,
-                                            )
-                                        }),
-                                        unread: false,
-                                        can_archive: self.can_archive(&s.id),
-                                    }
-                                })
-                                .collect();
-                        for (key, live) in &self.sessions {
-                            if live.project.path == p.path
-                                && !p.sessions.iter().any(|s| {
-                                    s.id == live.controller.state().identity.id
-                                        || s.id == live.source_id
-                                })
-                            {
-                                sessions.push(SessionItem {
-                                    id: key.clone(),
-                                    title: title(live),
-                                    time: String::new(),
-                                    status: Some(if live.controller.state().working {
-                                        components::chrome::SessionStatus::Working
-                                    } else {
-                                        components::chrome::SessionStatus::Draft
-                                    }),
-                                    unread: false,
-                                    can_archive: false,
-                                });
-                            }
-                        }
-                        ProjectItem {
-                            id: p.path.clone(),
-                            title: p.name.clone(),
-                            location: p.working_directory.clone(),
-                            collapsed: p.collapsed,
-                            sessions,
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        if let Some(sidebar) = &self.sidebar {
-            let mut props = sidebar_props();
-            props.active = self.active.clone();
-            props.archived = self.session_actions.archived;
-            if props.archived {
-                props.sessions = self.archived_items();
-            }
-            sidebar.update(cx, |s, cx| {
-                s.set_props(props, cx);
-                s.set_projects(projects, cx);
-                if changed {
-                    s.set_theme(dark, window, cx);
-                }
-            });
-        }
+        self.sync_sidebar(window, cx);
         if let Some(header) = &self.header {
             let heading = self
                 .sessions
@@ -215,23 +138,20 @@ impl Shell {
                     .sync(&state.transcript, &live.transcript, cx);
                 live.projection_dirty = false;
             }
+            live.transcript.update(cx, |t, cx| {
+                t.set_working_indicator(projection::working_indicator(state), cx);
+            });
             if state.draft != live.shown_draft {
                 let draft = state.draft.clone();
                 live.shown_draft = draft.clone();
                 let editor = live.composer.read(cx).editor();
                 editor.update(cx, |e, cx| e.set_value(&draft, window, cx));
             }
-            // Models/settings mutate only on protocol reads, not frame rendering.
-            let selectable_models = state.selectable_models();
-            let choice_key = serde_json::to_string(&(
-                &selectable_models,
-                &state.thinking_levels,
-                &state.model,
-                &state.effort,
-            ))
-            .unwrap_or_default();
-            if choice_key != live.choices {
-                live.choices = choice_key;
+            // Check the mutation token before projecting or serializing any model data.
+            let choice_revision = live.controller.model_choices_revision();
+            if live.choices != Some(choice_revision) {
+                live.choices = Some(choice_revision);
+                let selectable_models = state.selectable_models();
                 let models = selectable_models
                     .iter()
                     .filter_map(|m| {
@@ -249,7 +169,7 @@ impl Shell {
                     .iter()
                     .map(|level| Choice {
                         id: level.clone(),
-                        label: level.clone(),
+                        label: components::composer::effort_label(level).into(),
                         element_id: format!("effort-{level}"),
                     })
                     .collect();
@@ -475,6 +395,7 @@ impl Shell {
             }
         }
         self.sync_remote(window, cx);
+        self.sync_admin(window, cx);
         self.sync_palette(window, cx);
         cx.notify();
     }
@@ -507,6 +428,7 @@ impl Shell {
                 );
             }
             self.active = key.clone();
+            self.mark_sidebar_read(&key);
             self.start_live(&key, cx);
             self.persist(false, cx);
             self.sync(window, cx);
@@ -545,6 +467,10 @@ impl Shell {
             return;
         }
         if self.session_action(&action, window, cx) {
+            return;
+        }
+        if self.handle_read_state(&action) {
+            self.sync(window, cx);
             return;
         }
         match action {
@@ -620,6 +546,7 @@ impl Render for Shell {
         use gpui_kit::TestSupportExt;
         let t = support::tokens(self.dark);
         let mut body = Self::palette_keymap(div().key_context("TauShell"), cx)
+            .capture_key_down(cx.listener(Self::admin_key))
             .flex()
             .size_full()
             .bg(rgb(t.canvas))
@@ -643,7 +570,8 @@ impl Render for Shell {
             );
         }
         if let Some(live) = self.sessions.get(&self.active) {
-            let empty = live.transcript.read(cx).is_empty();
+            let empty = live.transcript.read(cx).is_empty()
+                && live.transcript.read(cx).working_indicator().is_none();
             live.composer.update(cx, |composer, cx| {
                 composer.set_fill_height(empty, cx);
             });

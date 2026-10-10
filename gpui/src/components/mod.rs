@@ -1,4 +1,5 @@
 pub mod activity;
+pub mod admin;
 pub mod chrome;
 pub mod composer;
 pub mod diagram;

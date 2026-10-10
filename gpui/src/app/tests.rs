@@ -32,6 +32,8 @@ pub(super) fn shell(commands: async_channel::Sender<Command>) -> Shell {
         session_actions: session_actions::SessionActions::default(),
         palette: palette::State::default(),
         remote: remote::State::default(),
+        admin: admin::State::default(),
+        sidebar_state: sidebar::State::default(),
     }
 }
 pub(super) fn project() -> ProjectSummary {

@@ -3,12 +3,15 @@
 mod native_smoke;
 #[cfg(feature = "native-os-tests")]
 pub use native_smoke::run_native_smoke;
+mod admin;
+mod admin_bridge;
 mod model_scope;
 mod palette;
 mod projection;
 mod remote;
 mod service;
 mod session_actions;
+mod sidebar;
 #[cfg(test)]
 mod tests;
 mod view;
@@ -80,7 +83,7 @@ struct LiveSession {
     dirty: bool,
     projection_dirty: bool,
     ui_status: Option<(bool, bool)>,
-    choices: String,
+    choices: Option<u64>,
     model_scope_read: Option<tau_session::session::ModelScopeToken>,
     extension: Option<(String, Entity<NativeDialog>)>,
     extension_subscription: Option<Subscription>,
@@ -115,6 +118,8 @@ pub struct Shell {
     session_actions: session_actions::SessionActions,
     palette: palette::State,
     remote: remote::State,
+    admin: admin::State,
+    sidebar_state: sidebar::State,
 }
 
 pub fn run() -> anyhow::Result<()> {
@@ -203,6 +208,8 @@ fn run_with(
                 session_actions: session_actions::SessionActions::default(),
                 palette: palette::State::default(),
                 remote: remote::State::default(),
+                admin: admin::State::default(),
+                sidebar_state: sidebar::State::default(),
             };
             cx.spawn(async move |weak, cx| {
                 while let Ok(first) = events.recv().await {
@@ -283,7 +290,10 @@ fn run_with(
                                 }
                             }
                             if changed {
+                                shell.sidebar_state.invalidate_projection();
                                 shell.persist(false, cx);
+                            }
+                            if changed || shell.sidebar_clock_due() {
                                 shell.refresh_window(cx);
                             }
                         })
@@ -330,6 +340,7 @@ fn run_with(
                         let no_windows = cx.global::<NativeHost>().lifecycle().windows().is_empty();
                         request_shell.update(cx, |s, cx| {
                             s.lifecycle = Some(request);
+                            s.sidebar_state.invalidate_projection();
                             if no_windows && !s.is_busy() {
                                 s.begin_exit(request, true, cx);
                             } else {
@@ -349,6 +360,7 @@ fn run_with(
                         settled_shell.update(cx, |s, cx| {
                             if s.lifecycle == Some(request) {
                                 s.lifecycle = None;
+                                s.sidebar_state.invalidate_projection();
                                 s.confirmation = None;
                                 s.exit_revision = None;
                                 cx.notify();
@@ -374,6 +386,7 @@ fn run_with(
             }
         })
         .detach();
+        host.lifecycle().set_quit_on_last_window_close(true);
         host.open_window(cx);
         let _ = commands.try_send(Command::Load { project });
         cx.activate(true);
@@ -450,7 +463,12 @@ impl Shell {
                 .map(|failed| failed.into_inner())
         };
         if let Some(failed) = failed {
+            self.sidebar_state.invalidate_projection();
             match failed {
+                Command::Admin(command) => {
+                    self.admin_failed(command, cx);
+                    return;
+                }
                 Command::Remote(command) => {
                     self.remote_failed(command, cx);
                     return;
@@ -569,6 +587,7 @@ impl Shell {
             .push(cx.observe_window_appearance(window, |s, w, cx| s.sync(w, cx)));
         self.mount_palette(window, cx);
         self.mount_remote(window, cx);
+        self.mount_admin(window, cx);
         self.sync(window, cx);
     }
     fn theme_dark(&self, window: &Window) -> bool {
@@ -665,6 +684,7 @@ impl Shell {
             cx,
         );
         self.active = key.clone();
+        self.mark_sidebar_read(&key);
         self.start_live(&key, cx);
         self.persist(false, cx);
         self.sync(window, cx);
@@ -724,7 +744,9 @@ impl Shell {
                     live.controller.set_draft(text);
                     live.dirty = true;
                 }
+                s.sidebar_state.invalidate_projection();
                 s.persist(false, cx);
+                s.refresh_window(cx);
             }
         });
         let queue_key = key.clone();
@@ -769,13 +791,14 @@ impl Shell {
                 dirty: true,
                 projection_dirty: true,
                 ui_status: None,
-                choices: String::new(),
+                choices: None,
                 model_scope_read: None,
                 extension: None,
                 extension_subscription: None,
                 _subscriptions: vec![events, changes, queue_events, links],
             },
         );
+        self.sidebar_state.runtime_created(&key);
     }
     fn start_live(&mut self, key: &str, cx: &mut Context<Self>) {
         let Some(live) = self.sessions.get_mut(key) else {
@@ -787,6 +810,7 @@ impl Shell {
         live.controller
             .tick(self.epoch.elapsed().as_millis() as u64);
         live.starting = true;
+        self.sidebar_state.invalidate_projection();
         live.start_attempt += 1;
         live.start_deadline = self.epoch.elapsed().as_millis() as u64 + 10_000;
         live.startup_events.clear();
@@ -834,6 +858,7 @@ impl Shell {
             // admission must put that text back through the normal sync.
             live.shown_draft.clear();
         }
+        self.sidebar_state.invalidate_projection();
         self.effects(key, effects, cx);
         self.persist(false, cx);
         self.refresh_window(cx);
@@ -879,6 +904,7 @@ impl Shell {
                     self.sync_session_name(key, generation, identity, cx);
                 }
                 Effect::IdentityChanged { current, .. } => {
+                    self.sidebar_state.invalidate_metadata();
                     if self.active == key
                         && let Some(header) = &self.header
                     {
@@ -896,14 +922,16 @@ impl Shell {
     }
     fn ingest(&mut self, event: Event, cx: &mut Context<Self>) {
         match event {
+            Event::Admin(reply) => self.admin_event(reply, cx),
             Event::Remote(event) => self.remote_event(event, cx),
             Event::ModelScope { runtime, token, patterns } => self.model_scope_result(runtime, token, patterns, cx),
-            Event::Loaded(Ok((workspace, preferences))) => { self.workspace = Some(workspace); self.preferences = preferences; self.loaded = true; }
+            Event::Loaded(Ok((workspace, preferences))) => { self.workspace = Some(workspace); self.preferences = preferences; self.loaded = true; self.sidebar_state.invalidate_metadata(); }
             Event::Loaded(Err(())) => self.error = Some("Tau could not load its workspace. Reopen Tau to retry; saved data was not changed.".into()),
             Event::Workspace(Ok(mut workspace)) => {
                 self.reconcile_archive(&mut workspace);
                 for live in self.sessions.values_mut() { if let Some(project) = workspace.projects.iter().find(|p| p.path == live.project.path) { live.project = project.clone(); } }
                 self.workspace = Some(workspace);
+                self.sidebar_state.invalidate_metadata();
             }
             Event::NameStored { runtime, generation, revision, id, path, name, success } => self.finish_name(runtime, generation, revision, id, path, name, success),
             Event::Archived { project, id, revision, archived, success } => self.finish_archive(project, id, revision, archived, success),
@@ -916,6 +944,7 @@ impl Shell {
                 if let Some(live) = self.sessions.get_mut(&runtime) {
                     if attempt != live.start_attempt { return; }
                     live.starting = false;
+                    self.sidebar_state.invalidate_projection();
                     live.dirty = true;
                     live.projection_dirty = true;
                     live.controller.tick(self.epoch.elapsed().as_millis() as u64);
@@ -929,6 +958,9 @@ impl Shell {
             Event::Written { runtime, generation, request, success } => {
                 if let Some(live) = self.sessions.get_mut(&runtime) {
                     if live.controller.generation() != generation { return; }
+                    if !success || request["type"] == "extension_ui_response" {
+                        self.sidebar_state.invalidate_projection();
+                    }
                     live.dirty |= !success || request["type"] == "extension_ui_response";
                     live.projection_dirty |= !success;
                     let id = request["id"].as_str().unwrap_or_default();
@@ -957,12 +989,25 @@ impl Shell {
                     if live.controller.generation() != event.generation { return; }
                     live.dirty = true;
                     live.projection_dirty = true;
-                    let effects = if event.kind == "rpc" { event.line.and_then(|line| serde_json::from_str(&line).ok()).map(|value| live.controller.ingest(&event.runtime_id, event.generation, value)).unwrap_or_default() }
-                    else if matches!(event.kind, "exited" | "error") { live.controller.transport_failed(event.generation) } else { vec![] };
+                    let effects = if event.kind == "rpc" {
+                        if let Some(value) = event.line.and_then(|line| serde_json::from_str(&line).ok()) {
+                            self.observe_sidebar_event(&event.runtime_id, event.generation, &value);
+                            if value["type"] == "response" {
+                                self.sidebar_state.invalidate_metadata();
+                            }
+                            let live = self.sessions.get_mut(&event.runtime_id).unwrap();
+                            let before = (live.controller.state().working, live.controller.state().stopping, live.controller.state().extension_dialogs.len());
+                            let effects = live.controller.ingest(&event.runtime_id, event.generation, value);
+                            let after = (live.controller.state().working, live.controller.state().stopping, live.controller.state().extension_dialogs.len());
+                            if before != after { self.sidebar_state.invalidate_projection(); }
+                            effects
+                        } else { vec![] }
+                    } else if matches!(event.kind, "exited" | "error") { self.sidebar_state.invalidate_projection(); live.controller.transport_failed(event.generation) } else { vec![] };
                     self.effects(&event.runtime_id, effects, cx);
                 }
             }
             Event::Saved { revision, success, stopped } => {
+                self.sidebar_state.invalidate_projection();
                 if let Some(saved) = self.pending_saves.remove(&revision)
                     && success {
                         for draft in &saved.drafts {

@@ -9,6 +9,8 @@ use tau_core::{
 };
 use tau_session::session::ModelScopeToken;
 
+#[path = "service_admin.rs"]
+mod admin_backend;
 #[path = "service_remote.rs"]
 mod remote;
 pub use remote::{RemoteCommand, RemoteEvent, RemoteOperation, RemoteResult};
@@ -33,6 +35,7 @@ pub struct Draft {
 
 #[derive(Clone)]
 pub enum Command {
+    Admin(super::admin::Command),
     Remote(RemoteCommand),
     ReadModelScope {
         runtime: String,
@@ -98,6 +101,7 @@ pub enum Command {
     Shutdown(Sender<()>),
 }
 pub enum Event {
+    Admin(super::admin::Reply),
     Remote(RemoteEvent),
     ModelScope {
         runtime: String,
@@ -146,7 +150,23 @@ pub enum Event {
 pub fn launch(data: PathBuf) -> (Sender<Command>, Receiver<Event>) {
     let (commands, receiver) = async_channel::bounded(256);
     let (events, output) = async_channel::bounded(512);
-    std::thread::spawn(move || worker(data, receiver, events));
+    // Profile selection belongs to app startup, never the worker or isolated tests.
+    #[cfg(not(test))]
+    let telemetry = tau_observability::Telemetry::init().ok();
+    #[cfg(test)]
+    let telemetry: Option<Arc<tau_observability::Telemetry>> = None;
+    if let Some(telemetry) = &telemetry {
+        telemetry.record_lifecycle(tau_observability::telemetry::native::Lifecycle::Started);
+    }
+    std::thread::spawn(move || {
+        worker_with_backend(
+            data,
+            receiver,
+            events,
+            remote::import,
+            admin_backend::Backend(telemetry),
+        );
+    });
     (commands, output)
 }
 #[derive(Debug)]
@@ -193,15 +213,22 @@ fn launch_model_scope_reader_with(
     jobs
 }
 
-fn worker(data: PathBuf, commands: Receiver<Command>, events: Sender<Event>) {
-    worker_with_import(data, commands, events, remote::import);
-}
-
+#[cfg(test)]
 fn worker_with_import(
     data: PathBuf,
     commands: Receiver<Command>,
     events: Sender<Event>,
     import: impl Fn(&RemoteCommand) -> Result<RemoteResult, ()>,
+) {
+    worker_with_backend(data, commands, events, import, admin_backend::Backend(None));
+}
+
+fn worker_with_backend(
+    data: PathBuf,
+    commands: Receiver<Command>,
+    events: Sender<Event>,
+    import: impl Fn(&RemoteCommand) -> Result<RemoteResult, ()>,
+    mut admin: admin_backend::Backend,
 ) {
     let remote_jobs = remote::launch(events.clone());
     let model_scope_jobs = launch_model_scope_reader(events.clone());
@@ -239,6 +266,7 @@ fn worker_with_import(
             continue;
         }
         let event = match command {
+            Command::Admin(command) => Some(Event::Admin(admin.execute(command))),
             Command::Remote(command) if command.operation == RemoteOperation::Import => {
                 Some(Event::Remote(RemoteEvent {
                     result: import(&command),
@@ -476,6 +504,7 @@ fn worker_with_import(
             }
             Command::Shutdown(done) => {
                 pi.shutdown();
+                admin.finish();
                 let _ = done.send_blocking(());
                 return;
             }

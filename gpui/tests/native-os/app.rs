@@ -92,12 +92,14 @@ def stop(signum, _frame):
     except subprocess.TimeoutExpired:
         child.kill()
         child.wait()
+    mark('child_exit_ack')
     sys.exit(128 + signum)
 signal.signal(signal.SIGTERM, stop)
 signal.signal(signal.SIGINT, stop)
 calls = set()
 def mark(marker):
     with open(os.path.join(root, 'events.jsonl'), 'a') as journal: journal.write(marker + '\n')
+mark('child_started')
 try:
     for line in child.stdout:
         try:
@@ -129,7 +131,9 @@ try:
         except (ValueError, TypeError): pass
         sys.stdout.buffer.write(line)
         sys.stdout.buffer.flush()
-    sys.exit(child.wait())
+    status = child.wait()
+    mark('child_exit_ack')
+    sys.exit(status)
 finally:
     if child.poll() is None:
         child.terminate()
@@ -227,6 +231,17 @@ fn main() -> anyhow::Result<()> {
     let child = command.spawn()?;
     let group = child.id();
     let result = child.wait_with_output();
+    // Snapshot before harness cleanup: cleanup must not manufacture shutdown proof.
+    let shutdown_journal =
+        std::fs::read_to_string(root.path().join("events.jsonl")).unwrap_or_default();
+    let starts = shutdown_journal
+        .lines()
+        .filter(|s| *s == "child_started")
+        .count();
+    let exits = shutdown_journal
+        .lines()
+        .filter(|s| *s == "child_exit_ack")
+        .count();
     let _ = Command::new("/bin/kill")
         .args(["-TERM", "--", &format!("-{group}")])
         .stdout(std::process::Stdio::null())
@@ -258,7 +273,7 @@ fn main() -> anyhow::Result<()> {
     let phases = std::fs::read(&log)?;
     std::io::stderr().write_all(&phases)?;
     let markers = String::from_utf8_lossy(&phases)
-        .matches("PASS native-app completion-gated quit")
+        .matches("PASS native-app completion-gated last CmdW quit")
         .count();
     anyhow::ensure!(
         output.status.success() && markers == 1,
@@ -266,6 +281,7 @@ fn main() -> anyhow::Result<()> {
     );
     let phases = String::from_utf8_lossy(&phases);
     for phase in [
+        "PASS native-app busy last CmdW cancel retains actual root/composer and unrelated draft",
         "PASS native-app palette visible measured root panel + focused empty input",
         "PASS native-app remote visible measured root panel + focused empty input",
         "PASS native-app reopened root palette visible measured panel + focused empty input",
@@ -276,6 +292,12 @@ fn main() -> anyhow::Result<()> {
             "native-app missing or repeated palette/remote acceptance phase; reviewed phase log: {log}"
         );
     }
-    eprintln!("PASS native-app child exited after gated production shutdown");
+    anyhow::ensure!(
+        starts >= 2 && exits == starts,
+        "native-app exited before all installed Pi children acknowledged exit; starts={starts}, exits={exits}; reviewed phase log: {log}"
+    );
+    eprintln!(
+        "PASS native-app last CmdW child exited after gated production shutdown + all Pi child exit acknowledgements"
+    );
     Ok(())
 }
