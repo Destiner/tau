@@ -24,7 +24,8 @@ and session files.
 Implemented first-slice behavior includes local project import, existing/new
 sessions, model/effort selection, prompt/stream/activity/Stop and queue controls,
 extension input/select/confirm and custom output, owned folder
-selection, drafts, guarded close/quit, last-window survival and reopen. See
+selection, drafts, guarded close/quit, and quit on the last window after persistence
+and runtime cleanup. Generic host reopen remains separately supported. See
 [APP.md](../gpui/APP.md) for launch and profile safety instructions and
 [controller limits](../crates/tau-session/README.md) for exact protocol boundaries.
 
@@ -42,7 +43,8 @@ GPUI release or GPUI updater. See [packaging](../gpui/PACKAGING.md).
 - Core extraction: **57 unit + 2 integration tests passed**, one explicit canary
   ignored. Existing Tauri compatibility tests and unsigned Tauri bundle passed;
   that bundle is not GPUI packaging.
-- `tau-session`: **41 tests passed**, including scoped-model ordering/fallback/fences,
+- `tau-session`: **48 tests passed**, including model-choice revision/streaming cost,
+  compaction presentation, scoped-model ordering/fallback/fences,
   tool summaries, rename correlation, rollback and name bounds; one opt-in installed-Pi
   canary ignored in the default run.
 - Native credential-free acceptance passed with installed **Pi 0.99.2** in an
@@ -95,7 +97,28 @@ GPUI release or GPUI updater. See [packaging](../gpui/PACKAGING.md).
   snapshots; the corrected predicate uses the actual editor, without a deadline change.
   The optional model run passed assistant/tools/Stop and session actions, then again
   timed out at the later Cmd-W gate; no complete model-smoke PASS is claimed.
-- GPUI library: **319 passed, 0 failed, 1 ignored**, plus **13 passed** editor
+- Sidebar/admin batch: nested tool scrolling is contained with retained offsets;
+  edge-reveal drag handles animate; archives are virtualized with global ordering,
+  local-calendar buckets and project/model subtitles. Cached projections avoid full
+  workspace work on unchanged streams and age time labels while idle. Draft/unread
+  dots and rich session/SSH project tooltips are wired to real state. Model menus are
+  bounded, scrollable and provider-grouped; effort names are readable. Working/Stopping
+  uses Vue's assistant/compaction logic without adding synthetic transcript entries.
+- Shared `tau-observability` preserves existing Tauri preferences, telemetry and local
+  feedback contracts. Native `iddqd` outside fields toggles the same persisted gate;
+  the retained reporter and enabled-only palette actions use real worker acknowledgements.
+  Accepted writes remain tracked through disable/hide; no timeout invents a failed save.
+- Latest credential-free **and model-enabled** native acceptance passed admin unlock,
+  actual checkbox/report submission, retained editor dismissal/reopen, persisted disable,
+  and the new completion-gated last-Cmd-W quit with all Pi child exit acknowledgements.
+  The model run also passed assistant/tools/Stop and rename/archive/restore. This supersedes
+  the earlier production close/reopen sequence, not its historical failures or generic
+  host coverage. No activation repair, arbitrary sleeps or widened gates were used.
+- Integrated regressions caught archive width/anchor issues, a model-revision variable
+  shadowing the durability identity flag, and a real report pointer-dismissal focus steal.
+  These are fixed. The native checkbox test now exercises toggles instead of requiring an
+  explicit false disabled snapshot value. Original failure logs remain preserved.
+- GPUI library: **370 passed, 0 failed, 1 ignored**, plus **13 passed** editor
   integration tests; all-target/all-feature strict Clippy and the actual `tau`
   build passed. The broader Rust run passed its unit binaries but timed out in
   the existing activity Metal runner; the full suite is not reported green.
@@ -143,8 +166,10 @@ failures); no speculative activation/focus repair or relabelled visual snapshots
 - [ ] Preserve per-session runtime/generation/request ownership and stale-result
       fencing. Never auto-replay uncertain prompts or invent a parallel Pi runtime
       or session format. Reuse repository-owned contracts and deterministic fakes.
-- [ ] Restore required admin reporting/diagnostics only behind `iddqd`, bounded,
-      content-free and best-effort; never log content, paths, credentials or raw errors.
+- [x] Restore the shared admin gate and issue reporter behind `iddqd`, with bounded,
+      content-free, best-effort diagnostics and explicit opt-in report attachments.
+      Native command/lifecycle records are catalog-bound; this does not claim every
+      Vue action milestone has a native equivalent.
 
 ### 2. Produce an actual installable GPUI application
 
@@ -162,9 +187,10 @@ failures); no speculative activation/focus repair or relabelled visual snapshots
 - [ ] Verify existing projects, sessions, drafts/settings and restart recovery with
       isolated data first, without destructive conversion or concurrent profile writers.
 - [ ] In the packaged app, accept local and SSH send/stream/tools/Stop, session
-      switching/drafts, restart, close/cancel/quit/reopen and owned async cleanup.
+      switching/drafts, restart, close/cancel/last-window quit and owned async cleanup.
 - [ ] Confirm captured lifecycle identities, essential persistence and runtime
       shutdown before exit approval; preserve work on cancellation or failure.
+      Latest owned-window local acceptance passes; packaged/SSH acceptance remains.
 - [ ] Make an explicit ship/continue/revert decision in the 9–10 October window,
       with concrete blockers and safe rollback. Existing Tau remains the fallback.
 
