@@ -8,7 +8,7 @@ fn main() {
 
 #[cfg(target_os = "macos")]
 #[allow(unexpected_cfgs)]
-fn settings_menu() {
+fn check_native_menus() {
     use objc::{class, msg_send, runtime::Object, sel, sel_impl};
     use std::ffi::CStr;
     unsafe {
@@ -22,14 +22,12 @@ fn settings_menu() {
             let item: *mut Object = msg_send![submenu, itemAtIndex: i];
             let title: *mut Object = msg_send![item, title];
             let pointer: *const std::ffi::c_char = msg_send![title, UTF8String];
-            if CStr::from_ptr(pointer).to_bytes() == "Settings…".as_bytes() {
-                let enabled: objc::runtime::BOOL = msg_send![item, isEnabled];
-                assert_eq!(enabled, objc::runtime::YES);
-                let _: () = msg_send![submenu, performActionForItemAtIndex: i];
-                return;
-            }
+            assert_ne!(
+                CStr::from_ptr(pointer).to_bytes(),
+                "Settings…".as_bytes(),
+                "Tau must not expose a Settings menu"
+            );
         }
-        panic!("native Settings menu missing");
     }
 }
 
@@ -154,7 +152,7 @@ fn main() -> anyhow::Result<()> {
         return tau_gpui_prototype::app::run_native_smoke(
             root.clone(),
             root.join("project").to_string_lossy().into_owned(),
-            settings_menu,
+            check_native_menus,
         )
         .map_err(|_| anyhow::anyhow!("native-app startup or acceptance failed"));
     }

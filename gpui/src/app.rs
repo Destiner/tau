@@ -97,7 +97,6 @@ pub struct Shell {
     picker_busy: bool,
     subscriptions: Vec<Subscription>,
     dark: bool,
-    settings: bool,
     error: Option<String>,
     lifecycle: Option<Request>,
     confirmation: Option<Entity<NativeDialog>>,
@@ -184,7 +183,6 @@ fn run_with(
                 picker_busy: false,
                 subscriptions: vec![],
                 dark,
-                settings: false,
                 error: None,
                 lifecycle: None,
                 confirmation: None,
@@ -294,7 +292,6 @@ fn run_with(
         let factory_shell = shell.clone();
         let request_shell = shell.clone();
         let settled_shell = shell.clone();
-        let settings_shell = shell.clone();
         let new_shell = shell.clone();
         let failed_shell = shell.clone();
         let host = NativeHost::install(
@@ -311,13 +308,6 @@ fn run_with(
                         s.error = Some("The window could not open. Try reopening Tau.".into());
                         cx.notify();
                     })
-                }),
-                settings: Rc::new(move |cx| {
-                    cx.global::<NativeHost>().clone().reopen(cx);
-                    settings_shell.update(cx, |s, cx| {
-                        s.settings = true;
-                        s.refresh_window(cx);
-                    });
                 }),
                 new_session: Rc::new(move |cx| {
                     cx.global::<NativeHost>().clone().reopen(cx);

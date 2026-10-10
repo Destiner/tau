@@ -27,7 +27,7 @@ selection/history enabled states, and command delivery without clipboard access.
 
 `install_window_commands` and `window_menu` provide explicit host-owned close
 and minimize integration; see [window.md](window.md). [NativeHost](host.md)
-explicitly composes application menus, settings callbacks, guarded close/quit
+explicitly composes application menus, New Session callbacks, guarded close/quit
 and reopen policy. [PathChooser](paths.md) provides owned native file-dialog
 requests. Runtime shutdown, persistence, confirmation presentation and the real
 Pi-backed root remain injected host responsibilities. A quit cleanup callback
@@ -122,7 +122,7 @@ remains a source/headless contract rather than an independently observed OS
 attribute. Premature app termination fails both desktop tests.
 
 The opt-in `native-host` target separately exercises actual AppKit termination
-veto/approval, Settings, close, reopen and minimized-window reveal. See
+veto/approval, New Session, close, reopen and minimized-window reveal. See
 [host.md](host.md) for commands and the exact evidence boundary.
 
 System-clipboard exchange, physical keyboard/menu tracking, IME candidate/dead-key

@@ -40,7 +40,6 @@ struct Fixture {
     settled: Rc<RefCell<Vec<(Request, Outcome)>>>,
     editors: Rc<RefCell<Vec<Entity<InputState>>>>,
     created: Rc<Cell<usize>>,
-    settings: Rc<Cell<usize>>,
     sessions: Rc<Cell<usize>>,
     reveals: Rc<RefCell<Vec<AnyWindowHandle>>>,
     fail_factory: Rc<Cell<bool>>,
@@ -54,7 +53,6 @@ impl Fixture {
         let settled = Rc::new(RefCell::new(Vec::new()));
         let editors = Rc::new(RefCell::new(Vec::new()));
         let created = Rc::new(Cell::new(0));
-        let settings = Rc::new(Cell::new(0));
         let sessions = Rc::new(Cell::new(0));
         let reveals = Rc::new(RefCell::new(Vec::new()));
         let fail_factory = Rc::new(Cell::new(false));
@@ -66,7 +64,6 @@ impl Fixture {
             let settled = settled.clone();
             let editors = editors.clone();
             let created = created.clone();
-            let settings = settings.clone();
             let sessions = sessions.clone();
             let reveals = reveals.clone();
             let fail_factory = fail_factory.clone();
@@ -88,7 +85,6 @@ impl Fixture {
                             settled.borrow_mut().push((request, outcome))
                         }),
                     },
-                    settings: Rc::new(move |_| settings.set(settings.get() + 1)),
                     new_session: Rc::new(move |_| sessions.set(sessions.get() + 1)),
                     create_window: Rc::new(move |cx| {
                         created.set(created.get() + 1);
@@ -125,7 +121,6 @@ impl Fixture {
             settled,
             editors,
             created,
-            settings,
             sessions,
             reveals,
             fail_factory,
@@ -196,7 +191,6 @@ fn host_installation_is_idempotent_and_keeps_later_host_policy() {
                     requested: Rc::new(|_, _| panic!("original callback must remain")),
                     settled: Rc::new(|_, _, _| panic!("original callback must remain")),
                 },
-                settings: Rc::new(|_| panic!("original callback must remain")),
                 new_session: Rc::new(|_| panic!("original callback must remain")),
                 create_window: Rc::new(|_| panic!("original callback must remain")),
                 reveal_window: Rc::new(|_, _| panic!("original callback must remain")),
@@ -206,29 +200,40 @@ fn host_installation_is_idempotent_and_keeps_later_host_policy() {
         assert_eq!(cx.key_bindings().borrow().bindings().len(), bindings);
     });
     assert_eq!(f.app.quit_mode(), gpui_kit::QuitMode::LastWindowClosed);
-    f.dispatch(&Settings);
-    assert_eq!(f.settings.get(), 1);
+    f.dispatch(&NewSession);
+    assert_eq!(f.sessions.get(), 1);
 }
 
 #[test]
-fn composed_menus_settings_and_no_active_window_dispatch() {
+fn composed_menus_exclude_settings_and_keep_no_active_window_dispatch() {
     let mut f = Fixture::new();
     let menus = host_menus("Tau");
     assert_eq!(
         menus.iter().map(|m| m.name.as_ref()).collect::<Vec<_>>(),
         ["Tau", "File", "Edit", "Window"]
     );
-    let settings = menus[0]
-        .items
-        .iter()
-        .find_map(|item| match item {
-            MenuItem::Action { name, action, .. } if name.as_ref() == "Settings…" => Some(action),
-            _ => None,
-        })
-        .unwrap();
-    f.app.update(|cx| cx.dispatch_action(settings.as_ref()));
+    assert_eq!(menus[0].items.len(), 1);
+    assert!(
+        matches!(&menus[0].items[0], MenuItem::Action { name, .. } if name.as_ref() == "Quit Tau")
+    );
+    let bindings = f.app.update(|cx| {
+        cx.key_bindings()
+            .borrow()
+            .bindings()
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    let unbound = KeyBinding::new("cmd-,", Quit, None);
+    assert!(
+        bindings
+            .iter()
+            .all(|binding| binding.keystrokes() != unbound.keystrokes())
+    );
     f.first.simulate_keystroke("cmd-,");
-    assert_eq!(f.settings.get(), 2);
+    assert_eq!(f.sessions.get(), 0);
+    assert_eq!(f.created.get(), 0);
+    assert!(f.requests.borrow().is_empty());
+    f.drafts();
     let new_session = menus[1]
         .items
         .iter()
@@ -246,8 +251,6 @@ fn composed_menus_settings_and_no_active_window_dispatch() {
         "Cmd-N must not replace Tau's New Session with New Window"
     );
     f.app.simulate_deactivation();
-    f.dispatch(&Settings);
-    assert_eq!(f.settings.get(), 3);
     f.dispatch(&CloseWindow);
     assert!(f.requests.borrow().is_empty());
     f.dispatch(&Quit);

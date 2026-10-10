@@ -758,34 +758,6 @@ impl Render for Shell {
                 }),
             ));
         }
-        if self.settings {
-            main = main.child(
-                div()
-                    .p(px(16.))
-                    .child("Theme")
-                    .children(
-                        [("auto", "System"), ("light", "Light"), ("dark", "Dark")]
-                            .into_iter()
-                            .map(|(value, label)| {
-                                Button::new(format!("theme-{value}")).child(label).on_click(
-                                    cx.listener(move |s, _, _, cx| {
-                                        s.preferences.theme = value.into();
-                                        s.persist(false, cx);
-                                        s.refresh_window(cx);
-                                    }),
-                                )
-                            }),
-                    )
-                    .child(
-                        Button::new("close-settings")
-                            .child("Done")
-                            .on_click(cx.listener(|s, _, _, cx| {
-                                s.settings = false;
-                                cx.notify();
-                            })),
-                    ),
-            );
-        }
         body = body.child(main);
         if let Some(dialog) = &self.confirmation {
             body = body.child(dialog.clone());

@@ -47,7 +47,8 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   and Restore is explicit. Drafts and session files are retained.
 - Extension input/select/confirm, notifications and editor-text requests. The extension
   multiline editor still needs its dedicated control.
-- Application menus, theme settings, owned folder chooser, guarded close/quit,
+- Application menus without a Settings surface or Cmd-comma shortcut, owned folder
+  chooser, guarded close/quit,
   draft persistence, warm runtimes while the last window is closed, and reopen.
 - Bounded presentation cache and incremental changed-row projection. Streaming does
   not hash or clone unchanged historical text.
@@ -86,7 +87,7 @@ clicks the measured native Stop button, and requires real abort/tool-end/settlem
 with partial output and unrelated draft preservation.
 
 Credential-free native acceptance with Pi 0.99.2 passed, including actual extension
-input/Enter, custom output, drafts/session switching, Settings, close/reopen,
+input/Enter, custom output, drafts/session switching, native menus, close/reopen,
 busy-close cancellation and quit cleanup. Reopen has a measured-control regression
 with a negative control for stale first-paint listeners (12 application tests passed).
 This is not assistant acceptance or a repeated native reliability campaign.

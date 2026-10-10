@@ -2,7 +2,7 @@
 
 This is an opt-in host API, not a Pi-backed application. Component initialization
 and the prototype executables do not install it. Tauri still owns the operational
-Pi processes, session files, persistence, settings, updates, and project import.
+Pi processes, session files, persistence, updates, and project import.
 No session/runtime model, clipboard access or user-data write is introduced here.
 The separate [PathChooser](paths.md) adapter owns native file-dialog requests.
 
@@ -10,7 +10,7 @@ The separate [PathChooser](paths.md) adapter owns native file-dialog requests.
 
 After component initialization, call `NativeHost::install(cx, "Tau", timeout,
 HostCallbacks { ... })` once. It installs App / File / Edit / Window menus,
-Cmd-Q, Cmd-comma (Settings), Cmd-N (New Session), and the existing Cmd-W / Cmd-M
+Cmd-Q, Cmd-N (New Session), and the existing Cmd-W / Cmd-M
 helpers. Close appears in File, Minimize in Window; Edit uses the existing focused
 Base responders. The host explicitly selects `QuitMode::Explicit`, keeping the
 process alive after the last window closes. Reinstallation retains the first
@@ -22,8 +22,6 @@ Hide, Services) separately; this foundation does not invent their behavior.
 
 Inject:
 
-- `settings`: dispatch to the host's own settings surface, even without an active
-  window. This does not issue Pi `/settings` or manufacture settings state.
 - `new_session`: dispatch Tau's existing New Session command without creating a
   window or inventing session state. The callback owns project/runtime policy.
 - `create_window`: open the real root and return its `AnyWindowHandle`, or an
@@ -160,7 +158,7 @@ TestPlatform/TestApp callback delivery hooks. Tests run real Core action dispatc
 Base Root/Input entities, Window close guards, and the installed platform callback.
 They use no AppKit launch, OS picker, clipboard, permissions, Pi/SSH, or user data.
 
-Coverage includes Settings descriptors/shortcut, no-active-window dispatch,
+Coverage includes the absence of Settings/its shortcut, New Session, no-active-window dispatch,
 two-window close isolation/coalescing, cancelled/repeated requests, preserved
 editor identity/drafts, Quit supersession, delayed stale approval after timeout,
 foreign-host decisions, target removal, native callback gating while AppCell is
@@ -182,7 +180,7 @@ Success requires a successful child exit and exactly one completion marker emitt
 by `on_app_quit` after the observed approval. Early native exit is a failure even
 with exit status zero. A child watchdog bounds AppKit hangs.
 
-The termination child checks native Settings plus local Cmd-comma, native close
+The termination child checks native New Session plus local Cmd-N, native close
 veto/cancel/new approval, explicit last-window survival, and own-delegate reopen.
 Both children call actual `NSApplication terminate:` and verify veto preserves
 native key/visible/active state, editor entity/draft/focus, and zero cleanup. Repeated
@@ -200,6 +198,6 @@ AX client/permissions, Dock manipulation, user data, session, or runtime is invo
 These callbacks model ownership, not a Pi shell or a confirmation UI. Standard
 reveal is verified in this owned-window setup, not all Space/fullscreen configurations.
 
-Real Pi-backed shell wiring, runtime shutdown, settings surfaces, persistence,
+Real Pi-backed shell wiring, runtime shutdown, persistence,
 confirmation presentation/focus restoration, hardware Cmd-Q, and actual Dock
 interaction remain separate integration/acceptance work.

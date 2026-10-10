@@ -8,7 +8,7 @@ use std::cell::Cell;
 
 pub const COMPLETE: &str = "PASS native-app completion-gated quit";
 
-pub fn run_native_smoke(root: PathBuf, project: String, settings_menu: fn()) -> anyhow::Result<()> {
+pub fn run_native_smoke(root: PathBuf, project: String, check_menus: fn()) -> anyhow::Result<()> {
     std::panic::set_hook(Box::new(|_| {
         eprintln!("FAIL native-app assertion (no transcript or raw error logged)");
         std::process::exit(1);
@@ -34,7 +34,7 @@ pub fn run_native_smoke(root: PathBuf, project: String, settings_menu: fn()) -> 
             })
             .detach();
             cx.spawn(async move |cx| {
-                exercise(shell, root, settings_menu, complete, cx.clone()).await
+                exercise(shell, root, check_menus, complete, cx.clone()).await
             })
             .detach();
         },
@@ -287,7 +287,7 @@ async fn ready(shell: &Entity<Shell>, cx: &AsyncApp) {
 async fn exercise(
     shell: Entity<Shell>,
     root: PathBuf,
-    settings_menu: fn(),
+    check_menus: fn(),
     complete: Rc<Cell<bool>>,
     cx: AsyncApp,
 ) {
@@ -350,14 +350,8 @@ async fn exercise(
     })
     .await;
     eprintln!("PASS native-app NewSession + real sidebar switches retain editor draft");
-    settings_menu();
-    poll(&cx, "normal native Settings menu", 5, |cx| {
-        shell.read(cx).settings
-    })
-    .await;
-    click(&shell, &cx, "close-settings").await;
-    poll(&cx, "Settings Done", 5, |cx| !shell.read(cx).settings).await;
-    eprintln!("PASS native-app native Settings menu and rendered Done");
+    check_menus();
+    eprintln!("PASS native-app native menu omits Settings");
     focus_composer(&shell, &cx);
     insert_composer(&shell, &cx, "/tau-native-smoke");
     key(&shell, &cx, "enter");

@@ -51,7 +51,7 @@ mod macos {
         settled: RefCell<Vec<(Request, Outcome)>>,
         editors: RefCell<Vec<Entity<InputState>>>,
         created: Cell<usize>,
-        settings: Cell<usize>,
+        sessions: Cell<usize>,
         cleanup: Cell<usize>,
         complete: Cell<bool>,
     }
@@ -322,13 +322,13 @@ mod macos {
             retained(&cx, first, &state, 1);
             eprintln!("PASS standard reveal retains minimized editor identity/draft/focus");
         } else {
-            invoke("Host Test", "Settings…");
-            poll(&cx, "native Settings callback", || {
-                state.settings.get() == 1
+            invoke("File", "New Session");
+            poll(&cx, "native New Session callback", || {
+                state.sessions.get() == 1
             })
             .await;
-            key(&cx, first, "cmd-,");
-            poll(&cx, "local Cmd-, callback", || state.settings.get() == 2).await;
+            key(&cx, first, "cmd-n");
+            poll(&cx, "local Cmd-N callback", || state.sessions.get() == 2).await;
             retained(&cx, first, &state, 1);
             unsafe {
                 let _: () = msg_send![owned_window(1), performClose: NIL];
@@ -444,7 +444,7 @@ mod macos {
             let requested = state.clone();
             let settled = state.clone();
             let factory = state.clone();
-            let settings = state.clone();
+            let sessions = state.clone();
             let host = NativeHost::install(
                 cx,
                 "Host Test",
@@ -460,8 +460,9 @@ mod macos {
                             settled.settled.borrow_mut().push((r, o));
                         }),
                     },
-                    settings: Rc::new(move |_| settings.settings.set(settings.settings.get() + 1)),
-                    new_session: Rc::new(|_| panic!("unexpected session command")),
+                    new_session: Rc::new(move |_| {
+                        sessions.sessions.set(sessions.sessions.get() + 1)
+                    }),
                     create_window: Rc::new(move |cx| {
                         let index = factory.created.get() + 1;
                         factory.created.set(index);

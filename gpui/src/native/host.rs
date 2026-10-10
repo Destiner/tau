@@ -4,7 +4,7 @@ use super::{CloseWindow, MinimizeWindow, edit_menu, install_window_commands};
 use gpui_kit::{AnyWindowHandle, App, Global, KeyBinding, Menu, MenuItem, actions};
 use std::{rc::Rc, time::Duration};
 
-actions!(native_host, [Quit, Settings, NewSession, NewWindow]);
+actions!(native_host, [Quit, NewSession, NewWindow]);
 
 pub type WindowFactory = dyn Fn(&mut App) -> gpui_kit::Result<AnyWindowHandle>;
 pub type WindowRevealer = dyn Fn(AnyWindowHandle, &mut App);
@@ -13,7 +13,6 @@ pub type WindowRevealer = dyn Fn(AnyWindowHandle, &mut App);
 /// No raw paths, errors, or fabricated business rules cross this API.
 pub struct HostCallbacks {
     pub lifecycle: LifecycleCallbacks,
-    pub settings: Rc<dyn Fn(&mut App)>,
     pub new_session: Rc<dyn Fn(&mut App)>,
     pub create_window: Rc<WindowFactory>,
     /// Reveal an existing root. `reveal_window` supplies standard Window activation
@@ -41,11 +40,7 @@ pub fn reveal_window(target: AnyWindowHandle, cx: &mut App) -> gpui_kit::Result<
 /// Pure menu composition; no handlers or policy are implicitly installed.
 pub fn host_menus(app_name: &str) -> Vec<Menu> {
     vec![
-        Menu::new(app_name.to_owned()).items([
-            MenuItem::action("Settings…", Settings),
-            MenuItem::separator(),
-            MenuItem::action(format!("Quit {app_name}"), Quit),
-        ]),
+        Menu::new(app_name.to_owned()).items([MenuItem::action(format!("Quit {app_name}"), Quit)]),
         Menu::new("File").items([
             MenuItem::action("New Session", NewSession),
             MenuItem::separator(),
@@ -57,7 +52,7 @@ pub fn host_menus(app_name: &str) -> Vec<Menu> {
 }
 
 impl NativeHost {
-    /// Call after component initialization. Owns menu composition, Cmd-Q/Cmd-,/
+    /// Call after component initialization. Owns menu composition, Cmd-Q,
     /// Cmd-N (New Session), explicit last-window policy, termination, and reopen.
     /// Repeated installation is inert and retains the original callbacks.
     pub fn install(
@@ -81,7 +76,6 @@ impl NativeHost {
         cx.set_global(host.clone());
         cx.bind_keys([
             KeyBinding::new("cmd-q", Quit, None),
-            KeyBinding::new("cmd-,", Settings, None),
             KeyBinding::new("cmd-n", NewSession, None),
         ]);
         cx.on_action_available::<Quit>(|_, cx| !cx.global::<NativeHost>().lifecycle.is_exiting());
@@ -91,15 +85,7 @@ impl NativeHost {
         cx.on_action_available::<NewSession>(|_, cx| {
             cx.global::<NativeHost>().lifecycle.can_open_window()
         });
-        cx.on_action_available::<Settings>(|_, cx| {
-            !cx.global::<NativeHost>().lifecycle.is_exiting()
-        });
         cx.on_action(|_: &Quit, cx| cx.quit());
-        let settings = callbacks.settings;
-        cx.on_action(move |_: &Settings, cx| {
-            let settings = settings.clone();
-            cx.defer(move |cx| settings(cx));
-        });
         let new_session = callbacks.new_session;
         cx.on_action(move |_: &NewSession, cx| {
             let new_session = new_session.clone();

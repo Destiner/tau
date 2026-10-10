@@ -17,7 +17,6 @@ pub(super) fn shell(commands: async_channel::Sender<Command>) -> Shell {
         picker_busy: false,
         subscriptions: vec![],
         dark: false,
-        settings: false,
         error: None,
         lifecycle: None,
         confirmation: None,
