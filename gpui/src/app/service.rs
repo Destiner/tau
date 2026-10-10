@@ -7,6 +7,11 @@ use tau_core::{
     pi::{PiEvent, PiSink, PiState},
     storage,
 };
+use tau_session::session::ModelScopeToken;
+
+#[path = "service_remote.rs"]
+mod remote;
+pub use remote::{RemoteCommand, RemoteEvent, RemoteOperation, RemoteResult};
 
 #[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -28,6 +33,12 @@ pub struct Draft {
 
 #[derive(Clone)]
 pub enum Command {
+    Remote(RemoteCommand),
+    ReadModelScope {
+        runtime: String,
+        token: ModelScopeToken,
+        connection: Option<String>,
+    },
     Load {
         project: Option<String>,
     },
@@ -87,6 +98,12 @@ pub enum Command {
     Shutdown(Sender<()>),
 }
 pub enum Event {
+    Remote(RemoteEvent),
+    ModelScope {
+        runtime: String,
+        token: ModelScopeToken,
+        patterns: Option<Vec<String>>,
+    },
     Loaded(Result<(WorkspaceSnapshot, Preferences), ()>),
     Workspace(Result<WorkspaceSnapshot, ()>),
     Started {
@@ -132,7 +149,62 @@ pub fn launch(data: PathBuf) -> (Sender<Command>, Receiver<Event>) {
     std::thread::spawn(move || worker(data, receiver, events));
     (commands, output)
 }
+#[derive(Debug)]
+struct ModelScopeRead {
+    runtime: String,
+    token: ModelScopeToken,
+    connection: Option<String>,
+}
+
+fn launch_model_scope_reader(events: Sender<Event>) -> Sender<ModelScopeRead> {
+    launch_model_scope_reader_with(events, |connection| {
+        match connection {
+            Some(connection) => tau_core::settings::read_remote_model_scope(connection),
+            None => tau_core::settings::read_model_scope(),
+        }
+        .ok()
+    })
+}
+
+fn launch_model_scope_reader_with(
+    events: Sender<Event>,
+    read: impl Fn(Option<String>) -> Option<Vec<String>> + Send + 'static,
+) -> Sender<ModelScopeRead> {
+    // SSH reads inherit tau-core's timeout/output limits, off the Pi command worker.
+    let (jobs, receiver) = async_channel::bounded::<ModelScopeRead>(8);
+    std::thread::spawn(move || {
+        while let Ok(job) = receiver.recv_blocking() {
+            if events.is_closed() {
+                break;
+            }
+            let patterns = read(job.connection);
+            if events
+                .send_blocking(Event::ModelScope {
+                    runtime: job.runtime,
+                    token: job.token,
+                    patterns,
+                })
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
+    jobs
+}
+
 fn worker(data: PathBuf, commands: Receiver<Command>, events: Sender<Event>) {
+    worker_with_import(data, commands, events, remote::import);
+}
+
+fn worker_with_import(
+    data: PathBuf,
+    commands: Receiver<Command>,
+    events: Sender<Event>,
+    import: impl Fn(&RemoteCommand) -> Result<RemoteResult, ()>,
+) {
+    let remote_jobs = remote::launch(events.clone());
+    let model_scope_jobs = launch_model_scope_reader(events.clone());
     let pi = PiState::default();
     let owner = uuid::Uuid::new_v4().to_string();
     let claimed = pi
@@ -154,10 +226,51 @@ fn worker(data: PathBuf, commands: Receiver<Command>, events: Sender<Event>) {
         }
     }));
     while let Ok(command) = commands.recv_blocking() {
-        if events.is_closed() && matches!(&command, Command::Start { .. }) {
+        if events.is_closed()
+            && matches!(
+                &command,
+                Command::Start { .. }
+                    | Command::Remote(RemoteCommand {
+                        operation: RemoteOperation::Import,
+                        ..
+                    })
+            )
+        {
             continue;
         }
         let event = match command {
+            Command::Remote(command) if command.operation == RemoteOperation::Import => {
+                Some(Event::Remote(RemoteEvent {
+                    result: import(&command),
+                    command,
+                }))
+            }
+            Command::Remote(command) => match remote_jobs.try_send(command) {
+                Ok(()) => None,
+                Err(error) => Some(Event::Remote(RemoteEvent {
+                    command: error.into_inner(),
+                    result: Err(()),
+                })),
+            },
+            Command::ReadModelScope {
+                runtime,
+                token,
+                connection,
+            } => match model_scope_jobs.try_send(ModelScopeRead {
+                runtime,
+                token,
+                connection,
+            }) {
+                Ok(()) => None,
+                Err(error) => {
+                    let job = error.into_inner();
+                    Some(Event::ModelScope {
+                        runtime: job.runtime,
+                        token: job.token,
+                        patterns: None,
+                    })
+                }
+            },
             Command::Load { project } => {
                 let result = if claimed {
                     project
@@ -499,6 +612,80 @@ mod tests {
             );
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
+    }
+
+    #[test]
+    fn settings_reader_is_bounded_and_preserves_result_tokens_without_real_io() {
+        let (events, output) = async_channel::bounded(16);
+        let (entered, started) = std::sync::mpsc::channel();
+        let (release, wait) = std::sync::mpsc::channel();
+        let jobs = launch_model_scope_reader_with(events, move |connection| {
+            if connection.as_deref() == Some("blocked") {
+                entered.send(()).unwrap();
+                wait.recv().unwrap();
+                Some(vec!["fixture/beta".into()])
+            } else {
+                assert!(connection.is_none());
+                None
+            }
+        });
+        let mut controller = tau_session::session::Controller::new("scope");
+        controller.begin_generation(1);
+        let token = controller.begin_model_scope_read();
+        jobs.try_send(ModelScopeRead {
+            runtime: "remote".into(),
+            token: token.clone(),
+            connection: Some("blocked".into()),
+        })
+        .unwrap_or_else(|_| panic!("reader should accept first job"));
+        started
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap();
+        // A slow remote read cannot create unbounded threads or queued work.
+        for _ in 0..8 {
+            jobs.try_send(ModelScopeRead {
+                runtime: "local".into(),
+                token: token.clone(),
+                connection: None,
+            })
+            .unwrap_or_else(|_| panic!("bounded queue should accept eight jobs"));
+        }
+        let rejected = jobs
+            .try_send(ModelScopeRead {
+                runtime: "rejected".into(),
+                token: token.clone(),
+                connection: None,
+            })
+            .expect_err("full queue must reject without blocking")
+            .into_inner();
+        assert_eq!(rejected.runtime, "rejected");
+        assert_eq!(rejected.token, token);
+        release.send(()).unwrap();
+        let Event::ModelScope {
+            runtime,
+            token: returned,
+            patterns,
+        } = output.recv_blocking().unwrap()
+        else {
+            panic!("expected settings result");
+        };
+        assert_eq!(runtime, "remote");
+        assert_eq!(returned, token);
+        assert_eq!(patterns, Some(vec!["fixture/beta".into()]));
+        for _ in 0..8 {
+            let Event::ModelScope {
+                runtime,
+                token: returned,
+                patterns,
+            } = output.recv_blocking().unwrap()
+            else {
+                panic!("expected failed settings result");
+            };
+            assert_eq!(runtime, "local");
+            assert_eq!(returned, token);
+            assert!(patterns.is_none());
+        }
+        jobs.close();
     }
 
     #[test]

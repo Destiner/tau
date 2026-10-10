@@ -1,8 +1,8 @@
 //! Searchable command palette; pages and destinations are supplied by the host.
 use super::support;
 use gpui_kit::{
-    BoxShadow, Context, Entity, IntoElement, KeyDownEvent, MouseButton, Render, TestSupportExt,
-    Window,
+    BoxShadow, Context, Entity, EntityInputHandler, IntoElement, KeyDownEvent, MouseButton, Render,
+    ScrollHandle, TestSupportExt, Window,
     base::{
         Button, Input,
         input::{InputEvent, InputState},
@@ -12,7 +12,7 @@ use gpui_kit::{
     px, rgb, rgba,
 };
 
-gpui_kit::actions!(native_palette, [NextRow, PreviousRow]);
+gpui_kit::actions!(native_palette, [NextRow, PreviousRow, KeepFocus]);
 
 #[derive(Clone)]
 pub struct PaletteItem {
@@ -44,6 +44,8 @@ pub struct Palette {
     page: usize,
     selected: Option<usize>,
     query: String,
+    root_search: Option<(String, Option<String>)>,
+    scroll: ScrollHandle,
     search: Entity<InputState>,
 }
 impl gpui_kit::EventEmitter<PaletteEvent> for Palette {}
@@ -87,6 +89,8 @@ impl Palette {
         cx.bind_keys([
             gpui_kit::KeyBinding::new("down", NextRow, Some("NativePaletteSearch > Input")),
             gpui_kit::KeyBinding::new("up", PreviousRow, Some("NativePaletteSearch > Input")),
+            gpui_kit::KeyBinding::new("tab", KeepFocus, Some("NativePaletteSearch > Input")),
+            gpui_kit::KeyBinding::new("shift-tab", KeepFocus, Some("NativePaletteSearch > Input")),
         ]);
         let search = cx.new(|cx| {
             InputState::new(window, cx)
@@ -101,15 +105,25 @@ impl Palette {
                 ..support::input_style(dark)
             });
         });
-        cx.subscribe(&search, |this, input, event: &InputEvent, cx| {
-            if matches!(event, InputEvent::Change) {
-                this.query = input.read(cx).value().to_string();
-                if !this.selected.is_some_and(|i| this.visible().contains(&i)) {
-                    this.selected = this.visible().first().copied();
+        cx.subscribe_in(
+            &search,
+            window,
+            |this, input, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. })
+                    && this.open
+                    && let Some(i) = this.selected
+                {
+                    this.activate(i, window, cx);
                 }
-                cx.notify();
-            }
-        })
+                if matches!(event, InputEvent::Change) {
+                    this.query = input.read(cx).value().to_string();
+                    if !this.selected.is_some_and(|i| this.visible().contains(&i)) {
+                        this.selected = this.visible().first().copied();
+                    }
+                    cx.notify();
+                }
+            },
+        )
         .detach();
         let selected = (!pages[0].items.is_empty()).then_some(0);
         Self {
@@ -123,6 +137,8 @@ impl Palette {
             page: 0,
             selected,
             query: String::new(),
+            root_search: None,
+            scroll: ScrollHandle::new(),
             search,
         }
     }
@@ -164,6 +180,23 @@ impl Palette {
         self.page = 0;
         self.reset_search(window, cx);
     }
+    /// Refresh host data without resetting text, focus, page, or row identity.
+    pub fn refresh_pages(
+        &mut self,
+        pages: Vec<PalettePage>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let page = self.page_id().to_owned();
+        let selected = self.selected_id().map(str::to_owned);
+        self.pages = Self::with_root(pages);
+        self.page = self.pages.iter().position(|p| p.id == page).unwrap_or(0);
+        self.selected = selected.and_then(|id| self.rows().iter().position(|r| r.id == id));
+        let placeholder = self.pages[self.page].placeholder.clone();
+        self.search
+            .update(cx, |s, cx| s.set_placeholder(placeholder, window, cx));
+        cx.notify();
+    }
     fn with_root(mut pages: Vec<PalettePage>) -> Vec<PalettePage> {
         if pages.is_empty() {
             pages.push(PalettePage {
@@ -180,6 +213,7 @@ impl Palette {
     /// Open a host-supplied page without changing which page is the root.
     pub fn open_page(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.open = true;
+        self.root_search = None;
         self.page = self
             .pages
             .iter()
@@ -187,10 +221,14 @@ impl Palette {
             .unwrap_or(0);
         self.reset_search(window, cx);
     }
-    pub fn dismiss(&mut self, cx: &mut Context<Self>) {
+    /// Close for host dispatch without scheduling a second focus restoration.
+    pub fn close(&mut self, cx: &mut Context<Self>) {
         self.open = false;
-        cx.emit(PaletteEvent::Dismissed);
         cx.notify();
+    }
+    pub fn dismiss(&mut self, cx: &mut Context<Self>) {
+        self.close(cx);
+        cx.emit(PaletteEvent::Dismissed);
     }
     fn rows(&self) -> &[PaletteItem] {
         &self.pages[self.page].items
@@ -218,7 +256,7 @@ impl Palette {
         cx.notify();
     }
     fn activate(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.visible().contains(&i) {
+        if !self.open || !self.visible().contains(&i) {
             return;
         }
         if let Some(next) = self.rows()[i]
@@ -226,12 +264,16 @@ impl Palette {
             .as_ref()
             .and_then(|id| self.pages.iter().position(|page| &page.id == id))
         {
+            if self.page == 0 {
+                self.root_search =
+                    Some((self.query.clone(), self.selected_id().map(str::to_owned)));
+            }
             self.page = next;
             self.reset_search(window, cx);
         } else {
             let event = PaletteEvent::Selected(self.rows()[i].id.clone());
-            cx.emit(event);
             self.open = false;
+            cx.emit(event);
             cx.notify();
         }
     }
@@ -240,10 +282,17 @@ impl Palette {
             self.page = 0;
             cx.emit(PaletteEvent::Back);
             self.reset_search(window, cx);
+            if let Some((query, selected)) = self.root_search.take() {
+                self.set_query(query, window, cx);
+                self.selected = selected.and_then(|id| self.rows().iter().position(|r| r.id == id));
+            }
         }
     }
-    fn move_row(&mut self, down: bool, cx: &mut Context<Self>) {
-        if !self.open {
+    fn move_row(&mut self, down: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let composing = self
+            .search
+            .update(cx, |s, cx| s.marked_text_range(window, cx).is_some());
+        if !self.open || composing {
             return;
         }
         let visible = self.visible();
@@ -261,25 +310,44 @@ impl Palette {
                 (current + visible.len() - 1) % visible.len()
             }],
         );
+        if let Some(index) = self
+            .selected
+            .and_then(|i| visible.iter().position(|n| *n == i))
+        {
+            self.scroll.scroll_to_item(index);
+        }
         cx.notify();
     }
     fn key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.open {
+        if !self.open
+            || self
+                .search
+                .update(cx, |s, cx| s.marked_text_range(window, cx).is_some())
+        {
             return;
         }
+        let modifiers = e.keystroke.modifiers;
         match e.keystroke.key.as_str() {
             "escape" => self.dismiss(cx),
-            "enter" => {
-                if let Some(i) = self.selected {
-                    self.activate(i, window, cx);
-                }
+            "[" if self.page != 0 && (modifiers.platform || modifiers.control) => {
+                self.back(window, cx)
             }
-            "backspace" if self.page != 0 && self.query.is_empty() => self.back(window, cx),
+            "backspace" | "delete"
+                if self.page != 0
+                    && self.query.is_empty()
+                    && !modifiers.platform
+                    && !modifiers.control
+                    && !modifiers.alt
+                    && !modifiers.shift =>
+            {
+                self.back(window, cx)
+            }
             _ => return,
         }
         cx.stop_propagation();
     }
-    fn dialog(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn dialog(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let rows_height = (f32::from(window.viewport_size().height) * 0.85 - 61.).clamp(55., 480.);
         let t = support::tokens(self.dark);
         let visible = self.visible();
         div()
@@ -303,8 +371,11 @@ impl Palette {
             .overflow_hidden()
             .occlude()
             .on_key_down(cx.listener(Self::key))
-            .on_action(cx.listener(|s, _: &NextRow, _, cx| s.move_row(true, cx)))
-            .on_action(cx.listener(|s, _: &PreviousRow, _, cx| s.move_row(false, cx)))
+            .on_action(cx.listener(|s, _: &NextRow, w, cx| s.move_row(true, w, cx)))
+            .on_action(cx.listener(|s, _: &PreviousRow, w, cx| s.move_row(false, w, cx)))
+            .on_action(cx.listener(|s, _: &KeepFocus, w, cx| {
+                s.search.update(cx, |input, cx| input.focus(w, cx));
+            }))
             .child(
                 div()
                     .h(px(35.))
@@ -342,8 +413,10 @@ impl Palette {
             .child(
                 div()
                     .p(px(6.))
-                    .max_h(px(480.))
-                    .overflow_hidden()
+                    .id("palette-results")
+                    .max_h(px(rows_height))
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
                     .flex()
                     .flex_col()
                     .children(visible.iter().copied().map(|i| {
@@ -459,6 +532,7 @@ impl Render for Palette {
                 .left_0()
                 .w(viewport.width)
                 .h(viewport.height)
+                .occlude()
                 .child(
                     div()
                         .absolute()
@@ -475,7 +549,7 @@ impl Render for Palette {
                         .px(px(14.))
                         .flex()
                         .justify_center()
-                        .child(self.dialog(cx)),
+                        .child(self.dialog(window, cx)),
                 )
         })
     }
@@ -640,7 +714,7 @@ mod tests {
         window.update(|palette, window, cx| {
             palette.open(window, cx);
             assert_eq!(palette.selected_id(), None);
-            palette.move_row(true, cx);
+            palette.move_row(true, window, cx);
             assert_eq!(palette.selected_id(), None);
             palette.dismiss(cx);
         });

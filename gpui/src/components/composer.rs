@@ -84,6 +84,7 @@ pub struct Composer {
     search_style: gpui_kit::base::input::InputEditorStyle,
     models: Vec<Choice>,
     model_heading: String,
+    model_fallback: String,
     efforts: Vec<Choice>,
     dark: bool,
     editor: Entity<TextareaState>,
@@ -219,6 +220,11 @@ impl Composer {
     pub fn model(&self) -> Option<&Choice> {
         self.models.get(self.model)
     }
+    pub fn model_label(&self) -> &str {
+        self.model()
+            .map(|choice| choice.label.as_str())
+            .unwrap_or(&self.model_fallback)
+    }
     pub fn effort(&self) -> Option<&Choice> {
         self.efforts.get(self.effort)
     }
@@ -296,10 +302,17 @@ impl Composer {
         self.close(cx);
     }
     pub fn set_model(&mut self, id: &str, cx: &mut Context<Self>) {
-        if let Some(ix) = self.models.iter().position(|choice| choice.id == id) {
-            self.model = ix;
-            cx.notify();
-        }
+        // An explicit host selection must not silently select a different scoped model.
+        self.model = self
+            .models
+            .iter()
+            .position(|choice| choice.id == id)
+            .unwrap_or(usize::MAX);
+        cx.notify();
+    }
+    pub fn set_model_fallback(&mut self, label: impl Into<String>, cx: &mut Context<Self>) {
+        self.model_fallback = label.into();
+        cx.notify();
     }
     pub fn set_effort(&mut self, id: &str, cx: &mut Context<Self>) {
         if let Some(ix) = self.efforts.iter().position(|choice| choice.id == id) {
@@ -761,6 +774,7 @@ impl Composer {
             dark,
             models: options.models,
             model_heading: options.model_heading,
+            model_fallback: String::new(),
             efforts: options.efforts,
             editor,
             editor_bounds: Rc::new(Cell::new(None)),
@@ -918,10 +932,7 @@ impl Render for Composer {
                     .on_prepaint(move |bounds, _, _| model_bounds.set(Some(bounds)))
                     .child(
                         BaseButton::new("model")
-                            .accessibility_label(format!(
-                                "Model: {}",
-                                self.model().map(|o| o.label.as_str()).unwrap_or_default()
-                            ))
+                            .accessibility_label(format!("Model: {}", self.model_label()))
                             .disabled(settings_disabled)
                             .h(px(22.))
                             .relative()
@@ -949,7 +960,7 @@ impl Render for Composer {
                                         s.close(cx);
                                     } else {
                                         s.selector = Some("model");
-                                        s.cursor = s.model;
+                                        s.cursor = if s.model().is_some() { s.model } else { 0 };
                                         s.query.clear();
                                         s.search.update(cx, |input, cx| {
                                             input.set_value("", window, cx);
@@ -959,7 +970,7 @@ impl Render for Composer {
                                     }
                                 }
                             }))
-                            .child(self.model().map(|o| o.label.clone()).unwrap_or_default())
+                            .child(self.model_label().to_owned())
                             .child(
                                 support::selector_arrow(model_color)
                                     .opacity(if settings_disabled { 0.45 } else { 1. }),
@@ -1985,6 +1996,117 @@ mod tests {
             window.read(|composer, cx| composer.editor().read(cx).value().to_string()),
             "keep my draft"
         );
+    }
+
+    #[test]
+    fn scoped_model_fallback_is_display_only_and_selection_emits_once() {
+        let (_app, mut window) = fixture(false, false);
+        let received = Rc::new(RefCell::new(Vec::new()));
+        let events = received.clone();
+        let _subscription = window.update(|composer, _, cx| {
+            let subscription = cx.subscribe(&cx.entity(), move |_, _, event: &Event, _| {
+                events.borrow_mut().push(event.clone());
+            });
+            composer.set_choices(
+                vec![Choice {
+                    id: "beta".into(),
+                    label: "Beta".into(),
+                    element_id: "model-beta".into(),
+                }],
+                vec![],
+                cx,
+            );
+            composer.set_model("alpha", cx);
+            composer.set_model_fallback("Alpha", cx);
+            subscription
+        });
+        window.draw();
+        assert!(window.read(|composer, _| composer.model().is_none()));
+        assert_eq!(
+            window.read(|composer, _| composer.model_label().to_owned()),
+            "Alpha"
+        );
+        assert_eq!(
+            window.read(|composer, _| composer
+                .visible_models()
+                .iter()
+                .map(|c| c.id.clone())
+                .collect::<Vec<_>>()),
+            vec!["beta"]
+        );
+        assert!(received.borrow().is_empty());
+        click(&mut window, "model");
+        assert_eq!(
+            window.read(|composer, _| composer.model_cursor().map(|c| c.id.clone())),
+            Some("beta".into())
+        );
+        click(&mut window, "model-beta");
+        assert_eq!(*received.borrow(), vec![Event::ModelChanged("beta".into())]);
+        assert_eq!(
+            window.read(|composer, _| composer.model_label().to_owned()),
+            "Beta"
+        );
+        assert!(window.read(|composer, _| composer.open_selector().is_none()));
+    }
+
+    #[test]
+    fn empty_model_choices_allow_empty_or_host_default_fallback() {
+        let (_app, mut window) = fixture(false, false);
+        window.update(|composer, _, cx| {
+            composer.set_choices(vec![], vec![], cx);
+            composer.set_model("", cx);
+        });
+        assert_eq!(
+            window.read(|composer, _| composer.model_label().to_owned()),
+            ""
+        );
+        window.update(|composer, _, cx| composer.set_model_fallback("Select Model", cx));
+        window.draw();
+        assert_eq!(
+            window.read(|composer, _| composer.model_label().to_owned()),
+            "Select Model"
+        );
+        click(&mut window, "model");
+        assert!(
+            window.read(|composer, _| composer.visible_models().is_empty()
+                && composer.model_cursor().is_none())
+        );
+        window.update(|composer, _, cx| composer.set_model_fallback("", cx));
+        assert_eq!(
+            window.read(|composer, _| composer.model_label().to_owned()),
+            ""
+        );
+    }
+
+    #[test]
+    fn model_choices_reorder_preserves_id_but_explicit_unknown_overrides_default() {
+        let (_app, mut window) = fixture(false, false);
+        window.update(|composer, _, cx| {
+            composer.set_model("beta", cx);
+            let mut choices = options(false, false).models;
+            choices.reverse();
+            composer.set_choices(choices, vec![], cx);
+        });
+        assert_eq!(
+            window.read(|composer, _| composer.model().map(|c| c.id.clone())),
+            Some("beta".into())
+        );
+        window.update(|composer, _, cx| {
+            composer.set_choices(options(false, false).models, vec![], cx);
+        });
+        assert_eq!(
+            window.read(|composer, _| composer.model().map(|c| c.id.clone())),
+            Some("beta".into())
+        );
+        window.update(|composer, _, cx| {
+            composer.set_choices(vec![options(false, false).models.remove(0)], vec![], cx);
+        });
+        assert_eq!(
+            window.read(|composer, _| composer.model().map(|c| c.id.clone())),
+            Some("alpha".into())
+        );
+        window.update(|composer, _, cx| composer.set_model("beta", cx));
+        assert!(window.read(|composer, _| composer.model().is_none()));
     }
 
     #[test]

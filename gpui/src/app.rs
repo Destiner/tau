@@ -3,7 +3,10 @@
 mod native_smoke;
 #[cfg(feature = "native-os-tests")]
 pub use native_smoke::run_native_smoke;
+mod model_scope;
+mod palette;
 mod projection;
+mod remote;
 mod service;
 mod session_actions;
 #[cfg(test)]
@@ -78,6 +81,7 @@ struct LiveSession {
     projection_dirty: bool,
     ui_status: Option<(bool, bool)>,
     choices: String,
+    model_scope_read: Option<tau_session::session::ModelScopeToken>,
     extension: Option<(String, Entity<NativeDialog>)>,
     extension_subscription: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
@@ -109,6 +113,8 @@ pub struct Shell {
     pending_saves: BTreeMap<u64, Preferences>,
     restored: bool,
     session_actions: session_actions::SessionActions,
+    palette: palette::State,
+    remote: remote::State,
 }
 
 pub fn run() -> anyhow::Result<()> {
@@ -195,6 +201,8 @@ fn run_with(
                 pending_saves: BTreeMap::new(),
                 restored: false,
                 session_actions: session_actions::SessionActions::default(),
+                palette: palette::State::default(),
+                remote: remote::State::default(),
             };
             cx.spawn(async move |weak, cx| {
                 while let Ok(first) = events.recv().await {
@@ -443,6 +451,14 @@ impl Shell {
         };
         if let Some(failed) = failed {
             match failed {
+                Command::Remote(command) => {
+                    self.remote_failed(command, cx);
+                    return;
+                }
+                Command::ReadModelScope { runtime, token, .. } => {
+                    self.model_scope_result(runtime, token, None, cx);
+                    return;
+                }
                 Command::Send {
                     runtime,
                     generation,
@@ -537,9 +553,7 @@ impl Shell {
             &sidebar,
             window,
             |s, _, action: &Action, w, cx| {
-                if !s.session_action(action, w, cx) {
-                    s.action(action.clone(), w, cx);
-                }
+                s.action(action.clone(), w, cx);
             },
         ));
         let header = self.header.as_ref().unwrap().clone();
@@ -548,13 +562,13 @@ impl Shell {
             &header,
             window,
             |s, _, action: &Action, w, cx| {
-                if !s.session_action(action, w, cx) {
-                    s.action(action.clone(), w, cx);
-                }
+                s.action(action.clone(), w, cx);
             },
         ));
         self.subscriptions
             .push(cx.observe_window_appearance(window, |s, w, cx| s.sync(w, cx)));
+        self.mount_palette(window, cx);
+        self.mount_remote(window, cx);
         self.sync(window, cx);
     }
     fn theme_dark(&self, window: &Window) -> bool {
@@ -569,6 +583,7 @@ impl Shell {
     }
     fn is_busy(&self) -> bool {
         self.picker_busy
+            || self.remote.is_busy()
             || !self.register_retries.is_empty()
             || self.sessions.values().any(|live| {
                 let state = live.controller.state();
@@ -601,6 +616,9 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.remote.is_open() || self.lifecycle.is_some() || self.confirmation.is_some() {
+            return;
+        }
         let project = project
             .and_then(|path| {
                 self.workspace
@@ -752,6 +770,7 @@ impl Shell {
                 projection_dirty: true,
                 ui_status: None,
                 choices: String::new(),
+                model_scope_read: None,
                 extension: None,
                 extension_subscription: None,
                 _subscriptions: vec![events, changes, queue_events, links],
@@ -877,6 +896,8 @@ impl Shell {
     }
     fn ingest(&mut self, event: Event, cx: &mut Context<Self>) {
         match event {
+            Event::Remote(event) => self.remote_event(event, cx),
+            Event::ModelScope { runtime, token, patterns } => self.model_scope_result(runtime, token, patterns, cx),
             Event::Loaded(Ok((workspace, preferences))) => { self.workspace = Some(workspace); self.preferences = preferences; self.loaded = true; }
             Event::Loaded(Err(())) => self.error = Some("Tau could not load its workspace. Reopen Tau to retry; saved data was not changed.".into()),
             Event::Workspace(Ok(mut workspace)) => {

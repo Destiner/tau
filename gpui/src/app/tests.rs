@@ -30,6 +30,8 @@ pub(super) fn shell(commands: async_channel::Sender<Command>) -> Shell {
         pending_saves: BTreeMap::new(),
         restored: false,
         session_actions: session_actions::SessionActions::default(),
+        palette: palette::State::default(),
+        remote: remote::State::default(),
     }
 }
 pub(super) fn project() -> ProjectSummary {

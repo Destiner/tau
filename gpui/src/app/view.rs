@@ -16,7 +16,12 @@ impl Shell {
                         if shell.window != Some(target)
                             || shell.lifecycle.is_some()
                             || shell.confirmation.is_some()
+                            || shell.palette.is_open(cx)
                         {
+                            return;
+                        }
+                        if shell.remote.is_open() {
+                            owner.update(cx, |s, cx| s.focus_remote(window, cx));
                             return;
                         }
                         let Some(live) = shell.sessions.get(&shell.active) else {
@@ -44,6 +49,7 @@ impl Shell {
         };
         let changed = self.dark != dark;
         self.dark = dark;
+        self.sync_model_scopes(cx);
         if self.loaded && !self.restored {
             self.restored = true;
             let drafts = self.preferences.drafts.clone();
@@ -216,8 +222,9 @@ impl Shell {
                 editor.update(cx, |e, cx| e.set_value(&draft, window, cx));
             }
             // Models/settings mutate only on protocol reads, not frame rendering.
+            let selectable_models = state.selectable_models();
             let choice_key = serde_json::to_string(&(
-                &state.models,
+                &selectable_models,
                 &state.thinking_levels,
                 &state.model,
                 &state.effort,
@@ -225,8 +232,7 @@ impl Shell {
             .unwrap_or_default();
             if choice_key != live.choices {
                 live.choices = choice_key;
-                let models = state
-                    .models
+                let models = selectable_models
                     .iter()
                     .filter_map(|m| {
                         let provider = m["provider"].as_str()?;
@@ -255,6 +261,13 @@ impl Shell {
                 live.composer.update(cx, |c, cx| {
                     c.set_choices(models, efforts, cx);
                     c.set_model(&model, cx);
+                    c.set_model_fallback(
+                        state.model["name"]
+                            .as_str()
+                            .or(state.model["id"].as_str())
+                            .unwrap_or("Select Model"),
+                        cx,
+                    );
                     c.set_effort(&state.effort, cx);
                 });
             }
@@ -437,11 +450,15 @@ impl Shell {
                                         .resolve(request, false, cx);
                                 }
                                 DialogEvent::Submitted(_) => {
-                                    if s.picker_busy {
+                                    if s.picker_busy || s.remote.is_busy() {
                                         s.error = Some(
+                                        if s.remote.is_busy() {
+                                            "Wait for the remote project operation before closing."
+                                        } else {
                                             "Finish or cancel the folder picker before closing."
-                                                .into(),
-                                        );
+                                        }
+                                        .into(),
+                                    );
                                     } else {
                                         s.begin_exit(request, true, cx);
                                     }
@@ -457,6 +474,8 @@ impl Shell {
                 dialog.update(cx, |d, cx| d.set_busy(self.exit_revision.is_some(), cx));
             }
         }
+        self.sync_remote(window, cx);
+        self.sync_palette(window, cx);
         cx.notify();
     }
     pub(super) fn select(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -522,10 +541,15 @@ impl Shell {
         }
     }
     pub(super) fn action(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if self.remote.is_open() || self.lifecycle.is_some() || self.confirmation.is_some() {
+            return;
+        }
         if self.session_action(&action, window, cx) {
             return;
         }
         match action {
+            Action::Palette => self.toggle_palette(window, cx),
+            Action::OpenRemoteProject => self.open_remote(window, cx),
             Action::Select(id) => self.select(&id, window, cx),
             Action::NewSession => self.new_session(None, window, cx),
             Action::NewSessionIn(project) => self.new_session(Some(project), window, cx),
@@ -595,7 +619,7 @@ impl Render for Shell {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         use gpui_kit::TestSupportExt;
         let t = support::tokens(self.dark);
-        let mut body = div()
+        let mut body = Self::palette_keymap(div().key_context("TauShell"), cx)
             .flex()
             .size_full()
             .bg(rgb(t.canvas))
@@ -750,7 +774,14 @@ impl Render for Shell {
                 }),
             ));
         }
-        body = body.child(main);
+        body = body
+            .child(main)
+            .when_some(self.palette.view.clone(), |body, palette| {
+                body.child(palette)
+            });
+        if self.confirmation.is_none() {
+            body = body.when_some(self.remote.view.clone(), |body, remote| body.child(remote));
+        }
         if let Some(dialog) = &self.confirmation {
             body = body.child(dialog.clone());
         }

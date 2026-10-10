@@ -1,5 +1,6 @@
 //! Opt-in acceptance against the production shell, worker, renderer and installed Pi.
 use super::*;
+use gpui_kit::base::input::InputState;
 use gpui_kit::{
     AsyncApp, EntityInputHandler, Focusable, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, PlatformInput,
@@ -251,6 +252,265 @@ async fn capture(shell: &Entity<Shell>, cx: &AsyncApp, name: &str, empty: bool) 
     .await;
 }
 
+fn modal_facts(
+    editor: &Entity<InputState>,
+    w: &Window,
+    cx: &App,
+    panel: &str,
+    field: &str,
+) -> [bool; 6] {
+    use gpui_kit::base::test_support::find;
+    let panel = find(w, &[], &panel.to_owned().into());
+    let field = panel
+        .as_ref()
+        .and_then(|panel| find(w, panel.path(), &field.to_owned().into()));
+    let measured = |node: &gpui_kit::base::test_support::ElementSnapshot| {
+        node.visible() && node.bounds().size.width > px(0.) && node.bounds().size.height > px(0.)
+    };
+    // BaseInput registers its wrapper geometry, not editor focus/value facts.
+    let input = editor.read(cx);
+    [
+        panel.is_some(),
+        field.is_some(),
+        panel.as_ref().is_some_and(measured),
+        field.as_ref().is_some_and(measured),
+        input.focus_handle(cx).is_focused(w),
+        input.value().is_empty(),
+    ]
+}
+
+fn modal_ready(
+    editor: &Entity<InputState>,
+    w: &Window,
+    cx: &App,
+    panel: &str,
+    field: &str,
+) -> bool {
+    modal_facts(editor, w, cx, panel, field)
+        .into_iter()
+        .all(|fact| fact)
+}
+
+async fn capture_modal(
+    shell: &Entity<Shell>,
+    cx: &AsyncApp,
+    name: &str,
+    field: &str,
+    editor: Entity<InputState>,
+) {
+    let painted = Rc::new(Cell::new(false));
+    let observed = painted.clone();
+    let name = name.to_owned();
+    let field = field.to_owned();
+    let panel = if name == "palette" {
+        "palette-surface"
+    } else {
+        "remote-dialog"
+    };
+    cx.update(|cx| {
+        window(shell, cx).update(cx, |_, w, _| {
+            w.on_next_frame(move |w, _| w.on_next_frame(move |w, cx| {
+                assert!(modal_ready(&editor, w, cx, panel, &field));
+                let bounds = gpui_kit::base::test_support::find(w, &[], &panel.into()).unwrap().bounds();
+                eprintln!("PASS native-app {name} visible measured root panel + focused empty input bounds={bounds:?}");
+                if let Some(directory) = std::env::var_os("TAU_NATIVE_CAPTURE_DIR") {
+                    let destination = PathBuf::from(directory).join(format!("{name}.png"));
+                    let image = w.render_to_image().expect("owned modal renderer capture");
+                    let (width, height) = image.dimensions();
+                    image.save(&destination).expect("save actual modal renderer PNG");
+                    eprintln!("PASS native-app owned Metal scene PNG {width}x{height}: {}", destination.display());
+                }
+                observed.set(true);
+            }));
+        }).unwrap();
+    });
+    poll(
+        cx,
+        "normal native modal painted frame and capture",
+        5,
+        |_| painted.get(),
+    )
+    .await;
+}
+
+async fn palette_remote(shell: &Entity<Shell>, cx: &AsyncApp, first: &str) {
+    let counts = cx.update(|cx| {
+        let s = shell.read(cx);
+        (
+            s.sessions.len(),
+            s.workspace.as_ref().unwrap().projects.len(),
+        )
+    });
+    key(shell, cx, "cmd-k");
+    let observed = Cell::new(None);
+    poll(
+        cx,
+        "CmdK unfiltered root palette and focused search",
+        5,
+        |cx| {
+            window(shell, cx)
+                .update(cx, |_, w, cx| {
+                    let s = shell.read(cx);
+                    let open = s.palette.view.as_ref().is_some_and(|view| {
+                        let p = view.read(cx);
+                        p.is_open()
+                            && p.page_id() == "root"
+                            && p.query().is_empty()
+                            && p.search_editor().read(cx).focus_handle(cx).is_focused(w)
+                    });
+                    let facts = s.palette.view.as_ref().map(|view| {
+                        modal_facts(&view.read(cx).search_editor(), w, cx, "palette-surface", "search")
+                    }).unwrap_or([false; 6]);
+                    let visible = facts.into_iter().all(|fact| fact);
+                    let flags = (w.is_window_active(), s.loaded, s.error.is_none(), open, facts);
+                    if observed.replace(Some(flags)) != Some(flags) {
+                        eprintln!("OBSERVED palette active/loaded/no-error/open-focused/(panel/field/panel-measured/field-measured/editor-focused/editor-empty)={flags:?}");
+                    }
+                    open && visible
+                })
+                .unwrap()
+        },
+    )
+    .await;
+    let editor = cx.update(|cx| {
+        shell
+            .read(cx)
+            .palette
+            .view
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .search_editor()
+    });
+    capture_modal(shell, cx, "palette", "search", editor).await;
+    cx.update(|cx| {
+        window(shell, cx)
+            .update(cx, |_, w, cx| {
+                let editor = shell
+                    .read(cx)
+                    .palette
+                    .view
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .search_editor();
+                assert!(editor.read(cx).focus_handle(cx).is_focused(w));
+                editor.update(cx, |input, cx| {
+                    input.replace_text_in_range(None, "Open Remote Project", w, cx)
+                });
+            })
+            .unwrap();
+    });
+    poll(
+        cx,
+        "real palette query selects Open Remote Project",
+        5,
+        |cx| {
+            let s = shell.read(cx);
+            let p = s.palette.view.as_ref().unwrap().read(cx);
+            p.query() == "Open Remote Project" && p.selected_id() == Some("project.openRemote")
+        },
+    )
+    .await;
+    key(shell, cx, "enter");
+    let observed = Cell::new(None);
+    poll(cx, "palette Enter opens focused remote form", 5, |cx| {
+        window(shell, cx)
+            .update(cx, |_, w, cx| {
+                let s = shell.read(cx);
+                assert!(!s.remote.is_busy());
+                let facts = s.remote.view.as_ref().map(|view| {
+                    modal_facts(&view.read(cx).editor(), w, cx, "remote-dialog", "remote-field")
+                }).unwrap_or([false; 6]);
+                let flags = (s.remote.is_open(), !s.palette.is_open(cx), facts);
+                if observed.replace(Some(flags)) != Some(flags) {
+                    eprintln!("OBSERVED remote open/palette-closed/(panel/field/panel-measured/field-measured/editor-focused/editor-empty)={flags:?}");
+                }
+                flags.0 && flags.1 && facts.into_iter().all(|fact| fact)
+            })
+            .unwrap()
+    })
+    .await;
+    let editor = cx.update(|cx| {
+        shell
+            .read(cx)
+            .remote
+            .view
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .editor()
+    });
+    capture_modal(shell, cx, "remote", "remote-field", editor).await;
+    key(shell, cx, "escape");
+    for reopen in [true, false] {
+        poll(
+            cx,
+            "modal Escape preserves live draft and restores composer focus",
+            5,
+            |cx| {
+                window(shell, cx)
+                    .update(cx, |_, w, cx| {
+                        let s = shell.read(cx);
+                        assert_eq!(
+                            (
+                                s.sessions.len(),
+                                s.workspace.as_ref().unwrap().projects.len()
+                            ),
+                            counts
+                        );
+                        assert!(!s.remote.is_busy());
+                        let live = &s.sessions[first];
+                        let editor = live.composer.read(cx).editor();
+                        s.active == first
+                            && !s.remote.is_open()
+                            && !s.palette.is_open(cx)
+                            && live.controller.state().draft == "Owned draft café 😀"
+                            && editor.read(cx).value().as_ref() == "Owned draft café 😀"
+                            && editor.read(cx).focus_handle(cx).is_focused(w)
+                            && gpui_kit::base::test_support::find(w, &[], &"remote-dialog".into())
+                                .is_none()
+                            && gpui_kit::base::test_support::find(w, &[], &"palette-surface".into())
+                                .is_none()
+                    })
+                    .unwrap()
+            },
+        )
+        .await;
+        if reopen {
+            key(shell, cx, "cmd-k");
+            let observed = Cell::new(None);
+            poll(cx, "reopened root palette focused search", 5, |cx| {
+                window(shell, cx)
+                    .update(cx, |_, w, cx| {
+                        let s = shell.read(cx);
+                        let root = s.palette.view.as_ref().is_some_and(|view| {
+                            let p = view.read(cx);
+                            p.is_open() && p.page_id() == "root" && p.query().is_empty()
+                        });
+                        let facts = s.palette.view.as_ref().map(|view| {
+                            modal_facts(&view.read(cx).search_editor(), w, cx, "palette-surface", "search")
+                        }).unwrap_or([false; 6]);
+                        let flags = (root, facts);
+                        if observed.replace(Some(flags)) != Some(flags) {
+                            eprintln!("OBSERVED reopened palette root/(panel/field/panel-measured/field-measured/editor-focused/editor-empty)={flags:?}");
+                        }
+                        root && facts.into_iter().all(|fact| fact)
+                    })
+                    .unwrap()
+            })
+            .await;
+            eprintln!(
+                "PASS native-app reopened root palette visible measured panel + focused empty input"
+            );
+            key(shell, cx, "escape");
+        }
+    }
+    eprintln!(
+        "PASS native-app CmdK/query/Enter remote form + Escape/reopen/Escape retain draft and live composer focus without SSH"
+    );
+}
+
 fn insert_rename(shell: &Entity<Shell>, cx: &AsyncApp, text: &str) {
     cx.update(|cx| {
         window(shell, cx)
@@ -309,6 +569,7 @@ async fn exercise(
         shell.read(cx).sessions[&first].controller.state().draft == "Owned draft café 😀"
     })
     .await;
+    palette_remote(&shell, &cx, &first).await;
     cx.update(|cx| cx.dispatch_action(&crate::native::NewSession));
     ready(&shell, &cx).await;
     let second = cx.update(|cx| shell.read(cx).active.clone());

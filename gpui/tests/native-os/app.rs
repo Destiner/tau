@@ -264,6 +264,18 @@ fn main() -> anyhow::Result<()> {
         output.status.success() && markers == 1,
         "native-app failed; reviewed phase log: {log}; completion markers={markers}"
     );
+    let phases = String::from_utf8_lossy(&phases);
+    for phase in [
+        "PASS native-app palette visible measured root panel + focused empty input",
+        "PASS native-app remote visible measured root panel + focused empty input",
+        "PASS native-app reopened root palette visible measured panel + focused empty input",
+        "PASS native-app CmdK/query/Enter remote form + Escape/reopen/Escape retain draft and live composer focus without SSH",
+    ] {
+        anyhow::ensure!(
+            phases.matches(phase).count() == 1,
+            "native-app missing or repeated palette/remote acceptance phase; reviewed phase log: {log}"
+        );
+    }
     eprintln!("PASS native-app child exited after gated production shutdown");
     Ok(())
 }

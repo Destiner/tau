@@ -36,13 +36,20 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
 
 ## Implemented boundary
 
-- Real local workspace import, session selection and new sessions; existing remote
-  project configurations are recognized and can use the shared SSH transport.
-  Real SSH smoke acceptance and new remote import UI remain outstanding.
+- Local and remote project import, session selection and new sessions. Remote import
+  uses the existing SSH probe/directory browser and storage contracts; network reads
+  do not block Pi writes or Stop. Authenticated real-host SSH acceptance remains outstanding.
 - Retained composer/transcript entities, full-height empty composer, model/effort
   choices, visibly rendered prompts/streaming prose/activity, Stop, queue submission
   and clear. While working, Enter or Send queues steering; Cmd-Enter queues a follow-up.
   Shift-Enter inserts a newline. When idle, Cmd-Enter sends an ordinary prompt.
+- Cmd-K command palette with real session/project/model/effort pages, supported actions
+  and shortcuts, search, keyboard navigation, and modal-aware focus restoration.
+- Model choices use Pi's scoped-model settings for local or remote sessions, following
+  Vue's matching/order/fallback behavior. An out-of-scope current model remains a
+  display label, not an extra selectable option.
+- Thinking/tool adjacency uses Vue's compact spacing; tool headers include argument
+  summaries such as `read  gpui/APP.md`, with unchanged raw source and results.
 - Click-to-rename saved sessions through Pi, with bounded names, rollback and registry
   persistence. Archive idle saved sessions; browsing archives does not restore them,
   and Restore is explicit. Drafts and session files are retained.
@@ -54,10 +61,24 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
 - Bounded presentation cache and incremental changed-row projection. Streaming does
   not hash or clone unchanged historical text.
 
-The current slice does **not** finish session removal, palette, remote
-import UI, file previews/media, admin reporter, full history/replacement recovery,
+The current slice does **not** finish session removal, unsupported palette commands
+(such as removal, queue recovery or update/reporting actions), file previews/media,
+admin reporter, full history/replacement recovery,
 idle eviction, updater or release packaging. Unavailable actions report that boundary;
 they are not simulated successes. See [controller limits](../crates/tau-session/README.md).
+
+## Keyboard and remote projects
+
+Cmd-K opens the palette; Cmd-P / Cmd-Shift-P open sessions/projects, and
+Cmd-Shift-M / Cmd-Shift-E open model/thinking choices. Cmd-Shift-O opens a local
+project; Cmd-Alt-O opens the SSH form. Cmd-period stops active Pi work.
+
+In the SSH form, Enter probes the connection. The directory browser supports filtering,
+Up/Down, Enter to choose the highlighted row, Cmd-Up for the parent, and Cmd-Enter to
+import the current directory. Escape/backdrop cancels when idle. Reopening starts at
+the connection step while retaining its draft. Errors are local and retryable; busy
+imports cannot be repeated or discarded by approving Quit. Storage imports are serialized
+with other workspace writes and merge the returned project instead of a stale snapshot.
 
 ## Verification
 
@@ -116,6 +137,19 @@ counts and the unsigned Tauri bundle are not GPUI release proof. No signed/notar
 GPUI distribution or updater is available yet. A separate, locally ad-hoc-signed
 `Tau Native.app` preview can be built using [PACKAGING.md](PACKAGING.md); it neither
 replaces Tauri nor isolates data unless explicitly launched with `--isolated`.
+
+The workflow batch adds production-root activity geometry, argument-summary, scoped
+picker, palette and remote-flow regressions. Native Metal captures of the palette,
+SSH form and tool transcript were inspected. Credential-free native acceptance passed
+Cmd-K → search/Enter → remote form → Escape → palette reopen/dismiss, with retained
+composer draft/focus, followed by close/reopen and shutdown. Two initial acceptance
+runs exposed an invalid test predicate: InputBase snapshots do not contain editor
+focus/value facts. The corrected gate checks measured bounds plus the actual InputState
+focus and value; its deadline is unchanged. The model variant passed assistant/tools,
+Stop and session actions, then again timed out at the later Cmd-W gate; it is not a
+complete model smoke pass. Directory navigation/import uses deterministic fake-command
+and isolated-storage tests, not an authenticated SSH connection. There was no fresh
+full Vue/native screenshot comparison campaign.
 
 The reported layout/title/action regressions have production-root layout and paint
 coverage, plus inspected native Metal images. Real Pi acceptance passed rename and
