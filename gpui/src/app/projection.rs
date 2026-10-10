@@ -3,7 +3,24 @@ use crate::components::{
     transcript::{Transcript, TranscriptContent, TranscriptEntry},
 };
 use gpui_kit::{Context, Entity};
-use tau_session::transcript::Entry;
+use tau_session::{session::State, transcript::Entry};
+
+/// Vue App.vue: stopping wins, compaction and an assistant tail hide working.
+pub fn working_indicator(state: &State) -> Option<&'static str> {
+    if state.stopping {
+        Some("Stopping")
+    } else if state.working
+        && !state.compacting
+        && state
+            .transcript
+            .last()
+            .is_none_or(|entry| entry.kind != "assistant")
+    {
+        Some("Working")
+    } else {
+        None
+    }
+}
 
 #[derive(Default)]
 pub struct Projection {
@@ -136,6 +153,64 @@ mod tests {
         crate::components::transcript::tests::production_projection_matches_vue_activity_geometry_and_remeasures_neighbors(
             |source, transcript, cx| projection.sync(source, transcript, cx),
         );
+    }
+
+    #[test]
+    fn production_state_projection_renders_transient_working_tail() {
+        let mut projection = Projection::default();
+        crate::components::transcript::tests::production_working_tail(|state, transcript, cx| {
+            projection.sync(&state.transcript, transcript, cx);
+            transcript.update(cx, |this, cx| {
+                this.set_working_indicator(working_indicator(state), cx)
+            });
+        });
+    }
+
+    #[test]
+    fn working_indicator_matches_vue_and_controller_generation_fences() {
+        use tau_session::session::Controller;
+        let mut controller = Controller::new("working");
+        controller.begin_generation(1);
+        assert_eq!(working_indicator(controller.state()), None);
+        controller.handle(json!({"type":"compaction_start"}));
+        assert_eq!(working_indicator(controller.state()), None);
+        controller.handle(json!({"type":"compaction_end"}));
+        assert_eq!(working_indicator(controller.state()), None);
+        controller.handle(json!({"type":"agent_start"}));
+        assert_eq!(working_indicator(controller.state()), Some("Working"));
+        controller.handle(json!({"type":"compaction_start"}));
+        assert!(controller.state().compacting);
+        assert_eq!(working_indicator(controller.state()), None);
+        controller.handle(json!({"type":"compaction_end"}));
+        assert_eq!(working_indicator(controller.state()), Some("Working"));
+        let mut state = controller.state().clone();
+        for kind in ["tool", "thinking", "user", "assistant"] {
+            state.transcript = vec![entry(0, kind, "content")];
+            assert_eq!(
+                working_indicator(&state),
+                if kind == "assistant" {
+                    None
+                } else {
+                    Some("Working")
+                }
+            );
+        }
+        state.stopping = true;
+        state.compacting = true;
+        state.working = false;
+        assert_eq!(working_indicator(&state), Some("Stopping"));
+        controller.handle(json!({"type":"agent_settled"}));
+        assert_eq!(working_indicator(controller.state()), None);
+        assert!(!controller.state().compacting);
+        controller.handle(json!({"type":"compaction_start"}));
+        controller.begin_generation(2);
+        controller.ingest("working", 1, json!({"type":"agent_start"}));
+        assert_eq!(working_indicator(controller.state()), None);
+        assert!(!controller.state().compacting);
+        controller.handle(json!({"type":"agent_start"}));
+        controller.transport_failed(2);
+        assert_eq!(working_indicator(controller.state()), None);
+        assert!(!controller.state().compacting);
     }
 
     #[test]

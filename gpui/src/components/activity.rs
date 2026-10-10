@@ -1,6 +1,7 @@
 use super::support;
 use gpui_kit::{
-    Context, Entity, EventEmitter, FocusHandle, IntoElement, Render, TestSupportExt, Window,
+    Context, Entity, EventEmitter, FocusHandle, IntoElement, Render, ScrollHandle, TestSupportExt,
+    Window,
     base::{Button, TextView, TextViewState, TextViewStyle},
     div,
     prelude::*,
@@ -130,6 +131,17 @@ pub fn tool_details(
     failed: bool,
     dark: bool,
 ) -> impl IntoElement {
+    tool_details_with_scroll(id, arguments, result, failed, dark, None)
+}
+
+fn tool_details_with_scroll(
+    id: impl Into<gpui_kit::ElementId>,
+    arguments: &str,
+    result: &str,
+    failed: bool,
+    dark: bool,
+    scroll: Option<&ScrollHandle>,
+) -> impl IntoElement {
     let t = support::tokens(dark);
     let mut details = div()
         .id(id)
@@ -144,7 +156,8 @@ pub fn tool_details(
         .flex_col()
         .gap(px(8.))
         .max_h(px(455.))
-        .overflow_y_scroll();
+        .overflow_y_scroll()
+        .when_some(scroll, |details, scroll| details.track_scroll(scroll));
     for (label, value) in [
         ("Arguments", arguments),
         (if failed { "Error" } else { "Result" }, result),
@@ -180,7 +193,11 @@ pub fn tool_details(
                 ),
         );
     }
-    details
+    // Bubble after the child's built-in scroller, including at either edge.
+    // Never intercept capture: descendants (e.g. horizontal code) handle first.
+    div()
+        .child(details)
+        .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
 }
 
 #[derive(Clone, Debug)]
@@ -216,6 +233,7 @@ pub struct ActivityRow {
     hovered: bool,
     focus: FocusHandle,
     prose: Vec<Entity<TextViewState>>,
+    details_scroll: ScrollHandle,
 }
 impl EventEmitter<ActivityEvent> for ActivityRow {}
 impl ActivityRow {
@@ -250,7 +268,14 @@ impl ActivityRow {
             hovered: false,
             focus: cx.focus_handle(),
             prose,
+            details_scroll: ScrollHandle::new(),
         }
+    }
+    pub fn set_details_scroll(&mut self, scroll: ScrollHandle) {
+        self.details_scroll = scroll;
+    }
+    pub fn details_scroll(&self) -> &ScrollHandle {
+        &self.details_scroll
     }
     pub fn expanded(&self) -> bool {
         self.expanded
@@ -373,12 +398,13 @@ impl Render for ActivityRow {
         .on_click(cx.listener(|this, _, _, cx| this.toggle(cx)));
         let mut container = div().w_full().child(header);
         if open && matches!(self.content, ActivityContent::Tool { .. }) {
-            container = container.child(tool_details(
+            container = container.child(tool_details_with_scroll(
                 format!("{}-details", self.id),
                 arguments,
                 result,
                 failed,
                 self.dark,
+                Some(&self.details_scroll),
             ));
         } else if open {
             let mut details = div()

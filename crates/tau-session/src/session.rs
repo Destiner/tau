@@ -2,7 +2,15 @@ use crate::model_scope::{resolved_scope, scope_models, valid_model};
 use crate::transcript::{content_text, message_key, project, string, Entry};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+
+fn replace_changed<T: PartialEq>(current: &mut T, next: T) -> bool {
+    if *current == next {
+        return false;
+    }
+    *current = next;
+    true
+}
 
 pub const REQUEST_TIMEOUT_MS: u64 = 10_000;
 pub const STOP_TIMEOUT_MS: u64 = 10_000;
@@ -90,6 +98,8 @@ pub struct State {
     pub status: Status,
     pub ready: bool,
     pub working: bool,
+    #[serde(default)]
+    pub compacting: bool,
     pub stopping: bool,
     pub history_loading: bool,
     pub transcript: Vec<Entry>,
@@ -112,19 +122,24 @@ impl State {
     /// when unavailable or outside the scope, matching Vue's fallback label.
     pub fn selectable_models(&self) -> Vec<&Value> {
         if let Some(scope) = &self.scoped_models {
+            // Keep the first catalogue entry for each identity, as the old lookup did.
+            let mut catalogue = HashMap::with_capacity(self.models.len());
+            for (index, model) in self.models.iter().enumerate() {
+                if let (Some(provider), Some(id)) =
+                    (model["provider"].as_str(), model["id"].as_str())
+                {
+                    catalogue.entry((provider, id)).or_insert(index);
+                }
+            }
+            let mut seen = HashSet::with_capacity(scope.len());
             let selected: Vec<_> = scope
                 .iter()
                 .filter_map(|scoped| {
-                    self.models.iter().find(|model| {
-                        model["provider"] == scoped["provider"] && model["id"] == scoped["id"]
-                    })
+                    let identity = (scoped["provider"].as_str()?, scoped["id"].as_str()?);
+                    let index = *catalogue.get(&identity)?;
+                    seen.insert(index).then(|| &self.models[index])
                 })
-                .fold(Vec::new(), |mut selected, model| {
-                    if !selected.contains(&model) {
-                        selected.push(model);
-                    }
-                    selected
-                });
+                .collect();
             if !selected.is_empty() {
                 return selected;
             }
@@ -178,6 +193,9 @@ pub struct Controller {
     state_serial: u64,
     connected: bool,
     scope_revision: u64,
+    model_choices_revision: u64,
+    // Idle compaction must not invent a stream when it finishes.
+    compaction_working: bool,
 }
 impl Controller {
     pub fn new(runtime_id: impl Into<String>) -> Self {
@@ -202,6 +220,8 @@ impl Controller {
             state_serial: 0,
             connected: false,
             scope_revision: 0,
+            model_choices_revision: 0,
+            compaction_working: false,
         }
     }
     pub fn runtime_id(&self) -> &str {
@@ -212,6 +232,10 @@ impl Controller {
     }
     pub fn state(&self) -> &State {
         &self.state
+    }
+    /// O(1) invalidation token for catalogue, scope, current model and effort choices.
+    pub fn model_choices_revision(&self) -> u64 {
+        self.model_choices_revision
     }
     pub fn pending_count(&self) -> usize {
         self.pending.len()
@@ -253,23 +277,24 @@ impl Controller {
         if !self.connected || *token != self.model_scope_token() {
             return false;
         }
-        match patterns {
-            None => self.state.model_scope.clear(),
-            Some(Value::Array(patterns)) => {
-                self.state.model_scope = patterns
-                    .iter()
-                    .filter_map(|p| p.as_str().map(str::to_owned))
-                    .collect();
-            }
+        let patterns = match patterns {
+            None => Vec::new(),
+            Some(Value::Array(patterns)) => patterns
+                .iter()
+                .filter_map(|p| p.as_str().map(str::to_owned))
+                .collect(),
             Some(_) => return false,
-        }
+        };
+        self.model_choices_revision +=
+            replace_changed(&mut self.state.model_scope, patterns) as u64;
         true
     }
     fn reset_model_scope(&mut self) {
         self.scope_revision += 1;
-        self.state.models.clear();
-        self.state.model_scope.clear();
-        self.state.scoped_models = None;
+        let changed = replace_changed(&mut self.state.models, Vec::new())
+            | replace_changed(&mut self.state.model_scope, Vec::new())
+            | replace_changed(&mut self.state.scoped_models, None);
+        self.model_choices_revision += changed as u64;
     }
     fn next_id(&mut self) -> String {
         self.sequence += 1;
@@ -311,6 +336,7 @@ impl Controller {
         self.recover_pending();
         self.finalize_partial();
         self.generation = generation;
+        self.compaction_working = false;
         self.epoch += 1;
         self.reset_model_scope();
         self.pending.clear();
@@ -322,6 +348,7 @@ impl Controller {
         self.state.ready = false;
         self.state.working = false;
         self.state.stopping = false;
+        self.state.compacting = false;
         self.state.durable = false;
         self.state.error = None;
         self.state.status = Status::Starting;
@@ -354,6 +381,9 @@ impl Controller {
         match v["type"].as_str().unwrap_or_default() {
             "response" => return self.response(v),
             "agent_start" => {
+                if self.state.compacting {
+                    self.compaction_working = true;
+                }
                 self.confirm_prompt();
                 self.state.working = true;
                 self.revision += 1;
@@ -421,6 +451,7 @@ impl Controller {
                 self.revision += 1;
             }
             "agent_settled" => {
+                self.state.compacting = false;
                 self.state.working = false;
                 self.state.stopping = false;
                 self.stop_deadline = None;
@@ -439,14 +470,31 @@ impl Controller {
             }
             "extension_ui_request" => self.extension(&v),
             "session_info_changed" => effects.push(self.send("get_state", json!({}), false)),
-            "thinking_level_changed" => self.state.effort = string(&v["level"]),
+            "thinking_level_changed" => {
+                self.model_choices_revision +=
+                    replace_changed(&mut self.state.effort, string(&v["level"])) as u64;
+            }
             "extension_error" => {
                 self.fail("A Pi extension failed. Review the extension setup and try again.")
             }
-            "compaction_start" | "auto_retry_start" | "summarization_retry_scheduled" => {
-                self.state.working = true
+            "compaction_start" => {
+                if !self.state.compacting {
+                    self.compaction_working = self.state.working;
+                }
+                self.state.compacting = true;
+                self.state.working = true;
+            }
+            "auto_retry_start" | "summarization_retry_scheduled" => {
+                if self.state.compacting {
+                    self.compaction_working = true;
+                }
+                self.state.working = true;
             }
             "compaction_end" => {
+                if self.state.compacting {
+                    self.state.working = self.compaction_working;
+                }
+                self.state.compacting = false;
                 if v["result"].is_object() {
                     effects.push(self.send("get_messages", json!({}), false));
                 } else if v["errorMessage"].is_string() {
@@ -539,11 +587,14 @@ impl Controller {
                         });
                     }
                 }
-                self.state.model = d["model"].clone();
-                self.state.effort = string(&d["thinkingLevel"]);
+                let choices_changed = replace_changed(&mut self.state.model, d["model"].clone())
+                    | replace_changed(&mut self.state.effort, string(&d["thinkingLevel"]));
+                self.model_choices_revision += choices_changed as u64;
                 // A durability read is not a run-lifecycle signal; a later event may already have started work.
                 if !p.barrier && p.revision == self.revision {
-                    self.state.working = d["isStreaming"] == true || d["isCompacting"] == true;
+                    self.state.compacting = d["isCompacting"] == true;
+                    self.compaction_working = d["isStreaming"] == true;
+                    self.state.working = d["isStreaming"] == true || self.state.compacting;
                 }
                 self.state.ready = true;
                 if p.barrier && !changed {
@@ -605,15 +656,23 @@ impl Controller {
                 }
             }
             "get_available_models" => {
-                self.state.models = array(&d["models"])
+                let models = array(&d["models"])
                     .into_iter()
                     .filter(valid_model)
                     .collect();
+                self.model_choices_revision +=
+                    replace_changed(&mut self.state.models, models) as u64;
             }
-            "get_scoped_models" => self.state.scoped_models = resolved_scope(d),
+            "get_scoped_models" => {
+                self.model_choices_revision +=
+                    replace_changed(&mut self.state.scoped_models, resolved_scope(d)) as u64;
+            }
             "get_commands" => self.state.commands = array(&d["commands"]),
             "get_available_thinking_levels" => {
-                self.state.thinking_levels = strings(&d["levels"]).unwrap_or_default()
+                self.model_choices_revision += replace_changed(
+                    &mut self.state.thinking_levels,
+                    strings(&d["levels"]).unwrap_or_default(),
+                ) as u64;
             }
             "prompt" => {
                 if let Some(rid) = &p.optimistic {
@@ -1087,7 +1146,8 @@ impl Controller {
     fn reject(&mut self, p: Pending, timeout: bool) {
         // Optional capability: old Pi versions reject this correlated probe.
         if p.command == "get_scoped_models" {
-            self.state.scoped_models = None;
+            self.model_choices_revision +=
+                replace_changed(&mut self.state.scoped_models, None) as u64;
             return;
         }
         if let Some(previous) = &p.previous_name {
@@ -1177,6 +1237,7 @@ impl Controller {
         self.state.ready = false;
         self.state.working = false;
         self.state.stopping = false;
+        self.state.compacting = false;
         self.state.history_loading = false;
         self.startup_deadline = None;
         self.stop_deadline = None;
@@ -1264,6 +1325,10 @@ impl Controller {
         self.state.error = Some(message.into());
     }
     fn update_status(&mut self) {
+        if !self.state.working {
+            self.compaction_working = false;
+            self.state.compacting = false;
+        }
         self.state.status = if self.state.stopping {
             Status::Stopping
         } else if self.state.error.is_some() {
@@ -1300,6 +1365,32 @@ fn strings(v: &Value) -> Option<Vec<String>> {
 #[cfg(test)]
 mod revision_tests {
     use super::*;
+
+    #[test]
+    fn compaction_presentation_preserves_stream_lifecycle_and_generation_fences() {
+        let mut controller = Controller::new("test");
+        controller.begin_generation(1);
+        for streaming in [false, true] {
+            if streaming {
+                controller.handle(json!({"type":"agent_start"}));
+            }
+            controller.handle(json!({"type":"compaction_start"}));
+            assert!(controller.state.compacting);
+            assert!(controller.state.working);
+            controller.handle(json!({"type":"compaction_end"}));
+            assert!(!controller.state.compacting);
+            assert_eq!(controller.state.working, streaming);
+        }
+        controller.handle(json!({"type":"compaction_start"}));
+        controller.begin_generation(2);
+        controller.ingest("test", 1, json!({"type":"compaction_start"}));
+        assert!(!controller.state.compacting);
+        assert!(!controller.state.working);
+        controller.handle(json!({"type":"compaction_start"}));
+        controller.transport_failed(2);
+        assert!(!controller.state.compacting);
+        assert!(!controller.state.working);
+    }
 
     #[test]
     fn stream_revisions_leave_large_history_sources_untouched() {

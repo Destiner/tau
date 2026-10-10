@@ -6,7 +6,8 @@ use super::{
 };
 use gpui_kit::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, FollowMode, IntoElement,
-    ListAlignment, ListState, Render, Subscription, TestSupportExt, WeakEntity, Window,
+    ListAlignment, ListState, Render, ScrollHandle, Subscription, TestSupportExt, WeakEntity,
+    Window,
     base::{
         Scrollbar, ScrollbarMode, SelectionFormat, TextSelectionDomain, TextSelectionDomainRange,
         TextViewState,
@@ -52,6 +53,7 @@ struct Row {
     entry: TranscriptEntry,
     key: u64,
     expanded: bool,
+    details_scroll: ScrollHandle,
 }
 #[derive(Clone)]
 enum View {
@@ -76,6 +78,7 @@ pub struct Transcript {
     selection: TextSelectionDomain,
     cache: HashMap<u64, Mounted>,
     recent: VecDeque<u64>,
+    working_indicator: Option<String>,
 }
 impl EventEmitter<TranscriptEvent> for Transcript {}
 impl Focusable for Transcript {
@@ -115,7 +118,31 @@ impl Transcript {
             selection,
             cache: HashMap::new(),
             recent: VecDeque::new(),
+            working_indicator: None,
         }
+    }
+    /// Presentation-only virtual tail. Does not allocate source/selection identities.
+    pub fn set_working_indicator(&mut self, label: Option<&str>, cx: &mut Context<Self>) {
+        if self.working_indicator.as_deref() == label {
+            return;
+        }
+        let tail = self.list.is_following_tail();
+        let ix = self.rows.len();
+        let before = usize::from(self.working_indicator.is_some());
+        let after = usize::from(label.is_some());
+        self.working_indicator = label.map(str::to_owned);
+        if before != after {
+            self.list.splice(ix..ix + before, after);
+        } else {
+            self.list.remeasure_items(ix..ix + after);
+        }
+        if tail {
+            self.list.scroll_to_end();
+        }
+        cx.notify();
+    }
+    pub fn working_indicator(&self) -> Option<&str> {
+        self.working_indicator.as_deref()
     }
     pub fn len(&self) -> usize {
         self.rows.len()
@@ -147,6 +174,7 @@ impl Transcript {
     pub fn reset(&mut self, cx: &mut Context<Self>) {
         self.clear_selection(cx);
         self.rows.clear();
+        self.working_indicator = None;
         self.by_id.clear();
         self.by_key.clear();
         self.cache.clear();
@@ -189,6 +217,7 @@ impl Transcript {
             entry,
             key,
             expanded: false,
+            details_scroll: ScrollHandle::new(),
         });
         self.list.splice(ix..ix, 1);
         if ix > 0 && self.is_compact(ix - 1) {
@@ -402,6 +431,7 @@ impl Transcript {
                     entry,
                     key: self.allocate_key(),
                     expanded: false,
+                    details_scroll: ScrollHandle::new(),
                 }
             };
             self.rows.push(row);
@@ -434,7 +464,8 @@ impl Transcript {
             }
         }
         if self.rows.is_empty() {
-            self.list.reset(0);
+            self.list
+                .reset(usize::from(self.working_indicator.is_some()));
             self.list.scroll_to_end();
         } else if tail {
             self.list.scroll_to_end();
@@ -581,6 +612,7 @@ impl Transcript {
                         self.dark,
                         cx,
                     );
+                    activity.set_details_scroll(row.details_scroll.clone());
                     if row.expanded {
                         activity.toggle(cx);
                     }
@@ -674,6 +706,32 @@ impl Render for Transcript {
                     let Some(entity) = owner.upgrade() else {
                         return div().into_any_element();
                     };
+                    let indicator = {
+                        let this = entity.read(cx);
+                        (ix == this.rows.len())
+                            .then(|| this.working_indicator.clone())
+                            .flatten()
+                    };
+                    if let Some(label) = indicator {
+                        return div()
+                            .id("tau-working-indicator")
+                            .test_support()
+                            .w_full()
+                            .flex()
+                            .justify_center()
+                            .child(
+                                div()
+                                    .w_full()
+                                    .max_w(px(880.))
+                                    .pl(px(gutter + 8.))
+                                    .pr(px(gutter + 20.))
+                                    .pb(px(22.))
+                                    .flex()
+                                    .items_center()
+                                    .child(working_spinner(label, t.muted, cx.reduce_motion())),
+                            )
+                            .into_any_element();
+                    }
                     let metadata = entity.update(cx, |this, cx| {
                         let view = this.mount(ix, owner.clone(), cx)?;
                         let row = this.rows.get(ix)?;
@@ -756,6 +814,49 @@ impl Render for Transcript {
             )
     }
 }
+fn working_spinner(label: String, color: u32, reduced_motion: bool) -> impl IntoElement {
+    use gpui_kit::{Animation, AnimationExt};
+    div()
+        .id("working-spinner")
+        .role(gpui_kit::accesskit::Role::Status)
+        .aria_label(label)
+        .relative()
+        .size(px(8.))
+        .with_animation(
+            "working-trail",
+            Animation::new(std::time::Duration::from_millis(640))
+                .repeat()
+                .with_max_fps(12.5),
+            move |spinner, progress| {
+                let step = (progress * 8.) as usize % 8;
+                let opacity = [1., 0.72, 0.5, 0.34, 0.24, 0.17, 0.12, 0.08];
+                let positions = [
+                    (0., 0.),
+                    (3., 0.),
+                    (6., 0.),
+                    (6., 3.),
+                    (6., 6.),
+                    (3., 6.),
+                    (0., 6.),
+                    (0., 3.),
+                ];
+                spinner.children(positions.into_iter().enumerate().map(|(ix, (x, y))| {
+                    div()
+                        .absolute()
+                        .left(px(x))
+                        .top(px(y))
+                        .size(px(2.))
+                        .bg(rgb(color))
+                        .opacity(if reduced_motion {
+                            0.45
+                        } else {
+                            opacity[(step + 7 - ix) % 8]
+                        })
+                }))
+            },
+        )
+}
+
 fn markdown_prefix(source: &str, end: usize) -> Option<String> {
     TextViewState::copy_markdown_slice_with_extensions(
         source,

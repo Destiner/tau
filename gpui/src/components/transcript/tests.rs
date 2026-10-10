@@ -323,6 +323,104 @@ pub(crate) fn production_projection_matches_vue_activity_geometry_and_remeasures
     });
 }
 
+pub(crate) fn production_working_tail(
+    mut sync: impl FnMut(&tau_session::session::State, &Entity<Transcript>, &mut Context<()>),
+) {
+    use serde_json::json;
+    use tau_session::session::Controller;
+    let mut controller = Controller::new("working-render");
+    controller.begin_generation(1);
+    let mut app = app();
+    let host = app.new_entity(|_| ());
+    let transcript = app.new_entity(|cx| Transcript::new("transcript", true, cx));
+    let mut window =
+        app.open_window(|w, cx| Root::new(transcript.clone(), w, cx).flex().flex_col());
+    window.activate_accessibility();
+    for (event, expected) in [
+        ("agent_start", Some("Working")),
+        ("compaction_start", None),
+        ("compaction_end", Some("Working")),
+        ("abort", Some("Stopping")),
+        ("agent_settled", None),
+    ] {
+        if event == "abort" {
+            controller.abort();
+        } else {
+            controller.handle(json!({"type": event}));
+        }
+        window
+            .update(|_, _, cx| host.update(cx, |_, cx| sync(controller.state(), &transcript, cx)));
+        window.draw();
+        window.read(|_, cx| {
+            let this = transcript.read(cx);
+            assert_eq!(this.working_indicator(), expected);
+            assert_eq!(this.list.item_count(), usize::from(expected.is_some()));
+            assert!(this.rows.is_empty());
+            assert!(this.cache.is_empty());
+            assert!(this.by_id.is_empty());
+        });
+        let tree = window.accessibility_tree().unwrap();
+        let labels = tree
+            .nodes
+            .iter()
+            .filter(|(_, node)| node.role() == gpui_kit::accesskit::Role::Status)
+            .filter_map(|(_, node)| node.label())
+            .collect::<Vec<_>>();
+        assert_eq!(labels, expected.into_iter().collect::<Vec<_>>());
+        if expected.is_some() {
+            window.update(|_, w, _| {
+                assert_eq!(
+                    w.find("tau-working-indicator").bounds().size.height,
+                    px(30.)
+                )
+            });
+        }
+    }
+    controller.handle(json!({"type":"agent_start"}));
+    for (timestamp, content, expected) in [
+        (
+            1,
+            json!({"type":"toolCall", "id":"read", "name":"read", "arguments":{"path":"file.rs"}}),
+            Some("Working"),
+        ),
+        (2, json!({"type":"text", "text":"Reply"}), None),
+    ] {
+        controller.handle(json!({"type":"message_start", "message": {
+            "role":"assistant", "timestamp": timestamp, "content":[content]
+        }}));
+        window
+            .update(|_, _, cx| host.update(cx, |_, cx| sync(controller.state(), &transcript, cx)));
+        window.draw();
+        window.read(|_, cx| {
+            let this = transcript.read(cx);
+            assert_eq!(this.working_indicator(), expected);
+            assert_eq!(
+                this.list.item_count(),
+                controller.state().transcript.len() + usize::from(expected.is_some())
+            );
+            assert!(
+                this.rows
+                    .iter()
+                    .map(|row| row.entry.id.as_str())
+                    .eq(controller
+                        .state()
+                        .transcript
+                        .iter()
+                        .map(|entry| entry.id.as_str()))
+            );
+            assert!(this.cache.len() <= CACHE_LIMIT);
+        });
+        let tree = window.accessibility_tree().unwrap();
+        assert_eq!(
+            tree.nodes
+                .iter()
+                .filter(|(_, node)| node.role() == gpui_kit::accesskit::Role::Status)
+                .count(),
+            usize::from(expected.is_some())
+        );
+    }
+}
+
 fn fixture() -> (TestApp, gpui_kit::TestAppWindow<Root>, Entity<Transcript>) {
     let mut app = app();
     let mut transcript = None;
@@ -461,6 +559,17 @@ fn selected_source_survives_eviction_and_incompatible_markup_cancels_it() {
         assert_eq!(this.copy_selection(selected), "**ending");
     });
     assert_eq!(root_copy(&mut window), "**ending");
+    window.update(|_, _, cx| {
+        transcript.update(cx, |this, cx| {
+            this.set_working_indicator(Some("Working"), cx);
+            this.set_working_indicator(Some("Stopping"), cx);
+            this.set_working_indicator(None, cx);
+            assert_eq!(this.selection.stored_range(), Some(selected));
+            assert_eq!(this.copy_selection(selected), "**ending");
+        })
+    });
+    window.draw();
+    assert_eq!(root_copy(&mut window), "**ending");
     let viewport = window.read(|_, cx| transcript.read(cx).list.viewport_bounds());
     for _ in 0..30 {
         window.simulate_scroll(viewport.center(), point(px(0.), px(550.)));
@@ -536,4 +645,175 @@ fn root_copy(window: &mut gpui_kit::TestAppWindow<Root>) -> String {
             .and_then(|item| item.text())
             .unwrap()
     })
+}
+
+#[test]
+fn expanded_tool_consumes_real_wheel_once_including_edges() {
+    let (_, mut window, transcript) = fixture();
+    window.update(|_, _, cx| {
+        transcript.update(cx, |this, cx| {
+            this.append_entry(
+                TranscriptEntry {
+                    id: "tool".into(),
+                    content: TranscriptContent::Activity(ActivityContent::Tool {
+                        name: "read".into(),
+                        argument: "file.rs".into(),
+                        arguments: "{\"path\":\"file.rs\"}".into(),
+                        result: "output line\n".repeat(300),
+                        running: false,
+                        failed: false,
+                    }),
+                },
+                cx,
+            )
+            .unwrap();
+        })
+    });
+    window.draw();
+    let key = window.read(|_, cx| transcript.read(cx).rows.last().unwrap().key);
+    window.update(|_, _, cx| {
+        transcript.update(cx, |this, cx| {
+            let View::Activity(activity) = &this.cache[&key].view else {
+                panic!()
+            };
+            activity.update(cx, |activity, cx| activity.toggle(cx));
+        })
+    });
+    for _ in 0..3 {
+        window.draw();
+    }
+    window.update(|_, _, cx| {
+        transcript.update(cx, |this, cx| {
+            this.list.scroll_by(px(-60.));
+            cx.notify();
+        })
+    });
+    window.draw();
+    let inner = window.update(|_, window, _| {
+        window
+            .find(format!("transcript-activity-{key}-details"))
+            .bounds()
+            .center()
+    });
+    let scroll = window.read(|_, cx| {
+        transcript
+            .read(cx)
+            .rows
+            .last()
+            .unwrap()
+            .details_scroll
+            .clone()
+    });
+    let before = window.read(|_, cx| {
+        let p = transcript.read(cx).list.logical_scroll_top();
+        (p.item_ix, p.offset_in_item)
+    });
+    let start = scroll.offset();
+    window.simulate_scroll(inner, point(px(0.), px(-90.)));
+    window.draw();
+    assert!(scroll.offset().y < start.y);
+    assert_eq!(scroll.offset().y, start.y - px(90.));
+    window.update(|_, _, cx| {
+        transcript.update(cx, |this, cx| {
+            let owner = cx.entity().downgrade();
+            for ix in 0..this.rows.len() - 1 {
+                this.mount(ix, owner.clone(), cx);
+            }
+            assert!(!this.cache.contains_key(&key));
+            let mut content = this.rows.last().unwrap().entry.content.clone();
+            let TranscriptContent::Activity(ActivityContent::Tool { result, .. }) = &mut content
+            else {
+                panic!()
+            };
+            result.push_str("more output");
+            this.update_content("tool", content, cx);
+        })
+    });
+    window.draw();
+    assert_eq!(scroll.offset().y, start.y - px(90.));
+    window.read(|_, cx| {
+        let this = transcript.read(cx);
+        let View::Activity(activity) = &this.cache[&key].view else {
+            panic!()
+        };
+        assert!(activity.read(cx).expanded());
+        assert_eq!(activity.read(cx).details_scroll().offset(), scroll.offset());
+        assert!(this.cache.len() <= CACHE_LIMIT);
+        let position = this.list.logical_scroll_top();
+        assert_eq!((position.item_ix, position.offset_in_item), before);
+    });
+    for delta in [-100_000., -100., 100_000., 100.] {
+        window.simulate_scroll(inner, point(px(0.), px(delta)));
+        window.draw();
+        let after = window.read(|_, cx| {
+            let p = transcript.read(cx).list.logical_scroll_top();
+            (p.item_ix, p.offset_in_item)
+        });
+        assert_eq!(after, before, "nested wheel {delta} moved transcript");
+    }
+    assert_eq!(scroll.offset().y, px(0.));
+    let viewport = window.read(|_, cx| transcript.read(cx).list.viewport_bounds());
+    window.simulate_scroll(
+        point(viewport.left() + px(5.), viewport.center().y),
+        point(px(0.), px(100.)),
+    );
+    window.draw();
+    let after = window.read(|_, cx| {
+        let p = transcript.read(cx).list.logical_scroll_top();
+        (p.item_ix, p.offset_in_item)
+    });
+    assert_ne!(after, before, "wheel outside details must reach transcript");
+}
+
+#[test]
+fn working_tail_is_virtual_and_reset_retires_it_without_touching_selection() {
+    let (_, mut window, transcript) = fixture();
+    let keys = window.read(|_, cx| {
+        transcript
+            .read(cx)
+            .rows
+            .iter()
+            .map(|row| row.key)
+            .collect::<Vec<_>>()
+    });
+    window.update(|_, _, cx| {
+        transcript.update(cx, |this, cx| {
+            this.set_working_indicator(Some("Working"), cx);
+            assert_eq!(this.len(), 1000);
+            assert_eq!(this.list.item_count(), 1001);
+            assert_eq!(this.copy_selection(range(keys[999], 0, keys[999], 1)), "A");
+        })
+    });
+    window.draw();
+    assert!(
+        window.update(
+            |_, window, _| window.find("tau-working-indicator").bounds().size.height > px(0.)
+        )
+    );
+    window.update(|_, _, cx| {
+        transcript.update(cx, |this, cx| {
+            this.set_working_indicator(Some("Stopping"), cx);
+            this.append_entry(entry("new", "new tail"), cx).unwrap();
+            assert_eq!(this.list.item_count(), 1002);
+            this.set_entries(vec![entry("other", "reconciled")], cx)
+                .unwrap();
+            assert_eq!(this.list.item_count(), 2);
+            this.set_entries(vec![], cx).unwrap();
+            assert_eq!(this.list.item_count(), 1);
+        })
+    });
+    window.draw();
+    assert!(
+        window.update(
+            |_, window, _| window.find("tau-working-indicator").bounds().size.height > px(0.)
+        )
+    );
+    window.update(|_, _, cx| {
+        transcript.update(cx, |this, cx| {
+            this.reset(cx);
+            assert_eq!(this.working_indicator(), None);
+            assert_eq!(this.list.item_count(), 0);
+            assert!(this.cache.len() <= CACHE_LIMIT);
+        })
+    });
 }
