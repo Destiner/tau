@@ -313,7 +313,8 @@ impl Composer {
         self.fill_height = fill;
         self.editor.update(cx, |editor, cx| {
             editor.set_editor_paddings(gpui_kit::Edges {
-                top: px(if fill { 16. } else { 4. }),
+                // Fill-height changes the viewport, not the first line's inset.
+                top: px(4.),
                 right: px(4.),
                 bottom: px(3.),
                 left: px(4.),
@@ -2009,6 +2010,44 @@ mod tests {
                 assert!(control.bottom() <= toolbar.bottom());
             }
         });
+    }
+
+    #[test]
+    fn fill_height_preserves_rendered_first_line_and_caret_inset() {
+        let (_app, mut window) = fill_height_fixture();
+        let editor = window.read(|root, cx| root.composer.read(cx).editor());
+        window.update(|_, w, cx| editor.read(cx).focus_handle(cx).focus(w, cx));
+        window.draw();
+        let geometry = |window: &mut TestAppWindow<FillHeightRoot>| {
+            window.update(|_, w, cx| {
+                let state = editor.read(cx);
+                let container = w.find("editor").bounds();
+                let text = state.range_to_bounds(&(0..0)).expect("first line layout");
+                let (caret, _) = state.cursor_layout().expect("focused caret layout");
+                (text.top() - container.top(), caret.top() - container.top())
+            })
+        };
+        let compact = geometry(&mut window);
+        assert_eq!(compact.0, px(4.));
+        let assert_origin = |actual: (gpui_kit::Pixels, gpui_kit::Pixels)| {
+            assert_eq!(actual.0, compact.0, "first-line origin is unchanged");
+            // Subtracting different window origins introduces f32 cancellation error.
+            assert!(
+                (actual.1 - compact.1).abs() < px(0.001),
+                "caret: {actual:?} vs {compact:?}"
+            );
+        };
+        set_fill_height(&mut window, true);
+        assert_origin(geometry(&mut window));
+        window.simulate_input("First line");
+        window.draw();
+        assert_origin(geometry(&mut window));
+        set_fill_height(&mut window, false);
+        assert_origin(geometry(&mut window));
+        assert_eq!(
+            window.read(|_, cx| editor.read(cx).value().to_string()),
+            "First line"
+        );
     }
 
     #[test]
