@@ -16,14 +16,14 @@ use std::cell::RefCell;
 
 use gpui_kit::{
     Bounds, BoxShadow, Context, Entity, EventEmitter, FocusHandle, Focusable, HoverListenerMode,
-    IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Point, Render, Subscription,
-    Window,
+    IntoElement, KeyDownEvent, ListAlignment, ListOffset, ListState, MouseButton, MouseDownEvent,
+    Pixels, Point, Render, Subscription, Window,
     base::{
         Button as BaseButton, ElementExt, Input, InputBase, Placement, Positioner, TestSupportExt,
         TextView, TextViewState, TextViewStyle,
         input::{InputEvent, InputState},
     },
-    div,
+    div, list,
     prelude::*,
     px, rgb, rgba, svg,
 };
@@ -106,6 +106,20 @@ pub struct ArchivedDetails {
     pub model: Option<String>,
 }
 const ARCHIVED_GROUPS: [&str; 5] = ["Today", "Yesterday", "This Week", "Last Week", "Older"];
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ArchiveEntry {
+    Heading(String),
+    Session { index: usize, id: String },
+}
+impl ArchiveEntry {
+    fn key(&self) -> (&str, bool) {
+        match self {
+            Self::Heading(group) => (group, true),
+            Self::Session { id, .. } => (id, false),
+        }
+    }
+}
 
 fn expanded_relative_time(value: &str) -> String {
     if value == "now" {
@@ -446,6 +460,64 @@ impl Slide {
         self.from != self.to && now.saturating_sub(self.started) < SIDEBAR_MOTION
     }
 }
+// CSS cubic-bezier: solve x before evaluating y (time is not the curve parameter).
+fn css_bezier(progress: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
+    if progress <= 0. || progress >= 1. {
+        return progress.clamp(0., 1.);
+    }
+    let curve = |t: f32, a: f32, b: f32| {
+        3. * (1. - t).powi(2) * t * a + 3. * (1. - t) * t * t * b + t.powi(3)
+    };
+    let (mut low, mut high) = (0., 1.);
+    for _ in 0..16 {
+        let mid = (low + high) / 2.;
+        if curve(mid, x1, x2) < progress {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    curve((low + high) / 2., y1, y2)
+}
+#[derive(Clone, Copy)]
+struct HeaderReveal {
+    opacity_from: f32,
+    from: f32,
+    to: f32,
+    started: Duration,
+}
+impl HeaderReveal {
+    fn value(self, now: Duration) -> f32 {
+        let progress = (now.saturating_sub(self.started).as_secs_f32() / 0.160).clamp(0., 1.);
+        if progress >= 1. {
+            return self.to;
+        }
+        self.from + (self.to - self.from) * css_bezier(progress, 0.2, 0.8, 0.2, 1.)
+    }
+    fn opacity(self, now: Duration) -> f32 {
+        let progress = (now.saturating_sub(self.started).as_secs_f32() / 0.110).clamp(0., 1.);
+        if progress >= 1. {
+            return self.to;
+        }
+        self.opacity_from
+            + (self.to - self.opacity_from) * css_bezier(progress, 0.25, 0.1, 0.25, 1.)
+    }
+    fn retarget(&mut self, to: f32, now: Duration, animate: bool) {
+        if self.to != to {
+            self.from = self.value(now);
+            self.opacity_from = self.opacity(now);
+            self.to = to;
+            self.started = now;
+        }
+        if !animate {
+            self.from = to;
+            self.opacity_from = to;
+        }
+    }
+    fn running(self, now: Duration) -> bool {
+        self.from != self.to && now.saturating_sub(self.started) < Duration::from_millis(160)
+    }
+}
 fn aggregate_status(sessions: &[SessionItem]) -> Option<SessionStatus> {
     [
         SessionStatus::Unread,
@@ -475,7 +547,7 @@ pub struct Sidebar {
     animations_enabled: bool,
     clock: Rc<dyn Fn() -> Duration>,
     header_hover: BTreeSet<String>,
-    header_slides: BTreeMap<String, Slide>,
+    header_slides: BTreeMap<String, HeaderReveal>,
     group_slides: BTreeMap<String, Slide>,
     group_rects: BTreeMap<String, AnchorBounds>,
     pending_order: Option<Vec<String>>,
@@ -497,6 +569,10 @@ pub struct Sidebar {
     archived_details: BTreeMap<String, ArchivedDetails>,
     closed_groups: BTreeSet<String>,
     archived_focus: BTreeMap<String, (FocusHandle, FocusHandle)>,
+    archive_entries: Vec<ArchiveEntry>,
+    mounted_archive_ids: BTreeSet<String>,
+    orphaned_archive_focus: Vec<FocusHandle>,
+    archive_list: ListState,
     held_session_ids: Option<Vec<String>>,
     version_open: bool,
     project_open: bool,
@@ -570,7 +646,7 @@ impl Sidebar {
         });
         let executor = cx.background_executor().clone();
         let epoch = executor.now();
-        Self {
+        let mut sidebar = Self {
             context_menu,
             menu_target: None,
             menu_origin: None,
@@ -578,7 +654,7 @@ impl Sidebar {
             session_focus: BTreeMap::new(),
             menu_focus: None,
             _menu_events: menu_events,
-            animations_enabled: false,
+            animations_enabled: true,
             clock: Rc::new(move || executor.now().duration_since(epoch)),
             header_hover: BTreeSet::new(),
             header_slides: BTreeMap::new(),
@@ -603,6 +679,11 @@ impl Sidebar {
             archived_details: BTreeMap::new(),
             closed_groups: BTreeSet::new(),
             archived_focus: BTreeMap::new(),
+            archive_entries: Vec::new(),
+            mounted_archive_ids: BTreeSet::new(),
+            orphaned_archive_focus: Vec::new(),
+            archive_list: ListState::new(0, ListAlignment::Top, px(68.))
+                .with_estimated_item_size(gpui_kit::size(px(248.), px(34.))),
             held_session_ids: None,
             version_open: false,
             project_open: false,
@@ -621,7 +702,9 @@ impl Sidebar {
             resize_bounds: Rc::new(Cell::new(None)),
             resize_handle_bounds: Rc::new(Cell::new(None)),
             resize_lifecycle: Vec::new(),
-        }
+        };
+        sidebar.rebuild_archive();
+        sidebar
     }
     pub fn width(&self) -> f32 {
         self.width
@@ -832,15 +915,10 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) {
         if self.session_details != details {
-            self.tooltip_markdown = details
-                .iter()
-                .map(|(id, detail)| {
-                    (
-                        id.clone(),
-                        cx.new(|cx| TextViewState::markdown(&detail.message, cx)),
-                    )
-                })
-                .collect();
+            self.tooltip_markdown.retain(|id, _| {
+                self.session_details.get(id).map(|d| &d.message)
+                    == details.get(id).map(|d| &d.message)
+            });
             self.session_details = details;
             cx.notify();
         }
@@ -924,8 +1002,87 @@ impl Sidebar {
     ) {
         if self.archived_details != details {
             self.archived_details = details;
+            self.rebuild_archive();
             cx.notify();
         }
+    }
+    fn rebuild_archive(&mut self) {
+        let mut entries = Vec::new();
+        // Vue buckets by calendar group, preserving caller order inside each bucket.
+        let mut buckets: Vec<Vec<(usize, &SessionItem)>> =
+            (0..=ARCHIVED_GROUPS.len()).map(|_| Vec::new()).collect();
+        for (index, session) in self.props.sessions.iter().enumerate() {
+            let bucket = self
+                .archived_details
+                .get(&session.id)
+                .and_then(|d| ARCHIVED_GROUPS.iter().position(|g| *g == d.group))
+                .unwrap_or(ARCHIVED_GROUPS.len());
+            buckets[bucket].push((index, session));
+        }
+        for (bucket, sessions) in buckets.into_iter().enumerate() {
+            if sessions.is_empty() {
+                continue;
+            }
+            let group = ARCHIVED_GROUPS.get(bucket).copied().unwrap_or("");
+            if !group.is_empty() {
+                entries.push(ArchiveEntry::Heading(group.to_owned()));
+            }
+            if !self.closed_groups.contains(group) {
+                entries.extend(sessions.into_iter().map(|(index, session)| {
+                    ArchiveEntry::Session {
+                        index,
+                        id: session.id.clone(),
+                    }
+                }));
+            }
+        }
+        let old_top = self.archive_list.logical_scroll_top();
+        let same_keys = self
+            .archive_entries
+            .iter()
+            .map(ArchiveEntry::key)
+            .eq(entries.iter().map(ArchiveEntry::key));
+        if !same_keys {
+            // Keep the same row and pixel offset; if removed, prefer its next surviving row.
+            let positions: BTreeMap<_, _> = entries
+                .iter()
+                .enumerate()
+                .map(|(index, entry)| (entry.key(), index))
+                .collect();
+            let anchor = self
+                .archive_entries
+                .iter()
+                .skip(old_top.item_ix)
+                .find_map(|old| positions.get(&old.key()).copied());
+            self.archive_list.reset(entries.len());
+            if !entries.is_empty() {
+                self.archive_list.scroll_to(ListOffset {
+                    item_ix: if old_top.item_ix == 0 && old_top.offset_in_item == px(0.) {
+                        // A list pinned to its start must reveal newly inserted headings.
+                        0
+                    } else {
+                        anchor.unwrap_or(old_top.item_ix.min(entries.len() - 1))
+                    },
+                    offset_in_item: old_top.offset_in_item,
+                });
+            }
+        }
+        let visible: BTreeSet<_> = entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ArchiveEntry::Session { id, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        self.archived_focus.retain(|id, (select, restore)| {
+            if visible.contains(id.as_str()) {
+                return true;
+            }
+            self.orphaned_archive_focus
+                .extend([select.clone(), restore.clone()]);
+            false
+        });
+        self.archive_entries = entries;
     }
     pub fn version_open(&self) -> bool {
         self.version_open
@@ -938,17 +1095,32 @@ impl Sidebar {
     pub fn hovered_session(&self) -> Option<String> {
         self.hovered_session.clone()
     }
+    /// Selection-only updates need not clone/compare the caller's entire archive snapshot.
+    pub fn set_active_session(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.props.active != id {
+            self.props.active = id;
+            cx.notify();
+        }
+    }
     pub fn set_props(&mut self, props: SidebarProps, cx: &mut Context<Self>) {
-        if self.props != props {
+        let rows_changed = self.props.sessions != props.sessions;
+        let mode_changed = self.props.archived != props.archived;
+        if rows_changed
+            || mode_changed
+            || self.props.active != props.active
+            || self.props.collapsed != props.collapsed
+            || self.props.present != props.present
+        {
             self.dismiss_context(cx);
-            if self.props.archived != props.archived {
+            if mode_changed {
                 self.held_session_ids = None;
                 self.project_drag = None;
                 self.closed_groups.clear();
             }
-            self.archived_focus
-                .retain(|id, _| props.sessions.iter().any(|s| &s.id == id));
             self.props = props;
+            if rows_changed || mode_changed {
+                self.rebuild_archive();
+            }
             self.hint.dismiss();
             #[cfg(test)]
             {
@@ -1050,11 +1222,15 @@ impl Sidebar {
                 .project_drag
                 .as_ref()
                 .is_some_and(|(dragged, _, _, _)| dragged == id);
-            let slide = self.header_slides.entry(id.clone()).or_insert(Slide {
-                from: 0.,
-                to: 0.,
-                started: now,
-            });
+            let slide = self
+                .header_slides
+                .entry(id.clone())
+                .or_insert(HeaderReveal {
+                    opacity_from: 0.,
+                    from: 0.,
+                    to: 0.,
+                    started: now,
+                });
             slide.retarget(
                 if chosen || self.header_hover.contains(id) {
                     1.
@@ -1135,6 +1311,13 @@ impl Sidebar {
 }
 impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self
+            .orphaned_archive_focus
+            .drain(..)
+            .any(|focus| focus.is_focused(window))
+        {
+            self.focus.focus(window, cx);
+        }
         if self.resize_lifecycle.is_empty() {
             self.resize_lifecycle
                 .push(cx.observe_window_activation(window, |s, w, cx| {
@@ -1195,6 +1378,18 @@ impl Render for Sidebar {
         {
             origin.focus(window, cx);
         }
+        if self.props.archived {
+            self.archived_focus.retain(|id, (select, restore)| {
+                self.mounted_archive_ids.contains(id)
+                    || select.is_focused(window)
+                    || restore.is_focused(window)
+            });
+            self.hint.anchors.retain(|(key, _)| {
+                key.strip_prefix("restore-")
+                    .is_none_or(|id| self.archived_focus.contains_key(id))
+            });
+            self.mounted_archive_ids.clear();
+        }
         let t = support::tokens(self.dark);
         let dark = self.dark;
         let offsets = self.motion(window, cx);
@@ -1208,7 +1403,7 @@ impl Render for Sidebar {
             .flex_1()
             .min_h_0()
             .p(px(6.))
-            .overflow_y_scroll()
+            .when(!self.props.archived, |d| d.overflow_y_scroll())
             .flex()
             .flex_col();
         if self.props.archived && self.props.sessions.is_empty() {
@@ -1240,6 +1435,10 @@ impl Render for Sidebar {
                     .header_slides
                     .get(&project_id)
                     .map_or(0., |slide| slide.value(now));
+                let header_opacity = self
+                    .header_slides
+                    .get(&project_id)
+                    .map_or(0., |slide| slide.opacity(now));
                 let group_rect = self
                     .group_rects
                     .entry(project_id.clone())
@@ -1474,7 +1673,7 @@ impl Render for Sidebar {
                                         .h(px(13.))
                                         .relative()
                                         .left(px(-8. * (1. - header_progress)))
-                                        .opacity(header_progress)
+                                        .opacity(header_opacity)
                                         .child(support::icon("grip", 9., t.muted).h(px(13.))),
                                 )
                                 .on_click(cx.listener(|_, _, _, cx| cx.stop_propagation()))
@@ -1703,110 +1902,105 @@ impl Render for Sidebar {
             };
             let name_leading = normal_leading(11.);
             let meta_leading = normal_leading(10.);
-            // Missing metadata stays ungrouped, rather than inventing a calendar date.
-            for group in ARCHIVED_GROUPS.into_iter().chain(std::iter::once("")) {
-                let sessions: Vec<_> = self
-                    .props
-                    .sessions
-                    .iter()
-                    .filter(|session| {
-                        self.archived_details
-                            .get(&session.id)
-                            .map(|d| d.group.as_str())
-                            .filter(|label| ARCHIVED_GROUPS.contains(label))
-                            .unwrap_or("")
-                            == group
-                    })
-                    .cloned()
-                    .collect();
-                if sessions.is_empty() {
-                    continue;
-                }
-                if !group.is_empty() {
-                    let label = group.to_owned();
-                    let closed = self.closed_groups.contains(group);
-                    body = body.child(
-                        BaseButton::new(format!("archived-group-{group}"))
-                            .w_full()
-                            .h(px(22.))
-                            .flex_shrink_0()
-                            .mt(px(6.))
-                            .px(px(5.))
-                            .justify_start()
+            body = body.child(
+                list(
+                    self.archive_list.clone(),
+                    cx.processor(move |s, index: usize, window, cx| {
+                        let Some(entry) = s.archive_entries.get(index).cloned() else {
+                            return div().into_any_element();
+                        };
+                        if let ArchiveEntry::Heading(group) = entry {
+                            let label = group.clone();
+                            let closed = s.closed_groups.contains(&group);
+                            return div()
+                                .w_full()
+                                .h(px(28.))
+                                .flex_shrink_0()
+                                .child(
+                                    BaseButton::new(format!("archived-group-{group}"))
+                                        .w_full()
+                                        .h(px(22.))
+                                        .flex_shrink_0()
+                                        .mt(px(6.))
+                                        .px(px(5.))
+                                        .justify_start()
+                                        .gap(px(4.))
+                                        .bg(rgba(0x00000000))
+                                        .text_size(px(10.))
+                                        .text_color(rgb(t.muted))
+                                        .on_click(cx.listener(move |s, _, _, cx| {
+                                            if !s.closed_groups.remove(&label) {
+                                                s.closed_groups.insert(label.clone());
+                                            }
+                                            s.rebuild_archive();
+                                            cx.notify();
+                                        }))
+                                        .child(group.to_owned())
+                                        .child(support::icon(
+                                            if closed {
+                                                "chevron-right"
+                                            } else {
+                                                "chevron-down"
+                                            },
+                                            10.,
+                                            t.muted,
+                                        )),
+                                )
+                                .into_any_element();
+                        }
+                        let ArchiveEntry::Session { index, .. } = entry else {
+                            unreachable!()
+                        };
+                        let session = s.props.sessions[index].clone();
+                        let id = session.id.clone();
+                        s.mounted_archive_ids.insert(id.clone());
+                        let restore_key = format!("restore-{id}");
+                        let restore_anchor = s.hint.anchor(&restore_key);
+                        let active = s.props.active == id;
+                        let (select_focus, restore_focus) = s
+                            .archived_focus
+                            .entry(id.clone())
+                            .or_insert_with(|| (cx.focus_handle(), cx.focus_handle()))
+                            .clone();
+                        let focused =
+                            select_focus.is_focused(window) || restore_focus.is_focused(window);
+                        let details = s.archived_details.get(&id);
+                        let mut meta = div()
+                            .id(format!("archived-meta-{id}"))
+                            .test_support()
+                            .line_height(meta_leading)
+                            .flex()
                             .gap(px(4.))
-                            .bg(rgba(0x00000000))
+                            .overflow_hidden()
                             .text_size(px(10.))
-                            .text_color(rgb(t.muted))
-                            .on_click(cx.listener(move |s, _, _, cx| {
-                                if !s.closed_groups.remove(&label) {
-                                    s.closed_groups.insert(label.clone());
-                                }
-                                cx.notify();
-                            }))
-                            .child(group.to_owned())
-                            .child(support::icon(
-                                if closed {
-                                    "chevron-right"
-                                } else {
-                                    "chevron-down"
-                                },
-                                10.,
-                                t.muted,
-                            )),
-                    );
-                    if closed {
-                        continue;
-                    }
-                }
-                for session in sessions {
-                    let id = session.id.clone();
-                    let restore_key = format!("restore-{id}");
-                    let restore_anchor = self.hint.anchor(&restore_key);
-                    let active = self.props.active == id;
-                    let (select_focus, restore_focus) = self
-                        .archived_focus
-                        .entry(id.clone())
-                        .or_insert_with(|| (cx.focus_handle(), cx.focus_handle()))
-                        .clone();
-                    let focused =
-                        select_focus.is_focused(window) || restore_focus.is_focused(window);
-                    let details = self.archived_details.get(&id);
-                    let mut meta = div()
-                        .id(format!("archived-meta-{id}"))
-                        .test_support()
-                        .line_height(meta_leading)
-                        .flex()
-                        .gap(px(4.))
-                        .overflow_hidden()
-                        .text_size(px(10.))
-                        .text_color(rgb(t.muted));
-                    if let Some(details) = details {
-                        meta = meta.child(
-                            div()
-                                .min_w_0()
-                                .text_ellipsis()
-                                .whitespace_nowrap()
-                                .overflow_hidden()
-                                .child(details.project.clone()),
-                        );
-                        if let Some(model) = &details.model {
-                            meta = meta.child("·").child(
+                            .text_color(rgb(t.muted));
+                        if let Some(details) = details {
+                            meta = meta.child(
                                 div()
                                     .min_w_0()
                                     .text_ellipsis()
                                     .whitespace_nowrap()
                                     .overflow_hidden()
-                                    .child(model.clone()),
+                                    .child(details.project.clone()),
                             );
+                            if let Some(model) = &details.model {
+                                meta = meta.child("·").child(
+                                    div()
+                                        .min_w_0()
+                                        .text_ellipsis()
+                                        .whitespace_nowrap()
+                                        .overflow_hidden()
+                                        .child(model.clone()),
+                                );
+                            }
                         }
-                    }
-                    body = body.child(
                         div()
                             .id(format!("archived-row-{id}"))
                             .test_support()
                             .relative()
                             .group("archived-row")
-                            .min_h(px(34.))
+                            .w_full()
+                            .h(px(34.))
                             .flex_shrink_0()
                             .rounded(px(6.))
                             .bg(if active {
@@ -1897,10 +2091,16 @@ impl Render for Sidebar {
                                         cx.emit(Action::Restore(id.clone()));
                                     }
                                 })),
-                            ),
-                    );
-                }
-            }
+                            )
+                            .into_any_element()
+                    }),
+                )
+                // The flex parent owns the viewport, not the list's intrinsic content size.
+                .with_sizing_behavior(gpui_kit::ListSizingBehavior::Auto)
+                .flex_1()
+                .min_h_0()
+                .w_full(),
+            );
         }
         if self.rendered_projects().is_empty() && !self.props.archived {
             body = body.child(
@@ -2189,6 +2389,18 @@ impl Render for Sidebar {
                 )
             })
             .flatten();
+        if let Some(id) = self
+            .hint
+            .visible
+            .as_deref()
+            .and_then(|id| id.strip_prefix("session-"))
+            && !self.tooltip_markdown.contains_key(id)
+            && let Some(detail) = self.session_details.get(id)
+        {
+            let markdown = cx.new(|cx| TextViewState::markdown(&detail.message, cx));
+            self.tooltip_markdown.clear();
+            self.tooltip_markdown.insert(id.to_owned(), markdown);
+        }
         let tooltip = self.hint.visible.as_deref().and_then(|id| {
             let (label, shortcut) = match id {
                 _ if id.starts_with("status-unread-") => ("Unread", None),
@@ -2868,6 +3080,9 @@ impl Render for Header {
     }
 }
 
+#[cfg(test)]
+#[path = "chrome/archive_tests.rs"]
+mod archive_tests;
 #[cfg(test)]
 #[path = "chrome/regressions.rs"]
 mod regressions;

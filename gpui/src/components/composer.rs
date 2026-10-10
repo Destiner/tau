@@ -3,8 +3,9 @@ use super::{
     support,
 };
 use gpui_kit::{
-    Anchor, Bounds, BoxShadow, Context, Entity, FocusHandle, Focusable, IntoElement, KeyDownEvent,
-    MouseDownEvent, Pixels, Render, Subscription, TestSupportExt, Window,
+    Anchor, Bounds, BoxShadow, Context, Entity, EntityInputHandler, FocusHandle, Focusable,
+    IntoElement, KeyDownEvent, MouseDownEvent, Pixels, Render, ScrollHandle, Subscription,
+    TestSupportExt, Window,
     base::{
         Button as BaseButton, ElementExt, Input, InputBase, Placement, Popup, Positioner,
         ScrollbarStyles, Textarea, Theme, Tooltip,
@@ -14,7 +15,55 @@ use gpui_kit::{
     prelude::*,
     px, rgb, rgba,
 };
-use std::{cell::Cell, rc::Rc};
+use std::{cell::Cell, collections::HashMap, rc::Rc};
+
+/// Choice identity → display group. No changes to Choice or protocol identities.
+pub type ModelGroups = HashMap<String, String>;
+
+pub fn effort_label(value: &str) -> &str {
+    match value {
+        "off" => "Off",
+        "minimal" => "Minimal",
+        "low" => "Low",
+        "medium" => "Medium",
+        "high" => "High",
+        "xhigh" => "Extra High",
+        "max" => "Max",
+        other => other,
+    }
+}
+
+/// Matches src/lib/model-selector.ts.
+pub fn provider_label(provider: &str) -> String {
+    match provider {
+        "amazon-bedrock" => "Amazon Bedrock".into(),
+        "github-copilot" => "GitHub Copilot".into(),
+        "google-vertex" => "Google Vertex".into(),
+        "openai-codex" => "OpenAI Codex".into(),
+        "opencode" => "OpenCode".into(),
+        "opencode-go" => "OpenCode Go".into(),
+        "openrouter" => "OpenRouter".into(),
+        "pi-claude" => "Pi Claude".into(),
+        "xai" => "xAI".into(),
+        other => {
+            let mut boundary = true;
+            other
+                .replace('-', " ")
+                .chars()
+                .map(|c| {
+                    let word = c.is_ascii_alphanumeric() || c == '_';
+                    let result = if boundary && word {
+                        c.to_ascii_uppercase()
+                    } else {
+                        c
+                    };
+                    boundary = !word;
+                    result
+                })
+                .collect()
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Choice {
@@ -84,6 +133,9 @@ pub struct Composer {
     search_style: gpui_kit::base::input::InputEditorStyle,
     models: Vec<Choice>,
     model_heading: String,
+    model_groups: ModelGroups,
+    selector_scroll: ScrollHandle,
+    reveal_cursor: Rc<Cell<bool>>,
     model_fallback: String,
     efforts: Vec<Choice>,
     dark: bool,
@@ -228,6 +280,14 @@ impl Composer {
     pub fn effort(&self) -> Option<&Choice> {
         self.efforts.get(self.effort)
     }
+    fn effort_choice_label(choice: &Choice) -> &str {
+        let label = effort_label(&choice.id);
+        if label == choice.id {
+            &choice.label
+        } else {
+            label
+        }
+    }
     pub fn query(&self) -> &str {
         &self.query
     }
@@ -301,6 +361,31 @@ impl Composer {
             .unwrap_or(0);
         self.close(cx);
     }
+    /// Display labels keyed by unchanged Choice identities; preferred over inference.
+    pub fn set_model_groups(&mut self, groups: ModelGroups, cx: &mut Context<Self>) {
+        self.model_groups = groups;
+        self.reveal_cursor.set(true);
+        cx.notify();
+    }
+
+    pub fn set_model_heading(&mut self, heading: impl Into<String>, cx: &mut Context<Self>) {
+        self.model_heading = heading.into();
+        cx.notify();
+    }
+
+    fn model_group(&self, ix: usize) -> String {
+        self.model_groups
+            .get(&self.models[ix].id)
+            .cloned()
+            .unwrap_or_else(|| {
+                self.models[ix]
+                    .id
+                    .split_once('\u{1f}')
+                    .map(|(provider, _)| provider_label(provider))
+                    .unwrap_or_else(|| self.model_heading.clone())
+            })
+    }
+
     pub fn set_model(&mut self, id: &str, cx: &mut Context<Self>) {
         // An explicit host selection must not silently select a different scoped model.
         self.model = self
@@ -323,12 +408,26 @@ impl Composer {
 
     fn visible_model_indices(&self) -> Vec<usize> {
         let query = self.query.trim().to_lowercase();
-        (0..self.models.len())
+        let visible: Vec<_> = (0..self.models.len())
             .filter(|&i| {
                 query.is_empty()
                     || self.models[i].id.to_lowercase().contains(&query)
                     || self.models[i].label.to_lowercase().contains(&query)
             })
+            .collect();
+        // UiSelect's insertion-ordered Map coalesces nonadjacent provider runs.
+        let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
+        for ix in visible {
+            let group = self.model_group(ix);
+            if let Some((_, members)) = groups.iter_mut().find(|(label, _)| *label == group) {
+                members.push(ix);
+            } else {
+                groups.push((group, vec![ix]));
+            }
+        }
+        groups
+            .into_iter()
+            .flat_map(|(_, members)| members)
             .collect()
     }
 
@@ -356,7 +455,14 @@ impl Composer {
         self.close(cx);
     }
 
-    fn move_cursor(&mut self, down: bool, cx: &mut Context<Self>) {
+    fn move_cursor(&mut self, down: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selector == Some("model")
+            && self
+                .search
+                .update(cx, |s, cx| s.marked_text_range(window, cx).is_some())
+        {
+            return;
+        }
         let visible = match self.selector {
             Some("model") => self.visible_model_indices(),
             Some("effort") => (0..self.efforts.len()).collect(),
@@ -371,13 +477,21 @@ impl Composer {
         } else {
             current.saturating_sub(1)
         }];
+        self.reveal_cursor.set(true);
         cx.notify();
     }
 
-    fn key(&mut self, e: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let Some(selector) = self.selector else {
             return;
         };
+        if selector == "model"
+            && self
+                .search
+                .update(cx, |s, cx| s.marked_text_range(window, cx).is_some())
+        {
+            return;
+        }
         match e.keystroke.key.as_str() {
             "escape" => self.close(cx),
             "enter" | "space" if selector == "effort" || e.keystroke.key == "enter" => {
@@ -390,7 +504,45 @@ impl Composer {
         cx.stop_propagation();
     }
 
-    fn menu(&self, selector: &'static str, cx: &mut Context<Self>) -> impl IntoElement {
+    fn selector_geometry(&self, selector: &str, window: &Window) -> (Pixels, Pixels, Anchor) {
+        let viewport = window.viewport_size();
+        let bounds = if selector == "model" {
+            self.model_bounds.get()
+        } else {
+            self.effort_bounds.get()
+        };
+        let (above, below) = bounds
+            .map(|b| {
+                (
+                    (b.top() - px(13.)).max(px(0.)),
+                    (viewport.height - b.bottom() - px(13.)).max(px(0.)),
+                )
+            })
+            .unwrap_or(((viewport.height - px(16.)).max(px(0.)), px(0.)));
+        let desired = px(if selector == "model" {
+            352.
+        } else {
+            8. + self.efforts.len() as f32 * 24.
+        });
+        let top = above >= desired || above >= below;
+        (
+            px(if selector == "model" { 300. } else { 100. })
+                .min((viewport.width - px(16.)).max(px(0.))),
+            desired.min(if top { above } else { below }),
+            if top {
+                Anchor::BottomLeft
+            } else {
+                Anchor::TopLeft
+            },
+        )
+    }
+
+    fn menu(
+        &self,
+        selector: &'static str,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let t = support::tokens(self.dark);
         let is_model = selector == "model";
         let visible = if is_model {
@@ -403,10 +555,13 @@ impl Composer {
         } else {
             self.effort_bounds.clone()
         };
+        let (width, height, _) = self.selector_geometry(selector, window);
         let mut menu = div()
             .id(format!("{selector}-menu"))
             .test_support()
-            .w(px(if is_model { 300. } else { 70. }))
+            .w(width)
+            .max_h(height)
+            .overflow_hidden()
             .rounded(px(8.))
             .bg(rgb(t.panel_raised))
             .shadow(vec![
@@ -429,14 +584,16 @@ impl Composer {
                 }
             }))
             .on_key_down(cx.listener(Self::key))
-            .on_action(cx.listener(|s, _: &NextChoice, _, cx| s.move_cursor(true, cx)))
-            .on_action(cx.listener(|s, _: &PreviousChoice, _, cx| s.move_cursor(false, cx)));
+            .on_action(cx.listener(|s, _: &NextChoice, w, cx| s.move_cursor(true, w, cx)))
+            .on_action(cx.listener(|s, _: &PreviousChoice, w, cx| s.move_cursor(false, w, cx)));
         if is_model {
             menu = menu.overflow_hidden().child(
                 div()
                     .id("model-search")
                     .test_support()
-                    .h(px(28.))
+                    .h(px(28.).min(height))
+                    .flex_shrink_0()
+                    .overflow_hidden()
                     .px(px(12.))
                     .bg(rgb(if self.dark { 0x080b11 } else { 0xebeef0 }))
                     .rounded_tl(px(8.))
@@ -462,23 +619,14 @@ impl Composer {
             .px(px(4.))
             .pb(px(4.))
             .when(!is_model, |d| d.pt(px(4.)))
+            .max_h((height - px(if is_model { 28. } else { 0. })).max(px(0.)))
+            .min_h_0()
+            .overflow_y_scroll()
+            .track_scroll(&self.selector_scroll)
             .flex()
             .flex_col();
-        if is_model && !visible.is_empty() {
-            list = list.child(
-                div()
-                    .id("model-heading")
-                    .test_support()
-                    .h(px(22.))
-                    .mr(px(10.))
-                    .px(px(8.))
-                    .flex()
-                    .items_center()
-                    .text_size(px(10.))
-                    .text_color(rgb(t.faint))
-                    .child(self.model_heading.clone()),
-            );
-        }
+        let mut last_group = None;
+        let mut row = 0;
         if is_model && visible.is_empty() {
             list = list.child(
                 div()
@@ -492,10 +640,40 @@ impl Composer {
             );
         }
         for ix in visible {
+            if is_model {
+                let group = self.model_group(ix);
+                if last_group.as_ref() != Some(&group) {
+                    if !group.is_empty() {
+                        list = list.child(
+                            div()
+                                .id(if row == 0 {
+                                    "model-heading".into()
+                                } else {
+                                    format!("model-heading-{ix}")
+                                })
+                                .test_support()
+                                .h(px(22.))
+                                .flex_shrink_0()
+                                .px(px(8.))
+                                .flex()
+                                .items_center()
+                                .text_size(px(10.))
+                                .text_color(rgb(t.faint))
+                                .child(div().w_full().truncate().child(group.clone())),
+                        );
+                        row += 1;
+                    }
+                    last_group = Some(group);
+                }
+            }
+            row += 1;
+            let pending = self.reveal_cursor.clone();
+            let scroll = self.selector_scroll.clone();
+            let cursor = self.cursor == ix;
             let label = if is_model {
                 self.models[ix].label.clone()
             } else {
-                self.efforts[ix].label.clone()
+                Self::effort_choice_label(&self.efforts[ix]).to_owned()
             };
             let selected = if is_model {
                 self.model == ix
@@ -510,6 +688,33 @@ impl Composer {
                 })
                 .w_full()
                 .h(px(if is_model { 28. } else { 24. }))
+                .flex_shrink_0()
+                .min_w_0()
+                .on_prepaint(move |bounds, window, _| {
+                    if !cursor || !pending.get() {
+                        return;
+                    }
+                    // Use painted geometry: deferred Popup offsets are not included in
+                    // ScrollHandle's child layout bounds (notably the pinned search height).
+                    let viewport = scroll.bounds();
+                    let oversized = bounds.size.height > viewport.size.height;
+                    let delta = if oversized || bounds.top() < viewport.top() {
+                        viewport.top() - bounds.top()
+                    } else if bounds.bottom() > viewport.bottom() {
+                        viewport.bottom() - bounds.bottom()
+                    } else {
+                        px(0.)
+                    };
+                    if delta == px(0.) || oversized {
+                        pending.set(false);
+                    }
+                    if delta != px(0.) {
+                        let mut offset = scroll.offset();
+                        offset.y += delta;
+                        scroll.set_offset(offset);
+                        window.request_animation_frame();
+                    }
+                })
                 .px(px(8.))
                 .relative()
                 .rounded(px(6.))
@@ -545,7 +750,15 @@ impl Composer {
                     }
                 }))
                 .on_click(cx.listener(move |s, _, _, cx| s.choose(selector, ix, cx)))
-                .child(div().w_full().h_full().flex().items_center().child(label)),
+                .child(
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .h_full()
+                        .flex()
+                        .items_center()
+                        .child(div().w_full().truncate().child(label)),
+                ),
             );
         }
         menu.child(list)
@@ -599,6 +812,7 @@ impl Composer {
         self._search_events = cx.subscribe(&self.search, |this, input, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
                 this.query = input.read(cx).value().to_string();
+                this.reveal_cursor.set(true);
                 let visible = this.visible_model_indices();
                 if !visible.contains(&this.cursor) {
                     this.cursor = visible.first().copied().unwrap_or(0);
@@ -697,6 +911,7 @@ impl Composer {
         let search_events = cx.subscribe(&search, |this, input, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
                 this.query = input.read(cx).value().to_string();
+                this.reveal_cursor.set(true);
                 let visible = this.visible_model_indices();
                 if !visible.contains(&this.cursor) {
                     this.cursor = visible.first().copied().unwrap_or(0);
@@ -758,7 +973,7 @@ impl Composer {
             .models
             .iter()
             .position(|o| o.id == options.model)
-            .unwrap_or(0);
+            .unwrap_or(usize::MAX);
         let effort = options
             .efforts
             .iter()
@@ -774,6 +989,9 @@ impl Composer {
             dark,
             models: options.models,
             model_heading: options.model_heading,
+            model_groups: ModelGroups::new(),
+            selector_scroll: ScrollHandle::new(),
+            reveal_cursor: Rc::new(Cell::new(true)),
             model_fallback: String::new(),
             efforts: options.efforts,
             editor,
@@ -801,7 +1019,7 @@ impl Composer {
     }
 }
 impl Render for Composer {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = support::tokens(self.dark);
         let draft = self.editor.read(cx).value().to_string();
         let filled = !draft.trim().is_empty();
@@ -932,6 +1150,8 @@ impl Render for Composer {
                     .on_prepaint(move |bounds, _, _| model_bounds.set(Some(bounds)))
                     .child(
                         BaseButton::new("model")
+                            .max_w((window.viewport_size().width - px(145.)).max(px(40.)))
+                            .min_w_0()
                             .accessibility_label(format!("Model: {}", self.model_label()))
                             .disabled(settings_disabled)
                             .h(px(22.))
@@ -960,6 +1180,7 @@ impl Render for Composer {
                                         s.close(cx);
                                     } else {
                                         s.selector = Some("model");
+                                        s.reveal_cursor.set(true);
                                         s.cursor = if s.model().is_some() { s.model } else { 0 };
                                         s.query.clear();
                                         s.search.update(cx, |input, cx| {
@@ -970,17 +1191,22 @@ impl Render for Composer {
                                     }
                                 }
                             }))
-                            .child(self.model_label().to_owned())
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .child(self.model_label().to_owned()),
+                            )
                             .child(
                                 support::selector_arrow(model_color)
                                     .opacity(if settings_disabled { 0.45 } else { 1. }),
                             ),
                     ),
             )
-            .anchor(Anchor::BottomLeft)
+            .anchor(self.selector_geometry("model", window).2)
             .offset(px(5.))
             .when(self.selector == Some("model"), |popup| {
-                popup.content(self.menu("model", cx))
+                popup.content(self.menu("model", window, cx))
             });
         let effort_bounds = self.effort_bounds.clone();
         let effort =
@@ -993,7 +1219,9 @@ impl Render for Composer {
                         BaseButton::new("effort")
                             .accessibility_label(format!(
                                 "Effort: {}",
-                                self.effort().map(|o| o.label.as_str()).unwrap_or_default()
+                                self.effort()
+                                    .map(Self::effort_choice_label)
+                                    .unwrap_or_default()
                             ))
                             .disabled(settings_disabled)
                             .track_focus(&self.effort_focus)
@@ -1002,8 +1230,8 @@ impl Render for Composer {
                                     return;
                                 }
                                 match event.keystroke.key.as_str() {
-                                    "down" => s.move_cursor(true, cx),
-                                    "up" => s.move_cursor(false, cx),
+                                    "down" => s.move_cursor(true, window, cx),
+                                    "up" => s.move_cursor(false, window, cx),
                                     "enter" if s.selector == Some("effort") => {
                                         s.suppress_effort_click = true;
                                         s.key(event, window, cx);
@@ -1046,23 +1274,29 @@ impl Render for Composer {
                                         s.close(cx);
                                     } else {
                                         s.selector = Some("effort");
+                                        s.reveal_cursor.set(true);
                                         s.cursor = s.effort;
                                         s.effort_focus.focus(window, cx);
                                         cx.notify();
                                     }
                                 }
                             }))
-                            .child(self.effort().map(|o| o.label.clone()).unwrap_or_default())
+                            .child(
+                                self.effort()
+                                    .map(Self::effort_choice_label)
+                                    .unwrap_or_default()
+                                    .to_owned(),
+                            )
                             .child(
                                 support::selector_arrow(effort_color)
                                     .opacity(if settings_disabled { 0.45 } else { 1. }),
                             ),
                     ),
             )
-            .anchor(Anchor::BottomLeft)
+            .anchor(self.selector_geometry("effort", window).2)
             .offset(px(5.))
             .when(self.selector == Some("effort"), |popup| {
-                popup.content(self.menu("effort", cx))
+                popup.content(self.menu("effort", window, cx))
             });
         let toolbar = div()
             .id("footer-gap")
@@ -1119,6 +1353,10 @@ impl Render for Composer {
             .when_some(hint, |composer, hint| composer.child(hint))
     }
 }
+
+#[cfg(test)]
+#[path = "composer/selector_tests.rs"]
+mod selector_tests;
 
 #[cfg(test)]
 mod tests {
