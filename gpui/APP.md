@@ -41,7 +41,8 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   Real SSH smoke acceptance and new remote import UI remain outstanding.
 - Retained composer/transcript entities, full-height empty composer, model/effort
   choices, visibly rendered prompts/streaming prose/activity, Stop, queue submission
-  and clear.
+  and clear. While working, Enter or Send queues steering; Cmd-Enter queues a follow-up.
+  Shift-Enter inserts a newline. When idle, Cmd-Enter sends an ordinary prompt.
 - Click-to-rename saved sessions through Pi, with bounded names, rollback and registry
   persistence. Archive idle saved sessions; browsing archives does not restore them,
   and Restore is explicit. Drafts and session files are retained.
@@ -59,6 +60,10 @@ idle eviction, updater or release packaging. Unavailable actions report that bou
 they are not simulated successes. See [controller limits](../crates/tau-session/README.md).
 
 ## Verification
+
+Production-root keyboard regressions check follow-up versus steering in the actual RPC
+request after queue-mode acknowledgments, including remounts, session isolation and idle
+submission. Composer tests also protect the IME composition guard.
 
 Default Rust tests use deterministic fakes. Installed Pi and an unlocked macOS desktop
 are needed only for explicitly selected acceptance targets:

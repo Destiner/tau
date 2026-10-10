@@ -596,14 +596,6 @@ impl Render for Shell {
         use gpui_kit::TestSupportExt;
         let t = support::tokens(self.dark);
         let mut body = div()
-            .capture_key_down(cx.listener(|s, event: &gpui_kit::KeyDownEvent, _, _| {
-                if event.keystroke.key == "enter"
-                    && !event.keystroke.modifiers.shift
-                    && let Some(live) = s.sessions.get_mut(&s.active)
-                {
-                    live.follow_up = event.keystroke.modifiers.platform;
-                }
-            }))
             .flex()
             .size_full()
             .bg(rgb(t.canvas))

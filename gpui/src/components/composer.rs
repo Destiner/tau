@@ -43,6 +43,7 @@ pub enum Event {
     ModelChanged(String),
     EffortChanged(String),
     Send(String),
+    FollowUp(String),
     Stop,
 }
 
@@ -537,7 +538,7 @@ impl Composer {
         menu.child(list)
     }
 
-    fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn send(&mut self, follow_up: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.disabled || self.stopped {
             return;
         }
@@ -551,7 +552,11 @@ impl Composer {
         }
         let draft = self.editor.read(cx).value().to_string();
         self.editor.update(cx, |e, cx| e.set_value("", window, cx));
-        cx.emit(Event::Send(draft));
+        cx.emit(if follow_up {
+            Event::FollowUp(draft)
+        } else {
+            Event::Send(draft)
+        });
         cx.notify();
     }
 }
@@ -568,8 +573,12 @@ impl Composer {
             &self.editor,
             window,
             |this, _, event: &InputEvent, window, cx| {
-                if matches!(event, InputEvent::PressEnter { shift: false, .. }) {
-                    this.send(window, cx);
+                if let InputEvent::PressEnter {
+                    shift: false,
+                    secondary,
+                } = event
+                {
+                    this.send(*secondary, window, cx);
                 }
                 cx.notify();
             },
@@ -649,8 +658,12 @@ impl Composer {
             &editor,
             window,
             |this, _, event: &InputEvent, window, cx| {
-                if matches!(event, InputEvent::PressEnter { shift: false, .. }) {
-                    this.send(window, cx);
+                if let InputEvent::PressEnter {
+                    shift: false,
+                    secondary,
+                } = event
+                {
+                    this.send(*secondary, window, cx);
                 }
                 cx.notify();
             },
@@ -815,7 +828,7 @@ impl Render for Composer {
                 t.muted
             }))
             .styles(|styles| styles.disabled(|button| button.opacity(0.45)))
-            .on_click(cx.listener(|s, _, window, cx| s.send(window, cx)))
+            .on_click(cx.listener(|s, _, window, cx| s.send(false, window, cx)))
             .when(!send_disabled, |button| {
                 button.hover(move |s| s.bg(rgb(t.hover)).text_color(rgb(t.text)))
             })

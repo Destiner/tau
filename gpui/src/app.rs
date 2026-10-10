@@ -77,7 +77,6 @@ struct LiveSession {
     dirty: bool,
     projection_dirty: bool,
     ui_status: Option<(bool, bool)>,
-    follow_up: bool,
     choices: String,
     extension: Option<(String, Entity<NativeDialog>)>,
     extension_subscription: Option<Subscription>,
@@ -752,7 +751,6 @@ impl Shell {
                 dirty: true,
                 projection_dirty: true,
                 ui_status: None,
-                follow_up: false,
                 choices: String::new(),
                 extension: None,
                 extension_subscription: None,
@@ -787,21 +785,20 @@ impl Shell {
         };
         live.dirty = true;
         live.projection_dirty = true;
-        let follow_up = if matches!(event, ComposerEvent::Send(_)) {
-            std::mem::take(&mut live.follow_up)
-        } else {
-            false
-        };
         let effects = match event {
-            ComposerEvent::Send(text) if live.controller.state().working => {
-                let kind = if follow_up {
+            ComposerEvent::Send(text) | ComposerEvent::FollowUp(text)
+                if live.controller.state().working =>
+            {
+                let kind = if matches!(event, ComposerEvent::FollowUp(_)) {
                     QueueKind::FollowUp
                 } else {
                     QueueKind::Steer
                 };
                 live.controller.submit_queued(text, kind)
             }
-            ComposerEvent::Send(text) => live.controller.submit(text),
+            ComposerEvent::Send(text) | ComposerEvent::FollowUp(text) => {
+                live.controller.submit(text)
+            }
             ComposerEvent::Stop => live.controller.abort(),
             ComposerEvent::ModelChanged(id) => {
                 let (provider, model) = id.split_once('\u{1f}').unwrap_or(("", id));
@@ -809,7 +806,7 @@ impl Shell {
             }
             ComposerEvent::EffortChanged(effort) => live.controller.set_thinking(effort),
         };
-        if let ComposerEvent::Send(text) = event
+        if let ComposerEvent::Send(text) | ComposerEvent::FollowUp(text) = event
             && effects.is_empty()
             && !text.trim().is_empty()
         {
@@ -1099,3 +1096,6 @@ fn sidebar_props() -> SidebarProps {
         archived: false,
     }
 }
+
+#[cfg(test)]
+mod queue_shortcut_tests;

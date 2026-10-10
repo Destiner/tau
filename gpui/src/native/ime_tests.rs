@@ -108,7 +108,7 @@ impl Fixture {
             });
             let target = sent.clone();
             let subscription = cx.subscribe(&composer, move |_, _, event, _| {
-                if let Event::Send(text) = event {
+                if let Event::Send(text) | Event::FollowUp(text) = event {
                     target.borrow_mut().push(text.clone());
                 }
             });
@@ -198,6 +198,24 @@ impl Drop for Fixture {
             self.app.run_until_parked();
         }
     }
+}
+
+#[test]
+fn ime_secondary_enter_submits_only_after_composition_commits() {
+    let mut f = Fixture::new(false);
+    let key = if cfg!(target_os = "macos") {
+        "cmd-enter"
+    } else {
+        "ctrl-enter"
+    };
+    f.marked(Some(0..4), "稍后", Some(2..2));
+    f.key(key);
+    assert!(f.sent.borrow().is_empty());
+    f.check("稍后", Some(0..2), 2..2);
+    f.commit(None, "稍后");
+    f.key(key);
+    assert_eq!(*f.sent.borrow(), vec!["稍后"]);
+    assert_eq!(f.value(), "");
 }
 
 #[test]
