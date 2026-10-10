@@ -1,6 +1,6 @@
 # GPUI rewrite: current status and delivery plan
 
-Updated 9 October 2026. This supersedes the historical prototype checklist.
+Updated 10 October 2026. This supersedes the historical prototype checklist.
 The delivery/decision window remains **9–10 October**: finish usable native Tau or
 make an explicit continue/revert decision. This is not a guaranteed delivery date.
 
@@ -10,15 +10,16 @@ make an explicit continue/revert decision. This is not a guaranteed delivery dat
 `tau` is Cargo's default run target; the older `src/main.rs` playground remains a
 reference tool, not the application runtime. The real shell reuses accepted
 chrome, transcript, composer, selectors, dialogs and native host adapters. It owns
-workspace/session/settings state, retained editors and lifecycle requests; it does
+workspace/session state, persisted preferences, retained editors and lifecycle requests; it does
 not use synthetic projects, timers or fixture transcripts.
 
 Framework-independent process, storage, profile and SSH services were extracted
 into `tau-core` in `af98b6d`, preserving existing Tauri service compatibility.
 `tau-session` supplies real Pi JSONL RPC orchestration; the shell (`63cba9c`) routes effects
 through those shared services. Local and SSH backends are available, including
-existing remote-project configuration. **Real SSH acceptance and new remote import
-UI are not implemented/proven.** Pi still owns extensions and session files.
+existing remote-project configuration and a new SSH connection/directory import UI.
+**Authenticated real-host SSH acceptance remains unproven.** Pi still owns extensions
+and session files.
 
 Implemented first-slice behavior includes local project import, existing/new
 sessions, model/effort selection, prompt/stream/activity/Stop and queue controls,
@@ -41,8 +42,9 @@ GPUI release or GPUI updater. See [packaging](../gpui/PACKAGING.md).
 - Core extraction: **57 unit + 2 integration tests passed**, one explicit canary
   ignored. Existing Tauri compatibility tests and unsigned Tauri bundle passed;
   that bundle is not GPUI packaging.
-- `tau-session`: **27 tests passed**, including rename correlation, rollback and
-  name bounds; one opt-in installed-Pi canary ignored in the default run.
+- `tau-session`: **41 tests passed**, including scoped-model ordering/fallback/fences,
+  tool summaries, rename correlation, rollback and name bounds; one opt-in installed-Pi
+  canary ignored in the default run.
 - Native credential-free acceptance passed with installed **Pi 0.99.2** in an
   isolated profile: command bootstrap, actual extension input/Enter/custom output,
   session switching and drafts, native menus, close/reopen, busy-close cancellation,
@@ -79,7 +81,21 @@ GPUI release or GPUI updater. See [packaging](../gpui/PACKAGING.md).
   Pi acceptance passed these interactions; that extended run later hit an inactive
   window at Cmd-W and is not a full smoke PASS. A final credential-free native
   run passed close/reopen and shutdown.
-- GPUI library: **263 passed, 0 failed, 1 ignored**, plus **13 passed** editor
+- Cmd-Enter now carries follow-up intent in the submit event rather than a shell key
+  listener; actual RPC regressions distinguish follow-up from steering and preserve IME.
+- Workflow batch: command palette with real actions/pages/shortcuts; remote connection,
+  directory browsing and serialized project import; local/remote scoped model choices
+  matching Vue; compact thinking/tool spacing and argument details in tool headers.
+  Production-root regressions cover geometry, rendered controls, focus, stale callbacks,
+  import persistence and scope filtering. Remote imports merge the returned project,
+  not a competing workspace snapshot. No authenticated SSH host was exercised.
+- Native Cmd-K → remote form → cancellation/reopen passed with measured controls,
+  actual editor focus/value and retained drafts. Palette/remote/tool-transcript Metal
+  images were inspected. Initial new-test failures expected focus/value facts on wrapper
+  snapshots; the corrected predicate uses the actual editor, without a deadline change.
+  The optional model run passed assistant/tools/Stop and session actions, then again
+  timed out at the later Cmd-W gate; no complete model-smoke PASS is claimed.
+- GPUI library: **319 passed, 0 failed, 1 ignored**, plus **13 passed** editor
   integration tests; all-target/all-feature strict Clippy and the actual `tau`
   build passed. The broader Rust run passed its unit binaries but timed out in
   the existing activity Metal runner; the full suite is not reported green.
@@ -115,8 +131,10 @@ failures); no speculative activation/focus repair or relabelled visual snapshots
 - [x] Prove real model-issued tool execution and Stop through the native composer;
       retain earlier failures and distinguish the remaining cancellation/queue cases.
 - [x] Wire saved-session rename and archive/browse/restore using existing contracts.
-- [ ] Finish session removal and palette workflows; add new remote import UI and
-      real SSH smoke coverage using existing configuration contracts.
+- [x] Implement the command palette for supported native workflows, remote import UI,
+      scoped model choices and Vue-aligned transcript activity presentation.
+- [ ] Finish session removal and remaining unsupported palette actions; prove real
+      SSH workflows using existing configuration contracts.
 - [ ] Complete file/media previews, multiline extension editing and applicable
       extension presentation; preserve local/remote preview security.
 - [ ] Finish history/tree/branch/navigation and compaction parity, replacement
