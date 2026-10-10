@@ -56,6 +56,11 @@ pub enum Command {
         runtime: String,
         attempt: u64,
     },
+    DisposeEmpty {
+        runtime: String,
+        attempt: u64,
+        generation: u64,
+    },
     Send {
         runtime: String,
         generation: u64,
@@ -115,6 +120,12 @@ pub enum Event {
         attempt: u64,
         result: Result<u64, ()>,
     },
+    EmptyDisposed {
+        runtime: String,
+        attempt: u64,
+        generation: u64,
+        success: bool,
+    },
     Written {
         runtime: String,
         generation: u64,
@@ -144,6 +155,12 @@ pub enum Event {
         success: bool,
     },
     StorageFailed,
+    RegistrationStored {
+        runtime: String,
+        generation: u64,
+        id: String,
+        path: String,
+    },
     RegistrationFailed(Command),
 }
 
@@ -242,6 +259,7 @@ fn worker_with_backend(
     let mut generations = HashMap::new();
     let mut registry_generations = HashMap::new();
     let mut start_attempts = HashMap::new();
+    let mut retired_attempts = HashMap::new();
     let mut archive_intents = std::collections::HashSet::new();
     let mut session_names = SessionNames::default();
     let sink_events = events.clone();
@@ -324,6 +342,15 @@ fn worker_with_backend(
                 project,
                 source,
             } => {
+                if retired_attempts
+                    .get(&runtime)
+                    .is_some_and(|retired| attempt <= *retired)
+                    || start_attempts
+                        .get(&runtime)
+                        .is_some_and(|started| attempt <= *started)
+                {
+                    continue;
+                }
                 start_attempts.insert(runtime.clone(), attempt);
                 generations.remove(&runtime);
                 registry_generations.remove(&runtime);
@@ -367,6 +394,38 @@ fn worker_with_backend(
                 }
                 None
             }
+            Command::DisposeEmpty {
+                runtime,
+                attempt,
+                generation,
+            } => {
+                let matches = retire_empty(
+                    &runtime,
+                    attempt,
+                    generation,
+                    &start_attempts,
+                    &mut generations,
+                    &mut registry_generations,
+                    &mut retired_attempts,
+                );
+                let success = if matches {
+                    match pi.stop(&owner, &runtime) {
+                        Ok(_) => {
+                            start_attempts.remove(&runtime);
+                            true
+                        }
+                        Err(_) => false,
+                    }
+                } else {
+                    true
+                }; // A successor owns this key; never stop it.
+                Some(Event::EmptyDisposed {
+                    runtime,
+                    attempt,
+                    generation,
+                    success,
+                })
+            }
             Command::Send {
                 runtime,
                 generation,
@@ -401,13 +460,17 @@ fn worker_with_backend(
                     name: name.clone(),
                 };
                 let adopted = registration_is_adoption(&archive_intents, &project, &id);
-                if session_names
-                    .register(project, id, path, name, adopted)
-                    .is_err()
-                {
-                    Some(Event::RegistrationFailed(retry))
-                } else {
+                let result = session_names.register(project, id, path, name, adopted);
+                let reply = registration_reply(retry, result);
+                if matches!(reply, Event::RegistrationStored { .. }) {
+                    // Only an accepted row is a durability acknowledgement; a workspace
+                    // reload failure must not turn this into a registration retry.
+                    if events.send_blocking(reply).is_err() {
+                        break;
+                    }
                     Some(Event::Workspace(storage::load_workspace().map_err(|_| ())))
+                } else {
+                    Some(reply)
                 }
             }
             Command::StoreName {
@@ -515,6 +578,47 @@ fn worker_with_backend(
     }
     pi.shutdown();
 }
+fn retire_empty(
+    runtime: &str,
+    attempt: u64,
+    generation: u64,
+    starts: &HashMap<String, u64>,
+    generations: &mut HashMap<String, u64>,
+    registry: &mut HashMap<String, u64>,
+    retired: &mut HashMap<String, u64>,
+) -> bool {
+    if !disposal_matches(runtime, attempt, generation, starts, generations, retired) {
+        return false;
+    }
+    // Revoke sends and durability retries before potentially failing cleanup.
+    retired
+        .entry(runtime.into())
+        .and_modify(|retired| *retired = (*retired).max(attempt))
+        .or_insert(attempt);
+    generations.remove(runtime);
+    registry.remove(runtime);
+    true
+}
+
+fn disposal_matches(
+    runtime: &str,
+    attempt: u64,
+    generation: u64,
+    starts: &HashMap<String, u64>,
+    generations: &HashMap<String, u64>,
+    retired: &HashMap<String, u64>,
+) -> bool {
+    (starts.get(runtime) == Some(&attempt)
+        && (retired.get(runtime) == Some(&attempt)
+            || generation == 0
+            || generations.get(runtime) == Some(&generation)))
+        || (!starts.contains_key(runtime) && !generations.contains_key(runtime))
+}
+
+#[cfg(test)]
+#[path = "service_empty_tests.rs"]
+mod empty_tests;
+
 #[derive(Default)]
 struct SessionNames {
     authoritative: HashMap<(String, String, String), String>,
@@ -556,6 +660,32 @@ impl SessionNames {
         storage::register_session(project, id, path, Some(name), None, Some(false))
     }
 }
+fn registration_reply(
+    command: Command,
+    result: Result<Option<tau_core::models::SessionSummary>, String>,
+) -> Event {
+    if matches!(result, Ok(Some(_))) {
+        let Command::Register {
+            runtime,
+            generation,
+            id,
+            path,
+            ..
+        } = command
+        else {
+            unreachable!("registration reply requires its captured command")
+        };
+        Event::RegistrationStored {
+            runtime,
+            generation,
+            id,
+            path,
+        }
+    } else {
+        Event::RegistrationFailed(command)
+    }
+}
+
 fn registration_is_adoption(
     intents: &std::collections::HashSet<(String, String)>,
     project: &str,

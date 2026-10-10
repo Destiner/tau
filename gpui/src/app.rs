@@ -5,6 +5,7 @@ mod native_smoke;
 pub use native_smoke::run_native_smoke;
 mod admin;
 mod admin_bridge;
+mod empty_sessions;
 mod model_scope;
 mod palette;
 mod projection;
@@ -67,6 +68,8 @@ struct LiveSession {
     project: ProjectSummary,
     source_id: String,
     source_path: String,
+    ephemeral: bool,
+    registration_pending: std::collections::BTreeSet<(u64, String, String)>,
     controller: Controller,
     starting: bool,
     start_attempt: u64,
@@ -99,6 +102,7 @@ pub struct Shell {
     sidebar: Option<Entity<Sidebar>>,
     header: Option<Entity<Header>>,
     window: Option<AnyWindowHandle>,
+    shell_focus: Option<gpui_kit::FocusHandle>,
     picker: Option<Rc<PathChooser<Root>>>,
     picker_busy: bool,
     subscriptions: Vec<Subscription>,
@@ -113,6 +117,8 @@ pub struct Shell {
     loaded: bool,
     save_failed: bool,
     register_retries: Vec<Command>,
+    empty_candidates: std::collections::BTreeSet<String>,
+    empty_disposals: std::collections::BTreeSet<(String, u64, u64)>,
     pending_saves: BTreeMap<u64, Preferences>,
     restored: bool,
     session_actions: session_actions::SessionActions,
@@ -189,6 +195,7 @@ fn run_with(
                 sidebar: None,
                 header: None,
                 window: None,
+                shell_focus: None,
                 picker: None,
                 picker_busy: false,
                 subscriptions: vec![],
@@ -203,6 +210,8 @@ fn run_with(
                 loaded: false,
                 save_failed: false,
                 register_retries: vec![],
+                empty_candidates: Default::default(),
+                empty_disposals: Default::default(),
                 pending_saves: BTreeMap::new(),
                 restored: false,
                 session_actions: session_actions::SessionActions::default(),
@@ -289,11 +298,14 @@ fn run_with(
                                     );
                                 }
                             }
+                            let live_count = shell.sessions.len();
+                            shell.reconcile_empty_sessions(cx);
+                            let retired = live_count != shell.sessions.len();
                             if changed {
                                 shell.sidebar_state.invalidate_projection();
                                 shell.persist(false, cx);
                             }
-                            if changed || shell.sidebar_clock_due() {
+                            if changed || retired || shell.sidebar_clock_due() {
                                 shell.refresh_window(cx);
                             }
                         })
@@ -454,6 +466,10 @@ fn open(shell: Entity<Shell>, cx: &mut App) -> gpui_kit::Result<AnyWindowHandle>
 
 impl Shell {
     fn dispatch(&mut self, command: Command, cx: &mut Context<Self>) {
+        if !self.empty_session_retry_is_current(&command) {
+            return;
+        }
+        self.protect_empty_registration(&command);
         let failed = if matches!(&command, Command::Start { .. }) && self.lifecycle.is_some() {
             Some(command)
         } else {
@@ -465,6 +481,10 @@ impl Shell {
         if let Some(failed) = failed {
             self.sidebar_state.invalidate_projection();
             match failed {
+                command @ Command::DisposeEmpty { .. } => {
+                    self.empty_disposal_dispatch_failed(command, cx);
+                    return;
+                }
                 Command::Admin(command) => {
                     self.admin_failed(command, cx);
                     return;
@@ -554,6 +574,8 @@ impl Shell {
         }
     }
     fn mount(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.window = Some(window.window_handle());
+        self.shell_focus = Some(cx.focus_handle());
         self.subscriptions.clear();
         for live in self.sessions.values_mut() {
             live.dirty = true;
@@ -638,16 +660,13 @@ impl Shell {
         if self.remote.is_open() || self.lifecycle.is_some() || self.confirmation.is_some() {
             return;
         }
-        let project = project
-            .and_then(|path| {
-                self.workspace
-                    .as_ref()?
-                    .projects
-                    .iter()
-                    .find(|p| p.path == path)
-                    .cloned()
-            })
-            .or_else(|| self.selected_project());
+        let project = match project {
+            Some(path) => self
+                .workspace
+                .as_ref()
+                .and_then(|workspace| workspace.projects.iter().find(|p| p.path == path).cloned()),
+            None => self.selected_project(),
+        };
         if let Some(project) = project {
             self.create_live(
                 uuid::Uuid::new_v4().to_string(),
@@ -658,6 +677,10 @@ impl Shell {
                 window,
                 cx,
             );
+            if let Some(focus) = self.shell_focus.clone() {
+                focus.focus(window, cx);
+            }
+            self.restore_input_focus(cx);
         } else {
             self.error = Some("Import a project before creating a session.".into());
             cx.notify();
@@ -674,6 +697,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.discard_empty_before_switch(&key, cx);
         self.create_retained(
             key.clone(),
             project,
@@ -703,6 +727,7 @@ impl Shell {
         if self.sessions.contains_key(&key) {
             return;
         }
+        let ephemeral = source_id.is_empty() && source_path.is_empty();
         let mut controller = Controller::new(&key);
         controller.tick(self.epoch.elapsed().as_millis() as u64);
         if !source_id.is_empty() {
@@ -775,6 +800,8 @@ impl Shell {
                 project: project.clone(),
                 source_id,
                 source_path: source_path.clone(),
+                ephemeral,
+                registration_pending: Default::default(),
                 controller,
                 starting: false,
                 start_attempt: 0,
@@ -922,6 +949,8 @@ impl Shell {
     }
     fn ingest(&mut self, event: Event, cx: &mut Context<Self>) {
         match event {
+            Event::RegistrationStored { runtime, generation, id, path } => self.empty_registration_stored(&runtime, generation, &id, &path),
+            Event::EmptyDisposed { runtime, attempt, generation, success } => self.empty_disposed(runtime, attempt, generation, success, cx),
             Event::Admin(reply) => self.admin_event(reply, cx),
             Event::Remote(event) => self.remote_event(event, cx),
             Event::ModelScope { runtime, token, patterns } => self.model_scope_result(runtime, token, patterns, cx),
@@ -936,6 +965,7 @@ impl Shell {
             Event::NameStored { runtime, generation, revision, id, path, name, success } => self.finish_name(runtime, generation, revision, id, path, name, success),
             Event::Archived { project, id, revision, archived, success } => self.finish_archive(project, id, revision, archived, success),
             Event::RegistrationFailed(command) => {
+                if !self.empty_session_retry_is_current(&command) { return; }
                 self.register_retries.push(command);
                 self.error = Some("A completed session could not be added to the workspace. Retry saving it.".into());
             }
@@ -1045,6 +1075,7 @@ impl Shell {
                     }
             }
         }
+        self.reconcile_empty_sessions(cx);
         if !self.save_failed
             && self.sessions.values().any(|live| {
                 live.controller.state().draft != live.persisted_draft

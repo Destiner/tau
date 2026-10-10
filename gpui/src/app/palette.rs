@@ -191,7 +191,7 @@ impl Shell {
     fn palette_blocked(&self) -> bool {
         !self.loaded || self.palette_modal_blocked()
     }
-    fn palette_binding(&self) -> Option<(String, u64, String, String)> {
+    pub(super) fn palette_binding(&self) -> Option<(String, u64, String, String)> {
         let Some(l) = self.sessions.get(&self.active) else {
             return self
                 .selected_project()
@@ -247,6 +247,7 @@ impl Shell {
         }
     }
     fn palette_restore_focus(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        let origin = self.palette.origin.take();
         self.sync_admin(w, cx);
         if self.admin_reporter_open(cx) {
             self.open_admin_reporter(w, cx);
@@ -255,13 +256,15 @@ impl Shell {
         if self.palette_modal_blocked() || self.palette.is_open(cx) {
             return;
         }
-        if self.palette.binding == self.palette_binding()
-            && let Some(focus) = self.palette.origin.take()
-        {
+        // Validate origin membership after painting: even a currently mounted
+        // composer can leave the dispatch tree when this command disables it.
+        let origin = (self.palette.binding == self.palette_binding())
+            .then_some(origin)
+            .flatten();
+        if let Some(focus) = self.shell_focus.clone() {
             focus.focus(w, cx);
-            return;
         }
-        self.action(Action::FocusComposer, w, cx);
+        self.restore_input_focus_from(origin, cx);
     }
     fn palette_selected(&mut self, id: &str, w: &mut Window, cx: &mut Context<Self>) {
         let Some(target) = self.palette.targets.get(id).cloned() else {
@@ -278,7 +281,24 @@ impl Shell {
         if let Some(view) = self.palette.view.clone() {
             view.update(cx, |palette, cx| palette.close(cx));
         }
-        self.palette_restore_focus(w, cx);
+        let changes_context = matches!(
+            target,
+            Target::Live(..)
+                | Target::Select(..)
+                | Target::Project(..)
+                | Target::New(..)
+                | Target::Archive(..)
+        );
+        let owns_focus = matches!(
+            target,
+            Target::Local
+                | Target::Remote
+                | Target::Rename
+                | Target::Composer
+                | Target::ReportIssue
+                | Target::Quit
+        );
+        let mut created_session = false;
         match target {
             Target::Live(key, generation, id, path) => {
                 if self.sessions.get(&key).is_some_and(|l| {
@@ -318,6 +338,7 @@ impl Shell {
                     self.select(&session, w, cx);
                 } else {
                     self.new_session(Some(path), w, cx);
+                    created_session = true;
                 }
             }
             Target::Local => self.action(Action::OpenLocalProject, w, cx),
@@ -336,7 +357,10 @@ impl Shell {
                     return;
                 }
                 match target {
-                    Target::New(p) => self.new_session(Some(p), w, cx),
+                    Target::New(p) => {
+                        self.new_session(Some(p), w, cx);
+                        created_session = true;
+                    }
                     Target::Archive(id) => self.action(Action::Archive(id), w, cx),
                     Target::Restore(id) => self.action(Action::Restore(id), w, cx),
                     Target::Rename => {
@@ -385,6 +409,23 @@ impl Shell {
                     _ => {}
                 }
             }
+        }
+        if changes_context {
+            // Select first: the old composer is about to leave the focus tree.
+            // The shell restores once the destination has rendered, including
+            // its extension dialog or disabled-composer fallback.
+            self.palette.origin = None;
+            if !created_session {
+                // Keep shortcuts routed while the destination editor awaits paint.
+                if let Some(focus) = self.shell_focus.clone() {
+                    focus.focus(w, cx);
+                }
+                self.restore_input_focus(cx);
+            }
+        } else if owns_focus {
+            self.palette.origin = None;
+        } else {
+            self.palette_restore_focus(w, cx);
         }
     }
     fn palette_pages(&self) -> (Vec<PalettePage>, BTreeMap<String, Target>) {

@@ -45,6 +45,15 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   Shift-Enter inserts a newline. When idle, Cmd-Enter sends an ordinary prompt.
 - Cmd-K command palette with real session/project/model/effort pages, supported actions
   and shortcuts, search, keyboard navigation, and modal-aware focus restoration.
+  Session switching keeps shortcuts on the mounted shell while the destination paints;
+  Cmd-P → switch → Cmd-K works without clicking or reactivating. A starting composer
+  uses shell focus, then receives focus when ready unless another surface owns it.
+- Leaving a truly empty, unregistered session retires its UI/runtime without deleting
+  Pi files. Pending reads defer the decision; only explicitly abandoned candidates are
+  revisited. Drafts (including whitespace), history, queued/recovered work, extension
+  prompts, errors and outstanding captured registrations prevent retirement.
+- Empty-session input uses a 4px internal top inset, 12px above the previous placement.
+  Outer composer padding, compact input and footer position are unchanged.
 - Model choices use Pi's scoped-model settings for local or remote sessions, following
   Vue's matching/order/fallback behavior. An out-of-scope current model remains a
   display label, not an extra selectable option. Provider-grouped, searchable menus
@@ -76,7 +85,7 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
 - Bounded presentation cache and incremental changed-row projection. Streaming does
   not hash or clone unchanged historical text.
 
-The current slice does **not** finish session removal, unsupported palette commands
+The current slice does **not** finish saved-session removal, unsupported palette commands
 (such as removal, queue recovery or update actions), file previews/media,
 full history/replacement recovery,
 idle eviction, updater or release packaging. Unavailable actions report that boundary;
@@ -120,6 +129,22 @@ this production policy. Both credential-free and model-enabled native acceptance
 passed the new guarded last-Cmd-W policy on 10 October 2026.
 
 ## Verification
+
+The session-switch follow-up passed **393 library tests** (one ignored benchmark),
+**13 editor integration tests**, formatting, GPUI lint/typecheck, all-target/all-feature
+strict Clippy and the actual native build. Both credential-free and model-enabled native
+acceptance passed actual Cmd-P/search/arrows/Enter → immediate Cmd-K/Escape, empty-session
+runtime cleanup acknowledgement, retained drafts, admin reporting and guarded shutdown.
+The model variant retained assistant/tool/Stop and rename/archive/restore coverage.
+The empty first-line bounds were measured at composer-area top + 10px and the owned
+native image was inspected. This requested 12px inset reduction intentionally differs
+from Vue's older empty-textarea override; no full paired visual campaign was performed.
+
+Negative controls reproduce the old palette handoff, false self-containment membership,
+and prepaint focus race. Initial native runs also caught missing New Session focus and
+an immediate-shortcut gap before the destination paint. Both are fixed with owned focus
+handoff, not test refocusing/activation, retries or widened deadlines. The initial static
+batch timed out during all-target checking; resumed strict checks passed.
 
 The sidebar/admin batch passed **370 library tests** (one ignored timing benchmark),
 **13 editor integration tests**, **48 controller tests** (one opt-in Pi canary ignored),

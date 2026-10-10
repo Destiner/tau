@@ -3,42 +3,82 @@ use gpui_kit::base::Button;
 
 impl Shell {
     pub(super) fn restore_input_focus(&self, cx: &mut Context<Self>) {
+        self.restore_input_focus_from(None, cx);
+    }
+    pub(super) fn restore_input_focus_from(
+        &self,
+        origin: Option<gpui_kit::FocusHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        let binding = self.palette_binding();
         let owner = cx.entity().downgrade();
         let target = self.window;
         cx.defer(move |cx| {
             if let Some(target) = target {
                 let _ = target.update(cx, |_, window, _| {
-                    window.on_next_frame(move |window, cx| {
-                        let Some(owner) = owner.upgrade() else {
-                            return;
-                        };
-                        let shell = owner.read(cx);
-                        if shell.window != Some(target)
-                            || shell.lifecycle.is_some()
-                            || shell.confirmation.is_some()
-                            || shell.palette.is_open(cx)
-                        {
-                            return;
-                        }
-                        if shell.remote.is_open() {
-                            owner.update(cx, |s, cx| s.focus_remote(window, cx));
-                            return;
-                        }
-                        if shell.admin_reporter_open(cx) {
-                            owner.update(cx, |s, cx| s.open_admin_reporter(window, cx));
-                            return;
-                        }
-                        let Some(live) = shell.sessions.get(&shell.active) else {
-                            return;
-                        };
-                        if let Some((_, dialog)) = &live.extension {
-                            let dialog = dialog.clone();
-                            dialog.update(cx, |dialog, cx| dialog.focus(window, cx));
-                        } else if !live.composer.read(cx).is_disabled() {
-                            use gpui_kit::Focusable;
-                            let focus = live.composer.read(cx).editor().read(cx).focus_handle(cx);
-                            focus.focus(window, cx);
-                        }
+                    // GPUI delivers frame callbacks before drawing. The second callback
+                    // sees the dispatch tree painted by the first frame.
+                    window.on_next_frame(move |window, _| {
+                        window.on_next_frame(move |window, cx| {
+                            let Some(owner) = owner.upgrade() else {
+                                return;
+                            };
+                            let shell = owner.read(cx);
+                            if shell.window != Some(target)
+                                || shell.lifecycle.is_some()
+                                || shell.confirmation.is_some()
+                                || shell.error.is_some()
+                                || shell.picker_busy
+                                || shell.palette.is_open(cx)
+                            {
+                                return;
+                            }
+                            if shell.remote.is_open() {
+                                owner.update(cx, |s, cx| s.focus_remote(window, cx));
+                                return;
+                            }
+                            if shell.admin_reporter_open(cx) {
+                                owner.update(cx, |s, cx| s.open_admin_reporter(window, cx));
+                                return;
+                            }
+                            if let Some((_, dialog)) = shell
+                                .sessions
+                                .get(&shell.active)
+                                .and_then(|live| live.extension.as_ref())
+                            {
+                                let dialog = dialog.clone();
+                                dialog.update(cx, |dialog, cx| dialog.focus(window, cx));
+                                return;
+                            }
+                            if binding == shell.palette_binding()
+                                && let Some(focus) = origin
+                                && shell.shell_focus.as_ref().is_some_and(|root| {
+                                    root != &focus && root.contains(&focus, window)
+                                })
+                            {
+                                focus.focus(window, cx);
+                                return;
+                            }
+                            if let Some(live) = shell.sessions.get(&shell.active)
+                                && !live.composer.read(cx).is_disabled()
+                            {
+                                use gpui_kit::Focusable;
+                                let focus =
+                                    live.composer.read(cx).editor().read(cx).focus_handle(cx);
+                                // contains(self) is true even for an unmounted handle.
+                                if shell
+                                    .shell_focus
+                                    .as_ref()
+                                    .is_some_and(|root| root.contains(&focus, window))
+                                {
+                                    focus.focus(window, cx);
+                                    return;
+                                }
+                            }
+                            if let Some(focus) = shell.shell_focus.clone() {
+                                focus.focus(window, cx);
+                            }
+                        });
                     });
                 });
             }
@@ -126,6 +166,7 @@ impl Shell {
             });
         }
         let keys: Vec<_> = self.sessions.keys().cloned().collect();
+        let mut focus_ready_composer = false;
         for key in keys {
             let live = self.sessions.get_mut(&key).unwrap();
             if !live.dirty && !changed {
@@ -196,6 +237,13 @@ impl Shell {
                 state.working,
             );
             let status_changed = live.ui_status != Some(status);
+            focus_ready_composer |= status_changed
+                && !status.0
+                && key == self.active
+                && self
+                    .shell_focus
+                    .as_ref()
+                    .is_some_and(|focus| focus.is_focused(window));
             live.ui_status = Some(status);
             live.composer.update(cx, |c, cx| {
                 if status_changed {
@@ -397,6 +445,9 @@ impl Shell {
         self.sync_remote(window, cx);
         self.sync_admin(window, cx);
         self.sync_palette(window, cx);
+        if focus_ready_composer {
+            self.restore_input_focus(cx);
+        }
         cx.notify();
     }
     pub(super) fn select(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -415,6 +466,7 @@ impl Shell {
             })
             .map(|(key, _)| key.clone())
         {
+            self.discard_empty_before_switch(&key, cx);
             self.sessions.get_mut(&key).unwrap().dirty = true;
             if let Some((project, session, _)) = self.saved_session(&key)
                 && !session.archived
@@ -546,6 +598,9 @@ impl Render for Shell {
         use gpui_kit::TestSupportExt;
         let t = support::tokens(self.dark);
         let mut body = Self::palette_keymap(div().key_context("TauShell"), cx)
+            .when_some(self.shell_focus.as_ref(), |body, focus| {
+                body.track_focus(focus)
+            })
             .capture_key_down(cx.listener(Self::admin_key))
             .flex()
             .size_full()

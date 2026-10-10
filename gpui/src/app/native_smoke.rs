@@ -210,11 +210,12 @@ async fn capture(shell: &Entity<Shell>, cx: &AsyncApp, name: &str, empty: bool) 
     let painted = Rc::new(Cell::new(false));
     let observed = painted.clone();
     let name = name.to_owned();
+    let captured_shell = shell.clone();
     cx.update(|cx| {
         window(shell, cx).update(cx, |_, w, _| {
             // GPUI drains frame callbacks before drawing. A second callback
             // observes the scene painted by the first normal platform frame.
-            w.on_next_frame(move |w, _| w.on_next_frame(move |w, _| {
+            w.on_next_frame(move |w, _| w.on_next_frame(move |w, cx| {
                 let bounds = |id: &str| gpui_kit::base::test_support::find(w, &[], &id.to_owned().into()).unwrap().bounds();
                 let area = bounds("shell-composer-area");
                 let editor = bounds("editor");
@@ -226,6 +227,11 @@ async fn capture(shell: &Entity<Shell>, cx: &AsyncApp, name: &str, empty: bool) 
                 if empty {
                     assert!(gpui_kit::base::test_support::find(w, &[], &"shell-transcript-slot".into()).is_none());
                     assert_eq!(editor.top(), area.top() + px(6.));
+                    let s = captured_shell.read(cx);
+                    let textarea = s.sessions[&s.active].composer.read(cx).editor();
+                    let first_line = textarea.read(cx).range_to_bounds(&(0..0)).expect("painted first line layout");
+                    assert_eq!(first_line.top(), area.top() + px(10.));
+                    eprintln!("PASS native-app {name} actual empty first-line bounds={first_line:?} inset=10px");
                     assert_eq!(editor.bottom(), footer.top());
                     assert!(editor.size.height > w.viewport_size().height * 0.75);
                 } else {
@@ -847,6 +853,181 @@ async fn ready(shell: &Entity<Shell>, cx: &AsyncApp) {
     })
     .await;
 }
+async fn empty_session_keyboard_switch(shell: &Entity<Shell>, cx: &AsyncApp, first: &str) {
+    let count = cx.update(|cx| shell.read(cx).sessions.len());
+    cx.update(|cx| cx.dispatch_action(&crate::native::NewSession));
+    ready(shell, cx).await;
+    let temporary = cx.update(|cx| shell.read(cx).active.clone());
+    assert_ne!(temporary, first);
+    capture(shell, cx, "transient-empty", true).await;
+    key(shell, cx, "cmd-p");
+    poll(cx, "CmdP sessions search naturally focused", 5, |cx| {
+        window(shell, cx)
+            .update(cx, |_, w, cx| {
+                shell.read(cx).palette.view.as_ref().is_some_and(|view| {
+                    let p = view.read(cx);
+                    p.is_open()
+                        && p.page_id() == "sessions"
+                        && modal_ready(&p.search_editor(), w, cx, "palette-surface", "search")
+                })
+            })
+            .unwrap()
+    })
+    .await;
+    cx.update(|cx| {
+        window(shell, cx)
+            .update(cx, |_, w, cx| {
+                let editor = shell
+                    .read(cx)
+                    .palette
+                    .view
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .search_editor();
+                assert!(editor.read(cx).focus_handle(cx).is_focused(w));
+                editor.update(cx, |input, cx| {
+                    input.replace_text_in_range(None, "New Session", w, cx)
+                });
+            })
+            .unwrap();
+    });
+    poll(cx, "actual CmdP search results", 5, |cx| {
+        let s = shell.read(cx);
+        let p = s.palette.view.as_ref().unwrap().read(cx);
+        p.query() == "New Session" && p.selected_id().is_some()
+    })
+    .await;
+    // Both live blanks have the same title; choose the original via actual arrow keys.
+    let target = format!("live:Live({first:?},");
+    for _ in 0..=count {
+        let selected = cx.update(|cx| {
+            shell
+                .read(cx)
+                .palette
+                .view
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .selected_id()
+                .unwrap()
+                .to_owned()
+        });
+        if selected.starts_with(&target) {
+            break;
+        }
+        key(shell, cx, "down");
+        poll(cx, "CmdP keyboard selection advances", 5, |cx| {
+            shell
+                .read(cx)
+                .palette
+                .view
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .selected_id()
+                != Some(selected.as_str())
+        })
+        .await;
+    }
+    cx.update(|cx| {
+        assert!(
+            shell
+                .read(cx)
+                .palette
+                .view
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .selected_id()
+                .unwrap()
+                .starts_with(&target)
+        );
+    });
+    key(shell, cx, "enter");
+    ready(shell, cx).await;
+    poll(
+        cx,
+        "CmdP retires blank and acknowledges runtime disposal",
+        5,
+        |cx| {
+            let s = shell.read(cx);
+            assert!(s.error.is_none());
+            assert!(
+                s.sessions
+                    .values()
+                    .all(|live| live.controller.state().error.is_none())
+            );
+            s.active == first
+                && !s.palette.is_open(cx)
+                && !s.sessions.contains_key(&temporary)
+                && s.sessions.len() == count
+                && s.empty_candidates.is_empty()
+                && s.empty_disposals.is_empty()
+                && s.sessions
+                    .values()
+                    .all(|live| live.registration_pending.is_empty())
+                && s.sessions[first].controller.state().draft == "Owned draft café 😀"
+                && s.sessions[first]
+                    .composer
+                    .read(cx)
+                    .editor()
+                    .read(cx)
+                    .value()
+                    .as_ref()
+                    == "Owned draft café 😀"
+        },
+    )
+    .await;
+    // No activation, click or focus repair between the session switch and CmdK.
+    key(shell, cx, "cmd-k");
+    poll(
+        cx,
+        "post-CmdP CmdK root palette naturally focused",
+        5,
+        |cx| {
+            window(shell, cx)
+                .update(cx, |_, w, cx| {
+                    shell.read(cx).palette.view.as_ref().is_some_and(|view| {
+                        let p = view.read(cx);
+                        p.is_open()
+                            && p.page_id() == "root"
+                            && modal_ready(&p.search_editor(), w, cx, "palette-surface", "search")
+                    })
+                })
+                .unwrap()
+        },
+    )
+    .await;
+    key(shell, cx, "escape");
+    poll(
+        cx,
+        "post-switch Escape restores actual first composer focus",
+        5,
+        |cx| {
+            window(shell, cx)
+                .update(cx, |_, w, cx| {
+                    let s = shell.read(cx);
+                    let live = &s.sessions[first];
+                    let editor = live.composer.read(cx).editor();
+                    assert!(s.error.is_none() && live.controller.state().error.is_none());
+                    s.active == first
+                        && !s.palette.is_open(cx)
+                        && editor.read(cx).focus_handle(cx).is_focused(w)
+                        && editor.read(cx).value().as_ref() == "Owned draft café 😀"
+                        && live.controller.state().draft == "Owned draft café 😀"
+                        && gpui_kit::base::test_support::find(w, &[], &"palette-surface".into())
+                            .is_none()
+                })
+                .unwrap()
+        },
+    )
+    .await;
+    eprintln!(
+        "PASS native-app real CmdP search/arrows/Enter disposes blank + retains Unicode draft; immediate CmdK/Escape restores first composer without refocus"
+    );
+}
+
 async fn exercise(
     shell: Entity<Shell>,
     root: PathBuf,
@@ -874,10 +1055,38 @@ async fn exercise(
     .await;
     palette_remote(&shell, &cx, &first).await;
     admin_report(&shell, &cx, &root, &first).await;
+    empty_session_keyboard_switch(&shell, &cx, &first).await;
     cx.update(|cx| cx.dispatch_action(&crate::native::NewSession));
     ready(&shell, &cx).await;
     let second = cx.update(|cx| shell.read(cx).active.clone());
     assert_ne!(first, second);
+    poll(
+        &cx,
+        "second composer naturally focused before draft input",
+        5,
+        |cx| {
+            window(&shell, cx)
+                .update(cx, |_, w, cx| {
+                    shell.read(cx).sessions[&second]
+                        .composer
+                        .read(cx)
+                        .editor()
+                        .read(cx)
+                        .focus_handle(cx)
+                        .is_focused(w)
+                })
+                .unwrap()
+        },
+    )
+    .await;
+    insert_composer(&shell, &cx, "/tau-native-smoke");
+    poll(
+        &cx,
+        "second draft protects session before sidebar switch",
+        5,
+        |cx| shell.read(cx).sessions[&second].controller.state().draft == "/tau-native-smoke",
+    )
+    .await;
     cx.update(|cx| {
         let s = shell.read(cx);
         eprintln!(
@@ -911,14 +1120,23 @@ async fn exercise(
     .await;
     click(&shell, &cx, &format!("session-status-{second}")).await;
     poll(&cx, "sidebar selects second isolated draft", 5, |cx| {
-        shell.read(cx).active == second
+        let s = shell.read(cx);
+        s.active == second
+            && s.sessions[&second].controller.state().draft == "/tau-native-smoke"
+            && s.sessions[&second]
+                .composer
+                .read(cx)
+                .editor()
+                .read(cx)
+                .value()
+                .as_ref()
+                == "/tau-native-smoke"
     })
     .await;
     eprintln!("PASS native-app NewSession + real sidebar switches retain editor draft");
     check_menus();
     eprintln!("PASS native-app native menu omits Settings");
     focus_composer(&shell, &cx);
-    insert_composer(&shell, &cx, "/tau-native-smoke");
     key(&shell, &cx, "enter");
     poll(&cx, "real Pi extension input", 12, |cx| {
         shell.read(cx).sessions[&second].extension.is_some()

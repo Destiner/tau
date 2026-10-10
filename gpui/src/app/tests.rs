@@ -13,6 +13,7 @@ pub(super) fn shell(commands: async_channel::Sender<Command>) -> Shell {
         sidebar: None,
         header: None,
         window: None,
+        shell_focus: None,
         picker: None,
         picker_busy: false,
         subscriptions: vec![],
@@ -27,6 +28,8 @@ pub(super) fn shell(commands: async_channel::Sender<Command>) -> Shell {
         loaded: true,
         save_failed: false,
         register_retries: vec![],
+        empty_candidates: Default::default(),
+        empty_disposals: Default::default(),
         pending_saves: BTreeMap::new(),
         restored: false,
         session_actions: session_actions::SessionActions::default(),
@@ -379,7 +382,8 @@ fn saturated_dispatch_recovers_request_and_does_not_acknowledge_draft_save() {
 #[test]
 fn registration_uses_captured_identity_without_selecting_it() {
     with_shell(64, |s, w, cx, requests| {
-        create(s, "a", "", w, cx);
+        create(s, "a", "retained work", w, cx);
+        started(s, "a", 4, cx);
         create(s, "b", "", w, cx);
         s.effects(
             "a",
