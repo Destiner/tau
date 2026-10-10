@@ -22,12 +22,14 @@ UI are not implemented/proven.** Pi still owns extensions and session files.
 
 Implemented first-slice behavior includes local project import, existing/new
 sessions, model/effort selection, prompt/stream/activity/Stop and queue controls,
-extension input/select/confirm and custom output, theme Settings, owned folder
+extension input/select/confirm and custom output, owned folder
 selection, drafts, guarded close/quit, last-window survival and reopen. See
 [APP.md](../gpui/APP.md) for launch and profile safety instructions and
 [controller limits](../crates/tau-session/README.md) for exact protocol boundaries.
 
 **This is an operational native slice, not whole runtime parity or cutover.**
+Settings is intentionally absent: no panel, menu item or Cmd-comma shortcut.
+Existing persisted theme choices remain readable; otherwise appearance follows the system.
 Tauri remains the operational fallback. A standalone, locally ad-hoc-signed
 **Tau Native.app** preview now packages the actual GPUI executable (`4366e27`),
 with a separate bundle identity and verified metadata/linkage. It has not replaced
@@ -43,7 +45,7 @@ GPUI release or GPUI updater. See [packaging](../gpui/PACKAGING.md).
   name bounds; one opt-in installed-Pi canary ignored in the default run.
 - Native credential-free acceptance passed with installed **Pi 0.99.2** in an
   isolated profile: command bootstrap, actual extension input/Enter/custom output,
-  session switching and drafts, Settings, close/reopen, busy-close cancellation,
+  session switching and drafts, native menus, close/reopen, busy-close cancellation,
   restored dialog focus, and completion-gated quit/process cleanup.
 - Reopen now presents a fresh per-window surface only after remount. The regression
   clicks actual measured controls and includes a negative control reproducing the
