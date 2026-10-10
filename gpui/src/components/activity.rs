@@ -39,7 +39,7 @@ pub fn tool_header(
         .disabled(!expandable)
         .track_focus(focus)
         .w_full()
-        .min_h(px(19.))
+        .min_h(px(18.5))
         .flex()
         .items_center()
         .gap(px(8.))
@@ -53,6 +53,7 @@ pub fn tool_header(
             div()
                 .font_family("Menlo")
                 .text_size(px(10.))
+                .line_height(gpui_kit::relative(1.25))
                 .text_color(rgb(if expandable && hovered {
                     t.text
                 } else {
@@ -67,6 +68,7 @@ pub fn tool_header(
                 .whitespace_nowrap()
                 .font_family("Menlo")
                 .text_size(px(10.))
+                .line_height(gpui_kit::relative(1.25))
                 .text_color(rgb(t.faint))
                 .child(argument.to_owned()),
         )

@@ -1,4 +1,5 @@
 use super::*;
+use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
     TestApp,
     base::{Root, TextSelectionDomainEndpoint},
@@ -175,6 +176,150 @@ fn tool_disclosure_survives_eviction_and_content_refresh() {
                 "prose\n\nprose"
             );
         });
+    });
+}
+
+pub(crate) fn production_projection_matches_vue_activity_geometry_and_remeasures_neighbors(
+    mut sync: impl FnMut(&[tau_session::transcript::Entry], &Entity<Transcript>, &mut Context<()>),
+) {
+    use serde_json::json;
+    use tau_session::session::Controller;
+
+    let mut controller = Controller::new("geometry");
+    controller.begin_generation(1);
+    controller.handle(json!({"type":"message_start", "message":{
+        "role":"assistant", "timestamp":1, "content":[
+            {"type":"thinking", "thinking":"Plan"},
+            {"type":"toolCall", "id":"read", "name":"read", "arguments":{"path":"gpui/APP.md"}},
+            {"type":"text", "text":"Reply"}
+        ]
+    }}));
+    let mut app = app();
+    let host = app.new_entity(|_| ());
+    let transcript = app.new_entity(|cx| Transcript::new("transcript", true, cx));
+    app.update(|cx| {
+        host.update(cx, |_, cx| {
+            sync(&controller.state().transcript, &transcript, cx)
+        })
+    });
+    let mut window =
+        app.open_window(|w, cx| Root::new(transcript.clone(), w, cx).flex().flex_col());
+    window.simulate_resize(size(px(1000.), px(700.)));
+    window.update(|_, w, cx| w.bounds_changed(cx));
+    window.draw();
+    window.update(|_, w, _| {
+        let thinking = w.find("transcript-row-0").bounds();
+        let tool = w.find("transcript-row-1").bounds();
+        let text = w.find("transcript-row-2").bounds();
+        let header = w.find("transcript-activity-1").bounds();
+        // Vue: 10px * 1.25 + 2 * 3px; compact padding 0, otherwise 22px.
+        assert_eq!(thinking.size.height, px(18.5));
+        assert_eq!(tool.size.height, px(40.5));
+        assert_eq!(tool.top(), thinking.bottom());
+        assert_eq!(text.top() - header.bottom(), px(22.));
+    });
+    app.update(|cx| {
+        transcript.update(cx, |t, _| {
+            let TranscriptContent::Activity(ActivityContent::Tool { name, argument, .. }) =
+                &t.rows[1].entry.content
+            else {
+                panic!()
+            };
+            assert_eq!((name.as_str(), argument.as_str()), ("read", "gpui/APP.md"));
+        })
+    });
+
+    let mut source = controller.state().transcript.clone();
+    // Reconcile away the tool: unchanged thinking must regain its 22px padding.
+    source.remove(1);
+    window.update(|_, _, cx| host.update(cx, |_, cx| sync(&source, &transcript, cx)));
+    window.draw();
+    window.update(|_, w, _| assert_eq!(w.find("transcript-row-0").bounds().size.height, px(40.5)));
+    // Append an activity after the remaining thinking tail, then change its kind.
+    source.pop();
+    window.update(|_, _, cx| host.update(cx, |_, cx| sync(&source, &transcript, cx)));
+    source.push(controller.state().transcript[1].clone());
+    window.update(|_, _, cx| host.update(cx, |_, cx| sync(&source, &transcript, cx)));
+    window.draw();
+    window.update(|_, w, _| assert_eq!(w.find("transcript-row-0").bounds().size.height, px(18.5)));
+    source[1].kind = "assistant".into();
+    source[1].text = "Result".into();
+    source[1].revision += 1;
+    window.update(|_, _, cx| host.update(cx, |_, cx| sync(&source, &transcript, cx)));
+    window.draw();
+    window.update(|_, w, _| assert_eq!(w.find("transcript-row-0").bounds().size.height, px(40.5)));
+
+    source[1].kind = "tool".into();
+    source[1].text.clear();
+    source[1].result = "raw result  \n".into();
+    let key = app.update(|cx| transcript.read(cx).rows[1].key);
+    for (name, args, expected) in [
+        ("read", json!({"path":"gpui/APP.md"}), "gpui/APP.md"),
+        ("bash", json!({"command":"bun run build"}), "bun run build"),
+        (
+            "edit",
+            json!({"path":"file.rs", "oldText":"raw  \n", "newText":"new"}),
+            "file.rs",
+        ),
+        ("tool", json!(null), ""),
+        ("tool", json!(false), "false"),
+    ] {
+        source[1].tool_name = Some(name.into());
+        source[1].arguments = args.clone();
+        source[1].revision += 1;
+        window.update(|_, _, cx| host.update(cx, |_, cx| sync(&source, &transcript, cx)));
+        window.draw();
+        window.read(|_, cx| {
+            let t = transcript.read(cx);
+            assert_eq!(t.rows[1].key, key);
+            let TranscriptContent::Activity(ActivityContent::Tool {
+                name: label,
+                argument,
+                result,
+                ..
+            }) = &t.rows[1].entry.content
+            else {
+                panic!()
+            };
+            assert_eq!((label.as_str(), argument.as_str()), (name, expected));
+            assert_eq!(result, "raw result  \n");
+            assert!(t.cache.len() <= CACHE_LIMIT);
+        });
+        assert_eq!(source[1].arguments, args);
+    }
+    let mut thinking = source[0].clone();
+    thinking.id = "second-thinking".into();
+    let mut tool = source[1].clone();
+    tool.id = "second-tool".into();
+    source = vec![
+        source[0].clone(),
+        thinking,
+        source[1].clone(),
+        tool,
+        controller.state().transcript[2].clone(),
+    ];
+    window.update(|_, _, cx| host.update(cx, |_, cx| sync(&source, &transcript, cx)));
+    window.draw();
+    let keys = window.read(|_, cx| {
+        transcript
+            .read(cx)
+            .rows
+            .iter()
+            .map(|row| row.key)
+            .collect::<Vec<_>>()
+    });
+    window.update(|_, w, _| {
+        let bounds = keys
+            .iter()
+            .map(|key| w.find(format!("transcript-row-{key}")).bounds())
+            .collect::<Vec<_>>();
+        // thinking → thinking → tool → tool → text has only one 22px gap.
+        for ix in 0..3 {
+            assert_eq!(bounds[ix].size.height, px(18.5));
+            assert_eq!(bounds[ix].bottom(), bounds[ix + 1].top());
+        }
+        assert_eq!(bounds[3].size.height, px(40.5));
+        assert_eq!(bounds[3].bottom(), bounds[4].top());
     });
 }
 

@@ -11,6 +11,7 @@ pub struct Projection {
 }
 struct Revision {
     id: String,
+    kind: String,
     revision: u64,
     length: usize,
 }
@@ -27,9 +28,13 @@ fn row(entry: &Entry) -> TranscriptEntry {
             text: entry.text.clone(),
         }),
         "tool" => TranscriptContent::Activity(ActivityContent::Tool {
-            name: entry.tool_name.clone().unwrap_or_else(|| "Tool".into()),
-            argument: entry.text.clone(),
-            arguments: entry.arguments.to_string(),
+            name: entry
+                .tool_name
+                .clone()
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| "tool".into()),
+            argument: entry.tool_description(),
+            arguments: entry.tool_arguments_text(),
             result: entry.result.clone(),
             running: entry.activity,
             failed: entry.is_error,
@@ -60,7 +65,8 @@ impl Projection {
                 if old.revision == entry.revision {
                     continue;
                 }
-                if matches!(entry.kind.as_str(), "assistant" | "user")
+                if old.kind == entry.kind
+                    && matches!(entry.kind.as_str(), "assistant" | "user")
                     && entry.text_reset_revision <= old.revision
                     && entry.text.len() >= old.length
                     && entry.text.is_char_boundary(old.length)
@@ -69,6 +75,7 @@ impl Projection {
                 } else {
                     apply(Change::Replace(entry));
                 }
+                old.kind.clone_from(&entry.kind);
                 old.revision = entry.revision;
                 old.length = entry.text.len();
             } else {
@@ -77,6 +84,7 @@ impl Projection {
                 }
                 self.previous.push(Revision {
                     id: entry.id.clone(),
+                    kind: entry.kind.clone(),
                     revision: entry.revision,
                     length: entry.text.len(),
                 });
@@ -122,6 +130,125 @@ mod tests {
         }))
         .unwrap()
     }
+    #[test]
+    fn production_projection_matches_vue_activity_geometry_and_remeasures_neighbors() {
+        let mut projection = Projection::default();
+        crate::components::transcript::tests::production_projection_matches_vue_activity_geometry_and_remeasures_neighbors(
+            |source, transcript, cx| projection.sync(source, transcript, cx),
+        );
+    }
+
+    #[test]
+    fn kind_changes_replace_instead_of_using_prose_append_lineage() {
+        let mut source = vec![entry(0, "thinking", "")];
+        let mut projection = Projection::default();
+        projection.changes(&source, |_| {});
+        for kind in ["assistant", "user", "tool", "assistant"] {
+            source[0].kind = kind.into();
+            source[0].revision += 1;
+            projection.changes(&source, |change| {
+                assert!(matches!(change, Change::Replace(_)));
+            });
+        }
+    }
+
+    #[test]
+    fn tool_headers_use_vue_semantics_without_mutating_raw_payloads() {
+        let cases = [
+            (
+                "read",
+                json!({"path":"gpui/APP.md", "offset":2}),
+                "gpui/APP.md",
+            ),
+            ("bash", json!({"command":"bun run build"}), "bun run build"),
+            (
+                "edit",
+                json!({"path":"file.rs", "oldText":"before", "newText":"after"}),
+                "file.rs",
+            ),
+            ("write", json!({"file_path":"new.rs"}), "new.rs"),
+            ("search", json!({"query":"needle"}), "needle"),
+            (
+                "custom",
+                json!({"command":"", "path":23, "query":"fallback"}),
+                "fallback",
+            ),
+            ("custom", json!([1, 2]), "[1,2]"),
+            ("custom", json!("partial JSON"), "\"partial JSON\""),
+            ("custom", json!({}), "{}"),
+            ("", json!(null), ""),
+        ];
+        for (name, args, expected) in cases {
+            let mut entry = entry(0, "tool", "");
+            entry.tool_name = Some(name.into());
+            entry.arguments = args.clone();
+            entry.result = "raw\noutput  \n".into();
+            let TranscriptContent::Activity(ActivityContent::Tool {
+                name: label,
+                argument,
+                arguments,
+                result,
+                ..
+            }) = row(&entry).content
+            else {
+                panic!()
+            };
+            assert_eq!(label, if name.is_empty() { "tool" } else { name });
+            assert_eq!(argument, expected);
+            if args.as_object().is_some_and(|args| !args.is_empty()) {
+                assert_eq!(
+                    serde_json::from_str::<serde_json::Value>(&arguments).unwrap(),
+                    args
+                );
+                assert!(arguments.contains('\n'));
+            } else {
+                assert!(arguments.is_empty());
+            }
+            assert_eq!(entry.arguments, args);
+            assert_eq!(result, "raw\noutput  \n");
+        }
+    }
+
+    #[test]
+    fn production_controller_argument_updates_reach_the_same_tool_row() {
+        use tau_session::session::Controller;
+        let mut controller = Controller::new("projection");
+        controller.begin_generation(1);
+        controller.handle(json!({"type":"message_start", "message":{
+            "role":"assistant", "timestamp":1, "content":[
+                {"type":"toolCall", "id":"call", "name":"read"}
+            ]
+        }}));
+        let mut projection = Projection::default();
+        projection.changes(&controller.state().transcript, |_| {});
+        let id = controller.state().transcript[0].id.clone();
+        controller.handle(json!({"type":"tool_execution_start", "toolCallId":"call",
+            "toolName":"read", "args":{"path":"gpui/APP.md"}}));
+        let mut replaced = false;
+        projection.changes(&controller.state().transcript, |change| {
+            let Change::Replace(entry) = change else {
+                panic!("argument changes must replace only the tool presentation")
+            };
+            assert_eq!(entry.id, id);
+            let TranscriptContent::Activity(ActivityContent::Tool { argument, .. }) =
+                row(entry).content
+            else {
+                panic!()
+            };
+            assert_eq!(argument, "gpui/APP.md");
+            replaced = true;
+        });
+        assert!(replaced);
+        controller.handle(
+            json!({"type":"tool_execution_end", "toolCallId":"call", "toolName":"read",
+            "result":{"content":[{"type":"text", "text":"raw result"}]}, "isError":false}),
+        );
+        assert_eq!(
+            controller.state().transcript[0].tool_description(),
+            "gpui/APP.md"
+        );
+    }
+
     #[test]
     fn large_history_projects_only_changed_row_and_prose_suffix() {
         let mut source: Vec<_> = (0..2000)

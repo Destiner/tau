@@ -6,7 +6,7 @@ use super::{
 };
 use gpui_kit::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, FollowMode, IntoElement,
-    ListAlignment, ListState, Render, Subscription, WeakEntity, Window,
+    ListAlignment, ListState, Render, Subscription, TestSupportExt, WeakEntity, Window,
     base::{
         Scrollbar, ScrollbarMode, SelectionFormat, TextSelectionDomain, TextSelectionDomainRange,
         TextViewState,
@@ -24,6 +24,9 @@ pub enum TranscriptContent {
     Activity(ActivityContent),
 }
 impl TranscriptContent {
+    fn is_activity(&self) -> bool {
+        matches!(self, Self::Activity(_))
+    }
     fn text(&self) -> Option<&str> {
         match self {
             Self::User(text) | Self::Assistant(text) => Some(text),
@@ -188,6 +191,10 @@ impl Transcript {
             expanded: false,
         });
         self.list.splice(ix..ix, 1);
+        if ix > 0 && self.is_compact(ix - 1) {
+            // The former tail is now compact beside another activity.
+            self.list.remeasure_items(ix - 1..ix);
+        }
         if tail {
             self.list.scroll_to_end();
         }
@@ -216,6 +223,7 @@ impl Transcript {
             return true;
         }
         let key = self.rows[ix].key;
+        let neighbor_changed = self.rows[ix].entry.content.is_activity() != content.is_activity();
         let append = match (self.rows[ix].entry.content.text(), content.text()) {
             (Some(before), Some(after))
                 if same_prose_kind(&self.rows[ix].entry.content, &content) =>
@@ -247,7 +255,12 @@ impl Transcript {
             }
             self.rows[ix].entry.content = content;
         }
-        self.list.remeasure_items(ix..ix + 1);
+        let start = if neighbor_changed {
+            ix.saturating_sub(1)
+        } else {
+            ix
+        };
+        self.list.remeasure_items(start..ix + 1);
         cx.notify();
         true
     }
@@ -327,7 +340,13 @@ impl Transcript {
             .filter(|row| self.selection_contains(row.key))
             .map(|row| row.key)
             .collect();
-        let mut changed = Vec::new();
+        let compact_before: HashMap<_, _> = self
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(ix, row)| (row.key, self.is_compact(ix)))
+            .collect();
+        let mut changed = HashSet::new();
         let mut old: HashMap<_, _> = std::mem::take(&mut self.rows)
             .into_iter()
             .map(|r| (r.entry.id.clone(), r))
@@ -335,7 +354,7 @@ impl Transcript {
         for entry in entries {
             let row = if let Some(mut row) = old.remove(&entry.id) {
                 if !same_content(&row.entry.content, &entry.content) {
-                    changed.push(row.key);
+                    changed.insert(row.key);
                     if let Some(Mounted {
                         view: View::Activity(activity),
                         ..
@@ -399,7 +418,16 @@ impl Transcript {
             self.list
                 .splice(prefix..old_len - suffix, self.rows.len() - prefix - suffix);
         }
-        // Preserve geometry of unchanged rows; only changed surviving content needs remeasure.
+        // A surviving neighbor can change padding even when its source is unchanged.
+        for (ix, row) in self.rows.iter().enumerate() {
+            if compact_before
+                .get(&row.key)
+                .is_some_and(|before| *before != self.is_compact(ix))
+            {
+                changed.insert(row.key);
+            }
+        }
+        // Preserve geometry of unchanged rows.
         for key in changed {
             if let Some(&ix) = self.by_key.get(&key) {
                 self.list.remeasure_items(ix..ix + 1);
@@ -611,6 +639,15 @@ impl Transcript {
         }
         self.cache.get(&key).map(|mounted| mounted.view.clone())
     }
+    fn is_compact(&self, ix: usize) -> bool {
+        self.rows
+            .get(ix)
+            .is_some_and(|row| row.entry.content.is_activity())
+            && self
+                .rows
+                .get(ix + 1)
+                .is_some_and(|row| row.entry.content.is_activity())
+    }
     fn row_changed(&mut self, key: u64, cx: &mut Context<Self>) {
         if let Some(&ix) = self.by_key.get(&key) {
             self.list.remeasure_items(ix..ix + 1);
@@ -643,19 +680,21 @@ impl Render for Transcript {
                         Some((
                             row.key,
                             matches!(row.entry.content, TranscriptContent::User(_)),
+                            this.is_compact(ix),
                             view,
                         ))
                     });
-                    let Some((key, user, view)) = metadata else {
+                    let Some((key, user, compact, view)) = metadata else {
                         return div().into_any_element();
                     };
                     let mut row = div()
                         .id(format!("transcript-row-{key}"))
+                        .test_support()
                         .w_full()
                         .max_w(px(880.))
                         .pl(px(gutter + if user { -5. } else { 8. }))
                         .pr(px(gutter + 20.))
-                        .pb(px(22.));
+                        .pb(px(if compact { 0. } else { 22. }));
                     match view {
                         View::Activity(activity) => row = row.child(activity),
                         View::Prose(_, presentation) => {
@@ -782,4 +821,4 @@ fn same_content(a: &TranscriptContent, b: &TranscriptContent) -> bool {
 }
 #[cfg(test)]
 #[path = "transcript/tests.rs"]
-mod tests;
+pub(crate) mod tests;

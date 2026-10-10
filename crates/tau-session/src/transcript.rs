@@ -41,6 +41,43 @@ impl Entry {
             source,
         }
     }
+    /// Vue's toolSummary: prefer the first nonempty string, then compact JSON.
+    /// Null also represents missing arguments in the controller's data model.
+    pub fn tool_description(&self) -> String {
+        if self.arguments.is_null() {
+            return self.text.clone();
+        }
+        if let Some(args) = self.arguments.as_object() {
+            for key in ["command", "path", "file_path", "query"] {
+                if let Some(value) = args
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                {
+                    return value.to_owned();
+                }
+            }
+        }
+        let json = self.arguments.to_string();
+        // JavaScript slices UTF-16 code units; never slice a Rust string by bytes.
+        if json.encode_utf16().count() > 220 {
+            format!(
+                "{}…",
+                String::from_utf16_lossy(&json.encode_utf16().take(217).collect::<Vec<_>>())
+            )
+        } else {
+            json
+        }
+    }
+    /// Vue's toolArgumentsText; presentation only, never rewrites the raw value.
+    pub fn tool_arguments_text(&self) -> String {
+        match self.arguments.as_object() {
+            Some(args) if !args.is_empty() => {
+                serde_json::to_string_pretty(&self.arguments).unwrap_or_default()
+            }
+            _ => String::new(),
+        }
+    }
     pub(crate) fn touch(&mut self) {
         self.revision += 1;
     }
@@ -56,6 +93,10 @@ impl Entry {
         }
     }
 }
+#[cfg(test)]
+#[path = "transcript/tests.rs"]
+mod tests;
+
 pub fn content_text(value: &Value) -> String {
     if let Some(s) = value.as_str() {
         return s.into();
@@ -106,6 +147,7 @@ pub(crate) fn project(m: &Value, key: &str) -> Vec<Entry> {
         }
         "bashExecution" => {
             add("tool", string(&m["command"]), key.into());
+            rows[0].tool_name = Some("bash".into());
             rows[0].result = string(&m["output"]);
         }
         "custom" if m["display"] == true => add("notice", content_text(&m["content"]), key.into()),
