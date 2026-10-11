@@ -1,6 +1,8 @@
 //! Empty-session retirement is selection-driven, never a background eviction policy.
 use super::*;
 
+const CLEANUP_ERROR: &str = "An empty session could not stop. Retry saving before closing Tau.";
+
 impl Shell {
     pub(super) fn discard_empty_before_switch(
         &mut self,
@@ -91,13 +93,12 @@ impl Shell {
             attempt: live.start_attempt,
             generation: live.controller.generation(),
         };
-        // Keep the bounded cleanup command until acknowledgement, including enqueue failure.
+        // Keep acknowledgement ownership separate from failed operations offered for retry.
         self.empty_disposals.insert((
             key.to_owned(),
             live.start_attempt,
             live.controller.generation(),
         ));
-        self.register_retries.push(command.clone());
         self.empty_candidates.remove(key);
         self.sessions.remove(key);
         self.clear_session_action_identity(key);
@@ -114,7 +115,7 @@ impl Shell {
         true
     }
 
-    /// Called for DisposeEmpty dispatch failure; the retained command already is its retry.
+    /// Only an authoritative enqueue/worker failure creates a retry.
     pub(super) fn empty_disposal_dispatch_failed(
         &mut self,
         command: Command,
@@ -130,8 +131,7 @@ impl Shell {
         {
             self.register_retries.push(command);
         }
-        self.error =
-            Some("An empty session could not stop. Retry saving before closing Tau.".into());
+        self.error = Some(CLEANUP_ERROR.into());
         cx.notify();
     }
 
@@ -144,12 +144,19 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         if success {
-            self.empty_disposals
+            let owned = self
+                .empty_disposals
                 .remove(&(runtime.clone(), attempt, generation));
             self.register_retries.retain(|command| {
                 !matches!(command, Command::DisposeEmpty { runtime: key, attempt: a, generation: g }
                     if key == &runtime && *a == attempt && *g == generation)
             });
+            if owned
+                && self.empty_disposals.is_empty()
+                && self.error.as_deref() == Some(CLEANUP_ERROR)
+            {
+                self.error = None;
+            }
         } else {
             // No automatic tight loop: retry through the existing save/close path.
             let command = Command::DisposeEmpty {
@@ -255,3 +262,7 @@ mod tests;
 #[cfg(test)]
 #[path = "empty_reconciliation_tests.rs"]
 mod reconciliation_tests;
+
+#[cfg(test)]
+#[path = "empty_storage_tests.rs"]
+mod storage_tests;

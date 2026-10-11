@@ -310,10 +310,13 @@ fn registration_failure_and_retry_remain_protected_until_matching_success() {
 
 #[test]
 fn cleanup_ack_cannot_be_reacquired_by_late_retry_failure() {
-    with_shell(512, |s, w, cx, _| {
+    with_shell(512, |s, w, cx, requests| {
         create(s, "a", "", w, cx);
         create(s, "b", "target draft", w, cx);
-        let command = s.register_retries.pop().unwrap();
+        assert!(s.register_retries.is_empty());
+        let command = std::iter::from_fn(|| requests.try_recv().ok())
+            .find(|command| matches!(command, Command::DisposeEmpty { .. }))
+            .unwrap();
         let Command::DisposeEmpty {
             runtime,
             attempt,

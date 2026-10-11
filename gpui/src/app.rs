@@ -626,6 +626,7 @@ impl Shell {
         self.picker_busy
             || self.remote.is_busy()
             || !self.register_retries.is_empty()
+            || !self.empty_disposals.is_empty()
             || self.sessions.values().any(|live| {
                 let state = live.controller.state();
                 live.starting
@@ -1068,7 +1069,7 @@ impl Shell {
                 if success && let Some((expected, request)) = self.exit_revision
                     && expected == revision {
                         self.exit_revision = None;
-                        if !self.register_retries.is_empty() { self.save_failed = true; self.error = Some("A completed session still needs saving. Retry before closing Tau.".into()); }
+                        if !self.register_retries.is_empty() || !self.empty_disposals.is_empty() { self.save_failed = true; self.error = Some("Session changes still need saving or cleanup. Retry before closing Tau.".into()); }
                         else if revision != self.save_revision || self.sessions.values().any(|live| live.controller.state().draft != live.persisted_draft || live.controller.state().recovered_drafts.len() + live.restored_recovered.len() != live.persisted_recovered) {
                             self.begin_exit(request, cleanup_ran || matches!(request.intent(), Intent::Quit), cx);
                         } else { let lifecycle = cx.global::<NativeHost>().lifecycle(); lifecycle.resolve(request, true, cx); }
