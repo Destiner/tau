@@ -1,8 +1,9 @@
 # GPUI rewrite: current status and delivery plan
 
-Updated 10 October 2026. This supersedes the historical prototype checklist.
-The delivery/decision window remains **9–10 October**: finish usable native Tau or
-make an explicit continue/revert decision. This is not a guaranteed delivery date.
+Updated 11 October 2026. This supersedes the historical prototype checklist.
+The requested delivery/decision window was **9–10 October**. The native preview remains
+under active user review and correction; it is not a completed production cutover.
+The remaining release/cutover gates below still require an explicit decision.
 
 ## Current boundary: first real native application implemented
 
@@ -127,7 +128,22 @@ GPUI release or GPUI updater. See [packaging](../gpui/PACKAGING.md).
   Credential-free and model-enabled native acceptance passed the new sequence and
   cleanup acknowledgement alongside existing workflow/shutdown checks. Negative controls
   and early native focus failures remain recorded; no reactivation or widened gates.
-- GPUI library: **393 passed, 0 failed, 1 ignored**, plus **13 passed** editor
+- Focused Vue behaviour audit: stable Pi row identities fix cold-selection hover
+  shuffling; per-project hovered membership hides arrivals until pointer exit, matching
+  Vue's current contract instead of the earlier append-arrival implementation. Measured
+  Root tests cover four cold/four warm selections and lower-project stability.
+  Archive/archived-details tooltips and read-only header affordances are complete.
+- Empty cleanup no longer enters Retry Save before failure; pending acknowledgements
+  still gate exit. Additional audited fixes cover empty keyboard submission versus Stop,
+  pending-setting and compaction admission, rename/palette suspension with ordinary
+  outside-click commits, fixed Yes/No confirm shortcuts, and queue pending feedback.
+  The audit's source contracts and bounds are recorded in `gpui/APP.md`.
+- Both native acceptance variants pass real hover-created hidden arrivals, natural
+  pointer release, retained drafts, cleanup and guarded shutdown. The model run also
+  measures/captures the archive tooltip and retains assistant/tool/session actions.
+  Earlier failed tooltip ownership and fixture/bootstrap assumptions remain recorded;
+  no arbitrary sleeps, activation repairs or widened interaction gates.
+- GPUI library: **422 passed, 0 failed, 1 ignored**, plus **13 passed** editor
   integration tests; all-target/all-feature strict Clippy and the actual `tau`
   build passed. The broader Rust run passed its unit binaries but timed out in
   the existing activity Metal runner; the full suite is not reported green.
