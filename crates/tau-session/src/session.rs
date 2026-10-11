@@ -483,6 +483,10 @@ impl Controller {
                 }
                 self.state.compacting = true;
                 self.state.working = true;
+                // A mode acknowledgment must not resume a queue gesture across compaction.
+                if let Some((draft, _)) = self.queue_submission.take() {
+                    self.restore(draft);
+                }
             }
             "auto_retry_start" | "summarization_retry_scheduled" => {
                 if self.state.compacting {
@@ -771,6 +775,7 @@ impl Controller {
     }
     fn submit_inner(&mut self, draft: String, queue: Option<QueueKind>) -> Vec<Effect> {
         if !self.state.ready
+            || self.state.compacting
             || self.state.stopping
             || !self.state.extension_dialogs.is_empty()
             || draft.trim().is_empty()
@@ -832,6 +837,9 @@ impl Controller {
         vec![effect]
     }
     pub fn submit_queued(&mut self, text: impl Into<String>, kind: QueueKind) -> Vec<Effect> {
+        if self.state.compacting {
+            return vec![];
+        }
         if !self.state.working {
             return self.submit(text);
         }
@@ -847,6 +855,12 @@ impl Controller {
         vec![self.send("set_steering_mode", json!({"mode":"all"}), false)]
     }
     fn continue_queue(&mut self) -> Vec<Effect> {
+        if self.state.compacting {
+            if let Some((draft, _)) = self.queue_submission.take() {
+                self.restore(draft);
+            }
+            return vec![];
+        }
         if self.queue_submission.is_none() {
             return vec![];
         }
@@ -860,7 +874,7 @@ impl Controller {
         self.submit_inner(text, Some(kind))
     }
     pub fn abort(&mut self) -> Vec<Effect> {
-        if !self.state.working || self.state.stopping {
+        if !self.state.working || self.state.stopping || self.state.compacting {
             return vec![];
         }
         self.state.stopping = true;
@@ -868,8 +882,15 @@ impl Controller {
         self.update_status();
         vec![self.send("abort", json!({}), false)]
     }
+    fn settings_allowed(&self) -> bool {
+        self.state.ready
+            && !self.state.working
+            && !self.state.stopping
+            && !self.state.compacting
+            && !self.setting_pending()
+    }
     pub fn set_model(&mut self, provider: &str, model_id: &str) -> Vec<Effect> {
-        if !self.state.ready {
+        if !self.settings_allowed() {
             return vec![];
         }
         vec![self.send(
@@ -879,7 +900,7 @@ impl Controller {
         )]
     }
     pub fn set_thinking(&mut self, level: &str) -> Vec<Effect> {
-        if !self.state.ready {
+        if !self.settings_allowed() {
             return vec![];
         }
         vec![self.send("set_thinking_level", json!({"level":level}), false)]
