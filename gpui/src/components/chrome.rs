@@ -536,6 +536,12 @@ fn status_color(status: Option<SessionStatus>, t: &support::Tokens) -> gpui_kit:
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct HeldSessionId {
+    id: String,
+    source_identity: String,
+}
+
 pub struct Sidebar {
     context_menu: Entity<Menu>,
     menu_target: Option<(String, SessionItem)>,
@@ -573,7 +579,9 @@ pub struct Sidebar {
     mounted_archive_ids: BTreeSet<String>,
     orphaned_archive_focus: Vec<FocusHandle>,
     archive_list: ListState,
-    held_session_ids: Option<Vec<String>>,
+    held_session_order: Option<BTreeMap<String, Vec<HeldSessionId>>>,
+    session_identities: BTreeMap<String, String>,
+    body_bounds: AnchorBounds,
     version_open: bool,
     project_open: bool,
     project_cursor: Option<usize>,
@@ -684,7 +692,9 @@ impl Sidebar {
             orphaned_archive_focus: Vec::new(),
             archive_list: ListState::new(0, ListAlignment::Top, px(68.))
                 .with_estimated_item_size(gpui_kit::size(px(248.), px(34.))),
-            held_session_ids: None,
+            held_session_order: None,
+            session_identities: BTreeMap::new(),
+            body_bounds: Rc::new(Cell::new(None)),
             version_open: false,
             project_open: false,
             project_cursor: None,
@@ -845,7 +855,21 @@ impl Sidebar {
         cx.notify();
     }
     pub fn set_projects(&mut self, projects: Vec<ProjectItem>, cx: &mut Context<Self>) {
-        if self.projects != projects {
+        self.set_projects_with_identities(projects, BTreeMap::new(), cx);
+    }
+    /// Atomically supplies current session ID → stable ephemeral-object identity.
+    /// Keep that identity through materialization, including saved-row registration.
+    /// Captured IDs win over identity when an outgoing phase remains present.
+    /// Ordinary saved sessions can omit the map entry (their ID is their identity).
+    pub fn set_projects_with_identities(
+        &mut self,
+        projects: Vec<ProjectItem>,
+        identities: BTreeMap<String, String>,
+        cx: &mut Context<Self>,
+    ) {
+        let identities_changed = self.session_identities != identities;
+        self.session_identities = identities;
+        if self.projects != projects || identities_changed {
             if self.projects.iter().map(|p| &p.id).collect::<Vec<_>>()
                 != projects.iter().map(|p| &p.id).collect::<Vec<_>>()
             {
@@ -884,20 +908,6 @@ impl Sidebar {
             self.group_slides.retain(|id, _| ids.contains(id));
             self.header_slides.retain(|id, _| ids.contains(id));
             self.header_hover.retain(|id| ids.contains(id));
-            if let Some(held) = &mut self.held_session_ids {
-                // Hover freezes relative order, not membership.
-                let live: BTreeSet<_> = projects
-                    .iter()
-                    .flat_map(|project| project.sessions.iter().map(|session| &session.id))
-                    .collect();
-                held.retain(|id| live.contains(id));
-                let mut seen: BTreeSet<_> = held.iter().cloned().collect();
-                for session in projects.iter().flat_map(|project| &project.sessions) {
-                    if seen.insert(session.id.clone()) {
-                        held.push(session.id.clone());
-                    }
-                }
-            }
             self.projects = projects;
             self.hint.dismiss();
             cx.notify();
@@ -1004,6 +1014,21 @@ impl Sidebar {
             self.archived_details = details;
             self.rebuild_archive();
             cx.notify();
+        }
+    }
+    fn tooltip_details(&self, id: &str) -> Option<SessionDetails> {
+        if self.props.archived {
+            let session = self.props.sessions.iter().find(|s| s.id == id)?;
+            Some(SessionDetails {
+                status: "Archived".into(),
+                message: self
+                    .session_details
+                    .get(id)
+                    .map_or_else(|| session.title.clone(), |details| details.message.clone()),
+                relative_time: (!session.time.is_empty()).then(|| session.time.clone()),
+            })
+        } else {
+            self.session_details.get(id).cloned()
         }
     }
     fn rebuild_archive(&mut self) {
@@ -1113,12 +1138,13 @@ impl Sidebar {
         {
             self.dismiss_context(cx);
             if mode_changed {
-                self.held_session_ids = None;
+                self.held_session_order = None;
                 self.project_drag = None;
                 self.closed_groups.clear();
             }
             self.props = props;
             if rows_changed || mode_changed {
+                self.tooltip_markdown.clear();
                 self.rebuild_archive();
             }
             self.hint.dismiss();
@@ -1143,12 +1169,31 @@ impl Sidebar {
             }
             return;
         }
+        if self.resizing || self.version_open || self.project_open || self.project_drag.is_some() {
+            return;
+        }
+        // The select button and its overlaid archive action both receive hover.
+        // Resolve the measured action first, independent of callback order.
+        let archive_id = id
+            .strip_prefix("session-")
+            .map(|id| format!("archive-{id}"));
+        let id = archive_id
+            .as_deref()
+            .filter(|archive_id| {
+                self.hint.anchors.iter().any(|(name, bounds)| {
+                    name == archive_id
+                        && bounds
+                            .get()
+                            .is_some_and(|b| b.contains(&window.mouse_position()))
+                })
+            })
+            .unwrap_or(id);
         #[cfg(test)]
-        if let Some(session) = id.strip_prefix("session-") {
-            self.hovered_session = Some(session.to_owned());
+        {
+            self.hovered_session = id.strip_prefix("session-").map(str::to_owned);
             cx.notify();
         }
-        if self.resizing || self.version_open || self.project_open || self.project_drag.is_some() {
+        if self.hint.pending.as_deref() == Some(id) {
             return;
         }
         let epoch = self.hint.start(id.to_owned());
@@ -1247,17 +1292,56 @@ impl Sidebar {
         }
         offsets
     }
+    fn session_identity<'a>(&'a self, id: &'a str) -> &'a str {
+        self.session_identities.get(id).map_or(id, String::as_str)
+    }
+    fn ordered_sessions(&self, project: &ProjectItem) -> Vec<SessionItem> {
+        let Some(held) = self
+            .held_session_order
+            .as_ref()
+            .and_then(|order| order.get(&project.id))
+        else {
+            return project.sessions.clone();
+        };
+        held.iter()
+            .filter_map(|entry| {
+                project
+                    .sessions
+                    .iter()
+                    .find(|s| s.id == entry.id)
+                    .or_else(|| {
+                        project
+                            .sessions
+                            .iter()
+                            .find(|s| self.session_identity(&s.id) == entry.source_identity)
+                    })
+            })
+            .cloned()
+            .collect()
+    }
     fn hold_body_order(&mut self, hovered: bool, cx: &mut Context<Self>) {
         if hovered {
-            if self.held_session_ids.is_none() {
-                self.held_session_ids = Some(
-                    self.rendered_projects()
+            if self.held_session_order.is_none() {
+                self.held_session_order = Some(
+                    self.projects
                         .iter()
-                        .flat_map(|p| p.sessions.iter().map(|s| s.id.clone()))
+                        .map(|project| {
+                            (
+                                project.id.clone(),
+                                project
+                                    .sessions
+                                    .iter()
+                                    .map(|s| HeldSessionId {
+                                        id: s.id.clone(),
+                                        source_identity: self.session_identity(&s.id).to_owned(),
+                                    })
+                                    .collect(),
+                            )
+                        })
                         .collect(),
                 );
             }
-        } else if self.held_session_ids.take().is_some() {
+        } else if self.held_session_order.take().is_some() {
             cx.notify();
         }
     }
@@ -1322,6 +1406,8 @@ impl Render for Sidebar {
             self.resize_lifecycle
                 .push(cx.observe_window_activation(window, |s, w, cx| {
                     if !w.is_window_active() {
+                        s.hold_body_order(false, cx);
+                        s.hint.dismiss();
                         s.finish_resize(cx);
                         s.resize_hovered = false;
                         s.resize_pointer_focused = false;
@@ -1348,7 +1434,11 @@ impl Render for Sidebar {
             self.rendered_projects()
                 .into_iter()
                 .filter(|project| !project.collapsed)
-                .flat_map(|project| project.sessions.into_iter().map(|session| session.id))
+                .flat_map(|project| {
+                    self.ordered_sessions(&project)
+                        .into_iter()
+                        .map(|session| session.id)
+                })
                 .collect()
         };
         if self.session_focus.iter().any(|(id, (row, archive))| {
@@ -1386,6 +1476,7 @@ impl Render for Sidebar {
             });
             self.hint.anchors.retain(|(key, _)| {
                 key.strip_prefix("restore-")
+                    .or_else(|| key.strip_prefix("session-"))
                     .is_none_or(|id| self.archived_focus.contains_key(id))
             });
             self.mounted_archive_ids.clear();
@@ -1394,9 +1485,11 @@ impl Render for Sidebar {
         let dark = self.dark;
         let offsets = self.motion(window, cx);
         let now = (self.clock)();
+        let body_bounds = self.body_bounds.clone();
         let mut body = div()
             .id("sidebar-body")
             .test_support()
+            .on_prepaint(move |bounds, _, _| body_bounds.set(Some(bounds)))
             // Recency stays frozen under a stationary pointer, including while typing.
             .hover_listener_mode(HoverListenerMode::InputModalityIndependent)
             .on_hover(cx.listener(|s, hovered, _, cx| s.hold_body_order(*hovered, cx)))
@@ -1701,15 +1794,8 @@ impl Render for Sidebar {
                 );
                 if !project_item.collapsed {
                     group = group.child(div().h(px(1.)));
-                    let sessions = match &self.held_session_ids {
-                        Some(ids) => ids
-                            .iter()
-                            .filter_map(|id| {
-                                project_item.sessions.iter().find(|s| &s.id == id).cloned()
-                            })
-                            .collect(),
-                        None => project_item.sessions.clone(),
-                    };
+                    let sessions = self.ordered_sessions(&project_item);
+                    let empty = sessions.is_empty();
                     for session in sessions {
                         let active = self.props.active == session.id;
                         let id = session.id.clone();
@@ -1722,7 +1808,12 @@ impl Render for Sidebar {
                         let focused = row_focus.contains_focused(window, cx)
                             || archive_focus.contains_focused(window, cx);
                         let anchor = self.hint.anchor(&key);
+                        let archive_key = format!("archive-{}", session.id);
+                        let archive_anchor = self.hint.anchor(&archive_key);
                         let hover_key = key.clone();
+                        let move_key = key.clone();
+                        let move_archive_key = archive_key.clone();
+                        let move_archive_anchor = archive_anchor.clone();
                         let context_target = (project_item.id.clone(), session.clone());
                         let status_key = format!(
                             "status-{}-{}",
@@ -1778,6 +1869,19 @@ impl Render for Sidebar {
                                         .on_hover(cx.listener(move |s, h, w, cx| {
                                             s.hover(&hover_key, *h, w, cx)
                                         }))
+                                        .on_mouse_move(cx.listener(
+                                            move |s, e: &gpui_kit::MouseMoveEvent, w, cx| {
+                                                if (s.hint.pending.is_none()
+                                                    || s.hint.pending.as_deref()
+                                                        == Some(&move_archive_key))
+                                                    && !move_archive_anchor
+                                                        .get()
+                                                        .is_some_and(|b| b.contains(&e.position))
+                                                {
+                                                    s.hover(&move_key, true, w, cx);
+                                                }
+                                            },
+                                        ))
                                         .on_click(cx.listener(move |_, _, _, cx| {
                                             cx.emit(Action::Select(id.clone()))
                                         }))
@@ -1849,13 +1953,17 @@ impl Render for Sidebar {
                                 .when(session.can_archive, |row| {
                                     row.child(
                                         icon_button(
-                                            format!("archive-{}", session.id),
+                                            archive_key.clone(),
                                             "archive",
                                             24.,
                                             dark,
                                             false,
                                         )
                                         .track_focus(&archive_focus)
+                                        .on_prepaint(move |b, _, _| archive_anchor.set(Some(b)))
+                                        .on_hover(cx.listener(move |s, h, w, cx| {
+                                            s.hover(&archive_key, *h, w, cx)
+                                        }))
                                         .absolute()
                                         .right(px(0.))
                                         .top(px(2.))
@@ -1874,9 +1982,11 @@ impl Render for Sidebar {
                                 }),
                         );
                     }
-                    if project_item.sessions.is_empty() {
+                    if empty {
                         group = group.child(
                             div()
+                                .id(format!("empty-sessions-{}", project_item.id))
+                                .test_support()
                                 .h(px(29.))
                                 .px(px(5.))
                                 .flex()
@@ -1954,6 +2064,8 @@ impl Render for Sidebar {
                         let session = s.props.sessions[index].clone();
                         let id = session.id.clone();
                         s.mounted_archive_ids.insert(id.clone());
+                        let session_key = format!("session-{id}");
+                        let session_anchor = s.hint.anchor(&session_key);
                         let restore_key = format!("restore-{id}");
                         let restore_anchor = s.hint.anchor(&restore_key);
                         let active = s.props.active == id;
@@ -2014,6 +2126,10 @@ impl Render for Sidebar {
                             .child(
                                 BaseButton::new(format!("archived-select-{id}"))
                                     .track_focus(&select_focus)
+                                    .on_prepaint(move |b, _, _| session_anchor.set(Some(b)))
+                                    .on_hover(cx.listener(move |s, h, w, cx| {
+                                        s.hover(&session_key, *h, w, cx)
+                                    }))
                                     .flex_1()
                                     .min_w_0()
                                     .px(px(7.))
@@ -2395,7 +2511,7 @@ impl Render for Sidebar {
             .as_deref()
             .and_then(|id| id.strip_prefix("session-"))
             && !self.tooltip_markdown.contains_key(id)
-            && let Some(detail) = self.session_details.get(id)
+            && let Some(detail) = self.tooltip_details(id)
         {
             let markdown = cx.new(|cx| TextViewState::markdown(&detail.message, cx));
             self.tooltip_markdown.clear();
@@ -2429,14 +2545,15 @@ impl Render for Sidebar {
                     },
                     Some("⌘⇧H"),
                 ),
+                _ if id.starts_with("archive-") => ("Archive Session", Some("⌘⇧A")),
                 _ if id.starts_with("restore-") => ("Unarchive Session", None),
                 _ => {
                     let session_id = id.strip_prefix("session-")?;
                     if let (Some(details), Some(markdown)) = (
-                        self.session_details.get(session_id),
+                        self.tooltip_details(session_id),
                         self.tooltip_markdown.get(session_id),
                     ) {
-                        return self.hint.session_view(dark, details, markdown);
+                        return self.hint.session_view(dark, &details, markdown);
                     }
                     let session = self
                         .rendered_projects()
@@ -2570,6 +2687,12 @@ impl Render for Sidebar {
                         window.on_mouse_event(move |e: &gpui_kit::MouseMoveEvent, phase, _, cx| {
                             if phase == gpui_kit::DispatchPhase::Capture {
                                 let _ = moving.update(cx, |s, cx| {
+                                    // Capture also sees moves outside the body when another
+                                    // control owns the gesture and hover leave is suppressed.
+                                    if !s.body_bounds.get().is_some_and(|b| b.contains(&e.position))
+                                    {
+                                        s.hold_body_order(false, cx);
+                                    }
                                     if s.resizing {
                                         if e.pressed_button == Some(MouseButton::Left) {
                                             s.resize_to_pointer(e.position, cx);
@@ -2681,6 +2804,7 @@ pub struct Header {
     title: String,
     dark: bool,
     editing: Option<String>,
+    palette_focus_pending: bool,
     input: Entity<InputState>,
     input_style: gpui_kit::base::input::InputEditorStyle,
     _input_events: Subscription,
@@ -2760,13 +2884,18 @@ impl Header {
             }
         });
         let focus = input.read(cx).focus_handle(cx).clone();
-        let blur = cx.on_blur(&focus, window, |s, window, cx| s.close(true, window, cx));
+        let blur = cx.on_blur(&focus, window, |s, window, cx| {
+            if !s.palette_focus_pending {
+                s.close(true, window, cx);
+            }
+        });
         Self {
             renamable: true,
             active,
             title,
             dark,
             editing: None,
+            palette_focus_pending: false,
             input,
             input_style: support::input_style(dark),
             _input_events: events,
@@ -2812,6 +2941,12 @@ impl Header {
     }
     pub fn renaming(&self) -> bool {
         self.editing.is_some()
+    }
+    pub fn prepare_palette_open(&mut self) {
+        self.palette_focus_pending = true;
+    }
+    pub fn finish_palette_focus(&mut self) {
+        self.palette_focus_pending = false;
     }
     #[cfg(test)]
     pub fn tooltip_label(&self) -> Option<String> {
@@ -2918,6 +3053,8 @@ impl Render for Header {
         let palette_anchor = self.hint.anchor("palette");
         let input_bounds = self.input_bounds.clone();
         let outside_bounds = self.input_bounds.clone();
+        let palette_pointer_bounds = palette_anchor.clone();
+        let entity = cx.entity().downgrade();
         let titlebar_exclusions = vec![
             if self.editing.is_some() {
                 self.input_bounds.clone()
@@ -2927,7 +3064,6 @@ impl Render for Header {
             new_anchor.clone(),
             palette_anchor.clone(),
         ];
-        let entity = cx.entity().downgrade();
         let heading = if self.editing.is_some() {
             let font = window
                 .text_system()
@@ -2964,7 +3100,7 @@ impl Render for Header {
                 .on_prepaint(move |b, _, _| name_anchor.set(Some(b)))
                 .child(
                     BaseButton::new("session-name")
-                        .focusable(self.renamable)
+                        .focusable(self.renamable && !self.active.is_empty())
                         .justify_start()
                         .max_w_full()
                         .px(px(5.))
@@ -2974,8 +3110,11 @@ impl Render for Header {
                         .text_color(rgb(t.text))
                         .text_size(px(13.))
                         .line_height(chrome_title_leading(window, 13.))
-                        .hover(move |b| b.bg(wash(dark)))
-                        .on_hover(cx.listener(|s, h, w, cx| s.hover("session-name", *h, w, cx)))
+                        .when(self.renamable && !self.active.is_empty(), |b| {
+                            b.hover(move |b| b.bg(wash(dark))).on_hover(
+                                cx.listener(|s, h, w, cx| s.hover("session-name", *h, w, cx)),
+                            )
+                        })
                         .on_click(cx.listener(|s, _, w, cx| s.begin_rename(w, cx)))
                         .child(self.title.clone()),
                 )
@@ -2983,7 +3122,9 @@ impl Render for Header {
         };
         let tip = self.hint.visible.as_deref().and_then(|id| {
             let (name, shortcut) = match id {
-                "session-name" => ("Rename Session", "⌘⇧R"),
+                "session-name" if self.renamable && !self.active.is_empty() => {
+                    ("Rename Session", "⌘⇧R")
+                }
                 "new-session" => ("New Session", "⌘N"),
                 "palette" => ("Command Palette", "⌘K"),
                 _ => return None,
@@ -3030,13 +3171,23 @@ impl Render for Header {
                     |_, _, _| {},
                     move |_, _, window, _| {
                         window.on_mouse_event(move |e: &MouseDownEvent, phase, window, cx| {
-                            if phase == gpui_kit::DispatchPhase::Capture
-                                && !outside_bounds
-                                    .get()
-                                    .is_some_and(|b| b.contains(&e.position))
+                            if phase != gpui_kit::DispatchPhase::Capture {
+                                return;
+                            }
+                            if palette_pointer_bounds
+                                .get()
+                                .is_some_and(|b| b.contains(&e.position))
+                            {
+                                // Vue's pointerdown.prevent retains the rename origin.
+                                window.prevent_default();
+                                return;
+                            }
+                            if !outside_bounds
+                                .get()
+                                .is_some_and(|b| b.contains(&e.position))
                             {
                                 let _ = entity.update(cx, |s, cx| {
-                                    if s.editing.is_some() {
+                                    if !s.palette_focus_pending {
                                         s.close_with_focus(true, false, window, cx);
                                     }
                                 });
@@ -3093,3 +3244,7 @@ mod text_tests;
 #[cfg(test)]
 #[path = "chrome/resize_tests.rs"]
 mod resize_tests;
+
+#[cfg(test)]
+#[path = "chrome/behaviour_tests.rs"]
+mod behaviour_tests;

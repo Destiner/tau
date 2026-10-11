@@ -39,6 +39,14 @@ fn saved_fixture(s: &mut Shell, w: &mut Window, cx: &mut Context<Shell>) {
     s.active = "live".into();
 }
 fn row(s: &Shell, id: &str) -> SessionItem {
+    let semantic = s
+        .sessions
+        .get(id)
+        .map(|live| SessionIdentity::live(id, live));
+    let id = semantic
+        .as_ref()
+        .filter(|binding| !binding.pi_id.is_empty())
+        .map_or(id, |binding| binding.pi_id.as_str());
     projected(s)
         .0
         .into_iter()
@@ -73,7 +81,7 @@ fn saved_and_ephemeral_dirty_drafts_ignore_whitespace_and_use_vue_priority() {
         assert_eq!(row(s, "live").status, Some(SessionStatus::Working));
         s.ingest(rpc("live", 1, json!({"type":"extension_ui_request","id":"question","method":"confirm","title":"Continue?"})), cx);
         assert_eq!(row(s, "live").status, Some(SessionStatus::Unread));
-        assert_eq!(projected(s).1["live"].status, "Unread");
+        assert_eq!(projected(s).1["saved"].status, "Unread");
     });
 }
 
@@ -148,8 +156,8 @@ fn projection_uses_saved_markdown_ssh_location_and_runtime_user_timestamp() {
         s.ingest(rpc("live", 1, json!({"type":"tool_execution_end","toolCallId":"bash","result":{"content":[{"type":"text","text":"Not the last message"}]}})), cx);
         let (projects, details) = s.sidebar_projection(180000, &runtime_index(&s.sessions));
         assert_eq!(projects[0].location, "ssh-alias · /remote/work");
-        assert_eq!(details["live"].message, "**Actual user request**");
-        assert_eq!(details["live"].relative_time.as_deref(), Some("1m"));
+        assert_eq!(details["saved"].message, "**Actual user request**");
+        assert_eq!(details["saved"].relative_time.as_deref(), Some("1m"));
     });
 }
 
@@ -178,15 +186,15 @@ fn archive_order_is_global_stable_milliseconds_and_cache_ignores_streaming() {
                 .iter()
                 .map(|r| r.id.as_str())
                 .collect::<Vec<_>>(),
-            ["latest", "tie-first", "tie-second", "tie-lower", "live"]
+            ["latest", "tie-first", "tie-second", "tie-lower", "saved"]
         );
         s.sync_sidebar(w, cx);
-        assert_eq!(s.sidebar_state.archive_details["live"].project, "Project");
+        assert_eq!(s.sidebar_state.archive_details["saved"].project, "Project");
         assert_eq!(
-            s.sidebar_state.archive_details["live"].model.as_deref(),
+            s.sidebar_state.archive_details["saved"].model.as_deref(),
             Some("model-a")
         );
-        assert_eq!(projected(s).1["live"].status, "Archived");
+        assert_eq!(projected(s).1["saved"].status, "Archived");
         create(s, "background", "", w, cx);
         s.sidebar_state.runtime_created("background");
         started(s, "background", 2, cx);
@@ -293,7 +301,7 @@ fn unsent_drafts_sort_by_creation_not_runtime_key_or_user_activity() {
             .iter()
             .map(|r| r.id.clone())
             .collect();
-        assert_eq!(ids, ["m-newest", "a-second", "z-first", "live"]);
+        assert_eq!(ids, ["m-newest", "a-second", "z-first", "saved"]);
     });
 }
 
@@ -350,7 +358,7 @@ fn timer_ages_minutes_and_calendar_groups_without_reprojecting_archive_metadata(
         let builds = s.sidebar_state.metadata_builds;
         let rebuilds = s.sidebar_state.archive_rebuilds;
         assert_eq!(s.sidebar_state.archive_rows[0].time, "now");
-        assert_eq!(s.sidebar_state.archive_details["live"].group, "Today");
+        assert_eq!(s.sidebar_state.archive_details["saved"].group, "Today");
         s.sync_sidebar_at(now + chrono::Duration::seconds(59), w, cx);
         assert_eq!(s.sidebar_state.archive_rows[0].time, "now");
         s.sync_sidebar_at(now + chrono::Duration::minutes(1), w, cx);
@@ -358,7 +366,7 @@ fn timer_ages_minutes_and_calendar_groups_without_reprojecting_archive_metadata(
         assert_eq!(s.sidebar_state.archive_rebuilds, rebuilds);
         s.sync_sidebar_at(now + chrono::Duration::minutes(2), w, cx);
         assert_eq!(s.sidebar_state.archive_rows[0].time, "2m");
-        assert_eq!(s.sidebar_state.archive_details["live"].group, "Yesterday");
+        assert_eq!(s.sidebar_state.archive_details["saved"].group, "Yesterday");
         assert_eq!(s.sidebar_state.archive_rebuilds, rebuilds + 1);
         assert_eq!(s.sidebar_state.metadata_builds, builds);
     });

@@ -128,7 +128,64 @@ host reopen coverage remains separate. Historical close/reopen results below pre
 this production policy. Both credential-free and model-enabled native acceptance
 passed the new guarded last-Cmd-W policy on 10 October 2026.
 
+## Behaviour parity audit
+
+The focused Vue/JS audit on 11 October 2026 checked sidebar, composer, selector,
+rename/palette, extension-confirm and queue interactions against production sources:
+
+- `ProjectSidebar.vue` / `session-order.ts`: saved rows keep Pi identity through cold
+  startup, rather than becoming new runtime-keyed rows on first selection. List hover
+  captures each project's membership/order; arrivals stay hidden until pointer exit,
+  including in held-empty projects. Real removals close gaps; phantom materialization
+  retains its source association and captured outgoing IDs win during replacement.
+  Footer/titlebar hover is outside this hold; native deactivation releases it.
+- Sidebar archive controls have the delayed action tooltip and shortcut. Measured
+  overlapping action/row hit areas choose one tooltip owner. Archived rows have details
+  tooltips; read-only header titles do not advertise Rename.
+- Empty-runtime cleanup has separate pending and failed ownership. Accepted cleanup
+  never paints Retry Save; genuine enqueue/worker failures offer retry. Cleanup still
+  gates shutdown and successful acknowledgements clear only its owned error.
+- `ComposerBar.vue` / `useTau/composer.ts`: empty or whitespace Enter/Cmd-Enter does
+  nothing, even while working. Stop remains an explicit button or Cmd-period action.
+- `useTau/settings.ts`: pending model/effort writes disable and close both selectors,
+  not draft editing. The controller also rejects stale concurrent/busy setting actions.
+- `state.ts` / `runtime/queue.ts`: compaction blocks Stop and queue admission without
+  disabling draft editing. A queue gesture crossing compaction is cancelled and its
+  text retained; late mode replies cannot resume it after compaction ends.
+- `SessionHeader.vue`: opening the palette by keyboard or pointer suspends rename,
+  not commits it. Escape restores its editor/text; switching sessions cancels it.
+  Ordinary outside clicks still commit without stealing the clicked control's focus.
+- `ExtensionDialog.vue`: Cmd-Enter confirms Yes, Cmd-Shift-Enter confirms No, independent
+  of highlighted row; ordinary select Enter, busy and composition rules are unchanged.
+- `MessageQueue.vue`: Clear All is disabled while queue operations are pending and the
+  rail shows Updating queue…; rejection/timeout releases admission without losing items.
+
+This is a focused interaction audit, not a claim that all runtime/recovery parity is
+finished. Settings remains intentionally absent; full recovery, saved-session removal,
+file previews/media, authenticated SSH and release gates remain as documented above.
+
 ## Verification
+
+The behavioural audit passed **422 library tests** (one ignored timing benchmark),
+**13 editor integration tests**, and **52 controller tests** (the opt-in installed-Pi
+canary remains ignored). Formatting, GPUI lint/typecheck, strict all-target/all-feature
+Clippy and the native build passed. Production-root tests measure four cold and four
+warm sidebar selections, exact row/lower-project bounds, hidden arrivals, materialization
+and replacement; a legacy runtime-ID negative control breaks the same painted oracle.
+
+Both credential-free and model-enabled native acceptance pass real hovered session
+creation with unchanged row bounds, hidden arrival until natural pointer exit, empty
+cleanup without Retry Save, existing keyboard/admin/draft workflows and guarded shutdown.
+The model run additionally measures the archive tooltip above its action and retains
+assistant/tool/Stop/rename/archive/restore coverage. Its owned renderer image was
+inspected; no fresh full paired Vue/native visual campaign or authenticated SSH claim.
+
+Intermediate evidence is retained: the first tooltip implementation let overlapping row
+hover replace the action timer; new fixtures initially failed to settle all bootstrap
+reads; the older native sequence tried to click an arrival while still intentionally
+held hidden. Corrections preserve the 450ms tooltip contract, real pointer exit and
+unchanged acceptance deadlines. Build/check command timeouts were resumed separately;
+no application activation or focus repair was added.
 
 The session-switch follow-up passed **393 library tests** (one ignored benchmark),
 **13 editor integration tests**, formatting, GPUI lint/typecheck, all-target/all-feature

@@ -246,6 +246,7 @@ impl Shell {
                     .is_some_and(|focus| focus.is_focused(window));
             live.ui_status = Some(status);
             live.composer.update(cx, |c, cx| {
+                c.set_admission(live.controller.setting_pending(), state.compacting, cx);
                 if status_changed {
                     if state.error.is_some() && state.working {
                         c.set_status(status.0, false, cx);
@@ -268,7 +269,7 @@ impl Shell {
                             .cloned()
                             .collect(),
                         feedback: String::new(),
-                        busy: false,
+                        busy: live.controller.queue_busy(),
                         can_recover: false,
                     },
                     cx,
@@ -334,9 +335,14 @@ impl Shell {
                         options,
                     };
                     let dialog = cx.new(|cx| {
-                        NativeDialog::new(props, dark, window, cx)
+                        let dialog = NativeDialog::new(props, dark, window, cx)
                             .embedded()
-                            .keyboard_submission()
+                            .keyboard_submission();
+                        if method == "confirm" {
+                            dialog.confirm_shortcuts()
+                        } else {
+                            dialog
+                        }
                     });
                     if let Some(prefill) = request.request["prefill"]
                         .as_str()
@@ -775,3 +781,16 @@ impl Render for Shell {
 #[cfg(test)]
 #[path = "layout_tests.rs"]
 mod layout_tests;
+
+#[cfg(test)]
+#[path = "confirm_queue_fixture.rs"]
+mod confirm_queue_fixture;
+#[cfg(test)]
+#[path = "confirm_shortcut_tests.rs"]
+mod confirm_shortcut_tests;
+#[cfg(test)]
+#[path = "queue_pending_tests.rs"]
+mod queue_pending_tests;
+#[cfg(test)]
+#[path = "settings_pending_tests.rs"]
+mod settings_pending_tests;

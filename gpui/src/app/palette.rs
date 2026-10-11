@@ -215,6 +215,7 @@ impl Shell {
     }
     pub(super) fn show_palette_page(&mut self, page: &str, w: &mut Window, cx: &mut Context<Self>) {
         if self.palette_blocked() {
+            self.finish_header_palette_focus(cx);
             return;
         }
         if self.palette.view.is_none() {
@@ -225,6 +226,9 @@ impl Shell {
             self.palette.binding = self.palette_binding();
         }
         self.sync_palette(w, cx);
+        if let Some(header) = self.header.clone() {
+            header.update(cx, |h, _| h.prepare_palette_open());
+        }
         if let Some(v) = self.palette.view.clone() {
             v.update(cx, |p, cx| p.open_page(page, w, cx));
         }
@@ -246,7 +250,15 @@ impl Shell {
             });
         }
     }
+    fn finish_header_palette_focus(&mut self, cx: &mut Context<Self>) {
+        if let Some(header) = self.header.clone() {
+            header.update(cx, |h, _| h.finish_palette_focus());
+        }
+    }
     fn palette_restore_focus(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        if !self.palette.is_open(cx) {
+            self.finish_header_palette_focus(cx);
+        }
         let origin = self.palette.origin.take();
         self.sync_admin(w, cx);
         if self.admin_reporter_open(cx) {
@@ -281,6 +293,7 @@ impl Shell {
         if let Some(view) = self.palette.view.clone() {
             view.update(cx, |palette, cx| palette.close(cx));
         }
+        self.finish_header_palette_focus(cx);
         let changes_context = matches!(
             target,
             Target::Live(..)
@@ -691,6 +704,7 @@ impl Shell {
                 && state.ready
                 && !live.starting
                 && !state.stopping
+                && !state.compacting
                 && state.extension_dialogs.is_empty()
             {
                 if state.working {
@@ -823,6 +837,9 @@ fn palette_models(state: &tau_session::session::State) -> Vec<&serde_json::Value
     state.selectable_models()
 }
 
+#[cfg(test)]
+#[path = "palette/rename_tests.rs"]
+mod rename_tests;
 #[cfg(test)]
 #[path = "palette/tests.rs"]
 mod tests;

@@ -41,6 +41,7 @@ pub struct NativeDialog {
     dark: bool,
     embedded: bool,
     keyboard_submission: bool,
+    confirm_shortcuts: bool,
     open: bool,
     busy: bool,
     readonly: bool,
@@ -119,6 +120,7 @@ impl NativeDialog {
             dark,
             embedded: false,
             keyboard_submission: false,
+            confirm_shortcuts: false,
             open: true,
             busy: false,
             readonly: false,
@@ -138,6 +140,11 @@ impl NativeDialog {
     /// Opt into inline keyboard routing and pending-response duplicate protection.
     pub fn keyboard_submission(mut self) -> Self {
         self.keyboard_submission = true;
+        self
+    }
+    /// Confirm modifiers express Yes/No, independently of select navigation.
+    pub fn confirm_shortcuts(mut self) -> Self {
+        self.confirm_shortcuts = true;
         self
     }
     pub fn editor(&self) -> Entity<InputState> {
@@ -450,6 +457,20 @@ impl NativeDialog {
                         cx.notify();
                         cx.stop_propagation();
                     }
+                    "enter"
+                        if s.confirm_shortcuts
+                            && s.props.kind == DialogKind::ExtensionSelect
+                            && event.keystroke.modifiers.secondary() =>
+                    {
+                        s.selected = if event.keystroke.modifiers.shift {
+                            "No"
+                        } else {
+                            "Yes"
+                        }
+                        .into();
+                        s.submit(cx);
+                        cx.stop_propagation();
+                    }
                     "enter" if s.props.kind == DialogKind::ExtensionSelect => {
                         if let Some(option) = s.props.options.get(s.cursor) {
                             s.selected = option.label.clone();
@@ -706,6 +727,103 @@ mod tests {
             vec![DialogEvent::Submitted("Second".into())]
         );
     }
+    #[test]
+    fn confirm_shortcuts_ignore_cursor_and_remain_busy_guarded() {
+        for shift in [false, true] {
+            let mut app = gpui_kit::TestApp::new();
+            app.update(gpui_kit::init);
+            let mut window = app.open_window(|w, cx| {
+                let mut p = props(DialogKind::ExtensionSelect);
+                p.options = vec![
+                    DialogOption {
+                        id: "yes".into(),
+                        label: "Yes".into(),
+                    },
+                    DialogOption {
+                        id: "no".into(),
+                        label: "No".into(),
+                    },
+                ];
+                NativeDialog::new(p, false, w, cx)
+                    .embedded()
+                    .keyboard_submission()
+                    .confirm_shortcuts()
+            });
+            let received = Rc::new(RefCell::new(Vec::new()));
+            let events = received.clone();
+            let _subscription = window.update(|dialog, _, cx| {
+                dialog.cursor = usize::from(!shift);
+                cx.subscribe(&cx.entity(), move |_, _, event: &DialogEvent, _| {
+                    events.borrow_mut().push(event.clone())
+                })
+            });
+            window.draw();
+            let key = match (cfg!(target_os = "macos"), shift) {
+                (true, false) => "cmd-enter",
+                (true, true) => "cmd-shift-enter",
+                (false, false) => "ctrl-enter",
+                (false, true) => "ctrl-shift-enter",
+            };
+            window.update(|dialog, _, cx| dialog.set_readonly(true, cx));
+            window.draw();
+            window.simulate_keystroke(key);
+            assert!(received.borrow().is_empty());
+            window.update(|dialog, _, cx| dialog.set_readonly(false, cx));
+            window.draw();
+            window.simulate_keystroke(key);
+            window.simulate_keystroke(key);
+            window.simulate_keystroke("escape");
+            assert_eq!(
+                *received.borrow(),
+                vec![DialogEvent::Submitted(
+                    if shift { "No" } else { "Yes" }.into()
+                )]
+            );
+            assert!(window.read(|dialog, _| dialog.is_open() && dialog.is_busy()));
+        }
+    }
+
+    #[test]
+    fn inline_input_ime_composition_still_blocks_secondary_enter() {
+        use gpui_kit::EntityInputHandler;
+        let mut app = gpui_kit::TestApp::new();
+        app.update(gpui_kit::init);
+        let mut window = app.open_window(|w, cx| {
+            NativeDialog::new(props(DialogKind::ExtensionInput), false, w, cx)
+                .embedded()
+                .keyboard_submission()
+        });
+        let received = Rc::new(RefCell::new(Vec::new()));
+        let events = received.clone();
+        let _subscription = window.update(|dialog, w, cx| {
+            dialog.input.update(cx, |input, cx| {
+                input.replace_and_mark_text_in_range(None, "稍后", Some(2..2), w, cx);
+            });
+            cx.subscribe(&cx.entity(), move |_, _, event: &DialogEvent, _| {
+                events.borrow_mut().push(event.clone())
+            })
+        });
+        window.draw();
+        let key = if cfg!(target_os = "macos") {
+            "cmd-enter"
+        } else {
+            "ctrl-enter"
+        };
+        window.simulate_keystroke(key);
+        assert!(received.borrow().is_empty());
+        window.update(|dialog, w, cx| {
+            dialog.input.update(cx, |input, cx| {
+                input.replace_text_in_range(None, "稍后", w, cx)
+            });
+        });
+        window.draw();
+        window.simulate_keystroke(key);
+        assert_eq!(
+            *received.borrow(),
+            vec![DialogEvent::Submitted("稍后".into())]
+        );
+    }
+
     #[test]
     fn ssh_busy_and_readonly_block_cancel_and_duplicate_submit() {
         let mut app = gpui_kit::TestApp::new();

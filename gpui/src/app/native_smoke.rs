@@ -110,7 +110,29 @@ fn insert_composer(shell: &Entity<Shell>, cx: &AsyncApp, text: &str) {
             .unwrap()
     });
 }
+fn sidebar_element(shell: &Shell, id: &str) -> String {
+    for prefix in [
+        "session-status-",
+        "session-",
+        "archive-",
+        "restore-",
+        "archived-select-",
+    ] {
+        if let Some(live) = id
+            .strip_prefix(prefix)
+            .and_then(|key| shell.sessions.get(key))
+        {
+            let identity = &live.controller.state().identity.id;
+            if !identity.is_empty() {
+                return format!("{prefix}{identity}");
+            }
+        }
+    }
+    id.to_owned()
+}
 async fn click(shell: &Entity<Shell>, cx: &AsyncApp, id: &str) {
+    let id = cx.update(|cx| sidebar_element(shell.read(cx), id));
+    let id = id.as_str();
     let label = if id.starts_with("session-status-") {
         "painted sidebar session"
     } else {
@@ -540,7 +562,7 @@ async fn sidebar_focus(shell: &Entity<Shell>, cx: &AsyncApp, first: &str) {
                 let dot = gpui_kit::base::test_support::find(
                     w,
                     &[],
-                    &format!("session-status-{first}").into(),
+                    &sidebar_element(s, &format!("session-status-{first}")).into(),
                 )
                 .unwrap();
                 assert_eq!(dot.bounds().size, gpui_kit::size(px(6.), px(6.)));
@@ -569,7 +591,7 @@ async fn sidebar_focus(shell: &Entity<Shell>, cx: &AsyncApp, first: &str) {
                     && gpui_kit::base::test_support::find(
                         w,
                         &[],
-                        &format!("session-{first}").into(),
+                        &sidebar_element(s, &format!("session-{first}")).into(),
                     )
                     .is_some_and(|row| row.visible() && row.focused() == Some(true))
             })
@@ -951,6 +973,15 @@ async fn empty_session_keyboard_switch(shell: &Entity<Shell>, cx: &AsyncApp, fir
         "CmdP retires blank and acknowledges runtime disposal",
         5,
         |cx| {
+            window(shell, cx)
+                .update(cx, |_, w, _| {
+                    assert!(
+                        gpui_kit::base::test_support::find(w, &[], &"retry-storage".into())
+                            .is_none(),
+                        "accepted empty cleanup must not offer Retry Save"
+                    );
+                })
+                .unwrap();
             let s = shell.read(cx);
             assert!(s.error.is_none());
             assert!(
@@ -1056,6 +1087,25 @@ async fn exercise(
     palette_remote(&shell, &cx, &first).await;
     admin_report(&shell, &cx, &root, &first).await;
     empty_session_keyboard_switch(&shell, &cx, &first).await;
+    let held_first = cx.update(|cx| {
+        window(&shell, cx)
+            .update(cx, |_, w, cx| {
+                let id = sidebar_element(shell.read(cx), &format!("session-status-{first}"));
+                let bounds = gpui_kit::base::test_support::find(w, &[], &id.into())
+                    .unwrap()
+                    .bounds();
+                w.dispatch_event(
+                    PlatformInput::MouseMove(MouseMoveEvent {
+                        position: bounds.center(),
+                        pressed_button: None,
+                        modifiers: Default::default(),
+                    }),
+                    cx,
+                );
+                bounds
+            })
+            .unwrap()
+    });
     cx.update(|cx| cx.dispatch_action(&crate::native::NewSession));
     ready(&shell, &cx).await;
     let second = cx.update(|cx| shell.read(cx).active.clone());
@@ -1104,6 +1154,50 @@ async fn exercise(
             )
         );
     });
+    cx.update(|cx| {
+        window(&shell, cx)
+            .update(cx, |_, w, cx| {
+                let s = shell.read(cx);
+                let first_id = sidebar_element(s, &format!("session-status-{first}"));
+                let second_id = sidebar_element(s, &format!("session-status-{second}"));
+                assert_eq!(
+                    gpui_kit::base::test_support::find(w, &[], &first_id.into())
+                        .unwrap()
+                        .bounds(),
+                    held_first
+                );
+                assert!(
+                    gpui_kit::base::test_support::find(w, &[], &second_id.into()).is_none(),
+                    "new session stays hidden during sidebar hold"
+                );
+                let outside = gpui_kit::base::test_support::find(w, &[], &"footer-gap".into())
+                    .unwrap()
+                    .bounds()
+                    .center();
+                w.dispatch_event(
+                    PlatformInput::MouseMove(MouseMoveEvent {
+                        position: outside,
+                        pressed_button: None,
+                        modifiers: Default::default(),
+                    }),
+                    cx,
+                );
+            })
+            .unwrap()
+    });
+    poll(&cx, "hover release reveals new session", 5, |cx| {
+        window(&shell, cx)
+            .update(cx, |_, w, cx| {
+                let id = sidebar_element(shell.read(cx), &format!("session-status-{second}"));
+                gpui_kit::base::test_support::find(w, &[], &id.into())
+                    .is_some_and(|row| row.visible())
+            })
+            .unwrap()
+    })
+    .await;
+    eprintln!(
+        "PASS native-app hovered new session stays hidden and retained row bounds stay exact until natural pointer exit"
+    );
     click(&shell, &cx, &format!("session-status-{first}")).await;
     poll(&cx, "sidebar selects first retained draft", 5, |cx| {
         let s = shell.read(cx);
@@ -1413,6 +1507,45 @@ async fn exercise(
         .await;
         eprintln!("PASS native-app focused rename Escape preserves Pi and persisted name");
         capture(&shell, &cx, "nonempty-renamed", false).await;
+        let archive_id =
+            cx.update(|cx| sidebar_element(shell.read(cx), &format!("archive-{second}")));
+        cx.update(|cx| {
+            window(&shell, cx)
+                .update(cx, |_, w, cx| {
+                    let bounds =
+                        gpui_kit::base::test_support::find(w, &[], &archive_id.clone().into())
+                            .unwrap()
+                            .bounds();
+                    w.dispatch_event(
+                        PlatformInput::MouseMove(MouseMoveEvent {
+                            position: bounds.center(),
+                            pressed_button: None,
+                            modifiers: Default::default(),
+                        }),
+                        cx,
+                    );
+                })
+                .unwrap()
+        });
+        poll(&cx, "native archive action tooltip", 5, |cx| {
+            window(&shell, cx)
+                .update(cx, |_, w, _| {
+                    gpui_kit::base::test_support::find(w, &[], &"chrome-tooltip".into())
+                        .is_some_and(|tip| {
+                            let action = gpui_kit::base::test_support::find(
+                                w,
+                                &[],
+                                &archive_id.clone().into(),
+                            )
+                            .unwrap();
+                            tip.visible() && tip.bounds().bottom() <= action.bounds().top()
+                        })
+                })
+                .unwrap()
+        })
+        .await;
+        capture(&shell, &cx, "archive-tooltip", false).await;
+        eprintln!("PASS native-app actual archive hover paints tooltip above measured action");
         click(&shell, &cx, &format!("archive-{second}")).await;
         poll(
             &cx,
@@ -1421,16 +1554,13 @@ async fn exercise(
             |cx| {
                 let s = shell.read(cx);
                 assert!(s.error.is_none());
+                let row_id = sidebar_element(s, &format!("session-status-{second}"));
                 s.sessions[&first].controller.state().draft == "Owned draft café 😀"
                     && registry_record(&s.sessions[&second]).is_some_and(|r| r["archived"] == true)
                     && window(&shell, cx)
                         .update(cx, |_, w, _| {
-                            gpui_kit::base::test_support::find(
-                                w,
-                                &[],
-                                &format!("session-status-{second}").into(),
-                            )
-                            .is_none()
+                            gpui_kit::base::test_support::find(w, &[], &row_id.clone().into())
+                                .is_none()
                         })
                         .unwrap()
             },
@@ -1444,7 +1574,9 @@ async fn exercise(
                 && s.session_actions.archived
                 && s.sessions[&second].controller.pending_count() == 0
                 && registry_record(&s.sessions[&second]).is_some_and(|r| r["archived"] == true)
-                && s.archived_items().iter().any(|r| r.id == second)
+                && s.archived_items()
+                    .iter()
+                    .any(|r| r.id == s.sessions[&second].controller.state().identity.id)
         })
         .await;
         eprintln!(
@@ -1455,7 +1587,10 @@ async fn exercise(
             let s = shell.read(cx);
             assert!(s.error.is_none());
             registry_record(&s.sessions[&second]).is_some_and(|r| r["archived"] == false)
-                && !s.archived_items().iter().any(|r| r.id == second)
+                && !s
+                    .archived_items()
+                    .iter()
+                    .any(|r| r.id == s.sessions[&second].controller.state().identity.id)
         })
         .await;
         click(&shell, &cx, "archived").await;

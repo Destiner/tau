@@ -476,7 +476,7 @@ impl Render for MessageQueue {
                     .text_color(rgb(t.muted))
                     .text_size(px(10.))
                     .child(if self.props.busy {
-                        "Clearing…".to_owned()
+                        "Updating queue…".to_owned()
                     } else {
                         self.props.feedback.clone()
                     }),

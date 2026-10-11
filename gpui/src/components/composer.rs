@@ -143,6 +143,8 @@ pub struct Composer {
     editor_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     streaming: bool,
     disabled: bool,
+    setting_pending: bool,
+    compacting: bool,
     stopped: bool,
     fill_height: bool,
     selector: Option<&'static str>,
@@ -340,6 +342,28 @@ impl Composer {
         }
         cx.notify();
     }
+    /// Admission flags do not affect draft editing or ordinary idle submission.
+    pub fn set_admission(
+        &mut self,
+        setting_pending: bool,
+        compacting: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if (self.setting_pending, self.compacting) == (setting_pending, compacting) {
+            return;
+        }
+        self.setting_pending = setting_pending;
+        self.compacting = compacting;
+        if self.settings_disabled() {
+            self.close(cx);
+        }
+        cx.notify();
+    }
+
+    fn settings_disabled(&self) -> bool {
+        self.disabled || self.streaming || self.stopped || self.setting_pending || self.compacting
+    }
+
     pub fn set_choices(
         &mut self,
         models: Vec<Choice>,
@@ -439,7 +463,7 @@ impl Composer {
     }
 
     fn choose(&mut self, selector: &str, index: usize, cx: &mut Context<Self>) {
-        if self.selector != Some(selector) || self.disabled || self.streaming || self.stopped {
+        if self.selector != Some(selector) || self.settings_disabled() {
             return;
         }
         if selector == "model" {
@@ -766,11 +790,21 @@ impl Composer {
     }
 
     fn send(&mut self, follow_up: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if self.disabled || self.stopped {
+        self.activate(follow_up, false, window, cx);
+    }
+
+    fn activate(
+        &mut self,
+        follow_up: bool,
+        explicit_stop: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.disabled || self.stopped || self.compacting {
             return;
         }
         if self.editor.read(cx).value().trim().is_empty() {
-            if self.streaming {
+            if self.streaming && explicit_stop {
                 self.stopped = true;
                 cx.emit(Event::Stop);
                 cx.notify();
@@ -999,6 +1033,8 @@ impl Composer {
             editor_bounds: Rc::new(Cell::new(None)),
             streaming,
             disabled,
+            setting_pending: false,
+            compacting: false,
             stopped: false,
             fill_height: false,
             selector: None,
@@ -1024,7 +1060,7 @@ impl Render for Composer {
         let t = support::tokens(self.dark);
         let draft = self.editor.read(cx).value().to_string();
         let filled = !draft.trim().is_empty();
-        let settings_disabled = self.disabled || self.streaming || self.stopped;
+        let settings_disabled = self.settings_disabled();
         let model_color = if self.selector == Some("model") {
             t.text
         } else {
@@ -1035,7 +1071,8 @@ impl Render for Composer {
         } else {
             t.muted
         };
-        let send_disabled = self.disabled || self.stopped || (!self.streaming && !filled);
+        let send_disabled =
+            self.disabled || self.stopped || self.compacting || (!self.streaming && !filled);
         let icon_name = if self.streaming {
             if filled { "queue" } else { "stop" }
         } else {
@@ -1061,7 +1098,7 @@ impl Render for Composer {
                 t.muted
             }))
             .styles(|styles| styles.disabled(|button| button.opacity(0.45)))
-            .on_click(cx.listener(|s, _, window, cx| s.send(false, window, cx)))
+            .on_click(cx.listener(|s, _, window, cx| s.activate(false, true, window, cx)))
             .when(!send_disabled, |button| {
                 button.hover(move |s| s.bg(rgb(t.hover)).text_color(rgb(t.text)))
             })
@@ -1176,7 +1213,7 @@ impl Render for Composer {
                             })
                             .text_size(px(10.))
                             .on_click(cx.listener(|s, _, window, cx| {
-                                if !s.disabled && !s.streaming && !s.stopped {
+                                if !s.settings_disabled() {
                                     if s.selector == Some("model") {
                                         s.close(cx);
                                     } else {
@@ -1270,7 +1307,7 @@ impl Render for Composer {
                                     s.suppress_effort_click = false;
                                     return;
                                 }
-                                if !s.disabled && !s.streaming && !s.stopped {
+                                if !s.settings_disabled() {
                                     if s.selector == Some("effort") {
                                         s.close(cx);
                                     } else {
@@ -1415,6 +1452,74 @@ mod tests {
         });
         window.simulate_click(position, MouseButton::Right);
         window.draw();
+    }
+
+    #[test]
+    fn admission_flags_close_stale_selectors_without_disabling_draft() {
+        for selector in ["model", "effort"] {
+            let (_app, mut window) = fixture(false, false);
+            click(&mut window, selector);
+            assert!(window.read(|s, _| s.open_selector().is_some()));
+            window.update(|s, _, cx| s.set_admission(true, false, cx));
+            assert!(window.read(|s, _| s.open_selector().is_none()));
+            window.update(|s, _, cx| {
+                // Even a stale selector callback must recheck admission.
+                s.selector = Some(selector);
+                s.choose(selector, 1, cx);
+                assert_eq!(s.model, 0);
+                assert_eq!(s.effort, 0);
+                s.close(cx);
+            });
+            click(&mut window, selector);
+            assert!(window.read(|s, _| s.open_selector().is_none()));
+            window.update(|s, w, cx| s.editor.update(cx, |e, cx| e.focus(w, cx)));
+            window.simulate_input(" more");
+            assert!(window.read(|s, cx| s.editor.read(cx).value().contains(" more")));
+            window.update(|s, _, cx| s.set_admission(false, false, cx));
+            click(&mut window, selector);
+            assert!(window.read(|s, _| s.open_selector().is_some()));
+        }
+    }
+
+    #[test]
+    fn compaction_keeps_draft_and_blocks_keyboard_and_explicit_stop_after_reattach() {
+        let (_app, mut window) = fixture(false, true);
+        let received = Rc::new(RefCell::new(Vec::new()));
+        let events = received.clone();
+        let _subscription = window.update(|_, _, cx| {
+            cx.subscribe(&cx.entity(), move |_, _, event: &Event, _| {
+                events.borrow_mut().push(event.clone())
+            })
+        });
+        for reattach in [false, true] {
+            window.update(|s, w, cx| {
+                if reattach {
+                    s.reattach_window(w, cx);
+                }
+                s.set_admission(false, true, cx);
+                s.editor.update(cx, |e, cx| e.focus(w, cx));
+            });
+            window.simulate_keystroke("enter");
+            window.simulate_keystroke(if cfg!(target_os = "macos") {
+                "cmd-enter"
+            } else {
+                "ctrl-enter"
+            });
+            click(&mut window, "send");
+            assert!(received.borrow().is_empty());
+            assert_eq!(
+                window.read(|s, cx| s.editor.read(cx).value().to_string()),
+                "keep my draft"
+            );
+            assert!(!window.read(|s, _| s.is_stopped()));
+        }
+        window.update(|s, w, cx| {
+            s.set_admission(false, false, cx);
+            s.editor.update(cx, |e, cx| e.set_value("", w, cx));
+        });
+        click(&mut window, "send");
+        click(&mut window, "send");
+        assert_eq!(*received.borrow(), vec![Event::Stop]);
     }
 
     #[test]

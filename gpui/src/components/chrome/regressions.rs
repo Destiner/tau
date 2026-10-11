@@ -268,7 +268,7 @@ fn session_anchor(sidebar: &Sidebar, id: &str) -> Bounds<Pixels> {
 }
 
 #[test]
-fn hovered_empty_sidebar_renders_and_selects_arriving_sessions() {
+fn hovered_empty_sidebar_distinguishes_startup_from_a_held_empty_project() {
     for initial in [vec![], projects()] {
         let mut app = gpui_kit::TestApp::new();
         app.update(gpui_kit::init);
@@ -299,17 +299,26 @@ fn hovered_empty_sidebar_renders_and_selects_arriving_sessions() {
         window.simulate_mouse_move(pointer);
         window.draw();
         window.update(|s, _, cx| {
-            assert_eq!(s.held_session_ids, Some(vec![]));
+            assert!(s.held_session_order.is_some());
             s.set_projects(session_projects(&["arrival"]), cx);
         });
         window.draw();
+        window.update(|_, w, _| {
+            let arrival =
+                gpui_kit::base::test_support::find(w, &[], &"session-status-arrival".into());
+            // Vue snapshots only existing projects; startup's first project is unheld.
+            assert_eq!(arrival.is_some(), initial.is_empty());
+            if !initial.is_empty() {
+                bounds(w, "empty-sessions-tau");
+            }
+        });
+        let footer = window.update(|_, w, _| bounds(w, "sidebar-footer").center());
+        window.simulate_mouse_move(footer);
+        window.draw();
         let row = window.update(|s, w, _| {
-            let row = session_anchor(s, "arrival");
-            assert!(bounds(w, "sidebar-body").contains(&row.center()));
-            assert!(row.size.height > px(0.));
+            assert!(s.held_session_order.is_none());
             bounds(w, "session-status-arrival");
-            assert_eq!(s.held_session_ids, Some(vec!["arrival".into()]));
-            row.center()
+            session_anchor(s, "arrival").center()
         });
         window.simulate_click(row, MouseButton::Left);
         window.draw();
@@ -318,7 +327,7 @@ fn hovered_empty_sidebar_renders_and_selects_arriving_sessions() {
 }
 
 #[test]
-fn hovered_sidebar_reconciles_membership_without_releasing_order() {
+fn hovered_sidebar_hides_arrivals_closes_real_gaps_and_releases_to_caller_order() {
     let mut app = gpui_kit::TestApp::new();
     app.update(gpui_kit::init);
     let mut window = app.open_window(|_, cx| {
@@ -341,27 +350,26 @@ fn hovered_sidebar_reconciles_membership_without_releasing_order() {
     window.simulate_mouse_move(pointer);
     window.draw();
     window.update(|s, _, cx| {
-        assert_eq!(
-            s.held_session_ids,
-            Some(vec!["a".into(), "b".into(), "c".into()])
-        );
+        assert!(s.held_session_order.is_some());
         s.set_projects(session_projects(&["c", "new-2", "b", "new-1", "a"]), cx);
     });
     window.draw();
     window.update(|s, w, cx| {
-        let held = ["a", "b", "c", "new-2", "new-1"];
-        assert_eq!(s.held_session_ids, Some(held.map(String::from).to_vec()));
+        let held = ["a", "b", "c"];
         for pair in held.windows(2) {
             assert!(session_anchor(s, pair[0]).top() < session_anchor(s, pair[1]).top());
         }
-        bounds(w, "session-status-new-2");
-        bounds(w, "session-status-new-1");
+        assert!(
+            gpui_kit::base::test_support::find(w, &[], &"session-status-new-2".into()).is_none()
+        );
+        assert!(
+            gpui_kit::base::test_support::find(w, &[], &"session-status-new-1".into()).is_none()
+        );
         s.set_projects(session_projects(&["new-1", "c", "new-2", "a"]), cx);
     });
     window.draw();
     window.update(|s, w, _| {
-        let held = ["a", "c", "new-2", "new-1"];
-        assert_eq!(s.held_session_ids, Some(held.map(String::from).to_vec()));
+        let held = ["a", "c"];
         for pair in held.windows(2) {
             assert!(session_anchor(s, pair[0]).top() < session_anchor(s, pair[1]).top());
         }
@@ -371,7 +379,7 @@ fn hovered_sidebar_reconciles_membership_without_releasing_order() {
     window.simulate_mouse_move(outside);
     window.draw();
     window.update(|s, _, _| {
-        assert!(s.held_session_ids.is_none());
+        assert!(s.held_session_order.is_none());
         for pair in ["new-1", "c", "new-2", "a"].windows(2) {
             assert!(session_anchor(s, pair[0]).top() < session_anchor(s, pair[1]).top());
         }

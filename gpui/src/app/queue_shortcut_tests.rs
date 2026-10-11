@@ -160,6 +160,102 @@ fn assert_prompt(request: &(String, u64, Value), id: &str, text: &str, behavior:
 }
 
 #[test]
+fn empty_keyboard_enter_never_stops_including_whitespace_and_remount() {
+    for remount in [false, true] {
+        for text in ["", "   "] {
+            for key in ["enter", secondary_key()] {
+                let mut f = QueueShortcutFixture::new();
+                if remount {
+                    f.root
+                        .update(|_, w, cx| f.shell.update(cx, |s, cx| s.mount(w, cx)));
+                    f.focus("a");
+                }
+                f.root.simulate_input(text);
+                f.root.simulate_keystroke(key);
+                f.root.draw();
+                assert!(
+                    f.sent().is_empty(),
+                    "empty keyboard submission must not send any RPC"
+                );
+                f.root.update(|_, _, cx| {
+                    assert!(!f.shell.read(cx).sessions["a"].controller.state().stopping);
+                });
+            }
+        }
+    }
+}
+
+#[test]
+fn explicit_empty_stop_button_and_shortcut_still_abort_once() {
+    for shortcut in [false, true] {
+        let mut f = QueueShortcutFixture::new();
+        if shortcut {
+            let key = if cfg!(target_os = "macos") {
+                "cmd-."
+            } else {
+                "ctrl-."
+            };
+            f.root.simulate_keystroke(key);
+            f.root.simulate_keystroke(key);
+        } else {
+            f.root.draw();
+            let position = f.root.update(|_, w, _| w.find("send").bounds().center());
+            for _ in 0..2 {
+                f.root.simulate_mouse_down(position, MouseButton::Left);
+                f.root.simulate_mouse_up(position, MouseButton::Left);
+                f.root.draw();
+            }
+        }
+        f.root.draw();
+        let sent = f.sent();
+        assert_eq!(
+            sent.iter().filter(|(_, _, r)| r["type"] == "abort").count(),
+            1
+        );
+        assert!(!sent.iter().any(|(_, _, r)| r["type"] == "prompt"));
+    }
+}
+
+#[test]
+fn compacting_root_blocks_enter_button_and_stop_shortcut_without_losing_draft() {
+    for text in ["", "Keep this draft"] {
+        for key in [
+            "enter",
+            secondary_key(),
+            if cfg!(target_os = "macos") {
+                "cmd-."
+            } else {
+                "ctrl-."
+            },
+        ] {
+            let mut f = QueueShortcutFixture::new();
+            f.root.simulate_input(text);
+            f.root.update(|_, w, cx| {
+                f.shell.update(cx, |s, cx| {
+                    s.ingest(rpc("a", 8, json!({"type":"compaction_start"})), cx);
+                    s.sync(w, cx);
+                })
+            });
+            f.root.simulate_keystroke(key);
+            f.root.draw();
+            let position = f.root.update(|_, w, _| w.find("send").bounds().center());
+            f.root.simulate_mouse_down(position, MouseButton::Left);
+            f.root.simulate_mouse_up(position, MouseButton::Left);
+            f.root.draw();
+            assert!(f.sent().is_empty());
+            f.root.update(|_, _, cx| {
+                let s = f.shell.read(cx);
+                assert_eq!(
+                    s.sessions["a"].composer.read(cx).editor().read(cx).value(),
+                    text
+                );
+                assert!(!s.sessions["a"].controller.state().stopping);
+            });
+        }
+    }
+}
+
+#[test]
 fn working_secondary_enter_queues_follow_up_not_steering() {
     let mut f = QueueShortcutFixture::new();
     let request = f.submit("Later 🧑🏽‍💻 café", secondary_key());

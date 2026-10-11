@@ -41,6 +41,7 @@ pub(super) struct State {
     unread: HashSet<SessionIdentity>,
     last_user: HashMap<SessionIdentity, u64>,
     runtime_identity: HashMap<String, SessionIdentity>,
+    row_sources: BTreeMap<String, String>,
     archive_source: Vec<ArchiveMetadata>,
     archive_rows: Vec<SessionItem>,
     archive_details: BTreeMap<String, ArchivedDetails>,
@@ -94,13 +95,15 @@ fn runtime_index(sessions: &BTreeMap<String, LiveSession>) -> HashMap<(&str, &st
     let mut index = HashMap::with_capacity(sessions.len() * 2);
     for (key, live) in sessions {
         let project = live.project.path.as_str();
-        for id in [
-            live.source_id.as_str(),
-            live.controller.state().identity.id.as_str(),
-        ] {
-            if !id.is_empty() {
-                index.entry((project, id)).or_insert(key.as_str());
-            }
+        // The launch source is only a bootstrap fallback, not an alias for a replacement.
+        let current = live.controller.state().identity.id.as_str();
+        let id = if current.is_empty() {
+            live.source_id.as_str()
+        } else {
+            current
+        };
+        if !id.is_empty() {
+            index.entry((project, id)).or_insert(key.as_str());
         }
     }
     index
@@ -213,7 +216,7 @@ impl Shell {
                         .map(|live| live.controller.state().identity.name.as_str())
                         .filter(|s| !s.is_empty());
                     source.push(ArchiveMetadata {
-                        id: key.unwrap_or(&session.id).into(),
+                        id: session.id.clone(),
                         title: live_name.unwrap_or(&session.title).into(),
                         project: project.name.clone(),
                         model: session.model.clone(),
@@ -407,7 +410,7 @@ impl Shell {
                         .map(|s| s.identity.name.as_str())
                         .filter(|s| !s.is_empty())
                         .unwrap_or(&session.title);
-                    let id = key.unwrap_or(&session.id).to_owned();
+                    let id = session.id.clone();
                     // Metadata is title Markdown, never a tool-output-derived fake last message.
                     details.insert(
                         id.clone(),
@@ -445,13 +448,11 @@ impl Shell {
                     }
                 }
                 for &(key, live) in by_project.get(project.path.as_str()).into_iter().flatten() {
-                    if known.contains(live.source_id.as_str())
-                        || known.contains(live.controller.state().identity.id.as_str())
-                    {
+                    let binding = SessionIdentity::live(key, live);
+                    if known.contains(binding.pi_id.as_str()) {
                         continue;
                     }
                     let state = live.controller.state();
-                    let binding = SessionIdentity::live(key, live);
                     let unread = self.sidebar_state.unread.contains(&binding);
                     let status = indicator(
                         !state.extension_dialogs.is_empty(),
@@ -469,8 +470,13 @@ impl Shell {
                     } else {
                         name
                     };
+                    let id = if binding.pi_id.is_empty() {
+                        key.clone()
+                    } else {
+                        binding.pi_id.clone()
+                    };
                     details.insert(
-                        key.clone(),
+                        id.clone(),
                         SessionDetails {
                             status: status_label(status).into(),
                             message: tooltip_markdown(&name),
@@ -485,7 +491,7 @@ impl Shell {
                             .copied()
                             .unwrap_or_default(),
                         SessionItem {
-                            id: key.clone(),
+                            id,
                             title: name,
                             time: String::new(),
                             status,
@@ -574,7 +580,38 @@ impl Shell {
         let projection =
             projection_changed.then(|| self.sidebar_projection(now_ms, index.as_ref().unwrap()));
         let source = metadata_changed.then(|| self.archive_metadata(index.as_ref().unwrap()));
+        let active_id = self
+            .sessions
+            .get(&self.active)
+            .map(|live| SessionIdentity::live(&self.active, live))
+            .map(|binding| {
+                if binding.pi_id.is_empty() {
+                    self.active.clone()
+                } else {
+                    binding.pi_id
+                }
+            })
+            .unwrap_or_else(|| self.active.clone());
         let state = &mut self.sidebar_state;
+        if let Some((projects, _)) = &projection {
+            let rows: HashSet<_> = projects
+                .iter()
+                .flat_map(|project| project.sessions.iter().map(|row| row.id.as_str()))
+                .collect();
+            // A saved predecessor can outlive its runtime binding during replacement.
+            state.row_sources.retain(|id, _| rows.contains(id.as_str()));
+            for (runtime, live) in &self.sessions {
+                let binding = SessionIdentity::live(runtime, live);
+                let id = if binding.pi_id.is_empty() {
+                    runtime
+                } else {
+                    &binding.pi_id
+                };
+                if rows.contains(id.as_str()) {
+                    state.row_sources.insert(id.clone(), runtime.clone());
+                }
+            }
+        }
         #[cfg(test)]
         {
             state.projection_builds += usize::from(projection_changed);
@@ -639,17 +676,17 @@ impl Shell {
             sidebar.update(cx, |sidebar, cx| {
                 if mode_changed || (self.session_actions.archived && archive_changed) {
                     let mut props = sidebar_props();
-                    props.active = self.active.clone();
+                    props.active = active_id.clone();
                     props.archived = self.session_actions.archived;
                     if props.archived {
                         props.sessions = state.archive_rows.clone();
                     }
                     sidebar.set_props(props, cx);
                 } else {
-                    sidebar.set_active_session(self.active.clone(), cx);
+                    sidebar.set_active_session(active_id.clone(), cx);
                 }
                 if let Some((projects, details)) = projection {
-                    sidebar.set_projects(projects, cx);
+                    sidebar.set_projects_with_identities(projects, state.row_sources.clone(), cx);
                     sidebar.set_session_details(details, cx);
                 }
                 if metadata_changed || day_changed || entity_changed {
@@ -664,4 +701,8 @@ impl Shell {
 }
 
 #[cfg(test)]
+mod painted_tests;
+#[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod workflow_tests;

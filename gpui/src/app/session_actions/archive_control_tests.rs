@@ -21,7 +21,7 @@ fn mounted_idle_shell_archives_with_models_and_commands_reads_pending() {
     });
     root.draw();
     let position = root.update(|_, w, _| {
-        gpui_kit::base::test_support::find(w, &[], &"archive-live".to_owned().into())
+        gpui_kit::base::test_support::find(w, &[], &"archive-saved".to_owned().into())
             .unwrap()
             .bounds()
             .center()
