@@ -196,6 +196,7 @@ pub struct Controller {
     connected: bool,
     scope_revision: u64,
     model_choices_revision: u64,
+    commands_revision: u64,
     // Idle compaction must not invent a stream when it finishes.
     compaction_working: bool,
     history_layers: Vec<HistoryLayer>,
@@ -227,6 +228,7 @@ impl Controller {
             connected: false,
             scope_revision: 0,
             model_choices_revision: 0,
+            commands_revision: 0,
             compaction_working: false,
             history_layers: vec![],
             first_history_layer: 0,
@@ -315,6 +317,13 @@ impl Controller {
     /// O(1) invalidation token for catalogue, scope, current model and effort choices.
     pub fn model_choices_revision(&self) -> u64 {
         self.model_choices_revision
+    }
+    /// Changes only when the authoritative command catalogue changes or is reset.
+    pub fn commands_revision(&self) -> u64 {
+        self.commands_revision
+    }
+    fn reset_commands(&mut self) {
+        self.commands_revision += replace_changed(&mut self.state.commands, vec![]) as u64;
     }
     pub fn pending_count(&self) -> usize {
         self.pending.len()
@@ -419,6 +428,7 @@ impl Controller {
         self.reset_history();
         self.compaction_snapshot = None;
         self.generation = generation;
+        self.reset_commands();
         self.compaction_working = false;
         self.epoch += 1;
         self.reset_model_scope();
@@ -671,6 +681,7 @@ impl Controller {
                     self.lose_queue();
                     self.state.durable = false;
                     self.state.identity = current.clone();
+                    self.reset_commands();
                     self.reset_model_scope();
                     effects.push(Effect::IdentityChanged { previous, current });
                     effects.push(self.send("get_available_models", json!({}), false));
@@ -812,7 +823,10 @@ impl Controller {
                 self.model_choices_revision +=
                     replace_changed(&mut self.state.scoped_models, resolved_scope(d)) as u64;
             }
-            "get_commands" => self.state.commands = array(&d["commands"]),
+            "get_commands" => {
+                self.commands_revision +=
+                    replace_changed(&mut self.state.commands, array(&d["commands"])) as u64;
+            }
             "get_available_thinking_levels" => {
                 self.model_choices_revision += replace_changed(
                     &mut self.state.thinking_levels,
@@ -1531,6 +1545,10 @@ fn strings(v: &Value) -> Option<Vec<String>> {
         .map(|v| v.as_str().map(str::to_owned))
         .collect()
 }
+
+#[cfg(test)]
+#[path = "session_command_tests.rs"]
+mod command_tests;
 
 #[cfg(test)]
 #[path = "session_history_tests.rs"]

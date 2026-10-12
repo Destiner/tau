@@ -1133,7 +1133,33 @@ async fn exercise(
         },
     )
     .await;
-    insert_composer(&shell, &cx, "/tau-native-smoke");
+    insert_composer(&shell, &cx, "/");
+    poll(&cx, "slash renders actual Pi command catalogue", 5, |cx| {
+        window(&shell, cx)
+            .update(cx, |_, w, cx| {
+                let live = &shell.read(cx).sessions[&second];
+                let composer = live.composer.read(cx);
+                composer
+                    .active_command()
+                    .is_some_and(|command| command.name == "tau-native-smoke")
+                    && gpui_kit::base::test_support::find(w, &[], &"command-option-0".into())
+                        .is_some_and(|row| row.visible() && row.bounds().size.height > px(0.))
+                    && composer.editor().read(cx).focus_handle(cx).is_focused(w)
+            })
+            .unwrap()
+    })
+    .await;
+    capture(&shell, &cx, "slash-commands", true).await;
+    key(&shell, &cx, "tab");
+    poll(&cx, "Tab expands without executing command", 5, |cx| {
+        let live = &shell.read(cx).sessions[&second];
+        live.controller.state().draft == "/tau-native-smoke "
+            && !live.controller.submission_pending()
+            && !live.composer.read(cx).command_menu_active()
+            && live.extension.is_none()
+    })
+    .await;
+    key(&shell, &cx, "backspace");
     poll(
         &cx,
         "second draft protects session before sidebar switch",

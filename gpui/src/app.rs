@@ -5,6 +5,8 @@ mod native_smoke;
 pub use native_smoke::run_native_smoke;
 mod admin;
 mod admin_bridge;
+#[cfg(test)]
+mod command_tests;
 mod empty_sessions;
 #[cfg(test)]
 mod history_admission_tests;
@@ -91,6 +93,7 @@ struct LiveSession {
     projection_dirty: bool,
     ui_status: Option<(bool, bool)>,
     choices: Option<u64>,
+    command_choices: Option<u64>,
     model_scope_read: Option<tau_session::session::ModelScopeToken>,
     presented_history: Option<(String, String)>,
     extension: Option<(String, Entity<NativeDialog>)>,
@@ -858,6 +861,7 @@ impl Shell {
                 projection_dirty: true,
                 ui_status: None,
                 choices: None,
+                command_choices: None,
                 model_scope_read: None,
                 presented_history: None,
                 extension: None,

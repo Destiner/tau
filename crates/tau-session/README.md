@@ -32,6 +32,7 @@ Use ordinary persistent RPC mode for saved work; **`--no-session` means in-memor
 - `set_draft(text)`, `submit(text)`, `submit_queued(text, QueueKind::{Steer, FollowUp})`.
 - `abort()`: Stop current work, never clear queues. `queue_snapshot()`, `clear_queue()`.
 - `set_model(provider, model_id)`, `set_thinking(level)`, `refresh()`, `refresh_models()`.
+- `model_choices_revision()`, `commands_revision()` let hosts cache catalogue projections across unchanged streaming updates. Command revisions advance only when the authoritative catalogue changes; generation/identity replacement clears it, and existing request/generation/identity fences reject stale replies.
 - `load_history(marker_id)` reveals one earlier compaction layer, using cached active-branch entries or a fenced `get_entries` request. Reconcile the authoritative marker state even when no effects are returned: a cached reveal and a rejected request are both possible.
 - `setting_pending()`, `submission_pending()`, `queue_busy()` expose action-specific admission instead of treating pending read requests as blocked work.
 - `begin_model_scope_read() -> ModelScopeToken`, `apply_model_scope(&token, Option<Value>)`: fence host-owned async settings reads by generation, identity and refresh/read revision. The value is an array of scope patterns, not the entire settings file.

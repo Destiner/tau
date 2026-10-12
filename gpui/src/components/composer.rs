@@ -20,6 +20,9 @@ use std::{cell::Cell, collections::HashMap, rc::Rc};
 /// Choice identity → display group. No changes to Choice or protocol identities.
 pub type ModelGroups = HashMap<String, String>;
 
+mod commands;
+pub use commands::{CommandOption, CommandOrigin, CommandScope, CommandSource, CommandSourceInfo};
+
 pub fn effort_label(value: &str) -> &str {
     match value {
         "off" => "Off",
@@ -125,6 +128,8 @@ pub(super) fn retheme_input_style(
 }
 
 pub struct Composer {
+    commands: commands::Commands,
+    _command_keys: Option<Subscription>,
     hint_hovered: bool,
     hint_visible: bool,
     hint_task: Option<gpui_kit::Task<()>>,
@@ -801,7 +806,11 @@ impl Composer {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.disabled || self.stopped || self.compacting {
+        if self.disabled
+            || self.stopped
+            || self.compacting
+            || (self.streaming && self.extension_command_draft(cx))
+        {
             return;
         }
         if self.editor.read(cx).value().trim().is_empty() {
@@ -825,24 +834,20 @@ impl Composer {
 impl Composer {
     /// Move window-bound routes without replacing editing state or undo history.
     pub fn reattach_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.editor_bounds.set(None);
+        self.commands.bounds.set(None);
         self.close(cx);
         self.hint_task = None;
         self.hint_hovered = false;
         self.hint_visible = false;
         self.context_menu.update(cx, |menu, cx| menu.dismiss(cx));
         self.menu_target = None;
+        self.install_command_keys(window, cx);
         self._events = cx.subscribe_in(
             &self.editor,
             window,
             |this, _, event: &InputEvent, window, cx| {
-                if let InputEvent::PressEnter {
-                    shift: false,
-                    secondary,
-                } = event
-                {
-                    this.send(*secondary, window, cx);
-                }
-                cx.notify();
+                this.editor_event(event, window, cx);
             },
         );
         self._search_events = cx.subscribe(&self.search, |this, input, event: &InputEvent, cx| {
@@ -919,14 +924,7 @@ impl Composer {
             &editor,
             window,
             |this, _, event: &InputEvent, window, cx| {
-                if let InputEvent::PressEnter {
-                    shift: false,
-                    secondary,
-                } = event
-                {
-                    this.send(*secondary, window, cx);
-                }
-                cx.notify();
+                this.editor_event(event, window, cx);
             },
         );
         cx.bind_keys([
@@ -1013,7 +1011,9 @@ impl Composer {
             .iter()
             .position(|o| o.id == options.effort)
             .unwrap_or(0);
-        Self {
+        let mut composer = Self {
+            commands: commands::Commands::default(),
+            _command_keys: None,
             hint_hovered: false,
             hint_visible: false,
             hint_task: None,
@@ -1051,11 +1051,16 @@ impl Composer {
             _menu_events: menu_events,
             _events: events,
             _search_events: search_events,
-        }
+        };
+        composer.sync_commands(cx);
+        composer.install_command_keys(window, cx);
+        composer
     }
 }
 impl Render for Composer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_commands(cx);
+        let command_popup = self.command_popup(window, cx);
         let t = support::tokens(self.dark);
         let draft = self.editor.read(cx).value().to_string();
         let filled = !draft.trim().is_empty();
@@ -1070,8 +1075,11 @@ impl Render for Composer {
         } else {
             t.muted
         };
-        let send_disabled =
-            self.disabled || self.stopped || self.compacting || (!self.streaming && !filled);
+        let send_disabled = self.disabled
+            || self.stopped
+            || self.compacting
+            || (!self.streaming && !filled)
+            || (self.streaming && self.extension_command_draft(cx));
         let icon_name = if self.streaming {
             if filled { "queue" } else { "stop" }
         } else {
@@ -1356,13 +1364,22 @@ impl Render for Composer {
             // insert a newline before the deferred PressEnter subscriber sends.
             .on_action(|_: &gpui_kit::base::input::Enter, _, cx| cx.stop_propagation())
             .relative()
-            .on_prepaint(move |bounds, _, _| editor_bounds.set(Some(bounds)))
+            .on_prepaint(move |bounds, window, _| {
+                if editor_bounds.replace(Some(bounds)) != Some(bounds) {
+                    window.request_animation_frame();
+                }
+            })
             .on_mouse_down_out(cx.listener(|s, event: &MouseDownEvent, window, cx| {
                 // Capture runs even when blank chrome consumes the target's mouse down.
                 // Only release our own focus; menus and other editors own theirs independently.
                 if s.editor_bounds
                     .get()
                     .is_some_and(|bounds| !bounds.contains(&event.position))
+                    && !(s.command_menu_active()
+                        && s.commands
+                            .bounds
+                            .get()
+                            .is_some_and(|bounds| bounds.contains(&event.position)))
                     && s.editor.read(cx).focus_handle(cx).is_focused(window)
                 {
                     window.blur(cx);
@@ -1390,6 +1407,7 @@ impl Render for Composer {
             .child(toolbar)
             .child(self.context_menu.clone())
             .when_some(hint, |composer, hint| composer.child(hint))
+            .when_some(command_popup, |composer, popup| composer.child(popup))
     }
 }
 

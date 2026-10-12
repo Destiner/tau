@@ -1,5 +1,5 @@
 use super::*;
-use gpui_kit::base::Button;
+use gpui_kit::base::{Button, ElementExt};
 
 impl Shell {
     pub(super) fn restore_input_focus(&self, cx: &mut Context<Self>) {
@@ -190,6 +190,17 @@ impl Shell {
                 live.shown_draft = draft.clone();
                 let editor = live.composer.read(cx).editor();
                 editor.update(cx, |e, cx| e.set_value(&draft, window, cx));
+            }
+            let commands_revision = live.controller.commands_revision();
+            if live.command_choices != Some(commands_revision) {
+                live.command_choices = Some(commands_revision);
+                let commands = state
+                    .commands
+                    .iter()
+                    .filter_map(|command| serde_json::from_value(command.clone()).ok())
+                    .collect();
+                live.composer
+                    .update(cx, |composer, cx| composer.set_commands(commands, cx));
             }
             // Check the mutation token before projecting or serializing any model data.
             let choice_revision = live.controller.model_choices_revision();
@@ -626,7 +637,23 @@ impl Render for Shell {
         }
         let mut main = div().flex().flex_col().flex_1().min_w_0().h_full();
         if let Some(header) = &self.header {
-            main = main.child(header.clone());
+            let composer = self
+                .sessions
+                .get(&self.active)
+                .map(|live| live.composer.clone());
+            main = main.child(
+                div()
+                    .w_full()
+                    .flex_shrink_0()
+                    .on_prepaint(move |bounds, _, cx| {
+                        if let Some(composer) = &composer {
+                            composer.update(cx, |composer, cx| {
+                                composer.set_command_top_boundary(bounds.bottom(), cx);
+                            });
+                        }
+                    })
+                    .child(header.clone()),
+            );
         }
         if let Some(error) = self.session_action_error() {
             main = main.child(
