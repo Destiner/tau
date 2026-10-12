@@ -14,6 +14,10 @@ pub struct Entry {
     pub text: String,
     pub activity: bool,
     pub pending: bool,
+    #[serde(default)]
+    pub history_available: bool,
+    #[serde(default)]
+    pub history_loading: bool,
     pub interrupted: bool,
     pub tool_call_id: Option<String>,
     pub tool_name: Option<String>,
@@ -32,6 +36,8 @@ impl Entry {
             text,
             activity: false,
             pending: false,
+            history_available: false,
+            history_loading: false,
             interrupted: false,
             tool_call_id: None,
             tool_name: None,
@@ -94,6 +100,9 @@ impl Entry {
     }
 }
 #[cfg(test)]
+#[path = "transcript/history_tests.rs"]
+pub(crate) mod history_tests;
+#[cfg(test)]
 #[path = "transcript/tests.rs"]
 mod tests;
 
@@ -151,9 +160,12 @@ pub(crate) fn project(m: &Value, key: &str) -> Vec<Entry> {
             rows[0].result = string(&m["output"]);
         }
         "custom" if m["display"] == true => add("notice", content_text(&m["content"]), key.into()),
-        "compactionSummary" | "branchSummary" => {
-            add("compaction", string(&m["summary"]), key.into())
+        "compactionSummary" => {
+            add("compaction", String::new(), key.into());
+            rows[0].history_available = true;
         }
+        // Branch summaries are model context, not conversation (Vue omits them).
+        "branchSummary" => {}
         _ => {}
     }
     rows
@@ -195,6 +207,119 @@ fn project_assistant(m: &Value, key: &str) -> Vec<Entry> {
             "The reply failed. Check the Pi setup and try again.".into(),
             format!("{key}:error"),
         ));
+    }
+    rows
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct HistoryLayer {
+    pub marker_id: String,
+    pub rows: Vec<Entry>,
+}
+
+/// Pi's raw active branch, sliced only at real firstKeptEntryId boundaries.
+pub(crate) fn history_layers(values: &[Value], leaf: &str) -> Vec<HistoryLayer> {
+    use std::collections::{BTreeSet, HashMap, HashSet};
+    let by_id: HashMap<_, _> = values
+        .iter()
+        .filter_map(|v| Some((v["id"].as_str()?, v)))
+        .collect();
+    let mut path = vec![];
+    let mut seen = HashSet::new();
+    let mut cursor = leaf;
+    while !cursor.is_empty() {
+        if !seen.insert(cursor) {
+            return vec![];
+        }
+        let Some(entry) = by_id.get(cursor) else {
+            return vec![];
+        };
+        path.push(*entry);
+        cursor = entry["parentId"].as_str().unwrap_or_default();
+    }
+    path.reverse();
+    let Some(latest) = path.iter().rposition(|e| e["type"] == "compaction") else {
+        return vec![];
+    };
+    let index_by_id: HashMap<_, _> = path
+        .iter()
+        .enumerate()
+        .filter_map(|(index, e)| Some((e["id"].as_str()?, index)))
+        .collect();
+    let Some(start) = path[latest]["firstKeptEntryId"]
+        .as_str()
+        .and_then(|id| index_by_id.get(id))
+        .copied()
+        .filter(|&i| i > 0 && i <= latest)
+    else {
+        return vec![];
+    };
+    let mut cutoffs = BTreeSet::from([0, start]);
+    for entry in &path[..latest] {
+        if entry["type"] == "compaction" {
+            if let Some(&index) = entry["firstKeptEntryId"]
+                .as_str()
+                .and_then(|id| index_by_id.get(id))
+            {
+                if index > 0 && index < start {
+                    cutoffs.insert(index);
+                }
+            }
+        }
+    }
+    let cutoffs: Vec<_> = cutoffs.into_iter().collect();
+    let mut layers = vec![];
+    for span in cutoffs.windows(2) {
+        let prefix = format!("history:{}", string(&path[span[0]]["id"]));
+        let mut rows: Vec<Entry> = vec![];
+        for entry in &path[span[0]..span[1]] {
+            if entry["type"] != "message" {
+                continue;
+            }
+            let key = format!("{prefix}:{}", string(&entry["id"]));
+            for (part, mut row) in project(&entry["message"], &key).into_iter().enumerate() {
+                if row.kind == "tool" {
+                    if let Some(prior) = rows.iter_mut().rev().find(|r| {
+                        r.kind == "tool"
+                            && r.tool_call_id.is_some()
+                            && r.tool_call_id == row.tool_call_id
+                    }) {
+                        prior.result = row.result;
+                        prior.is_error = row.is_error;
+                        continue;
+                    }
+                }
+                row.id = format!("{key}:{part}");
+                // Tool projection normally uses a runtime-global call source.
+                row.source = format!("{prefix}:{}", row.source);
+                row.history_available = false;
+                rows.push(row);
+            }
+        }
+        if !rows.is_empty() {
+            layers.push(HistoryLayer {
+                marker_id: format!("{prefix}:compaction"),
+                rows,
+            });
+        }
+    }
+    layers
+}
+
+pub(crate) fn history_prefix(layers: &[HistoryLayer], first: usize) -> Vec<Entry> {
+    let mut rows = vec![];
+    for (index, layer) in layers.iter().enumerate().skip(first) {
+        if index > first || first > 0 {
+            let mut marker = Entry::new(
+                layer.marker_id.clone(),
+                "compaction",
+                String::new(),
+                layer.marker_id.clone(),
+            );
+            marker.history_available = index == first && first > 0;
+            rows.push(marker);
+        }
+        rows.extend(layer.rows.iter().cloned());
     }
     rows
 }

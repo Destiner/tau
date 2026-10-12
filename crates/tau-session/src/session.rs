@@ -1,5 +1,7 @@
 use crate::model_scope::{resolved_scope, scope_models, valid_model};
-use crate::transcript::{content_text, message_key, project, string, Entry};
+use crate::transcript::{
+    content_text, history_layers, history_prefix, message_key, project, string, Entry, HistoryLayer,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -196,6 +198,10 @@ pub struct Controller {
     model_choices_revision: u64,
     // Idle compaction must not invent a stream when it finishes.
     compaction_working: bool,
+    history_layers: Vec<HistoryLayer>,
+    first_history_layer: usize,
+    history_prefix_len: usize,
+    compaction_snapshot: Option<HashMap<String, u64>>,
 }
 impl Controller {
     pub fn new(runtime_id: impl Into<String>) -> Self {
@@ -222,6 +228,79 @@ impl Controller {
             scope_revision: 0,
             model_choices_revision: 0,
             compaction_working: false,
+            history_layers: vec![],
+            first_history_layer: 0,
+            history_prefix_len: 0,
+            compaction_snapshot: None,
+        }
+    }
+    fn reset_history(&mut self) {
+        let prefix = self.history_prefix_len.min(self.state.transcript.len());
+        self.state.transcript.drain(..prefix);
+        self.history_prefix_len = 0;
+        self.history_layers.clear();
+        self.first_history_layer = 0;
+        self.pending.retain(|_, p| p.command != "get_entries");
+        self.latest.remove("get_entries");
+        for row in &mut self.state.transcript {
+            if row.kind == "compaction" {
+                row.history_available = false;
+                row.history_loading = false;
+                row.touch();
+            }
+        }
+    }
+    fn set_history_loading(&mut self, loading: bool) {
+        if let Some(marker) = self
+            .state
+            .transcript
+            .iter_mut()
+            .find(|r| r.kind == "compaction" && r.history_available)
+        {
+            marker.history_loading = loading;
+            marker.touch();
+        }
+    }
+    fn apply_history_prefix(&mut self) {
+        if self.history_layers.is_empty() {
+            if self.pending.values().any(|p| p.command == "get_entries") {
+                self.set_history_loading(true);
+            }
+            return;
+        }
+        for row in &mut self.state.transcript {
+            if row.kind == "compaction" {
+                row.history_available = false;
+                row.history_loading = false;
+                row.touch();
+            }
+        }
+        let mut prefix = history_prefix(&self.history_layers, self.first_history_layer);
+        self.history_prefix_len = prefix.len();
+        prefix.append(&mut self.state.transcript);
+        self.state.transcript = prefix;
+    }
+    /// Activate only the current session's loadable boundary; Pi owns the tree.
+    pub fn load_history(&mut self, marker_id: &str) -> Vec<Effect> {
+        if !self.connected
+            || !self
+                .state
+                .transcript
+                .iter()
+                .any(|r| r.id == marker_id && r.history_available && !r.history_loading)
+        {
+            return vec![];
+        }
+        if !self.history_layers.is_empty() {
+            if self.first_history_layer > 0 {
+                self.state.transcript.drain(..self.history_prefix_len);
+                self.first_history_layer -= 1;
+                self.apply_history_prefix();
+            }
+            vec![]
+        } else {
+            self.set_history_loading(true);
+            vec![self.send("get_entries", json!({}), false)]
         }
     }
     pub fn runtime_id(&self) -> &str {
@@ -253,6 +332,8 @@ impl Controller {
     }
     /// Optional requested saved identity, set before bootstrap; never itself a durability proof.
     pub fn bind_source(&mut self, id: impl Into<String>, path: impl Into<String>) {
+        self.reset_history();
+        self.compaction_snapshot = None;
         self.state.identity = Identity {
             id: id.into(),
             path: path.into(),
@@ -335,6 +416,8 @@ impl Controller {
         }
         self.recover_pending();
         self.finalize_partial();
+        self.reset_history();
+        self.compaction_snapshot = None;
         self.generation = generation;
         self.compaction_working = false;
         self.epoch += 1;
@@ -500,6 +583,17 @@ impl Controller {
                 }
                 self.state.compacting = false;
                 if v["result"].is_object() {
+                    self.reset_history();
+                    self.state
+                        .transcript
+                        .retain(|r| !r.source.starts_with("local:"));
+                    self.compaction_snapshot = Some(
+                        self.state
+                            .transcript
+                            .iter()
+                            .map(|r| (r.id.clone(), r.revision))
+                            .collect(),
+                    );
                     effects.push(self.send("get_messages", json!({}), false));
                 } else if v["errorMessage"].is_string() {
                     self.fail(
@@ -568,6 +662,8 @@ impl Controller {
                     self.pending.clear();
                     self.latest.clear();
                     self.epoch += 1;
+                    self.reset_history();
+                    self.compaction_snapshot = None;
                     self.state.transcript.clear();
                     self.message_occurrences.clear();
                     self.active_assistant = None;
@@ -611,7 +707,7 @@ impl Controller {
                 effects.push(self.send("get_available_thinking_levels", json!({}), false));
             }
             "get_messages" => {
-                if p.revision != self.revision {
+                if p.revision != self.revision && self.compaction_snapshot.is_none() {
                     self.state.history_loading = false;
                     if !self.state.working {
                         return vec![self.send("get_messages", json!({}), false)];
@@ -619,7 +715,9 @@ impl Controller {
                     return vec![];
                 }
                 if let Some(messages) = d["messages"].as_array() {
-                    let old = self.state.transcript.clone();
+                    let old = self.state.transcript
+                        [self.history_prefix_len.min(self.state.transcript.len())..]
+                        .to_vec();
                     self.state.transcript.clear();
                     let mut occurrences = BTreeMap::new();
                     for (i, m) in messages.iter().enumerate() {
@@ -646,17 +744,60 @@ impl Controller {
                         self.merge_rows(rows, false);
                     }
                     self.message_occurrences = occurrences;
+                    // A continuing run may advance while the compaction read is in flight.
+                    let reconciling_compaction = self.compaction_snapshot.is_some();
+                    if let Some(snapshot) = self.compaction_snapshot.take() {
+                        for live in old
+                            .iter()
+                            .filter(|r| snapshot.get(&r.id) != Some(&r.revision))
+                        {
+                            if let Some(index) = self
+                                .state
+                                .transcript
+                                .iter()
+                                .position(|r| r.source == live.source && r.kind == live.kind)
+                            {
+                                self.state.transcript[index] = live.clone();
+                            } else {
+                                // Equal prose is not provenance: repeated messages are valid.
+                                self.state.transcript.push(live.clone());
+                            }
+                        }
+                    }
                     // Local notices and failed/uncertain partial output are not in Pi history.
                     for r in old {
-                        if (r.source.starts_with("local:") || r.interrupted)
+                        if !reconciling_compaction
+                            && (r.source.starts_with("local:") || r.interrupted)
                             && !self.state.transcript.iter().any(|n| n.id == r.id)
                         {
                             self.state.transcript.push(r);
                         }
                     }
+                    self.apply_history_prefix();
                     self.state.history_loading = false;
                 } else {
                     self.reject(p, false);
+                }
+            }
+            "get_entries" => {
+                self.set_history_loading(false);
+                self.history_layers = history_layers(
+                    d["entries"]
+                        .as_array()
+                        .map(Vec::as_slice)
+                        .unwrap_or_default(),
+                    &string(&d["leafId"]),
+                );
+                if self.history_layers.is_empty() {
+                    for row in &mut self.state.transcript {
+                        if row.kind == "compaction" {
+                            row.history_available = false;
+                            row.touch();
+                        }
+                    }
+                } else {
+                    self.first_history_layer = self.history_layers.len() - 1;
+                    self.apply_history_prefix();
                 }
             }
             "get_available_models" => {
@@ -1200,6 +1341,9 @@ impl Controller {
         if p.command == "get_messages" {
             self.state.history_loading = false;
         }
+        if p.command == "get_entries" {
+            self.set_history_loading(false);
+        }
         if p.command.starts_with("set_") {
             if let Some((draft, _)) = self.queue_submission.take() {
                 self.restore(draft);
@@ -1212,6 +1356,9 @@ impl Controller {
             "prompt" => "The message was not accepted. Review the draft and try again.",
             "abort" => "Stop was not confirmed. Pi may still be working. Try Stop again.",
             "clear_queue" => "Could not clear the queue. Check the Pi version and retry.",
+            "get_entries" => {
+                "Earlier messages could not be loaded. Try the compacted divider again."
+            }
             "set_session_name" => {
                 "The session could not be renamed. Choose another name and try again."
             }
@@ -1249,6 +1396,8 @@ impl Controller {
         }
         self.connected = false;
         self.admission = None;
+        self.set_history_loading(false);
+        self.compaction_snapshot = None;
         self.recover_pending();
         self.pending.clear();
         self.latest.clear();
@@ -1382,6 +1531,10 @@ fn strings(v: &Value) -> Option<Vec<String>> {
         .map(|v| v.as_str().map(str::to_owned))
         .collect()
 }
+
+#[cfg(test)]
+#[path = "session_history_tests.rs"]
+mod history_tests;
 
 #[cfg(test)]
 mod revision_tests {

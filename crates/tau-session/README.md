@@ -32,6 +32,7 @@ Use ordinary persistent RPC mode for saved work; **`--no-session` means in-memor
 - `set_draft(text)`, `submit(text)`, `submit_queued(text, QueueKind::{Steer, FollowUp})`.
 - `abort()`: Stop current work, never clear queues. `queue_snapshot()`, `clear_queue()`.
 - `set_model(provider, model_id)`, `set_thinking(level)`, `refresh()`, `refresh_models()`.
+- `load_history(marker_id)` reveals one earlier compaction layer, using cached active-branch entries or a fenced `get_entries` request. Reconcile the authoritative marker state even when no effects are returned: a cached reveal and a rejected request are both possible.
 - `setting_pending()`, `submission_pending()`, `queue_busy()` expose action-specific admission instead of treating pending read requests as blocked work.
 - `begin_model_scope_read() -> ModelScopeToken`, `apply_model_scope(&token, Option<Value>)`: fence host-owned async settings reads by generation, identity and refresh/read revision. The value is an array of scope patterns, not the entire settings file.
 - `extension_response(id, ExtensionResponse::{Value(String), Confirmed(bool), Cancelled})`. Dialog remains `submitting` until the host calls **`extension_sent(id, success)`** after writing the response. Pi does not emit a normal response to this record. On write failure the dialog is retryable. Fence host callbacks by captured runtime/generation, just like stdout.
@@ -44,6 +45,21 @@ All action/effect APIs return `Vec<Effect>`; empty effects mean no request was d
 `State` exposes identity (`id`, `path`, `name`), opaque Pi `model`, `effort`, `status`, readiness/working/stopping/history-loading flags, `transcript`, draft/recovered drafts, queue snapshots, `extension_dialogs`, opaque commands/models, thinking levels, reviewed `error`, and `durable`.
 
 `Entry` exposes stable UI `id`, `kind`, `text`, `activity`, `pending`, `interrupted`, tool ID/name/arguments/result/error and a source reconciliation key. These IDs are **controller-local UI IDs**, not Pi session-entry IDs or durable history cursors. Actual Pi message timestamps plus occurrence order bind streamed rows to hydration; tool rows use actual `toolCallId`. Final `message_end` text replaces deltas without changing row identity. Render/sanitize content in the host; this crate has no DOM or markdown renderer.
+
+### Compacted history
+
+Current messages come from `get_messages`. `compactionSummary` becomes a non-prose
+boundary with no raw summary text; `branchSummary` is omitted, matching Vue. Available
+boundaries expose `history_available` and `history_loading` for control/retry presentation. `load_history`
+walks the actual `get_entries` active ancestry from `leafId`, follows
+`firstKeptEntryId`, and reveals one preceding layer without navigating branches.
+Startup metadata may be the leaf; it need not be the last message or session-info entry.
+
+Request/generation/identity fences reject stale history replies. Duplicate loads are
+suppressed, failed requests release loading for retry, and cached entries avoid repeated
+RPCs. Compaction refresh preserves a fresh streaming suffix without reintroducing hidden
+pre-compaction messages. Hosts must keep boundaries out of prose, Copy and markdown
+view caches, and retain reader position and unchanged source identities when prepending.
 
 ### Scoped models
 
@@ -73,7 +89,7 @@ Queue messages use real `prompt` with `streamingBehavior: "steer" | "followUp"`,
 
 This is a working protocol core, **not TS runtime parity**:
 
-- History is the current Pi `get_messages` projection. No `get_entries` tree traversal, branch/fork/navigation, pre-compaction reveal, progressive history loading, or stable durable Pi entry cursors. Compaction success requests a fresh message projection; it is not the full TS compaction reconciliation algorithm.
+- History supports current `get_messages` and layered pre-compaction reveal through active-branch `get_entries`. It does not provide branch/fork/navigation, general progressive history loading, or stable durable Pi entry cursors. Compaction success requests a fresh message projection; this remains narrower than the full TS history/replacement lifecycle.
 - Timestamp/occurrence reconciliation assumes actual Pi message timestamps and append-order current history. Synthetic/malformed messages without timestamps, context rewrites, abandoned branches and compaction can change row IDs. Empty/image-only user messages have no image UI; skill envelopes are plain user text, not a dedicated skill row.
 - Tool execution events and final assistant tool calls are projected. `toolcall_*` argument streaming is not displayed before the final tool-call/message or tool execution start. Provider-level `done`/`error` updates rely on ordinary Pi `message_end`. Tool/custom renderers and image results are not implemented. Nested tool execution rows may disappear on authoritative hydration because Pi does not store nested calls as independent messages.
 - Replacement detection is limited to bootstrap, agent-start, settlement, handled-command, answered-dialog, explicit refresh, and durability reads. No delayed replacement watcher, retry/backoff, bounded materialization verification, saved-history registration fallback, registry archive mutation, idle eviction or workflow restoration. If a replacement is learned through another read before a predecessor barrier returns, that barrier is conservatively discarded; predecessor registration recovery belongs to a later slice. Events emitted for an undiscovered successor can transiently project under the predecessor and are discarded on rebinding; there is no event-carried identity to infer otherwise. No transfer of live successor stream suffix across that race.
