@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use gpui_kit::{
     ElementId, SharedString, Svg,
-    base::{Button as BaseButton, input::InputEditorStyle},
+    base::{Button as BaseButton, ScrollbarStyles, Theme, input::InputEditorStyle},
     div,
     prelude::*,
     px, rgb, rgba, svg,
@@ -269,6 +269,24 @@ pub fn input_style(dark: bool) -> InputEditorStyle {
     }
 }
 
+/// Vue leaves scrollbars to the platform (only queue requests `thin`).
+/// Project the same quiet overlay ink onto Base's retained-editor and custom bars.
+pub fn scrollbar_styles(dark: bool) -> ScrollbarStyles {
+    let ink = tokens(dark).text;
+    ScrollbarStyles::default()
+        .track(|track| track.bg(rgba(0).into()).border_color(rgba(0).into()))
+        .thumb(|thumb| thumb.bg(rgba((ink << 8) | 0x59)).radius(px(4.)))
+        .thumb_hover(|thumb| thumb.bg(rgba((ink << 8) | 0x8c)).radius(px(4.)))
+        .thumb_active(|thumb| thumb.bg(rgba((ink << 8) | 0x8c)).radius(px(4.)))
+}
+
+/// Call at application initialization and when its appearance changes.
+/// Preserves Base's mode, motion, geometry, and the owning scroll handles.
+pub fn install_scrollbar_theme(dark: bool, cx: &mut gpui_kit::App) {
+    let scrollbar = Theme::global(cx).scrollbar;
+    Theme::global_mut(cx).scrollbar = scrollbar.with_styles(scrollbar_styles(dark));
+}
+
 pub fn mono() -> &'static str {
     if cfg!(target_os = "macos") {
         ".AppleSystemUIFontMonospaced"
@@ -295,16 +313,18 @@ pub fn icon(name: &str, size: f32, color: u32) -> Svg {
         .text_color(rgb(color))
 }
 
-/// The selector's CSS 5px square, 1px right/bottom borders, rotated 45°.
+/// A smaller, pixel-aligned glyph box; the trigger and previous glyph center stay put.
 pub fn selector_arrow(color: u32) -> gpui_kit::Div {
-    let extent = 5. * std::f32::consts::SQRT_2;
-    let overhang = (extent - 5.) / 2.;
+    let extent = 6.;
+    let overhang = (extent - 4.) / 2.;
     div()
         .absolute()
-        .right(px(8. - overhang))
+        .size(px(extent))
+        .flex_shrink_0()
+        .right(px(8.5 - overhang))
         .top(gpui_kit::relative(0.5))
-        .mt(px(-4. - overhang))
-        .child(icon("selector-chevron", extent, color))
+        .mt(px(-3.5 - overhang))
+        .child(icon("selector-chevron", extent, color).flex_shrink_0())
 }
 
 /// Bundled production icons and the CSS-derived selector chevron.
@@ -312,7 +332,7 @@ pub fn asset(path: &str) -> Option<Cow<'static, [u8]>> {
     let bytes: &'static [u8] = match path {
         "product-icons/search.svg" => include_bytes!("../../assets/product-icons/search.svg"),
         "product-icons/selector-chevron.svg" => {
-            include_bytes!("../../assets/product-icons/selector-chevron.svg")
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="5.656854" height="5.656854" viewBox="-0.828427 -0.828427 5.656854 5.656854"><path transform="rotate(45 2 2)" d="M3 0H4V4H0V3H3Z"/></svg>"#
         }
         "product-icons/chevron-left.svg" => {
             include_bytes!("../../assets/product-icons/chevron-left.svg")
@@ -538,6 +558,76 @@ mod tests {
                     assert_eq!(clicks.get() - before, if empty || busy { 0 } else { 3 });
                 }
             }
+        }
+    }
+
+    struct ScrollbarHost {
+        dark: bool,
+        scroll: gpui_kit::ScrollHandle,
+    }
+    impl Render for ScrollbarHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            use gpui_kit::{
+                TestSupportExt,
+                base::{Scrollbar, ScrollbarMode},
+            };
+            root(self.dark).child(
+                div()
+                    .relative()
+                    .w(px(200.))
+                    .h(px(100.))
+                    .child(
+                        div()
+                            .id("scroll-viewport")
+                            .test_support()
+                            .h(px(100.))
+                            .overflow_y_scroll()
+                            .track_scroll(&self.scroll)
+                            .child(div().h(px(400.)).w_full()),
+                    )
+                    .child(
+                        Scrollbar::vertical(&self.scroll)
+                            .mode(ScrollbarMode::Always)
+                            .styles(|_| scrollbar_styles(self.dark)),
+                    ),
+            )
+        }
+    }
+
+    #[test]
+    fn custom_scrollbars_paint_shared_dark_and_light_rest_and_hover_ink() {
+        for dark in [false, true] {
+            let mut app = TestApp::new();
+            app.update(gpui_kit::init);
+            let mut window = app.open_window(|_, _| ScrollbarHost {
+                dark,
+                scroll: gpui_kit::ScrollHandle::new(),
+            });
+            window.draw();
+            window.update(|_, window, _| {
+                let expected = rgba((tokens(dark).text << 8) | 0x59);
+                assert!(
+                    window
+                        .painted_quads()
+                        .iter()
+                        .any(|quad| quad.background == expected.into())
+                );
+            });
+            let position = window.update(|_, window, _| {
+                let bounds = window.find("scroll-viewport").bounds();
+                gpui_kit::point(bounds.right() - px(8.), bounds.top() + px(12.))
+            });
+            window.simulate_mouse_move(position);
+            window.draw();
+            window.update(|_, window, _| {
+                let expected = rgba((tokens(dark).text << 8) | 0x8c);
+                assert!(
+                    window
+                        .painted_quads()
+                        .iter()
+                        .any(|quad| quad.background == expected.into())
+                );
+            });
         }
     }
 

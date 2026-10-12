@@ -7,8 +7,8 @@ use gpui_kit::{
     IntoElement, KeyDownEvent, MouseDownEvent, Pixels, Render, ScrollHandle, Subscription,
     TestSupportExt, Window,
     base::{
-        Button as BaseButton, ElementExt, Input, InputBase, Placement, Popup, Positioner,
-        ScrollbarStyles, Textarea, Theme, Tooltip,
+        Button as BaseButton, ElementExt, Input, InputBase, Placement, Popup, Positioner, Textarea,
+        Tooltip,
         input::{Copy, Cut, InputEvent, InputState, Paste, TextareaState},
     },
     div,
@@ -168,6 +168,7 @@ impl Composer {
         if self.dark == dark {
             return;
         }
+        support::install_scrollbar_theme(dark, cx);
         retheme_input_style(&mut self.editor_style, self.dark, dark);
         retheme_input_style(&mut self.search_style, self.dark, dark);
         self.dark = dark;
@@ -892,9 +893,7 @@ impl Composer {
         let dark = options.dark;
         let disabled = options.disabled;
         let streaming = options.streaming;
-        let scrollbar = Theme::global(cx).scrollbar.clone();
-        Theme::global_mut(cx).scrollbar =
-            scrollbar.with_styles(ScrollbarStyles::default().thumb(|thumb| thumb.radius(px(4.))));
+        support::install_scrollbar_theme(dark, cx);
         let editor = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .accessibility_label("Message")
@@ -1180,162 +1179,164 @@ impl Render for Composer {
                 .with_priority(200)
             });
         let model_bounds = self.model_bounds.clone();
-        let model =
-            Popup::new(
-                "model-popup",
-                div()
-                    .relative()
-                    .on_prepaint(move |bounds, _, _| model_bounds.set(Some(bounds)))
-                    .child(
-                        BaseButton::new("model")
-                            .max_w((window.viewport_size().width - px(145.)).max(px(40.)))
-                            .min_w_0()
-                            .accessibility_label(format!("Model: {}", self.model_label()))
-                            .disabled(settings_disabled)
-                            .h(px(22.))
-                            .relative()
-                            .pl(px(5.))
-                            .pr(px(24.))
-                            .border_1()
-                            .border_color(rgb(if self.selector == Some("model") {
-                                t.accent
-                            } else {
-                                t.canvas
-                            }))
-                            .text_color(rgb(model_color))
-                            .styles(|styles| styles.disabled(|button| button.opacity(0.45)))
-                            .flex()
-                            .items_center()
-                            .gap(px(4.))
-                            .rounded(px(4.))
-                            .when(!settings_disabled, |button| {
-                                button.hover(move |s| s.bg(rgb(t.hover)))
-                            })
-                            .text_size(px(10.))
-                            .on_click(cx.listener(|s, _, window, cx| {
-                                if !s.settings_disabled() {
-                                    if s.selector == Some("model") {
-                                        s.close(cx);
-                                    } else {
-                                        s.selector = Some("model");
-                                        s.reveal_cursor.set(true);
-                                        s.cursor = if s.model().is_some() { s.model } else { 0 };
-                                        s.query.clear();
-                                        s.search.update(cx, |input, cx| {
-                                            input.set_value("", window, cx);
-                                            input.focus(window, cx);
-                                        });
-                                        cx.notify();
-                                    }
+        let model = Popup::new(
+            "model-popup",
+            div()
+                .relative()
+                .on_prepaint(move |bounds, _, _| model_bounds.set(Some(bounds)))
+                .child(
+                    BaseButton::new("model")
+                        .max_w((window.viewport_size().width - px(145.)).max(px(40.)))
+                        .min_w_0()
+                        .accessibility_label(format!("Model: {}", self.model_label()))
+                        .disabled(settings_disabled)
+                        .h(px(22.))
+                        .relative()
+                        .pl(px(5.))
+                        .pr(px(24.))
+                        .border_1()
+                        .border_color(rgb(if self.selector == Some("model") {
+                            t.accent
+                        } else {
+                            t.canvas
+                        }))
+                        .text_color(rgb(model_color))
+                        .styles(|styles| styles.disabled(|button| button.opacity(0.45)))
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .rounded(px(4.))
+                        .when(!settings_disabled, |button| {
+                            button.hover(move |s| s.bg(rgb(t.hover)))
+                        })
+                        .text_size(px(10.))
+                        .on_click(cx.listener(|s, _, window, cx| {
+                            if !s.settings_disabled() {
+                                if s.selector == Some("model") {
+                                    s.close(cx);
+                                } else {
+                                    s.selector = Some("model");
+                                    s.reveal_cursor.set(true);
+                                    s.cursor = if s.model().is_some() { s.model } else { 0 };
+                                    s.query.clear();
+                                    s.search.update(cx, |input, cx| {
+                                        input.set_value("", window, cx);
+                                        input.focus(window, cx);
+                                    });
+                                    cx.notify();
                                 }
-                            }))
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .child(self.model_label().to_owned()),
-                            )
-                            .child(
-                                support::selector_arrow(model_color)
-                                    .opacity(if settings_disabled { 0.45 } else { 1. }),
-                            ),
-                    ),
-            )
-            .anchor(self.selector_geometry("model", window).2)
-            .offset(px(5.))
-            .when(self.selector == Some("model"), |popup| {
-                popup.content(self.menu("model", window, cx))
-            });
+                            }
+                        }))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .child(self.model_label().to_owned()),
+                        )
+                        .child(
+                            support::selector_arrow(model_color)
+                                .id("model-chevron")
+                                .test_support()
+                                .opacity(if settings_disabled { 0.45 } else { 1. }),
+                        ),
+                ),
+        )
+        .anchor(self.selector_geometry("model", window).2)
+        .offset(px(5.))
+        .when(self.selector == Some("model"), |popup| {
+            popup.content(self.menu("model", window, cx))
+        });
         let effort_bounds = self.effort_bounds.clone();
-        let effort =
-            Popup::new(
-                "effort-popup",
-                div()
-                    .relative()
-                    .on_prepaint(move |bounds, _, _| effort_bounds.set(Some(bounds)))
-                    .child(
-                        BaseButton::new("effort")
-                            .accessibility_label(format!(
-                                "Effort: {}",
-                                self.effort()
-                                    .map(Self::effort_choice_label)
-                                    .unwrap_or_default()
-                            ))
-                            .disabled(settings_disabled)
-                            .track_focus(&self.effort_focus)
-                            .on_key_down(cx.listener(|s, event: &KeyDownEvent, window, cx| {
-                                if s.selector != Some("effort") {
+        let effort = Popup::new(
+            "effort-popup",
+            div()
+                .relative()
+                .on_prepaint(move |bounds, _, _| effort_bounds.set(Some(bounds)))
+                .child(
+                    BaseButton::new("effort")
+                        .accessibility_label(format!(
+                            "Effort: {}",
+                            self.effort()
+                                .map(Self::effort_choice_label)
+                                .unwrap_or_default()
+                        ))
+                        .disabled(settings_disabled)
+                        .track_focus(&self.effort_focus)
+                        .on_key_down(cx.listener(|s, event: &KeyDownEvent, window, cx| {
+                            if s.selector != Some("effort") {
+                                return;
+                            }
+                            match event.keystroke.key.as_str() {
+                                "down" => s.move_cursor(true, window, cx),
+                                "up" => s.move_cursor(false, window, cx),
+                                "enter" if s.selector == Some("effort") => {
+                                    s.suppress_effort_click = true;
+                                    s.key(event, window, cx);
                                     return;
                                 }
-                                match event.keystroke.key.as_str() {
-                                    "down" => s.move_cursor(true, window, cx),
-                                    "up" => s.move_cursor(false, window, cx),
-                                    "enter" if s.selector == Some("effort") => {
-                                        s.suppress_effort_click = true;
-                                        s.key(event, window, cx);
-                                        return;
-                                    }
-                                    _ => {
-                                        s.key(event, window, cx);
-                                        return;
-                                    }
-                                }
-                                cx.stop_propagation();
-                            }))
-                            .h(px(22.))
-                            .relative()
-                            .pl(px(5.))
-                            .pr(px(24.))
-                            .border_1()
-                            .border_color(rgb(if self.selector == Some("effort") {
-                                t.accent
-                            } else {
-                                t.canvas
-                            }))
-                            .text_color(rgb(effort_color))
-                            .styles(|styles| styles.disabled(|button| button.opacity(0.45)))
-                            .flex()
-                            .items_center()
-                            .gap(px(4.))
-                            .rounded(px(4.))
-                            .when(!settings_disabled, |button| {
-                                button.hover(move |s| s.bg(rgb(t.hover)))
-                            })
-                            .text_size(px(10.))
-                            .on_click(cx.listener(|s, _, window, cx| {
-                                if s.suppress_effort_click {
-                                    s.suppress_effort_click = false;
+                                _ => {
+                                    s.key(event, window, cx);
                                     return;
                                 }
-                                if !s.settings_disabled() {
-                                    if s.selector == Some("effort") {
-                                        s.close(cx);
-                                    } else {
-                                        s.selector = Some("effort");
-                                        s.reveal_cursor.set(true);
-                                        s.cursor = s.effort;
-                                        s.effort_focus.focus(window, cx);
-                                        cx.notify();
-                                    }
+                            }
+                            cx.stop_propagation();
+                        }))
+                        .h(px(22.))
+                        .relative()
+                        .pl(px(5.))
+                        .pr(px(24.))
+                        .border_1()
+                        .border_color(rgb(if self.selector == Some("effort") {
+                            t.accent
+                        } else {
+                            t.canvas
+                        }))
+                        .text_color(rgb(effort_color))
+                        .styles(|styles| styles.disabled(|button| button.opacity(0.45)))
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .rounded(px(4.))
+                        .when(!settings_disabled, |button| {
+                            button.hover(move |s| s.bg(rgb(t.hover)))
+                        })
+                        .text_size(px(10.))
+                        .on_click(cx.listener(|s, _, window, cx| {
+                            if s.suppress_effort_click {
+                                s.suppress_effort_click = false;
+                                return;
+                            }
+                            if !s.settings_disabled() {
+                                if s.selector == Some("effort") {
+                                    s.close(cx);
+                                } else {
+                                    s.selector = Some("effort");
+                                    s.reveal_cursor.set(true);
+                                    s.cursor = s.effort;
+                                    s.effort_focus.focus(window, cx);
+                                    cx.notify();
                                 }
-                            }))
-                            .child(
-                                self.effort()
-                                    .map(Self::effort_choice_label)
-                                    .unwrap_or_default()
-                                    .to_owned(),
-                            )
-                            .child(
-                                support::selector_arrow(effort_color)
-                                    .opacity(if settings_disabled { 0.45 } else { 1. }),
-                            ),
-                    ),
-            )
-            .anchor(self.selector_geometry("effort", window).2)
-            .offset(px(5.))
-            .when(self.selector == Some("effort"), |popup| {
-                popup.content(self.menu("effort", window, cx))
-            });
+                            }
+                        }))
+                        .child(
+                            self.effort()
+                                .map(Self::effort_choice_label)
+                                .unwrap_or_default()
+                                .to_owned(),
+                        )
+                        .child(
+                            support::selector_arrow(effort_color)
+                                .id("effort-chevron")
+                                .test_support()
+                                .opacity(if settings_disabled { 0.45 } else { 1. }),
+                        ),
+                ),
+        )
+        .anchor(self.selector_geometry("effort", window).2)
+        .offset(px(5.))
+        .when(self.selector == Some("effort"), |popup| {
+            popup.content(self.menu("effort", window, cx))
+        });
         let toolbar = div()
             .id("footer-gap")
             .test_support()
@@ -1423,6 +1424,48 @@ mod tests {
             dark: false,
             disabled,
             streaming,
+        }
+    }
+
+    #[test]
+    fn retained_editor_scrollbar_and_selector_boxes_follow_both_appearances() {
+        use gpui_kit::base::{ScrollbarMode, Theme};
+        let mut app = TestApp::new();
+        app.update(|cx| {
+            super::super::init(cx, false);
+            let scrollbar = Theme::global(cx).scrollbar;
+            Theme::global_mut(cx).scrollbar = scrollbar.with_mode(ScrollbarMode::Always);
+        });
+        let mut opts = options(false, false);
+        opts.draft = "Long draft line\n".repeat(80);
+        let mut window = app.open_window(|window, cx| Composer::new(opts, window, cx));
+        for dark in [false, true, false] {
+            window.update(|composer, window, cx| composer.set_theme(dark, window, cx));
+            window.draw();
+            window.update(|composer, window, cx| {
+                for (trigger, arrow) in [("model", "model-chevron"), ("effort", "effort-chevron")] {
+                    let trigger = window.find(trigger).bounds();
+                    let arrow = window.find(arrow).bounds();
+                    let extent = px(6.);
+                    assert!((arrow.size.width - extent).abs() < px(0.1));
+                    assert!((arrow.size.height - extent).abs() < px(0.1));
+                    assert!((arrow.center().x - (trigger.right() - px(11.5))).abs() < px(0.1));
+                    assert!((arrow.center().y - (trigger.center().y - px(1.5))).abs() < px(0.1));
+                }
+                let expected = rgba((support::tokens(dark).text << 8) | 0x59);
+                assert!(
+                    window
+                        .painted_quads()
+                        .iter()
+                        .any(|quad| quad.background == expected.into()),
+                    "native retained editor must paint the shared themed thumb"
+                );
+                assert_eq!(
+                    composer.editor.read(cx).value().to_string(),
+                    "Long draft line\n".repeat(80)
+                );
+                assert_eq!(Theme::global(cx).scrollbar.mode(), ScrollbarMode::Always);
+            });
         }
     }
 

@@ -43,6 +43,7 @@ pub fn init(cx: &mut App, dark: bool) {
     } else {
         ThemeAppearance::Light
     };
+    support::install_scrollbar_theme(dark, cx);
     font::init(cx);
 }
 

@@ -8,18 +8,32 @@ fn assert_busy(f: &mut Fixture, busy: bool) {
         let live = &f.shell.read(cx).sessions["a"];
         assert_eq!(live.controller.queue_busy(), busy);
         assert_eq!(live.queue.read(cx).props().busy, busy);
-        assert_eq!(w.try_find("feedback").is_some(), busy);
+        assert!(
+            w.try_find("feedback").is_none(),
+            "pending queue stays quiet"
+        );
         assert!(w.find("clear").visible());
         assert_eq!(w.find("clear").disabled() == Some(true), busy);
     });
 }
 
 fn clear(f: &mut Fixture) -> Value {
+    let geometry = f
+        .root
+        .update(|_, w, _| ["clear", "steer"].map(|id| w.find(id).bounds()));
     f.click("clear");
     let requests = f.sent();
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0]["type"], "clear_queue");
     assert_busy(f, true);
+    f.root.update(|_, w, cx| {
+        assert_eq!(["clear", "steer"].map(|id| w.find(id).bounds()), geometry);
+        let props = f.shell.read(cx).sessions["a"].queue.read(cx).props();
+        assert!(
+            !props.steering.is_empty(),
+            "clear must not optimistically erase items"
+        );
+    });
     f.click("clear");
     f.click("clear");
     assert!(f.sent().is_empty(), "pending clear must be inert");

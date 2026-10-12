@@ -381,6 +381,7 @@ impl Render for MessageQueue {
                                 t.border
                             }))
                             .bg(rgb(t.panel))
+                            .when(self.props.busy, |chip| chip.opacity(0.55))
                             .text_size(px(11.))
                             .hover(move |s| s.bg(rgb(t.hover)))
                             .on_hover(cx.listener({
@@ -468,18 +469,14 @@ impl Render for MessageQueue {
             );
         }
         bar = bar.child(rail);
-        if !self.props.feedback.is_empty() || self.props.busy {
+        if !self.props.feedback.is_empty() {
             bar = bar.child(
                 div()
                     .id("feedback")
                     .test_support()
                     .text_color(rgb(t.muted))
                     .text_size(px(10.))
-                    .child(if self.props.busy {
-                        "Updating queue…".to_owned()
-                    } else {
-                        self.props.feedback.clone()
-                    }),
+                    .child(self.props.feedback.clone()),
             );
         }
         if !self.props.feedback.is_empty() && !self.props.busy {
@@ -775,6 +772,10 @@ mod tests {
                 }
             })
         });
+        let geometry = window.update(|_, window, _| {
+            ["queue-host", "clear", "steer", "follow-up", "follow-up-3"]
+                .map(|id| window.find(id).bounds())
+        });
         for busy in [true, false, true, false] {
             window.update(|host, _, cx| {
                 host.queue.update(cx, |queue, cx| {
@@ -784,12 +785,77 @@ mod tests {
                 });
             });
             window.draw();
-            let center = window.update(|_, window, _| window.find("clear").bounds().center());
+            let center = window.update(|_, window, _| {
+                assert!(window.try_find("feedback").is_none());
+                assert_eq!(
+                    ["queue-host", "clear", "steer", "follow-up", "follow-up-3"]
+                        .map(|id| window.find(id).bounds()),
+                    geometry,
+                    "pending must not shift the queue"
+                );
+                window.find("clear").bounds().center()
+            });
             window.simulate_mouse_move(center);
             let before = clears.get();
-            window.simulate_click(center, gpui_kit::MouseButton::Left);
-            assert_eq!(clears.get() - before, usize::from(!busy));
+            for _ in 0..3 {
+                window.simulate_click(center, gpui_kit::MouseButton::Left);
+            }
+            assert_eq!(clears.get() - before, 3 * usize::from(!busy));
+            window.update(|host, _, cx| {
+                let props = host.queue.read(cx).props();
+                assert_eq!(props.steering, vec!["Steer this turn"]);
+                assert_eq!(props.follow_up.len(), 3);
+            });
         }
+    }
+
+    #[test]
+    fn pending_items_remain_inspectable_and_failure_feedback_is_not_replaced() {
+        let (_, mut window) = fixture();
+        window.update(|host, _, cx| {
+            host.queue.update(cx, |queue, cx| {
+                let mut props = queue.props().clone();
+                props.busy = true;
+                props.feedback = "Could not clear messages. Try again.".into();
+                props.failed = vec!["Keep this unsent draft".into()];
+                queue.set_props(props, cx);
+            });
+        });
+        window.draw();
+        let chip = window.update(|_, window, _| {
+            assert!(window.find("feedback").visible());
+            assert!(window.find("recover").visible());
+            assert_eq!(window.find("clear").disabled(), Some(true));
+            window.find("follow-up").bounds()
+        });
+        window.simulate_mouse_move(chip.center());
+        window.simulate_click(chip.center(), gpui_kit::MouseButton::Left);
+        window.draw();
+        window.read(|host, cx| {
+            let queue = host.queue.read(cx);
+            assert_eq!(
+                queue.preview(),
+                Some(&("Follow Up".into(), "First follow up".into()))
+            );
+            assert_eq!(
+                queue.props().feedback,
+                "Could not clear messages. Try again."
+            );
+            assert_eq!(queue.props().failed, vec!["Keep this unsent draft"]);
+        });
+        window.update(|host, _, cx| {
+            host.queue.update(cx, |queue, cx| {
+                let mut props = queue.props().clone();
+                props.busy = false;
+                queue.set_props(props, cx);
+            });
+        });
+        window.draw();
+        window.update(|_, window, _| {
+            assert!(window.find("feedback").visible());
+            assert!(window.find("dismiss").visible());
+            assert_ne!(window.find("clear").disabled(), Some(true));
+        });
     }
 
     #[test]

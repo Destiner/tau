@@ -54,6 +54,7 @@ impl Palette {
         if self.dark == dark {
             return;
         }
+        support::install_scrollbar_theme(dark, cx);
         // Palette placeholders use muted rather than faint ink.
         let muted = rgb(support::tokens(self.dark).muted).into();
         if self.editor_style.muted_foreground == muted {
@@ -85,6 +86,7 @@ impl Palette {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        support::install_scrollbar_theme(dark, cx);
         let pages = Self::with_root(pages);
         cx.bind_keys([
             gpui_kit::KeyBinding::new("down", NextRow, Some("NativePaletteSearch > Input")),
@@ -405,8 +407,15 @@ impl Palette {
                             .id("search")
                             .test_support()
                             .flex_1()
+                            .min_w_0()
                             .key_context("NativePaletteSearch")
-                            .line_height(px(16.))
+                            .map(|mut search| {
+                                // Vue keeps fractional leading rather than rounding to whole pixels.
+                                search.text_style().fractional_line_height = Some(true);
+                                search
+                            })
+                            .text_size(px(13.))
+                            .line_height(gpui_kit::relative(1.45))
                             .child(Input::new(&self.search)),
                     ),
             )
@@ -446,6 +455,7 @@ impl Palette {
                             .child(
                                 Button::new(format!("row-{i}"))
                                     .w_full()
+                                    .min_w_0()
                                     .min_h(px(28.))
                                     .px(px(10.))
                                     .rounded(px(4.))
@@ -468,18 +478,33 @@ impl Palette {
                                     .child(
                                         div()
                                             .w_full()
+                                            .min_w_0()
                                             .flex()
                                             .items_center()
-                                            .justify_between()
+                                            .gap(px(10.))
                                             .child(
                                                 div()
+                                                    .flex_1()
+                                                    .min_w_0()
                                                     .flex()
                                                     .items_baseline()
                                                     .gap(px(8.))
-                                                    .child(row.label.clone())
+                                                    .child(
+                                                        div()
+                                                            .id(format!("palette-title-{i}"))
+                                                            .test_support()
+                                                            .min_w_0()
+                                                            .truncate()
+                                                            .child(row.label.clone()),
+                                                    )
                                                     .when(!row.detail.is_empty(), |d| {
                                                         d.child(
                                                             div()
+                                                                .id(format!("palette-detail-{i}"))
+                                                                .test_support()
+                                                                .flex_1()
+                                                                .min_w_0()
+                                                                .truncate()
                                                                 .text_size(px(11.))
                                                                 .text_color(rgb(t.muted))
                                                                 .child(row.detail.clone()),
@@ -489,6 +514,9 @@ impl Palette {
                                             .when(!row.shortcut.is_empty(), |d| {
                                                 d.child(
                                                     div()
+                                                        .id(format!("palette-shortcut-{i}"))
+                                                        .test_support()
+                                                        .flex_shrink_0()
                                                         .flex()
                                                         .gap(px(2.))
                                                         .font_family(support::mono())
@@ -559,6 +587,72 @@ impl Render for Palette {
 mod tests {
     use super::*;
     use std::{cell::RefCell, rc::Rc};
+    #[test]
+    fn painted_rows_clip_secondary_first_and_search_uses_vue_type() {
+        use gpui_kit::test::TestWindowExt;
+        let mut app = gpui_kit::TestApp::new();
+        app.update(gpui_kit::init);
+        let mut window = app.open_window(|window, cx| {
+            Palette::new(false, vec![PalettePage {
+                id: "sessions".into(),
+                placeholder: "Switch session…".into(),
+                items: [
+                    ("Session", "".to_owned()),
+                    ("Session", "secondary context ".repeat(80)),
+                    ("A very long session name that must never escape the command palette row", "secondary context ".repeat(80)),
+                ].into_iter().enumerate().map(|(i, (label, detail))| PaletteItem {
+                    id: format!("session-{i}"), label: label.into(), detail,
+                    shortcut: "⌘1".into(), group: None, destination: None,
+                }).collect(),
+            }], window, cx)
+        });
+        window.update(|palette, window, cx| palette.open(window, cx));
+        window.draw();
+        window.update(|palette, window, cx| {
+            let plain = window.find("palette-title-0").bounds();
+            let with_detail = window.find("palette-title-1").bounds();
+            assert!((plain.size.width - with_detail.size.width).abs() < px(1.));
+            for i in 0..3 {
+                let title = window.find(format!("palette-title-{i}")).bounds();
+                let shortcut = window.find(format!("palette-shortcut-{i}")).bounds();
+                assert!(title.right() <= shortcut.left() - px(9.));
+                assert!(title.size.height < px(20.), "single-line title: {title:?}");
+            }
+            let detail = window.find("palette-detail-2").bounds();
+            assert!(
+                detail.size.width <= px(1.),
+                "primary identity takes space first"
+            );
+            let (_, line_height) = palette
+                .search
+                .read(cx)
+                .cursor_layout()
+                .expect("retained search caret");
+            assert!(
+                (line_height - px(13. * 1.45)).abs() < px(0.1),
+                "painted empty search leading: {line_height:?}"
+            );
+            palette.set_query("Session", window, cx);
+        });
+        window.draw();
+        window.update(|palette, window, cx| {
+            let search = palette.search.read(cx);
+            let (_, line_height) = search.cursor_layout().unwrap();
+            assert!(
+                (line_height - px(13. * 1.45)).abs() < px(0.1),
+                "painted typed search leading: {line_height:?}"
+            );
+            let actual = search
+                .range_to_bounds(&(0..7))
+                .expect("typed search layout");
+            let run = window.text_style().to_run(7);
+            let expected = window
+                .text_system()
+                .shape_line("Session".into(), px(13.), &[run], None);
+            assert!((actual.size.width - expected.width).abs() < px(1.));
+        });
+    }
+
     #[test]
     fn page_selection_and_back_are_typed() {
         let mut pages = vec![

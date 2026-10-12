@@ -52,6 +52,8 @@ pub fn tool_header(
         .focus_visible(move |s| s.bg(rgb(t.hover)))
         .child(
             div()
+                .flex_shrink_0()
+                .whitespace_nowrap()
                 .font_family("Menlo")
                 .text_size(px(10.))
                 .line_height(gpui_kit::relative(1.25))
@@ -65,16 +67,17 @@ pub fn tool_header(
         .child(
             div()
                 .flex_1()
-                .overflow_hidden()
-                .whitespace_nowrap()
+                .min_w(px(0.))
+                .truncate()
                 .font_family("Menlo")
                 .text_size(px(10.))
                 .line_height(gpui_kit::relative(1.25))
                 .text_color(rgb(t.faint))
-                .child(argument.to_owned()),
+                .child(argument.split_whitespace().collect::<Vec<_>>().join(" ")),
         )
         .child(
             div()
+                .flex_shrink_0()
                 .flex()
                 .items_center()
                 .gap(px(6.))
@@ -180,6 +183,9 @@ fn tool_details_with_scroll(
                 )
                 .child(
                     div()
+                        .id(format!("{label}-body"))
+                        .test_support()
+                        .min_w(px(0.))
                         .font_family(support::mono())
                         .text_size(px(10.))
                         .line_height(gpui_kit::relative(1.45))
@@ -607,6 +613,129 @@ mod tests {
             )
         );
     }
+    #[test]
+    fn multiline_and_unbroken_summaries_stay_one_line_and_disclose_by_pointer() {
+        let (_app, mut window, row) = bounded_fixture("row-one", tool());
+        window.simulate_resize(size(px(320.), px(700.)));
+        window.update(|_, window, cx| window.bounds_changed(cx));
+        window.draw();
+        let baseline = window.update(|_, window, _| window.find("row-one").bounds());
+        for argument in [
+            "python <<'PY'\r\nprint('hello')\nPY".repeat(100),
+            format!("/{}", "long-path-without-breaks".repeat(200)),
+        ] {
+            let raw = argument.clone();
+            window.update(|_, _, cx| {
+                row.update(cx, |row, cx| {
+                    row.set_content(
+                        ActivityContent::Tool {
+                            name: "bash".into(),
+                            argument,
+                            arguments: raw.clone(),
+                            result: "raw\noutput".into(),
+                            running: true,
+                            failed: false,
+                        },
+                        cx,
+                    );
+                })
+            });
+            window.draw();
+            let header = window.update(|_, window, _| window.find("row-one").bounds());
+            assert_eq!(header.size, baseline.size);
+            let viewport = window.update(|_, window, _| window.viewport_size());
+            assert!(
+                header.right() <= px(320.),
+                "header={header:?} viewport={viewport:?} baseline={baseline:?}"
+            );
+            window.simulate_mouse_move(header.center());
+            window.simulate_click(header.center(), MouseButton::Left);
+            window.draw();
+            assert!(window.read(|_, cx| row.read(cx).expanded()));
+            window.read(|_, cx| {
+                let row = row.read(cx);
+                let ActivityContent::Tool {
+                    arguments, result, ..
+                } = row.content()
+                else {
+                    panic!("expected tool");
+                };
+                assert_eq!(arguments, &raw);
+                assert_eq!(result, "raw\noutput");
+            });
+            window.simulate_click(header.center(), MouseButton::Left);
+            window.draw();
+            assert!(!window.read(|_, cx| row.read(cx).expanded()));
+        }
+    }
+
+    struct SelectionHost(Entity<ActivityRow>);
+    impl Render for SelectionHost {
+        fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            // A window root has intrinsic available width unless the host constrains it.
+            div()
+                .w(window.viewport_size().width)
+                .h(window.viewport_size().height)
+                .child(self.0.clone())
+        }
+    }
+
+    fn bounded_fixture(
+        id: &str,
+        content: ActivityContent,
+    ) -> (
+        TestApp,
+        TestAppWindow<gpui_kit::base::Root>,
+        Entity<ActivityRow>,
+    ) {
+        let mut app = TestApp::new();
+        app.update(gpui_kit::init);
+        let row = app.new_entity(|cx| ActivityRow::new(id, content, false, cx));
+        let mut window = app.open_window(|window, cx| {
+            let host = cx.new(|_| SelectionHost(row.clone()));
+            gpui_kit::base::Root::new(host, window, cx)
+        });
+        window.draw();
+        (app, window, row)
+    }
+
+    #[test]
+    fn expanded_heredoc_details_keep_raw_multiline_values() {
+        let arguments = "python <<'PY'\nprint('hello')\nPY";
+        let result = "hello\nsecond line\n";
+        let (_app, mut window, row) = bounded_fixture(
+            "raw-row",
+            ActivityContent::Tool {
+                name: "bash".into(),
+                argument: arguments.into(),
+                arguments: arguments.into(),
+                result: result.into(),
+                running: false,
+                failed: false,
+            },
+        );
+        window.draw();
+        let header = window.update(|_, window, _| window.find("raw-row").bounds());
+        window.simulate_click(header.center(), MouseButton::Left);
+        window.draw();
+        for id in ["Arguments-body", "Result-body"] {
+            let body = window.update(|_, window, _| window.find(id).bounds());
+            assert!(body.size.height > px(14.5), "details retain multiple lines");
+        }
+        window.read(|_, cx| {
+            let ActivityContent::Tool {
+                arguments: actual_arguments,
+                result: actual_result,
+                ..
+            } = row.read(cx).content()
+            else {
+                panic!("tool")
+            };
+            assert_eq!(actual_arguments, arguments);
+            assert_eq!(actual_result, result);
+        });
+    }
+
     #[test]
     fn disabled_header_does_not_disclose() {
         let (_, mut window) = fixture(ActivityContent::Tool {
