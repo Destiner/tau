@@ -122,6 +122,25 @@ try:
                     mark('tool_execution_update:ready')
                 elif kind == 'tool_execution_end' and result.get('details', {}).get('aborted') is True:
                     mark('tool_execution_end:aborted')
+            elif kind == 'response' and record.get('command') == 'get_messages' and record.get('success') is True:
+                messages = record.get('data', {}).get('messages', [])
+                compact = any(m.get('role') == 'compactionSummary' and 'TAU_SYNTHETIC_COMPACTION_CONTEXT_ONLY' in m.get('summary', '') for m in messages)
+                branch = any(m.get('role') == 'branchSummary' and 'TAU_SYNTHETIC_BRANCH_CONTEXT_ONLY' in m.get('summary', '') for m in messages)
+                if compact and branch: mark('history:get_messages:fixture')
+            elif kind == 'response' and record.get('command') == 'get_entries' and record.get('success') is True:
+                data = record.get('data', {})
+                entries = data.get('entries', [])
+                prior = any(e.get('type') == 'message' and e.get('message', {}).get('content') == 'Invented prior layer' for e in entries)
+                compact = any(e.get('type') == 'compaction' and 'TAU_SYNTHETIC_COMPACTION_CONTEXT_ONLY' in e.get('summary', '') for e in entries)
+                branch = any(e.get('type') == 'branch_summary' and 'TAU_SYNTHETIC_BRANCH_CONTEXT_ONLY' in e.get('summary', '') for e in entries)
+                by_id = {e.get('id'): e for e in entries}
+                active = set()
+                leaf = data.get('leafId')
+                while leaf in by_id and leaf not in active:
+                    active.add(leaf)
+                    leaf = by_id[leaf].get('parentId')
+                # Pi may append startup settings; validate the actual active ancestry.
+                if prior and compact and branch and {'10000001', '10000003', '10000004', '10000005'}.issubset(active): mark('history:get_entries:fixture')
             elif kind == 'response' and record.get('command') == 'abort' and record.get('success') is True:
                 mark('response:abort:success')
             elif kind == 'agent_settled':
@@ -281,6 +300,8 @@ fn main() -> anyhow::Result<()> {
     );
     let phases = String::from_utf8_lossy(&phases);
     for phase in [
+        "PASS native-app compacted history real get_messages/get_entries + measured Load Earlier prior layer; stable tail identity/content/reader bounds",
+        "PASS native-app synthetic history sidebar return retains original draft",
         "PASS native-app busy last CmdW cancel retains actual root/composer and unrelated draft",
         "PASS native-app palette visible measured root panel + focused empty input",
         "PASS native-app remote visible measured root panel + focused empty input",
@@ -289,7 +310,7 @@ fn main() -> anyhow::Result<()> {
     ] {
         anyhow::ensure!(
             phases.matches(phase).count() == 1,
-            "native-app missing or repeated palette/remote acceptance phase; reviewed phase log: {log}"
+            "native-app missing or repeated acceptance phase; reviewed phase log: {log}"
         );
     }
     anyhow::ensure!(

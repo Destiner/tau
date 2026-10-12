@@ -7,6 +7,7 @@ pub(super) fn shell(commands: async_channel::Sender<Command>) -> Shell {
     Shell {
         commands,
         workspace: None,
+        workspace_mutations: workspace_mutations::State::default(),
         preferences: Preferences::default(),
         sessions: BTreeMap::new(),
         active: String::new(),
@@ -37,6 +38,7 @@ pub(super) fn shell(commands: async_channel::Sender<Command>) -> Shell {
         remote: remote::State::default(),
         admin: admin::State::default(),
         sidebar_state: sidebar::State::default(),
+        session_loading: loading::State::default(),
     }
 }
 pub(super) fn project() -> ProjectSummary {

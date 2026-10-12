@@ -185,9 +185,12 @@ fn cleanup_failure_keeps_one_retry_and_acknowledgement_releases_it() {
         );
         s.active = "empty".into();
         s.commands
-            .try_send(Command::Collapse {
-                project: project().path,
-                collapsed: false,
+            .try_send(Command::WorkspaceMutation {
+                revision: 0,
+                mutation: workspace_mutations::Mutation::Collapse {
+                    project: project().path,
+                    collapsed: false,
+                },
             })
             .unwrap();
         assert!(s.discard_empty_before_switch("valid-target", cx));

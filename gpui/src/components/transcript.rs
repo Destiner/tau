@@ -9,18 +9,20 @@ use gpui_kit::{
     ListAlignment, ListState, Render, ScrollHandle, Subscription, TestSupportExt, WeakEntity,
     Window,
     base::{
-        Scrollbar, ScrollbarMode, SelectionFormat, TextSelectionDomain, TextSelectionDomainRange,
-        TextViewState,
+        Button as BaseButton, Scrollbar, ScrollbarMode, SelectionFormat, TextSelectionDomain,
+        TextSelectionDomainRange, TextViewState,
     },
     div, list,
     prelude::*,
-    px, rgb, rgba, size,
+    px, rgb, size,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 
 #[derive(Clone, Debug)]
 pub enum TranscriptContent {
     User(String),
+    PendingUser(String),
+    Compaction { available: bool, loading: bool },
     Assistant(String),
     Activity(ActivityContent),
 }
@@ -30,8 +32,8 @@ impl TranscriptContent {
     }
     fn text(&self) -> Option<&str> {
         match self {
-            Self::User(text) | Self::Assistant(text) => Some(text),
-            Self::Activity(_) => None,
+            Self::User(text) | Self::PendingUser(text) | Self::Assistant(text) => Some(text),
+            Self::Activity(_) | Self::Compaction { .. } => None,
         }
     }
 }
@@ -48,17 +50,27 @@ pub enum TranscriptError {
 pub enum TranscriptEvent {
     /// The owner must validate schemes and route external/local-file destinations.
     OpenLink(String),
+    /// The owner routes this to the originating controller's load_history.
+    LoadHistory(String),
 }
 struct Row {
     entry: TranscriptEntry,
     key: u64,
     expanded: bool,
     details_scroll: ScrollHandle,
+    loading_started: Option<std::time::Instant>,
+    history_requested: bool,
 }
 #[derive(Clone)]
 enum View {
     Prose(Entity<TextViewState>, Entity<MarkdownPresentation>),
     Activity(Entity<ActivityRow>),
+    Boundary {
+        id: String,
+        available: bool,
+        loading: bool,
+        show_loading: bool,
+    },
 }
 struct Mounted {
     view: View,
@@ -196,6 +208,7 @@ impl Transcript {
                 View::Activity(activity) => {
                     activity.update(cx, |a, cx| a.set_theme(dark, window, cx))
                 }
+                View::Boundary { .. } => {}
             }
         }
         cx.notify();
@@ -218,6 +231,8 @@ impl Transcript {
             key,
             expanded: false,
             details_scroll: ScrollHandle::new(),
+            loading_started: None,
+            history_requested: false,
         });
         self.list.splice(ix..ix, 1);
         if ix > 0 && self.is_compact(ix - 1) {
@@ -248,8 +263,15 @@ impl Transcript {
         let Some(&ix) = self.by_id.get(id) else {
             return false;
         };
+        let was_requested = std::mem::take(&mut self.rows[ix].history_requested);
         if same_content(&self.rows[ix].entry.content, &content) {
+            if was_requested {
+                cx.notify();
+            }
             return true;
+        }
+        if !matches!(content, TranscriptContent::Compaction { loading: true, .. }) {
+            self.rows[ix].loading_started = None;
         }
         let key = self.rows[ix].key;
         let neighbor_changed = self.rows[ix].entry.content.is_activity() != content.is_activity();
@@ -263,6 +285,8 @@ impl Transcript {
         };
         if let Some(chunk) = append {
             self.append_text(id, &chunk, cx);
+            // Pending acknowledgments change only bubble style, not selection identity.
+            self.rows[ix].entry.content = content;
         } else {
             if self.selection_contains(key)
                 && (self.rows[ix].entry.content.text().is_some() || content.text().is_some())
@@ -424,6 +448,13 @@ impl Transcript {
                         }
                     }
                 }
+                if !matches!(
+                    entry.content,
+                    TranscriptContent::Compaction { loading: true, .. }
+                ) {
+                    row.loading_started = None;
+                }
+                row.history_requested = false;
                 row.entry = entry;
                 row
             } else {
@@ -432,6 +463,8 @@ impl Transcript {
                     key: self.allocate_key(),
                     expanded: false,
                     details_scroll: ScrollHandle::new(),
+                    loading_started: None,
+                    history_requested: false,
                 }
             };
             self.rows.push(row);
@@ -489,7 +522,9 @@ impl Transcript {
         let before =
             bound.map(|end| markdown_prefix(self.rows[ix].entry.content.text().unwrap(), end));
         let text = match &mut self.rows[ix].entry.content {
-            TranscriptContent::User(t) | TranscriptContent::Assistant(t) => t,
+            TranscriptContent::User(t)
+            | TranscriptContent::PendingUser(t)
+            | TranscriptContent::Assistant(t) => t,
             _ => unreachable!(),
         };
         text.push_str(chunk);
@@ -573,8 +608,33 @@ impl Transcript {
         result
     }
     fn mount(&mut self, ix: usize, owner: WeakEntity<Self>, cx: &mut App) -> Option<View> {
-        let row = self.rows.get(ix)?;
+        let row = self.rows.get_mut(ix)?;
         let key = row.key;
+        if let TranscriptContent::Compaction { available, loading } = row.entry.content {
+            if !loading {
+                row.loading_started = None;
+            } else if row.loading_started.is_none() {
+                row.loading_started = Some(std::time::Instant::now());
+                let notify = owner.clone();
+                cx.spawn(async move |cx| {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(180))
+                        .await;
+                    let _ = notify.update(cx, |this, cx| this.row_changed(key, cx));
+                })
+                .detach();
+            }
+            // Dividers have no prose/markdown state and do not occupy the 128-view cache.
+            return Some(View::Boundary {
+                id: row.entry.id.clone(),
+                available,
+                loading: loading || row.history_requested,
+                show_loading: row
+                    .loading_started
+                    .is_some_and(|start| start.elapsed() >= std::time::Duration::from_millis(180)),
+            });
+        }
+        let row = self.rows.get(ix)?;
         if !self.cache.contains_key(&key) {
             let mut subscriptions = vec![];
             let view = if let Some(source) = row.entry.content.text() {
@@ -737,12 +797,16 @@ impl Render for Transcript {
                         let row = this.rows.get(ix)?;
                         Some((
                             row.key,
-                            matches!(row.entry.content, TranscriptContent::User(_)),
+                            matches!(
+                                row.entry.content,
+                                TranscriptContent::User(_) | TranscriptContent::PendingUser(_)
+                            ),
+                            matches!(row.entry.content, TranscriptContent::PendingUser(_)),
                             this.is_compact(ix),
                             view,
                         ))
                     });
-                    let Some((key, user, compact, view)) = metadata else {
+                    let Some((key, user, pending, compact, view)) = metadata else {
                         return div().into_any_element();
                     };
                     let mut row = div()
@@ -752,8 +816,93 @@ impl Render for Transcript {
                         .max_w(px(880.))
                         .pl(px(gutter + if user { -5. } else { 8. }))
                         .pr(px(gutter + 20.))
-                        .pb(px(if compact { 0. } else { 22. }));
+                        .pb(px(if compact || matches!(&view, View::Boundary { .. }) {
+                            0.
+                        } else {
+                            22.
+                        }));
                     match view {
+                        View::Boundary {
+                            id,
+                            available,
+                            loading,
+                            show_loading,
+                        } => {
+                            let children = || {
+                                vec![
+                                    compaction_rule(
+                                        key,
+                                        "left",
+                                        t,
+                                        show_loading,
+                                        cx.reduce_motion(),
+                                    ),
+                                    compaction_label(key, t),
+                                    compaction_rule(
+                                        key,
+                                        "right",
+                                        t,
+                                        show_loading,
+                                        cx.reduce_motion(),
+                                    ),
+                                ]
+                            };
+                            let divider = if available {
+                                let notify = owner.clone();
+                                BaseButton::new(format!("compaction-{key}"))
+                                    .accessibility_label("Load earlier messages")
+                                    .disabled(loading)
+                                    .a11y_synthetic_children(move |tree| {
+                                        if loading {
+                                            tree.parent_node().set_busy();
+                                        }
+                                    })
+                                    .w_full()
+                                    .h(px(22.))
+                                    .my(px(16.))
+                                    .gap(px(10.))
+                                    .children(children())
+                                    .on_click(move |_, _, cx| {
+                                        let _ = notify.update(cx, |this, cx| {
+                                            let Some(&ix) = this.by_key.get(&key) else {
+                                                return;
+                                            };
+                                            let row = &mut this.rows[ix];
+                                            // Recheck live state: another input may beat the next paint.
+                                            if row.entry.id != id
+                                                || row.history_requested
+                                                || !matches!(
+                                                    row.entry.content,
+                                                    TranscriptContent::Compaction {
+                                                        available: true,
+                                                        loading: false
+                                                    }
+                                                )
+                                            {
+                                                return;
+                                            }
+                                            row.history_requested = true;
+                                            cx.notify();
+                                            cx.emit(TranscriptEvent::LoadHistory(id.clone()));
+                                        });
+                                    })
+                                    .into_any_element()
+                            } else {
+                                // Passive divs retain their implicit role.
+                                div()
+                                    .id(format!("compaction-{key}"))
+                                    .test_support()
+                                    .w_full()
+                                    .h(px(22.))
+                                    .my(px(16.))
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(10.))
+                                    .children(children())
+                                    .into_any_element()
+                            };
+                            row = row.child(divider);
+                        }
                         View::Activity(activity) => row = row.child(activity),
                         View::Prose(_, presentation) => {
                             let notify = owner.clone();
@@ -779,6 +928,7 @@ impl Render for Transcript {
                                         .py(px(9.))
                                         .rounded(px(7.))
                                         .bg(rgb(if dark { 0x1b1f29 } else { 0xebeef0 }))
+                                        .opacity(if pending { 0.88 } else { 1.0 })
                                         .child(prose),
                                 )
                             } else {
@@ -801,23 +951,79 @@ impl Render for Transcript {
             .child(
                 Scrollbar::vertical(&self.list)
                     .mode(ScrollbarMode::Scrolling)
-                    .styles(|style| {
-                        style
-                            .thumb(|thumb| thumb.bg(rgba((t.text << 8) | 0x59)).radius(px(4.)))
-                            .thumb_hover(|thumb| {
-                                thumb.bg(rgba((t.text << 8) | 0x8c)).radius(px(4.))
-                            })
-                            .thumb_active(|thumb| {
-                                thumb.bg(rgba((t.text << 8) | 0x8c)).radius(px(4.))
-                            })
-                    }),
+                    .styles(|_| support::scrollbar_styles(dark)),
             )
     }
 }
-fn working_spinner(label: String, color: u32, reduced_motion: bool) -> impl IntoElement {
+fn compaction_label(key: u64, t: support::Tokens) -> gpui_kit::AnyElement {
+    div()
+        .id(format!("compaction-label-{key}"))
+        .test_support()
+        .min_h(px(22.))
+        .px(px(2.))
+        .py(px(4.))
+        .text_size(px(10.))
+        .line_height(gpui_kit::relative(1.25))
+        .font_family(support::mono())
+        .text_color(rgb(t.faint))
+        .child(gpui_kit::Text::new(
+            format!("compaction-text-{key}").into(),
+            "compacted".into(),
+        ))
+        .into_any_element()
+}
+
+fn compaction_rule(
+    key: u64,
+    side: &str,
+    t: support::Tokens,
+    loading: bool,
+    reduced_motion: bool,
+) -> gpui_kit::AnyElement {
+    use gpui_kit::{Animation, AnimationExt, relative};
+    let mut border = rgb(t.border);
+    border.a = 0.72;
+    let rule = div()
+        .id(format!("compaction-rule-{side}-{key}"))
+        .test_support()
+        .relative()
+        .flex_1()
+        .min_w(px(12.))
+        .h(px(1.))
+        .overflow_hidden()
+        .bg(border);
+    let trail = move || {
+        div()
+            .absolute()
+            .top_0()
+            .h_full()
+            .w(relative(0.3))
+            .bg(rgb(t.muted))
+            .opacity(0.7)
+    };
+    if !loading {
+        rule.into_any_element()
+    } else if reduced_motion {
+        // No Animation wrapper: reduced motion must not schedule animation frames.
+        rule.child(trail().left_0()).into_any_element()
+    } else {
+        rule.with_animation(
+            "compaction-loading",
+            Animation::new(std::time::Duration::from_millis(850)).repeat(),
+            move |rule, progress| {
+                let eased = (1. - (progress * std::f32::consts::PI).cos()) * 0.5;
+                rule.child(trail().left(relative(-0.33 + eased * 1.65)))
+            },
+        )
+        .into_any_element()
+    }
+}
+
+pub(crate) fn working_spinner(label: String, color: u32, reduced_motion: bool) -> impl IntoElement {
     use gpui_kit::{Animation, AnimationExt};
     div()
         .id("working-spinner")
+        .test_support()
         .role(gpui_kit::accesskit::Role::Status)
         .aria_label(label)
         .relative()
@@ -870,17 +1076,30 @@ fn markdown_prefix(source: &str, end: usize) -> Option<String> {
 fn same_prose_kind(a: &TranscriptContent, b: &TranscriptContent) -> bool {
     matches!(
         (a, b),
-        (TranscriptContent::User(_), TranscriptContent::User(_))
-            | (
-                TranscriptContent::Assistant(_),
-                TranscriptContent::Assistant(_)
-            )
+        (
+            TranscriptContent::User(_) | TranscriptContent::PendingUser(_),
+            TranscriptContent::User(_) | TranscriptContent::PendingUser(_)
+        ) | (
+            TranscriptContent::Assistant(_),
+            TranscriptContent::Assistant(_)
+        )
     )
 }
 fn same_content(a: &TranscriptContent, b: &TranscriptContent) -> bool {
     match (a, b) {
         (TranscriptContent::User(a), TranscriptContent::User(b))
+        | (TranscriptContent::PendingUser(a), TranscriptContent::PendingUser(b))
         | (TranscriptContent::Assistant(a), TranscriptContent::Assistant(b)) => a == b,
+        (
+            TranscriptContent::Compaction {
+                available: a,
+                loading: al,
+            },
+            TranscriptContent::Compaction {
+                available: b,
+                loading: bl,
+            },
+        ) => (a, al) == (b, bl),
         (TranscriptContent::Activity(a), TranscriptContent::Activity(b)) => match (a, b) {
             (ActivityContent::Thinking { text: a }, ActivityContent::Thinking { text: b }) => {
                 a == b

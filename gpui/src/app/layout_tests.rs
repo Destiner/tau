@@ -5,6 +5,9 @@ use gpui_kit::{MouseButton, TestApp, TestAppWindow, point, size};
 use serde_json::json;
 use tau_core::pi::PiEvent;
 
+#[path = "activity_header_tests.rs"]
+mod activity_header_tests;
+
 fn rpc(value: serde_json::Value) -> Event {
     Event::Pi(PiEvent {
         runtime_id: "a".into(),
@@ -145,7 +148,7 @@ fn layout_editor_send_and_assistant_stream_paint_in_production_shell() {
             .painted_quads()
             .into_iter()
             .find(|q| {
-                q.background == rgb(0xebeef0).into()
+                q.background == rgb(0xebeef0).opacity(0.88).into()
                     && slot.contains(&q.bounds.map(|p| px(p.as_f32() / w.scale_factor())).center())
             })
             .expect("optimistic user bubble must be painted inside the real transcript viewport");
@@ -160,6 +163,25 @@ fn layout_editor_send_and_assistant_stream_paint_in_production_shell() {
         "optimistic",
         "painted TextView glyph hit testing, not just a row count"
     );
+    root.update(|_, w, cx| {
+        shell.update(cx, |s, cx| {
+            s.ingest(rpc(json!({"type":"message_start", "message":{"role":"user", "content":"optimistic"}})), cx);
+            s.sync(w, cx);
+        });
+    });
+    root.draw();
+    root.update(|_, w, cx| {
+        assert!(
+            w.painted_quads()
+                .iter()
+                .any(|q| q.background == rgb(0xebeef0).into()),
+            "Pi acknowledgment paints the same user bubble at full opacity"
+        );
+        assert_eq!(
+            gpui_kit::base::TextSelection::selected_text(w, cx).trim(),
+            "optimistic"
+        );
+    });
     root.update(|_, w, cx| {
         shell.update(cx, |s, cx| {
             s.ingest(rpc(json!({"type":"message_start", "message":{"role":"assistant", "timestamp":1,"content":[]}})), cx);

@@ -31,6 +31,7 @@ struct Revision {
     kind: String,
     revision: u64,
     length: usize,
+    pending: bool,
 }
 enum Change<'a> {
     Reconcile(&'a [Entry]),
@@ -38,9 +39,14 @@ enum Change<'a> {
     Replace(&'a Entry),
     Text(&'a str, &'a str),
 }
-fn row(entry: &Entry) -> TranscriptEntry {
+pub(super) fn row(entry: &Entry) -> TranscriptEntry {
     let content = match entry.kind.as_str() {
+        "user" if entry.pending => TranscriptContent::PendingUser(entry.text.clone()),
         "user" => TranscriptContent::User(entry.text.clone()),
+        "compaction" => TranscriptContent::Compaction {
+            available: entry.history_available,
+            loading: entry.history_loading,
+        },
         "thinking" => TranscriptContent::Activity(ActivityContent::Thinking {
             text: entry.text.clone(),
         }),
@@ -83,6 +89,7 @@ impl Projection {
                     continue;
                 }
                 if old.kind == entry.kind
+                    && old.pending == entry.pending
                     && matches!(entry.kind.as_str(), "assistant" | "user")
                     && entry.text_reset_revision <= old.revision
                     && entry.text.len() >= old.length
@@ -95,6 +102,7 @@ impl Projection {
                 old.kind.clone_from(&entry.kind);
                 old.revision = entry.revision;
                 old.length = entry.text.len();
+                old.pending = entry.pending;
             } else {
                 if !structural {
                     apply(Change::Append(entry));
@@ -104,6 +112,7 @@ impl Projection {
                     kind: entry.kind.clone(),
                     revision: entry.revision,
                     length: entry.text.len(),
+                    pending: entry.pending,
                 });
             }
         }
@@ -147,6 +156,45 @@ mod tests {
         }))
         .unwrap()
     }
+    #[test]
+    fn pending_acknowledgment_is_a_style_update_not_an_empty_text_delta() {
+        let mut projection = Projection::default();
+        let mut user = entry(1, "user", "draft");
+        user.pending = true;
+        assert!(matches!(
+            row(&user).content,
+            TranscriptContent::PendingUser(_)
+        ));
+        projection.changes(&[user.clone()], |_| {});
+        user.pending = false;
+        user.revision += 1;
+        let source = [user];
+        let mut replaced = false;
+        projection.changes(&source, |change| {
+            assert!(matches!(change, Change::Replace(_)));
+            replaced = true;
+        });
+        assert!(replaced);
+        assert!(matches!(
+            row(&source[0]).content,
+            TranscriptContent::User(_)
+        ));
+    }
+
+    #[test]
+    fn compaction_projection_never_mounts_raw_summary_as_prose() {
+        let mut compact = entry(1, "compaction", "/not/prose\n/file/list");
+        compact.history_available = true;
+        compact.history_loading = true;
+        assert!(matches!(
+            row(&compact).content,
+            TranscriptContent::Compaction {
+                available: true,
+                loading: true
+            }
+        ));
+    }
+
     #[test]
     fn production_projection_matches_vue_activity_geometry_and_remeasures_neighbors() {
         let mut projection = Projection::default();

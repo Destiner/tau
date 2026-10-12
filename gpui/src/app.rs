@@ -6,6 +6,9 @@ pub use native_smoke::run_native_smoke;
 mod admin;
 mod admin_bridge;
 mod empty_sessions;
+#[cfg(test)]
+mod history_admission_tests;
+mod loading;
 mod model_scope;
 mod palette;
 mod projection;
@@ -16,6 +19,7 @@ mod sidebar;
 #[cfg(test)]
 mod tests;
 mod view;
+mod workspace_mutations;
 
 use crate::{
     components::{
@@ -88,6 +92,7 @@ struct LiveSession {
     ui_status: Option<(bool, bool)>,
     choices: Option<u64>,
     model_scope_read: Option<tau_session::session::ModelScopeToken>,
+    presented_history: Option<(String, String)>,
     extension: Option<(String, Entity<NativeDialog>)>,
     extension_subscription: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
@@ -96,6 +101,7 @@ struct LiveSession {
 pub struct Shell {
     commands: async_channel::Sender<Command>,
     workspace: Option<WorkspaceSnapshot>,
+    workspace_mutations: workspace_mutations::State,
     preferences: Preferences,
     sessions: BTreeMap<String, LiveSession>,
     active: String,
@@ -126,6 +132,7 @@ pub struct Shell {
     remote: remote::State,
     admin: admin::State,
     sidebar_state: sidebar::State,
+    session_loading: loading::State,
 }
 
 pub fn run() -> anyhow::Result<()> {
@@ -189,6 +196,7 @@ fn run_with(
             let shell = Shell {
                 commands: commands.clone(),
                 workspace: None,
+                workspace_mutations: workspace_mutations::State::default(),
                 preferences: Preferences::default(),
                 sessions: BTreeMap::new(),
                 active: String::new(),
@@ -219,6 +227,7 @@ fn run_with(
                 remote: remote::State::default(),
                 admin: admin::State::default(),
                 sidebar_state: sidebar::State::default(),
+                session_loading: loading::State::default(),
             };
             cx.spawn(async move |weak, cx| {
                 while let Ok(first) = events.recv().await {
@@ -699,6 +708,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         self.discard_empty_before_switch(&key, cx);
+        self.initialize_workspace_session(&project, &source_path, cx);
         self.create_retained(
             key.clone(),
             project,
@@ -789,12 +799,40 @@ impl Shell {
                 cx.notify();
             }
         });
-        let links = cx.subscribe(&transcript, |_, _, event: &TranscriptEvent, cx| {
-            let TranscriptEvent::OpenLink(link) = event;
-            if link.starts_with("https://") || link.starts_with("http://") {
-                cx.open_url(link);
-            }
-        });
+        let history_key = key.clone();
+        let links = cx.subscribe(
+            &transcript,
+            move |s, _, event: &TranscriptEvent, cx| match event {
+                TranscriptEvent::OpenLink(link) => {
+                    if link.starts_with("https://") || link.starts_with("http://") {
+                        cx.open_url(link);
+                    }
+                }
+                TranscriptEvent::LoadHistory(marker) => {
+                    if let Some(live) = s.sessions.get_mut(&history_key) {
+                        live.dirty = true;
+                        live.projection_dirty = true;
+                        let effects = live.controller.load_history(marker);
+                        // Admission may be a no-op without a revision change. Restore
+                        // this locally busy row from its authoritative controller state.
+                        if let Some(entry) = live
+                            .controller
+                            .state()
+                            .transcript
+                            .iter()
+                            .find(|entry| entry.id == *marker)
+                        {
+                            let row = projection::row(entry);
+                            live.transcript.update(cx, |transcript, cx| {
+                                transcript.update_content(&row.id, row.content, cx);
+                            });
+                        }
+                        s.effects(&history_key, effects, cx);
+                        s.refresh_window(cx);
+                    }
+                }
+            },
+        );
         self.sessions.insert(
             key.clone(),
             LiveSession {
@@ -821,6 +859,7 @@ impl Shell {
                 ui_status: None,
                 choices: None,
                 model_scope_read: None,
+                presented_history: None,
                 extension: None,
                 extension_subscription: None,
                 _subscriptions: vec![events, changes, queue_events, links],
@@ -955,9 +994,14 @@ impl Shell {
             Event::Admin(reply) => self.admin_event(reply, cx),
             Event::Remote(event) => self.remote_event(event, cx),
             Event::ModelScope { runtime, token, patterns } => self.model_scope_result(runtime, token, patterns, cx),
-            Event::Loaded(Ok((workspace, preferences))) => { self.workspace = Some(workspace); self.preferences = preferences; self.loaded = true; self.sidebar_state.invalidate_metadata(); }
+            Event::WorkspaceMutation { revision, success } => self.finish_workspace_mutation(revision, success),
+            Event::RegisteredRow { project, row } => self.merge_registered_row(project, row),
+            Event::ImportedProject(Ok(project)) => self.merge_workspace_project(project),
+            Event::Loaded(Ok((mut workspace, preferences))) => { self.reconcile_workspace_mutations(&mut workspace); self.workspace = Some(workspace); self.preferences = preferences; self.loaded = true; self.sidebar_state.invalidate_metadata(); }
             Event::Loaded(Err(())) => self.error = Some("Tau could not load its workspace. Reopen Tau to retry; saved data was not changed.".into()),
+            #[cfg(test)]
             Event::Workspace(Ok(mut workspace)) => {
+                self.reconcile_workspace_mutations(&mut workspace);
                 self.reconcile_archive(&mut workspace);
                 for live in self.sessions.values_mut() { if let Some(project) = workspace.projects.iter().find(|p| p.path == live.project.path) { live.project = project.clone(); } }
                 self.workspace = Some(workspace);
@@ -970,7 +1014,9 @@ impl Shell {
                 self.register_retries.push(command);
                 self.error = Some("A completed session could not be added to the workspace. Retry saving it.".into());
             }
-            Event::Workspace(Err(())) | Event::StorageFailed => self.error = Some("Workspace changes could not be saved. Try again.".into()),
+            Event::ImportedProject(Err(())) => self.error = Some("Workspace changes could not be saved. Try again.".into()),
+            #[cfg(test)]
+            Event::Workspace(Err(())) => self.error = Some("Workspace changes could not be saved. Try again.".into()),
             Event::Started { runtime, attempt, result } => {
                 if let Some(live) = self.sessions.get_mut(&runtime) {
                     if attempt != live.start_attempt { return; }

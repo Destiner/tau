@@ -93,6 +93,9 @@ impl Shell {
         };
         let changed = self.dark != dark;
         self.dark = dark;
+        if changed {
+            support::install_scrollbar_theme(dark, cx);
+        }
         self.sync_model_scopes(cx);
         if self.loaded && !self.restored {
             self.restored = true;
@@ -448,10 +451,16 @@ impl Shell {
                 dialog.update(cx, |d, cx| d.set_busy(self.exit_revision.is_some(), cx));
             }
         }
+        let loading_finished = self.sync_session_loading(cx);
         self.sync_remote(window, cx);
         self.sync_admin(window, cx);
         self.sync_palette(window, cx);
-        if focus_ready_composer {
+        if (focus_ready_composer || loading_finished)
+            && !self
+                .header
+                .as_ref()
+                .is_some_and(|header| header.read(cx).renaming())
+        {
             self.restore_input_focus(cx);
         }
         cx.notify();
@@ -474,16 +483,15 @@ impl Shell {
         {
             self.discard_empty_before_switch(&key, cx);
             self.sessions.get_mut(&key).unwrap().dirty = true;
-            if let Some((project, session, _)) = self.saved_session(&key)
-                && !session.archived
-            {
-                self.dispatch(
-                    Command::Select {
-                        project: project.path,
-                        session: session.id,
-                    },
-                    cx,
-                );
+            match self.saved_session(&key) {
+                Some((project, session, _)) if !session.archived => {
+                    self.select_workspace(project.path, session.id, cx);
+                }
+                None => {
+                    let project = self.sessions[&key].project.path.clone();
+                    self.select_workspace(project, String::new(), cx);
+                }
+                _ => {}
             }
             self.active = key.clone();
             self.mark_sidebar_read(&key);
@@ -501,13 +509,7 @@ impl Shell {
             })
         }) {
             if !session.archived {
-                self.dispatch(
-                    Command::Select {
-                        project: project.path.clone(),
-                        session: session.id.clone(),
-                    },
-                    cx,
-                );
+                self.select_workspace(project.path.clone(), session.id.clone(), cx);
             }
             self.create_live(
                 uuid::Uuid::new_v4().to_string(),
@@ -543,9 +545,16 @@ impl Shell {
                     .as_ref()
                     .and_then(|w| w.projects.iter().find(|p| p.path == project))
                     .is_some_and(|p| !p.collapsed);
-                self.dispatch(Command::Collapse { project, collapsed }, cx);
+                self.mutate_workspace(
+                    workspace_mutations::Mutation::Collapse { project, collapsed },
+                    cx,
+                );
+                self.sync(window, cx);
             }
-            Action::ReorderProjects(projects) => self.dispatch(Command::Reorder(projects), cx),
+            Action::ReorderProjects(projects) => {
+                self.mutate_workspace(workspace_mutations::Mutation::Order(projects), cx);
+                self.sync(window, cx);
+            }
             Action::OpenLocalProject => {
                 if let Some(picker) = self.picker.clone() {
                     let weak = cx.entity().downgrade();
@@ -631,102 +640,139 @@ impl Render for Shell {
             );
         }
         if let Some(live) = self.sessions.get(&self.active) {
-            let empty = live.transcript.read(cx).is_empty()
-                && live.transcript.read(cx).working_indicator().is_none();
-            live.composer.update(cx, |composer, cx| {
-                composer.set_fill_height(empty, cx);
-            });
-            if !empty {
+            if self.active_session_loading() {
                 main = main.child(
                     div()
-                        .id("shell-transcript-slot")
+                        .id("session-loading")
                         .test_support()
-                        .flex()
-                        .flex_col()
                         .flex_1()
                         .min_h_0()
-                        .child(live.transcript.clone()),
-                );
-            }
-            if live.starting {
-                main = main.child(div().px(px(24.)).child("Starting Pi…"));
-            }
-            if live.controller.state().status == Status::Error {
-                let key = self.active.clone();
-                main = main.child(
-                    div()
-                        .px(px(24.))
-                        .child(live.controller.state().error.clone().unwrap_or_else(|| {
-                            "Pi could not complete this operation. Try again.".into()
-                        }))
-                        .child(
-                            Button::new("retry-pi")
-                                .child(if live.controller.state().ready {
-                                    "Refresh"
-                                } else {
-                                    "Reconnect"
-                                })
-                                .on_click(cx.listener(move |s, _, _, cx| {
-                                    if let Some(live) = s.sessions.get_mut(&key) {
-                                        if live.starting {
-                                            return;
-                                        }
-                                        if live.controller.state().ready {
-                                            live.dirty = true;
-                                            let effects = live.controller.refresh();
-                                            s.effects(&key, effects, cx);
-                                            s.refresh_window(cx);
-                                            return;
-                                        }
-                                        live.starting = true;
-                                        live.startup_events.clear();
-                                        live.dirty = true;
-                                        live.start_attempt += 1;
-                                        live.start_deadline =
-                                            s.epoch.elapsed().as_millis() as u64 + 10_000;
-                                        let attempt = live.start_attempt;
-                                        let project = live.project.clone();
-                                        let path =
-                                            if live.controller.state().identity.path.is_empty() {
-                                                live.source_path.clone()
-                                            } else {
-                                                live.controller.state().identity.path.clone()
-                                            };
-                                        s.dispatch(
-                                            Command::Start {
-                                                runtime: key.clone(),
-                                                attempt,
-                                                project,
-                                                source: (!path.is_empty()).then_some(path),
-                                            },
-                                            cx,
-                                        );
-                                        s.refresh_window(cx);
-                                    }
-                                })),
-                        ),
-                );
-            }
-            main = main.child(live.queue.clone());
-            if let Some((_, dialog)) = &live.extension {
-                main = main.child(dialog.clone());
-            } else {
-                main = main.child(
-                    div()
-                        .id("shell-composer-area")
-                        .test_support()
                         .flex()
                         .flex_col()
-                        .min_h_0()
-                        .flex_shrink_0()
-                        .pt(px(6.))
-                        .pr(px(8.))
-                        .pb(px(8.))
-                        .pl(px(6.))
-                        .when(empty, |area| area.flex_1())
-                        .when(!empty, |area| area.border_t_1().border_color(rgb(t.border)))
-                        .child(live.composer.clone()),
+                        .items_center()
+                        .justify_center()
+                        .pb(px(24.))
+                        .text_size(px(12.))
+                        .text_color(rgb(t.muted))
+                        .when(self.loading_indicator_visible(), |loading| {
+                            loading.child(
+                                div()
+                                    .id("session-loading-content")
+                                    .test_support()
+                                    .flex()
+                                    .flex_col()
+                                    .items_center()
+                                    .gap(px(10.))
+                                    .child(components::transcript::working_spinner(
+                                        "Loading session".into(),
+                                        t.muted,
+                                        cx.reduce_motion(),
+                                    ))
+                                    .child(
+                                        div()
+                                            .id("session-loading-label")
+                                            .test_support()
+                                            .child("Loading"),
+                                    ),
+                            )
+                        }),
                 );
+            } else {
+                let empty = live.transcript.read(cx).is_empty()
+                    && live.transcript.read(cx).working_indicator().is_none();
+                live.composer.update(cx, |composer, cx| {
+                    composer.set_fill_height(empty, cx);
+                });
+                if !empty {
+                    main = main.child(
+                        div()
+                            .id("shell-transcript-slot")
+                            .test_support()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_h_0()
+                            .child(live.transcript.clone()),
+                    );
+                }
+                if live.controller.state().status == Status::Error {
+                    let key = self.active.clone();
+                    main = main.child(
+                        div()
+                            .px(px(24.))
+                            .child(live.controller.state().error.clone().unwrap_or_else(|| {
+                                "Pi could not complete this operation. Try again.".into()
+                            }))
+                            .child(
+                                Button::new("retry-pi")
+                                    .child(if live.controller.state().ready {
+                                        "Refresh"
+                                    } else {
+                                        "Reconnect"
+                                    })
+                                    .on_click(cx.listener(move |s, _, _, cx| {
+                                        if let Some(live) = s.sessions.get_mut(&key) {
+                                            if live.starting {
+                                                return;
+                                            }
+                                            if live.controller.state().ready {
+                                                live.dirty = true;
+                                                let effects = live.controller.refresh();
+                                                s.effects(&key, effects, cx);
+                                                s.refresh_window(cx);
+                                                return;
+                                            }
+                                            live.starting = true;
+                                            live.startup_events.clear();
+                                            live.dirty = true;
+                                            live.start_attempt += 1;
+                                            live.start_deadline =
+                                                s.epoch.elapsed().as_millis() as u64 + 10_000;
+                                            let attempt = live.start_attempt;
+                                            let project = live.project.clone();
+                                            let path =
+                                                if live.controller.state().identity.path.is_empty()
+                                                {
+                                                    live.source_path.clone()
+                                                } else {
+                                                    live.controller.state().identity.path.clone()
+                                                };
+                                            s.dispatch(
+                                                Command::Start {
+                                                    runtime: key.clone(),
+                                                    attempt,
+                                                    project,
+                                                    source: (!path.is_empty()).then_some(path),
+                                                },
+                                                cx,
+                                            );
+                                            s.refresh_window(cx);
+                                        }
+                                    })),
+                            ),
+                    );
+                }
+                main = main.child(live.queue.clone());
+                if let Some((_, dialog)) = &live.extension {
+                    main = main.child(dialog.clone());
+                } else {
+                    main = main.child(
+                        div()
+                            .id("shell-composer-area")
+                            .test_support()
+                            .flex()
+                            .flex_col()
+                            .min_h_0()
+                            .flex_shrink_0()
+                            .pt(px(6.))
+                            .pr(px(8.))
+                            .pb(px(8.))
+                            .pl(px(6.))
+                            .when(empty, |area| area.flex_1())
+                            .when(!empty, |area| area.border_t_1().border_color(rgb(t.border)))
+                            .child(live.composer.clone()),
+                    );
+                }
             }
         } else {
             main = main.child(div().flex_1()).child(div().p(px(24.)).child(

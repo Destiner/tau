@@ -239,18 +239,27 @@ mod review_tests {
         let data = tempfile::tempdir().unwrap();
         let (commands, events) = super::super::launch(data.path().into());
         commands
-            .send_blocking(Command::Collapse {
-                project: project.path.clone(),
-                collapsed: true,
+            .send_blocking(Command::WorkspaceMutation {
+                revision: 0,
+                mutation: crate::app::workspace_mutations::Mutation::Collapse {
+                    project: project.path.clone(),
+                    collapsed: true,
+                },
             })
             .unwrap();
         commands.send_blocking(Command::Remote(command(2))).unwrap();
         commands
-            .send_blocking(Command::Reorder(vec![project.path]))
+            .send_blocking(Command::WorkspaceMutation {
+                revision: 0,
+                mutation: crate::app::workspace_mutations::Mutation::Order(vec![project.path]),
+            })
             .unwrap();
         assert!(matches!(
             events.recv_blocking().unwrap(),
-            Event::Workspace(Err(()))
+            Event::WorkspaceMutation {
+                revision: 0,
+                success: true
+            }
         ));
         let Event::Remote(event) = events.recv_blocking().unwrap() else {
             panic!("FIFO import")
@@ -259,7 +268,10 @@ mod review_tests {
         assert!(matches!(event.result, Ok(RemoteResult::Imported(project)) if project.collapsed));
         assert!(matches!(
             events.recv_blocking().unwrap(),
-            Event::Workspace(Err(()))
+            Event::WorkspaceMutation {
+                revision: 0,
+                success: false
+            }
         ));
         let (done, completed) = async_channel::bounded(1);
         commands.send_blocking(Command::Shutdown(done)).unwrap();

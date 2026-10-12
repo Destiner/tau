@@ -7,6 +7,9 @@ use gpui_kit::{
 };
 use std::cell::Cell;
 
+#[path = "native_history_smoke.rs"]
+mod history;
+
 pub const COMPLETE: &str = "PASS native-app completion-gated last CmdW quit";
 
 pub fn run_native_smoke(root: PathBuf, project: String, check_menus: fn()) -> anyhow::Result<()> {
@@ -1087,6 +1090,7 @@ async fn exercise(
     palette_remote(&shell, &cx, &first).await;
     admin_report(&shell, &cx, &root, &first).await;
     empty_session_keyboard_switch(&shell, &cx, &first).await;
+    history::exercise(&shell, &cx, &root, &first).await;
     let held_first = cx.update(|cx| {
         window(&shell, cx)
             .update(cx, |_, w, cx| {

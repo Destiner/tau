@@ -89,15 +89,10 @@ pub enum Command {
         revision: u64,
         archived: bool,
     },
-    Select {
-        project: String,
-        session: String,
+    WorkspaceMutation {
+        revision: u64,
+        mutation: super::workspace_mutations::Mutation,
     },
-    Collapse {
-        project: String,
-        collapsed: bool,
-    },
-    Reorder(Vec<String>),
     Save {
         revision: u64,
         preferences: Option<Preferences>,
@@ -114,7 +109,17 @@ pub enum Event {
         patterns: Option<Vec<String>>,
     },
     Loaded(Result<(WorkspaceSnapshot, Preferences), ()>),
+    #[cfg(test)]
     Workspace(Result<WorkspaceSnapshot, ()>),
+    WorkspaceMutation {
+        revision: u64,
+        success: bool,
+    },
+    ImportedProject(Result<ProjectSummary, ()>),
+    RegisteredRow {
+        project: String,
+        row: tau_core::models::SessionSummary,
+    },
     Started {
         runtime: String,
         attempt: u64,
@@ -154,7 +159,6 @@ pub enum Event {
         archived: bool,
         success: bool,
     },
-    StorageFailed,
     RegistrationStored {
         runtime: String,
         generation: u64,
@@ -331,10 +335,8 @@ fn worker_with_backend(
                 };
                 Some(Event::Loaded(result.map_err(|_| ())))
             }
-            Command::Import(path) => Some(Event::Workspace(
-                storage::import_project(path)
-                    .and_then(|_| storage::load_workspace())
-                    .map_err(|_| ()),
+            Command::Import(path) => Some(Event::ImportedProject(
+                storage::import_project(path).map_err(|_| ()),
             )),
             Command::Start {
                 runtime,
@@ -460,15 +462,16 @@ fn worker_with_backend(
                     name: name.clone(),
                 };
                 let adopted = registration_is_adoption(&archive_intents, &project, &id);
-                let result = session_names.register(project, id, path, name, adopted);
+                let result = session_names.register(project.clone(), id, path, name, adopted);
+                let row = result.as_ref().ok().and_then(|row| row.clone());
                 let reply = registration_reply(retry, result);
                 if matches!(reply, Event::RegistrationStored { .. }) {
-                    // Only an accepted row is a durability acknowledgement; a workspace
-                    // reload failure must not turn this into a registration retry.
+                    // The accepted row is both durability acknowledgement and metadata;
+                    // do not discover every other session after a single registration.
                     if events.send_blocking(reply).is_err() {
                         break;
                     }
-                    Some(Event::Workspace(storage::load_workspace().map_err(|_| ())))
+                    row.map(|row| Event::RegisteredRow { project, row })
                 } else {
                     Some(reply)
                 }
@@ -518,22 +521,10 @@ fn worker_with_backend(
                     success,
                 })
             }
-            Command::Select { project, session } => {
-                let success = storage::set_active_project(project.clone())
-                    .and_then(|_| storage::set_active_session(project, session))
-                    .is_ok();
-                (!success).then_some(Event::StorageFailed)
-            }
-            Command::Collapse { project, collapsed } => Some(Event::Workspace(
-                storage::set_project_collapsed(project, collapsed)
-                    .and_then(|_| storage::load_workspace())
-                    .map_err(|_| ()),
-            )),
-            Command::Reorder(projects) => Some(Event::Workspace(
-                storage::reorder_projects(projects)
-                    .and_then(|_| storage::load_workspace())
-                    .map_err(|_| ()),
-            )),
+            Command::WorkspaceMutation { revision, mutation } => Some(Event::WorkspaceMutation {
+                revision,
+                success: write_workspace_mutation(mutation).is_ok(),
+            }),
             Command::Save {
                 revision,
                 preferences,
@@ -578,6 +569,25 @@ fn worker_with_backend(
     }
     pi.shutdown();
 }
+fn write_workspace_mutation(mutation: super::workspace_mutations::Mutation) -> Result<(), String> {
+    use super::workspace_mutations::Mutation;
+    match mutation {
+        Mutation::Collapse { project, collapsed } => {
+            storage::set_project_collapsed(project, collapsed)
+        }
+        Mutation::Order(projects) => storage::reorder_projects(projects),
+        Mutation::Select { project, session } if session.is_empty() => {
+            storage::set_active_project(project)
+        }
+        // set_active_session already persists the active project under the storage lock.
+        Mutation::Select { project, session } => storage::set_active_session(project, session),
+    }
+}
+
+#[cfg(test)]
+#[path = "service_workspace_tests.rs"]
+mod workspace_tests;
+
 fn retire_empty(
     runtime: &str,
     attempt: u64,

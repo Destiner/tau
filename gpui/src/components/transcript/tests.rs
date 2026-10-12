@@ -30,6 +30,309 @@ fn app() -> TestApp {
     app
 }
 #[test]
+fn pending_acknowledgment_preserves_mounted_markdown_selection_and_source() {
+    let mut app = app();
+    app.update(|cx| {
+        let transcript = cx.new(|cx| Transcript::new("transcript", true, cx));
+        let owner = transcript.downgrade();
+        transcript.update(cx, |this, cx| {
+            this.append_entry(
+                TranscriptEntry {
+                    id: "user".into(),
+                    content: TranscriptContent::PendingUser("**draft**".into()),
+                },
+                cx,
+            )
+            .unwrap();
+            let key = this.rows[0].key;
+            let Some(View::Prose(before, _)) = this.mount(0, owner.clone(), cx) else {
+                panic!()
+            };
+            assert_eq!(this.copy_selection(range(key, 0, key, 5)), "draft");
+            this.update_content("user", TranscriptContent::User("**draft**".into()), cx);
+            let Some(View::Prose(after, _)) = this.mount(0, owner, cx) else {
+                panic!()
+            };
+            assert_eq!(before, after);
+            assert_eq!(this.rows[0].key, key);
+            assert!(matches!(
+                this.rows[0].entry.content,
+                TranscriptContent::User(_)
+            ));
+            assert_eq!(this.copy_selection(range(key, 0, key, 5)), "draft");
+        });
+    });
+}
+
+#[test]
+fn compaction_dividers_have_no_copy_source_or_cache_and_reveals_keep_tail_keys() {
+    let mut app = app();
+    app.update(|cx| {
+        let transcript = cx.new(|cx| Transcript::new("transcript", true, cx));
+        let owner = transcript.downgrade();
+        transcript.update(cx, |this, cx| {
+            let boundary = || TranscriptEntry {
+                id: "compacted".into(),
+                content: TranscriptContent::Compaction {
+                    available: true,
+                    loading: false,
+                },
+            };
+            this.set_entries(vec![boundary(), entry("current", "current")], cx)
+                .unwrap();
+            let tail_key = this.rows[1].key;
+            assert!(matches!(
+                this.mount(0, owner.clone(), cx),
+                Some(View::Boundary { .. })
+            ));
+            assert!(this.cache.is_empty());
+            assert_eq!(this.prose_index(this.rows[0].key), None);
+            this.set_entries(
+                vec![entry("old", "old"), boundary(), entry("current", "current")],
+                cx,
+            )
+            .unwrap();
+            assert_eq!(this.rows[2].key, tail_key);
+            let old_key = this.rows[0].key;
+            assert_eq!(
+                this.copy_selection(range(old_key, 0, tail_key, 7)),
+                "old\n\ncurrent"
+            );
+            for index in 0..300 {
+                this.append_entry(entry(format!("tail-{index}"), "source"), cx)
+                    .unwrap();
+            }
+            for index in 0..this.len() {
+                this.mount(index, owner.clone(), cx).unwrap();
+            }
+            assert!(this.cache.len() <= CACHE_LIMIT);
+            assert_eq!(
+                this.copy_selection(range(old_key, 0, tail_key, 7)),
+                "old\n\ncurrent"
+            );
+        });
+    });
+}
+
+#[test]
+fn compaction_busy_feedback_is_delayed_and_retry_restarts_the_delay() {
+    let mut app = app();
+    app.update(|cx| {
+        let transcript = cx.new(|cx| Transcript::new("transcript", true, cx));
+        let owner = transcript.downgrade();
+        transcript.update(cx, |this, cx| {
+            let content = |loading| TranscriptContent::Compaction {
+                available: true,
+                loading,
+            };
+            this.append_entry(
+                TranscriptEntry {
+                    id: "boundary".into(),
+                    content: content(true),
+                },
+                cx,
+            )
+            .unwrap();
+            assert!(matches!(
+                this.mount(0, owner.clone(), cx),
+                Some(View::Boundary {
+                    loading: true,
+                    show_loading: false,
+                    ..
+                })
+            ));
+            this.rows[0].loading_started =
+                Some(std::time::Instant::now() - std::time::Duration::from_millis(200));
+            assert!(matches!(
+                this.mount(0, owner.clone(), cx),
+                Some(View::Boundary {
+                    show_loading: true,
+                    ..
+                })
+            ));
+            this.update_content("boundary", content(false), cx);
+            this.update_content("boundary", content(true), cx);
+            assert!(matches!(
+                this.mount(0, owner, cx),
+                Some(View::Boundary {
+                    show_loading: false,
+                    ..
+                })
+            ));
+            assert!(this.cache.is_empty());
+        });
+    });
+}
+
+fn boundary(available: bool, loading: bool) -> TranscriptEntry {
+    TranscriptEntry {
+        id: "boundary".into(),
+        content: TranscriptContent::Compaction { available, loading },
+    }
+}
+
+fn divider_fixture(
+    available: bool,
+    loading: bool,
+) -> (TestApp, gpui_kit::TestAppWindow<Root>, Entity<Transcript>) {
+    let mut app = app();
+    let transcript = app.new_entity(|cx| {
+        let mut t = Transcript::new("transcript", true, cx);
+        t.set_entries(vec![boundary(available, loading)], cx)
+            .unwrap();
+        t
+    });
+    let mut window =
+        app.open_window(|w, cx| Root::new(transcript.clone(), w, cx).flex().flex_col());
+    window.simulate_resize(size(px(1000.), px(700.)));
+    window.update(|_, w, cx| {
+        w.activate_window();
+        w.bounds_changed(cx);
+    });
+    app.run_until_parked();
+    window.activate_accessibility();
+    window.draw();
+    (app, window, transcript)
+}
+
+#[test]
+fn painted_compaction_available_loading_and_unavailable_match_vue_geometry_and_semantics() {
+    for (available, loading) in [(true, false), (true, true), (false, false)] {
+        let (_, mut window, transcript) = divider_fixture(available, loading);
+        for delayed in [false, true] {
+            if delayed && loading {
+                window.update(|_, _, cx| {
+                    transcript.update(cx, |t, cx| {
+                        t.rows[0].loading_started =
+                            Some(std::time::Instant::now() - std::time::Duration::from_millis(200));
+                        cx.notify();
+                    })
+                });
+                window.draw();
+            }
+            window.update(|_, w, _| {
+                let row = w.find("transcript-row-0").bounds();
+                let control = w.find("compaction-0").bounds();
+                let label = w.find("compaction-label-0").bounds();
+                assert_eq!(row.size.height, px(54.));
+                assert_eq!(control.size.height, px(22.));
+                assert_eq!(control.top() - row.top(), px(16.));
+                assert_eq!(row.bottom() - control.bottom(), px(16.));
+                assert_eq!(label.size.height, px(22.));
+                for side in ["left", "right"] {
+                    let rule = w.find(format!("compaction-rule-{side}-0")).bounds();
+                    assert_eq!(rule.size.height, px(1.));
+                    assert_eq!(rule.center().y, control.center().y);
+                }
+            });
+            let tree = window.accessibility_tree().unwrap();
+            let buttons = tree
+                .nodes
+                .iter()
+                .filter(|(_, n)| n.role() == gpui_kit::accesskit::Role::Button)
+                .collect::<Vec<_>>();
+            assert_eq!(buttons.len(), usize::from(available));
+            if available {
+                assert_eq!(buttons[0].1.label(), Some("Load earlier messages"));
+                assert_eq!(buttons[0].1.is_disabled(), loading);
+                assert_eq!(buttons[0].1.is_busy(), loading);
+            }
+            let text = tree
+                .nodes
+                .iter()
+                .filter_map(|(_, n)| n.value())
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(text.contains("compacted"), "painted label: {text:?}");
+            assert!(!text.contains("loading earlier messages"));
+            window.read(|_, cx| {
+                let t = transcript.read(cx);
+                assert!(t.cache.is_empty());
+                assert!(t.recent.is_empty());
+                assert_eq!(t.prose_index(t.rows[0].key), None);
+                assert_eq!(t.rows[0].entry.content.text(), None);
+                assert_eq!(
+                    t.copy_selection(range(t.rows[0].key, 0, t.rows[0].key, 100)),
+                    ""
+                );
+            });
+            assert_eq!(root_copy(&mut window), "copy sentinel");
+        }
+    }
+}
+
+#[test]
+fn painted_compaction_keyboard_and_pointer_gate_duplicates_and_recheck_live_state() {
+    use std::{cell::RefCell, rc::Rc};
+    for keyboard in ["enter", "space"] {
+        let press = |window: &mut gpui_kit::TestAppWindow<Root>| {
+            window.simulate_keystroke(keyboard);
+            window.simulate_event(gpui_kit::KeyUpEvent {
+                keystroke: gpui_kit::Keystroke::parse(keyboard).unwrap(),
+            });
+        };
+        let (mut app, mut window, transcript) = divider_fixture(true, false);
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let observed = events.clone();
+        let _subscription = app.update(|cx| {
+            cx.subscribe(&transcript, move |_, event: &TranscriptEvent, _| {
+                if let TranscriptEvent::LoadHistory(id) = event {
+                    observed.borrow_mut().push(id.clone());
+                }
+            })
+        });
+        window.simulate_keystroke("tab");
+        window.draw();
+        window.update(|_, w, _| assert_eq!(w.find("compaction-0").focused(), Some(true)));
+        let control = window.update(|_, w, _| w.find("compaction-0").bounds().center());
+        // No intervening paint: both keyboard and pointer use the old handler.
+        press(&mut window);
+        press(&mut window);
+        window.simulate_click(control, gpui_kit::MouseButton::Left);
+        window.draw();
+        assert_eq!(*events.borrow(), vec!["boundary"]);
+        window.update(|_, _, cx| {
+            transcript.update(cx, |t, cx| {
+                t.update_content("boundary", boundary(true, true).content, cx);
+            })
+        });
+        window.draw();
+        window.simulate_click(control, gpui_kit::MouseButton::Left);
+        press(&mut window);
+        assert_eq!(events.borrow().len(), 1);
+        // A failed request's authoritative idle state allows a retry.
+        window.update(|_, _, cx| {
+            transcript.update(cx, |t, cx| {
+                t.update_content("boundary", boundary(true, false).content, cx);
+            })
+        });
+        window.draw();
+        window.simulate_click(control, gpui_kit::MouseButton::Left);
+        press(&mut window);
+        window.draw();
+        assert_eq!(events.borrow().len(), 2);
+        // Availability can disappear before the old control's handler is repainted.
+        window.update(|_, _, cx| {
+            transcript.update(cx, |t, cx| {
+                t.update_content("boundary", boundary(false, false).content, cx);
+            })
+        });
+        window.simulate_click(control, gpui_kit::MouseButton::Left);
+        press(&mut window);
+        window.draw();
+        assert_eq!(events.borrow().len(), 2);
+        window.simulate_click(control, gpui_kit::MouseButton::Left);
+        press(&mut window);
+        assert_eq!(events.borrow().len(), 2);
+        window.read(|_, cx| {
+            let t = transcript.read(cx);
+            assert_eq!(t.rows[0].key, 0);
+            assert!(t.cache.is_empty());
+        });
+    }
+}
+
+#[test]
 fn append_keeps_keys_and_does_not_mount_offscreen_prose() {
     let mut app = app();
     app.update(|cx| {
@@ -321,6 +624,91 @@ pub(crate) fn production_projection_matches_vue_activity_geometry_and_remeasures
         assert_eq!(bounds[3].size.height, px(40.5));
         assert_eq!(bounds[3].bottom(), bounds[4].top());
     });
+
+    // Exercise the real production projection and Root, not just mount's enum.
+    // Even a legacy/source row carrying rawSummary must remain a passive boundary.
+    window.activate_accessibility();
+    let raw_summary = "/private/file.rs\n<summary>rawSummary is not prose</summary>";
+    let mut before = source[0].clone();
+    before.id = "before-boundary".into();
+    before.kind = "assistant".into();
+    before.text = "before".into();
+    let mut compact = source[1].clone();
+    compact.id = "boundary".into();
+    compact.kind = "compaction".into();
+    compact.text = raw_summary.into();
+    let mut after = before.clone();
+    after.id = "after-boundary".into();
+    after.text = "after".into();
+    let mut stable_keys = None;
+    let mut reader_bounds = None;
+    for (available, loading) in [(true, false), (true, true), (false, false)] {
+        compact.history_available = available;
+        compact.history_loading = loading;
+        compact.revision += 1;
+        let rows = vec![before.clone(), compact.clone(), after.clone()];
+        window.update(|_, _, cx| host.update(cx, |_, cx| sync(&rows, &transcript, cx)));
+        window.draw();
+        let keys = window.read(|_, cx| {
+            let t = transcript.read(cx);
+            let keys = t.rows.iter().map(|row| row.key).collect::<Vec<_>>();
+            assert_eq!(t.rows[1].entry.content.text(), None);
+            assert_eq!(t.prose_index(keys[1]), None);
+            assert!(!t.cache.contains_key(&keys[1]));
+            assert!(!t.recent.contains(&keys[1]));
+            assert_eq!(
+                t.copy_selection(range(keys[0], 0, keys[2], 5)),
+                "before\n\nafter"
+            );
+            assert!(t.cache.len() <= CACHE_LIMIT);
+            keys
+        });
+        if let Some(stable) = &stable_keys {
+            assert_eq!(&keys, stable);
+        } else {
+            stable_keys = Some(keys.clone());
+        }
+        window.update(|_, w, _| {
+            let row = w.find(format!("transcript-row-{}", keys[1])).bounds();
+            assert_eq!(row.size.height, px(54.));
+            assert_eq!(
+                w.find(format!("compaction-{}", keys[1]))
+                    .bounds()
+                    .size
+                    .height,
+                px(22.)
+            );
+            assert_eq!(
+                row.bottom(),
+                w.find(format!("transcript-row-{}", keys[2])).bounds().top()
+            );
+        });
+        let physical = window.update(|_, w, _| {
+            (
+                w.find(format!("transcript-row-{}", keys[0])).bounds(),
+                w.find(format!("transcript-row-{}", keys[2])).bounds(),
+            )
+        });
+        if let Some(bounds) = reader_bounds {
+            assert_eq!(physical, bounds, "boundary state must not move the reader");
+        } else {
+            reader_bounds = Some(physical);
+        }
+        let tree = window.accessibility_tree().unwrap();
+        let painted_text = tree
+            .nodes
+            .iter()
+            .filter_map(|(_, n)| n.value())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(painted_text.contains("compacted"));
+        assert!(!painted_text.contains("rawSummary"));
+        assert!(!painted_text.contains("/private/file.rs"));
+        assert_eq!(
+            rows[1].text, raw_summary,
+            "projection must not rewrite source"
+        );
+    }
 }
 
 pub(crate) fn production_working_tail(

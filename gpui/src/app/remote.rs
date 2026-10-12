@@ -291,23 +291,7 @@ impl Shell {
         cx.notify();
     }
     fn merge_imported_project(&mut self, project: ProjectSummary) {
-        self.sidebar_state.invalidate_metadata();
-        let Some(workspace) = &mut self.workspace else {
-            return;
-        };
-        let selected = project.selected;
-        let path = project.path.clone();
-        if let Some(existing) = workspace.projects.iter_mut().find(|p| p.path == path) {
-            *existing = project;
-        } else {
-            workspace.projects.push(project);
-        }
-        if selected {
-            workspace.active_project_path = path.clone();
-            for item in &mut workspace.projects {
-                item.selected = item.path == path;
-            }
-        }
+        self.merge_workspace_project(project);
     }
     pub(super) fn sync_remote(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(view) = self.remote.view.clone() else {
