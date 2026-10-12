@@ -3094,29 +3094,46 @@ impl Render for Header {
                 )
                 .into_any_element()
         } else {
+            let font = window
+                .text_system()
+                .resolve_font(&gpui_kit::font(font::family()));
+            let measure = window
+                .text_system()
+                .advance(font, px(13.), '0')
+                .map(|advance| advance.width * 60.)
+                .unwrap_or(px(390.));
             div()
                 .flex()
+                .min_w_0()
+                .max_w(measure)
                 .justify_start()
                 .on_prepaint(move |b, _, _| name_anchor.set(Some(b)))
                 .child(
                     BaseButton::new("session-name")
+                        .accessibility_label(self.title.clone())
                         .focusable(self.renamable && !self.active.is_empty())
                         .justify_start()
+                        .min_w_0()
                         .max_w_full()
                         .px(px(5.))
-                        .h(px(24.))
+                        .py(px(2.))
+                        // Production Vue: normal Inter leading + 2px vertical padding = 20px.
+                        .h(px(20.))
                         .rounded(px(5.))
                         .bg(rgba(0x00000000))
                         .text_color(rgb(t.text))
                         .text_size(px(13.))
                         .line_height(chrome_title_leading(window, 13.))
                         .when(self.renamable && !self.active.is_empty(), |b| {
-                            b.hover(move |b| b.bg(wash(dark))).on_hover(
-                                cx.listener(|s, h, w, cx| s.hover("session-name", *h, w, cx)),
-                            )
+                            b.cursor_text()
+                                .hover(move |b| b.bg(wash(dark)))
+                                .focus_visible(move |b| b.bg(wash(dark)))
+                                .on_hover(
+                                    cx.listener(|s, h, w, cx| s.hover("session-name", *h, w, cx)),
+                                )
                         })
                         .on_click(cx.listener(|s, _, w, cx| s.begin_rename(w, cx)))
-                        .child(self.title.clone()),
+                        .child(div().min_w_0().truncate().child(self.title.clone())),
                 )
                 .into_any_element()
         };
@@ -3244,6 +3261,10 @@ mod text_tests;
 #[cfg(test)]
 #[path = "chrome/resize_tests.rs"]
 mod resize_tests;
+
+#[cfg(test)]
+#[path = "chrome/header_geometry_tests.rs"]
+mod header_geometry_tests;
 
 #[cfg(test)]
 #[path = "chrome/behaviour_tests.rs"]
