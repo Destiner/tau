@@ -39,6 +39,12 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
 - Local and remote project import, session selection and new sessions. Remote import
   uses the existing SSH probe/directory browser and storage contracts; network reads
   do not block Pi writes or Stop. Authenticated real-host SSH acceptance remains outstanding.
+- Cold saved-session opens reserve the main pane immediately and show a centered
+  loading indicator after 200ms. Fast hydration and new blank sessions do not flash it;
+  selection/start/identity fencing cancels stale timers and startup errors reveal Retry Pi.
+- Collapse/reorder update optimistically with revision-fenced persistence and rollback.
+  Selection and new-session metadata writes no longer rescan every project's histories;
+  registration/import merge returned rows/projects instead of reloading the workspace.
 - Retained composer/transcript entities, full-height empty composer, model/effort
   choices, visibly rendered prompts/streaming prose/activity, Stop, queue submission
   and clear. While working, Enter or Send queues steering; Cmd-Enter queues a follow-up.
@@ -60,7 +66,8 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   scroll within the viewport; thinking labels are human-readable (including Extra High).
   Choice revisions avoid rebuilding or serializing the catalogue during streaming.
 - Thinking/tool adjacency uses Vue's compact spacing; tool headers include argument
-  summaries such as `read  gpui/APP.md`, with unchanged raw source and results.
+  summaries such as `read  gpui/APP.md`. Multiline/heredoc arguments normalize whitespace
+  only in the single-line, bounded header; raw arguments and results remain unchanged.
   Expanded details own wheel scrolling, including at either edge, and retain their
   offset across updates/cache eviction. The transient Working/Stopping tail follows
   Vue's assistant/compaction rules and is excluded from transcript data and Copy.
@@ -82,6 +89,17 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   chooser, guarded close/quit and draft persistence. Closing the last production
   window quits only after confirmation (when busy), all-draft persistence and
   runtime shutdown acknowledgement. Closing one of multiple windows keeps the app alive.
+- Compaction summaries render as non-prose dividers; branch summaries are omitted.
+  Available dividers reveal an earlier active-branch layer through Pi's actual
+  `get_entries`/`firstKeptEntryId`, with keyboard/pointer admission, retry and stale-reply
+  fences. Prepending retains the current reader/source identities; dividers do not use
+  the 128-view cache or become Copy sources. No alternate session format is introduced.
+- Pending user bubbles use 0.88 opacity until Pi acknowledges them, without replacing
+  their source/selection identity. Busy queue chips dim, Clear stays visible but disabled,
+  previews remain usable, and only genuine errors show feedback—not Updating queue….
+- Palette titles/details clip independently with reserved shortcut space; its retained
+  search editor uses 13px type. Selector glyphs are smaller without shrinking hit areas.
+  Shared light/dark scrollbar styles apply to editors, transcript and other scrollers.
 - Bounded presentation cache and incremental changed-row projection. Streaming does
   not hash or clone unchanged historical text.
 
@@ -157,8 +175,9 @@ rename/palette, extension-confirm and queue interactions against production sour
   Ordinary outside clicks still commit without stealing the clicked control's focus.
 - `ExtensionDialog.vue`: Cmd-Enter confirms Yes, Cmd-Shift-Enter confirms No, independent
   of highlighted row; ordinary select Enter, busy and composition rules are unchanged.
-- `MessageQueue.vue`: Clear All is disabled while queue operations are pending and the
-  rail shows Updating queue…; rejection/timeout releases admission without losing items.
+- `MessageQueue.vue`: Clear All is disabled while queue operations are pending;
+  rejection/timeout releases admission without losing items. The later transcript/UI
+  correction below deliberately replaces generic busy text with quiet dimmed chips.
 
 This is a focused interaction audit, not a claim that all runtime/recovery parity is
 finished. Settings remains intentionally absent; full recovery, saved-session removal,
@@ -166,7 +185,38 @@ file previews/media, authenticated SSH and release gates remain as documented ab
 
 ## Verification
 
-The behavioural audit passed **422 library tests** (one ignored timing benchmark),
+The later transcript/UI correction passed **450 library tests** (one ignored timing
+benchmark), **13 editor integration tests**, and **62 controller tests** (one opt-in
+installed-Pi canary ignored). Formatting, GPUI lint/typecheck, five packaging tests and
+strict GPUI all-target/all-feature plus controller Clippy passed. A fresh arm64 debug
+`Tau Native.app` passed packaging/linkage and ad-hoc signature verification; it is not
+notarized and this does not establish packaged local/SSH workflow acceptance.
+
+Both credential-free and model-enabled native acceptance passed with Pi 0.99.2.
+A synthetic Pi v3 fixture under the isolated profile is opened through the real worker
+and measured sidebar. Actual `get_messages`/`get_entries` replies prove summary exclusion,
+prior-layer reveal, current reader bounds/source retention and return to the Unicode
+draft, alongside existing workflows and guarded shutdown. These tests do not read
+production sessions or prove that compaction explained the user's entire malformed
+transcript report. Root tests additionally cover exact delayed loading, unavailable/
+busy divider semantics, pending acknowledgement, one-line tools and optimistic mutations.
+
+Eight fresh light/dark pairs import actual production Vue and native components inside
+Base Root: activity, palette, scrolled composer and pending transcript/queue. Paired
+images/diffs were inspected; pending bubbles and wheel-revealed themed thumbs are asserted
+painted. Smaller native chevrons (6px versus Vue's approximately 8.485px rotated extent)
+and quiet busy queues intentionally differ from Vue. Text rasterization/rounding and
+platform scrollbar appearance retain visible differences; this is focused evidence,
+not a full pixel-parity campaign or release certification.
+
+Intermediate failures remain recorded: an invalid generic accessibility role on passive
+dividers, a stale seeded-leaf wire assumption, inactive keyboard/handle-lifetime test
+fixtures, and incomplete visual-wrapper sizing/activation. Fixes retain real ancestry,
+initial fixture setup, painted-content checks and unchanged native deadlines. A tool-detail
+selection experiment was reverted after losing a terminal newline; no new exact-copy
+support is claimed. No dependency-cache patch or production data migration was added.
+
+The earlier behavioural audit passed **422 library tests** (one ignored timing benchmark),
 **13 editor integration tests**, and **52 controller tests** (the opt-in installed-Pi
 canary remains ignored). Formatting, GPUI lint/typecheck, strict all-target/all-feature
 Clippy and the native build passed. Production-root tests measure four cold and four

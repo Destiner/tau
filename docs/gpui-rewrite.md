@@ -1,6 +1,6 @@
 # GPUI rewrite: current status and delivery plan
 
-Updated 11 October 2026. This supersedes the historical prototype checklist.
+Updated 12 October 2026. This supersedes the historical prototype checklist.
 The requested delivery/decision window was **9–10 October**. The native preview remains
 under active user review and correction; it is not a completed production cutover.
 The remaining release/cutover gates below still require an explicit decision.
@@ -143,9 +143,28 @@ GPUI release or GPUI updater. See [packaging](../gpui/PACKAGING.md).
   measures/captures the archive tooltip and retains assistant/tool/session actions.
   Earlier failed tooltip ownership and fixture/bootstrap assumptions remain recorded;
   no arbitrary sleeps, activation repairs or widened interaction gates.
-- GPUI library: **422 passed, 0 failed, 1 ignored**, plus **13 passed** editor
-  integration tests; all-target/all-feature strict Clippy and the actual `tau`
-  build passed. The broader Rust run passed its unit binaries but timed out in
+- Transcript/UI correction: delayed cold-history loading, non-prose compaction dividers
+  with real active-branch reveal, acknowledged pending-user presentation, compact
+  multiline tool headers, quiet busy queues, clipped palette rows/smaller controls and
+  shared light/dark scrollbars. Optimistic collapse/reorder and cheap selection writes
+  avoid unrelated history rescans. This corrects a concrete summary-projection defect;
+  the user's complete malformed-transcript example was not reproduced from user data.
+- Both native acceptance variants pass isolated synthetic-history hydration through
+  installed Pi's actual `get_messages`/`get_entries`, earlier-layer reveal, reader/source
+  preservation and return to the retained draft, plus existing workflows/shutdown.
+  Startup metadata is allowed at the active leaf. No production sessions were read and
+  no interaction deadline was widened. Invalid divider semantics and early fixture/wire
+  assumptions were corrected; their negative evidence remains recorded.
+- Eight fresh production Vue/GPUI light/dark pairs and diffs were inspected for activity,
+  palette, wheel-scrolled composer and pending transcript/queue. Real painted rows/thumbs
+  are asserted. The smaller chevrons and quiet queue deliberately differ from Vue;
+  residual text rasterization/rounding and platform scrollbar appearance are disclosed.
+  This is focused comparison coverage, not full-app visual or packaged acceptance.
+- Latest GPUI library: **450 passed, 0 failed, 1 ignored**, plus **13 passed** editor
+  integration tests and **62 passed** controller tests (one opt-in Pi canary ignored).
+  Formatting, GPUI lint/typecheck, five packaging tests, strict all-target/all-feature
+  GPUI Clippy and controller Clippy passed. The actual native application was built
+  for both acceptance variants. The broader historical Rust run passed its unit binaries but timed out in
   the existing activity Metal runner; the full suite is not reported green.
 - Frontend: **894 tests**, lint, typecheck and build passed. GPUI TypeScript/lint
   passed; its Bun suite had **97 passes / 1 browser-clock failure**. The unchanged
@@ -185,8 +204,10 @@ failures); no speculative activation/focus repair or relabelled visual snapshots
       SSH workflows using existing configuration contracts.
 - [ ] Complete file/media previews, multiline extension editing and applicable
       extension presentation; preserve local/remote preview security.
-- [ ] Finish history/tree/branch/navigation and compaction parity, replacement
-      watching/materialization, recovery/reconnect and idle eviction. Preserve
+- [x] Restore non-prose compaction boundaries and earlier active-branch layers through
+      real Pi history RPC, preserving source identities, reader position and draft.
+- [ ] Finish remaining history/tree/branch/navigation and compaction lifecycle parity,
+      replacement watching/materialization, recovery/reconnect and idle eviction. Preserve
       drafts, optimistic prompts, reading position and workflow context.
 - [ ] Preserve per-session runtime/generation/request ownership and stale-result
       fencing. Never auto-replay uncertain prompts or invent a parallel Pi runtime
