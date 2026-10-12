@@ -49,6 +49,13 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   choices, visibly rendered prompts/streaming prose/activity, Stop, queue submission
   and clear. While working, Enter or Send queues steering; Cmd-Enter queues a follow-up.
   Shift-Enter inserts a newline. When idle, Cmd-Enter sends an ordinary prompt.
+- Typing `/` at the start of the composer opens Pi's session-owned command catalogue.
+  Fuzzy filtering, source labels, clamped Up/Down navigation, pointer choice and Escape
+  match Vue. Tab completes the active name without sending; Enter sends it once.
+  Completion is undoable, IME keeps marked-text keys, and Shift-Enter remains a newline.
+  While streaming, extension commands cannot submit; prompt/skill commands use the normal
+  queue path. The bounded popup flips below the first line in the full-height composer.
+  Command revisions avoid reparsing an unchanged catalogue on every streaming update.
 - Cmd-K command palette with real session/project/model/effort pages, supported actions
   and shortcuts, search, keyboard navigation, and modal-aware focus restoration.
   Session switching keeps shortcuts on the mounted shell while the destination paints;
@@ -72,7 +79,8 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   offset across updates/cache eviction. The transient Working/Stopping tail follows
   Vue's assistant/compaction rules and is excluded from transcript data and Copy.
 - Click-to-rename saved sessions through Pi, with bounded names, rollback and registry
-  persistence. Archive idle saved sessions; browsing archives does not restore them,
+  persistence. The title hover/focus wash is 20px high, matching Vue, with a 60ch cap
+  and clipped long titles; the rename editor and title baseline are unchanged. Archive idle saved sessions; browsing archives does not restore them,
   and Restore is explicit. Drafts and session files are retained. Archives are
   virtualized, globally sorted within local-calendar groups and include project/model
   subtitles. Sidebar projections are invalidated at data/status boundaries rather than
@@ -185,7 +193,32 @@ file previews/media, authenticated SSH and release gates remain as documented ab
 
 ## Verification
 
-The later transcript/UI correction passed **450 library tests** (one ignored timing
+The command/header correction passed **469 library tests** (one ignored timing
+benchmark), **13 editor integration tests**, and **64 controller tests** (one opt-in
+installed-Pi canary ignored). Formatting, GPUI lint/typecheck, six packaging tests and
+strict GPUI all-target/all-feature plus controller Clippy passed. Real Root regressions
+cover authoritative command hydration, Tab/Enter/pointer routing, session isolation,
+streaming admission and a quiet first-send pending state. Both credential-free and
+model-enabled native acceptance exercise the installed Pi catalogue and Tab completion
+before the existing extension/model/tool/Stop/session/shutdown sequence.
+
+Six fresh light/dark Vue/native/diff pairs cover the command popup above/below the
+editor and the title hover. They use production components, fonts and CSS import order;
+40.5px described-command rows, alpha-composited cursor wash and 20px title hover are
+measured and painted. The intentionally raised native empty-composer first line places
+its below popup 12px higher than current Vue; Base Positioner retains a 0.5px above-popup
+translation difference. Font rasterization also differs. Initial incorrect normal-leading,
+CSS-order and unsnapped geometry assumptions remain in the local evidence, not hidden
+by coordinate corrections. This is focused comparison, not full application parity.
+
+Current packaging calls the bundle **Tau.app**, with Tau display/application names,
+while preserving `com.destiner.tau.native-preview`. Packaging rejects existing targets,
+symlinks and system/current-user Applications destinations. It does not replace installed
+Tauri Tau. The preview still has no native updater/feed; **Check for Updates…** is omitted
+rather than wired to the incompatible Tauri updater. Local ad-hoc packaging remains
+separate from signed/notarized distribution and production cutover.
+
+The previous transcript/UI correction passed **450 library tests** (one ignored timing
 benchmark), **13 editor integration tests**, and **62 controller tests** (one opt-in
 installed-Pi canary ignored). Formatting, GPUI lint/typecheck, five packaging tests and
 strict GPUI all-target/all-feature plus controller Clippy passed. A fresh arm64 debug

@@ -34,13 +34,32 @@ and runtime cleanup. Generic host reopen remains separately supported. See
 Settings is intentionally absent: no panel, menu item or Cmd-comma shortcut.
 Existing persisted theme choices remain readable; otherwise appearance follows the system.
 Tauri remains the operational fallback. A standalone, locally ad-hoc-signed
-**Tau Native.app** preview now packages the actual GPUI executable (`4366e27`),
-with a separate bundle identity and verified metadata/linkage. It has not replaced
+**Tau.app** preview packages the actual GPUI executable (packaging introduced in
+`4366e27`; earlier previews were named Tau Native.app), with a separate bundle identity
+and verified metadata/linkage. Packaging refuses system/current-user Applications
+locations and existing destinations, including symlink aliases. It has not replaced
 Tauri or been certified for distribution. There is no Developer ID signed/notarized
 GPUI release or GPUI updater. See [packaging](../gpui/PACKAGING.md).
 
 ## Evidence and limits
 
+- Command/header correction: Pi-backed slash command picker, fuzzy source-labelled
+  choices, Tab completion without sending, exactly-once Enter, clamped arrows, pointer
+  selection, Escape, retained-editor undo/IME and streaming admission. Command revisions
+  fence catalogue replacement and avoid repeated deserialization during streaming.
+  First-send pending feedback stays quiet. Title hover is Vue's measured 20px high.
+  **469 library / 64 controller / 13 editor tests**, strict Clippy, formatting,
+  lint/typecheck and **six packaging tests** passed; both native acceptance variants
+  exercise real Pi command hydration/Tab alongside the existing workflows.
+- Six fresh light/dark production Vue/native/diff pairs cover above/below command
+  menus and title hover, with actual CSS import order and painted geometry. Initial
+  normal-leading/CSS-order and pixel-snapping fixture errors were corrected and kept
+  as negative evidence. Intentional 12px empty-inset difference, native Positioner's
+  half-pixel translation and font rasterization differences remain disclosed. Comparison
+  is focused, not full parity certification; temporary comparison machinery stays local.
+- The app/bundle is now named Tau, without changing the separate native-preview identity
+  or installing over Tauri. Check for Updates… remains absent until a real native updater
+  and feed exist; the Tauri update feed is not a compatible native update path.
 - Core extraction: **57 unit + 2 integration tests passed**, one explicit canary
   ignored. Existing Tauri compatibility tests and unsigned Tauri bundle passed;
   that bundle is not GPUI packaging.
