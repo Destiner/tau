@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   assertFresh,
@@ -12,7 +12,7 @@ import {
 
 test('defaults build the real release binary, never a prototype or prepare', () => {
   const options = plan([]);
-  expect(options.output).toEndWith('/gpui/target/bundle/macos/Tau Native.app');
+  expect(options.output).toEndWith('/gpui/target/bundle/macos/Tau.app');
   expect(options.build).toContain('--release');
   expect(
     options.build.slice(
@@ -27,14 +27,15 @@ test('defaults build the real release binary, never a prototype or prepare', () 
   expect(plan(['--no-build']).noBuild).toBe(true);
 });
 
-test('output requires absolute distinct app name and rejects unknown options', () => {
-  expect(plan(['--output', '/tmp/native-preview/Tau Native.app']).output).toBe(
-    '/tmp/native-preview/Tau Native.app',
+test('output requires absolute app name and rejects unknown options', () => {
+  expect(plan(['--output', '/tmp/native-preview/Tau.app']).output).toBe(
+    '/tmp/native-preview/Tau.app',
   );
   for (const args of [
     ['--output'],
-    ['--output', 'Tau Native.app'],
+    ['--output', 'Tau.app'],
     ['--output', '/Applications/Tau.app'],
+    ['--output', '/tmp/Tau Native.app'],
     ['--prepare'],
   ]) {
     expect(() => plan(args)).toThrow();
@@ -46,6 +47,8 @@ test('metadata has distinct identity, real executable and numeric version', () =
   expect(bundleId).not.toBe('com.destiner.tau');
   for (const value of [
     bundleId,
+    '<key>CFBundleName</key><string>Tau</string>',
+    '<key>CFBundleDisplayName</key><string>Tau</string>',
     '<string>tau</string>',
     '<string>0.1.0</string>',
     'GPUI debug preview',
@@ -58,7 +61,7 @@ test('metadata has distinct identity, real executable and numeric version', () =
 test('fresh-only output preserves directories and dangling symlinks', () => {
   const dir = mkdtempSync(join(tmpdir(), 'tau-package-test-'));
   try {
-    const output = join(dir, 'Tau Native.app');
+    const output = join(dir, 'Tau.app');
     assertFresh(output);
     mkdirSync(output);
     expect(() => assertFresh(output)).toThrow('already exists');
@@ -99,5 +102,41 @@ test('Mach-O, architecture, linkage and rpaths are inspected without a GUI', () 
     changed[index] = value;
     let i = 0;
     expect(() => verifyBinary('/tmp/tau', () => changed[i++]!)).toThrow();
+  }
+});
+
+test('Applications destinations reject lexical and symlink aliases even when fresh', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tau-package-location-'));
+  try {
+    for (const base of [
+      '/Applications',
+      '/System/Applications',
+      join(homedir(), 'Applications'),
+    ]) {
+      const output = join(base, 'tau-preview-fresh-test', 'Tau.app');
+      expect(() => plan(['--output', output])).toThrow('Applications');
+      expect(() => assertFresh(output)).toThrow('Applications');
+      expect(() =>
+        plan([
+          '--output',
+          `${base}/../Applications/tau-preview-fresh-test/Tau.app`,
+        ]),
+      ).toThrow('Applications');
+    }
+    symlinkSync('/Applications', join(dir, 'alias'));
+    const output = join(dir, 'alias', 'tau-preview-fresh-test', 'Tau.app');
+    expect(() => plan(['--output', output])).toThrow('Applications');
+    expect(() => assertFresh(output)).toThrow('Applications');
+    symlinkSync(join(dir, 'missing'), join(dir, 'dangling'));
+    expect(() => plan(['--output', join(dir, 'dangling', 'Tau.app')])).toThrow(
+      'symlink',
+    );
+    mkdirSync(join(dir, 'safe'));
+    symlinkSync(join(dir, 'safe'), join(dir, 'safe-alias'));
+    expect(() =>
+      assertFresh(join(dir, 'safe-alias', 'fresh', 'Tau.app')),
+    ).not.toThrow();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

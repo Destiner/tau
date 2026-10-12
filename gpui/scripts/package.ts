@@ -6,11 +6,20 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { homedir } from 'node:os';
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from 'node:path';
 
 const root = resolve(import.meta.dir, '..');
 export const bundleId = 'com.destiner.tau.native-preview';
@@ -37,7 +46,7 @@ export function plan(args: string[]): {
 } {
   let debug = false,
     noBuild = false;
-  let output = join(root, 'target/bundle/macos/Tau Native.app');
+  let output = join(root, 'target/bundle/macos/Tau.app');
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--debug') debug = true;
     else if (args[i] === '--no-build') noBuild = true;
@@ -48,8 +57,9 @@ export function plan(args: string[]): {
       output = resolve(value);
     } else throw new Error(`Unknown option: ${args[i]}`);
   }
-  if (basename(output) !== 'Tau Native.app')
-    throw new Error('Output must be named Tau Native.app (never Tau.app)');
+  if (basename(output) !== 'Tau.app')
+    throw new Error('Output must be named Tau.app');
+  assertSafeLocation(output);
   return {
     output,
     debug,
@@ -75,8 +85,8 @@ export function plist(version: string, debug: boolean): string {
     throw new Error('Expected a numeric Cargo package version');
   const values = {
     CFBundleIdentifier: bundleId,
-    CFBundleName: 'Tau Native',
-    CFBundleDisplayName: 'Tau Native',
+    CFBundleName: 'Tau',
+    CFBundleDisplayName: 'Tau',
     CFBundleExecutable: 'tau',
     CFBundlePackageType: 'APPL',
     CFBundleIconFile: 'icon.icns',
@@ -84,7 +94,7 @@ export function plist(version: string, debug: boolean): string {
     CFBundleVersion: version,
     CFBundleInfoDictionaryVersion: '6.0',
     LSMinimumSystemVersion: '15.0',
-    NSHumanReadableCopyright: `Tau Native ${version} — GPUI ${debug ? 'debug' : 'release'} preview; local ad-hoc build`,
+    NSHumanReadableCopyright: `Tau ${version} — GPUI ${debug ? 'debug' : 'release'} preview; local ad-hoc build`,
     NSHighResolutionCapable: true,
   };
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n${Object.entries(
@@ -127,12 +137,67 @@ export function verifyBinary(binary: string, exec: Runner): string {
   return arch;
 }
 
+function canonicalDestination(path: string): string {
+  let ancestor = resolve(path);
+  const suffix: string[] = [];
+  for (;;) {
+    try {
+      return resolve(realpathSync(ancestor), ...suffix);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      lstatIfPresent(ancestor);
+      const parent = dirname(ancestor);
+      if (parent === ancestor) throw error;
+      suffix.unshift(basename(ancestor));
+      ancestor = parent;
+    }
+  }
+}
+
+function lstatIfPresent(path: string): void {
+  try {
+    lstatSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
+  throw new Error(`Unresolved destination symlink: ${path}`);
+}
+
+function assertSafeLocation(output: string): void {
+  const locations = [
+    '/Applications',
+    '/System/Applications',
+    join(homedir(), 'Applications'),
+  ];
+  const paths = [resolve(output), canonicalDestination(output)];
+  for (const location of locations) {
+    for (const base of [resolve(location), canonicalDestination(location)]) {
+      if (
+        paths.some((path) => {
+          const child = relative(base, path);
+          return (
+            child === '' ||
+            (!child.startsWith('../') && child !== '..' && !isAbsolute(child))
+          );
+        })
+      )
+        throw new Error(
+          'Applications install locations are forbidden for previews',
+        );
+    }
+  }
+}
+
 // Fresh destinations only: even a marked bundle is never recursively replaced.
 export function assertFresh(output: string): void {
   try {
     lstatSync(output);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      assertSafeLocation(output);
+      return;
+    }
     throw error;
   }
   throw new Error(
@@ -160,7 +225,7 @@ export function packageApp(args: string[], exec: Runner = run): string {
   const stage = mkdtempSync(
     join(dirname(options.output), '.tau-native-package-'),
   );
-  const app = join(stage, 'Tau Native.app');
+  const app = join(stage, 'Tau.app');
   try {
     mkdirSync(join(app, 'Contents/MacOS'), { recursive: true });
     mkdirSync(join(app, 'Contents/Resources'));
