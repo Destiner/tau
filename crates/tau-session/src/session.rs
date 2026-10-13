@@ -6,6 +6,25 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+#[path = "session_input_failure.rs"]
+mod input_failure;
+#[path = "session_reconciliation.rs"]
+mod reconciliation;
+use reconciliation::{ReadPurpose, Reconciliation};
+
+fn meaningful_completed_assistant(message: &Value) -> bool {
+    message["role"] == "assistant"
+        && !matches!(message["stopReason"].as_str(), Some("error" | "aborted"))
+        && project(message, "proof").iter().any(|row| {
+            (matches!(row.kind.as_str(), "assistant" | "thinking") && !row.text.trim().is_empty())
+                || (row.kind == "tool"
+                    && row
+                        .tool_name
+                        .as_ref()
+                        .is_some_and(|name| !name.trim().is_empty()))
+        })
+}
+
 fn replace_changed<T: PartialEq>(current: &mut T, next: T) -> bool {
     if *current == next {
         return false;
@@ -285,12 +304,20 @@ struct Pending {
     deadline: u64,
     payload: Value,
     barrier: bool,
+    completed_assistant: bool,
     draft: Option<String>,
     optimistic: Option<String>,
     accepted: bool,
     previous_name: Option<String>,
+    purpose: ReadPurpose,
+    extension_command: bool,
+    command_incarnation: u64,
 }
 /// Pure protocol state. The host owns IO, persistence, rendering and scheduling.
+#[path = "session_saved_preview.rs"]
+mod saved_preview;
+pub use saved_preview::SavedPreviewToken;
+
 pub struct Controller {
     runtime_id: String,
     generation: u64,
@@ -304,6 +331,7 @@ pub struct Controller {
     active_assistant: Option<String>,
     message_occurrences: BTreeMap<String, usize>,
     registered: HashSet<(String, String)>,
+    materialisation: BTreeMap<(String, String), (Identity, u64)>,
     startup_deadline: Option<u64>,
     stop_deadline: Option<u64>,
     admission: Option<(u64, String)>,
@@ -322,6 +350,8 @@ pub struct Controller {
     compaction_snapshot: Option<HashMap<String, u64>>,
     error_revision: u64,
     extension_error_owner: Option<(u64, String, u64)>,
+    reconciliation: Reconciliation,
+    saved_preview: saved_preview::Admission,
 }
 impl Controller {
     pub fn new(runtime_id: impl Into<String>) -> Self {
@@ -338,6 +368,7 @@ impl Controller {
             active_assistant: None,
             message_occurrences: BTreeMap::new(),
             registered: HashSet::new(),
+            materialisation: BTreeMap::new(),
             startup_deadline: None,
             stop_deadline: None,
             admission: None,
@@ -355,6 +386,8 @@ impl Controller {
             compaction_snapshot: None,
             error_revision: 0,
             extension_error_owner: None,
+            reconciliation: Reconciliation::default(),
+            saved_preview: saved_preview::Admission::default(),
         }
     }
     fn reset_history(&mut self) {
@@ -477,6 +510,8 @@ impl Controller {
         self.state.extension_dialogs.clear();
         self.reset_history();
         self.compaction_snapshot = None;
+        self.saved_preview = saved_preview::Admission::default();
+        self.message_occurrences.clear();
         self.state.identity = Identity {
             id: id.into(),
             path: path.into(),
@@ -542,10 +577,14 @@ impl Controller {
                 deadline: self.now.saturating_add(REQUEST_TIMEOUT_MS),
                 payload: payload.clone(),
                 barrier,
+                completed_assistant: false,
                 draft: None,
                 optimistic: None,
                 accepted: false,
                 previous_name: None,
+                purpose: ReadPurpose::Ordinary,
+                extension_command: false,
+                command_incarnation: self.reconciliation.command_incarnation,
             },
         );
         if command != "prompt" && !barrier {
@@ -563,14 +602,22 @@ impl Controller {
         self.finalize_partial();
         self.reset_history();
         self.compaction_snapshot = None;
+        self.saved_preview
+            .adopt_start(self.generation, generation, self.epoch);
         self.generation = generation;
+        self.reset_reconciliation_generation();
         self.reset_commands();
         self.compaction_working = false;
         self.epoch += 1;
         self.reset_model_scope();
         self.pending.clear();
         self.latest.clear();
-        self.message_occurrences.clear();
+        self.restart_saved_preview_provenance();
+        self.message_occurrences = if self.saved_preview.projects_wire_rows() {
+            self.saved_preview.occupied.clone()
+        } else {
+            BTreeMap::new()
+        };
         self.connected = true;
         self.state_serial = 0;
         self.admission = None;
@@ -589,7 +636,7 @@ impl Controller {
         self.stop_deadline = None;
         self.update_status();
         vec![
-            self.send("get_state", json!({}), false),
+            self.send_read("get_state", ReadPurpose::Bootstrap),
             self.send("get_messages", json!({}), false),
             self.send("get_available_models", json!({}), false),
             self.send("get_scoped_models", json!({}), false),
@@ -623,6 +670,7 @@ impl Controller {
                 let m = &v["message"];
                 let fallback = self.next_id();
                 let key = occurrence_key(m, &fallback, &mut self.message_occurrences);
+                self.saved_preview.track(&key, m, &self.message_occurrences);
                 match m["role"].as_str() {
                     Some("user") => {
                         self.confirm_prompt();
@@ -645,6 +693,7 @@ impl Controller {
                     }
                     _ => {}
                 }
+                self.finish_saved_preview_track();
                 self.revision += 1;
             }
             "message_update" => {
@@ -660,7 +709,12 @@ impl Controller {
                         let fallback = self.next_id();
                         occurrence_key(m, &fallback, &mut self.message_occurrences)
                     };
+                    self.saved_preview.track(&key, m, &self.message_occurrences);
                     self.merge_rows(project(m, &key), false);
+                    self.finish_saved_preview_track();
+                    if meaningful_completed_assistant(m) {
+                        self.capture_materialisation();
+                    }
                     self.active_assistant = None;
                     self.revision += 1;
                     if !self
@@ -668,7 +722,16 @@ impl Controller {
                         .values()
                         .any(|p| p.barrier && p.epoch == self.epoch)
                     {
-                        effects.push(self.send("get_state", json!({}), true));
+                        let barrier = self.send("get_state", json!({}), true);
+                        if let Effect::Send(request) = &barrier {
+                            if let Some(pending) =
+                                self.pending.get_mut(string(&request["id"]).as_str())
+                            {
+                                pending.completed_assistant =
+                                    !matches!(m["stopReason"].as_str(), Some("error" | "aborted"));
+                            }
+                        }
+                        effects.push(barrier);
                     }
                 } else if m["role"] == "toolResult" {
                     let key = message_key(m, "result");
@@ -688,7 +751,9 @@ impl Controller {
                 self.stop_deadline = None;
                 self.finalize_partial();
                 self.revision += 1;
-                effects.push(self.send("get_state", json!({}), false));
+                self.watch_replacement();
+                self.start_verification();
+                effects.push(self.send_read("get_state", ReadPurpose::Settlement));
             }
             "queue_update" => {
                 if let (Some(s), Some(f)) = (strings(&v["steering"]), strings(&v["followUp"])) {
@@ -781,10 +846,42 @@ impl Controller {
             return vec![];
         }
         self.pending.remove(&id);
-        if p.epoch != self.epoch || !p.identity.binding_eq(&self.state.identity) {
+        if p.purpose == ReadPurpose::Command
+            && (!self.reconciliation.command
+                || p.command_incarnation != self.reconciliation.command_incarnation)
+        {
             return vec![];
         }
-        if !p.barrier && p.command != "prompt" && self.latest.get(&p.command) != Some(&id) {
+        if p.epoch != self.epoch || !p.identity.binding_eq(&self.state.identity) {
+            // A completed predecessor's FIFO barrier remains useful after B is adopted,
+            // but must never apply A's state to B.
+            if p.barrier
+                && v["success"] == true
+                && v["data"].is_object()
+                && (p.completed_assistant || self.has_materialisation(&p.identity))
+            {
+                let mut effects = vec![];
+                self.register(&p.identity, &mut effects);
+                if p.identity.binding_eq(&self.state.identity) {
+                    self.verified();
+                }
+                return effects;
+            }
+            if p.barrier {
+                let mut effects = vec![];
+                self.handoff_materialisation(&p.identity, &mut effects);
+                return effects;
+            }
+            if p.extension_command && p.command == "prompt" && v["success"] == true {
+                return self.start_command_reconciliation();
+            }
+            return vec![];
+        }
+        if !p.barrier
+            && p.purpose == ReadPurpose::Ordinary
+            && p.command != "prompt"
+            && self.latest.get(&p.command) != Some(&id)
+        {
             return vec![];
         }
         if v["success"] != true {
@@ -812,8 +909,9 @@ impl Controller {
                 };
                 let changed = !current.binding_eq(&self.state.identity);
                 // A barrier proves the captured predecessor was appended even if Pi already switched.
-                if p.barrier && p.identity.saved_candidate() {
+                if p.barrier && (p.completed_assistant || self.has_materialisation(&p.identity)) {
                     self.register(&p.identity, &mut effects);
+                    self.verified();
                 }
                 if p.serial < self.state_serial {
                     return effects;
@@ -821,24 +919,58 @@ impl Controller {
                 self.state_serial = p.serial;
                 if changed {
                     let previous = self.state.identity.clone();
-                    let missing_source = previous.saved_candidate()
-                        && previous.path == current.path
-                        && previous.id != current.id;
+                    if !self
+                        .pending
+                        .values()
+                        .any(|pending| pending.barrier && pending.identity.binding_eq(&previous))
+                    {
+                        self.handoff_materialisation(&previous, &mut effects);
+                    }
+                    self.replacement_reconciliation(
+                        p.purpose == ReadPurpose::Bootstrap,
+                        &previous,
+                        &current,
+                    );
                     self.clear_extension_error(None);
+                    // Preserve captured durability barriers and command completion ownership.
+                    let retained: BTreeMap<_, _> = self
+                        .pending
+                        .iter()
+                        .filter(|(_, pending)| {
+                            pending.barrier || pending.extension_command || pending.accepted
+                        })
+                        .map(|(id, pending)| {
+                            let mut pending = pending.clone();
+                            if pending.extension_command {
+                                pending.accepted = true;
+                            }
+                            (id.clone(), pending)
+                        })
+                        .collect();
+                    self.pending.retain(|_, pending| {
+                        !pending.barrier && !pending.extension_command && !pending.accepted
+                    });
                     self.recover_pending();
-                    self.pending.clear();
+                    self.pending = retained;
                     self.latest.clear();
                     self.epoch += 1;
                     self.reset_history();
                     self.compaction_snapshot = None;
                     self.state.transcript.clear();
                     self.message_occurrences.clear();
+                    self.saved_preview = saved_preview::Admission::default();
                     self.active_assistant = None;
                     self.state.queue_feedback = None;
                     self.state.extension_dialogs.clear();
                     self.lose_queue();
                     self.state.durable = false;
                     self.state.identity = current.clone();
+                    if matches!(
+                        p.purpose,
+                        ReadPurpose::Settlement | ReadPurpose::Verification
+                    ) {
+                        self.start_verification();
+                    }
                     self.state.retry = None;
                     self.reset_commands();
                     self.reset_model_scope();
@@ -846,9 +978,6 @@ impl Controller {
                     effects.push(self.send("get_available_models", json!({}), false));
                     effects.push(self.send("get_scoped_models", json!({}), false));
                     effects.push(self.send("get_commands", json!({}), false));
-                    if missing_source {
-                        self.fail("Pi opened a new identity at the requested path. The old session may not have been saved.");
-                    }
                 } else {
                     if !self.rename_pending() {
                         self.state.identity.name = current.name;
@@ -867,24 +996,54 @@ impl Controller {
                     self.state.working = d["isStreaming"] == true || self.state.compacting;
                 }
                 self.state.ready = true;
-                if p.barrier && !changed {
-                    self.state.durable = self.state.identity.saved_candidate();
+                if p.purpose == ReadPurpose::Bootstrap {
+                    self.reconciliation.bootstrap_source = None;
                 }
-                if changed || !p.barrier {
+                if p.barrier && !changed && self.state.durable {
+                    self.verified();
+                }
+                if changed
+                    || (!p.barrier
+                        && (p.purpose != ReadPurpose::Probe
+                            || self.reconciliation.verifying
+                            || self.reconciliation.command))
+                {
                     self.state.history_loading = true;
-                    effects.push(self.send("get_messages", json!({}), false));
+                    let purpose = if self.reconciliation.command {
+                        ReadPurpose::Command
+                    } else if changed && self.reconciliation.verifying {
+                        ReadPurpose::Settlement
+                    } else {
+                        p.purpose
+                    };
+                    effects.push(self.send_read("get_messages", purpose));
                 }
                 effects.push(self.send("get_available_thinking_levels", json!({}), false));
             }
             "get_messages" => {
                 if p.revision != self.revision && self.compaction_snapshot.is_none() {
                     self.state.history_loading = false;
+                    if matches!(
+                        p.purpose,
+                        ReadPurpose::Settlement | ReadPurpose::Verification
+                    ) {
+                        self.reconciliation_failed(&p);
+                        return vec![];
+                    }
                     if !self.state.working {
-                        return vec![self.send("get_messages", json!({}), false)];
+                        return vec![self.send_read("get_messages", p.purpose)];
                     }
                     return vec![];
                 }
                 if let Some(messages) = d["messages"].as_array() {
+                    if p.serial < self.reconciliation.messages_serial {
+                        return vec![];
+                    }
+                    let preview_projection = self.saved_preview.projects_wire_rows();
+                    let matched_sources = self.saved_preview.reconcile(messages);
+                    self.saved_preview.authoritative = true;
+                    self.reconciliation.messages_serial = p.serial;
+                    self.reconciled_messages(&p, messages, &mut effects);
                     let old = self.state.transcript
                         [self.history_prefix_len.min(self.state.transcript.len())..]
                         .to_vec();
@@ -894,10 +1053,19 @@ impl Controller {
                         let key = occurrence_key(m, &format!("history-{i}"), &mut occurrences);
                         let mut rows = project(m, &key);
                         for r in &mut rows {
-                            if let Some(prior) = old
-                                .iter()
-                                .find(|o| o.source == r.source && o.kind == r.kind)
-                            {
+                            if let Some(prior) = old.iter().find(|o| {
+                                let source = if preview_projection {
+                                    matched_sources[i].as_ref().map(|prior| {
+                                        r.source
+                                            .strip_prefix(&key)
+                                            .map(|suffix| format!("{prior}{suffix}"))
+                                            .unwrap_or_else(|| r.source.clone())
+                                    })
+                                } else {
+                                    Some(r.source.clone())
+                                };
+                                source.as_deref() == Some(o.source.as_str()) && o.kind == r.kind
+                            }) {
                                 r.id = prior.id.clone();
                                 r.revision = prior.revision + 1;
                                 r.text_reset_revision = r.revision;
@@ -999,12 +1167,14 @@ impl Controller {
                         r.touch();
                     }
                 }
-                if d["disposition"] == "handled" {
+                if d["disposition"] == "handled"
+                    || (p.extension_command && d["disposition"].is_null())
+                {
                     self.admission = None;
                     if !p.accepted {
                         self.state.working = false;
                     }
-                    effects.push(self.send("get_state", json!({}), false));
+                    effects.extend(self.start_command_reconciliation());
                 } else if d["disposition"] == "started" && p.revision == self.revision {
                     self.state.working = true;
                 }
@@ -1041,6 +1211,12 @@ impl Controller {
         effects
     }
     fn register(&mut self, identity: &Identity, effects: &mut Vec<Effect>) {
+        let captured = self
+            .materialisation
+            .remove(&(identity.id.clone(), identity.path.clone()));
+        let generation = captured
+            .as_ref()
+            .map_or(self.generation, |(_, generation)| *generation);
         if identity.saved_candidate() && identity.binding_eq(&self.state.identity) {
             self.state.durable = true;
         }
@@ -1051,7 +1227,7 @@ impl Controller {
         {
             effects.push(Effect::RegisterSession {
                 runtime_id: self.runtime_id.clone(),
-                generation: self.generation,
+                generation,
                 id: identity.id.clone(),
                 path: identity.path.clone(),
                 name: identity.name.clone(),
@@ -1144,6 +1320,7 @@ impl Controller {
         if let Some(p) = self.pending.get_mut(&id) {
             p.draft = Some(draft);
             p.optimistic = optimistic;
+            p.extension_command = command;
         }
         self.state.draft.clear();
         self.state.error = None;
@@ -1331,7 +1508,7 @@ impl Controller {
         self.clear_extension_error(Some(id));
         self.state.extension_dialogs.remove(index);
         self.update_status();
-        vec![self.send("get_state", json!({}), false)]
+        self.start_command_reconciliation()
     }
     fn extension(&mut self, v: &Value) {
         let id = string(&v["id"]);
@@ -1507,6 +1684,23 @@ impl Controller {
         }
     }
     fn reject(&mut self, p: Pending, timeout: bool) {
+        if self.reconciliation_failed(&p) {
+            return;
+        }
+        if (timeout || p.accepted)
+            && matches!(
+                p.command.as_str(),
+                "prompt"
+                    | "abort"
+                    | "set_session_name"
+                    | "set_model"
+                    | "set_thinking_level"
+                    | "clear_queue"
+            )
+        {
+            self.reconciliation.uncertain_write = true;
+            self.reconciliation.uncertain_since = self.sequence;
+        }
         // Optional capability: old Pi versions reject this correlated probe.
         if p.command == "get_scoped_models" {
             self.model_choices_revision +=
@@ -1582,9 +1776,13 @@ impl Controller {
     pub fn request_failed(&mut self, id: &str) -> Vec<Effect> {
         let mut effects = vec![];
         if let Some(p) = self.pending.remove(id) {
+            if p.barrier && !p.identity.binding_eq(&self.state.identity) {
+                self.handoff_materialisation(&p.identity, &mut effects);
+            }
             if p.epoch == self.epoch
                 && p.identity.binding_eq(&self.state.identity)
                 && (p.barrier
+                    || p.purpose != ReadPurpose::Ordinary
                     || p.command == "prompt"
                     || self
                         .latest
@@ -1601,9 +1799,25 @@ impl Controller {
         self.update_status();
         effects
     }
+    /// Acknowledges physical backend stop, not admission to stop or remote exit proof.
+    pub fn backend_stopped(&mut self, generation: u64) -> Vec<Effect> {
+        self.transport_failed(generation)
+    }
     pub fn transport_failed(&mut self, generation: u64) -> Vec<Effect> {
         if generation != self.generation {
             return vec![];
+        }
+        if self.state.working
+            || self.reconciliation.command
+            || self.pending.values().any(|p| p.accepted)
+            || self
+                .state
+                .extension_dialogs
+                .iter()
+                .any(|dialog| dialog.submitting)
+        {
+            self.reconciliation.uncertain_write = true;
+            self.reconciliation.uncertain_since = self.sequence;
         }
         self.connected = false;
         self.state.retry = None;
@@ -1633,17 +1847,22 @@ impl Controller {
     pub fn tick(&mut self, now_ms: u64) -> Vec<Effect> {
         self.now = self.now.max(now_ms);
         let mut refresh_name = false;
+        let mut effects = vec![];
         let expired: Vec<_> = self
             .pending
             .iter()
-            .filter(|(_, p)| p.deadline <= self.now)
+            .filter(|(_, p)| p.deadline <= self.now && !(p.command == "prompt" && p.accepted))
             .map(|(id, _)| id.clone())
             .collect();
         for id in expired {
             if let Some(p) = self.pending.remove(&id) {
+                if p.barrier && !p.identity.binding_eq(&self.state.identity) {
+                    self.handoff_materialisation(&p.identity, &mut effects);
+                }
                 if p.epoch == self.epoch
                     && p.identity.binding_eq(&self.state.identity)
                     && (p.barrier
+                        || p.purpose != ReadPurpose::Ordinary
                         || p.command == "prompt"
                         || self.latest.get(&p.command) == Some(&id))
                 {
@@ -1688,11 +1907,11 @@ impl Controller {
             self.fail("Stop was not confirmed. Pi may still be working. Try Stop again.");
         }
         self.update_status();
+        effects.extend(self.tick_reconciliation());
         if refresh_name && self.connected {
-            vec![self.send("get_state", json!({}), false)]
-        } else {
-            vec![]
+            effects.push(self.send("get_state", json!({}), false));
         }
+        effects
     }
     fn finalize_partial(&mut self) {
         for r in &mut self.state.transcript {
