@@ -92,6 +92,119 @@ pub struct ExtensionDialog {
     pub deadline_ms: Option<u64>,
     pub submitting: bool,
 }
+/// Reviewed, content-free auto-retry presentation. Never retain the provider error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RetryReason {
+    RateLimit,
+    Unavailable,
+    Network,
+    Failed,
+}
+impl RetryReason {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::RateLimit => "The model provider is receiving too many requests.",
+            Self::Unavailable => "The model provider is temporarily unavailable.",
+            Self::Network => "The model provider could not be reached.",
+            Self::Failed => "The reply failed.",
+        }
+    }
+    fn from_provider_error(raw: &str) -> Self {
+        let text = raw.to_lowercase();
+        let has = |terms: &[&str]| terms.iter().any(|term| text.contains(term));
+        let code = |n: &str| {
+            text.split(|c: char| !c.is_alphanumeric() && c != '_')
+                .any(|word| word == n)
+        };
+        // Match Vue's classification precedence; credentials/credit are never rate-limit copy.
+        if code("401")
+            || has(&[
+                "unauthorized",
+                "unauthorised",
+                "authentication",
+                "api key",
+                "api_key",
+                "api-key",
+                "apikey",
+                "credential",
+                "insufficient_quota",
+                "insufficient quota",
+                "insufficient-quota",
+                "insufficientquota",
+                "credit",
+                "billing",
+                "insufficient balance",
+                "insufficient funds",
+                "exceeded your current quota",
+            ])
+        {
+            Self::Failed
+        } else if code("429")
+            || has(&[
+                "rate limit",
+                "rate_limit",
+                "rate-limit",
+                "ratelimit",
+                "too many requests",
+            ])
+        {
+            Self::RateLimit
+        } else if code("402")
+            || has(&[
+                "quota",
+                "context length",
+                "context limit",
+                "context window",
+                "maximum context",
+                "max tokens",
+                "maximum tokens",
+                "conversation is too long",
+                "unsupported model",
+                "does not exist",
+            ])
+            || text.lines().any(|line| {
+                line.contains("model")
+                    && ["not found", "unavailable", "not available", "access denied"]
+                        .iter()
+                        .any(|term| line.contains(term))
+            })
+        {
+            Self::Failed
+        } else if has(&[
+            "network",
+            "fetch failed",
+            "connection failed",
+            "connection reset",
+            "connection refused",
+            "time out",
+            "timed out",
+            "timeout",
+            "dns",
+            "socket",
+            "unreachable",
+        ]) {
+            Self::Network
+        } else if ["502", "503", "504", "529"].iter().any(|n| code(n))
+            || has(&[
+                "overload",
+                "temporarily unavailable",
+                "server unavailable",
+                "capacity",
+            ])
+        {
+            Self::Unavailable
+        } else {
+            Self::Failed
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RetryState {
+    pub attempt: Option<u64>,
+    pub max_attempts: Option<u64>,
+    pub reason: RetryReason,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct State {
     pub identity: Identity,
@@ -103,6 +216,8 @@ pub struct State {
     #[serde(default)]
     pub compacting: bool,
     pub stopping: bool,
+    #[serde(default)]
+    pub retry: Option<RetryState>,
     pub history_loading: bool,
     pub transcript: Vec<Entry>,
     pub draft: String,
@@ -117,6 +232,8 @@ pub struct State {
     pub commands: Vec<Value>,
     pub thinking_levels: Vec<String>,
     pub error: Option<String>,
+    #[serde(default)]
+    pub queue_feedback: Option<String>,
     pub durable: bool,
 }
 impl State {
@@ -203,6 +320,8 @@ pub struct Controller {
     first_history_layer: usize,
     history_prefix_len: usize,
     compaction_snapshot: Option<HashMap<String, u64>>,
+    error_revision: u64,
+    extension_error_owner: Option<(u64, String, u64)>,
 }
 impl Controller {
     pub fn new(runtime_id: impl Into<String>) -> Self {
@@ -234,6 +353,8 @@ impl Controller {
             first_history_layer: 0,
             history_prefix_len: 0,
             compaction_snapshot: None,
+            error_revision: 0,
+            extension_error_owner: None,
         }
     }
     fn reset_history(&mut self) {
@@ -336,11 +457,24 @@ impl Controller {
     pub fn set_draft(&mut self, text: impl Into<String>) {
         self.state.draft = text.into();
     }
+    pub fn restore_recovered_draft(&mut self, index: usize, expected: &str) -> bool {
+        if !self.state.draft.is_empty()
+            || expected.is_empty()
+            || self.state.recovered_drafts.get(index).map(String::as_str) != Some(expected)
+        {
+            return false;
+        }
+        self.state.draft = self.state.recovered_drafts.remove(index);
+        true
+    }
     pub fn take_recovered_drafts(&mut self) -> Vec<String> {
         std::mem::take(&mut self.state.recovered_drafts)
     }
     /// Optional requested saved identity, set before bootstrap; never itself a durability proof.
     pub fn bind_source(&mut self, id: impl Into<String>, path: impl Into<String>) {
+        self.clear_extension_error(None);
+        self.state.queue_feedback = None;
+        self.state.extension_dialogs.clear();
         self.reset_history();
         self.compaction_snapshot = None;
         self.state.identity = Identity {
@@ -423,6 +557,8 @@ impl Controller {
         if generation <= self.generation {
             return vec![];
         }
+        self.clear_extension_error(None);
+        self.state.queue_feedback = None;
         self.recover_pending();
         self.finalize_partial();
         self.reset_history();
@@ -443,14 +579,15 @@ impl Controller {
         self.state.stopping = false;
         self.state.compacting = false;
         self.state.durable = false;
-        self.state.error = None;
         self.state.status = Status::Starting;
+        self.state.retry = None;
         self.state.history_loading = true;
         self.state.extension_dialogs.clear();
         self.lose_queue();
         self.active_assistant = None;
         self.startup_deadline = Some(self.now.saturating_add(REQUEST_TIMEOUT_MS));
         self.stop_deadline = None;
+        self.update_status();
         vec![
             self.send("get_state", json!({}), false),
             self.send("get_messages", json!({}), false),
@@ -544,6 +681,7 @@ impl Controller {
                 self.revision += 1;
             }
             "agent_settled" => {
+                self.state.retry = None;
                 self.state.compacting = false;
                 self.state.working = false;
                 self.state.stopping = false;
@@ -581,7 +719,25 @@ impl Controller {
                     self.restore(draft);
                 }
             }
-            "auto_retry_start" | "summarization_retry_scheduled" => {
+            "auto_retry_start" => {
+                self.state.retry = Some(RetryState {
+                    attempt: Some(v["attempt"].as_u64().unwrap_or(1).max(1)),
+                    max_attempts: v["maxAttempts"].as_u64(),
+                    reason: RetryReason::from_provider_error(
+                        v["errorMessage"].as_str().unwrap_or_default(),
+                    ),
+                });
+                self.revision += 1;
+                if self.state.compacting {
+                    self.compaction_working = true;
+                }
+                self.state.working = true;
+            }
+            "auto_retry_end" => {
+                self.state.retry = None;
+                self.revision += 1;
+            }
+            "summarization_retry_scheduled" => {
                 if self.state.compacting {
                     self.compaction_working = true;
                 }
@@ -668,6 +824,7 @@ impl Controller {
                     let missing_source = previous.saved_candidate()
                         && previous.path == current.path
                         && previous.id != current.id;
+                    self.clear_extension_error(None);
                     self.recover_pending();
                     self.pending.clear();
                     self.latest.clear();
@@ -677,10 +834,12 @@ impl Controller {
                     self.state.transcript.clear();
                     self.message_occurrences.clear();
                     self.active_assistant = None;
+                    self.state.queue_feedback = None;
                     self.state.extension_dialogs.clear();
                     self.lose_queue();
                     self.state.durable = false;
                     self.state.identity = current.clone();
+                    self.state.retry = None;
                     self.reset_commands();
                     self.reset_model_scope();
                     effects.push(Effect::IdentityChanged { previous, current });
@@ -867,8 +1026,11 @@ impl Controller {
                 effects.push(self.send("get_state", json!({}), false))
             }
             "set_steering_mode" | "set_follow_up_mode" => effects.extend(self.continue_queue()),
-            "clear_queue" if p.payload["queueVersion"].as_u64() == Some(self.queue_version) => {
-                self.state.queue = QueueSnapshot::default();
+            "clear_queue" => {
+                self.state.queue_feedback = None;
+                if p.payload["queueVersion"].as_u64() == Some(self.queue_version) {
+                    self.state.queue = QueueSnapshot::default();
+                }
             }
             _ => {}
         }
@@ -1089,6 +1251,12 @@ impl Controller {
     pub fn queue_busy(&self) -> bool {
         self.submission_pending() || self.pending.values().any(|p| p.command == "clear_queue")
     }
+    pub fn queue_feedback(&self) -> Option<&str> {
+        self.state.queue_feedback.as_deref()
+    }
+    pub fn dismiss_queue_feedback(&mut self) {
+        self.state.queue_feedback = None;
+    }
     pub fn clear_queue(&mut self) -> Vec<Effect> {
         if !self.state.ready
             || self
@@ -1099,6 +1267,7 @@ impl Controller {
         {
             return vec![];
         }
+        self.state.queue_feedback = None;
         let effect = self.send("clear_queue", json!({}), false);
         if let Effect::Send(v) = &effect {
             if let Some(p) = self.pending.get_mut(v["id"].as_str().unwrap_or_default()) {
@@ -1106,6 +1275,19 @@ impl Controller {
             }
         }
         vec![effect]
+    }
+    /// Whether the current generic incident belongs to this live extension request.
+    pub fn extension_delivery_error_owned(&self, id: &str) -> bool {
+        self.state.error.is_some()
+            && self
+                .extension_error_owner
+                .as_ref()
+                .is_some_and(|(epoch, request, revision)| {
+                    *epoch == self.epoch
+                        && request == id
+                        && *revision == self.error_revision
+                        && self.state.extension_dialogs.iter().any(|d| d.id == id)
+                })
     }
     pub fn extension_response(&mut self, id: &str, response: ExtensionResponse) -> Vec<Effect> {
         let Some(index) = self.state.extension_dialogs.iter().position(|d| d.id == id) else {
@@ -1122,7 +1304,9 @@ impl Controller {
         if self.state.extension_dialogs[index].submitting {
             return vec![];
         }
+        self.clear_extension_error(Some(id));
         self.state.extension_dialogs[index].submitting = true;
+        self.update_status();
         vec![Effect::Send(v)]
     }
     /// Extension responses have no Pi response envelope. Confirm host transport delivery explicitly.
@@ -1137,11 +1321,16 @@ impl Controller {
         };
         if !success {
             self.state.extension_dialogs[index].submitting = false;
-            self.fail("The extension response could not be sent. Try again.");
+            if self.state.error.is_none() || self.extension_error_owner.is_some() {
+                self.fail("The extension response could not be sent. Try again.");
+                self.extension_error_owner = Some((self.epoch, id.into(), self.error_revision));
+            }
             self.update_status();
             return vec![];
         }
+        self.clear_extension_error(Some(id));
         self.state.extension_dialogs.remove(index);
+        self.update_status();
         vec![self.send("get_state", json!({}), false)]
     }
     fn extension(&mut self, v: &Value) {
@@ -1164,16 +1353,14 @@ impl Controller {
                 }
             }
             "set_editor_text" => self.state.draft = string(&v["text"]),
-            "notify" => {
+            "notify" if v["message"].is_string() => {
                 let source = format!("local:notify:{id}");
                 if !self.state.transcript.iter().any(|r| r.source == source) {
                     let rid = self.next_id();
-                    self.state.transcript.push(Entry::new(
-                        rid,
-                        "notice",
-                        string(&v["message"]),
-                        source,
-                    ));
+                    let mut entry = Entry::new(rid, "notice", string(&v["message"]), source);
+                    entry.notice_type =
+                        crate::transcript::NoticeType::from_notify(&v["notifyType"]);
+                    self.state.transcript.push(entry);
                 }
             }
             _ => {}
@@ -1363,13 +1550,23 @@ impl Controller {
                 self.restore(draft);
             }
         }
+        if p.command == "clear_queue" {
+            self.state.queue_feedback = Some(
+                if timeout {
+                    "Queue clear was not confirmed. Check the queue before retrying."
+                } else {
+                    "Could not clear the queue. Check the Pi version and retry."
+                }
+                .into(),
+            );
+            return;
+        }
         self.fail(match p.command.as_str() {
             "prompt" if timeout => {
                 "Message confirmation was lost. Check the transcript before resending."
             }
             "prompt" => "The message was not accepted. Review the draft and try again.",
             "abort" => "Stop was not confirmed. Pi may still be working. Try Stop again.",
-            "clear_queue" => "Could not clear the queue. Check the Pi version and retry.",
             "get_entries" => {
                 "Earlier messages could not be loaded. Try the compacted divider again."
             }
@@ -1409,6 +1606,7 @@ impl Controller {
             return vec![];
         }
         self.connected = false;
+        self.state.retry = None;
         self.admission = None;
         self.set_history_loading(false);
         self.compaction_snapshot = None;
@@ -1417,6 +1615,8 @@ impl Controller {
         self.latest.clear();
         self.finalize_partial();
         self.lose_queue();
+        self.clear_extension_error(None);
+        self.state.queue_feedback = None;
         self.state.extension_dialogs.clear();
         self.state.ready = false;
         self.state.working = false;
@@ -1442,6 +1642,7 @@ impl Controller {
         for id in expired {
             if let Some(p) = self.pending.remove(&id) {
                 if p.epoch == self.epoch
+                    && p.identity.binding_eq(&self.state.identity)
                     && (p.barrier
                         || p.command == "prompt"
                         || self.latest.get(&p.command) == Some(&id))
@@ -1462,9 +1663,18 @@ impl Controller {
             self.state.working = false;
             self.fail("Pi accepted the message but did not start work. Check the transcript before resending.");
         }
-        self.state
+        // Accepted writes (including cancellation) belong to the transport until Written.
+        let expired_dialogs: Vec<_> = self
+            .state
             .extension_dialogs
-            .retain(|d| d.deadline_ms.is_none_or(|n| n > self.now));
+            .iter()
+            .filter(|d| !d.submitting && d.deadline_ms.is_some_and(|n| n <= self.now))
+            .map(|d| d.id.clone())
+            .collect();
+        for id in expired_dialogs {
+            self.clear_extension_error(Some(&id));
+            self.state.extension_dialogs.retain(|d| d.id != id);
+        }
         if self.startup_deadline.is_some_and(|n| n <= self.now) {
             self.startup_deadline = None;
             self.state.ready = false;
@@ -1505,11 +1715,24 @@ impl Controller {
         }
         self.state.queue = QueueSnapshot::default();
     }
+    fn clear_extension_error(&mut self, id: Option<&str>) {
+        if let Some((epoch, request, revision)) = &self.extension_error_owner {
+            if *epoch == self.epoch && id.is_none_or(|id| id == request) {
+                if *revision == self.error_revision {
+                    self.state.error = None;
+                }
+                self.extension_error_owner = None;
+            }
+        }
+    }
     fn fail(&mut self, message: &str) {
+        self.error_revision += 1;
+        self.extension_error_owner = None;
         self.state.error = Some(message.into());
     }
     fn update_status(&mut self) {
         if !self.state.working {
+            self.state.retry = None;
             self.compaction_working = false;
             self.state.compacting = false;
         }
@@ -1545,6 +1768,10 @@ fn strings(v: &Value) -> Option<Vec<String>> {
         .map(|v| v.as_str().map(str::to_owned))
         .collect()
 }
+
+#[cfg(test)]
+#[path = "session_feedback_ownership_tests.rs"]
+mod feedback_ownership_tests;
 
 #[cfg(test)]
 #[path = "session_command_tests.rs"]

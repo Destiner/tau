@@ -1,6 +1,25 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Severity comes from Pi's notifyType, never from message prose or custom data.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NoticeType {
+    #[default]
+    Info,
+    Warning,
+    Error,
+}
+impl NoticeType {
+    pub(crate) fn from_notify(value: &Value) -> Self {
+        match value.as_str() {
+            Some("warning") => Self::Warning,
+            Some("error") => Self::Error,
+            _ => Self::Info,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Entry {
     pub id: String,
@@ -24,9 +43,65 @@ pub struct Entry {
     pub arguments: Value,
     pub result: String,
     pub is_error: bool,
+    #[serde(default)]
+    pub notice_type: NoticeType,
+    #[serde(default)]
+    pub error_label: Option<String>,
     pub source: String,
 }
+/// The exact Pi user envelope; metadata is not inferred from ordinary prose.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkillEnvelope<'a> {
+    pub name: &'a str,
+    pub location: &'a str,
+    pub content: &'a str,
+    pub prompt: &'a str,
+}
+
+/// Matches Vue's parseSkillBlock without rewriting the source user message.
+pub fn parse_skill_envelope(text: &str) -> Option<SkillEnvelope<'_>> {
+    let rest = text.strip_prefix("<skill name=\"")?;
+    let (name, rest) = rest.split_once("\" location=\"")?;
+    let (location, rest) = rest.split_once("\">\n")?;
+    if name.is_empty() || location.is_empty() || name.contains('"') || location.contains('"') {
+        return None;
+    }
+    // Vue's non-greedy body can backtrack past a closing tag inside instructions.
+    for (end, _) in rest.match_indices("\n</skill>") {
+        let content = &rest[..end];
+        let trailing = &rest[end + "\n</skill>".len()..];
+        let prompt = if matches!(
+            trailing,
+            "" | "\n" | "\r" | "\r\n" | "\u{2028}" | "\u{2029}"
+        ) {
+            ""
+        } else if let Some(prompt) = trailing.strip_prefix("\n\n").filter(|s| !s.is_empty()) {
+            prompt.trim_matches(|c| {
+                matches!(c,
+                    '\u{0009}'..='\u{000d}' | ' ' | '\u{00a0}' | '\u{1680}' |
+                    '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' |
+                    '\u{205f}' | '\u{3000}' | '\u{feff}'
+                )
+            })
+        } else {
+            continue;
+        };
+        return Some(SkillEnvelope {
+            name,
+            location,
+            content,
+            prompt,
+        });
+    }
+    None
+}
+
 impl Entry {
+    pub fn skill(&self) -> Option<SkillEnvelope<'_>> {
+        (self.kind == "user")
+            .then(|| parse_skill_envelope(&self.text))
+            .flatten()
+    }
     pub(crate) fn new(id: String, kind: &str, text: String, source: String) -> Self {
         Self {
             id,
@@ -44,6 +119,8 @@ impl Entry {
             arguments: Value::Null,
             result: String::new(),
             is_error: false,
+            notice_type: NoticeType::Info,
+            error_label: None,
             source,
         }
     }
@@ -102,6 +179,9 @@ impl Entry {
 #[cfg(test)]
 #[path = "transcript/history_tests.rs"]
 pub(crate) mod history_tests;
+#[cfg(test)]
+#[path = "transcript/skill_tests.rs"]
+mod skill_tests;
 #[cfg(test)]
 #[path = "transcript/tests.rs"]
 mod tests;

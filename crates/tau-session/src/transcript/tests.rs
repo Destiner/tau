@@ -2,6 +2,99 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn displayed_custom_output_is_info_without_interpreting_custom_data_or_prose() {
+    let message = json!({"role":"custom", "customType":"usage", "display":true,
+        "timestamp":123, "content":[{"type":"text", "text":"**Warning**: error"},
+        {"type":"image", "data":"not prose"}, {"type":"text", "text":"Tokens: 10"}],
+        "details":{"severity":"error", "payload":[1,2,3]}, "notifyType":"warning"});
+    let before = message.clone();
+    let rows = project(&message, "custom:123");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].kind, "notice");
+    assert_eq!(rows[0].notice_type, NoticeType::Info);
+    assert_eq!(rows[0].text, "**Warning**: error\nTokens: 10");
+    assert_eq!(rows[0].source, "custom:123");
+    assert_eq!(message, before);
+    let mut hidden = message;
+    hidden["display"] = json!(false);
+    assert!(project(&hidden, "custom:123").is_empty());
+}
+
+#[test]
+fn notify_severity_is_wire_owned_and_old_entries_deserialize_as_info() {
+    use crate::session::Controller;
+    let mut controller = Controller::new("notices");
+    let bootstrap = controller.begin_generation(1);
+    for (id, value, expected) in [
+        ("info", json!("info"), NoticeType::Info),
+        ("warning", json!("warning"), NoticeType::Warning),
+        ("error", json!("error"), NoticeType::Error),
+        ("warn", json!("warn"), NoticeType::Info),
+        ("missing", Value::Null, NoticeType::Info),
+        ("object", json!({"type":"error"}), NoticeType::Info),
+    ] {
+        let event = json!({"type":"extension_ui_request", "method":"notify", "id":id,
+            "message":"error warning failed", "notifyType":value});
+        controller.ingest("notices", 1, event.clone());
+        let entry = controller.state().transcript.last().unwrap().clone();
+        assert_eq!(entry.notice_type, expected);
+        assert_eq!(entry.source, format!("local:notify:{id}"));
+        assert_eq!(entry.text, "error warning failed");
+        let count = controller.state().transcript.len();
+        controller.ingest("notices", 1, event);
+        assert_eq!(controller.state().transcript.len(), count);
+        assert_eq!(controller.state().transcript.last().unwrap(), &entry);
+    }
+    let before = controller.state().transcript.clone();
+    controller.ingest("notices", 0, json!({"type":"extension_ui_request", "method":"notify", "id":"stale", "message":"stale", "notifyType":"error"}));
+    controller.ingest("other", 1, json!({"type":"extension_ui_request", "method":"notify", "id":"other", "message":"other", "notifyType":"error"}));
+    controller.handle(
+        json!({"type":"extension_ui_request", "method":"notify", "id":"invalid", "message":23}),
+    );
+    assert_eq!(controller.state().transcript, before);
+    let mut legacy = serde_json::to_value(&before[0]).unwrap();
+    legacy.as_object_mut().unwrap().remove("notice_type");
+    legacy.as_object_mut().unwrap().remove("error_label");
+    let decoded: Entry = serde_json::from_value(legacy).unwrap();
+    assert_eq!(decoded.notice_type, NoticeType::Info);
+    assert_eq!(decoded.error_label, None);
+    let request = bootstrap
+        .iter()
+        .find_map(|effect| match effect {
+            crate::session::Effect::Send(request) if request["type"] == "get_messages" => {
+                Some(request)
+            }
+            _ => None,
+        })
+        .unwrap();
+    controller.handle(
+        json!({"type":"response", "id":request["id"], "command":"get_messages",
+        "success":true, "data":{"messages":[{"role":"assistant", "timestamp":1,
+        "content":[{"type":"text", "text":"Ordinary **reply**"}]}]}}),
+    );
+    let hydrated = &controller.state().transcript;
+    assert_eq!(hydrated.len(), before.len() + 1);
+    assert_eq!(hydrated[0].kind, "assistant");
+    assert_eq!(&hydrated[1..], before.as_slice());
+}
+
+#[test]
+fn assistant_error_and_ordinary_markdown_keep_their_real_provenance() {
+    let message = json!({"role":"assistant", "content":[{"type":"text", "text":"**warning** error"}],
+        "stopReason":"error", "errorMessage":"raw secret details"});
+    let rows = project(&message, "assistant:1");
+    assert_eq!(rows[0].kind, "assistant");
+    assert_eq!(rows[0].text, "**warning** error");
+    assert_eq!(rows[0].source, "assistant:1:0");
+    assert_eq!(rows[1].kind, "error");
+    assert_eq!(rows[1].source, "assistant:1:error");
+    assert!(!rows[1].text.contains("raw secret"));
+    let mut stopped = message;
+    stopped["stopReason"] = json!("aborted");
+    assert_eq!(project(&stopped, "assistant:1").len(), 1);
+}
+
+#[test]
 fn history_arguments_use_vue_precedence_and_preserve_sources() {
     let message = json!({"role":"assistant", "content":[
         {"type":"thinking", "thinking":"Plan"},
