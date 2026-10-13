@@ -7,6 +7,8 @@ use std::{cell::RefCell, rc::Rc};
 mod keyboard_tests;
 #[path = "new_session_tests.rs"]
 mod new_session_tests;
+#[path = "parity_tests.rs"]
+mod parity_tests;
 
 fn focus_frames(root: &mut gpui_kit::TestAppWindow<Root>) {
     // Match native ordering: callbacks, paint, then callbacks, paint.
@@ -28,7 +30,7 @@ fn shell_rows_use_workspace_and_hide_admin_actions_while_disabled() {
             pi_path: None,
         });
         s.mount_palette(w, cx);
-        let (pages, _) = s.palette_pages();
+        let (pages, _) = s.palette_pages(cx);
         let root = &pages[0].items;
         assert!(root.iter().any(|r| r.id == "session.new"));
         assert!(root.iter().any(|r| r.id == "project.openRemote"));
@@ -36,7 +38,7 @@ fn shell_rows_use_workspace_and_hide_admin_actions_while_disabled() {
             || r.id.contains("admin")
             || r.id == "app.reportIssue"));
         s.picker_busy = true;
-        assert!(s.palette_pages().0.iter().all(|p| p.items.is_empty()));
+        assert!(s.palette_pages(cx).0.iter().all(|p| p.items.is_empty()));
         s.palette_selected("session.new", w, cx);
         assert!(s.sessions.is_empty());
     });
@@ -60,7 +62,7 @@ fn admin_palette_actions_follow_actual_gate_and_handoff_to_retained_reporter() {
             cx,
         );
         s.toggle_palette(w, cx);
-        let (_, targets) = s.palette_pages();
+        let (_, targets) = s.palette_pages(cx);
         assert_eq!(targets.get("app.reportIssue"), Some(&Target::ReportIssue));
         assert_eq!(
             targets.get("app.disableAdminMode"),
@@ -69,11 +71,18 @@ fn admin_palette_actions_follow_actual_gate_and_handoff_to_retained_reporter() {
         s.palette_selected("app.reportIssue", w, cx);
         assert!(!s.palette.is_open(cx));
         assert!(s.admin_reporter_open(cx));
+        let reporter = s.admin.view.clone().unwrap();
+        let editor = reporter.read(cx).editor();
+        editor.update(cx, |editor, cx| editor.set_value("retained report", w, cx));
         s.toggle_palette(w, cx);
-        s.palette_selected("app.disableAdminMode", w, cx);
+        assert!(s.palette.is_open(cx));
+        assert!(reporter.read(cx).is_open());
+        assert_eq!(editor.read(cx).value().as_ref(), "retained report");
+        let command = s.admin.set_mode(false);
+        s.dispatch_admin(command, cx);
         assert!(!s.admin.enabled());
         assert!(!s.admin_reporter_open(cx));
-        assert!(!s.palette_pages().1.contains_key("app.reportIssue"));
+        assert!(!s.palette_pages(cx).1.contains_key("app.reportIssue"));
         assert!(matches!(
             requests.try_recv().unwrap(),
             Command::Admin(super::super::admin::Command::SetMode { enabled: false, .. })
@@ -203,7 +212,7 @@ fn active_and_background_work_do_not_block_navigation_or_project_actions() {
         assert!(s.is_busy());
         s.toggle_palette(w, cx);
         assert!(s.palette.is_open(cx));
-        let (pages, _) = s.palette_pages();
+        let (pages, _) = s.palette_pages(cx);
         for id in [
             "session.switch",
             "project.switch",
@@ -269,14 +278,14 @@ fn model_and_effort_choices_allow_pending_boot_reads_but_block_setting_writes() 
         assert!(controller.state().ready);
         assert!(controller.pending_count() > 0);
         assert!(!controller.setting_pending());
-        let pages = s.palette_pages().0;
+        let pages = s.palette_pages(cx).0;
         assert!(pages[0].items.iter().any(|r| r.id == "model.choose"));
         assert!(pages[0].items.iter().any(|r| r.id == "effort.choose"));
         assert!(pages[3].items.iter().any(|r| r.id == "model:fixture/alpha"));
         assert!(pages[4].items.iter().any(|r| r.id == "effort:high"));
         s.palette_selected("model:fixture/alpha", w, cx);
         assert!(s.sessions["active"].controller.setting_pending());
-        let pages = s.palette_pages().0;
+        let pages = s.palette_pages(cx).0;
         assert!(
             !pages[0]
                 .items
@@ -362,7 +371,12 @@ fn remote_dispatch_closes_palette_before_modal_and_modal_blocks_reopening() {
         );
         s.toggle_palette(w, cx);
         assert!(!s.palette.is_open(cx));
-        assert!(s.palette_pages().0.iter().all(|page| page.items.is_empty()));
+        assert!(
+            s.palette_pages(cx)
+                .0
+                .iter()
+                .all(|page| page.items.is_empty())
+        );
         assert_eq!(s.remote.view.as_ref(), Some(&remote));
     });
 }
@@ -402,7 +416,7 @@ fn global_shortcuts_use_the_real_shell_wrapper_and_recheck_availability() {
     root.update(|_, w, cx| {
         let s = shell.read(cx);
         assert_eq!(s.active, "active");
-        assert!(!s.palette_blocked());
+        assert!(!s.palette_blocked(cx));
         assert!(
             s.sessions["active"]
                 .composer
@@ -511,7 +525,7 @@ fn session_handoff_waits_for_the_destination_dispatch_tree() {
     root.draw();
     root.update(|_, w, cx| {
         shell.update(cx, |s, cx| {
-            let (_, targets) = s.palette_pages();
+            let (_, targets) = s.palette_pages(cx);
             let id = targets
                 .iter()
                 .find_map(|(id, target)| {
@@ -609,7 +623,7 @@ fn sent(requests: &async_channel::Receiver<Command>, kind: &str) -> Vec<serde_js
 fn draft_commands_use_controller_draft_and_pending_admission() {
     with_shell(128, |s, w, cx, requests| {
         ready(s, w, cx);
-        let root = s.palette_pages().0.remove(0).items;
+        let root = s.palette_pages(cx).0.remove(0).items;
         assert!(
             root.iter()
                 .any(|r| r.id == "app.quit" && r.shortcut == "⌘Q")
@@ -656,7 +670,7 @@ fn queued_commands_dispatch_modes_and_stop_preserves_draft() {
                 cx,
             );
             s.sync_palette(w, cx);
-            let root = s.palette_pages().0.remove(0).items;
+            let root = s.palette_pages(cx).0.remove(0).items;
             assert!(
                 root.iter()
                     .any(|r| r.id == "composer.send" && r.label == "Queue Steering Message")
@@ -666,7 +680,7 @@ fn queued_commands_dispatch_modes_and_stop_preserves_draft() {
             let steering = sent(&requests, "set_steering_mode");
             assert_eq!(steering.len(), 1);
             assert!(s.sessions["active"].controller.submission_pending());
-            assert!(!s.palette_pages().1.contains_key("composer.send"));
+            assert!(!s.palette_pages(cx).1.contains_key("composer.send"));
             s.ingest(crate::app::tests::rpc("active", 1, serde_json::json!({
                 "type":"response", "id":steering[0]["id"], "command":"set_steering_mode", "success":true
             })), cx);
@@ -698,7 +712,7 @@ fn queued_commands_dispatch_modes_and_stop_preserves_draft() {
                 s.sessions["active"].controller.state().draft,
                 "sacred draft"
             );
-            assert!(!s.palette_pages().1.contains_key("composer.stop"));
+            assert!(!s.palette_pages(cx).1.contains_key("composer.stop"));
         });
     }
 }
@@ -732,11 +746,11 @@ fn submission_rechecks_exact_binding_and_queue_clear_is_existing_effect() {
             cx,
         );
         s.sync_palette(w, cx);
-        assert!(s.palette_pages().1.contains_key("queue.clear"));
+        assert!(s.palette_pages(cx).1.contains_key("queue.clear"));
         s.palette_selected("queue.clear", w, cx);
         assert_eq!(sent(&requests, "clear_queue").len(), 1);
         assert!(s.sessions["active"].controller.queue_busy());
-        assert!(!s.palette_pages().1.contains_key("queue.clear"));
+        assert!(!s.palette_pages(cx).1.contains_key("queue.clear"));
         assert_eq!(
             s.sessions["active"].controller.state().draft,
             "sacred draft"

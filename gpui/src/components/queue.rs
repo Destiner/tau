@@ -334,6 +334,15 @@ impl MessageQueue {
     pub fn trigger(&self) -> Option<&str> {
         self.trigger.as_deref()
     }
+    pub fn open_review(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.props.failed.is_empty() {
+            return;
+        }
+        self.hide(cx);
+        self.details = true;
+        self.review_focus.focus(window, cx);
+        cx.notify();
+    }
     pub fn details_open(&self) -> bool {
         self.details
     }

@@ -1,7 +1,7 @@
 //! Empty-session retirement is selection-driven, never a background eviction policy.
 use super::*;
 
-const CLEANUP_ERROR: &str = "An empty session could not stop. Retry saving before closing Tau.";
+const CLEANUP_ERROR: &str = "An empty session could not stop. Retry cleanup to continue.";
 
 impl Shell {
     pub(super) fn discard_empty_before_switch(
@@ -72,13 +72,17 @@ impl Shell {
             || !state.extension_dialogs.is_empty()
             || live.extension.is_some()
             || live.controller.submission_pending()
+            || live.controller.provisional_replacement()
+            || live.controller.source_recovery().is_some()
         {
             self.empty_candidates.remove(key);
             return false;
         }
         // These barriers must settle before judging history or durability. Retain the
         // selection intent so the final correlated reply can reconsider the session.
-        if state.history_loading
+        if live.controller.reconciliation_pending()
+            || self.runtime_cleanup_pending(key)
+            || state.history_loading
             || live.controller.pending_count() > 0
             || !live.startup_events.is_empty()
             || !live.registration_pending.is_empty()
@@ -203,6 +207,35 @@ impl Shell {
         });
     }
 
+    pub(super) fn registration_failure_owned(&self, command: &Command) -> bool {
+        let Command::Register {
+            runtime,
+            generation,
+            id,
+            path,
+            ..
+        } = command
+        else {
+            return false;
+        };
+        self.sessions.get(runtime).is_some_and(|live| {
+            live.registration_pending
+                .contains(&(*generation, id.clone(), path.clone()))
+        })
+    }
+    pub(super) fn registration_retry_queued(&self, command: &Command) -> bool {
+        let Command::Register {
+            runtime,
+            generation,
+            id,
+            path,
+            ..
+        } = command
+        else {
+            return false;
+        };
+        self.register_retries.iter().any(|queued| matches!(queued, Command::Register { runtime: r, generation: g, id: i, path: p, .. } if r == runtime && g == generation && i == id && p == path))
+    }
     /// Guard registry and start retries before they enter the FIFO worker.
     pub(super) fn empty_session_retry_is_current(&self, command: &Command) -> bool {
         match command {
@@ -210,10 +243,13 @@ impl Shell {
                 runtime,
                 generation,
                 ..
-            } => self
-                .sessions
-                .get(runtime)
-                .is_some_and(|live| live.controller.generation() == *generation),
+            } => {
+                self.registration_failure_owned(command)
+                    || self
+                        .sessions
+                        .get(runtime)
+                        .is_some_and(|live| live.controller.generation() == *generation)
+            }
             Command::Start {
                 runtime, attempt, ..
             } => self

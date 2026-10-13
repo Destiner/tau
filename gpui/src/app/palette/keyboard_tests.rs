@@ -155,12 +155,36 @@ fn session_selection_keeps_shortcuts_on_the_current_shell_focus_path() {
         // The decisive regression: input is still delivered through Root<Shell>.
         root.simulate_keystroke(&format!("{modifier}-k"));
         app.run_until_parked();
-        assert_eq!(
+        assert!(
             app.update(|cx| shell.read(cx).palette.is_open(cx)),
-            case != "extension",
-            "{case}: Cmd-K"
+            "{case}: Cmd-K admits navigation"
         );
         if case == "extension" {
+            app.update(|cx| {
+                let s = shell.read(cx);
+                let (pages, targets) = s.palette_pages(cx);
+                assert!(pages[0].items.iter().any(|row| row.id == "session.switch"));
+                for id in [
+                    "focus.composer",
+                    "composer.send",
+                    "composer.followUp",
+                    "model.choose",
+                    "effort.choose",
+                ] {
+                    assert!(!pages[0].items.iter().any(|row| row.id == id), "{id}");
+                    assert!(!targets.contains_key(id), "{id}");
+                }
+                let (_, dialog) = s.sessions[&s.active].extension.as_ref().unwrap();
+                assert!(dialog.read(cx).accepted_event().is_none());
+                assert_eq!(
+                    s.sessions[&s.active].controller.state().extension_dialogs[0].id,
+                    "question"
+                );
+            });
+            root.simulate_keystroke("escape");
+            app.run_until_parked();
+            focus_frames(&mut root);
+            assert!(!app.update(|cx| shell.read(cx).palette.is_open(cx)));
             root.update(|_, w, cx| {
                 let s = shell.read(cx);
                 let (_, dialog) = s.sessions[&s.active].extension.as_ref().unwrap();

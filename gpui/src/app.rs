@@ -8,16 +8,21 @@ mod admin_bridge;
 #[cfg(test)]
 mod command_tests;
 mod empty_sessions;
+mod events;
 mod file_preview;
 mod first_run;
 #[cfg(test)]
 mod history_admission_tests;
+mod lifecycle;
 mod loading;
 mod model_scope;
 mod palette;
 mod projection;
 mod queue_recovery;
 mod remote;
+#[cfg(test)]
+mod renderer_tests;
+mod saved_history;
 mod service;
 mod session_actions;
 mod sidebar;
@@ -144,6 +149,8 @@ pub struct Shell {
     admin: admin::State,
     sidebar_state: sidebar::State,
     session_loading: loading::State,
+    runtime_lifecycle: lifecycle::State,
+    saved_history: saved_history::State,
 }
 
 pub fn run() -> anyhow::Result<()> {
@@ -242,6 +249,8 @@ fn run_with(
                 admin: admin::State::default(),
                 sidebar_state: sidebar::State::default(),
                 session_loading: loading::State::default(),
+                runtime_lifecycle: lifecycle::State::default(),
+                saved_history: saved_history::State::default(),
             };
             cx.spawn(async move |weak, cx| {
                 while let Ok(first) = events.recv().await {
@@ -323,6 +332,8 @@ fn run_with(
                             }
                             let live_count = shell.sessions.len();
                             shell.reconcile_empty_sessions(cx);
+                            shell.source_recoveries(cx);
+                            shell.release_idle_runtimes(cx);
                             let retired = live_count != shell.sessions.len();
                             if changed {
                                 shell.sidebar_state.invalidate_projection();
@@ -372,6 +383,8 @@ fn run_with(
                 }),
                 lifecycle: LifecycleCallbacks {
                     requested: Rc::new(move |request, cx| {
+                        #[cfg(feature = "native-os-tests")]
+                        eprintln!("OBSERVED native lifecycle callback=requested");
                         let no_windows = cx.global::<NativeHost>().lifecycle().windows().is_empty();
                         request_shell.update(cx, |s, cx| {
                             s.lifecycle = Some(request);
@@ -392,6 +405,8 @@ fn run_with(
                         }
                     }),
                     settled: Rc::new(move |request, outcome, cx| {
+                        #[cfg(feature = "native-os-tests")]
+                        eprintln!("OBSERVED native lifecycle callback=settled outcome={outcome:?}");
                         settled_shell.update(cx, |s, cx| {
                             if s.lifecycle == Some(request) {
                                 s.lifecycle = None;
@@ -399,6 +414,9 @@ fn run_with(
                                 s.confirmation = None;
                                 s.quit_error = None;
                                 s.exit_revision = None;
+                                s.runtime_lifecycle.exit_wait = None;
+                                s.runtime_lifecycle.exit_saved = None;
+                                s.runtime_lifecycle.exit_fence_pending = None;
                                 cx.notify();
                                 if outcome != Outcome::Approved {
                                     s.restore_input_focus(cx);
@@ -493,8 +511,39 @@ impl Shell {
         if !self.empty_session_retry_is_current(&command) {
             return;
         }
+        if !self.import_admitted()
+            && matches!(
+                &command,
+                Command::Import(_)
+                    | Command::Remote(service::RemoteCommand {
+                        operation: service::RemoteOperation::Import,
+                        ..
+                    })
+            )
+        {
+            if let Command::Remote(command) = command {
+                self.remote_failed(command, cx);
+            } else {
+                self.error = Some("Finish project cleanup before importing again.".into());
+            }
+            return;
+        }
+        let command = match command {
+            Command::Import(path) => {
+                let Some(command) = self.prepare_import(path) else {
+                    return;
+                };
+                command
+            }
+            command => command,
+        };
         self.protect_empty_registration(&command);
-        let failed = if matches!(&command, Command::Start { .. }) && self.lifecycle.is_some() {
+        if let Command::CancelStart { runtime, attempt } = &command {
+            self.runtime_lifecycle_track_cancel(runtime, *attempt);
+        }
+        let failed = if (matches!(&command, Command::Start { .. }) && self.lifecycle.is_some())
+            || matches!(&command, Command::Send { runtime, .. } if self.runtime_cleanup_pending(runtime))
+        {
             Some(command)
         } else {
             self.commands
@@ -504,6 +553,10 @@ impl Shell {
         };
         if let Some(failed) = failed {
             self.sidebar_state.invalidate_projection();
+            if self.lifecycle_dispatch_failed(&failed, cx) {
+                self.refresh_window(cx);
+                return;
+            }
             match failed {
                 command @ Command::DisposeEmpty { .. } => {
                     let previous = self.error.clone();
@@ -572,6 +625,13 @@ impl Shell {
                         live.dirty = true;
                         live.projection_dirty = true;
                     }
+                }
+                Command::ExitFence { .. } => {
+                    if let Some(request) = self.lifecycle {
+                        self.quit_error = Some((request, "Session storage receipts could not be drained. Retry before closing Tau.".into()));
+                    }
+                    self.refresh_window(cx);
+                    return;
                 }
                 Command::Save { revision, .. } => {
                     self.pending_saves.remove(&revision);
@@ -646,7 +706,11 @@ impl Shell {
     }
     fn mount(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.window = Some(window.window_handle());
-        self.shell_focus = Some(cx.focus_handle());
+        let focus = self.shell_focus.get_or_insert_with(|| cx.focus_handle());
+        // A fresh window needs a shortcut route; remounts retain the current owner.
+        if window.focused(cx).is_none() {
+            focus.focus(window, cx);
+        }
         self.subscriptions.clear();
         for live in self.sessions.values_mut() {
             live.dirty = true;
@@ -696,7 +760,9 @@ impl Shell {
         }
         self.mount_remote(window, cx);
         self.mount_admin(window, cx);
-        self.sync(window, cx);
+        // Mount establishes the route, not a delayed claim on an already-ready editor.
+        // Later readiness transitions still restore the composer after its first paint.
+        self.sync_with_focus_policy(window, cx, false);
     }
     fn theme_dark(&self, window: &Window) -> bool {
         match self.preferences.theme.as_str() {
@@ -713,6 +779,7 @@ impl Shell {
             || self.remote.is_busy()
             || !self.register_retries.is_empty()
             || !self.empty_disposals.is_empty()
+            || self.workflow_operations_pending()
             || self.sessions.values().any(|live| {
                 let state = live.controller.state();
                 live.starting
@@ -798,7 +865,9 @@ impl Shell {
         );
         self.active = key.clone();
         self.mark_sidebar_read(&key);
+        self.touch_runtime(&key);
         self.start_live(&key, cx);
+        self.navigate_saved_history(cx);
         self.persist(false, cx);
         self.sync(window, cx);
     }
@@ -1102,10 +1171,25 @@ impl Shell {
         self.sidebar_state.runtime_created(&key);
     }
     fn start_live(&mut self, key: &str, cx: &mut Context<Self>) {
+        if self.runtime_cleanup_pending(key) {
+            return;
+        }
+        let released = self.runtime_was_released(key);
+        let source = self.resumable_source(key);
+        if released
+            && (source.is_none()
+                || self.runtime_lifecycle.reconnect_required.contains(key)
+                || self
+                    .sessions
+                    .get(key)
+                    .is_some_and(|live| live.project.connection_string.is_some()))
+        {
+            return;
+        }
         let Some(live) = self.sessions.get_mut(key) else {
             return;
         };
-        if live.starting || live.controller.generation() != 0 {
+        if live.starting || (live.controller.generation() != 0 && !released) {
             return;
         }
         live.controller
@@ -1119,12 +1203,13 @@ impl Shell {
             runtime: key.into(),
             attempt: live.start_attempt,
             project: live.project.clone(),
-            source: (!live.source_path.is_empty()).then(|| live.source_path.clone()),
+            source,
         };
         self.dispatch(command, cx);
     }
     fn composer_event(&mut self, key: &str, event: &ComposerEvent, cx: &mut Context<Self>) {
         let admitted = self.active == key
+            && !self.runtime_cleanup_pending(key)
             && self.project_actions_admitted(cx)
             && !self.palette.is_open(cx)
             && self
@@ -1200,17 +1285,18 @@ impl Shell {
                     path,
                     name,
                 } => {
-                    self.dispatch(
-                        Command::Register {
-                            runtime: runtime_id,
-                            generation,
-                            project: project.clone(),
-                            id,
-                            path,
-                            name,
-                        },
-                        cx,
-                    );
+                    let command = Command::Register {
+                        runtime: runtime_id,
+                        generation,
+                        project: project.clone(),
+                        id,
+                        path,
+                        name,
+                    };
+                    // Controller proof can outlive its transport; retain its storage
+                    // owner before the ordinary dispatch/retry admission fence.
+                    self.protect_empty_registration(&command);
+                    self.dispatch(command, cx);
                 }
                 Effect::SessionNameChanged { identity } => {
                     self.sync_session_name(key, generation, identity, cx);
@@ -1232,190 +1318,17 @@ impl Shell {
             }
         }
     }
-    fn ingest(&mut self, event: Event, cx: &mut Context<Self>) {
-        match event {
-            Event::RegistrationStored { runtime, generation, id, path } => self.empty_registration_stored(&runtime, generation, &id, &path),
-            Event::EmptyDisposed { runtime, attempt, generation, success } => {
-                let owned = self.empty_disposals.contains(&(runtime.clone(), attempt, generation));
-                let previous = self.error.clone();
-                self.empty_disposed(runtime, attempt, generation, success, cx);
-                if !success && owned && let Some(request) = self.lifecycle {
-                    if let Some(error) = self.error.take() { self.quit_error = Some((request, error)); }
-                    self.error = previous;
-                }
-            }
-            Event::Admin(reply) => self.admin_event(reply, cx),
-            Event::Remote(event) => self.remote_event(event, cx),
-            Event::ModelScope { runtime, token, patterns } => self.model_scope_result(runtime, token, patterns, cx),
-            Event::WorkspaceMutation { revision, success } => self.finish_workspace_mutation(revision, success),
-            Event::RegisteredRow { project, row } => self.merge_registered_row(project, row),
-            Event::ImportedProject(Ok(project)) => self.merge_workspace_project(project),
-            Event::Loaded(Ok((mut workspace, preferences))) => { self.reconcile_workspace_mutations(&mut workspace); self.workspace = Some(workspace); self.preferences = preferences;
-                if let Some(sidebar) = &self.sidebar {
-                    sidebar.update(cx, |sidebar, cx| {
-                        sidebar.set_width(self.preferences.sidebar_width.unwrap_or(260.), cx);
-                        self.preferences.sidebar_width = Some(sidebar.width());
-                    });
-                }
-                self.loaded = true; self.sidebar_state.invalidate_metadata(); }
-            Event::Loaded(Err(())) => self.error = Some("Tau could not load its workspace. Reopen Tau to retry; saved data was not changed.".into()),
-            #[cfg(test)]
-            Event::Workspace(Ok(mut workspace)) => {
-                self.reconcile_workspace_mutations(&mut workspace);
-                self.reconcile_archive(&mut workspace);
-                for live in self.sessions.values_mut() { if let Some(project) = workspace.projects.iter().find(|p| p.path == live.project.path) { live.project = project.clone(); } }
-                self.workspace = Some(workspace);
-                self.sidebar_state.invalidate_metadata();
-            }
-            Event::NameStored { runtime, generation, revision, id, path, name, success } => self.finish_name(runtime, generation, revision, id, path, name, success),
-            Event::Archived { project, id, revision, archived, success } => self.finish_archive(project, id, revision, archived, success),
-            Event::RegistrationFailed(command) => {
-                if !self.empty_session_retry_is_current(&command) { return; }
-                self.register_retries.push(command);
-                let error = "A completed session could not be added to the workspace. Retry saving it.".into();
-                if let Some(request) = self.lifecycle { self.quit_error = Some((request, error)); }
-                else { self.error = Some(error); }
-            }
-            Event::ImportedProject(Err(())) => self.error = Some("Workspace changes could not be saved. Try again.".into()),
-            #[cfg(test)]
-            Event::Workspace(Err(())) => self.error = Some("Workspace changes could not be saved. Try again.".into()),
-            Event::Started { runtime, attempt, result } => {
-                if let Some(live) = self.sessions.get_mut(&runtime) {
-                    if attempt != live.start_attempt { return; }
-                    live.starting = false;
-                    self.sidebar_state.invalidate_projection();
-                    live.dirty = true;
-                    live.projection_dirty = true;
-                    live.controller.tick(self.epoch.elapsed().as_millis() as u64);
-                    let succeeded = result.is_ok();
-                    let effects = match result { Ok(generation) => live.controller.begin_generation(generation), Err(()) => live.controller.transport_failed(live.controller.generation()) };
-                    let buffered = std::mem::take(&mut live.startup_events);
-                    self.effects(&runtime, effects, cx);
-                    if succeeded { for event in buffered { self.ingest(Event::Pi(event), cx); } }
-                }
-            }
-            Event::Written { runtime, generation, request, success } => {
-                if let Some(live) = self.sessions.get_mut(&runtime) {
-                    if live.controller.generation() != generation { return; }
-                    if !success || request["type"] == "extension_ui_response" {
-                        self.sidebar_state.invalidate_projection();
-                    }
-                    live.dirty |= !success || request["type"] == "extension_ui_response";
-                    live.projection_dirty |= !success;
-                    let id = request["id"].as_str().unwrap_or_default();
-                    let effects = if request["type"] == "extension_ui_response" {
-                        if live.controller.state().extension_dialogs.iter().any(|r| r.id == id && r.submitting) {
-                            live.extension_error = (!success).then(|| (generation, id.into(), "The extension response could not be sent. Try again.".into()));
-                        }
-                        live.controller.extension_sent(id, success)
-                    } else if !success { live.controller.request_failed(id) } else { vec![] };
-                    self.effects(&runtime, effects, cx);
-                }
-            }
-            Event::Pi(event) => {
-                if let Some(live) = self.sessions.get_mut(&event.runtime_id) {
-                    if live.starting {
-                        if live.startup_events.len() < 512 {
-                            live.startup_events.push_back(event);
-                        } else {
-                            let runtime = event.runtime_id;
-                            let attempt = live.start_attempt;
-                            live.starting = false;
-                            live.start_attempt += 1;
-                            live.startup_events.clear();
-                            live.controller.transport_failed(live.controller.generation());
-                            live.dirty = true;
-                            live.projection_dirty = true;
-                            self.dispatch(Command::CancelStart { runtime, attempt }, cx);
-                        }
-                        return;
-                    }
-                    if live.controller.generation() != event.generation { return; }
-                    live.dirty = true;
-                    live.projection_dirty = true;
-                    let effects = if event.kind == "rpc" {
-                        if let Some(value) = event.line.and_then(|line| serde_json::from_str(&line).ok()) {
-                            self.observe_sidebar_event(&event.runtime_id, event.generation, &value);
-                            if value["type"] == "response" {
-                                self.sidebar_state.invalidate_metadata();
-                            }
-                            let live = self.sessions.get_mut(&event.runtime_id).unwrap();
-                            let before = (live.controller.state().working, live.controller.state().stopping, live.controller.state().extension_dialogs.len());
-                            let effects = live.controller.ingest(&event.runtime_id, event.generation, value);
-                            let after = (live.controller.state().working, live.controller.state().stopping, live.controller.state().extension_dialogs.len());
-                            if before != after { self.sidebar_state.invalidate_projection(); }
-                            effects
-                        } else { vec![] }
-                    } else if matches!(event.kind, "exited" | "error") { self.sidebar_state.invalidate_projection(); live.controller.transport_failed(event.generation) } else { vec![] };
-                    self.effects(&event.runtime_id, effects, cx);
-                }
-            }
-            Event::Saved { revision, success, stopped } => {
-                self.sidebar_state.invalidate_projection();
-                if let Some(mut saved) = self.pending_saves.remove(&revision)
-                    && success {
-                        for draft in &saved.drafts {
-                            if let Some(live) = self.sessions.get_mut(&draft.key) {
-                                live.persisted_draft = draft.text.clone();
-                                live.persisted_recovered = draft.recovered.len();
-                            }
-                        }
-                        for (key, live) in &mut self.sessions {
-                            if !saved.drafts.iter().any(|draft| &draft.key == key) {
-                                live.persisted_draft.clear();
-                                live.persisted_recovered = 0;
-                            }
-                        }
-                        saved.sidebar_width = self.preferences.sidebar_width;
-                        self.preferences = saved;
-                    }
-                let cleanup_ran = !stopped.is_empty();
-                for (runtime, generation) in stopped {
-                    if let Some(live) = self.sessions.get_mut(&runtime) {
-                        let effects = live.controller.transport_failed(generation);
-                        live.projection_dirty = true;
-                        self.effects(&runtime, effects, cx);
-                    }
-                }
-                for live in self.sessions.values_mut() { live.dirty = true; }
-                if !success {
-                    self.save_failed = true;
-                    if let Some((expected, request)) = self.exit_revision.filter(|(expected, _)| *expected == revision) {
-                        let _ = expected;
-                        self.quit_error = Some((request, "Drafts could not be saved or Pi could not stop. Retry before closing Tau.".into()));
-                        self.exit_revision = None;
-                    } else {
-                        self.error = Some("Drafts could not be saved. Try again.".into());
-                    }
-                } else if revision == self.save_revision { self.save_failed = false; }
-                if success && let Some((expected, request)) = self.exit_revision
-                    && expected == revision {
-                        self.exit_revision = None;
-                        if !self.register_retries.is_empty() || !self.empty_disposals.is_empty() { self.save_failed = true; self.quit_error = Some((request, "Session changes still need saving or cleanup. Retry before closing Tau.".into())); }
-                        else if revision != self.save_revision || self.sessions.values().any(|live| live.controller.state().draft != live.persisted_draft || live.controller.state().recovered_drafts.len() + live.restored_recovered.len() != live.persisted_recovered) {
-                            self.begin_exit(request, cleanup_ran || matches!(request.intent(), Intent::Quit), cx);
-                        } else { let lifecycle = cx.global::<NativeHost>().lifecycle(); lifecycle.resolve(request, true, cx); }
-                    }
-            }
-        }
-        self.reconcile_empty_sessions(cx);
-        if !self.save_failed
-            && self.sessions.values().any(|live| {
-                live.controller.state().draft != live.persisted_draft
-                    || live.controller.state().recovered_drafts.len()
-                        + live.restored_recovered.len()
-                        != live.persisted_recovered
-            })
-        {
-            self.persist(false, cx);
-        }
-        cx.notify();
-    }
     fn begin_exit(&mut self, request: Request, shutdown: bool, cx: &mut Context<Self>) {
         if !cx.global::<NativeHost>().lifecycle().is_pending(request) {
             return;
         }
-        if self.lifecycle != Some(request) || self.exit_revision.is_some() {
+        if self.lifecycle != Some(request)
+            || self.exit_phase_owned(request)
+            || self
+                .quit_error
+                .as_ref()
+                .is_some_and(|(owner, _)| *owner == request)
+        {
             return;
         }
         if self.picker_busy || self.remote.is_busy() {
@@ -1432,27 +1345,13 @@ impl Shell {
             return;
         }
         self.quit_error = None;
-        let retries = std::mem::take(&mut self.register_retries);
-        for command in retries {
-            self.dispatch(command, cx);
-        }
-        self.save_failed = false;
-        if self.loaded {
-            self.persist(shutdown, cx);
-        } else {
-            self.save_revision += 1;
-            self.dispatch(
-                Command::Save {
-                    revision: self.save_revision,
-                    preferences: None,
-                    shutdown,
-                },
-                cx,
-            );
-        }
-        if !self.save_failed {
-            self.exit_revision = Some((self.save_revision, request));
-        }
+        self.runtime_lifecycle.exit_saved = None;
+        self.runtime_lifecycle.exit_fence_pending = None;
+        self.runtime_lifecycle.exit_wait = Some((request, shutdown));
+        self.drain_exit_durability(cx);
+        self.source_recoveries(cx);
+        self.retry_workflow_operations(cx);
+        self.advance_exit(cx);
         for live in self.sessions.values_mut() {
             live.dirty = true;
         }

@@ -1,5 +1,7 @@
 use super::*;
 use tau_core::models::SessionSummary;
+#[path = "lifecycle/workspace_pruning.rs"]
+mod lifecycle_pruning;
 
 #[derive(Clone, Debug)]
 pub enum Mutation {

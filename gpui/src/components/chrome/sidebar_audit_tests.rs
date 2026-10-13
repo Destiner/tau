@@ -205,13 +205,13 @@ fn root_sidebar_disabled_actions_context_drag_and_truthful_removal_boundary() {
             assert_eq!(w.find("project-remove-project-id").disabled(), Some(true));
             assert_eq!(
                 sidebar.read(cx).tooltip_label().as_deref(),
-                Some("Remove Project unavailable in this build")
+                Some("Remove Project unavailable")
             );
         });
         click(&mut window, "project-remove-project-id");
         assert!(
             events.borrow().is_empty(),
-            "unsupported removal must not claim success or toggle the project"
+            "unavailable removal must not claim success or toggle the project"
         );
         window.update(|_, _, cx| sidebar.update(cx, |s, cx| s.set_actions_interactive(false, cx)));
         window.draw();
@@ -255,6 +255,17 @@ fn root_sidebar_disabled_actions_context_drag_and_truthful_removal_boundary() {
             })
         });
         window.draw();
+        let remove = bounds(&mut window, "project-remove-project-id");
+        window.simulate_mouse_move(remove.center());
+        app.advance_clock(Duration::from_millis(450));
+        window.draw();
+        window.update(|_, w, cx| {
+            assert_ne!(w.find("project-remove-project-id").disabled(), Some(true));
+            assert_eq!(
+                sidebar.read(cx).tooltip_label().as_deref(),
+                Some("Remove Project")
+            );
+        });
         click(&mut window, "project-remove-project-id");
         click(&mut window, "session-pi-session-id");
         assert_eq!(

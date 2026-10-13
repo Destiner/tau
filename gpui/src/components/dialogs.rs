@@ -699,7 +699,7 @@ impl NativeDialog {
                                 .text_size(px(12.))
                                 .font_weight(gpui_kit::FontWeight::MEDIUM)
                                 .line_height(px(15.))
-                                .child(title),
+                                .child(gpui_kit::Text::new("dialog-title".into(), title.into())),
                         )
                         .when(!description.is_empty(), |d| {
                             d.child(
@@ -707,7 +707,10 @@ impl NativeDialog {
                                     .text_size(px(11.))
                                     .line_height(gpui_kit::relative(1.45))
                                     .text_color(rgb(t.muted))
-                                    .child(description),
+                                    .child(gpui_kit::Text::new(
+                                        "dialog-description".into(),
+                                        description.into(),
+                                    )),
                             )
                         })
                         .when(!self.error.is_empty(), |d| {
@@ -718,7 +721,10 @@ impl NativeDialog {
                                     .text_size(px(11.))
                                     .line_height(gpui_kit::relative(1.45))
                                     .text_color(rgb(t.danger))
-                                    .child(self.error.clone()),
+                                    .child(gpui_kit::Text::new(
+                                        "dialog-error-text".into(),
+                                        self.error.clone().into(),
+                                    )),
                             )
                         }),
                 )
@@ -776,15 +782,12 @@ impl NativeDialog {
                             .text_size(px(12.))
                             .font_weight(gpui_kit::FontWeight::MEDIUM)
                             .line_height(px(15.))
-                            .child(title),
+                            .child(gpui_kit::Text::new("dialog-title".into(), title.into())),
                     )
                     .when(kind == DialogKind::Feedback, |d| {
-                        d.child(
-                            div()
-                                .text_size(px(11.))
-                                .text_color(rgb(t.muted))
-                                .child(description),
-                        )
+                        d.child(div().text_size(px(11.)).text_color(rgb(t.muted)).child(
+                            gpui_kit::Text::new("dialog-description".into(), description.into()),
+                        ))
                     }),
             );
             if kind == DialogKind::Ssh {

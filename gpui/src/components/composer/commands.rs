@@ -323,16 +323,24 @@ impl Composer {
             .max(px(96.))
             .min(if place_below { below } else { above });
         let t = support::tokens(self.dark);
+        // ui-pick-row uses Vue's translucent --hover over the raised surface.
+        let wash = rgb(if self.dark { 0x475266 } else { 0x6b7d8f }).opacity(if self.dark {
+            0.2
+        } else {
+            0.1
+        });
+        let popup_width = px(540.).min((bounds.size.width - px(8.)).max(px(0.)));
+        let popup_height = desired.min(max_height);
         let popup_bounds = self.commands.bounds.clone();
         let mut menu = div()
             .id("command-menu")
             .test_support()
             .role(gpui_kit::accesskit::Role::ListBox)
             .aria_label("Commands")
-            .w(px(540.).min((bounds.size.width - px(8.)).max(px(0.))))
+            .w(popup_width)
             // Vue's 96px floor applies to max-height, not the natural surface height.
             // Positioner's flex cross-axis otherwise stretches a one-result menu to that cap.
-            .h(desired.min(max_height))
+            .h(popup_height)
             .max_h(max_height)
             .min_h_0()
             .p(px(8.))
@@ -426,8 +434,9 @@ impl Composer {
                     .items_baseline()
                     .gap(px(10.))
                     .text_color(rgb(t.text))
+                    .hover(|d| d.bg(wash))
                     .when(active, |d| {
-                        d.child(
+                        d.bg(wash).child(
                             div()
                                 .absolute()
                                 .left(px(0.))
@@ -475,13 +484,16 @@ impl Composer {
                     } else {
                         px(0.)
                     };
-                    if delta == px(0.) || bounds.size.height > viewport.size.height - px(18.) {
-                        pending.set(false);
-                    } else {
+                    // Reveal is a keyboard request, not a persistent scroll constraint.
+                    // The bordered menu's desired inset can exceed the handle's scroll limit.
+                    pending.set(false);
+                    if delta != px(0.) && bounds.size.height <= viewport.size.height - px(18.) {
                         let mut offset = scroll.offset();
-                        offset.y += delta;
-                        scroll.set_offset(offset);
-                        window.request_animation_frame();
+                        offset.y = (offset.y + delta).clamp(-scroll.max_offset().y, px(0.));
+                        if offset != scroll.offset() {
+                            scroll.set_offset(offset);
+                            window.request_animation_frame();
+                        }
                     }
                 },
             ));
@@ -504,9 +516,23 @@ impl Composer {
                     ),
                 )
                 .margin(px(0.))
-                .child(support::observe_bounds(menu, move |bounds, _, _| {
-                    popup_bounds.set(Some(bounds));
-                })),
+                .child(
+                    div()
+                        .relative()
+                        .w(popup_width)
+                        .h(popup_height)
+                        .child(support::observe_bounds(menu, move |bounds, _, _| {
+                            popup_bounds.set(Some(bounds));
+                        }))
+                        // Overlay the shared thumb; short menus keep their full row width.
+                        .when(px(content_height) > popup_height, |d| {
+                            d.child(
+                                gpui_kit::base::Scrollbar::vertical(&self.commands.scroll)
+                                    .mode(gpui_kit::base::ScrollbarMode::Always)
+                                    .styles(|_| support::scrollbar_styles(self.dark)),
+                            )
+                        }),
+                ),
             )
             .with_priority(100)
             .into_any_element(),

@@ -1,6 +1,8 @@
 use super::*;
 use tau_core::models::SessionSummary;
 use tau_session::session::Identity;
+#[path = "lifecycle/session_pruning.rs"]
+mod lifecycle_pruning;
 
 #[derive(Default)]
 pub(super) struct SessionActions {

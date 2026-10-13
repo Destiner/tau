@@ -1758,8 +1758,53 @@ async fn exercise(
             s.sessions[&second].composer.read(cx).editor().entity_id(),
         )
     });
+    let close_status = |cx: &mut App| {
+        window(&shell, cx)
+            .update(cx, |_, w, cx| {
+                let s = shell.read(cx);
+                let focused = w.focused(cx);
+                (
+                    w.is_window_active(),
+                    cx.active_window() == Some(w.window_handle()),
+                    focused.as_ref().is_some_and(|f| {
+                        s.shell_focus
+                            .as_ref()
+                            .is_some_and(|root| root.contains(f, w))
+                    }),
+                    focused
+                        .as_ref()
+                        .is_some_and(|f| w.is_action_available_in(&crate::native::CloseWindow, f)),
+                    s.palette.is_open(cx),
+                    s.header.as_ref().is_some_and(|h| h.read(cx).renaming()),
+                    s.sessions[&second]
+                        .extension
+                        .as_ref()
+                        .is_some_and(|(_, d)| {
+                            d.read(cx).editor().read(cx).focus_handle(cx).is_focused(w)
+                        }),
+                    s.is_busy(),
+                    s.lifecycle.is_some(),
+                    s.confirmation.is_some(),
+                    s.exit_revision.is_some(),
+                )
+            })
+            .unwrap()
+    };
+    eprintln!(
+        "OBSERVED busy-close fields=windowActive/activeTarget/focusContainsRoot/closeAvailable/palette/renaming/extensionFocused/busy/lifecycle/confirmation/exiting before={:?}",
+        cx.update(close_status)
+    );
     key(&shell, &cx, "cmd-w");
+    let mut previous_close = cx.update(close_status);
+    eprintln!("OBSERVED busy-close after-key={previous_close:?}");
+    let mut observations = 0;
     poll(&cx, "busy close confirmation", 5, |cx| {
+        let status = close_status(cx);
+        if status != previous_close && observations < 8 {
+            eprintln!("OBSERVED busy-close transition={status:?}");
+            previous_close = status;
+            observations += 1;
+        }
         shell.read(cx).confirmation.is_some()
     })
     .await;

@@ -1,6 +1,8 @@
 //! Workspace presentation only; Pi remains the owner of identity and history.
 use super::*;
 use chrono::{DateTime, Datelike, Local, TimeZone};
+#[path = "lifecycle/sidebar_pruning.rs"]
+mod lifecycle_pruning;
 use components::chrome::{ArchivedDetails, SessionDetails, SessionStatus};
 use std::collections::{HashMap, HashSet};
 
@@ -330,6 +332,16 @@ impl Shell {
                 self.sidebar_state.invalidate_projection();
             }
         }
+    }
+    pub(super) fn palette_sidebar_projects(&self) -> Vec<ProjectItem> {
+        self.sidebar_projection(0, &runtime_index(&self.sessions)).0
+    }
+    pub(super) fn palette_session_unread(&self, runtime: &str) -> bool {
+        self.sessions.get(runtime).is_some_and(|live| {
+            self.sidebar_state
+                .unread
+                .contains(&SessionIdentity::live(runtime, live))
+        })
     }
     pub(super) fn handle_read_state(&mut self, action: &Action) -> bool {
         let Action::SetUnread {

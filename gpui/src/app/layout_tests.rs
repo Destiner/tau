@@ -7,6 +7,8 @@ use tau_core::pi::PiEvent;
 
 #[path = "activity_header_tests.rs"]
 mod activity_header_tests;
+#[path = "typography_tests.rs"]
+mod typography_tests;
 
 fn rpc(value: serde_json::Value) -> Event {
     Event::Pi(PiEvent {

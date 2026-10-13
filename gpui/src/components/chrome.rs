@@ -867,6 +867,31 @@ impl Sidebar {
         cx.stop_propagation();
         cx.notify();
     }
+    pub fn displayed_sessions(&self, project: &str) -> Option<Vec<SessionItem>> {
+        self.projects
+            .iter()
+            .find(|p| p.id == project)
+            .map(|p| self.ordered_sessions(p))
+    }
+    pub fn focus_selected_row(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let selected = Some(self.props.active.as_str());
+        let focus = if self.props.archived {
+            selected
+                .filter(|id| self.mounted_archive_ids.contains(*id))
+                .and_then(|id| self.archived_focus.get(id))
+                .map(|pair| &pair.0)
+        } else {
+            selected
+                .filter(|id| {
+                    self.projects
+                        .iter()
+                        .any(|p| !p.collapsed && p.sessions.iter().any(|s| s.id == *id))
+                })
+                .and_then(|id| self.session_focus.get(id))
+                .map(|pair| &pair.0)
+        };
+        focus.unwrap_or(&self.focus).focus(window, cx);
+    }
     pub fn context_menu(&self) -> Entity<Menu> {
         self.context_menu.clone()
     }
@@ -2826,7 +2851,7 @@ impl Render for Sidebar {
                     if self.remove_project_available {
                         "Remove Project"
                     } else {
-                        "Remove Project unavailable in this build"
+                        "Remove Project unavailable"
                     },
                     None,
                 ),

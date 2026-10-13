@@ -42,6 +42,8 @@ pub(super) fn shell(commands: async_channel::Sender<Command>) -> Shell {
         admin: admin::State::default(),
         sidebar_state: sidebar::State::default(),
         session_loading: loading::State::default(),
+        runtime_lifecycle: lifecycle::State::default(),
+        saved_history: saved_history::State::default(),
     }
 }
 pub(super) fn project() -> ProjectSummary {

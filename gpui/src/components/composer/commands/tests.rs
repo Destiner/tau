@@ -328,7 +328,7 @@ fn root_escape_stays_dismissed_until_token_exit_and_host_set_value_resets_cursor
     assert_focus(&mut window, &composer);
 }
 #[test]
-fn command_cursor_and_hover_paint_only_rail_without_moving_first_line() {
+fn command_cursor_and_hover_paint_wash_and_rail_without_moving_first_line() {
     for dark in [false, true] {
         let (_app, mut window, composer) = fixture(40., true, catalog());
         window.update(|_, w, cx| composer.update(cx, |c, cx| c.set_theme(dark, w, cx)));
@@ -361,10 +361,21 @@ fn command_cursor_and_hover_paint_only_rail_without_moving_first_line() {
                     0.1
                 });
                 assert!(
-                    !w.painted_quads()
+                    w.painted_quads()
                         .iter()
                         .any(|q| q.background == wash.into() && q.bounds.contains(&row.center()))
                 );
+                let inactive = w
+                    .find(if hovered {
+                        "command-option-0"
+                    } else {
+                        "command-option-1"
+                    })
+                    .bounds();
+                let inactive = w.pixel_snap_bounds(inactive).scale(w.scale_factor());
+                assert!(!w.painted_quads().iter().any(|q| {
+                    q.background == wash.into() && q.bounds.contains(&inactive.center())
+                }));
                 assert!(w.painted_quads().iter().any(|q| {
                     q.background == rgb(support::tokens(dark).accent).into()
                         && q.bounds.left() == row.left()
@@ -391,11 +402,8 @@ fn root_popup_overlay_geometry_clamping_reveal_wheel_and_hover_no_scroll() {
             assert_eq!(popup.size.width, px(540.));
             let first_row = w.find("command-option-0").bounds();
             assert_eq!(first_row.size.height, px(40.5));
-            let painted_row = gpui_kit::Bounds {
-                origin: first_row.origin.scale(w.scale_factor()),
-                size: first_row.size.scale(w.scale_factor()),
-            };
-            assert!(!w.painted_quads().iter().any(|quad| {
+            let painted_row = w.pixel_snap_bounds(first_row).scale(w.scale_factor());
+            assert!(w.painted_quads().iter().any(|quad| {
                 quad.bounds == painted_row && quad.background == rgb(0x6b7d8f).opacity(0.1).into()
             }));
             assert!(popup.size.height <= px(300.));
@@ -467,6 +475,130 @@ fn root_popup_overlay_geometry_clamping_reveal_wheel_and_hover_no_scroll() {
         });
     }
 }
+fn painted_command_thumb(
+    window: &mut TestAppWindow<Root>,
+    dark: bool,
+    hovered: bool,
+) -> Bounds<Pixels> {
+    window.update(|_, w, _| {
+        let popup = w.find("command-menu").bounds().scale(w.scale_factor());
+        let ink = rgba((support::tokens(dark).text << 8) | if hovered { 0x8c } else { 0x59 });
+        let thumb = w
+            .painted_quads()
+            .into_iter()
+            .find(|q| q.background == ink.into() && popup.contains(&q.bounds.center()))
+            .expect("overflowing command menu must paint its shared thumb");
+        let scale = w.scale_factor();
+        Bounds::new(
+            gpui_kit::point(
+                px(thumb.bounds.left().0 / scale),
+                px(thumb.bounds.top().0 / scale),
+            ),
+            gpui_kit::size(
+                px(thumb.bounds.size.width.0 / scale),
+                px(thumb.bounds.size.height.0 / scale),
+            ),
+        )
+    })
+}
+
+#[test]
+fn root_keyboard_reveal_finishes_at_scroll_limit_and_leaves_wheel_scrolling_in_control() {
+    let options: Vec<_> = (0..70)
+        .map(|i| option(&format!("command-{i}"), CommandSource::Prompt))
+        .collect();
+    for dark in [false, true] {
+        for (top, fill) in [(430., false), (40., true)] {
+            let (_app, mut window, composer) = fixture(top, fill, options.clone());
+            window.update(|_, w, cx| composer.update(cx, |s, cx| s.set_theme(dark, w, cx)));
+            set_draft(&mut window, &composer, "/");
+            for _ in 0..70 {
+                window.simulate_keystroke("down");
+            }
+            paint(&mut window);
+            let bottom = window.read(|_, cx| {
+                let commands = &composer.read(cx).commands;
+                assert!(
+                    !commands.reveal.get(),
+                    "terminal-row reveal must be consumed"
+                );
+                assert_eq!(commands.scroll.offset().y, -commands.scroll.max_offset().y);
+                commands.scroll.offset()
+            });
+            let last = painted_command_thumb(&mut window, dark, false);
+            let popup = window.update(|_, w, _| w.find("command-menu").bounds());
+            window.simulate_scroll(popup.center(), gpui_kit::point(px(0.), px(200.)));
+            paint(&mut window);
+            let wheeled = window.read(|_, cx| composer.read(cx).commands.scroll.offset());
+            assert!(wheeled.y > bottom.y);
+            assert!(painted_command_thumb(&mut window, dark, false).top() < last.top());
+            paint(&mut window);
+            assert_eq!(
+                window.read(|_, cx| composer.read(cx).commands.scroll.offset()),
+                wheeled,
+                "a later frame must not reveal the old keyboard cursor again"
+            );
+            assert_eq!(active(&window, &composer).as_deref(), Some("command-69"));
+            assert_eq!(draft(&window, &composer), "/");
+            assert_focus(&mut window, &composer);
+        }
+    }
+}
+
+#[test]
+fn root_shared_command_thumb_tracks_wheel_keyboard_hover_and_drag_in_both_themes() {
+    let options: Vec<_> = (0..70)
+        .map(|i| option(&format!("command-{i}"), CommandSource::Prompt))
+        .collect();
+    for dark in [false, true] {
+        for (top, fill) in [(430., false), (40., true)] {
+            let (_app, mut window, composer) = fixture(top, fill, options.clone());
+            window.update(|_, w, cx| composer.update(cx, |s, cx| s.set_theme(dark, w, cx)));
+            set_draft(&mut window, &composer, "/");
+            let initial = painted_command_thumb(&mut window, dark, false);
+            let popup = window.update(|_, w, _| w.find("command-menu").bounds());
+            window.simulate_scroll(popup.center(), gpui_kit::point(px(0.), px(-200.)));
+            paint(&mut window);
+            let wheeled = painted_command_thumb(&mut window, dark, false);
+            assert!(wheeled.top() > initial.top());
+            for _ in 0..70 {
+                window.simulate_keystroke("down");
+            }
+            paint(&mut window);
+            let last = painted_command_thumb(&mut window, dark, false);
+            assert!(last.top() > wheeled.top());
+            window.update(|_, w, _| {
+                let row = w.find("command-option-69").bounds();
+                assert!(row.top() >= popup.top() && row.bottom() <= popup.bottom());
+            });
+            window.simulate_mouse_move(last.center());
+            paint(&mut window);
+            let hovered = painted_command_thumb(&mut window, dark, true);
+            let start = hovered.center();
+            let end = gpui_kit::point(start.x, popup.top() + px(30.));
+            let before_drag = window.read(|_, cx| composer.read(cx).commands.scroll.offset());
+            window.simulate_mouse_down(start, MouseButton::Left);
+            window.simulate_event(gpui_kit::MouseMoveEvent {
+                position: end,
+                pressed_button: Some(MouseButton::Left),
+                modifiers: Default::default(),
+            });
+            let moved = window.read(|_, cx| composer.read(cx).commands.scroll.offset());
+            assert!(
+                moved.y > before_drag.y,
+                "held-pointer motion must scroll immediately"
+            );
+            window.simulate_mouse_up(end, MouseButton::Left);
+            window.simulate_mouse_move(gpui_kit::point(popup.left() - px(5.), popup.top()));
+            paint(&mut window);
+            let dragged = painted_command_thumb(&mut window, dark, false);
+            assert!(dragged.top() < last.top());
+            assert_eq!(draft(&window, &composer), "/");
+            assert_focus(&mut window, &composer);
+        }
+    }
+}
+
 #[test]
 fn root_natural_command_surface_has_symmetric_padding_for_zero_one_and_many_results() {
     for dark in [false, true] {
@@ -504,6 +636,7 @@ fn root_natural_command_surface_has_symmetric_padding_for_zero_one_and_many_resu
                         assert!((popup.size.height - natural.min(px(300.))).abs() < px(0.1));
                         let first = w.find("command-option-0").bounds();
                         assert_eq!(first.size.height, row_height);
+                        assert_eq!(first.size.width, popup.size.width - px(18.));
                         assert!(
                             (first.top() - popup.top() - px(9.)).abs() < px(0.1),
                             "count={count}, description={description:?}, below={below}, dark={dark}: popup={popup:?}, first={first:?}, offset={:?}",
@@ -514,6 +647,18 @@ fn root_natural_command_surface_has_symmetric_padding_for_zero_one_and_many_resu
                         assert!((copy.top() - first.top() - px(5.)).abs() < px(0.1));
                         assert!((first.bottom() - copy.bottom() - px(6.)).abs() < px(0.1));
                         assert!((source.bottom() - copy.bottom()).abs() < px(0.1));
+                        assert!(source.left() >= first.left() && source.right() <= first.right());
+                        let painted_popup = w.pixel_snap_bounds(popup).scale(w.scale_factor());
+                        let thumb_ink = rgba((support::tokens(dark).text << 8) | 0x59);
+                        let thumb = w.painted_quads().iter().any(|q| {
+                            q.background == thumb_ink.into()
+                                && painted_popup.contains(&q.bounds.center())
+                        });
+                        assert_eq!(
+                            thumb,
+                            count > 3,
+                            "only an overflowing menu paints a thumb"
+                        );
                         if count <= 3 {
                             let last = w.find(format!("command-option-{}", count - 1)).bounds();
                             assert!((popup.bottom() - last.bottom() - px(9.)).abs() < px(0.1));
@@ -641,7 +786,12 @@ fn root_command_catalog_updates_disabled_compacting_and_literal_submission() {
 #[test]
 fn root_resized_empty_fill_popup_stays_in_the_actual_viewport() {
     let catalog = (0..30)
-        .map(|i| option(&format!("command-{i}"), CommandSource::Prompt))
+        .map(|i| {
+            option(
+                &format!("command-with-a-very-long-name-that-must-truncate-{i}"),
+                CommandSource::Extension,
+            )
+        })
         .collect();
     let (_app, mut window, composer) = fixture(40., true, catalog);
     window.simulate_input("/");
@@ -653,6 +803,11 @@ fn root_resized_empty_fill_popup_stays_in_the_actual_viewport() {
         let popup = w.find("command-menu").bounds();
         assert!(popup.left() >= px(0.) && popup.right() <= px(320.));
         assert!(popup.top() >= px(40.) && popup.bottom() <= px(180.));
+        let row = w.find("command-option-0").bounds();
+        let copy = w.find("command-copy-0").bounds();
+        let source = w.find("command-source-0").bounds();
+        assert!(copy.left() >= row.left() && copy.right() <= source.left());
+        assert!(source.right() <= row.right() && row.right() <= popup.right());
     });
     assert_eq!(draft(&window, &composer), "/");
     assert_focus(&mut window, &composer);

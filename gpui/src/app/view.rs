@@ -4,6 +4,7 @@ use gpui_kit::base::{Button, ElementExt};
 impl Shell {
     pub(super) fn project_actions_admitted(&self, cx: &App) -> bool {
         self.loaded
+            && !self.project_removal_inflight()
             && self.lifecycle.is_none()
             && self.confirmation.is_none()
             && self.error.is_none()
@@ -29,7 +30,14 @@ impl Shell {
         if let Some(sidebar) = &self.sidebar {
             sidebar.update(cx, |sidebar, cx| {
                 sidebar.set_actions_interactive(actions && !palette, cx);
-                sidebar.set_remove_project_available(false, cx);
+                sidebar.set_remove_project_available(
+                    actions
+                        && !palette
+                        && self
+                            .selected_project()
+                            .is_some_and(|p| self.remove_project_available(&p.path)),
+                    cx,
+                );
                 if version && palette {
                     sidebar.preserve_version_under_palette(cx);
                 } else {
@@ -65,6 +73,10 @@ impl Shell {
     }
 
     pub(super) fn retry_pi(&mut self, key: &str, cx: &mut Context<Self>) {
+        if self.runtime_cleanup_pending(key) {
+            return;
+        }
+        let source = self.resumable_source(key);
         let Some(live) = self.sessions.get_mut(key) else {
             return;
         };
@@ -82,17 +94,12 @@ impl Shell {
             live.start_deadline = self.epoch.elapsed().as_millis() as u64 + 10_000;
             let attempt = live.start_attempt;
             let project = live.project.clone();
-            let path = if live.controller.state().identity.path.is_empty() {
-                live.source_path.clone()
-            } else {
-                live.controller.state().identity.path.clone()
-            };
             self.dispatch(
                 Command::Start {
                     runtime: key.into(),
                     attempt,
                     project,
-                    source: (!path.is_empty()).then_some(path),
+                    source,
                 },
                 cx,
             );
@@ -120,7 +127,9 @@ impl Shell {
                         self.active,
                         live.controller.generation()
                     ),
-                    error,
+                    if self.runtime_was_released(&self.active) && live.project.connection_string.is_some() && !self.runtime_lifecycle.reconnect_required.contains(&self.active) {
+                        "This remote Pi runtime was released while idle. Reconnect to reopen saved history; in-memory extension state was not retained.".into()
+                    } else { error },
                     Some((
                         self.active.clone(),
                         live.controller.generation(),
@@ -153,10 +162,16 @@ impl Shell {
             "Try Again"
         } else if let Some((_, _, ready)) = &session {
             if *ready { "Refresh" } else { "Reconnect" }
+        } else if self.retry_workflow_pending() {
+            "Retry"
         } else {
             ""
         };
-        let owned_message = message.clone();
+        let owned_message = session
+            .as_ref()
+            .and_then(|(key, _, _)| self.sessions.get(key))
+            .and_then(|live| live.controller.state().error.clone())
+            .unwrap_or_else(|| message.clone());
         let dialog = cx.new(|cx| {
             NativeDialog::new(
                 DialogProps {
@@ -215,8 +230,15 @@ impl Shell {
                     if s.error.as_ref() != Some(&owned_message) || (initialize && s.loaded) {
                         return;
                     }
-                    if initialize && matches!(event, DialogEvent::Submitted(_)) {
-                        s.dispatch(Command::Load { project: None }, cx);
+                    if matches!(event, DialogEvent::Submitted(_)) {
+                        if initialize {
+                            s.dispatch(Command::Load { project: None }, cx);
+                        } else {
+                            s.fallback = None;
+                            s.retry_workflows(cx);
+                            s.restore_input_focus(cx);
+                            return;
+                        }
                     }
                 }
                 s.error = None;
@@ -323,6 +345,15 @@ impl Shell {
         });
     }
     pub(super) fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_with_focus_policy(window, cx, true);
+    }
+    pub(super) fn sync_with_focus_policy(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        restore_ready_focus: bool,
+    ) {
+        self.sync_saved_history();
         let dark = self.theme_dark(window);
         Theme::global_mut(cx).appearance = if dark {
             ThemeAppearance::Dark
@@ -421,6 +452,7 @@ impl Shell {
         let keys: Vec<_> = self.sessions.keys().cloned().collect();
         let mut focus_ready_composer = false;
         for key in keys {
+            let cleanup_pending = self.runtime_cleanup_pending(&key);
             let can_recover = self.can_recover_queue(&key, cx);
             let can_answer = self.loaded
                 && self.lifecycle.is_none()
@@ -436,7 +468,8 @@ impl Shell {
                     .is_some_and(|(_, d)| d.read(cx).is_open())
                 && self.empty_disposals.is_empty()
                 && self.register_retries.is_empty();
-            let draft_blocked = !self.project_actions_admitted(cx) || self.palette.is_open(cx);
+            let draft_blocked =
+                cleanup_pending || !self.project_actions_admitted(cx) || self.palette.is_open(cx);
             let live = self.sessions.get_mut(&key).unwrap();
             if key == self.active
                 && can_answer
@@ -451,7 +484,7 @@ impl Shell {
             live.composer.update(cx, |c, cx| {
                 c.set_admission(live.controller.setting_pending(), state.compacting, cx);
                 c.set_readiness(
-                    state.ready && !live.starting,
+                    state.ready && !live.starting && !cleanup_pending,
                     state.stopping,
                     live.controller.submission_pending(),
                     live.controller.queue_busy(),
@@ -499,6 +532,15 @@ impl Shell {
                     d.set_readonly(!can_answer, cx);
                 });
             }
+            let status = (
+                cleanup_pending
+                    || !state.ready
+                    || live.starting
+                    || state.stopping
+                    || self.lifecycle.is_some(),
+                state.working,
+            );
+            live.dirty |= live.ui_status != Some(status);
             if !live.dirty && !changed {
                 continue;
             }
@@ -575,10 +617,6 @@ impl Shell {
                     c.set_effort(&state.effort, cx);
                 });
             }
-            let status = (
-                !state.ready || live.starting || state.stopping || self.exit_revision.is_some(),
-                state.working,
-            );
             let status_changed = live.ui_status != Some(status);
             focus_ready_composer |= status_changed
                 && !status.0
@@ -857,9 +895,13 @@ impl Shell {
                 .update(cx, |t, cx| t.set_extension_prompt(prompt, cx));
         }
         if let Some(request) = self.lifecycle {
-            if self.confirmation.is_none() && self.exit_revision.is_none() {
+            let failed = self
+                .quit_error
+                .as_ref()
+                .is_some_and(|(owner, _)| *owner == request);
+            if self.confirmation.is_none() && (!self.exit_phase_owned(request) || failed) {
                 let busy = self.is_busy();
-                if !busy && self.loaded && !self.picker_busy && !self.save_failed {
+                if !failed && !busy && self.loaded && !self.picker_busy && !self.save_failed {
                     self.begin_exit(request, matches!(request.intent(), Intent::Quit), cx);
                 } else {
                     let quitting = matches!(request.intent(), Intent::Quit);
@@ -891,6 +933,7 @@ impl Shell {
                         &dialog,
                         move |s, source, event: &DialogEvent, cx| {
                             if s.lifecycle != Some(request)
+                                || (s.exit_phase_owned(request) && s.quit_error.is_none())
                                 || s.exit_revision.is_some()
                                 || s.confirmation.as_ref() != Some(&source)
                             {
@@ -913,7 +956,14 @@ impl Shell {
                                         .into(),
                                     ));
                                     } else {
-                                        s.begin_exit(request, true, cx);
+                                        if s.quit_error
+                                            .as_ref()
+                                            .is_some_and(|(owner, _)| *owner == request)
+                                        {
+                                            s.retry_exit(request, true, cx);
+                                        } else {
+                                            s.begin_exit(request, true, cx);
+                                        }
                                     }
                                 }
                             }
@@ -926,8 +976,11 @@ impl Shell {
             if let Some(dialog) = &self.confirmation {
                 dialog.update(cx, |d, cx| {
                     d.set_busy(
-                        self.exit_revision
-                            .is_some_and(|(_, owner)| owner == request),
+                        self.exit_phase_owned(request)
+                            && !self
+                                .quit_error
+                                .as_ref()
+                                .is_some_and(|(owner, _)| *owner == request),
                         cx,
                     );
                     d.set_error(
@@ -947,7 +1000,8 @@ impl Shell {
         self.sync_palette(window, cx);
         self.sync_fallback(window, cx);
         self.sync_chrome_admission(cx);
-        if (focus_ready_composer || loading_finished)
+        if restore_ready_focus
+            && (focus_ready_composer || loading_finished)
             && !self
                 .header
                 .as_ref()
@@ -989,8 +1043,10 @@ impl Shell {
                 _ => {}
             }
             self.active = key.clone();
+            self.present_workflow_failure(&key);
             self.mark_sidebar_read(&key);
-            self.start_live(&key, cx);
+            self.resume_runtime(&key, cx);
+            self.navigate_saved_history(cx);
             self.persist(false, cx);
             self.sync(window, cx);
             return;
@@ -1041,6 +1097,7 @@ impl Shell {
                     sidebar.update(cx, |s, cx| s.open_version_status(window, cx));
                 }
             }
+            Action::RemoveProject(project) => self.remove_project(&project, cx),
             Action::OpenRemoteProject => self.open_remote(window, cx),
             Action::Select(id) => self.select(&id, window, cx),
             Action::NewSession => self.new_session(None, window, cx),
@@ -1256,19 +1313,12 @@ impl Render for Shell {
                     },
                 ));
             }
-            if !self.register_retries.is_empty() || self.save_failed {
-                main = main.child(Button::new("retry-storage").child("Retry Save").on_click(
-                    cx.listener(|s, _, _, cx| {
-                        let retries = std::mem::take(&mut s.register_retries);
-                        for command in retries {
-                            s.dispatch(command, cx);
-                        }
-                        if s.save_failed {
-                            s.persist(false, cx);
-                        }
-                        s.refresh_window(cx);
-                    }),
-                ));
+            if self.retry_workflow_pending() {
+                main = main.child(
+                    Button::new("retry-storage")
+                        .child("Retry Changes")
+                        .on_click(cx.listener(|s, _, _, cx| s.retry_workflows(cx))),
+                );
             }
             body = body.child(main);
         }
@@ -1281,12 +1331,22 @@ impl Render for Shell {
         if self.confirmation.is_none() {
             body = body.when_some(self.remote.view.clone(), |body, remote| body.child(remote));
         }
-        if let Some(dialog) = &self.confirmation {
-            body = body.child(dialog.clone());
-        } else if let Some((_, dialog)) = &self.fallback
-            && dialog.read(cx).is_open()
-        {
-            body = body.child(dialog.clone());
+        let overlay = self.confirmation.as_ref().or_else(|| {
+            self.fallback
+                .as_ref()
+                .map(|(_, dialog)| dialog)
+                .filter(|dialog| dialog.read(cx).is_open())
+        });
+        if let Some(dialog) = overlay {
+            // Standalone dialogs have a full-size root; keep it out of pane flex sizing.
+            body = body.child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .child(dialog.clone()),
+            );
         }
         body.on_action(cx.listener(Self::copy_link)).when_some(
             self.preview_feedback().zip(self.preview_anchor()),

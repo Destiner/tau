@@ -40,6 +40,7 @@ pub struct Palette {
     editor_style: gpui_kit::base::input::InputEditorStyle,
     dark: bool,
     open: bool,
+    restore_focus_on_dismiss: bool,
     pages: Vec<PalettePage>,
     page: usize,
     selected: Option<usize>,
@@ -135,6 +136,7 @@ impl Palette {
             },
             dark,
             open: false,
+            restore_focus_on_dismiss: true,
             pages,
             page: 0,
             selected,
@@ -228,7 +230,11 @@ impl Palette {
         self.open = false;
         cx.notify();
     }
+    pub fn restore_focus_on_dismiss(&self) -> bool {
+        self.restore_focus_on_dismiss
+    }
     pub fn dismiss(&mut self, cx: &mut Context<Self>) {
+        self.restore_focus_on_dismiss = true;
         self.close(cx);
         cx.emit(PaletteEvent::Dismissed);
     }
@@ -372,6 +378,13 @@ impl Palette {
             ])
             .overflow_hidden()
             .occlude()
+            .on_mouse_down_out(cx.listener(|s, e: &gpui_kit::MouseDownEvent, _, cx| {
+                if e.button == MouseButton::Left && s.open {
+                    s.close(cx);
+                    s.restore_focus_on_dismiss = false;
+                    cx.emit(PaletteEvent::Dismissed);
+                }
+            }))
             .on_key_down(cx.listener(Self::key))
             .on_action(cx.listener(|s, _: &NextRow, w, cx| s.move_row(true, w, cx)))
             .on_action(cx.listener(|s, _: &PreviousRow, w, cx| s.move_row(false, w, cx)))
@@ -455,6 +468,7 @@ impl Palette {
                             })
                             .child(
                                 Button::new(format!("row-{i}"))
+                                    .accessibility_label(row.label.clone())
                                     .w_full()
                                     .min_w_0()
                                     .min_h(px(28.))
@@ -562,14 +576,8 @@ impl Render for Palette {
                 .left_0()
                 .w(viewport.width)
                 .h(viewport.height)
-                .occlude()
-                .child(
-                    div()
-                        .absolute()
-                        .size_full()
-                        .bg(rgba(t.scrim))
-                        .on_mouse_down(MouseButton::Left, cx.listener(|s, _, _, cx| s.dismiss(cx))),
-                )
+                // Outside dismissal must let the same pointer event reach its focus owner.
+                .child(div().absolute().size_full().bg(rgba(t.scrim)))
                 .child(
                     div()
                         .absolute()
@@ -719,6 +727,11 @@ mod tests {
             root.update(|_, w, cx| {
                 let p = palette.read(cx);
                 assert_eq!(p.selected_id(), Some(format!("dense-{after}").as_str()));
+                assert_eq!(
+                    w.find(format!("row-{after}")).label(),
+                    Some(format!("Review change {after}").as_str()),
+                    "each painted command exposes its actual title"
+                );
                 assert_eq!(p.scroll.offset().y, px(-90.), "hover must not reveal/jump");
                 let row = w.find(format!("row-{after}")).bounds();
                 assert!(
@@ -838,6 +851,67 @@ mod tests {
             vec![PaletteEvent::Back, PaletteEvent::Selected("apply".into())]
         );
     }
+    struct PointerHarness {
+        palette: Entity<Palette>,
+    }
+    impl Render for PointerHarness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .child(
+                    Button::new("outside")
+                        .absolute()
+                        .left(px(10.))
+                        .bottom(px(10.))
+                        .w(px(120.))
+                        .h(px(30.))
+                        .child("Outside control"),
+                )
+                .child(self.palette.clone())
+        }
+    }
+
+    #[test]
+    fn root_first_outside_click_dismisses_without_stealing_pointer_focus() {
+        use gpui_kit::{Focusable, base::Root, test::TestWindowExt};
+        let mut app = gpui_kit::TestApp::new();
+        app.update(|cx| crate::components::init(cx, false));
+        let mut palette = None;
+        let mut root = app.open_window(|w, cx| {
+            let p = cx.new(|cx| Palette::new(false, vec![], w, cx));
+            p.update(cx, |p, cx| p.open(w, cx));
+            palette = Some(p.clone());
+            let host = cx.new(|_| PointerHarness { palette: p });
+            Root::new(host, w, cx)
+        });
+        let palette = palette.unwrap();
+        root.draw();
+        root.update(|_, w, cx| {
+            assert!(
+                palette
+                    .read(cx)
+                    .search
+                    .read(cx)
+                    .focus_handle(cx)
+                    .is_focused(w)
+            );
+        });
+        let outside = root.update(|_, w, _| w.find("outside").bounds().center());
+        root.simulate_mouse_down(outside, MouseButton::Left);
+        root.draw();
+        root.simulate_mouse_up(outside, MouseButton::Left);
+        root.draw();
+        root.update(|_, w, cx| {
+            assert!(!palette.read(cx).is_open());
+            assert!(!palette.read(cx).restore_focus_on_dismiss());
+            assert_eq!(w.find("outside").focused(), Some(true));
+        });
+        for _ in 0..3 {
+            root.draw();
+        }
+        root.update(|_, w, _| assert_eq!(w.find("outside").focused(), Some(true)));
+    }
+
     #[test]
     fn surface_tracks_viewport_and_backdrop_dismisses() {
         use gpui_kit::{point, size, test::TestWindowExt};

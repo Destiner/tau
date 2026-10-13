@@ -11,8 +11,11 @@ use tau_session::session::ModelScopeToken;
 
 #[path = "service_admin.rs"]
 mod admin_backend;
+#[path = "service_lifecycle.rs"]
+mod lifecycle;
 #[path = "service_remote.rs"]
 mod remote;
+use lifecycle::{release_runtime, retry_claim};
 pub use remote::{RemoteCommand, RemoteEvent, RemoteOperation, RemoteResult};
 
 #[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -47,6 +50,10 @@ pub enum Command {
         project: Option<String>,
     },
     Import(String),
+    ImportProject {
+        path: String,
+        token: u64,
+    },
     Start {
         runtime: String,
         attempt: u64,
@@ -56,6 +63,15 @@ pub enum Command {
     CancelStart {
         runtime: String,
         attempt: u64,
+    },
+    ReleaseRuntime {
+        runtime: String,
+        attempt: u64,
+        generation: u64,
+    },
+    RemoveProject {
+        project: String,
+        token: u64,
     },
     DisposeEmpty {
         runtime: String,
@@ -84,6 +100,12 @@ pub enum Command {
         path: String,
         name: String,
     },
+    ArchiveSource {
+        project: String,
+        id: String,
+        path: String,
+        token: u64,
+    },
     Archive {
         project: String,
         id: String,
@@ -98,6 +120,9 @@ pub enum Command {
         revision: u64,
         preferences: Option<Preferences>,
         shutdown: bool,
+    },
+    ExitFence {
+        revision: u64,
     },
     Shutdown(Sender<()>),
 }
@@ -117,7 +142,14 @@ pub enum Event {
         success: bool,
     },
     ImportedProject(Result<ProjectSummary, ()>),
-    RegisteredRow {
+    ProjectImported {
+        path: String,
+        token: u64,
+        result: Result<ProjectSummary, ()>,
+    },
+    RegisteredRuntimeRow {
+        runtime: String,
+        generation: u64,
         project: String,
         row: tau_core::models::SessionSummary,
     },
@@ -125,6 +157,22 @@ pub enum Event {
         runtime: String,
         attempt: u64,
         result: Result<u64, ()>,
+    },
+    StartCancelled {
+        runtime: String,
+        attempt: u64,
+        success: bool,
+    },
+    RuntimeReleased {
+        runtime: String,
+        attempt: u64,
+        generation: u64,
+        success: bool,
+    },
+    ProjectRemoved {
+        project: String,
+        token: u64,
+        success: bool,
     },
     EmptyDisposed {
         runtime: String,
@@ -144,6 +192,9 @@ pub enum Event {
         success: bool,
         stopped: Vec<(String, u64)>,
     },
+    ExitDrained {
+        revision: u64,
+    },
     NameStored {
         runtime: String,
         generation: u64,
@@ -151,6 +202,13 @@ pub enum Event {
         id: String,
         path: String,
         name: String,
+        success: bool,
+    },
+    SourceArchived {
+        project: String,
+        id: String,
+        path: String,
+        token: u64,
         success: bool,
     },
     Archived {
@@ -256,13 +314,15 @@ fn worker_with_backend(
     let model_scope_jobs = launch_model_scope_reader(events.clone());
     let pi = PiState::default();
     let owner = uuid::Uuid::new_v4().to_string();
-    let claimed = pi
-        .read_revision()
-        .ok()
+    let mut claim_revision = pi.read_revision().ok();
+    let mut claimed = claim_revision
         .and_then(|r| pi.claim(owner.clone(), r).ok())
         .is_some();
+    let mut removed_projects = std::collections::HashSet::new();
+    let mut runtime_projects = HashMap::<String, String>::new();
     let mut generations = HashMap::new();
     let mut registry_generations = HashMap::new();
+    let mut registration_tickets = lifecycle::RegistrationTickets::default();
     let mut start_attempts = HashMap::new();
     let mut retired_attempts = HashMap::new();
     let mut archive_intents = std::collections::HashSet::new();
@@ -291,10 +351,18 @@ fn worker_with_backend(
         let event = match command {
             Command::Admin(command) => Some(Event::Admin(admin.execute(command))),
             Command::Remote(command) if command.operation == RemoteOperation::Import => {
-                Some(Event::Remote(RemoteEvent {
-                    result: import(&command),
-                    command,
-                }))
+                let result = if runtime_projects
+                    .values()
+                    .any(|p| removed_projects.contains(p))
+                {
+                    Err(())
+                } else {
+                    import(&command)
+                };
+                if let Ok(RemoteResult::Imported(project)) = &result {
+                    removed_projects.remove(&project.path);
+                }
+                Some(Event::Remote(RemoteEvent { result, command }))
             }
             Command::Remote(command) => match remote_jobs.try_send(command) {
                 Ok(()) => None,
@@ -323,6 +391,13 @@ fn worker_with_backend(
                 }
             },
             Command::Load { project } => {
+                // A conflict never obtains a fresh revision for forced takeover.
+                retry_claim(
+                    &mut claimed,
+                    &mut claim_revision,
+                    || pi.read_revision().ok(),
+                    |revision| pi.claim(owner.clone(), revision).is_ok(),
+                );
                 let result = if claimed {
                     project
                         .map(storage::import_project)
@@ -336,15 +411,70 @@ fn worker_with_backend(
                 };
                 Some(Event::Loaded(result.map_err(|_| ())))
             }
-            Command::Import(path) => Some(Event::ImportedProject(
-                storage::import_project(path).map_err(|_| ()),
-            )),
+            Command::Import(path) => {
+                let result = if runtime_projects
+                    .values()
+                    .any(|p| p == &path && removed_projects.contains(p))
+                {
+                    Err(())
+                } else {
+                    storage::import_project(path).map_err(|_| ())
+                };
+                if let Ok(project) = &result {
+                    removed_projects.remove(&project.path);
+                }
+                Some(Event::ImportedProject(result))
+            }
+            Command::ImportProject { path, token } => {
+                let result = if runtime_projects
+                    .values()
+                    .any(|p| p == &path && removed_projects.contains(p))
+                {
+                    Err(())
+                } else {
+                    storage::import_project(path.clone()).map_err(|_| ())
+                };
+                if let Ok(project) = &result {
+                    removed_projects.remove(&project.path);
+                }
+                Some(Event::ProjectImported {
+                    path,
+                    token,
+                    result,
+                })
+            }
+            Command::RemoveProject { project, token } => {
+                let success = storage::remove_project(project.clone()).is_ok();
+                if success {
+                    removed_projects.insert(project.clone());
+                    registration_tickets.revoke_project(&project);
+                    registry_generations
+                        .retain(|runtime, _| runtime_projects.get(runtime) != Some(&project));
+                    session_names
+                        .authoritative
+                        .retain(|(path, _, _), _| path != &project);
+                    archive_intents.retain(|(path, _)| path != &project);
+                }
+                Some(Event::ProjectRemoved {
+                    project,
+                    token,
+                    success,
+                })
+            }
             Command::Start {
                 runtime,
                 attempt,
                 project,
                 source,
             } => {
+                if removed_projects.contains(&project.path) {
+                    let _ = events.send_blocking(Event::Started {
+                        runtime,
+                        attempt,
+                        result: Err(()),
+                    });
+                    continue;
+                }
                 if retired_attempts
                     .get(&runtime)
                     .is_some_and(|retired| attempt <= *retired)
@@ -354,6 +484,7 @@ fn worker_with_backend(
                 {
                     continue;
                 }
+                runtime_projects.insert(runtime.clone(), project.path.clone());
                 start_attempts.insert(runtime.clone(), attempt);
                 generations.remove(&runtime);
                 registry_generations.remove(&runtime);
@@ -382,6 +513,7 @@ fn worker_with_backend(
                 if let Ok(generation) = result {
                     generations.insert(runtime.clone(), generation);
                     registry_generations.insert(runtime.clone(), generation);
+                    registration_tickets.started(&runtime, generation, &project.path);
                 }
                 Some(Event::Started {
                     runtime,
@@ -390,12 +522,43 @@ fn worker_with_backend(
                 })
             }
             Command::CancelStart { runtime, attempt } => {
-                if start_attempts.get(&runtime) == Some(&attempt)
-                    && pi.stop(&owner, &runtime).is_ok()
-                {
+                let current = start_attempts.get(&runtime) == Some(&attempt);
+                let success = !current || pi.stop(&owner, &runtime).is_ok();
+                if current && success {
                     generations.remove(&runtime);
+                    registry_generations.remove(&runtime);
+                    start_attempts.remove(&runtime);
+                    runtime_projects.remove(&runtime);
                 }
-                None
+                Some(Event::StartCancelled {
+                    runtime,
+                    attempt,
+                    success,
+                })
+            }
+            Command::ReleaseRuntime {
+                runtime,
+                attempt,
+                generation,
+            } => {
+                let success = release_runtime(
+                    &runtime,
+                    attempt,
+                    generation,
+                    &mut start_attempts,
+                    &mut generations,
+                    &mut registry_generations,
+                    || pi.stop(&owner, &runtime).map(|_| ()).map_err(|_| ()),
+                );
+                if success && !start_attempts.contains_key(&runtime) {
+                    runtime_projects.remove(&runtime);
+                }
+                Some(Event::RuntimeReleased {
+                    runtime,
+                    attempt,
+                    generation,
+                    success,
+                })
             }
             Command::DisposeEmpty {
                 runtime,
@@ -415,6 +578,7 @@ fn worker_with_backend(
                     match pi.stop(&owner, &runtime) {
                         Ok(_) => {
                             start_attempts.remove(&runtime);
+                            runtime_projects.remove(&runtime);
                             true
                         }
                         Err(_) => false,
@@ -435,6 +599,9 @@ fn worker_with_backend(
                 request,
             } => {
                 let success = generations.get(&runtime) == Some(&generation)
+                    && !runtime_projects
+                        .get(&runtime)
+                        .is_some_and(|project| removed_projects.contains(project))
                     && pi.send(&owner, runtime.clone(), request.clone()).is_ok();
                 Some(Event::Written {
                     runtime,
@@ -451,9 +618,7 @@ fn worker_with_backend(
                 path,
                 name,
             } => {
-                if registry_generations.get(&runtime) != Some(&generation) {
-                    continue;
-                }
+                let row_runtime = runtime.clone();
                 let retry = Command::Register {
                     runtime: runtime.clone(),
                     generation,
@@ -462,17 +627,36 @@ fn worker_with_backend(
                     path: path.clone(),
                     name: name.clone(),
                 };
+                let admitted = registration_tickets.admit(
+                    &retry,
+                    &registry_generations,
+                    &runtime_projects,
+                    &removed_projects,
+                );
                 let adopted = registration_is_adoption(&archive_intents, &project, &id);
-                let result = session_names.register(project.clone(), id, path, name, adopted);
+                let result = if admitted {
+                    session_names.register(project.clone(), id, path, name, adopted)
+                } else {
+                    Err("registration ownership revoked".into())
+                };
                 let row = result.as_ref().ok().and_then(|row| row.clone());
                 let reply = registration_reply(retry, result);
                 if matches!(reply, Event::RegistrationStored { .. }) {
                     // The accepted row is both durability acknowledgement and metadata;
                     // do not discover every other session after a single registration.
-                    if events.send_blocking(reply).is_err() {
+                    if let Some(row) = row
+                        && events
+                            .send_blocking(Event::RegisteredRuntimeRow {
+                                runtime: row_runtime,
+                                generation,
+                                project,
+                                row,
+                            })
+                            .is_err()
+                    {
                         break;
                     }
-                    row.map(|row| Event::RegisteredRow { project, row })
+                    Some(reply)
                 } else {
                     Some(reply)
                 }
@@ -486,7 +670,8 @@ fn worker_with_backend(
                 path,
                 name,
             } => {
-                let success = registry_generations.get(&runtime) == Some(&generation)
+                let success = !removed_projects.contains(&project)
+                    && registry_generations.get(&runtime) == Some(&generation)
                     && session_names
                         .store(project, id.clone(), path.clone(), name.clone())
                         .is_ok_and(|row| row.is_some());
@@ -500,6 +685,23 @@ fn worker_with_backend(
                     success,
                 })
             }
+            Command::ArchiveSource {
+                project,
+                id,
+                path,
+                token,
+            } => {
+                archive_intents.insert((project.clone(), id.clone()));
+                let success = !removed_projects.contains(&project)
+                    && storage::archive_session(project.clone(), id.clone()).is_ok();
+                Some(Event::SourceArchived {
+                    project,
+                    id,
+                    path,
+                    token,
+                    success,
+                })
+            }
             Command::Archive {
                 project,
                 id,
@@ -508,7 +710,9 @@ fn worker_with_backend(
             } => {
                 // Retries and delayed durability callbacks are not new adoption intent.
                 archive_intents.insert((project.clone(), id.clone()));
-                let success = if archived {
+                let success = if removed_projects.contains(&project) {
+                    Err("removed".into())
+                } else if archived {
                     storage::archive_session(project.clone(), id.clone())
                 } else {
                     storage::unarchive_session(project.clone(), id.clone())
@@ -539,16 +743,21 @@ fn worker_with_backend(
                     // Failed/late starts can still own a manager process before a
                     // successful generation is recorded in the shell's map.
                     let running: Vec<_> = start_attempts.keys().cloned().collect();
-                    for runtime in running {
-                        match pi.stop(&owner, &runtime) {
-                            Ok(generation) => {
-                                generations.remove(&runtime);
-                                if let Some(generation) = generation {
-                                    stopped.push((runtime, generation));
+                    match pi.stop_many(&owner, &running) {
+                        Ok(outcomes) => {
+                            for (runtime, outcome) in outcomes {
+                                match outcome {
+                                    Ok(generation) => {
+                                        generations.remove(&runtime);
+                                        if let Some(generation) = generation {
+                                            stopped.push((runtime, generation));
+                                        }
+                                    }
+                                    Err(_) => success = false,
                                 }
                             }
-                            Err(_) => success = false,
                         }
+                        Err(_) => success = false,
                     }
                 }
                 Some(Event::Saved {
@@ -557,6 +766,7 @@ fn worker_with_backend(
                     stopped,
                 })
             }
+            Command::ExitFence { revision } => Some(Event::ExitDrained { revision }),
             Command::Shutdown(done) => {
                 pi.shutdown();
                 admin.finish();

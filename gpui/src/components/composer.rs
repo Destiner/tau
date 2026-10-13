@@ -1508,12 +1508,17 @@ impl Render for Composer {
                             }
                         }))
                         .child(
-                            div().min_w_0().truncate().child(
-                                self.effort()
-                                    .map(Self::effort_choice_label)
-                                    .unwrap_or_default()
-                                    .to_owned(),
-                            ),
+                            div()
+                                .id("effort-label")
+                                .test_support()
+                                .min_w_0()
+                                .truncate()
+                                .child(
+                                    self.effort()
+                                        .map(Self::effort_choice_label)
+                                        .unwrap_or_default()
+                                        .to_owned(),
+                                ),
                         )
                         .child(
                             support::selector_arrow(effort_color)
