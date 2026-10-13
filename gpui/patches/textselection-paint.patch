@@ -1,0 +1,227 @@
+diff --git a/src/text/inline.rs b/src/text/inline.rs
+index 547f146..3282fc6 100644
+--- a/src/text/inline.rs
++++ b/src/text/inline.rs
+@@ -206,6 +206,7 @@ pub(super) struct Inline {
+     text_style: Option<TextStyle>,
+     paint_origin: Option<Point<Pixels>>,
+     selection_bounds: Option<Bounds<Pixels>>,
++    selection_paint_bounds: Option<Bounds<Pixels>>,
+     selection_source: Option<(Arc<Mutex<InlineState>>, Range<usize>)>,
+     /// Range highlight backgrounds, painted behind the text.
+     range_backgrounds: Vec<(Range<usize>, Hsla)>,
+@@ -372,6 +373,7 @@ impl Inline {
+             text_style: None,
+             paint_origin: None,
+             selection_bounds: None,
++            selection_paint_bounds: None,
+             selection_source: None,
+             range_backgrounds: Vec::new(),
+             reveal: None,
+@@ -406,6 +408,11 @@ impl Inline {
+         self
+     }
+ 
++    pub(super) fn selection_paint_bounds(mut self, bounds: Bounds<Pixels>) -> Self {
++        self.selection_paint_bounds = Some(bounds);
++        self
++    }
++
+     pub(super) fn selection_source(
+         mut self,
+         state: Arc<Mutex<InlineState>>,
+@@ -764,6 +771,30 @@ impl Inline {
+         ))
+     }
+ 
++    // Wrapped rows share their resolved line's ascent and positive descent.
++    fn font_selection_rows(&self, layout: &TextLayout) -> Vec<Bounds<Pixels>> {
++        if let Some(bounds) = self.selection_paint_bounds {
++            return vec![bounds];
++        }
++        let mut y = layout.bounds().top();
++        let height = layout.line_height();
++        let mut rows = Vec::new();
++        for line in layout.line_layouts() {
++            let font_height = line.ascent() + line.descent().abs();
++            for _ in 0..=line.wrap_boundaries.len() {
++                rows.push(Bounds::new(
++                    point(
++                        layout.bounds().left(),
++                        y + (height - line.ascent() - line.descent()) / 2.,
++                    ),
++                    size(layout.bounds().size.width, font_height),
++                ));
++                y += height;
++            }
++        }
++        rows
++    }
++
+     /// Paint the selection background.
+     fn paint_selection(
+         selection: &Selection,
+@@ -1179,11 +1210,55 @@ impl Element for Inline {
+                 .text_view_state()
+                 .map(|state| state.read(cx).text_view_style.selection())
+                 .unwrap_or_else(|| crate::Theme::global(cx).tokens.colors.selection);
+-            Self::paint_selection(selection, &text_layout, &bounds, window, color);
+-            if let Some((start, end)) = Self::selection_edges(selection, &text_layout)
++            let font_metrics = GlobalState::global(cx)
++                .text_view_state()
++                .is_some_and(|view| view.read(cx).text_view_style.font_metric_selection());
++            if font_metrics {
++                let start = selection.start.min(selection.end);
++                let end = selection.start.max(selection.end);
++                if let (Some(a), Some(b)) = (
++                    text_layout.position_for_index(start),
++                    text_layout.position_for_index(end),
++                ) {
++                    let line_height = text_layout.line_height();
++                    let start_row =
++                        ((a.y - text_layout.bounds().top()) / line_height).round() as usize;
++                    let end_row =
++                        ((b.y - text_layout.bounds().top()) / line_height).round() as usize;
++                    for (ix, mut row) in self
++                        .font_selection_rows(&text_layout)
++                        .into_iter()
++                        .enumerate()
++                    {
++                        if ix < start_row || ix > end_row {
++                            continue;
++                        }
++                        let left = if ix == start_row { a.x } else { bounds.left() };
++                        let right = if ix == end_row { b.x } else { bounds.right() };
++                        row.origin.x = left;
++                        row.size.width = (right - left).max(Pixels::ZERO);
++                        window.paint_quad(gpui::fill(row, color));
++                    }
++                }
++            } else {
++                Self::paint_selection(selection, &text_layout, &bounds, window, color);
++            }
++            if let Some((mut start, mut end)) = Self::selection_edges(selection, &text_layout)
+                 && let Some(text_view_state) = GlobalState::global(cx).text_view_state().cloned()
+             {
+                 text_view_state.update(cx, |state, _| {
++                    if font_metrics {
++                        let rows = self.font_selection_rows(&text_layout);
++                        for edge in [&mut start, &mut end] {
++                            let ix = ((edge.top() - text_layout.bounds().top())
++                                / text_layout.line_height())
++                            .round() as usize;
++                            if let Some(row) = rows.get(ix) {
++                                edge.origin.y = row.top();
++                                edge.size.height = row.size.height;
++                            }
++                        }
++                    }
+                     state.selection_adapter.register_selection_edges(start, end);
+                 });
+             }
+diff --git a/src/text/inline_flow.rs b/src/text/inline_flow.rs
+index 2f5823a..f2b7eba 100644
+--- a/src/text/inline_flow.rs
++++ b/src/text/inline_flow.rs
+@@ -197,6 +197,7 @@ enum PositionedFragment {
+         links: Vec<(Range<usize>, LinkMark)>,
+         highlights: Vec<(Range<usize>, InlineHighlight)>,
+         selection_bounds: Bounds<Pixels>,
++        selection_paint_bounds: Bounds<Pixels>,
+         /// The rounded box behind a code span, relative to the flow.
+         code_background: Option<(Bounds<Pixels>, Hsla)>,
+     },
+@@ -576,6 +577,7 @@ impl Element for InlineFlow {
+                     links,
+                     highlights,
+                     selection_bounds,
++                    selection_paint_bounds,
+                     code_background,
+                 } => {
+                     let InlineFlowItem::Text {
+@@ -642,6 +644,10 @@ impl Element for InlineFlow {
+                         point(bounds.left(), bounds.top() + selection_bounds.top()),
+                         size(bounds.size.width, selection_bounds.size.height),
+                     ))
++                    .selection_paint_bounds(Bounds::new(
++                        bounds.origin + selection_paint_bounds.origin,
++                        selection_paint_bounds.size,
++                    ))
+                     .paint_origin(bounds.origin + origin + point(padding, Pixels::ZERO))
+                     .into_any_element();
+                     // The `Inline` is its own layout root, with no box around
+@@ -1166,6 +1172,18 @@ fn layout_measured_flow_with_wrap(
+             item_start = item_end;
+         }
+ 
++        // Keep all text fragments on the shared baseline, using the largest
++        // resolved font metrics on this row, before adding layout leading.
++        let ink_ascent = line_fragments
++            .iter()
++            .filter(|f| matches!(f.kind, LineFragmentKind::Text { .. }))
++            .map(|f| f.baseline)
++            .fold(Pixels::ZERO, Pixels::max);
++        let ink_descent = line_fragments
++            .iter()
++            .filter(|f| matches!(f.kind, LineFragmentKind::Text { .. }))
++            .map(|f| (f.size.height - f.baseline).abs())
++            .fold(Pixels::ZERO, Pixels::max);
+         let mut x = Pixels::ZERO;
+         for mut fragment in line_fragments {
+             // Give a text run's glyph box equal leading on both sides, as
+@@ -1205,6 +1223,10 @@ fn layout_measured_flow_with_wrap(
+                     size: fragment.size,
+                     source_range: fragment.source_range,
+                     selection_bounds,
++                    selection_paint_bounds: Bounds::new(
++                        point(x, y + line_ascent - ink_ascent),
++                        size(fragment.size.width, ink_ascent + ink_descent),
++                    ),
+                     font_size,
+                     text,
+                     links,
+diff --git a/src/text/style.rs b/src/text/style.rs
+index 0b80eb5..c4c8139 100644
+--- a/src/text/style.rs
++++ b/src/text/style.rs
+@@ -16,6 +16,7 @@ pub struct TextViewStyle {
+     muted_foreground: Hsla,
+     link: Hsla,
+     selection: Hsla,
++    font_metric_selection: bool,
+     code_background: Hsla,
+     border: Hsla,
+     paragraph_gap: Rems,
+@@ -65,6 +66,7 @@ impl PartialEq for TextViewStyle {
+             && self.muted_foreground == other.muted_foreground
+             && self.link == other.link
+             && self.selection == other.selection
++            && self.font_metric_selection == other.font_metric_selection
+             && self.code_background == other.code_background
+             && self.border == other.border
+             && (1..=6).all(|level| (self.heading)(level) == (other.heading)(level))
+@@ -286,6 +288,7 @@ impl TextViewStyle {
+             muted_foreground: colors.muted_foreground,
+             link: colors.primary,
+             selection: colors.selection,
++            font_metric_selection: false,
+             code_background: colors.accent,
+             border: colors.border,
+             paragraph_gap: rems(1.),
+@@ -341,6 +344,16 @@ impl TextViewStyle {
+     ///
+     /// Selection quads are painted under the glyphs, so this is normally a
+     /// translucent wash rather than a solid fill.
++    /// Paint selection within resolved font metrics, without changing interaction geometry.
++    pub fn with_font_metric_selection(mut self, enabled: bool) -> Self {
++        self.font_metric_selection = enabled;
++        self
++    }
++
++    pub fn font_metric_selection(&self) -> bool {
++        self.font_metric_selection
++    }
++
+     pub fn with_selection(mut self, color: Hsla) -> Self {
+         self.selection = color;
+         self

@@ -52,6 +52,7 @@ const crates = [
       'inline-file-links.patch',
       'input-undo-boundary.patch',
       'inline-text-accessibility.patch',
+      'textselection-paint.patch',
     ],
   },
   {
@@ -70,6 +71,7 @@ const crates = [
       'native-host-quit-core.patch',
       'native-paths-test-support-core.patch',
       'image-decode-limits-core.patch',
+      'single-line-ink-overflow.patch',
     ],
   },
   {

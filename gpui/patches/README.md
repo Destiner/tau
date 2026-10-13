@@ -2,7 +2,7 @@
 
 ## Prepared dependency set
 
-`gpui/scripts/prepare.ts` registers **30 Base patches**, **ten Core patches**,
+`gpui/scripts/prepare.ts` registers **31 Base patches**, **eleven Core patches**,
 and **five macOS patches**, including the native interaction and accessibility
 fixes below; **two merman-core patches** (parser manifest and ER
 semantic default direction); **one merman-analysis manifest patch**; **four
@@ -40,6 +40,47 @@ These are focused compatibility patches, not a commitment to a long-lived fork. 
 `../scripts/prepare.ts` verifies that archive, extracts it outside the enclosing Git checkout, applies all patches with `git apply --check`, and copies the result into ignored `.cache/crates/gpui-base`. Cargo's `[patch.crates-io]` uses that copy. A patch fingerprint and source-tree hash detect stale or locally altered cached source; the Cargo registry is never edited. The archive is reused from Cargo's cache if available, otherwise downloaded from `static.crates.io` over HTTPS. Build with `bun run --cwd gpui build:native`, not an unprepared bare Cargo invocation.
 
 Extraction outside the checkout is intentional: `git apply` run in a nested dependency directory can silently skip all unprefixed paths and still return zero. Preparation also places the published README at the workspace-relative path required by an upstream test include.
+
+## Font-metric text selection paint
+
+`textselection-paint.patch` is applied last to Base. The opt-in
+`TextViewStyle::with_font_metric_selection(true)` paints each selected row using
+its resolved shaped ascent plus absolute descent, centered on the existing text
+baseline. InlineFlow shares the largest resolved text metrics on each row across
+its fragments, including smaller inline code. Touch selection paint edges follow
+the same font boxes. The default remains false for other Base users.
+
+This changes only selection quads and touch paint edges, not line height, wrapping,
+source offsets, hit testing, range highlights, layout, or drag-gap geometry. Tau
+Markdown opts in at both transcript and compact body sizes, and explicitly supplies
+the production Vue selection colors: RGB `035bd6` at 15% in light mode and
+`3388ff` at 25% in dark mode. Root tests inspect per-row painted quads at both
+backing scales; actual raster parity still requires independent pixel capture.
+
+## Single-line ink overflow
+
+`single-line-ink-overflow.patch` makes Core `Styled::truncate()` constrain only
+horizontal overflow. It keeps the authored line box, baseline, font metrics and
+ellipsis policy. Intentional two-axis clipping still uses `overflow_hidden()`;
+`line_clamp()` and multiline line spacing are unchanged. This differs from
+Tailwind's two-axis `truncate` convenience: a compact GPUI line box is not a
+safe glyph-ink viewport.
+
+Core's `Style::overflow_mask` now takes the enclosing mask bounds as a third
+argument. Div supplies them in both prepaint and paint. Visible axes retain
+those enclosing limits instead of accidentally clipping to the element; hidden
+axes retain the element's border inset. Enclosing modal, scroll and window masks
+still constrain descendants. Both upstream Div call sites are updated; downstream
+callers of this method must supply their enclosing mask too.
+
+The patch includes axis/border and truncation-policy tests. Production Root
+regressions protect session-picker and High-effort geometry. The separate
+`tests/typography-ink.swift` oracle rasterizes bundled Inter with CoreText/CoreGraphics
+without opening a window, checks real ink pixels against clipped/unclipped
+controls, and composites coverage in both Tau themes. It is **not** production
+Root Metal readback. After registration, official preparation and Rust/native
+verification must run in the serialized validation slot; registration alone
+is not evidence that an already-built app contains this correction.
 
 ## Bounded image decoding
 
@@ -301,6 +342,13 @@ retain their legacy button/modifier contract; applications gate file gestures.
 No default external opener is invoked for a generated path. Tau's production
 MarkdownPresentation and MarkdownDocument consume this API. Context-menu target
 exposure and inline-only parsing are not included.
+
+Root and TextView Copy preserve nonblank source-owned domain projections exactly,
+including leading and trailing whitespace. Legacy geometry retains its existing
+synthetic-separator trimming; blank projections still fail closed. This repair
+lives here, after the native-menu patch, without changing that admission contract.
+Tau's held-gap renderer regressions check exact clipboard equality over three
+frames in both drag directions.
 
 The patch contains source-map/partial-Copy, precedence, UTF-8/admission and actual
 pointer activation/selection regressions; Tau adds entity-provenance and typed

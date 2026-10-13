@@ -49,6 +49,8 @@ pub fn init(cx: &mut App, dark: bool) {
 
 #[cfg(test)]
 mod native_navigation_tests;
+#[cfg(test)]
+pub(crate) mod renderer_interaction_tests;
 
 struct NativeNavigation {
     _subscription: gpui_kit::Subscription,

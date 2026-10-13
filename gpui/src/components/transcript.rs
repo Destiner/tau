@@ -1791,5 +1791,8 @@ mod integration_tests;
 #[path = "transcript/notice_tests.rs"]
 pub(crate) mod notice_tests;
 #[cfg(test)]
+#[path = "renderer_transcript_tests.rs"]
+pub(crate) mod renderer_transcript_tests;
+#[cfg(test)]
 #[path = "transcript/tests.rs"]
 pub(crate) mod tests;

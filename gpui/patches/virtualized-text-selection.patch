@@ -246,16 +246,19 @@ index e1e1c92..266d8cb 100644
              let hitbox = hitbox.clone();
 diff --git a/src/text/logical_selection_tests.rs b/src/text/logical_selection_tests.rs
 new file mode 100644
-index 0000000..24b05ee
+index 0000000..9395deb
 --- /dev/null
 +++ b/src/text/logical_selection_tests.rs
-@@ -0,0 +1,302 @@
+@@ -0,0 +1,305 @@
 +use super::{
 +    SelectionFormat, document::ParsedDocument, format::markdown, node::NodeContext,
 +    range_highlight::RenderedIndex,
 +};
 +use gpui::AppContext as _;
 +use std::ops::Range;
++
++#[path = "selection_gap_tests.rs"]
++mod selection_gap_tests;
 +
 +fn document(source: &str) -> (ParsedDocument, RenderedIndex) {
 +    let document = markdown::parse(source, &mut NodeContext::default()).unwrap();
@@ -1008,7 +1011,7 @@ index d03335b..8828c2f 100644
          let mut objects = Vec::new();
          for child in &paragraph.children {
 diff --git a/src/text/selection_adapter.rs b/src/text/selection_adapter.rs
-index b3bf12c..04ead79 100644
+index b3bf12c..e8ab658 100644
 --- a/src/text/selection_adapter.rs
 +++ b/src/text/selection_adapter.rs
 @@ -74,6 +74,8 @@ pub(super) struct TextViewSelectionAdapter {
@@ -1068,7 +1071,7 @@ index b3bf12c..04ead79 100644
          self.selection_edges = None;
      }
  
-@@ -205,8 +221,46 @@ impl TextViewSelectionAdapter {
+@@ -205,8 +221,66 @@ impl TextViewSelectionAdapter {
          self.selection_edges = Some((first, end));
      }
  
@@ -1100,23 +1103,43 @@ index b3bf12c..04ead79 100644
 +                });
 +            }
 +        }
-+        for (run, offset) in self.text_runs.iter().zip(&self.rendered_offsets) {
-+            if point.y < run.bounds().top() || point.y >= run.bounds().bottom() {
-+                continue;
-+            }
-+            let index = run
-+                .layout()
++        // Padding is not a missing logical endpoint. Resolve the actual drag head
++        // against the nearest painted run, not the last successful pointer event.
++        // Horizontal distance disambiguates fragments sharing a visual row.
++        let (run, offset) = self
++            .text_runs
++            .iter()
++            .zip(&self.rendered_offsets)
++            .filter_map(|(run, offset)| offset.map(|offset| (run, offset)))
++            .min_by(|(a, _), (b, _)| {
++                let distance = |run: &TextSelectionRun| {
++                    let bounds = run.bounds();
++                    let y = (bounds.top() - point.y)
++                        .max(point.y - bounds.bottom())
++                        .max(Pixels::ZERO);
++                    let x = (bounds.left() - point.x)
++                        .max(point.x - bounds.right())
++                        .max(Pixels::ZERO);
++                    (f32::from(y), f32::from(x))
++                };
++                let a = distance(a);
++                let b = distance(b);
++                a.0.total_cmp(&b.0).then_with(|| a.1.total_cmp(&b.1))
++            })?;
++        let index = if point.y < run.bounds().top() {
++            0
++        } else if point.y >= run.bounds().bottom() {
++            run.text().len()
++        } else {
++            run.layout()
 +                .index_for_position(point)
-+                .unwrap_or_else(|index| index);
-+            if index <= run.text().len() && run.text().is_char_boundary(index) {
-+                return offset.map(|offset| offset + index);
-+            }
-+        }
-+        None
++                .unwrap_or_else(|index| index)
++        };
++        (index <= run.text().len() && run.text().is_char_boundary(index)).then_some(offset + index)
      }
  
      pub(super) fn register_inline(&mut self, bounds: Vec<Bounds<Pixels>>) {
-@@ -266,6 +320,14 @@ impl TextViewSelectionAdapter {
+@@ -266,6 +340,14 @@ impl TextViewSelectionAdapter {
          Some((points.anchor(), points.cursor()))
      }
  
@@ -1531,7 +1554,7 @@ index 85744b4..d1917ad 100644
                      TextSelection::clear(window, cx);
                  }
 diff --git a/src/text_selection.rs b/src/text_selection.rs
-index a7719dd..1d4663c 100644
+index a7719dd..78afa44 100644
 --- a/src/text_selection.rs
 +++ b/src/text_selection.rs
 @@ -1,4 +1,5 @@
@@ -2067,7 +2090,62 @@ index a7719dd..1d4663c 100644
          self.cursor = Some(endpoint);
          if window.is_none() {
              self.update_participant_auto_scroll(position, cx);
-@@ -2001,7 +2324,11 @@ impl WindowSelectionState {
+@@ -1925,6 +2248,11 @@ impl WindowSelectionState {
+             Rc<TextSelectionRegistration>,
+             f32,
+         )> = None;
++        let mut nearest_domain: Option<(
++            WeakEntity<SelectableTextState>,
++            Rc<TextSelectionRegistration>,
++            Pixels,
++        )> = None;
+         let mut predecessor: Option<(
+             WeakEntity<SelectableTextState>,
+             Rc<TextSelectionRegistration>,
+@@ -1941,6 +2269,31 @@ impl WindowSelectionState {
+                 continue;
+             }
+             let participant_geometry = &registration.registration;
++            if self.is_selecting
++                && let Some((anchor_domain, _, epoch)) =
++                    self.anchor.as_ref().and_then(|a| a.domain.as_ref())
++                && let Some((domain, _, participant_epoch)) = registration
++                    .participant
++                    .upgrade()
++                    .and_then(|p| p.read(cx).endpoint_domain())
++                && anchor_domain.same_domain(&domain)
++                && *epoch == participant_epoch
++            {
++                let distance = (participant_geometry.bounds.top() - position.y)
++                    .max(position.y - participant_geometry.bounds.bottom())
++                    .max(Pixels::ZERO);
++                if nearest_domain.as_ref().is_none_or(|(_, best, previous)| {
++                    distance < *previous
++                        || (distance == *previous
++                            && participant_geometry.document_order < best.document_order)
++                }) {
++                    nearest_domain = Some((
++                        registration.participant.clone(),
++                        participant_geometry.clone(),
++                        distance,
++                    ));
++                }
++            }
+             let hovered = window.map_or_else(
+                 || participant_geometry.bounds.contains(&position),
+                 |window| participant_geometry.hitbox.is_hovered(window),
+@@ -1987,7 +2340,9 @@ impl WindowSelectionState {
+         let selection = hit
+             .map(|(participant, registration, _)| (participant, registration, true))
+             .or_else(|| {
+-                predecessor
++                nearest_domain
++                    .map(|(participant, registration, _)| (participant, registration))
++                    .or(predecessor)
+                     .or(first)
+                     .map(|(participant, registration)| (participant, registration, false))
+             });
+@@ -2001,7 +2356,11 @@ impl WindowSelectionState {
                          .clone()
                          .map(|callback| (callback, point))
                  });
@@ -2079,7 +2157,7 @@ index a7719dd..1d4663c 100644
                      point,
                      participant: Some(participant),
                      inside,
-@@ -2015,6 +2342,7 @@ impl WindowSelectionState {
+@@ -2015,6 +2374,7 @@ impl WindowSelectionState {
                  }
              }
              None => SelectionEndpoint {
@@ -2087,7 +2165,7 @@ index a7719dd..1d4663c 100644
                  participant: None,
                  point: position,
                  inside: false,
-@@ -2027,13 +2355,71 @@ impl WindowSelectionState {
+@@ -2027,13 +2387,71 @@ impl WindowSelectionState {
  
      fn publish_snapshots(&mut self, cx: &mut App) {
          self.prune_dead_participants();
@@ -2160,7 +2238,7 @@ index a7719dd..1d4663c 100644
                  && self.participates(*id, registration)
                  && single_participant.is_none_or(|single| single == *id))
              .then_some(snapshot)
-@@ -2308,11 +2694,32 @@ fn with_text_selection_scope<T>(
+@@ -2308,11 +2726,32 @@ fn with_text_selection_scope<T>(
  pub struct TextSelection;
  
  impl TextSelection {
@@ -2193,7 +2271,7 @@ index a7719dd..1d4663c 100644
          let items = state.read(cx).copy_items(cx);
          resolve_copy_items(items, cx)
      }
-@@ -2894,6 +3301,13 @@ pub(crate) fn clear_window_text_selection(window_id: gpui::WindowId, cx: &mut Ap
+@@ -2894,6 +3333,13 @@ pub(crate) fn clear_window_text_selection(window_id: gpui::WindowId, cx: &mut Ap
      dispatch_clear_handlers(handlers, cx);
  }
  
@@ -2858,4 +2936,171 @@ index 0000000..cc15107
 +        assert_eq!(domain.stored_range(), None);
 +        assert!(!domain.is_selecting());
 +    });
++}
+diff --git a/src/text/selection_gap_tests.rs b/src/text/selection_gap_tests.rs
+new file mode 100644
+index 0000000..0cd7e90
+--- /dev/null
++++ b/src/text/selection_gap_tests.rs
+@@ -0,0 +1,161 @@
++use crate::text::*;
++use gpui::{
++    AppContext as _, Context, Entity, IntoElement, Modifiers, MouseButton, Render, TestAppContext,
++    Window, div, point, px,
++};
++
++struct GapHost {
++    text: Entity<TextViewState>,
++}
++impl Render for GapHost {
++    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++        div().w(px(320.)).child(
++            TextView::new(&self.text)
++                .selectable(true)
++                .style(TextViewStyle::default().with_body_text_size(px(13.))),
++        )
++    }
++}
++
++#[gpui::test]
++fn root_drag_head_in_paragraph_list_and_code_gaps_keeps_logical_projection(
++    cx: &mut TestAppContext,
++) {
++    cx.update(crate::init);
++    let source = "甲乙\n\ncafé\n\n- tail\n\n```\ncode\n```";
++    let domain = crate::TextSelectionDomain::new(
++        |item, _| Some(item),
++        move |range, _| {
++            TextViewState::copy_markdown_slice(
++                source,
++                Some(range.anchor.offset.min(range.cursor.offset)),
++                Some(range.anchor.offset.max(range.cursor.offset)),
++                SelectionFormat::Plain,
++            )
++            .unwrap()
++        },
++    );
++    let mut retained = None;
++    let (_, window) = cx.add_window_view(|window, cx| {
++        let host = cx.new(|cx| GapHost {
++            text: cx.new(|cx| {
++                let mut text = TextViewState::markdown(source, cx);
++                text.set_selection_domain(Some((domain.clone(), 10)), cx);
++                text
++            }),
++        });
++        retained = Some(host.clone());
++        crate::Root::new(host, window, cx)
++    });
++    let host = retained.unwrap();
++    window.run_until_parked();
++    window.update(|window, cx| {
++        let _ = window.draw(cx);
++    });
++    let lines = host.read_with(window, |host, cx| {
++        host.text.read(cx).selection_adapter.text_bounds()
++    });
++    assert!(lines.len() >= 4);
++    let first = point(lines[0].left() + px(0.1), lines[0].center().y);
++    let last = point(
++        lines.last().unwrap().right(),
++        lines.last().unwrap().center().y,
++    );
++    for (anchor, forward) in [(first, true), (last, false)] {
++        window.simulate_mouse_down(anchor, MouseButton::Left, Modifiers::default());
++        window.update(|window, cx| {
++            let _ = window.draw(cx);
++        });
++        let pairs: Vec<_> = lines
++            .windows(2)
++            .filter(|pair| pair[1].top() > pair[0].bottom())
++            .collect();
++        assert!(
++            !pairs.is_empty(),
++            "fixture must contain actual measured gaps"
++        );
++        let pairs: Vec<_> = if forward {
++            pairs
++        } else {
++            pairs.into_iter().rev().collect()
++        };
++        for pair in pairs {
++            let boundaries = host.read_with(window, |host, cx| {
++                let text = host.text.read(cx);
++                (
++                    text.rendered_offset_at(point(pair[0].right() + px(2.), pair[0].center().y))
++                        .unwrap(),
++                    text.rendered_offset_at(point(pair[1].left() - px(2.), pair[1].center().y))
++                        .unwrap(),
++                )
++            });
++            let fractions = if forward {
++                [0.125, 0.375, 0.625, 0.875]
++            } else {
++                [0.875, 0.625, 0.375, 0.125]
++            };
++            for fraction in fractions {
++                let head = point(
++                    pair[0].center().x,
++                    pair[0].bottom() + (pair[1].top() - pair[0].bottom()) * fraction,
++                );
++                window.simulate_mouse_move(head, Some(MouseButton::Left), Modifiers::default());
++                for _ in 0..3 {
++                    window.update(|window, cx| {
++                        let _ = window.draw(cx);
++                    });
++                    host.read_with(window, |host, cx| {
++                        let text = host.text.read(cx);
++                        let range = domain.range(cx).expect("gap must not erase domain range");
++                        let resolved = text
++                            .rendered_offset_at(head)
++                            .expect("gap must resolve actual head");
++                        assert_eq!(
++                            resolved,
++                            if fraction < 0.5 {
++                                boundaries.0
++                            } else {
++                                boundaries.1
++                            },
++                            "resolve nearest logical boundary, not the previous drag head"
++                        );
++                        assert_eq!(range.cursor.offset, resolved);
++                        assert_eq!(
++                            text.selected_rendered_range_with(cx),
++                            Some(
++                                range.anchor.offset.min(resolved)
++                                    ..range.anchor.offset.max(resolved)
++                            )
++                        );
++                        assert!(!text.selected_text_with(cx).is_empty());
++                    });
++                    window.update(|window, cx| {
++                        let scale = window.scale_factor();
++                        let color = host.read(cx).text.read(cx).text_view_style.selection();
++                        assert!(
++                            window
++                                .painted_quads()
++                                .iter()
++                                .any(|q| q.background == color.into()
++                                    && f32::from(q.bounds.size.height) > scale),
++                            "held gap selection must paint, not merely keep Copy state"
++                        );
++                    });
++                }
++                window.dispatch_action(crate::input::Copy);
++                window.update(|_, cx| {
++                    let expected = host.read(cx).text.read(cx).selected_text_with(cx);
++                    assert_eq!(
++                        cx.read_from_clipboard().and_then(|item| item.text()),
++                        Some(expected)
++                    );
++                });
++            }
++        }
++        window.simulate_mouse_up(
++            if forward { last } else { first },
++            MouseButton::Left,
++            Modifiers::default(),
++        );
++    }
 +}

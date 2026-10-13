@@ -106,6 +106,14 @@ pub fn text_style_at_size(dark: bool, body: f32, window: &Window) -> TextViewSty
         .with_prose_max_width(zero_width * 80.)
         .with_strong_weight(gpui_kit::FontWeight::SEMIBOLD)
         .with_dark(dark)
+        .with_selection(
+            gpui_kit::Hsla::from(rgb(if dark { 0x3388ff } else { 0x035bd6 })).alpha(if dark {
+                0.25
+            } else {
+                0.15
+            }),
+        )
+        .with_font_metric_selection(true)
         .with_code_block_horizontal_scroll(true)
         .with_body_text_size(px(body))
         .with_block_spacing(MarkdownBlockSpacing {
@@ -810,6 +818,202 @@ mod tests {
         InputEvent, MouseButton, ScrollDelta, ScrollWheelEvent, TestApp, TestAppContext,
         TestSupportExt, gpui, point, test::TestWindowExt,
     };
+
+    #[test]
+    fn root_font_metric_selection_paints_resolved_rows_at_both_scales_and_themes() {
+        use crate::components::renderer_interaction_tests::{held_move, shaped_rows};
+        use gpui_kit::{TextRun, font, size};
+        assert!(!TextViewStyle::default().font_metric_selection());
+        assert!(
+            TextViewStyle::default() != TextViewStyle::default().with_font_metric_selection(true)
+        );
+        struct MetricHost {
+            text: Entity<TextViewState>,
+            dark: bool,
+            body: f32,
+            metric: bool,
+        }
+        impl Render for MetricHost {
+            fn render(&mut self, w: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .size_full()
+                    .p(px(20.))
+                    .font_family(native_font::family())
+                    .text_size(px(self.body))
+                    .line_height(gpui_kit::relative(1.62))
+                    .child(
+                        gpui_kit::base::TextView::new(&self.text)
+                            .markdown_extensions(extensions())
+                            .style(
+                                text_style_at_size(self.dark, self.body, w)
+                                    .with_font_metric_selection(self.metric),
+                            ),
+                    )
+            }
+        }
+        for scale in [1., 2.] {
+            for dark in [false, true] {
+                for body in [13., 11.] {
+                    for (name, source, factor, mono) in [
+                        (
+                            "prose",
+                            "First paragraph café 日本語. More prose to wrap across several painted rows. First paragraph café 日本語. More prose to wrap.",
+                            1.,
+                            false,
+                        ),
+                        (
+                            "link",
+                            "Paragraph [explicit link](https://example.org) and more wrapped prose across several rows with trailing words.",
+                            1.,
+                            false,
+                        ),
+                        (
+                            "inline-code",
+                            "Paragraph `small code` and more wrapped prose across several rows with trailing words.",
+                            1.,
+                            false,
+                        ),
+                        (
+                            "heading",
+                            "# Heading with `small code` and more words that wrap into another heading row",
+                            1.35,
+                            false,
+                        ),
+                        (
+                            "list",
+                            "- List prose with `code` and more wrapped words across multiple rows",
+                            1.,
+                            false,
+                        ),
+                        (
+                            "notice",
+                            "> Notice prose with [link](https://example.org) and `code` with more wrapped words",
+                            1.,
+                            false,
+                        ),
+                        ("inline-only", "`small code`", 0.88, true),
+                        ("code", "```txt\n  code café\nlast line\n```", 0.88, true),
+                    ] {
+                        let mut app = TestApp::new();
+                        app.update(|cx| crate::components::init(cx, dark));
+                        let text = app.new_entity(|cx| TextViewState::markdown(source, cx));
+                        let host = app.new_entity(|_| MetricHost {
+                            text: text.clone(),
+                            dark,
+                            body,
+                            metric: true,
+                        });
+                        let mut root =
+                            app.open_window(|w, cx| gpui_kit::base::Root::new(host.clone(), w, cx));
+                        root.simulate_resize(size(px(310.), px(650.)));
+                        root.simulate_scale_factor_change(scale);
+                        root.update(|_, w, _| w.activate_window());
+                        root.draw();
+                        let len = root.read(|_, cx| text.read(cx).rendered_text().len());
+                        let rows = shaped_rows(&mut root, &text, 0..len);
+                        let first = rows.first().unwrap();
+                        let last = rows.last().unwrap();
+                        root.simulate_mouse_down(first.center(), MouseButton::Left);
+                        held_move(&mut root, point(last.right() + px(1.), last.center().y));
+                        root.draw();
+                        root.read(|_, cx| {
+                            assert!(!text.read(cx).selected_text().is_empty(), "{name}")
+                        });
+
+                        let (expected, baseline_shift, color) = root.update(|_, w, cx| {
+                            let family = if mono {
+                                gpui_kit::base::Theme::global(cx)
+                                    .tokens
+                                    .typography
+                                    .mono
+                                    .clone()
+                            } else {
+                                native_font::family().into()
+                            };
+                            let mut resolved = font(family);
+                            if name == "heading" {
+                                resolved.weight = gpui_kit::FontWeight(650.);
+                            }
+                            let line = w.text_system().layout_line(
+                                "a",
+                                px(body * factor),
+                                &[TextRun {
+                                    len: 1,
+                                    font: resolved,
+                                    color: rgb(0).into(),
+                                    background_color: None,
+                                    underline: None,
+                                    strikethrough: None,
+                                }],
+                                None,
+                            );
+                            (
+                                line.ascent + line.descent.abs(),
+                                (line.descent.abs() - line.descent) / 2.,
+                                text_style(dark, w).selection(),
+                            )
+                        });
+                        assert_eq!(
+                            color,
+                            gpui_kit::Hsla::from(rgb(if dark { 0x3388ff } else { 0x035bd6 }))
+                                .alpha(if dark { 0.25 } else { 0.15 })
+                        );
+                        for _ in 0..3 {
+                            root.draw();
+                            root.update(|_, w, _| {
+                                let painted: Vec<_> = w
+                                    .painted_quads()
+                                    .into_iter()
+                                    .filter(|q| q.background == color.into())
+                                    .collect();
+                                assert!(!painted.is_empty(), "{name}/{body}/{dark}/{scale}");
+                                for q in painted {
+                                    assert!(rows.iter().any(|row| {
+                                        (q.bounds.center().y.0 / scale - f32::from(row.center().y + baseline_shift)).abs() <= 1. / scale
+                                    }), "font paint stays on the existing line baseline: {name}/{body}/{scale}: quad={:?} rows={rows:?}", q.bounds);
+                                    let physical = f32::from(expected) * scale;
+                                    assert!(
+                                        q.bounds.size.height.0 == physical.floor()
+                                            || q.bounds.size.height.0 == physical.ceil(),
+                                        "{name}/{body}/{dark}/{scale}: snapped {} != floor/ceil({physical})",
+                                        q.bounds.size.height.0
+                                    );
+                                }
+                            });
+                        }
+                        let before = root.read(|_, cx| text.read(cx).selected_text());
+                        app.update(|cx| {
+                            host.update(cx, |h, cx| {
+                                h.metric = false;
+                                cx.notify();
+                            })
+                        });
+                        root.draw();
+                        root.update(|_, w, _| {
+                            assert!(
+                                w.painted_quads()
+                                    .iter()
+                                    .filter(|q| q.background == color.into())
+                                    .any(|q| rows.iter().any(|row| q.bounds.size.height.0
+                                        == f32::from(row.size.height) * scale)),
+                                "legacy full row remains available: {name}/{body}/{scale}"
+                            );
+                        });
+                        root.read(|_, cx| assert_eq!(text.read(cx).selected_text(), before));
+                        let unchanged = shaped_rows(&mut root, &text, 0..len);
+                        assert_eq!(
+                            rows, unchanged,
+                            "paint opt-in must not alter range geometry: {name}"
+                        );
+                        root.simulate_mouse_up(
+                            point(last.right() + px(1.), last.center().y),
+                            MouseButton::Left,
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     struct CopyHost {
         markdown: Entity<MarkdownView>,
