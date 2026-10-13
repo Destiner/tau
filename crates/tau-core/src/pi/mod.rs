@@ -9,6 +9,11 @@ use serde_json::Value;
 use std::{process::Command, sync::Arc};
 pub use transport::PiEvent;
 
+pub type StopOutcome = (String, Result<Option<u64>, String>);
+
+/// `emit` returns only after accepting the event into the consumer's ordered
+/// queue (or processing it). Deferred enqueueing cannot establish a Stop drain.
+/// Bounded consumers must keep draining while a worker awaits Stop.
 pub trait PiEventSink: Send + Sync + 'static {
     fn emit(&self, event: PiEvent);
 }
@@ -152,7 +157,14 @@ impl PiState {
         environment::validate_runtime_id(&runtime)?;
         let connection = crate::ssh::SshConnection::parse(&connection)?;
         let remote = crate::ssh::remote_pi_command(&working_directory, session.as_deref());
-        self.start_command(owner, runtime, connection.pi_command(&remote), sink)
+        ownership::spawn_command(
+            self,
+            sink,
+            owner,
+            runtime,
+            connection.pi_command(&remote),
+            true,
+        )
     }
     /// Explicit command injection for deterministic subprocess tests and embedders.
     pub fn start_command(
@@ -163,33 +175,39 @@ impl PiState {
         sink: PiSink,
     ) -> Result<u64, String> {
         environment::validate_runtime_id(&runtime)?;
-        ownership::spawn_command(self, sink, owner, runtime, command)
+        ownership::spawn_command(self, sink, owner, runtime, command, false)
     }
     pub fn send(&self, owner: &str, runtime: String, request: Value) -> Result<(), String> {
-        let result = ownership::send_pi_to_state(self, owner, runtime.clone(), request);
-        if result.is_err() {
-            let failed = self.inner.lock().ok().and_then(|manager| {
-                manager.require_owner(owner).ok()?;
-                manager
-                    .processes
-                    .get(&runtime)
-                    .filter(|p| {
-                        p.owner_id == owner && !p.usable.load(std::sync::atomic::Ordering::Acquire)
-                    })
-                    .map(|p| (p.generation, p.sink.clone()))
-            });
-            if let Some((generation, sink)) = failed {
-                sink.emit(PiEvent {
-                    runtime_id: runtime,
-                    generation,
-                    kind: "exited",
-                    line: None,
-                    message: None,
-                    code: Some(1),
-                });
-            }
+        ownership::send_pi_with_input_event(self, owner, runtime, request)
+    }
+    /// One cleanup budget for all selected runtimes; failures retain ownership.
+    /// The outer error means no batch was admitted, not a successful stop receipt.
+    pub fn stop_many(&self, owner: &str, runtimes: &[String]) -> Result<Vec<StopOutcome>, String> {
+        let mut manager = self
+            .inner
+            .lock()
+            .map_err(|_| "Pi process state is unavailable.".to_string())?;
+        manager.require_owner(owner)?;
+        let _cleanup = ownership::CleanupGuard::reserve(&self.inner, &mut manager)?;
+        let selected = runtimes
+            .iter()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>();
+        for runtime in &selected {
+            manager.fence_stop(Some(runtime));
         }
-        result
+        drop(manager);
+        let outcomes = ownership::stop_selected_processes(&self.inner, Some(&selected))?;
+        let mut outcomes = outcomes
+            .into_iter()
+            .collect::<std::collections::HashMap<_, _>>();
+        Ok(selected
+            .into_iter()
+            .map(|runtime| {
+                let result = outcomes.remove(&runtime).unwrap_or(Ok(None));
+                (runtime, result)
+            })
+            .collect())
     }
     pub fn stop(&self, owner: &str, runtime: &str) -> Result<Option<u64>, String> {
         let mut manager = self
@@ -197,9 +215,12 @@ impl PiState {
             .lock()
             .map_err(|_| "Pi process state is unavailable.".to_string())?;
         manager.require_owner(owner)?;
+        let _cleanup = ownership::CleanupGuard::reserve(&self.inner, &mut manager)?;
         let process = manager.processes.get(runtime).cloned();
-        ownership::stop_runtime_process(&mut manager, runtime)?;
+        manager.fence_stop(Some(runtime));
         drop(manager);
+        ownership::stop_reserved_processes(&self.inner, Some(runtime))
+            .map_err(|(error, _)| error)?;
         if let Some(process) = process {
             process.sink.record(
                 runtime,

@@ -13,8 +13,8 @@ fn frontend_takeover_stops_stale_runtime_before_replacement_starts() {
         .start(&state, sink.clone(), "owner-a", "runtime-a")
         .expect("start first frontend runtime");
     expect_outer_event(&events, "started", first_generation);
-    let old_child =
-        Arc::clone(&state.inner.lock().expect("Pi manager").processes["runtime-a"].child);
+    let old_process = state.inner.lock().expect("Pi manager").processes["runtime-a"].clone();
+    let old_child = Arc::clone(&old_process.child);
 
     let outcome =
         claim_pi_frontend_inner(&state.inner, "owner-b".into(), 1).expect("replace frontend owner");
@@ -28,21 +28,47 @@ fn frontend_takeover_stops_stale_runtime_before_replacement_starts() {
     assert!(state.inner.lock().expect("Pi manager").processes.is_empty());
 
     let second_generation = fixture
-        .start(&state, sink, "owner-b", "runtime-b")
+        .start(&state, sink.clone(), "owner-b", "runtime-b")
         .expect("start replacement frontend runtime");
     assert!(second_generation > first_generation);
     let deadline = Instant::now() + EVENT_TIMEOUT;
+    let mut old_exit = false;
     loop {
         let event = events
             .recv_timeout(deadline.saturating_duration_since(Instant::now()))
             .expect("replacement started event");
         if event["generation"] == first_generation {
-            assert_eq!(event["kind"], "stderr");
+            assert!(matches!(event["kind"].as_str(), Some("stderr" | "exited")));
+            old_exit |= event["kind"] == "exited";
             continue;
         }
         assert_eq!(event["generation"], second_generation);
         assert_eq!(event["kind"], "started");
         break;
+    }
+    assert!(
+        old_exit,
+        "takeover acknowledges the predecessor reader exit"
+    );
+    // Drain any successor startup stderr, but no retired producer may enqueue
+    // RPC or stderr after the replacement's Started fence.
+    for kind in ["rpc", "stderr"] {
+        emit_current_event(
+            &old_process.output_current,
+            &sink,
+            PiEvent {
+                runtime_id: "runtime-a".into(),
+                generation: first_generation,
+                kind,
+                line: Some("{}".into()),
+                message: None,
+                code: None,
+            },
+        );
+    }
+    for event in events.try_iter() {
+        assert_ne!(event["generation"], first_generation);
+        assert_eq!(event["generation"], second_generation);
     }
     assert!(send_pi_to_state(
         &state,
@@ -135,16 +161,22 @@ fn failed_takeover_retains_only_children_that_could_not_be_stopped() {
     manager.processes.insert("locked".into(), locked.clone());
     let guard = locked.child.lock().expect("hold child lock");
 
-    let (_, stopped) = stop_stale_processes(&mut manager).expect_err("locked child times out");
+    let inner = Arc::new(Mutex::new(manager));
+    let cleanup = {
+        let mut manager = inner.lock().unwrap();
+        CleanupGuard::reserve(&inner, &mut manager).unwrap()
+    };
+    let (_, stopped) = stop_reserved_processes(&inner, None).expect_err("locked child times out");
 
     assert_eq!(stopped.len(), 1);
     assert_eq!(stopped[0].runtime_id, "responsive");
     assert_clean_exit(&responsive);
-    assert_eq!(manager.processes.len(), 1);
-    assert!(manager.processes.contains_key("locked"));
+    assert_eq!(inner.lock().unwrap().processes.len(), 1);
+    assert!(inner.lock().unwrap().processes.contains_key("locked"));
     drop(guard);
-    stop_stale_processes(&mut manager).expect("retry cleanup");
-    assert!(manager.processes.is_empty());
+    stop_reserved_processes(&inner, None).expect("retry cleanup");
+    assert!(inner.lock().unwrap().processes.is_empty());
+    drop(cleanup);
 }
 
 #[test]
@@ -246,7 +278,14 @@ fn stopping_one_runtime_keeps_other_processes() {
         .processes
         .insert("second".into(), sleeping_process(2));
 
-    stop_runtime_process(&mut manager, "first").expect("stop first runtime");
+    let inner = Arc::new(Mutex::new(manager));
+    let cleanup = {
+        let mut manager = inner.lock().unwrap();
+        CleanupGuard::reserve(&inner, &mut manager).unwrap()
+    };
+    stop_reserved_processes(&inner, Some("first")).expect("stop first runtime");
+    drop(cleanup);
+    let mut manager = inner.lock().unwrap();
 
     assert_clean_exit(&first);
     assert!(!manager.processes.contains_key("first"));

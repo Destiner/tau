@@ -39,12 +39,119 @@ pub(super) fn emit_pi_event(sink: &PiSink, event: PiEvent) {
     sink.emit(event);
 }
 pub(super) fn emit_current_event(usable: &AtomicBool, sink: &PiSink, event: PiEvent) {
-    // Stopping fences this generation before cleanup. Readers must keep draining
-    // pipes without waiting on the manager lock held by that cleanup.
+    // Input closure does not revoke output. The stdout producer receipt, not
+    // this admission check, establishes completion of ordered sink enqueues.
     if usable.load(Ordering::Acquire) {
         sink.emit(event);
     }
 }
+#[cfg(unix)]
+pub(super) fn nonblocking_pipe(pipe: &impl std::os::fd::AsRawFd) -> std::io::Result<()> {
+    let fd = pipe.as_raw_fd();
+    // The owned child pipe remains alive throughout both fcntl calls.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+pub(super) struct InterruptiblePipe<R> {
+    pub(super) pipe: R,
+    pub(super) drain: Arc<super::process::ReaderDrain>,
+    pub(super) current: Arc<AtomicBool>,
+}
+#[cfg(unix)]
+impl<R: std::io::Read + std::os::fd::AsRawFd> std::io::Read for InterruptiblePipe<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            if self.drain.expired() || !self.current.load(Ordering::Acquire) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "Pi output drain ended.",
+                ));
+            }
+            match self.pipe.read(buffer) {
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    let mut fd = libc::pollfd {
+                        fd: self.pipe.as_raw_fd(),
+                        events: libc::POLLIN,
+                        revents: 0,
+                    };
+                    // Poll only within the existing process-check interval;
+                    // inherited pipes cannot keep the reader alive past Stop.
+                    if unsafe { libc::poll(&mut fd, 1, 10) } < 0 {
+                        let error = std::io::Error::last_os_error();
+                        if error.kind() != std::io::ErrorKind::Interrupted {
+                            return Err(error);
+                        }
+                    }
+                }
+                result => return result,
+            }
+        }
+    }
+}
+#[cfg(windows)]
+impl<R: std::io::Read + std::os::windows::io::AsRawHandle> std::io::Read for InterruptiblePipe<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn PeekNamedPipe(
+                handle: *mut std::ffi::c_void,
+                buffer: *mut std::ffi::c_void,
+                size: u32,
+                read: *mut u32,
+                available: *mut u32,
+                remaining: *mut u32,
+            ) -> i32;
+        }
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        loop {
+            if self.drain.expired() || !self.current.load(Ordering::Acquire) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "Pi output drain ended.",
+                ));
+            }
+            let mut available = 0;
+            // The owned anonymous child pipe is valid for this non-consuming
+            // probe; ReadFile is called only for bytes already available.
+            if unsafe {
+                PeekNamedPipe(
+                    self.pipe.as_raw_handle(),
+                    std::ptr::null_mut(),
+                    0,
+                    std::ptr::null_mut(),
+                    &mut available,
+                    std::ptr::null_mut(),
+                )
+            } == 0
+            {
+                let error = std::io::Error::last_os_error();
+                return if error.kind() == std::io::ErrorKind::BrokenPipe {
+                    Ok(0)
+                } else {
+                    Err(error)
+                };
+            }
+            if available > 0 {
+                let count = buffer.len().min(available as usize);
+                return self.pipe.read(&mut buffer[..count]);
+            }
+            self.drain.poll_pause();
+        }
+    }
+}
+#[cfg(not(any(unix, windows)))]
+impl<R: std::io::Read> std::io::Read for InterruptiblePipe<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.pipe.read(buffer)
+    }
+}
+
 pub(super) fn io_error_kind_category(kind: std::io::ErrorKind) -> &'static str {
     match kind {
         std::io::ErrorKind::BrokenPipe => "broken_pipe",

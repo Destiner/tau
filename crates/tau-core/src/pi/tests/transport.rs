@@ -93,7 +93,7 @@ fn fake_pi_round_trips_jsonl_and_cleans_up_after_successful_exit() {
 }
 
 #[test]
-fn fake_pi_malformed_stdout_is_dropped_and_lifecycle_is_cleaned_up() {
+fn fake_pi_malformed_stdout_is_dropped_but_not_a_clean_drain_receipt() {
     let _lock = ENVIRONMENT_LOCK
         .lock()
         .unwrap_or_else(|error| error.into_inner());
@@ -107,8 +107,23 @@ fn fake_pi_malformed_stdout_is_dropped_and_lifecycle_is_cleaned_up() {
     assert_eq!(started["runtimeId"], "native-malformed");
     let exited = expect_outer_event(&events, "exited", generation);
     assert_eq!(exited["runtimeId"], "native-malformed");
-    assert_eq!(exited["code"], 0);
-    assert!(state.inner.lock().expect("Pi manager").processes.is_empty());
+    assert_eq!(exited["code"], 0); // Physical success is not valid-output proof.
+    assert!(state
+        .inner
+        .lock()
+        .expect("Pi manager")
+        .processes
+        .contains_key("native-malformed"));
+    assert!(state
+        .stop("owner-a", "native-malformed")
+        .unwrap_err()
+        .contains("invalid record"));
+    assert!(state
+        .inner
+        .lock()
+        .expect("Pi manager")
+        .processes
+        .contains_key("native-malformed"));
     assert!(matches!(
         events.try_recv(),
         Err(TryRecvError::Empty | TryRecvError::Disconnected)

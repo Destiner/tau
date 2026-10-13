@@ -1,8 +1,10 @@
 mod api;
 mod environment;
+mod output_drain;
 mod ownership;
 mod process;
 mod reader;
+mod remote_cleanup;
 mod transport;
 use super::*;
 #[cfg(unix)]
@@ -203,6 +205,9 @@ fn scripted_process(script: &str, generation: u64) -> PiProcess {
         .expect("scripted process");
     let stdin = child.stdin.take().expect("scripted stdin");
     PiProcess {
+        remote: false,
+        remote_uncertain: Arc::new(AtomicBool::new(false)),
+        kill_attempted: Arc::new(AtomicBool::new(false)),
         owner_id: "owner-a".into(),
         generation,
         sink: PiSink::new(Arc::new(|_: PiEvent| {})),
@@ -210,5 +215,12 @@ fn scripted_process(script: &str, generation: u64) -> PiProcess {
         writer: spawn_stdin_writer(stdin).expect("stdin writer"),
         usable: Arc::new(AtomicBool::new(true)),
         output_current: Arc::new(AtomicBool::new(true)),
+        stopping: Arc::new(AtomicBool::new(false)),
+        // These physical-stop fixtures inherit output rather than owning a reader.
+        drain: {
+            let drain = Arc::new(ReaderDrain::default());
+            drain.complete(Ok(()));
+            drain
+        },
     }
 }

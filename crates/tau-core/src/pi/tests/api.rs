@@ -88,6 +88,24 @@ fn stale_generations_cannot_emit_rpc_or_stderr() {
     }));
     let retired = eof_process(1);
     retired.close_stdin();
+    assert!(!retired.usable.load(Ordering::Acquire));
+    assert!(retired.output_current.load(Ordering::Acquire));
+    // Closing input is not retirement: already-produced output must drain.
+    emit_current_event(
+        &retired.output_current,
+        &sink,
+        PiEvent {
+            runtime_id: "runtime".into(),
+            generation: 1,
+            kind: "rpc",
+            line: Some("{}".into()),
+            message: None,
+            code: None,
+        },
+    );
+    assert_eq!(events.recv_timeout(EVENT_TIMEOUT).unwrap().generation, 1);
+    // The reader/confirmed retirement owns this output fence, not close_stdin.
+    retired.output_current.store(false, Ordering::Release);
     let process = eof_process(2);
     state
         .inner

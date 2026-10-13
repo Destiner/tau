@@ -28,7 +28,7 @@ fn stderr_events_and_tail_are_bounded_before_process_exit() {
 
 #[cfg(unix)]
 #[test]
-fn retired_start_cannot_emit_a_late_started_event() {
+fn stop_cannot_retire_a_generation_before_its_reader_is_started() {
     let state = Arc::new(PiState::default());
     state.claim("owner-a".into(), 0).unwrap();
     let (sender, events) = mpsc::channel();
@@ -57,10 +57,20 @@ fn retired_start_cannot_emit_a_late_started_event() {
         starting_state.start_command("owner-a".into(), "runtime".into(), command, sink)
     });
     started.recv_timeout(EVENT_TIMEOUT).unwrap();
-    state.stop("owner-a", "runtime").unwrap();
+    assert!(state
+        .stop("owner-a", "runtime")
+        .unwrap_err()
+        .contains("cleanup is in progress"));
     release.send(()).unwrap();
-    starter.join().unwrap().unwrap();
-    assert!(!events.try_iter().any(|event| event.kind == "started"));
+    let generation = starter.join().unwrap().unwrap();
+    assert_eq!(state.stop("owner-a", "runtime").unwrap(), Some(generation));
+    assert_eq!(
+        events
+            .try_iter()
+            .filter(|event| event.kind == "started")
+            .count(),
+        1
+    );
 }
 
 #[cfg(unix)]
@@ -110,8 +120,8 @@ fn stopped_readers_drain_final_output_without_blocking_graceful_exit() {
     state.claim("owner-a".into(), 0).unwrap();
     let sink = PiSink::new(Arc::new(|_: PiEvent| {}));
     let mut command = Command::new("sh");
-    // More than a pipe buffer of final output after stdin closes. Cleanup holds
-    // the manager lock, so a reader requiring that lock would force a kill.
+    // More than a pipe buffer of final output after stdin closes. Stop must
+    // let the reader enqueue it before acknowledging physical cleanup.
     command.args(["-c", "while IFS= read -r line; do :; done; i=0; while [ $i -lt 10000 ]; do printf '{\"type\":\"final\"}\\n'; i=$((i+1)); done; exit 0"]);
     state
         .start_command("owner-a".into(), "runtime".into(), command, sink)
