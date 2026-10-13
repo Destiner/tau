@@ -1,6 +1,6 @@
 use crate::components::{
     activity::ActivityContent,
-    transcript::{Transcript, TranscriptContent, TranscriptEntry},
+    transcript::{Notice, NoticeSeverity, Transcript, TranscriptContent, TranscriptEntry},
 };
 use gpui_kit::{Context, Entity};
 use tau_session::{session::State, transcript::Entry};
@@ -32,6 +32,7 @@ struct Revision {
     revision: u64,
     length: usize,
     pending: bool,
+    skill: bool,
 }
 enum Change<'a> {
     Reconcile(&'a [Entry]),
@@ -41,12 +42,39 @@ enum Change<'a> {
 }
 pub(super) fn row(entry: &Entry) -> TranscriptEntry {
     let content = match entry.kind.as_str() {
+        "user" if entry.skill().is_some() => {
+            let skill = entry.skill().expect("checked Pi envelope");
+            TranscriptContent::Activity(ActivityContent::Skill {
+                name: skill.name.into(),
+                prompt: skill.prompt.into(),
+                text: skill.content.into(),
+            })
+        }
         "user" if entry.pending => TranscriptContent::PendingUser(entry.text.clone()),
         "user" => TranscriptContent::User(entry.text.clone()),
         "compaction" => TranscriptContent::Compaction {
             available: entry.history_available,
             loading: entry.history_loading,
         },
+        "notice" => TranscriptContent::Notice(Notice {
+            severity: match entry.notice_type {
+                tau_session::transcript::NoticeType::Info => NoticeSeverity::Info,
+                tau_session::transcript::NoticeType::Warning => NoticeSeverity::Warning,
+                tau_session::transcript::NoticeType::Error => NoticeSeverity::Error,
+            },
+            label: String::new(),
+            text: entry.text.clone(),
+            inline: false,
+        }),
+        "error" => TranscriptContent::Notice(Notice {
+            severity: NoticeSeverity::Error,
+            label: entry
+                .error_label
+                .clone()
+                .unwrap_or_else(|| "Reply Failed".into()),
+            text: entry.text.clone(),
+            inline: true,
+        }),
         "thinking" => TranscriptContent::Activity(ActivityContent::Thinking {
             text: entry.text.clone(),
         }),
@@ -91,6 +119,8 @@ impl Projection {
                 if old.kind == entry.kind
                     && old.pending == entry.pending
                     && matches!(entry.kind.as_str(), "assistant" | "user")
+                    && entry.skill().is_none()
+                    && !old.skill
                     && entry.text_reset_revision <= old.revision
                     && entry.text.len() >= old.length
                     && entry.text.is_char_boundary(old.length)
@@ -103,6 +133,7 @@ impl Projection {
                 old.revision = entry.revision;
                 old.length = entry.text.len();
                 old.pending = entry.pending;
+                old.skill = entry.skill().is_some();
             } else {
                 if !structural {
                     apply(Change::Append(entry));
@@ -113,6 +144,7 @@ impl Projection {
                     revision: entry.revision,
                     length: entry.text.len(),
                     pending: entry.pending,
+                    skill: entry.skill().is_some(),
                 });
             }
         }
@@ -141,6 +173,10 @@ impl Projection {
         });
     }
 }
+
+#[cfg(test)]
+#[path = "projection_skill_tests.rs"]
+mod skill_tests;
 
 #[cfg(test)]
 mod tests {
@@ -179,6 +215,64 @@ mod tests {
             row(&source[0]).content,
             TranscriptContent::User(_)
         ));
+    }
+
+    #[test]
+    fn production_wire_notices_paint_select_copy_and_preserve_identity() {
+        let mut projection = Projection::default();
+        crate::components::transcript::notice_tests::production_notices(
+            |source, transcript, cx| projection.sync(source, transcript, cx),
+        );
+    }
+
+    #[test]
+    fn production_compaction_state_projects_transient_and_delayed_completion() {
+        let mut projection = Projection::default();
+        crate::components::transcript::notice_tests::production_compaction_state(
+            |state, transcript, cx| {
+                transcript.update(cx, |t, cx| t.set_compacting(state.compacting, cx));
+                projection.sync(&state.transcript, transcript, cx);
+                transcript.update(cx, |t, cx| {
+                    t.set_working_indicator(working_indicator(state), cx)
+                });
+            },
+        );
+    }
+
+    #[test]
+    fn notices_preserve_explicit_severity_and_reviewed_error_labels() {
+        let mut notice = entry(1, "notice", "error warning failed");
+        for (wire, severity) in [
+            (
+                tau_session::transcript::NoticeType::Info,
+                NoticeSeverity::Info,
+            ),
+            (
+                tau_session::transcript::NoticeType::Warning,
+                NoticeSeverity::Warning,
+            ),
+            (
+                tau_session::transcript::NoticeType::Error,
+                NoticeSeverity::Error,
+            ),
+        ] {
+            notice.notice_type = wire;
+            let projected = row(&notice);
+            assert_eq!(projected.id, notice.id);
+            let TranscriptContent::Notice(body) = projected.content else {
+                panic!()
+            };
+            assert_eq!(body.severity, severity);
+            assert!(!body.inline);
+            assert_eq!(body.text, notice.text);
+        }
+        notice.kind = "error".into();
+        notice.error_label = Some("Compaction Failed".into());
+        let TranscriptContent::Notice(body) = row(&notice).content else {
+            panic!()
+        };
+        assert_eq!(body.label(), "Compaction Failed");
+        assert!(body.inline);
     }
 
     #[test]

@@ -423,6 +423,7 @@ impl Palette {
                 div()
                     .p(px(6.))
                     .id("palette-results")
+                    .test_support()
                     .max_h(px(rows_height))
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
@@ -468,8 +469,9 @@ impl Palette {
                                     .text_size(px(12.))
                                     .focusable(false)
                                     .tab_stop(false)
-                                    .on_mouse_move(cx.listener(move |s, _, _, cx| {
-                                        if s.selected != Some(i) {
+                                    .on_hover(cx.listener(move |s, hovered, _, cx| {
+                                        // Entering after wheel layout is selection, not a reveal.
+                                        if *hovered && s.selected != Some(i) {
                                             s.selected = Some(i);
                                             cx.notify();
                                         }
@@ -609,7 +611,11 @@ mod tests {
         window.update(|palette, window, cx| palette.open(window, cx));
         window.draw();
         window.update(|palette, window, cx| {
+            let results = window.find("palette-results").bounds();
+            assert_eq!(results, palette.scroll.bounds());
+            assert!(results.size.height > px(0.));
             let plain = window.find("palette-title-0").bounds();
+            assert!(results.contains(&plain.center()));
             let with_detail = window.find("palette-title-1").bounds();
             assert!((plain.size.width - with_detail.size.width).abs() < px(1.));
             for i in 0..3 {
@@ -651,6 +657,126 @@ mod tests {
                 .shape_line("Session".into(), px(13.), &[run], None);
             assert!((actual.size.width - expected.width).abs() < px(1.));
         });
+    }
+
+    #[test]
+    fn root_wheel_enters_painted_row_without_motion_or_hover_reveal() {
+        use gpui_kit::{base::Root, point, size, test::TestWindowExt};
+        for dark in [false, true] {
+            let mut app = gpui_kit::TestApp::new();
+            app.update(|cx| crate::components::init(cx, dark));
+            let mut palette = None;
+            let mut root = app.open_window(|window, cx| {
+                let entity = cx.new(|cx| {
+                    Palette::new(
+                        dark,
+                        vec![PalettePage {
+                            id: "root".into(),
+                            placeholder: "Search".into(),
+                            items: (0..40)
+                                .map(|i| PaletteItem {
+                                    id: format!("dense-{i}"),
+                                    label: format!("Review change {i}"),
+                                    detail: String::new(),
+                                    shortcut: String::new(),
+                                    group: Some("Changes".into()),
+                                    destination: None,
+                                })
+                                .collect(),
+                        }],
+                        window,
+                        cx,
+                    )
+                });
+                entity.update(cx, |p, cx| p.open(window, cx));
+                palette = Some(entity.clone());
+                Root::new(entity, window, cx)
+            });
+            let palette = palette.unwrap();
+            root.simulate_resize(size(px(720.), px(480.)));
+            root.update(|_, w, cx| w.bounds_changed(cx));
+            root.draw();
+            root.simulate_keystroke("down");
+            root.draw();
+            let pointer = root.update(|_, w, _| w.find("palette-results").bounds().center());
+            root.simulate_mouse_move(pointer);
+            root.draw();
+            let hit = |root: &mut gpui_kit::TestAppWindow<Root>| {
+                root.update(|_, w, _| {
+                    (0..40)
+                        .find(|i| w.find(format!("row-{i}")).bounds().contains(&pointer))
+                        .expect("actual row under measured results center")
+                })
+            };
+            let before = hit(&mut root);
+            assert_eq!(root.read(|_, cx| palette.read(cx).selected), Some(before));
+            root.simulate_scroll(pointer, point(px(0.), px(-90.)));
+            for _ in 0..3 {
+                root.draw();
+            }
+            let after = hit(&mut root);
+            assert_ne!(before, after);
+            root.update(|_, w, cx| {
+                let p = palette.read(cx);
+                assert_eq!(p.selected_id(), Some(format!("dense-{after}").as_str()));
+                assert_eq!(p.scroll.offset().y, px(-90.), "hover must not reveal/jump");
+                let row = w.find(format!("row-{after}")).bounds();
+                assert!(
+                    w.painted_quads().iter().any(|q| {
+                        q.background == rgba(if dark { 0x4752664d } else { 0x6b7d8f33 }).into()
+                            && q.bounds.contains(&row.center().scale(w.scale_factor()))
+                    }),
+                    "selected hit row must actually paint its wash"
+                );
+            });
+            // A stationary hover must not undo keyboard selection on another frame.
+            root.simulate_keystroke("down");
+            for _ in 0..3 {
+                root.draw();
+            }
+            assert_eq!(
+                root.read(|_, cx| palette.read(cx).selected),
+                Some(after + 1)
+            );
+            // Genuine keyboard navigation still reveals a row outside the viewport.
+            for _ in 0..20 {
+                root.simulate_keystroke("down");
+                root.draw();
+            }
+            root.update(|_, w, cx| {
+                let p = palette.read(cx);
+                let row = w.find(format!("row-{}", p.selected.unwrap())).bounds();
+                assert!(
+                    p.scroll.bounds().contains(&row.center()),
+                    "keyboard reveal: {row:?}"
+                );
+                assert!(p.scroll.offset().y < px(-90.));
+            });
+            root.simulate_input("Review");
+            root.draw();
+            let editor = root.read(|_, cx| palette.read(cx).search.clone());
+            root.update(|_, w, cx| {
+                editor.update(cx, |e, cx| {
+                    e.replace_and_mark_text_in_range(None, "変", Some(0..1), w, cx);
+                })
+            });
+            root.draw();
+            let selected = root.read(|_, cx| palette.read(cx).selected);
+            root.simulate_keystroke("down");
+            root.update(|_, w, cx| {
+                editor.update(cx, |e, cx| {
+                    assert!(e.marked_text_range(w, cx).is_some(), "Down preserves IME");
+                })
+            });
+            root.simulate_keystroke("escape");
+            root.draw();
+            root.update(|_, _, cx| {
+                let p = palette.read(cx);
+                assert!(p.is_open());
+                assert_eq!(p.selected, selected);
+                assert!(p.query().contains("Review"), "draft retained");
+            });
+        }
     }
 
     #[test]

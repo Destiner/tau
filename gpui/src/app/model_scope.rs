@@ -98,6 +98,11 @@ mod tests {
                 }
                 Command::ReadModelScope { token, .. } => reads.push(token),
                 Command::Start { .. } | Command::Save { .. } => {}
+                Command::WorkspaceMutation { mutation, .. } => {
+                    assert!(matches!(mutation,
+                        super::super::workspace_mutations::Mutation::Select { project, session }
+                        if project == "/test/project" && session.is_empty()));
+                }
                 _ => panic!("unexpected bootstrap service command"),
             }
         }

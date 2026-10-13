@@ -136,6 +136,16 @@ fn disconnected_root_divider_rejects_without_rpc_or_false_busy_and_preserves_wor
         })
     });
     f.paint();
+    let close = f.root.update(|_, w, _| w.find("close").bounds().center());
+    f.root.simulate_click(close, MouseButton::Left);
+    f.paint();
+    // The connection incident may move the retained reader; navigate back to the divider.
+    let viewport = f
+        .root
+        .update(|_, w, _| w.find("shell-transcript-slot").bounds());
+    f.root
+        .simulate_scroll(viewport.center(), gpui_kit::point(px(0.), px(550.)));
+    f.paint();
     for _ in 0..2 {
         f.click(0);
         f.paint();

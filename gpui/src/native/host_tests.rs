@@ -215,9 +215,9 @@ fn composed_menus_exclude_settings_and_keep_no_active_window_dispatch() {
         menus.iter().map(|m| m.name.as_ref()).collect::<Vec<_>>(),
         ["Tau", "File", "Edit", "Window"]
     );
-    assert_eq!(menus[0].items.len(), 1);
+    assert_eq!(menus[0].items.len(), 3);
     assert!(
-        matches!(&menus[0].items[0], MenuItem::Action { name, .. } if name.as_ref() == "Quit Tau")
+        matches!(&menus[0].items[2], MenuItem::Action { name, .. } if name.as_ref() == "Quit Tau")
     );
     let bindings = f.app.update(|cx| {
         cx.key_bindings()

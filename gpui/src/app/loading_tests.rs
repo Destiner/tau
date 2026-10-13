@@ -203,7 +203,8 @@ fn loading_timer_is_selection_and_start_attempt_fenced_and_errors_end_the_wait()
     f.root.draw();
     f.root.update(|_, w, _| {
         assert!(w.try_find("session-loading").is_none());
-        assert!(w.find("retry-pi").visible());
+        assert!(w.find("reconnect").visible());
+        assert!(w.find("dialog").visible());
     });
     f.advance(500);
     f.root

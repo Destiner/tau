@@ -1062,6 +1062,84 @@ async fn empty_session_keyboard_switch(shell: &Entity<Shell>, cx: &AsyncApp, fir
     );
 }
 
+async fn version_status(shell: &Entity<Shell>, cx: &AsyncApp, runtime: &str) {
+    click(shell, cx, "version").await;
+    poll(cx, "native version status painted", 5, |cx| {
+        window(shell, cx)
+            .update(cx, |_, w, cx| {
+                shell
+                    .read(cx)
+                    .sidebar
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .version_open()
+                    && gpui_kit::base::test_support::find(w, &[], &"version-popover".into())
+                        .is_some_and(|panel| panel.visible())
+            })
+            .unwrap()
+    })
+    .await;
+    cx.update(|cx| {
+        window(shell, cx)
+            .update(cx, |_, w, _| {
+                let button =
+                    gpui_kit::base::test_support::find(w, &[], &"check-updates".into()).unwrap();
+                assert_eq!(button.disabled(), Some(true));
+            })
+            .unwrap()
+    });
+    click(shell, cx, "check-updates").await;
+    cx.update(|cx| {
+        assert!(
+            shell
+                .read(cx)
+                .sidebar
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .version_open()
+        );
+        assert_eq!(
+            shell.read(cx).sessions[runtime].controller.state().draft,
+            "Owned draft café 😀"
+        );
+    });
+    capture(shell, cx, "version-unavailable", true).await;
+    key(shell, cx, "escape");
+    poll(cx, "native version Escape closes panel", 5, |cx| {
+        !shell
+            .read(cx)
+            .sidebar
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .version_open()
+    })
+    .await;
+    // The version trigger owns return focus; subsequent composer focus uses the production action.
+    focus_composer(shell, cx);
+    cx.update(|cx| {
+        window(shell, cx)
+            .update(cx, |_, w, cx| {
+                let live = &shell.read(cx).sessions[runtime];
+                assert_eq!(live.controller.state().draft, "Owned draft café 😀");
+                assert!(
+                    live.composer
+                        .read(cx)
+                        .editor()
+                        .read(cx)
+                        .focus_handle(cx)
+                        .is_focused(w)
+                );
+            })
+            .unwrap()
+    });
+    eprintln!(
+        "PASS native-app measured version trigger + disabled unavailable update click + Escape retain draft"
+    );
+}
+
 async fn exercise(
     shell: Entity<Shell>,
     root: PathBuf,
@@ -1087,6 +1165,7 @@ async fn exercise(
         shell.read(cx).sessions[&first].controller.state().draft == "Owned draft café 😀"
     })
     .await;
+    version_status(&shell, &cx, &first).await;
     palette_remote(&shell, &cx, &first).await;
     admin_report(&shell, &cx, &root, &first).await;
     empty_session_keyboard_switch(&shell, &cx, &first).await;

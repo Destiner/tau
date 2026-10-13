@@ -21,6 +21,8 @@ use std::{cell::Cell, collections::HashMap, rc::Rc};
 pub type ModelGroups = HashMap<String, String>;
 
 mod commands;
+#[path = "composer/retry.rs"]
+pub mod retry;
 pub use commands::{CommandOption, CommandOrigin, CommandScope, CommandSource, CommandSourceInfo};
 
 pub fn effort_label(value: &str) -> &str {
@@ -149,6 +151,19 @@ pub struct Composer {
     streaming: bool,
     disabled: bool,
     setting_pending: bool,
+    ready: bool,
+    stopping: bool,
+    submission_pending: bool,
+    queue_busy: bool,
+    extension_blocked: bool,
+    retry: Option<retry::RetryPresentation>,
+    retry_focus: FocusHandle,
+    retry_hovered: bool,
+    retry_hint_visible: bool,
+    retry_hint_task: Option<gpui_kit::Task<()>>,
+    retry_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    retry_focus_events: Vec<Subscription>,
+    surface_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     compacting: bool,
     stopped: bool,
     fill_height: bool,
@@ -366,8 +381,99 @@ impl Composer {
         cx.notify();
     }
 
+    /// `set_status` controls draft editing; these flags control actions only.
+    /// Pending is controller-owned, including mode writes and accepted prompt acknowledgments.
+    pub fn set_readiness(
+        &mut self,
+        ready: bool,
+        stopping: bool,
+        submission_pending: bool,
+        queue_busy: bool,
+        extension_blocked: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.ready = ready;
+        self.stopping = stopping;
+        self.submission_pending = submission_pending;
+        self.queue_busy = queue_busy;
+        self.extension_blocked = extension_blocked;
+        if self.settings_disabled() {
+            self.close(cx);
+        }
+        cx.notify();
+    }
+
+    pub fn set_retry(&mut self, retry: Option<retry::RetryPresentation>, cx: &mut Context<Self>) {
+        if self.retry != retry {
+            self.retry = retry;
+            if self.retry.is_none() {
+                self.retry_hovered = false;
+                self.retry_hint_visible = false;
+                self.retry_hint_task = None;
+            }
+            cx.notify();
+        }
+    }
+
+    fn hover_retry(&mut self, hovered: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.retry_hovered = hovered;
+        self.retry_hint_visible = false;
+        self.retry_hint_task = None;
+        if hovered && self.retry.is_some() {
+            self.retry_hint_task = Some(cx.spawn_in(window, async move |owner, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(450))
+                    .await;
+                let _ = owner.update_in(cx, |s, _, cx| {
+                    s.retry_hint_visible = s.retry_hovered && s.retry.is_some();
+                    cx.notify();
+                });
+            }));
+        }
+        cx.notify();
+    }
+
+    pub fn retry_has_focus(&self, window: &Window) -> bool {
+        self.retry_focus.is_focused(window)
+    }
+
+    fn install_retry_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.retry_focus_events.clear();
+        self.retry_focus_events
+            .push(cx.on_focus_in(&self.retry_focus, window, |_, _, cx| cx.notify()));
+        self.retry_focus_events
+            .push(cx.on_focus_out(&self.retry_focus, window, |_, _, _, cx| cx.notify()));
+    }
+
     fn settings_disabled(&self) -> bool {
-        self.disabled || self.streaming || self.stopped || self.setting_pending || self.compacting
+        self.disabled
+            || !self.ready
+            || self.stopping
+            || self.streaming
+            || self.stopped
+            || self.setting_pending
+            || self.compacting
+            || self.extension_blocked
+    }
+
+    fn effort_disabled(&self) -> bool {
+        self.settings_disabled() || self.efforts.is_empty()
+    }
+
+    fn action_disabled(&self, filled: bool, cx: &gpui_kit::App) -> bool {
+        self.disabled
+            || !self.ready
+            || self.stopping
+            || self.stopped
+            || self.compacting
+            || if self.streaming && !filled {
+                false
+            } else {
+                !filled
+                    || self.submission_pending
+                    || self.extension_blocked
+                    || (self.streaming && (self.queue_busy || self.extension_command_draft(cx)))
+            }
     }
 
     pub fn set_choices(
@@ -551,14 +657,15 @@ impl Composer {
             })
             .unwrap_or(((viewport.height - px(16.)).max(px(0.)), px(0.)));
         let desired = px(if selector == "model" {
-            352.
+            320.
         } else {
             8. + self.efforts.len() as f32 * 24.
-        });
+        })
+        .min((viewport.height - px(120.)).max(px(0.)));
         let top = above >= desired || above >= below;
         (
             px(if selector == "model" { 300. } else { 100. })
-                .min((viewport.width - px(16.)).max(px(0.))),
+                .min((viewport.width - px(18.)).max(px(0.))),
             desired.min(if top { above } else { below }),
             if top {
                 Anchor::BottomLeft
@@ -614,10 +721,14 @@ impl Composer {
                     s.close(cx);
                 }
             }))
+            .when(is_model && self.models.is_empty(), |menu| {
+                menu.track_focus(&self.effort_focus)
+            })
             .on_key_down(cx.listener(Self::key))
             .on_action(cx.listener(|s, _: &NextChoice, w, cx| s.move_cursor(true, w, cx)))
             .on_action(cx.listener(|s, _: &PreviousChoice, w, cx| s.move_cursor(false, w, cx)));
-        if is_model {
+        let searchable = is_model && !self.models.is_empty();
+        if searchable {
             menu = menu.overflow_hidden().child(
                 div()
                     .id("model-search")
@@ -650,7 +761,7 @@ impl Composer {
             .px(px(4.))
             .pb(px(4.))
             .when(!is_model, |d| d.pt(px(4.)))
-            .max_h((height - px(if is_model { 28. } else { 0. })).max(px(0.)))
+            .max_h((height - px(if searchable { 28. } else { 0. })).max(px(0.)))
             .min_h_0()
             .overflow_y_scroll()
             .track_scroll(&self.selector_scroll)
@@ -661,13 +772,23 @@ impl Composer {
         if is_model && visible.is_empty() {
             list = list.child(
                 div()
+                    .id(if self.models.is_empty() {
+                        "model-empty"
+                    } else {
+                        "model-no-match"
+                    })
+                    .test_support()
                     .h(px(48.))
                     .flex()
                     .items_center()
                     .justify_center()
                     .text_size(px(10.))
                     .text_color(rgb(t.muted))
-                    .child("No matching models"),
+                    .child(if self.models.is_empty() {
+                        "No models available"
+                    } else {
+                        "No matching models"
+                    }),
             );
         }
         for ix in visible {
@@ -806,10 +927,11 @@ impl Composer {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.disabled
-            || self.stopped
-            || self.compacting
-            || (self.streaming && self.extension_command_draft(cx))
+        let filled = !self.editor.read(cx).value().trim().is_empty();
+        if self.action_disabled(filled, cx)
+            || self
+                .editor
+                .update(cx, |e, cx| e.marked_text_range(window, cx).is_some())
         {
             return;
         }
@@ -823,6 +945,8 @@ impl Composer {
         }
         let draft = self.editor.read(cx).value().to_string();
         self.editor.update(cx, |e, cx| e.set_value("", window, cx));
+        // Close the same-frame gap before the parent projects controller ownership.
+        self.submission_pending = true;
         cx.emit(if follow_up {
             Event::FollowUp(draft)
         } else {
@@ -843,6 +967,12 @@ impl Composer {
         self.context_menu.update(cx, |menu, cx| menu.dismiss(cx));
         self.menu_target = None;
         self.install_command_keys(window, cx);
+        self.install_retry_focus(window, cx);
+        self.surface_bounds.set(None);
+        self.retry_bounds.set(None);
+        self.retry_hovered = false;
+        self.retry_hint_visible = false;
+        self.retry_hint_task = None;
         self._events = cx.subscribe_in(
             &self.editor,
             window,
@@ -1033,6 +1163,19 @@ impl Composer {
             streaming,
             disabled,
             setting_pending: false,
+            ready: true,
+            stopping: false,
+            submission_pending: false,
+            queue_busy: false,
+            extension_blocked: false,
+            retry: None,
+            retry_focus: cx.focus_handle(),
+            retry_hovered: false,
+            retry_hint_visible: false,
+            retry_hint_task: None,
+            retry_bounds: Rc::new(Cell::new(None)),
+            retry_focus_events: Vec::new(),
+            surface_bounds: Rc::new(Cell::new(None)),
             compacting: false,
             stopped: false,
             fill_height: false,
@@ -1054,6 +1197,7 @@ impl Composer {
         };
         composer.sync_commands(cx);
         composer.install_command_keys(window, cx);
+        composer.install_retry_focus(window, cx);
         composer
     }
 }
@@ -1065,6 +1209,8 @@ impl Render for Composer {
         let draft = self.editor.read(cx).value().to_string();
         let filled = !draft.trim().is_empty();
         let settings_disabled = self.settings_disabled();
+        let model_open = self.selector == Some("model");
+        let effort_open = self.selector == Some("effort");
         let model_color = if self.selector == Some("model") {
             t.text
         } else {
@@ -1075,11 +1221,20 @@ impl Render for Composer {
         } else {
             t.muted
         };
-        let send_disabled = self.disabled
-            || self.stopped
-            || self.compacting
-            || (!self.streaming && !filled)
-            || (self.streaming && self.extension_command_draft(cx));
+        let send_disabled = self.action_disabled(filled, cx);
+        let effort_disabled = self.effort_disabled();
+        let pane_width = self
+            .surface_bounds
+            .get()
+            .map(|b| b.size.width)
+            .unwrap_or(px(0.));
+        // Reserve effort, send and toolbar gaps inside the actual mounted main pane.
+        let retry_reserve = px(if self.retry.is_some() { 70. } else { 0. });
+        let selectors_width = (pane_width - px(28.) - retry_reserve).max(px(0.));
+        let model_cap = px(210.)
+            .min((selectors_width - px(110.)).max(px(29.)))
+            .min(selectors_width);
+        let effort_cap = px(110.).min((selectors_width - model_cap).max(px(0.)));
         let icon_name = if self.streaming {
             if filled { "queue" } else { "stop" }
         } else {
@@ -1194,7 +1349,7 @@ impl Render for Composer {
                 .on_prepaint(move |bounds, _, _| model_bounds.set(Some(bounds)))
                 .child(
                     BaseButton::new("model")
-                        .max_w((window.viewport_size().width - px(145.)).max(px(40.)))
+                        .max_w(model_cap)
                         .min_w_0()
                         .accessibility_label(format!("Model: {}", self.model_label()))
                         .disabled(settings_disabled)
@@ -1208,6 +1363,9 @@ impl Render for Composer {
                         } else {
                             t.canvas
                         }))
+                        .when(self.selector == Some("model"), |b| {
+                            b.shadow(retry::glow(t.accent))
+                        })
                         .text_color(rgb(model_color))
                         .styles(|styles| styles.disabled(|button| button.opacity(0.45)))
                         .flex()
@@ -1215,7 +1373,13 @@ impl Render for Composer {
                         .gap(px(4.))
                         .rounded(px(4.))
                         .when(!settings_disabled, |button| {
-                            button.hover(move |s| s.bg(rgb(t.hover)))
+                            button.hover(move |s| {
+                                s.bg(rgb(t.hover)).border_color(rgb(if model_open {
+                                    t.accent
+                                } else {
+                                    t.border
+                                }))
+                            })
                         })
                         .text_size(px(10.))
                         .on_click(cx.listener(|s, _, window, cx| {
@@ -1227,10 +1391,16 @@ impl Render for Composer {
                                     s.reveal_cursor.set(true);
                                     s.cursor = if s.model().is_some() { s.model } else { 0 };
                                     s.query.clear();
+                                    let searchable = !s.models.is_empty();
                                     s.search.update(cx, |input, cx| {
                                         input.set_value("", window, cx);
-                                        input.focus(window, cx);
+                                        if searchable {
+                                            input.focus(window, cx);
+                                        }
                                     });
+                                    if !searchable {
+                                        s.effort_focus.focus(window, cx);
+                                    }
                                     cx.notify();
                                 }
                             }
@@ -1268,7 +1438,9 @@ impl Render for Composer {
                                 .map(Self::effort_choice_label)
                                 .unwrap_or_default()
                         ))
-                        .disabled(settings_disabled)
+                        .disabled(effort_disabled)
+                        .max_w(effort_cap)
+                        .min_w_0()
                         .track_focus(&self.effort_focus)
                         .on_key_down(cx.listener(|s, event: &KeyDownEvent, window, cx| {
                             if s.selector != Some("effort") {
@@ -1299,14 +1471,23 @@ impl Render for Composer {
                         } else {
                             t.canvas
                         }))
+                        .when(self.selector == Some("effort"), |b| {
+                            b.shadow(retry::glow(t.accent))
+                        })
                         .text_color(rgb(effort_color))
                         .styles(|styles| styles.disabled(|button| button.opacity(0.45)))
                         .flex()
                         .items_center()
                         .gap(px(4.))
                         .rounded(px(4.))
-                        .when(!settings_disabled, |button| {
-                            button.hover(move |s| s.bg(rgb(t.hover)))
+                        .when(!effort_disabled, |button| {
+                            button.hover(move |s| {
+                                s.bg(rgb(t.hover)).border_color(rgb(if effort_open {
+                                    t.accent
+                                } else {
+                                    t.border
+                                }))
+                            })
                         })
                         .text_size(px(10.))
                         .on_click(cx.listener(|s, _, window, cx| {
@@ -1314,7 +1495,7 @@ impl Render for Composer {
                                 s.suppress_effort_click = false;
                                 return;
                             }
-                            if !s.settings_disabled() {
+                            if !s.effort_disabled() {
                                 if s.selector == Some("effort") {
                                     s.close(cx);
                                 } else {
@@ -1327,16 +1508,18 @@ impl Render for Composer {
                             }
                         }))
                         .child(
-                            self.effort()
-                                .map(Self::effort_choice_label)
-                                .unwrap_or_default()
-                                .to_owned(),
+                            div().min_w_0().truncate().child(
+                                self.effort()
+                                    .map(Self::effort_choice_label)
+                                    .unwrap_or_default()
+                                    .to_owned(),
+                            ),
                         )
                         .child(
                             support::selector_arrow(effort_color)
                                 .id("effort-chevron")
                                 .test_support()
-                                .opacity(if settings_disabled { 0.45 } else { 1. }),
+                                .opacity(if effort_disabled { 0.45 } else { 1. }),
                         ),
                 ),
         )
@@ -1345,17 +1528,34 @@ impl Render for Composer {
         .when(self.selector == Some("effort"), |popup| {
             popup.content(self.menu("effort", window, cx))
         });
-        let toolbar = div()
-            .id("footer-gap")
-            .test_support()
-            .w_full()
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .gap(px(2.))
-            .child(model)
-            .child(effort)
-            .child(send);
+        let toolbar =
+            div()
+                .id("footer-gap")
+                .test_support()
+                .w_full()
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .gap(px(2.))
+                .child(model)
+                .child(effort)
+                .when_some(self.retry.as_ref(), |toolbar, retry| {
+                    toolbar.child(
+                        div()
+                            .id("retry-hover-target")
+                            .on_hover(cx.listener(|s, hovered, window, cx| {
+                                s.hover_retry(*hovered, window, cx)
+                            }))
+                            .child(retry::indicator(
+                                retry,
+                                &self.retry_focus,
+                                self.dark,
+                                self.retry_hint_visible || self.retry_focus.is_focused(window),
+                                self.retry_bounds.clone(),
+                            )),
+                    )
+                })
+                .child(send);
         let editor_bounds = self.editor_bounds.clone();
         let input = InputBase::new("editor")
             .role(None)
@@ -1371,10 +1571,13 @@ impl Render for Composer {
             })
             .on_mouse_down_out(cx.listener(|s, event: &MouseDownEvent, window, cx| {
                 // Capture runs even when blank chrome consumes the target's mouse down.
+                // Context gestures preserve the origin and selection before a menu captures them.
                 // Only release our own focus; menus and other editors own theirs independently.
-                if s.editor_bounds
-                    .get()
-                    .is_some_and(|bounds| !bounds.contains(&event.position))
+                if event.button == gpui_kit::MouseButton::Left
+                    && !event.modifiers.control
+                    && s.editor_bounds
+                        .get()
+                        .is_some_and(|bounds| !bounds.contains(&event.position))
                     && !(s.command_menu_active()
                         && s.commands
                             .bounds
@@ -1396,8 +1599,15 @@ impl Render for Composer {
             .text_size(px(13.))
             .line_height(gpui_kit::relative(1.45))
             .child(Textarea::new(&self.editor));
+        let surface_bounds = self.surface_bounds.clone();
         div()
             .w_full()
+            .min_w_0()
+            .on_prepaint(move |bounds, window, _| {
+                if surface_bounds.replace(Some(bounds)) != Some(bounds) {
+                    window.request_animation_frame();
+                }
+            })
             .when(self.fill_height, |composer| {
                 composer.h_full().min_h_0().flex().flex_col()
             })
@@ -1464,11 +1674,18 @@ mod tests {
                 for (trigger, arrow) in [("model", "model-chevron"), ("effort", "effort-chevron")] {
                     let trigger = window.find(trigger).bounds();
                     let arrow = window.find(arrow).bounds();
-                    let extent = px(6.);
-                    assert!((arrow.size.width - extent).abs() < px(0.1));
-                    assert!((arrow.size.height - extent).abs() < px(0.1));
-                    assert!((arrow.center().x - (trigger.right() - px(11.5))).abs() < px(0.1));
-                    assert!((arrow.center().y - (trigger.center().y - px(1.5))).abs() < px(0.1));
+                    let extent = px(6. * std::f32::consts::SQRT_2);
+                    let tolerance = px(0.5 / window.scale_factor() + 0.02);
+                    assert!((arrow.size.width - window.pixel_snap(extent)).abs() < px(0.01));
+                    assert!((arrow.size.height - window.pixel_snap(extent)).abs() < px(0.01));
+                    assert_eq!(trigger.size.height, px(22.));
+                    assert!((arrow.center().x - (trigger.right() - px(12.))).abs() < tolerance);
+                    assert!((arrow.center().y - (trigger.center().y - px(1.))).abs() < tolerance);
+                    // The two painted borders occupy the lower part of the rotated square.
+                    let painted_center_y = arrow.center().y + px(2.5 / std::f32::consts::SQRT_2);
+                    assert!(
+                        (painted_center_y - trigger.center().y - px(0.767767)).abs() < tolerance
+                    );
                 }
                 let expected = rgba((support::tokens(dark).text << 8) | 0x59);
                 assert!(

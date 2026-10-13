@@ -237,6 +237,11 @@ fn root_typing_tab_history_selection_and_enter_once_after_reattach() {
         );
         assert_eq!(draft(&window, &composer), "");
         received.borrow_mut().clear();
+        window.update(|_, _, cx| {
+            composer.update(cx, |s, cx| {
+                s.set_readiness(true, false, false, false, false, cx)
+            })
+        });
         assert_focus(&mut window, &composer);
         window.read(|_, cx| assert_eq!(composer.read(cx).editor(), editor));
     }
@@ -270,6 +275,12 @@ fn root_shift_newline_followup_and_streaming_extension_admission() {
             vec![Event::FollowUp("/summarize".into())]
         );
         received.borrow_mut().clear();
+        // Model a finished controller acknowledgment before the next independent gesture.
+        window.update(|_, _, cx| {
+            composer.update(cx, |s, cx| {
+                s.set_readiness(true, false, false, false, false, cx)
+            })
+        });
     }
     set_draft(&mut window, &composer, "/ssn");
     window.simulate_keystroke("enter");
@@ -317,6 +328,54 @@ fn root_escape_stays_dismissed_until_token_exit_and_host_set_value_resets_cursor
     assert_focus(&mut window, &composer);
 }
 #[test]
+fn command_cursor_and_hover_paint_only_rail_without_moving_first_line() {
+    for dark in [false, true] {
+        let (_app, mut window, composer) = fixture(40., true, catalog());
+        window.update(|_, w, cx| composer.update(cx, |c, cx| c.set_theme(dark, w, cx)));
+        window.simulate_input("/");
+        window.draw();
+        let editor = window.update(|_, w, _| w.find("editor").bounds());
+        let popup = window.update(|_, w, _| w.find("command-menu").bounds());
+        assert_eq!(popup.top(), editor.top() + px(28.));
+        let first = window.update(|_, w, _| w.find("command-copy-0").bounds());
+        for hovered in [false, true] {
+            if hovered {
+                let at = window.update(|_, w, _| w.find("command-option-1").bounds().center());
+                window.simulate_mouse_move(at);
+                window.draw();
+            }
+            window.update(|_, w, _| {
+                assert_eq!(w.find("command-copy-0").bounds(), first);
+                assert_eq!(w.find("command-menu").bounds(), popup);
+                let row = w
+                    .find(if hovered {
+                        "command-option-1"
+                    } else {
+                        "command-option-0"
+                    })
+                    .bounds();
+                let row = w.pixel_snap_bounds(row).scale(w.scale_factor());
+                let wash = rgb(if dark { 0x475266 } else { 0x6b7d8f }).opacity(if dark {
+                    0.2
+                } else {
+                    0.1
+                });
+                assert!(
+                    !w.painted_quads()
+                        .iter()
+                        .any(|q| q.background == wash.into() && q.bounds.contains(&row.center()))
+                );
+                assert!(w.painted_quads().iter().any(|q| {
+                    q.background == rgb(support::tokens(dark).accent).into()
+                        && q.bounds.left() == row.left()
+                        && q.bounds.size.width == px(2.).scale(w.scale_factor())
+                }));
+            });
+        }
+    }
+}
+
+#[test]
 fn root_popup_overlay_geometry_clamping_reveal_wheel_and_hover_no_scroll() {
     let catalog: Vec<_> = (0..70)
         .map(|i| option(&format!("scroll-command-{i}"), CommandSource::Prompt))
@@ -336,7 +395,7 @@ fn root_popup_overlay_geometry_clamping_reveal_wheel_and_hover_no_scroll() {
                 origin: first_row.origin.scale(w.scale_factor()),
                 size: first_row.size.scale(w.scale_factor()),
             };
-            assert!(w.painted_quads().iter().any(|quad| {
+            assert!(!w.painted_quads().iter().any(|quad| {
                 quad.bounds == painted_row && quad.background == rgb(0x6b7d8f).opacity(0.1).into()
             }));
             assert!(popup.size.height <= px(300.));
@@ -409,6 +468,76 @@ fn root_popup_overlay_geometry_clamping_reveal_wheel_and_hover_no_scroll() {
     }
 }
 #[test]
+fn root_natural_command_surface_has_symmetric_padding_for_zero_one_and_many_results() {
+    for dark in [false, true] {
+        for (top, fill, below) in [(430., false, false), (40., true, true)] {
+            for description in [None, Some(""), Some("A command description")] {
+                for count in [0, 1, 3, 70] {
+                    let options = (0..count)
+                        .map(|i| CommandOption {
+                            name: format!("command-{i}"),
+                            description: description.map(str::to_owned),
+                            source: CommandSource::Prompt,
+                            source_info: None,
+                        })
+                        .collect();
+                    let (_app, mut window, composer) = fixture(top, fill, options);
+                    window.update(|_, w, cx| composer.update(cx, |s, cx| s.set_theme(dark, w, cx)));
+                    set_draft(&mut window, &composer, "/");
+                    window.update(|_, w, cx| {
+                        let state = composer.read(cx);
+                        assert_eq!(state.command_menu_active(), count > 0);
+                        if count == 0 {
+                            assert!(
+                                gpui_kit::base::test_support::find(w, &[], &"command-menu".into())
+                                    .is_none()
+                            );
+                            return;
+                        }
+                        let popup = w.find("command-menu").bounds();
+                        let row_height = if description.is_some_and(|s| !s.is_empty()) {
+                            px(40.5)
+                        } else {
+                            px(24.)
+                        };
+                        let natural = px(18.) + row_height * count as f32;
+                        assert!((popup.size.height - natural.min(px(300.))).abs() < px(0.1));
+                        let first = w.find("command-option-0").bounds();
+                        assert_eq!(first.size.height, row_height);
+                        assert!(
+                            (first.top() - popup.top() - px(9.)).abs() < px(0.1),
+                            "count={count}, description={description:?}, below={below}, dark={dark}: popup={popup:?}, first={first:?}, offset={:?}",
+                            state.commands.scroll.offset(),
+                        );
+                        let copy = w.find("command-copy-0").bounds();
+                        let source = w.find("command-source-0").bounds();
+                        assert!((copy.top() - first.top() - px(5.)).abs() < px(0.1));
+                        assert!((first.bottom() - copy.bottom() - px(6.)).abs() < px(0.1));
+                        assert!((source.bottom() - copy.bottom()).abs() < px(0.1));
+                        if count <= 3 {
+                            let last = w.find(format!("command-option-{}", count - 1)).bounds();
+                            assert!((popup.bottom() - last.bottom() - px(9.)).abs() < px(0.1));
+                            assert_eq!(state.commands.scroll.max_offset().y, px(0.));
+                        } else {
+                            assert!(state.commands.scroll.max_offset().y > px(0.));
+                        }
+                        let editor = w.find("editor").bounds();
+                        if below {
+                            assert_eq!(popup.top(), editor.top() + px(28.));
+                        } else {
+                            assert!((popup.bottom() - editor.top() + px(5.)).abs() < px(1.));
+                        }
+                        assert!(w.painted_quads().iter().any(|q| {
+                            q.background == rgb(support::tokens(dark).panel_raised).into()
+                        }));
+                    });
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn root_pointer_selection_submits_without_blur_or_selection_dropthrough() {
     let (_app, mut window, composer) = fixture(40., true, catalog());
     let (received, _subscription) = events(&mut window, &composer);
@@ -457,6 +586,11 @@ fn root_base_enter_action_and_remount_handlers_have_the_same_completion_path() {
             vec![Event::FollowUp("/skill:source-check".into())]
         );
         received.borrow_mut().clear();
+        window.update(|_, _, cx| {
+            composer.update(cx, |s, cx| {
+                s.set_readiness(true, false, false, false, false, cx)
+            })
+        });
         assert_eq!(draft(&window, &composer), "");
     }
 }

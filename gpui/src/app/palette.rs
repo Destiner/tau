@@ -181,6 +181,8 @@ impl Shell {
         self.lifecycle.is_some()
             || self.confirmation.is_some()
             || self.error.is_some()
+            || self.fallback.is_some()
+            || self.preview_open()
             || self.picker_busy
             || self.remote.is_open()
             || self
@@ -260,7 +262,8 @@ impl Shell {
             self.finish_header_palette_focus(cx);
         }
         let origin = self.palette.origin.take();
-        self.sync_admin(w, cx);
+        // Closing changes composer admission even when no Pi event follows.
+        self.sync(w, cx);
         if self.admin_reporter_open(cx) {
             self.open_admin_reporter(w, cx);
             return;

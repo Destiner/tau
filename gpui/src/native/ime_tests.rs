@@ -300,6 +300,12 @@ fn ime_enter_os_delivery_contract_never_submits_marked_draft() {
     );
     assert_eq!(f.value(), "");
     assert!(!f.window.read(|_, cx| f.composer.read(cx).is_disabled()));
+    // The standalone host must project completion before a second independent send.
+    f.window.update(|_, _, cx| {
+        f.composer.update(cx, |s, cx| {
+            s.set_readiness(true, false, false, false, false, cx)
+        });
+    });
     f.commit(None, "line one");
     f.key("shift-enter");
     assert_eq!(f.value(), "line one\n");
@@ -337,6 +343,20 @@ fn ime_single_line_enter_is_local_only_until_commit() {
 #[test]
 fn ime_model_search_escape_preserves_popup_and_other_draft() {
     let mut f = Fixture::new(false);
+    f.window.update(|_, _, cx| {
+        f.composer.update(cx, |s, cx| {
+            s.set_choices(
+                vec![crate::components::composer::Choice {
+                    id: "model".into(),
+                    label: "Model".into(),
+                    element_id: "model-option".into(),
+                }],
+                vec![],
+                cx,
+            );
+        });
+    });
+    f.window.draw();
     let position = f.window.update(|_, w, _| w.find("model").bounds().center());
     f.window.simulate_click(position, MouseButton::Left);
     f.window.draw();

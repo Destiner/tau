@@ -1,9 +1,9 @@
 use super::support;
 use gpui_kit::{
-    Anchor, Bounds, BoxShadow, Context, Entity, IntoElement, KeyDownEvent, MouseDownEvent, Pixels,
-    Render, Window,
+    Anchor, Bounds, BoxShadow, Context, Entity, EntityInputHandler, FocusHandle, IntoElement,
+    KeyDownEvent, MouseDownEvent, Pixels, Render, Window,
     base::{
-        Button, ElementExt, Input, Popup, TestSupportExt,
+        Button, Input, Popup, TestSupportExt,
         input::{InputEvent, InputState},
     },
     div,
@@ -35,10 +35,14 @@ pub struct ModelSelector {
     options: Vec<ModelOption>,
     dark: bool,
     open: bool,
+    disabled: bool,
     selected: String,
+    fallback: String,
+    available_width: Pixels,
     cursor: usize,
     query: String,
     search: Entity<InputState>,
+    menu_focus: FocusHandle,
     trigger_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
 }
 impl ModelSelector {
@@ -81,8 +85,12 @@ impl ModelSelector {
         self.query.clear();
         cx.notify();
     }
-    fn move_cursor(&mut self, down: bool, cx: &mut Context<Self>) {
-        if !self.open {
+    fn move_cursor(&mut self, down: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.open
+            || self
+                .search
+                .update(cx, |s, cx| s.marked_text_range(window, cx).is_some())
+        {
             return;
         }
         let visible = self.visible();
@@ -97,8 +105,12 @@ impl ModelSelector {
         }];
         cx.notify();
     }
-    fn key(&mut self, e: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.open {
+    fn key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.open
+            || self
+                .search
+                .update(cx, |s, cx| s.marked_text_range(window, cx).is_some())
+        {
             return;
         }
         let visible = self.visible();
@@ -113,10 +125,12 @@ impl ModelSelector {
         }
         cx.stop_propagation();
     }
-    fn content(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn content(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = support::tokens(self.dark);
         let trigger_bounds = self.trigger_bounds.clone();
         let visible = self.visible();
+        let height = px(320.).min((window.viewport_size().height - px(120.)).max(px(0.)));
+        let searchable = !self.options.is_empty();
         let mut last = String::new();
         let mut rows = Vec::new();
         for ix in visible.iter().copied() {
@@ -130,13 +144,14 @@ impl ModelSelector {
                         .id(format!("heading-{ix}"))
                         .test_support()
                         .h(px(22.))
+                        .flex_shrink_0()
                         .mr(px(10.))
                         .px(px(8.))
                         .flex()
                         .items_center()
                         .text_size(px(10.))
                         .text_color(rgb(t.faint))
-                        .child(group)
+                        .child(div().w_full().min_w_0().truncate().child(group))
                         .into_any_element(),
                 );
             }
@@ -144,6 +159,8 @@ impl ModelSelector {
                 Button::new(option.element_id.clone())
                     .w_full()
                     .h(px(28.))
+                    .flex_shrink_0()
+                    .min_w_0()
                     .px(px(8.))
                     .rounded(px(6.))
                     .relative()
@@ -180,14 +197,25 @@ impl ModelSelector {
                     .on_click(cx.listener(move |s, _, _, cx| {
                         s.select(ix, cx);
                     }))
-                    .child(div().w_full().h_full().flex().items_center().child(label))
+                    .child(
+                        div()
+                            .w_full()
+                            .min_w_0()
+                            .h_full()
+                            .flex()
+                            .items_center()
+                            .child(div().w_full().truncate().child(label)),
+                    )
                     .into_any_element(),
             );
         }
         div()
             .id("model-surface")
             .test_support()
-            .w(px(300.))
+            .w(px(300.).min((window.viewport_size().width - px(18.)).max(px(0.))))
+            .max_h(height)
+            .flex()
+            .flex_col()
             .rounded(px(8.))
             .overflow_hidden()
             .bg(rgb(t.panel_raised))
@@ -208,37 +236,43 @@ impl ModelSelector {
                     s.close(cx);
                 }
             }))
+            .when(!searchable, |d| d.track_focus(&self.menu_focus))
             .on_key_down(cx.listener(Self::key))
-            .on_action(cx.listener(|s, _: &NextModel, _, cx| s.move_cursor(true, cx)))
-            .on_action(cx.listener(|s, _: &PreviousModel, _, cx| s.move_cursor(false, cx)))
-            .child(
-                div()
-                    .id("model-search")
-                    .test_support()
-                    .h(px(28.))
-                    .px(px(12.))
-                    .text_size(px(11.))
-                    .line_height(px(13.))
-                    .bg(rgb(if self.dark { 0x080b11 } else { 0xebeef0 }))
-                    // GPUI's overflow clip is rectangular; mirror the outer surface's corners.
-                    .rounded_tl(px(8.))
-                    .rounded_tr(px(8.))
-                    .flex()
-                    .items_center()
-                    .child(
-                        div()
-                            .w_full()
-                            .key_context("NativeModelsSearch")
-                            .child(Input::new(&self.search)),
-                    ),
-            )
+            .on_action(cx.listener(|s, _: &NextModel, w, cx| s.move_cursor(true, w, cx)))
+            .on_action(cx.listener(|s, _: &PreviousModel, w, cx| s.move_cursor(false, w, cx)))
+            .when(searchable, |surface| {
+                surface.child(
+                    div()
+                        .id("model-search")
+                        .test_support()
+                        .h(px(28.).min(height))
+                        .flex_shrink_0()
+                        .overflow_hidden()
+                        .px(px(12.))
+                        .text_size(px(11.))
+                        .line_height(px(13.))
+                        .bg(rgb(if self.dark { 0x080b11 } else { 0xebeef0 }))
+                        // GPUI's overflow clip is rectangular; mirror the outer surface's corners.
+                        .rounded_tl(px(8.))
+                        .rounded_tr(px(8.))
+                        .flex()
+                        .items_center()
+                        .child(
+                            div()
+                                .w_full()
+                                .key_context("NativeModelsSearch")
+                                .child(Input::new(&self.search)),
+                        ),
+                )
+            })
             .child(
                 div()
                     .id("model-list")
                     .test_support()
                     .px(px(4.))
                     .pb(px(4.))
-                    .max_h(px(320.))
+                    .max_h((height - px(if searchable { 28. } else { 0. })).max(px(0.)))
+                    .min_h_0()
                     .overflow_y_scroll()
                     .flex()
                     .flex_col()
@@ -253,7 +287,11 @@ impl ModelSelector {
                                 .justify_center()
                                 .text_size(px(10.))
                                 .text_color(rgb(t.muted))
-                                .child("No matching models"),
+                                .child(if self.options.is_empty() {
+                                    "No models available"
+                                } else {
+                                    "No matching models"
+                                }),
                         )
                     })
                     .children(rows),
@@ -298,12 +336,33 @@ impl ModelSelector {
             options,
             dark,
             open: false,
+            disabled: false,
             selected: selected.into(),
+            fallback: String::new(),
+            available_width: px(210.),
             cursor: 0,
             query: String::new(),
             search,
+            menu_focus: cx.focus_handle(),
             trigger_bounds: Rc::new(Cell::new(None)),
         }
+    }
+
+    pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
+        self.disabled = disabled;
+        if disabled {
+            self.close(cx);
+        }
+        cx.notify();
+    }
+    /// Standalone hosts provide their measured main-pane width, not window width.
+    pub fn set_available_width(&mut self, width: Pixels, cx: &mut Context<Self>) {
+        self.available_width = width.max(px(0.));
+        cx.notify();
+    }
+    pub fn set_fallback(&mut self, label: impl Into<String>, cx: &mut Context<Self>) {
+        self.fallback = label.into();
+        cx.notify();
     }
 
     pub fn selected(&self) -> &str {
@@ -328,11 +387,18 @@ impl ModelSelector {
             .map(|_| &self.options[self.cursor])
     }
     pub fn set_options(&mut self, options: Vec<ModelOption>, cx: &mut Context<Self>) {
+        let cursor_id = if self.open {
+            self.options.get(self.cursor).map(|o| o.id.clone())
+        } else {
+            Some(self.selected.clone())
+        };
         self.options = options;
         self.cursor = self
             .options
             .iter()
-            .position(|o| o.id == self.selected)
+            .position(|o| cursor_id.as_ref().is_some_and(|id| &o.id == id))
+            .filter(|index| self.visible().contains(index))
+            .or_else(|| self.visible().into_iter().next())
             .unwrap_or(0);
         cx.notify();
     }
@@ -341,7 +407,7 @@ impl ModelSelector {
         cx.notify();
     }
     fn select(&mut self, ix: usize, cx: &mut Context<Self>) {
-        if !self.open {
+        if !self.open || self.disabled {
             return;
         }
         if let Some(option) = self.options.get(ix) {
@@ -352,9 +418,16 @@ impl ModelSelector {
     }
 }
 impl Render for ModelSelector {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = support::tokens(self.dark);
+        let open = self.open;
+        let pane_width = self.available_width;
+        let trigger_bounds = self.trigger_bounds.clone();
         let trigger = Button::new("trigger")
+            .disabled(self.disabled)
+            .styles(|styles| styles.disabled(|b| b.opacity(0.45)))
+            .max_w(px(210.).min(pane_width))
+            .min_w_0()
             .h(px(22.))
             .pl(px(5.))
             .pr(px(24.))
@@ -363,22 +436,39 @@ impl Render for ModelSelector {
             .border_1()
             .border_color(rgb(if self.open { t.accent } else { t.canvas }))
             .bg(rgb(t.canvas))
-            .hover(move |button| button.bg(rgb(t.hover)))
+            .when(self.open, |b| {
+                b.shadow(super::composer::retry::glow(t.accent))
+            })
+            .when(!self.disabled, |b| {
+                b.hover(move |button| {
+                    button.bg(rgb(t.hover)).border_color(rgb(if open {
+                        t.accent
+                    } else {
+                        t.border
+                    }))
+                })
+            })
             .text_size(px(10.))
             .text_color(rgb(if self.open { t.text } else { t.muted }))
             .child(
-                self.options
-                    .iter()
-                    .find(|o| o.id == self.selected)
-                    .map(|o| o.label.clone())
-                    .unwrap_or_default(),
+                div().min_w_0().truncate().child(
+                    self.options
+                        .iter()
+                        .find(|o| o.id == self.selected)
+                        .map(|o| o.label.clone())
+                        .unwrap_or_else(|| self.fallback.clone()),
+                ),
             )
-            .child(support::selector_arrow(if self.open {
-                t.text
-            } else {
-                t.muted
-            }))
+            .child(
+                support::selector_arrow(if self.open { t.text } else { t.muted })
+                    .id("model-selector-chevron")
+                    .test_support()
+                    .opacity(if self.disabled { 0.45 } else { 1. }),
+            )
             .on_click(cx.listener(|s, _, w, cx| {
+                if s.disabled {
+                    return;
+                }
                 if s.open {
                     s.close(cx);
                 } else {
@@ -388,24 +478,37 @@ impl Render for ModelSelector {
                         .iter()
                         .position(|o| o.id == s.selected)
                         .unwrap_or(0);
+                    let searchable = !s.options.is_empty();
                     s.search.update(cx, |input, cx| {
                         input.set_value("", w, cx);
-                        input.focus(w, cx);
+                        if searchable {
+                            input.focus(w, cx);
+                        }
                     });
+                    if !searchable {
+                        s.menu_focus.focus(w, cx);
+                    }
                     cx.notify();
                 }
             }));
-        let bounds = self.trigger_bounds.clone();
+        let open_below = self.trigger_bounds.get().is_some_and(|bounds| {
+            let above = bounds.top() - px(8.);
+            let below = window.viewport_size().height - bounds.bottom() - px(8.);
+            above < px(320.) && below > above
+        });
         Popup::new(
             "model-popup",
-            div()
-                .relative()
-                .on_prepaint(move |rect, _, _| bounds.set(Some(rect)))
-                .child(trigger),
+            support::observe_bounds(trigger, move |bounds, _, _| {
+                trigger_bounds.set(Some(bounds));
+            }),
         )
-        .anchor(Anchor::BottomLeft)
+        .anchor(if open_below {
+            Anchor::TopLeft
+        } else {
+            Anchor::BottomLeft
+        })
         .offset(px(5.))
-        .when(self.open, |p| p.content(self.content(cx)))
+        .when(self.open, |p| p.content(self.content(window, cx)))
     }
 }
 
@@ -437,7 +540,11 @@ mod tests {
     fn click(window: &mut TestAppWindow<ModelSelector>, id: &str) {
         window.draw();
         let position = window.update(|_, window, _| window.find(id.to_owned()).bounds().center());
-        window.simulate_click(position, MouseButton::Left);
+        window.simulate_mouse_move(position);
+        window.draw();
+        window.simulate_mouse_down(position, MouseButton::Left);
+        window.draw();
+        window.simulate_mouse_up(position, MouseButton::Left);
         window.draw();
     }
 
@@ -492,6 +599,151 @@ mod tests {
         window.simulate_click(gpui_kit::point(px(20.), px(20.)), MouseButton::Left);
         window.draw();
         assert!(!window.read(|host, cx| host.selector.read(cx).is_open()));
+    }
+
+    #[test]
+    fn long_standalone_trigger_caps_clips_and_disabled_empty_picker_is_inert() {
+        let (_app, mut window) = fixture();
+        window.update(|s, _, cx| {
+            s.options[0].label = "UnbrokenModel".repeat(40);
+            s.set_available_width(px(70.), cx);
+        });
+        window.draw();
+        window.update(|_, w, _| assert!(w.find("trigger").bounds().size.width <= px(70.)));
+        click(&mut window, "trigger");
+        window.update(|s, _, cx| {
+            s.set_disabled(true, cx);
+            s.select(1, cx);
+        });
+        assert!(!window.read(|s, _| s.is_open()));
+        assert_eq!(window.read(|s, _| s.selected().to_owned()), "alpha");
+        click(&mut window, "trigger");
+        assert!(!window.read(|s, _| s.is_open()));
+        window.update(|s, _, cx| {
+            s.set_disabled(false, cx);
+            s.set_options(vec![], cx);
+            s.set_fallback("Outside Model", cx);
+        });
+        click(&mut window, "trigger");
+        window.update(|_, w, _| {
+            assert!(w.try_find("empty").is_some());
+            assert!(w.try_find("model-search").is_none());
+        });
+        window.simulate_keystroke("enter");
+        assert_eq!(window.read(|s, _| s.selected().to_owned()), "alpha");
+    }
+
+    #[test]
+    fn open_catalogue_reorder_retains_cursor_identity_query_and_marked_search() {
+        let (_app, mut window) = fixture();
+        click(&mut window, "trigger");
+        window.simulate_keystroke("down");
+        window.update(|s, w, cx| {
+            assert_eq!(s.cursor().map(|o| o.id.as_str()), Some("beta"));
+            s.search.update(cx, |search, cx| {
+                search.replace_and_mark_text_in_range(None, "model", Some(2..4), w, cx);
+            });
+        });
+        window.draw();
+        window.update(|s, w, cx| {
+            let editor = s.search.clone();
+            let before = editor.update(cx, |e, cx| {
+                (
+                    e.marked_text_range(w, cx),
+                    e.selected_text_range(false, w, cx)
+                        .map(|x| (x.range, x.reversed)),
+                )
+            });
+            let mut options = s.options.clone();
+            options.swap(0, 1);
+            s.set_options(options, cx);
+            assert_eq!(s.cursor().map(|o| o.id.as_str()), Some("beta"));
+            assert_eq!(
+                s.query(),
+                "",
+                "marked text is not a committed Vue v-model query"
+            );
+            assert_eq!(editor.read(cx).value().as_ref(), "model");
+            assert_eq!(s.search, editor);
+            let after = editor.update(cx, |e, cx| {
+                (
+                    e.marked_text_range(w, cx),
+                    e.selected_text_range(false, w, cx)
+                        .map(|x| (x.range, x.reversed)),
+                )
+            });
+            assert_eq!(after, before);
+        });
+        for key in ["down", "up", "enter", "escape"] {
+            window.simulate_keystroke(key);
+        }
+        assert!(window.read(|s, _| s.is_open()));
+        assert_eq!(window.read(|s, _| s.selected().to_owned()), "alpha");
+        window.update(|s, w, cx| {
+            s.search.update(cx, |search, cx| {
+                search.replace_text_in_range(Some(0..5), "model beta", w, cx);
+            });
+        });
+        window.draw();
+        window.update(|s, w, cx| {
+            assert_eq!(s.query(), "model beta");
+            assert!(
+                s.search
+                    .update(cx, |search, cx| search.marked_text_range(w, cx).is_none())
+            );
+            assert_eq!(s.visible().len(), 1);
+            assert_eq!(s.cursor().map(|o| o.id.as_str()), Some("beta"));
+        });
+        window.simulate_keystroke("enter");
+        assert_eq!(window.read(|s, _| s.selected().to_owned()), "beta");
+        assert!(!window.read(|s, _| s.is_open()));
+    }
+
+    #[test]
+    fn standalone_search_ime_never_moves_or_selects_a_model() {
+        let (_app, mut window) = fixture();
+        click(&mut window, "trigger");
+        window.update(|s, w, cx| {
+            s.search.update(cx, |search, cx| {
+                search.replace_and_mark_text_in_range(None, "model", Some(5..5), w, cx)
+            });
+            let cursor = s.cursor;
+            s.move_cursor(true, w, cx);
+            assert_eq!(s.cursor, cursor);
+        });
+        for key in ["down", "up", "enter", "escape"] {
+            window.simulate_keystroke(key);
+        }
+        assert!(window.read(|s, _| s.is_open()));
+        assert_eq!(window.read(|s, _| s.selected().to_owned()), "alpha");
+    }
+
+    #[test]
+    fn production_chevron_geometry_keeps_trigger_hit_area_in_both_themes_and_open_states() {
+        let (_app, mut window) = fixture();
+        let before = window.update(|_, w, _| w.find("trigger").bounds());
+        for dark in [false, true] {
+            for open in [false, true] {
+                window.update(|selector, w, cx| {
+                    selector.set_theme(dark, w, cx);
+                    selector.open = open;
+                    cx.notify();
+                });
+                window.draw();
+                window.update(|_, w, _| {
+                    let trigger = w.find("trigger").bounds();
+                    let arrow = w.find("model-selector-chevron").bounds();
+                    assert_eq!(trigger, before, "glyph must not change the hit area");
+                    assert_eq!(trigger.size.height, px(22.));
+                    let extent = px(6. * std::f32::consts::SQRT_2);
+                    let tolerance = px(0.5 / w.scale_factor() + 0.02);
+                    assert!((arrow.size.width - w.pixel_snap(extent)).abs() < px(0.01));
+                    assert!((arrow.size.height - w.pixel_snap(extent)).abs() < px(0.01));
+                    assert!((arrow.center().x - trigger.right() + px(12.)).abs() < tolerance);
+                    assert!((arrow.center().y - trigger.center().y + px(1.)).abs() < tolerance);
+                });
+            }
+        }
     }
 
     #[test]

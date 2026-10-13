@@ -120,7 +120,11 @@ fn session_selection_keeps_shortcuts_on_the_current_shell_focus_path() {
             if case == "cold" {
                 assert_ne!(s.active, "a");
                 assert!(s.sessions[&s.active].starting);
-                assert!(s.sessions[&s.active].composer.read(cx).is_disabled());
+                assert!(
+                    !s.sessions[&s.active].composer.read(cx).is_disabled(),
+                    "cold drafts remain editable"
+                );
+                assert!(!s.sessions[&s.active].controller.state().ready);
             } else {
                 assert_eq!(s.active, if case == "same" { "a" } else { "b" });
             }
@@ -132,7 +136,7 @@ fn session_selection_keeps_shortcuts_on_the_current_shell_focus_path() {
             if case == "cold" {
                 assert!(
                     s.shell_focus.as_ref().unwrap().is_focused(w),
-                    "cold: disabled composer uses shell fallback"
+                    "cold: not-yet-ready session uses shell fallback"
                 );
             }
             if matches!(case, "same" | "warm") {
@@ -204,6 +208,29 @@ fn session_selection_keeps_shortcuts_on_the_current_shell_focus_path() {
             );
         }
     }
+}
+
+#[test]
+fn palette_escape_reconciles_composer_admission_without_a_following_pi_event() {
+    let mut f = crate::app::view::confirm_queue_fixture::Fixture::new();
+    f.root.update(|_, w, cx| {
+        f.shell.update(cx, |s, cx| {
+            s.show_palette_page("root", w, cx);
+            assert!(s.palette.is_open(cx));
+            s.sync(w, cx);
+            assert!(s.sessions["a"].composer.read(cx).is_disabled());
+        })
+    });
+    f.root.draw();
+    f.press("escape");
+    focus_frames(&mut f.root);
+    f.root.update(|_, w, cx| {
+        let s = f.shell.read(cx);
+        assert!(!s.palette.is_open(cx));
+        let composer = s.sessions["a"].composer.read(cx);
+        assert!(!composer.is_disabled());
+        assert!(composer.editor().read(cx).focus_handle(cx).is_focused(w));
+    });
 }
 
 #[test]

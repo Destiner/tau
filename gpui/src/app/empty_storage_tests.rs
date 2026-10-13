@@ -65,6 +65,11 @@ fn successful_empty_cleanup_never_paints_retry_save_and_failure_is_retryable() {
         })
     });
     root.draw();
+    // The cleanup incident owns a real modal; dismiss it before clicking the underlying retry.
+    let close = root.update(|_, w, _| w.find("close").bounds().center());
+    root.simulate_click(close, MouseButton::Left);
+    root.draw();
+    root.update(|_, _, cx| assert_eq!(shell.read(cx).register_retries.len(), 1));
     let point = root.update(|_, w, _| w.find("retry-storage").bounds().center());
     root.simulate_click(point, MouseButton::Left);
     root.draw();

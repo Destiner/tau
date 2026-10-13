@@ -21,6 +21,7 @@ pub struct Preferences {
     pub theme: String,
     pub drafts: Vec<Draft>,
     pub selected_draft: String,
+    pub sidebar_width: Option<f32>,
 }
 #[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -742,6 +743,7 @@ mod tests {
         let prefs = Preferences {
             theme: "dark".into(),
             selected_draft: String::new(),
+            sidebar_width: None,
             drafts: vec![Draft {
                 text: "unsent".into(),
                 ..Draft::default()

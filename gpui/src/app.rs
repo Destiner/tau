@@ -8,12 +8,15 @@ mod admin_bridge;
 #[cfg(test)]
 mod command_tests;
 mod empty_sessions;
+mod file_preview;
+mod first_run;
 #[cfg(test)]
 mod history_admission_tests;
 mod loading;
 mod model_scope;
 mod palette;
 mod projection;
+mod queue_recovery;
 mod remote;
 mod service;
 mod session_actions;
@@ -98,6 +101,8 @@ struct LiveSession {
     presented_history: Option<(String, String)>,
     extension: Option<(String, Entity<NativeDialog>)>,
     extension_subscription: Option<Subscription>,
+    extension_generation: Option<u64>,
+    extension_error: Option<(u64, String, String)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -119,6 +124,9 @@ pub struct Shell {
     error: Option<String>,
     lifecycle: Option<Request>,
     confirmation: Option<Entity<NativeDialog>>,
+    quit_error: Option<(Request, String)>,
+    fallback: Option<(String, Entity<NativeDialog>)>,
+    preview: file_preview::State,
     save_revision: u64,
     exit_revision: Option<(u64, Request)>,
     requested_session: Option<String>,
@@ -214,6 +222,9 @@ fn run_with(
                 error: None,
                 lifecycle: None,
                 confirmation: None,
+                quit_error: None,
+                fallback: None,
+                preview: file_preview::State::default(),
                 save_revision: 0,
                 exit_revision: None,
                 requested_session: session,
@@ -386,6 +397,7 @@ fn run_with(
                                 s.lifecycle = None;
                                 s.sidebar_state.invalidate_projection();
                                 s.confirmation = None;
+                                s.quit_error = None;
                                 s.exit_revision = None;
                                 cx.notify();
                                 if outcome != Outcome::Approved {
@@ -494,7 +506,15 @@ impl Shell {
             self.sidebar_state.invalidate_projection();
             match failed {
                 command @ Command::DisposeEmpty { .. } => {
+                    let previous = self.error.clone();
                     self.empty_disposal_dispatch_failed(command, cx);
+                    if let Some(request) = self.lifecycle {
+                        if let Some(error) = self.error.take() {
+                            self.quit_error = Some((request, error));
+                        }
+                        self.error = previous;
+                    }
+                    self.refresh_window(cx);
                     return;
                 }
                 Command::Admin(command) => {
@@ -519,6 +539,19 @@ impl Shell {
                     {
                         let id = request["id"].as_str().unwrap_or_default();
                         let effects = if request["type"] == "extension_ui_response" {
+                            if live
+                                .controller
+                                .state()
+                                .extension_dialogs
+                                .iter()
+                                .any(|r| r.id == id && r.submitting)
+                            {
+                                live.extension_error = Some((
+                                    generation,
+                                    id.into(),
+                                    "The extension response could not be sent. Try again.".into(),
+                                ));
+                            }
                             live.controller.extension_sent(id, false)
                         } else {
                             live.controller.request_failed(id)
@@ -526,7 +559,9 @@ impl Shell {
                         live.dirty = true;
                         live.projection_dirty = true;
                         self.effects(&runtime, effects, cx);
+                        self.refresh_window(cx);
                     }
+                    return;
                 }
                 Command::Start { runtime, .. } => {
                     if let Some(live) = self.sessions.get_mut(&runtime) {
@@ -541,10 +576,34 @@ impl Shell {
                 Command::Save { revision, .. } => {
                     self.pending_saves.remove(&revision);
                     self.save_failed = true;
-                    self.exit_revision = None;
+                    if let Some(request) = self.lifecycle.filter(|_| revision == self.save_revision)
+                    {
+                        self.quit_error = Some((
+                            request,
+                            "Drafts could not be saved. Retry before closing Tau.".into(),
+                        ));
+                    } else {
+                        self.error = Some("Drafts could not be saved. Try again.".into());
+                    }
+                    if self
+                        .exit_revision
+                        .is_some_and(|(expected, _)| expected == revision)
+                    {
+                        self.exit_revision = None;
+                    }
+                    self.refresh_window(cx);
+                    return;
                 }
                 command @ (Command::Register { .. } | Command::CancelStart { .. }) => {
-                    self.register_retries.push(command)
+                    self.register_retries.push(command);
+                    if let Some(request) = self.lifecycle {
+                        self.quit_error = Some((
+                            request,
+                            "Session changes still need saving. Retry before closing Tau.".into(),
+                        ));
+                        self.refresh_window(cx);
+                        return;
+                    }
                 }
                 Command::Archive {
                     project,
@@ -593,8 +652,7 @@ impl Shell {
             live.dirty = true;
             live.composer
                 .update(cx, |composer, cx| composer.reattach_window(window, cx));
-            live.extension = None;
-            live.extension_subscription = None;
+            // Retain request-owned editors across window/session remounts.
         }
         let dark = self.theme_dark(window);
         self.sidebar =
@@ -606,6 +664,18 @@ impl Shell {
             window,
             |s, _, action: &Action, w, cx| {
                 s.action(action.clone(), w, cx);
+            },
+        ));
+        sidebar.update(cx, |sidebar, cx| {
+            sidebar.set_width(self.preferences.sidebar_width.unwrap_or(260.), cx);
+            self.preferences.sidebar_width = Some(sidebar.width());
+        });
+        self.subscriptions.push(cx.subscribe(
+            &sidebar,
+            |s, sidebar, event: &components::chrome::SidebarWidthChanged, cx| {
+                s.preferences.sidebar_width = Some(sidebar.read(cx).width());
+                debug_assert_eq!(event.0, sidebar.read(cx).width());
+                s.schedule_sidebar_width_save(cx);
             },
         ));
         let header = self.header.as_ref().unwrap().clone();
@@ -620,6 +690,10 @@ impl Shell {
         self.subscriptions
             .push(cx.observe_window_appearance(window, |s, w, cx| s.sync(w, cx)));
         self.mount_palette(window, cx);
+        if let Some(palette) = self.palette.view.clone() {
+            self.subscriptions
+                .push(cx.observe(&palette, |s, _, cx| s.sync_chrome_admission(cx)));
+        }
         self.mount_remote(window, cx);
         self.mount_admin(window, cx);
         self.sync(window, cx);
@@ -670,9 +744,10 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.remote.is_open() || self.lifecycle.is_some() || self.confirmation.is_some() {
+        if !self.project_actions_admitted(cx) || self.palette.is_open(cx) {
             return;
         }
+        let explicit_project = project.is_some();
         let project = match project {
             Some(path) => self
                 .workspace
@@ -694,7 +769,7 @@ impl Shell {
                 focus.focus(window, cx);
             }
             self.restore_input_focus(cx);
-        } else {
+        } else if !explicit_project {
             self.error = Some("Import a project before creating a session.".into());
             cx.notify();
         }
@@ -758,7 +833,7 @@ impl Shell {
                     effort: String::new(),
                     draft: draft.clone(),
                     dark: self.dark,
-                    disabled: true,
+                    disabled: false,
                     streaming: false,
                 },
                 window,
@@ -788,50 +863,203 @@ impl Shell {
                 s.refresh_window(cx);
             }
         });
-        let queue_key = key.clone();
-        let queue_events = cx.subscribe(&queue, move |s, _, event: &QueueEvent, cx| {
-            if matches!(event, QueueEvent::Clear) {
-                if let Some(live) = s.sessions.get_mut(&queue_key) {
-                    live.dirty = true;
-                    let effects = live.controller.clear_queue();
-                    s.effects(&queue_key, effects, cx);
-                    s.refresh_window(cx);
-                }
-            } else {
-                s.error = Some("This queue action is not available yet. Copy uncertain work before reconnecting.".into());
-                cx.notify();
-            }
+        let context_key = key.clone();
+        let context_transcript = transcript.downgrade();
+        let context_owner = cx.entity().downgrade();
+        transcript.update(cx, |transcript, cx| {
+            transcript.set_context_handler(
+                move |key, target, event, window, cx| {
+                    let Some(entity) = context_transcript.upgrade() else {
+                        return;
+                    };
+                    let _ = context_owner.update(cx, |shell, cx| {
+                        if !shell
+                            .sessions
+                            .get(&context_key)
+                            .is_some_and(|live| live.transcript == entity)
+                        {
+                            return;
+                        }
+                        if let Some(source) = shell.transcript_link_source(&context_key, key, cx) {
+                            shell.open_link_menu(
+                                &context_key,
+                                source,
+                                target,
+                                event.position,
+                                window,
+                                cx,
+                            );
+                        }
+                    });
+                },
+                cx,
+            );
         });
-        let history_key = key.clone();
-        let links = cx.subscribe(
-            &transcript,
-            move |s, _, event: &TranscriptEvent, cx| match event {
-                TranscriptEvent::OpenLink(link) => {
-                    if link.starts_with("https://") || link.starts_with("http://") {
-                        cx.open_url(link);
+        let menu_key = key.clone();
+        let menu_queue = queue.downgrade();
+        let menu_owner = cx.entity().downgrade();
+        queue.update(cx, |queue, _| {
+            queue.set_context_handler(move |target, event, window, cx| {
+                let Some(entity) = menu_queue.upgrade() else {
+                    return;
+                };
+                let Some(preview) = entity.read(cx).preview().cloned() else {
+                    return;
+                };
+                let _ = menu_owner.update(cx, |shell, cx| {
+                    if shell
+                        .sessions
+                        .get(&menu_key)
+                        .is_some_and(|live| live.queue == entity)
+                    {
+                        shell.open_link_menu(
+                            &menu_key,
+                            file_preview::LinkSource::Queue { preview },
+                            target,
+                            event.position,
+                            window,
+                            cx,
+                        );
+                    }
+                });
+            })
+        });
+        let queue_key = key.clone();
+        let queue_events = cx.subscribe_in(
+            &queue,
+            window,
+            move |s, source, event: &QueueEvent, window, cx| {
+                if !s
+                    .sessions
+                    .get(&queue_key)
+                    .is_some_and(|live| &live.queue == source)
+                {
+                    return;
+                }
+                match event {
+                    QueueEvent::Clear => {
+                        if !s.project_actions_admitted(cx) {
+                            return;
+                        }
+                        if let Some(live) = s.sessions.get_mut(&queue_key) {
+                            live.dirty = true;
+                            let effects = live.controller.clear_queue();
+                            s.effects(&queue_key, effects, cx);
+                            s.refresh_window(cx);
+                        }
+                    }
+                    QueueEvent::Recover(index) => {
+                        if let Some(ticket) = s.queue_recovery(&queue_key, source, *index, cx) {
+                            s.restore_queue_draft(ticket, window, cx);
+                        }
+                    }
+                    QueueEvent::OpenLink(target) => {
+                        let queue = source.read(cx);
+                        if let Some(preview) = queue.preview().cloned() {
+                            let Some(anchor) = queue.link_anchor() else {
+                                return;
+                            };
+                            s.open_source_link(
+                                &queue_key,
+                                file_preview::LinkSource::Queue { preview },
+                                target.clone(),
+                                window.focused(cx),
+                                anchor,
+                                window,
+                                cx,
+                            );
+                        }
+                    }
+                    QueueEvent::Dismiss => {
+                        if let Some(live) = s.sessions.get_mut(&queue_key) {
+                            live.controller.dismiss_queue_feedback();
+                            live.dirty = true;
+                            s.refresh_window(cx);
+                        }
                     }
                 }
-                TranscriptEvent::LoadHistory(marker) => {
-                    if let Some(live) = s.sessions.get_mut(&history_key) {
-                        live.dirty = true;
-                        live.projection_dirty = true;
-                        let effects = live.controller.load_history(marker);
-                        // Admission may be a no-op without a revision change. Restore
-                        // this locally busy row from its authoritative controller state.
-                        if let Some(entry) = live
-                            .controller
-                            .state()
-                            .transcript
-                            .iter()
-                            .find(|entry| entry.id == *marker)
-                        {
-                            let row = projection::row(entry);
-                            live.transcript.update(cx, |transcript, cx| {
-                                transcript.update_content(&row.id, row.content, cx);
-                            });
+            },
+        );
+        let history_key = key.clone();
+        let links = cx.subscribe_in(
+            &transcript,
+            window,
+            move |s, source, event: &TranscriptEvent, window, cx| {
+                if !s
+                    .sessions
+                    .get(&history_key)
+                    .is_some_and(|live| &live.transcript == source)
+                {
+                    return;
+                }
+                match event {
+                    TranscriptEvent::LinkRequested {
+                        key,
+                        target,
+                        origin,
+                        anchor,
+                    } => {
+                        if let Some(source) = s.transcript_link_source(&history_key, *key, cx) {
+                            s.open_source_link(
+                                &history_key,
+                                source,
+                                target.clone(),
+                                origin.clone(),
+                                *anchor,
+                                window,
+                                cx,
+                            );
                         }
-                        s.effects(&history_key, effects, cx);
-                        s.refresh_window(cx);
+                    }
+                    TranscriptEvent::LinkContextRequested { key, target, event } => {
+                        if let Some(source) = s.transcript_link_source(&history_key, *key, cx) {
+                            s.open_link_menu(
+                                &history_key,
+                                source,
+                                target.clone(),
+                                event.position,
+                                window,
+                                cx,
+                            );
+                        }
+                    }
+                    TranscriptEvent::OpenLink(link) => {
+                        if let Some(crate::components::markdown::LinkTarget::Web(url)) =
+                            crate::components::markdown::LinkTarget::explicit(link)
+                        {
+                            s.open_source_link(
+                                &history_key,
+                                file_preview::LinkSource::Project,
+                                crate::components::markdown::LinkTarget::Web(url),
+                                window.focused(cx),
+                                window.mouse_position(),
+                                window,
+                                cx,
+                            );
+                        }
+                    }
+                    TranscriptEvent::LoadHistory(marker) => {
+                        if let Some(live) = s.sessions.get_mut(&history_key) {
+                            live.dirty = true;
+                            live.projection_dirty = true;
+                            let effects = live.controller.load_history(marker);
+                            // Admission may be a no-op without a revision change. Restore
+                            // this locally busy row from its authoritative controller state.
+                            if let Some(entry) = live
+                                .controller
+                                .state()
+                                .transcript
+                                .iter()
+                                .find(|entry| entry.id == *marker)
+                            {
+                                let row = projection::row(entry);
+                                live.transcript.update(cx, |transcript, cx| {
+                                    transcript.update_content(&row.id, row.content, cx);
+                                });
+                            }
+                            s.effects(&history_key, effects, cx);
+                            s.refresh_window(cx);
+                        }
                     }
                 }
             },
@@ -866,6 +1094,8 @@ impl Shell {
                 presented_history: None,
                 extension: None,
                 extension_subscription: None,
+                extension_generation: None,
+                extension_error: None,
                 _subscriptions: vec![events, changes, queue_events, links],
             },
         );
@@ -894,31 +1124,42 @@ impl Shell {
         self.dispatch(command, cx);
     }
     fn composer_event(&mut self, key: &str, event: &ComposerEvent, cx: &mut Context<Self>) {
+        let admitted = self.active == key
+            && self.project_actions_admitted(cx)
+            && !self.palette.is_open(cx)
+            && self
+                .sessions
+                .get(key)
+                .is_some_and(|live| live.controller.state().extension_dialogs.is_empty());
         let Some(live) = self.sessions.get_mut(key) else {
             return;
         };
         live.dirty = true;
         live.projection_dirty = true;
-        let effects = match event {
-            ComposerEvent::Send(text) | ComposerEvent::FollowUp(text)
-                if live.controller.state().working =>
-            {
-                let kind = if matches!(event, ComposerEvent::FollowUp(_)) {
-                    QueueKind::FollowUp
-                } else {
-                    QueueKind::Steer
-                };
-                live.controller.submit_queued(text, kind)
+        let effects = if !admitted {
+            vec![]
+        } else {
+            match event {
+                ComposerEvent::Send(text) | ComposerEvent::FollowUp(text)
+                    if live.controller.state().working =>
+                {
+                    let kind = if matches!(event, ComposerEvent::FollowUp(_)) {
+                        QueueKind::FollowUp
+                    } else {
+                        QueueKind::Steer
+                    };
+                    live.controller.submit_queued(text, kind)
+                }
+                ComposerEvent::Send(text) | ComposerEvent::FollowUp(text) => {
+                    live.controller.submit(text)
+                }
+                ComposerEvent::Stop => live.controller.abort(),
+                ComposerEvent::ModelChanged(id) => {
+                    let (provider, model) = id.split_once('\u{1f}').unwrap_or(("", id));
+                    live.controller.set_model(provider, model)
+                }
+                ComposerEvent::EffortChanged(effort) => live.controller.set_thinking(effort),
             }
-            ComposerEvent::Send(text) | ComposerEvent::FollowUp(text) => {
-                live.controller.submit(text)
-            }
-            ComposerEvent::Stop => live.controller.abort(),
-            ComposerEvent::ModelChanged(id) => {
-                let (provider, model) = id.split_once('\u{1f}').unwrap_or(("", id));
-                live.controller.set_model(provider, model)
-            }
-            ComposerEvent::EffortChanged(effort) => live.controller.set_thinking(effort),
         };
         if let ComposerEvent::Send(text) | ComposerEvent::FollowUp(text) = event
             && effects.is_empty()
@@ -994,14 +1235,29 @@ impl Shell {
     fn ingest(&mut self, event: Event, cx: &mut Context<Self>) {
         match event {
             Event::RegistrationStored { runtime, generation, id, path } => self.empty_registration_stored(&runtime, generation, &id, &path),
-            Event::EmptyDisposed { runtime, attempt, generation, success } => self.empty_disposed(runtime, attempt, generation, success, cx),
+            Event::EmptyDisposed { runtime, attempt, generation, success } => {
+                let owned = self.empty_disposals.contains(&(runtime.clone(), attempt, generation));
+                let previous = self.error.clone();
+                self.empty_disposed(runtime, attempt, generation, success, cx);
+                if !success && owned && let Some(request) = self.lifecycle {
+                    if let Some(error) = self.error.take() { self.quit_error = Some((request, error)); }
+                    self.error = previous;
+                }
+            }
             Event::Admin(reply) => self.admin_event(reply, cx),
             Event::Remote(event) => self.remote_event(event, cx),
             Event::ModelScope { runtime, token, patterns } => self.model_scope_result(runtime, token, patterns, cx),
             Event::WorkspaceMutation { revision, success } => self.finish_workspace_mutation(revision, success),
             Event::RegisteredRow { project, row } => self.merge_registered_row(project, row),
             Event::ImportedProject(Ok(project)) => self.merge_workspace_project(project),
-            Event::Loaded(Ok((mut workspace, preferences))) => { self.reconcile_workspace_mutations(&mut workspace); self.workspace = Some(workspace); self.preferences = preferences; self.loaded = true; self.sidebar_state.invalidate_metadata(); }
+            Event::Loaded(Ok((mut workspace, preferences))) => { self.reconcile_workspace_mutations(&mut workspace); self.workspace = Some(workspace); self.preferences = preferences;
+                if let Some(sidebar) = &self.sidebar {
+                    sidebar.update(cx, |sidebar, cx| {
+                        sidebar.set_width(self.preferences.sidebar_width.unwrap_or(260.), cx);
+                        self.preferences.sidebar_width = Some(sidebar.width());
+                    });
+                }
+                self.loaded = true; self.sidebar_state.invalidate_metadata(); }
             Event::Loaded(Err(())) => self.error = Some("Tau could not load its workspace. Reopen Tau to retry; saved data was not changed.".into()),
             #[cfg(test)]
             Event::Workspace(Ok(mut workspace)) => {
@@ -1016,7 +1272,9 @@ impl Shell {
             Event::RegistrationFailed(command) => {
                 if !self.empty_session_retry_is_current(&command) { return; }
                 self.register_retries.push(command);
-                self.error = Some("A completed session could not be added to the workspace. Retry saving it.".into());
+                let error = "A completed session could not be added to the workspace. Retry saving it.".into();
+                if let Some(request) = self.lifecycle { self.quit_error = Some((request, error)); }
+                else { self.error = Some(error); }
             }
             Event::ImportedProject(Err(())) => self.error = Some("Workspace changes could not be saved. Try again.".into()),
             #[cfg(test)]
@@ -1045,7 +1303,12 @@ impl Shell {
                     live.dirty |= !success || request["type"] == "extension_ui_response";
                     live.projection_dirty |= !success;
                     let id = request["id"].as_str().unwrap_or_default();
-                    let effects = if request["type"] == "extension_ui_response" { live.controller.extension_sent(id, success) } else if !success { live.controller.request_failed(id) } else { vec![] };
+                    let effects = if request["type"] == "extension_ui_response" {
+                        if live.controller.state().extension_dialogs.iter().any(|r| r.id == id && r.submitting) {
+                            live.extension_error = (!success).then(|| (generation, id.into(), "The extension response could not be sent. Try again.".into()));
+                        }
+                        live.controller.extension_sent(id, success)
+                    } else if !success { live.controller.request_failed(id) } else { vec![] };
                     self.effects(&runtime, effects, cx);
                 }
             }
@@ -1089,7 +1352,7 @@ impl Shell {
             }
             Event::Saved { revision, success, stopped } => {
                 self.sidebar_state.invalidate_projection();
-                if let Some(saved) = self.pending_saves.remove(&revision)
+                if let Some(mut saved) = self.pending_saves.remove(&revision)
                     && success {
                         for draft in &saved.drafts {
                             if let Some(live) = self.sessions.get_mut(&draft.key) {
@@ -1103,6 +1366,7 @@ impl Shell {
                                 live.persisted_recovered = 0;
                             }
                         }
+                        saved.sidebar_width = self.preferences.sidebar_width;
                         self.preferences = saved;
                     }
                 let cleanup_ran = !stopped.is_empty();
@@ -1114,12 +1378,20 @@ impl Shell {
                     }
                 }
                 for live in self.sessions.values_mut() { live.dirty = true; }
-                if !success { self.save_failed = true; self.error = Some("Drafts could not be saved or Pi could not stop. Retry before closing Tau.".into()); self.exit_revision = None; }
-                else { self.save_failed = false; }
+                if !success {
+                    self.save_failed = true;
+                    if let Some((expected, request)) = self.exit_revision.filter(|(expected, _)| *expected == revision) {
+                        let _ = expected;
+                        self.quit_error = Some((request, "Drafts could not be saved or Pi could not stop. Retry before closing Tau.".into()));
+                        self.exit_revision = None;
+                    } else {
+                        self.error = Some("Drafts could not be saved. Try again.".into());
+                    }
+                } else if revision == self.save_revision { self.save_failed = false; }
                 if success && let Some((expected, request)) = self.exit_revision
                     && expected == revision {
                         self.exit_revision = None;
-                        if !self.register_retries.is_empty() || !self.empty_disposals.is_empty() { self.save_failed = true; self.error = Some("Session changes still need saving or cleanup. Retry before closing Tau.".into()); }
+                        if !self.register_retries.is_empty() || !self.empty_disposals.is_empty() { self.save_failed = true; self.quit_error = Some((request, "Session changes still need saving or cleanup. Retry before closing Tau.".into())); }
                         else if revision != self.save_revision || self.sessions.values().any(|live| live.controller.state().draft != live.persisted_draft || live.controller.state().recovered_drafts.len() + live.restored_recovered.len() != live.persisted_recovered) {
                             self.begin_exit(request, cleanup_ran || matches!(request.intent(), Intent::Quit), cx);
                         } else { let lifecycle = cx.global::<NativeHost>().lifecycle(); lifecycle.resolve(request, true, cx); }
@@ -1143,6 +1415,23 @@ impl Shell {
         if !cx.global::<NativeHost>().lifecycle().is_pending(request) {
             return;
         }
+        if self.lifecycle != Some(request) || self.exit_revision.is_some() {
+            return;
+        }
+        if self.picker_busy || self.remote.is_busy() {
+            self.quit_error = Some((
+                request,
+                if self.remote.is_busy() {
+                    "Wait for the remote project operation before closing."
+                } else {
+                    "Finish or cancel the folder picker before closing."
+                }
+                .into(),
+            ));
+            self.refresh_window(cx);
+            return;
+        }
+        self.quit_error = None;
         let retries = std::mem::take(&mut self.register_retries);
         for command in retries {
             self.dispatch(command, cx);
@@ -1230,10 +1519,7 @@ impl Shell {
     }
 }
 fn app_version() -> String {
-    serde_json::from_str::<serde_json::Value>(include_str!("../../package.json"))
-        .ok()
-        .and_then(|package| package["version"].as_str().map(str::to_owned))
-        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").into())
+    env!("CARGO_PKG_VERSION").into()
 }
 fn sidebar_props() -> SidebarProps {
     SidebarProps {

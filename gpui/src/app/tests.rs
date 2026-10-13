@@ -22,6 +22,9 @@ pub(super) fn shell(commands: async_channel::Sender<Command>) -> Shell {
         error: None,
         lifecycle: None,
         confirmation: None,
+        quit_error: None,
+        fallback: None,
+        preview: file_preview::State::default(),
         save_revision: 0,
         exit_revision: None,
         requested_session: None,
@@ -75,6 +78,13 @@ pub(super) fn with_shell(
     });
 }
 pub(super) fn create(s: &mut Shell, id: &str, text: &str, w: &mut Window, cx: &mut Context<Shell>) {
+    if s.workspace.is_none() {
+        s.workspace = Some(WorkspaceSnapshot {
+            projects: vec![project()],
+            active_project_path: project().path,
+            pi_path: None,
+        });
+    }
     s.create_live(
         id.into(),
         project(),
@@ -107,9 +117,9 @@ pub(super) fn rpc(runtime: &str, generation: u64, value: serde_json::Value) -> E
 }
 #[test]
 fn reopened_surface_never_exposes_dropped_sidebar_handlers() {
-    for assembled_surface in [false, true] {
+    {
         let mut app = app();
-        let (commands, _) = async_channel::bounded(64);
+        let (commands, _requests) = async_channel::bounded(64);
         let shell = app.new_entity(|_| shell(commands));
         let mut first = app.open_window(|w, cx| Root::new(shell.clone(), w, cx));
         first.update(|_, w, cx| {
@@ -127,44 +137,28 @@ fn reopened_surface_never_exposes_dropped_sidebar_handlers() {
             });
         });
         first.draw();
+        let (old_sidebar, old_header, editor) = app.read_entity(&shell, |s, cx| {
+            (
+                s.sidebar.as_ref().unwrap().downgrade(),
+                s.header.as_ref().unwrap().downgrade(),
+                s.sessions["a"].composer.read(cx).editor().entity_id(),
+            )
+        });
         first.update(|_, w, _| w.remove_window());
         app.update(|cx| {
             assert!(cx.windows().is_empty());
-            let target = if assembled_surface {
-                open(shell.clone(), cx).unwrap()
-            } else {
-                let target: AnyWindowHandle = cx
-                    .open_window(Default::default(), |w, cx| {
-                        cx.new(|cx| Root::new(shell.clone(), w, cx))
-                    })
-                    .unwrap()
-                    .into();
-                target
-                    .update(cx, |_, w, cx| {
-                        shell.update(cx, |s, cx| {
-                            s.window = Some(w.window_handle());
-                            s.mount(w, cx);
-                        });
-                    })
-                    .unwrap();
-                target
-            };
+            let target = open(shell.clone(), cx).unwrap();
+            assert!(old_sidebar.upgrade().is_none());
+            assert!(old_header.upgrade().is_none());
             target
                 .update(cx, |_, w, cx| {
                     let id = "session-status-b".to_string().into();
                     let stale = gpui_kit::base::test_support::find(w, &[], &id);
-                    if assembled_surface {
-                        assert!(
-                            stale.is_none(),
-                            "first paint must not expose retained old chrome"
-                        );
-                        w.draw(cx).clear(cx);
-                    } else {
-                        assert!(
-                            stale.is_some(),
-                            "negative control exposes dropped sidebar's paint"
-                        );
-                    }
+                    assert!(
+                        stale.is_none(),
+                        "first paint must not expose retained old chrome"
+                    );
+                    w.draw(cx).clear(cx);
                     let position = gpui_kit::base::test_support::find(w, &[], &id)
                         .unwrap()
                         .bounds()
@@ -191,8 +185,50 @@ fn reopened_surface_never_exposes_dropped_sidebar_handlers() {
                 })
                 .unwrap();
         });
-        app.read_entity(&shell, |s, _| {
-            assert_eq!(s.active, if assembled_surface { "b" } else { "a" });
+        app.read_entity(&shell, |s, cx| {
+            assert_eq!(s.active, "b");
+            assert_eq!(s.sessions["a"].controller.state().draft, "draft A");
+            assert_eq!(s.sessions["b"].controller.state().draft, "draft B");
+            assert_eq!(
+                s.sessions["a"].composer.read(cx).editor().entity_id(),
+                editor
+            );
+            assert_eq!(
+                s.sessions["b"]
+                    .composer
+                    .read(cx)
+                    .editor()
+                    .read(cx)
+                    .value()
+                    .as_ref(),
+                "draft B"
+            );
+        });
+        app.update(|cx| {
+            let target = cx.windows()[0];
+            target
+                .update(cx, |_, w, cx| {
+                    use gpui_kit::test::TestWindowExt;
+                    w.click("session-status-a", cx);
+                })
+                .unwrap();
+        });
+        app.read_entity(&shell, |s, cx| {
+            assert_eq!(s.active, "a");
+            assert_eq!(
+                s.sessions["a"].composer.read(cx).editor().entity_id(),
+                editor
+            );
+            assert_eq!(
+                s.sessions["a"]
+                    .composer
+                    .read(cx)
+                    .editor()
+                    .read(cx)
+                    .value()
+                    .as_ref(),
+                "draft A"
+            );
         });
     }
 }
@@ -354,7 +390,13 @@ fn restoration_starts_only_selected_draft_and_keeps_metadata() {
 fn saturated_dispatch_recovers_request_and_does_not_acknowledge_draft_save() {
     with_shell(1, |s, w, cx, requests| {
         create(s, "a", "keep", w, cx);
-        // Start fills the channel. Bootstrap writes fail immediately, not after 10s.
+        // The authoritative workspace selection occupies the one-slot queue first.
+        assert!(matches!(
+            requests.try_recv().unwrap(),
+            Command::WorkspaceMutation { .. }
+        ));
+        s.retry_pi("a", cx);
+        // The retried Start fills the channel. Bootstrap writes fail immediately, not after 10s.
         started(s, "a", 8, cx);
         assert_eq!(s.sessions["a"].controller.pending_count(), 0);
         s.sessions
@@ -366,7 +408,10 @@ fn saturated_dispatch_recovers_request_and_does_not_acknowledge_draft_save() {
         assert!(s.save_failed);
         assert_eq!(s.sessions["a"].persisted_draft, "keep");
         assert!(s.pending_saves.is_empty());
-        requests.try_recv().unwrap();
+        assert!(matches!(
+            requests.try_recv().unwrap(),
+            Command::Start { .. }
+        ));
         s.persist(false, cx);
         let revision = s.save_revision;
         assert_eq!(s.sessions["a"].persisted_draft, "keep");
@@ -562,7 +607,10 @@ fn remount_retains_editor_and_routes_enter_exactly_once_in_new_window() {
                     );
                     assert_eq!(editor.read(cx).selected_range(), 1..3);
                     let composer = s.sessions["a"].composer.clone();
-                    composer.update(cx, |c, cx| c.set_status(false, false, cx));
+                    composer.update(cx, |c, cx| {
+                        c.set_status(false, false, cx);
+                        c.set_readiness(true, false, false, false, false, cx);
+                    });
                     editor.update(cx, |_, cx| {
                         cx.emit(InputEvent::PressEnter {
                             shift: false,

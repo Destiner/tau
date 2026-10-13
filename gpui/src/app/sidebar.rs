@@ -38,6 +38,7 @@ impl SessionIdentity {
 }
 #[derive(Default)]
 pub(super) struct State {
+    width_save: Option<gpui_kit::Task<()>>,
     unread: HashSet<SessionIdentity>,
     last_user: HashMap<SessionIdentity, u64>,
     runtime_identity: HashMap<String, SessionIdentity>,
@@ -203,6 +204,20 @@ fn archive_rows(source: &[ArchiveMetadata], now: u64) -> Vec<SessionItem> {
         .collect()
 }
 impl Shell {
+    pub(super) fn schedule_sidebar_width_save(&mut self, cx: &mut Context<Self>) {
+        // Resize frames only update the snapshot; the existing guarded save path
+        // flushes the final width, including immediately when shutdown is admitted.
+        self.sidebar_state.width_save = Some(cx.spawn(async move |owner, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(150))
+                .await;
+            let _ = owner.update(cx, |s, cx| {
+                if s.lifecycle.is_none() && !s.save_failed {
+                    s.persist(false, cx);
+                }
+            });
+        }));
+    }
     fn archive_metadata(&self, index: &HashMap<(&str, &str), &str>) -> Vec<ArchiveMetadata> {
         let mut source = Vec::new();
         if let Some(workspace) = &self.workspace {
@@ -533,6 +548,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.sync_chrome_admission(cx);
         let sidebar = self.sidebar.clone();
         let now_ms = now.timestamp_millis().max(0) as u64;
         let entity_changed =

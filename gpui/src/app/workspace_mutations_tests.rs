@@ -1,6 +1,6 @@
 use super::*;
 use crate::app::tests::{app, create, project, shell};
-use gpui_kit::{TestApp, TestAppWindow, size};
+use gpui_kit::{TestApp, TestAppWindow, size, test::TestWindowExt};
 use serde_json::json;
 
 type Fixture = (
@@ -83,6 +83,12 @@ fn ack(root: &mut TestAppWindow<Root>, shell: &Entity<Shell>, revision: u64, suc
     });
     root.draw();
 }
+fn dismiss_feedback(root: &mut TestAppWindow<Root>) {
+    root.draw();
+    let close = root.update(|_, w, _| w.find("close").bounds().center());
+    root.simulate_click(close, gpui_kit::MouseButton::Left);
+    root.draw();
+}
 fn session_node_bounds(w: &mut Window) -> Option<gpui_kit::Bounds<gpui_kit::Pixels>> {
     gpui_kit::base::test_support::find(w, &[], &"session-saved".into()).map(|node| node.bounds())
 }
@@ -113,6 +119,7 @@ fn root_fold_paints_before_ack_and_fences_late_failure_and_snapshot() {
     root.draw();
     assert_eq!(session_bounds(&mut root), Some(expanded));
     ack(&mut root, &shell, first, false);
+    dismiss_feedback(&mut root);
     assert_eq!(
         session_bounds(&mut root),
         Some(expanded),
@@ -352,6 +359,7 @@ fn queue_rejection_reconciles_predecessor_ack_without_undoing_next_intent() {
     assert!(session_bounds(&mut root).is_some());
     let first = revision(&requests);
     ack(&mut root, &shell, first, true);
+    dismiss_feedback(&mut root);
     assert!(
         session_bounds(&mut root).is_none(),
         "rollback follows the last accepted write"

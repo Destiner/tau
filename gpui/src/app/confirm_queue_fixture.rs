@@ -1,12 +1,12 @@
 use super::*;
 use crate::app::tests::{app, create, project, rpc, shell, started};
-use gpui_kit::{MouseButton, TestApp, TestAppWindow, size, test::TestWindowExt};
+use gpui_kit::{TestApp, TestAppWindow, size, test::TestWindowExt};
 use serde_json::{Value, json};
 
-pub(super) struct Fixture {
+pub(in crate::app) struct Fixture {
     pub root: TestAppWindow<Root>,
     pub shell: Entity<Shell>,
-    requests: async_channel::Receiver<Command>,
+    pub(in crate::app) requests: async_channel::Receiver<Command>,
     // Entity handles must be dropped before the app.
     _app: TestApp,
 }
@@ -104,9 +104,18 @@ impl Fixture {
     }
 
     pub fn click(&mut self, id: &'static str) {
+        self._app.update(|cx| {
+            cx.update_window(self.root.handle().into(), |_, w, cx| w.click(id, cx))
+                .unwrap();
+        });
         self.root.draw();
-        let at = self.root.update(|_, w, _| w.find(id).bounds().center());
-        self.root.simulate_click(at, MouseButton::Left);
+    }
+
+    pub fn press(&mut self, key: &str) {
+        self._app.update(|cx| {
+            cx.update_window(self.root.handle().into(), |_, w, cx| w.press(key, cx))
+                .unwrap();
+        });
         self.root.draw();
     }
 
@@ -132,7 +141,7 @@ impl Fixture {
     }
 }
 
-pub(super) fn secondary(shift: bool) -> &'static str {
+pub(in crate::app) fn secondary(shift: bool) -> &'static str {
     match (cfg!(target_os = "macos"), shift) {
         (true, false) => "cmd-enter",
         (true, true) => "cmd-shift-enter",

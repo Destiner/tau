@@ -1,4 +1,5 @@
 use super::confirm_queue_fixture::{Fixture, secondary};
+use gpui_kit::test::TestWindowExt;
 use serde_json::json;
 
 #[test]
@@ -7,8 +8,8 @@ fn production_confirm_modifiers_send_fixed_booleans_independent_of_cursor() {
         let mut f = Fixture::new();
         f.dialog("confirm");
         if !shift {
-            // Highlight No before invoking the affirmative shortcut.
-            f.root.simulate_keystroke("down");
+            // Focus No before invoking the affirmative shortcut.
+            f.root.simulate_keystroke("tab");
         }
         f.root.simulate_keystroke(secondary(shift));
         f.root.draw();
@@ -26,7 +27,7 @@ fn production_confirm_modifiers_send_fixed_booleans_independent_of_cursor() {
         });
         f.root.simulate_keystroke(secondary(!shift));
         f.root.simulate_keystroke("enter");
-        f.click(if shift { "yes" } else { "no" });
+        f.click(if shift { "confirm" } else { "reject" });
         assert!(
             f.sent().is_empty(),
             "pending responses must not be duplicated"
@@ -56,11 +57,13 @@ fn production_confirm_plain_enter_and_click_keep_selected_answer() {
         let mut f = Fixture::new();
         f.dialog("confirm");
         if click {
-            f.click("no");
+            f.click("reject");
         } else {
-            f.root.simulate_keystroke("down");
-            f.root.simulate_keystroke("enter");
-            f.root.draw();
+            f.press("tab");
+            f.root.update(|_, w, _| {
+                assert_eq!(w.find("reject").focused(), Some(true));
+            });
+            f.press("enter");
         }
         assert_eq!(
             f.sent(),

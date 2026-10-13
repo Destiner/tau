@@ -14,9 +14,16 @@ use gpui_kit::{
 use super::super::{markdown::MarkdownView, support};
 
 /// A request only: the caller owns path resolution, permissions and navigation.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MarkdownLinkRequested {
-    pub target: String,
+    pub target: super::super::markdown::LinkTarget,
+    pub anchor: gpui_kit::Point<gpui_kit::Pixels>,
+}
+impl MarkdownLinkRequested {
+    /// Unsupported schemes/fragments are inert, never opened as local files.
+    pub fn destination(&self) -> Option<super::super::markdown::LinkTarget> {
+        Some(self.target.clone())
+    }
 }
 
 pub fn is_document(filename: &str) -> bool {
@@ -48,17 +55,12 @@ impl MarkdownDocument {
         let on_link: Arc<dyn Fn(MarkdownLinkRequested) + Send + Sync> = Arc::new(on_link);
         let handler = on_link.clone();
         let view = cx.new(|cx| {
-            MarkdownView::new(
-                body.clone(),
-                dark,
-                move |target| {
-                    handler(MarkdownLinkRequested {
-                        target: target.to_owned(),
-                    });
-                },
+            let mut view = MarkdownView::new(body.clone(), dark, |_| {}, cx).natural_height();
+            view.set_anchored_target_handler(
+                move |target, anchor| handler(MarkdownLinkRequested { target, anchor }),
                 cx,
-            )
-            .natural_height()
+            );
+            view
         });
         Self {
             source: body,
@@ -83,15 +85,28 @@ impl MarkdownDocument {
     ) {
         self.on_link = handler.clone();
         self.view.update(cx, |view, cx| {
-            view.set_link_handler(
-                move |target| {
-                    handler(MarkdownLinkRequested {
-                        target: target.to_owned(),
-                    });
-                },
+            view.set_anchored_target_handler(
+                move |target, anchor| handler(MarkdownLinkRequested { target, anchor }),
                 cx,
             );
         });
+        cx.notify();
+    }
+
+    pub fn set_context_handler(
+        &mut self,
+        handler: impl Fn(
+            super::super::markdown::LinkTarget,
+            &gpui_kit::MouseDownEvent,
+            &mut Window,
+            &mut App,
+        ) + Send
+        + Sync
+        + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        self.view
+            .update(cx, |view, cx| view.set_context_handler(handler, cx));
         cx.notify();
     }
 

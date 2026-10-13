@@ -358,7 +358,11 @@ impl Shell {
                     window,
                     cx,
                 );
-                input.set_editor_style(support::input_style(self.dark));
+                let mut style = support::input_style(self.dark);
+                if busy {
+                    style.foreground = rgb(support::tokens(self.dark).muted).into();
+                }
+                input.set_editor_style(style);
                 if input.value().as_ref() != value {
                     input.set_value(value, window, cx);
                 }
@@ -390,6 +394,7 @@ pub(super) struct RemoteDialog {
     cursor: usize,
     scroll: ScrollHandle,
     _input_events: Subscription,
+    _focus_events: Vec<Subscription>,
 }
 impl EventEmitter<UiEvent> for RemoteDialog {}
 impl RemoteDialog {
@@ -440,7 +445,12 @@ impl RemoteDialog {
                 _ => {}
             }
         });
-        input.read(cx).focus_handle(cx).focus(window, cx);
+        let input_focus = input.read(cx).focus_handle(cx);
+        let focus_events = vec![
+            cx.on_focus(&input_focus, window, |_, _, cx| cx.notify()),
+            cx.on_blur(&input_focus, window, |_, _, cx| cx.notify()),
+        ];
+        input_focus.focus(window, cx);
         Self {
             input,
             focus: cx.focus_handle(),
@@ -457,6 +467,7 @@ impl RemoteDialog {
             cursor: 0,
             scroll: ScrollHandle::new(),
             _input_events: events,
+            _focus_events: focus_events,
         }
     }
     pub(super) fn editor(&self) -> Entity<InputState> {
@@ -521,6 +532,10 @@ impl RemoteDialog {
 impl Render for RemoteDialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = support::tokens(self.dark);
+        let focused = self.input.read(cx).focus_handle(cx).is_focused(window);
+        let error = !self.error.is_empty();
+        let busy = self.busy;
+        let field_color = if error { t.danger } else { t.accent };
         let width = (window.viewport_size().width - px(36.))
             .max(px(0.))
             .min(px(if self.directory { 480. } else { 440. }));
@@ -536,12 +551,39 @@ impl Render for RemoteDialog {
                     .h(px(28.))
                     .rounded(px(4.))
                     .border_1()
-                    .border_color(rgb(if self.error.is_empty() {
+                    .border_color(rgb(if error {
+                        t.danger
+                    } else if focused {
                         t.accent
                     } else {
-                        t.danger
+                        t.border
                     }))
                     .bg(rgb(t.canvas))
+                    .hover(move |field| {
+                        if error {
+                            field
+                                .border_color(rgb(t.danger))
+                                .bg(remote_mix(t.danger, t.canvas, 0.05))
+                        } else if !busy && !focused {
+                            field.border_color(rgb(t.hover_border))
+                        } else {
+                            field
+                        }
+                    })
+                    .when(focused, |field| {
+                        field.shadow(vec![
+                            gpui_kit::BoxShadow::new(
+                                px(0.),
+                                px(0.),
+                                gpui_kit::Rgba {
+                                    a: if error { 0.20 } else { 0.22 },
+                                    ..rgb(field_color)
+                                }
+                                .into(),
+                            )
+                            .spread_radius(px(2.)),
+                        ])
+                    })
                     .px(px(8.))
                     .pb(px(2.))
                     .flex()
@@ -589,17 +631,46 @@ impl Render for RemoteDialog {
                     div()
                         .id(format!("remote-option-{ix}"))
                         .test_support()
+                        .relative()
                         .h(px(28.))
+                        .rounded(px(6.))
+                        .when(!self.busy, |d| d.cursor_pointer())
+                        .hover(move |d| d.bg(rgb(t.hover)))
+                        .tooltip({
+                            let path = row.path.clone();
+                            let dark = self.dark;
+                            move |_, cx| {
+                                cx.new(|_| DirectoryPathHint {
+                                    path: path.clone(),
+                                    dark,
+                                })
+                                .into()
+                            }
+                        })
                         .flex_shrink_0()
                         .px(px(8.))
                         .flex()
                         .items_center()
-                        .text_size(px(12.))
+                        .text_size(px(11.))
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
                         .text_color(rgb(if self.busy { t.muted } else { t.text }))
                         .when(ix == self.cursor, |d| d.bg(rgb(t.hover)))
+                        .when(ix == self.cursor, |d| {
+                            d.child(
+                                div()
+                                    .id(format!("remote-cursor-rail-{ix}"))
+                                    .test_support()
+                                    .absolute()
+                                    .top(px(3.))
+                                    .bottom(px(3.))
+                                    .left_0()
+                                    .w(px(2.))
+                                    .rounded_r(px(1.))
+                                    .bg(rgb(t.accent)),
+                            )
+                        })
                         .child(row.label.clone())
                         .on_mouse_down(gpui_kit::MouseButton::Left, |_, window, _| {
                             window.prevent_default()
@@ -741,6 +812,44 @@ impl Render for RemoteDialog {
     }
 }
 
+fn remote_mix(a: u32, b: u32, weight: f32) -> gpui_kit::Rgba {
+    let a = rgb(a);
+    let b = rgb(b);
+    gpui_kit::Rgba {
+        r: a.r * weight + b.r * (1. - weight),
+        g: a.g * weight + b.g * (1. - weight),
+        b: a.b * weight + b.b * (1. - weight),
+        a: 1.,
+    }
+}
+
+struct DirectoryPathHint {
+    path: String,
+    dark: bool,
+}
+impl Render for DirectoryPathHint {
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let t = support::tokens(self.dark);
+        div()
+            .id("remote-path-tooltip")
+            .test_support()
+            .max_w(
+                (window.viewport_size().width - px(16.))
+                    .max(px(0.))
+                    .min(px(500.)),
+            )
+            .px(px(7.))
+            .py(px(3.))
+            .rounded(px(4.))
+            .border_1()
+            .border_color(rgb(t.border))
+            .bg(rgb(t.panel_raised))
+            .text_color(rgb(t.text))
+            .text_size(px(10.))
+            .child(self.path.clone())
+    }
+}
+
 fn remote_spinner(color: u32, reduced_motion: bool) -> gpui_kit::AnyElement {
     use gpui_kit::{Animation, AnimationExt};
     let spinner = div()
@@ -790,6 +899,10 @@ fn remote_spinner(color: u32, reduced_motion: bool) -> gpui_kit::AnyElement {
             .into_any_element()
     }
 }
+
+#[cfg(test)]
+#[path = "remote_parity_tests.rs"]
+mod parity_tests;
 
 #[cfg(test)]
 #[path = "tests/service_remote.rs"]

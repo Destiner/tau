@@ -8,10 +8,20 @@ fn assert_busy(f: &mut Fixture, busy: bool) {
         let live = &f.shell.read(cx).sessions["a"];
         assert_eq!(live.controller.queue_busy(), busy);
         assert_eq!(live.queue.read(cx).props().busy, busy);
-        assert!(
-            w.try_find("feedback").is_none(),
-            "pending queue stays quiet"
+        assert_eq!(
+            live.queue.read(cx).props().feedback.as_str(),
+            live.controller.queue_feedback().unwrap_or_default()
         );
+        assert_eq!(
+            w.try_find("feedback").is_some(),
+            live.controller.queue_feedback().is_some()
+        );
+        if busy {
+            assert!(
+                live.controller.queue_feedback().is_none(),
+                "admitted clear retires old feedback"
+            );
+        }
         assert!(w.find("clear").visible());
         assert_eq!(w.find("clear").disabled() == Some(true), busy);
     });
@@ -87,14 +97,36 @@ fn mounted_queue_clear_failure_and_timeout_release_button_without_losing_items()
         assert_busy(&mut f, false);
         f.root.update(|_, _, cx| {
             let live = &f.shell.read(cx).sessions["a"];
-            assert!(live.controller.state().error.is_some());
+            assert!(
+                live.controller.state().error.is_none(),
+                "queue failure must not open a generic incident"
+            );
+            assert_eq!(
+                live.controller.queue_feedback(),
+                Some(if timeout {
+                    "Queue clear was not confirmed. Check the queue before retrying."
+                } else {
+                    "Could not clear the queue. Check the Pi version and retry."
+                })
+            );
             assert_eq!(live.queue.read(cx).props().steering, vec!["keep steering"]);
             assert_eq!(
                 live.queue.read(cx).props().follow_up,
                 vec!["keep follow up"]
             );
         });
-        f.sent();
+        f.click("dismiss");
+        assert_busy(&mut f, false);
+        f.root.update(|_, _, cx| {
+            let live = &f.shell.read(cx).sessions["a"];
+            assert!(live.controller.queue_feedback().is_none());
+            assert_eq!(live.queue.read(cx).props().steering, vec!["keep steering"]);
+            assert_eq!(
+                live.queue.read(cx).props().follow_up,
+                vec!["keep follow up"]
+            );
+        });
+        assert!(f.sent().is_empty(), "Dismiss must not send or clear");
         let retry = clear(&mut f);
         assert_ne!(retry["id"], request["id"]);
         if timeout {

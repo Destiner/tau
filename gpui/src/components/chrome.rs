@@ -156,11 +156,23 @@ fn wash(dark: bool) -> gpui_kit::Rgba {
 // A window-local tooltip with the production delay and surface. The anchor is
 // measured during prepaint rather than inferred from text or the pointer.
 type AnchorBounds = Rc<Cell<Option<Bounds<Pixels>>>>;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SidebarWidthChanged(pub f32);
+
+fn bounded_sidebar_width(width: f32) -> f32 {
+    if width.is_finite() {
+        width.round().clamp(200., 480.)
+    } else {
+        260.
+    }
+}
 struct Hint {
     pending: Option<String>,
     visible: Option<String>,
     epoch: usize,
     anchors: Vec<(String, AnchorBounds)>,
+    surface_bounds: AnchorBounds,
     #[cfg(test)]
     rendered_label: RefCell<Option<String>>,
 }
@@ -171,6 +183,7 @@ impl Hint {
             visible: None,
             epoch: 0,
             anchors: Vec::new(),
+            surface_bounds: Rc::new(Cell::new(None)),
             #[cfg(test)]
             rendered_label: RefCell::new(None),
         }
@@ -199,6 +212,7 @@ impl Hint {
         self.epoch += 1;
         self.pending = Some(id);
         self.visible = None;
+        self.surface_bounds.set(None);
         #[cfg(test)]
         self.rendered_label.replace(None);
         self.epoch
@@ -227,6 +241,8 @@ impl Hint {
         dark: bool,
         details: &SessionDetails,
         markdown: &Entity<TextViewState>,
+        window: &Window,
+        cx: &mut Context<Sidebar>,
     ) -> Option<gpui_kit::AnyElement> {
         let id = self.visible.as_ref()?;
         let anchor = self.anchors.iter().find(|(name, _)| name == id)?.1.get()?;
@@ -254,10 +270,30 @@ impl Hint {
                     .with_paragraph_gap(gpui_kit::rems(0.)),
             );
         content.text_style().fractional_line_height = Some(true);
+        let viewport = window.viewport_size();
+        let available = (anchor.top() - px(12.))
+            .max(viewport.height - anchor.bottom() - px(12.))
+            .max(px(0.));
+        let bounds = self.surface_bounds.clone();
+        let hover_id = id.clone();
         let surface = div()
             .id("chrome-tooltip")
             .test_support()
-            .max_w(px(300.))
+            .on_hover(cx.listener(move |s, hovered: &bool, w, cx| {
+                if !*hovered {
+                    s.hover(&hover_id, false, w, cx);
+                }
+            }))
+            .occlude()
+            .max_w(px(300.).min((viewport.width - px(12.)).max(px(0.))))
+            .max_h(
+                available
+                    .min((viewport.height - px(12.)).max(px(0.)))
+                    .floor(),
+            )
+            .min_h_0()
+            .flex_shrink_0()
+            .overflow_y_scroll()
             .px(px(11.))
             .py(px(9.))
             .rounded(px(4.))
@@ -275,18 +311,18 @@ impl Hint {
             .text_size(px(10.))
             .line_height(gpui_kit::relative(1.25))
             .text_color(rgb(t.muted))
-            .flex()
-            .flex_col()
             .child(
                 div()
                     .id("session-tooltip-status")
                     .test_support()
+                    .flex_shrink_0()
                     .child(details.status.clone()),
             )
             .child(
                 div()
                     .id("session-tooltip-name")
                     .test_support()
+                    .flex_shrink_0()
                     .mt(px(5.))
                     .min_w_0()
                     .child(content),
@@ -296,6 +332,7 @@ impl Hint {
                     div()
                         .id("session-tooltip-date")
                         .test_support()
+                        .flex_shrink_0()
                         .mt(px(12.))
                         .child(expanded_relative_time(&time)),
                 )
@@ -307,6 +344,7 @@ impl Hint {
                     .align(gpui_kit::base::Align::Start)
                     .offset(px(6.))
                     .margin(px(6.))
+                    .on_position(move |position| bounds.set(Some(position.bounds)))
                     .child(surface),
             )
             .priority(100)
@@ -384,15 +422,6 @@ impl Hint {
     }
 }
 
-fn icon_button(
-    id: impl Into<gpui_kit::ElementId>,
-    icon: &str,
-    size: f32,
-    dark: bool,
-    danger: bool,
-) -> BaseButton {
-    icon_button_color(id, icon, size, dark, danger, support::tokens(dark).muted)
-}
 fn icon_button_color(
     id: impl Into<gpui_kit::ElementId>,
     icon: &str,
@@ -401,8 +430,20 @@ fn icon_button_color(
     danger: bool,
     foreground: u32,
 ) -> BaseButton {
+    icon_button_admitted(id, icon, size, dark, danger, (foreground, true))
+}
+fn icon_button_admitted(
+    id: impl Into<gpui_kit::ElementId>,
+    icon: &str,
+    size: f32,
+    dark: bool,
+    danger: bool,
+    state: (u32, bool),
+) -> BaseButton {
+    let (foreground, enabled) = state;
     let t = support::tokens(dark);
     BaseButton::new(id)
+        .disabled(!enabled)
         .group("chrome-icon")
         .w(px(size))
         .h(px(size))
@@ -410,13 +451,15 @@ fn icon_button_color(
         .rounded(px(4.))
         .bg(rgba(0x00000000))
         .text_color(rgb(t.muted))
-        .opacity(0.65)
-        .hover(move |b| {
-            if danger {
-                b.opacity(1.).text_color(rgb(t.danger))
-            } else {
-                b.opacity(1.)
-            }
+        .opacity(if enabled { 0.65 } else { 0.35 })
+        .when(enabled, |b| {
+            b.hover(move |b| {
+                if danger {
+                    b.opacity(1.).text_color(rgb(t.danger))
+                } else {
+                    b.opacity(1.)
+                }
+            })
         })
         .focus_visible(move |b| b.bg(wash(dark)).opacity(1.))
         .child(
@@ -424,8 +467,10 @@ fn icon_button_color(
                 .path(format!("product-icons/{icon}.svg"))
                 .size(px(if size <= 24. { 12. } else { 16. }))
                 .text_color(rgb(foreground))
-                .group_hover("chrome-icon", move |svg| {
-                    svg.text_color(rgb(if danger { t.danger } else { foreground }))
+                .when(enabled, |svg| {
+                    svg.group_hover("chrome-icon", move |svg| {
+                        svg.text_color(rgb(if danger { t.danger } else { foreground }))
+                    })
                 }),
         )
 }
@@ -569,6 +614,8 @@ pub struct Sidebar {
     project_rects: BTreeMap<String, AnchorBounds>,
     project_drag: Option<(String, Point<Pixels>, bool, Vec<String>)>,
     dark: bool,
+    actions_interactive: bool,
+    remove_project_available: bool,
     hint: Hint,
     #[cfg(test)]
     hovered_session: Option<String>,
@@ -583,6 +630,11 @@ pub struct Sidebar {
     session_identities: BTreeMap<String, String>,
     body_bounds: AnchorBounds,
     version_open: bool,
+    version_interactive: bool,
+    version_registered: Option<gpui_kit::AnyWindowHandle>,
+    version_focus: FocusHandle,
+    version_surface_focus: FocusHandle,
+    version_origin: Option<FocusHandle>,
     project_open: bool,
     project_cursor: Option<usize>,
     project_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
@@ -601,6 +653,7 @@ pub struct Sidebar {
     resize_lifecycle: Vec<Subscription>,
 }
 impl EventEmitter<Action> for Sidebar {}
+impl EventEmitter<SidebarWidthChanged> for Sidebar {}
 impl Sidebar {
     pub fn set_theme(&mut self, dark: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.dark = dark;
@@ -625,7 +678,9 @@ impl Sidebar {
             if matches!(event, MenuEvent::Dismissed) && menu.read(cx).is_open() {
                 return;
             }
-            if let MenuEvent::Selected(id) = event {
+            if let MenuEvent::Selected(id) = event
+                && s.actions_interactive
+            {
                 let action = match id.as_str() {
                     "read" => s
                         .menu_target
@@ -681,6 +736,8 @@ impl Sidebar {
             project_rects: BTreeMap::new(),
             project_drag: None,
             dark,
+            actions_interactive: true,
+            remove_project_available: false,
             hint: Hint::new(),
             #[cfg(test)]
             hovered_session: None,
@@ -696,6 +753,11 @@ impl Sidebar {
             session_identities: BTreeMap::new(),
             body_bounds: Rc::new(Cell::new(None)),
             version_open: false,
+            version_interactive: true,
+            version_registered: None,
+            version_focus: cx.focus_handle().tab_stop(true).tab_index(0),
+            version_surface_focus: cx.focus_handle(),
+            version_origin: None,
             project_open: false,
             project_cursor: None,
             project_bounds: Rc::new(Cell::new(None)),
@@ -719,6 +781,43 @@ impl Sidebar {
     pub fn width(&self) -> f32 {
         self.width
     }
+    /// Preference hydration is silent; only user resizing emits width changes.
+    pub fn set_width(&mut self, width: f32, cx: &mut Context<Self>) {
+        let width = bounded_sidebar_width(width);
+        if self.width != width {
+            self.width = width;
+            cx.notify();
+        }
+    }
+    fn change_width(&mut self, width: f32, cx: &mut Context<Self>) {
+        let previous = self.width;
+        self.set_width(width, cx);
+        if previous != self.width {
+            cx.emit(SidebarWidthChanged(self.width));
+        }
+    }
+    /// Business admission is independent of the version/modal surface's policy.
+    pub fn set_actions_interactive(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if self.actions_interactive != enabled {
+            self.actions_interactive = enabled;
+            if !enabled {
+                self.dismiss_context(cx);
+                self.project_open = false;
+                self.project_drag = None;
+                self.pending_order = None;
+                self.hint.dismiss();
+            }
+            cx.notify();
+        }
+    }
+    /// Enable only after the shell wires the existing core removal operation.
+    pub fn set_remove_project_available(&mut self, available: bool, cx: &mut Context<Self>) {
+        if self.remove_project_available != available {
+            self.remove_project_available = available;
+            self.hint.dismiss();
+            cx.notify();
+        }
+    }
     pub fn resizing(&self) -> bool {
         self.resizing
     }
@@ -730,10 +829,7 @@ impl Sidebar {
     }
     fn resize_to_pointer(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
         if let Some(bounds) = self.resize_bounds.get() {
-            self.width = f32::from(position.x - bounds.left())
-                .round()
-                .clamp(200., 480.);
-            cx.notify();
+            self.change_width(f32::from(position.x - bounds.left()), cx);
         }
     }
     fn finish_resize(&mut self, cx: &mut Context<Self>) {
@@ -767,7 +863,7 @@ impl Sidebar {
                 return;
             }
         };
-        self.width = next.round().clamp(200., 480.);
+        self.change_width(next, cx);
         cx.stop_propagation();
         cx.notify();
     }
@@ -789,6 +885,9 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.actions_interactive {
+            return;
+        }
         let focused = window.focused(cx);
         let origin = if let Some((_, session)) = &target {
             Some(
@@ -956,7 +1055,7 @@ impl Sidebar {
         self.projects.clone()
     }
     fn move_project_drag(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
-        if self.project_drag.is_none() {
+        if !self.actions_interactive || self.project_drag.is_none() {
             return;
         }
         let original: Vec<_> = self
@@ -1112,6 +1211,54 @@ impl Sidebar {
     pub fn version_open(&self) -> bool {
         self.version_open
     }
+    /// The shell can deny opening behind a modal or during guarded shutdown.
+    pub fn set_version_interactive(&mut self, interactive: bool, cx: &mut Context<Self>) {
+        let closing = !interactive && self.version_open;
+        if self.version_interactive != interactive || closing {
+            self.version_interactive = interactive;
+            if !interactive {
+                self.version_open = false;
+                self.version_origin = None;
+            }
+            cx.notify();
+        }
+    }
+    /// Vue keeps the update surface mounted beneath the palette. Deny new reveals
+    /// and outside dismissal without taking focus from the palette's own editor.
+    pub fn preserve_version_under_palette(&mut self, cx: &mut Context<Self>) {
+        if self.version_interactive {
+            self.version_interactive = false;
+            cx.notify();
+        }
+    }
+    /// Shared sidebar/native-menu entrypoint. This never initiates an update check.
+    pub fn open_version_status(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.version_interactive {
+            return;
+        }
+        if !self.version_open {
+            self.version_origin = window.focused(cx);
+        }
+        self.dismiss_context(cx);
+        self.project_open = false;
+        self.hint.dismiss();
+        self.version_open = true;
+        self.version_surface_focus.focus(window, cx);
+        cx.notify();
+    }
+    fn dismiss_version(&mut self, restore: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.version_open = false;
+        if restore {
+            if let Some(origin) = self.version_origin.take() {
+                origin.focus(window, cx);
+            } else {
+                self.version_focus.focus(window, cx);
+            }
+        } else {
+            self.version_origin = None;
+        }
+        cx.notify();
+    }
     #[cfg(test)]
     pub fn tooltip_label(&self) -> Option<String> {
         self.hint.label()
@@ -1163,6 +1310,35 @@ impl Sidebar {
                     self.hovered_session = None;
                     cx.notify();
                 }
+            }
+            if id.starts_with("session-")
+                && self.hint.visible.as_deref() == Some(id)
+                && self.hint.surface_bounds.get().is_some()
+            {
+                // Keep the reader reachable across the 6px anchor-to-surface gap.
+                let id = id.to_owned();
+                let epoch = self.hint.epoch;
+                cx.spawn_in(window, async move |entity, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(100))
+                        .await;
+                    let _ = entity.update_in(cx, |s, w, cx| {
+                        let pointer = w.mouse_position();
+                        let inside = s
+                            .hint
+                            .surface_bounds
+                            .get()
+                            .is_some_and(|b| b.contains(&pointer))
+                            || s.hint.anchors.iter().any(|(key, b)| {
+                                key == &id && b.get().is_some_and(|b| b.contains(&pointer))
+                            });
+                        if s.hint.epoch == epoch && !inside && s.hint.leave(&id) {
+                            cx.notify();
+                        }
+                    });
+                })
+                .detach();
+                return;
             }
             if self.hint.leave(id) {
                 cx.notify();
@@ -1384,8 +1560,21 @@ impl Sidebar {
                 _ => {}
             }
         }
-        if e.keystroke.key == "escape" && (self.version_open || self.project_open) {
-            self.version_open = false;
+        if self.version_open {
+            if e.keystroke.key == "escape" {
+                self.dismiss_version(true, window, cx);
+                cx.stop_propagation();
+                return;
+            }
+            if e.keystroke.key == "enter"
+                && (e.keystroke.modifiers.platform || e.keystroke.modifiers.control)
+            {
+                // The native preview has no updater: even Mod-Enter must remain inert.
+                cx.stop_propagation();
+                return;
+            }
+        }
+        if e.keystroke.key == "escape" && self.project_open {
             self.project_open = false;
             self.focus.focus(window, cx);
             cx.stop_propagation();
@@ -1395,6 +1584,15 @@ impl Sidebar {
 }
 impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.version_registered != Some(window.window_handle()) {
+            crate::native::register_version_surface(
+                window,
+                cx,
+                |s| s.version_interactive,
+                Self::open_version_status,
+            );
+            self.version_registered = Some(window.window_handle());
+        }
         if self
             .orphaned_archive_focus
             .drain(..)
@@ -1483,6 +1681,8 @@ impl Render for Sidebar {
         }
         let t = support::tokens(self.dark);
         let dark = self.dark;
+        let admitted = self.actions_interactive;
+        let remove_admitted = admitted && self.remove_project_available;
         let offsets = self.motion(window, cx);
         let now = (self.clock)();
         let body_bounds = self.body_bounds.clone();
@@ -1541,6 +1741,7 @@ impl Render for Sidebar {
                     .id(format!("project-group-{project_id}"))
                     .test_support()
                     .relative()
+                    .when(!admitted, |d| d.opacity(0.5))
                     .top(px(offset))
                     .flex_shrink_0()
                     .flex()
@@ -1582,6 +1783,7 @@ impl Render for Sidebar {
                 );
                 let project_status_anchor = self.hint.anchor(&project_status_key);
                 let project = BaseButton::new(toggle_key.clone())
+                    .disabled(!admitted)
                     .justify_start()
                     .min_w_0()
                     .flex_1()
@@ -1593,9 +1795,11 @@ impl Render for Sidebar {
                     .text_size(px(13.))
                     .on_click(cx.listener({
                         let id = project_id.clone();
-                        move |_, _, _, cx| {
+                        move |s, _, _, cx| {
                             cx.stop_propagation();
-                            cx.emit(Action::ProjectToggle(id.clone()));
+                            if s.actions_interactive {
+                                cx.emit(Action::ProjectToggle(id.clone()));
+                            }
                         }
                     }))
                     .on_hover(cx.listener({
@@ -1604,6 +1808,8 @@ impl Render for Sidebar {
                     }))
                     .child(
                         div()
+                            .w_full()
+                            .min_w_0()
                             .flex()
                             .items_center()
                             .justify_start()
@@ -1642,6 +1848,8 @@ impl Render for Sidebar {
                             .child(
                                 div()
                                     .id(format!("project-label-{project_id}"))
+                                    .min_w_0()
+                                    .truncate()
                                     .text_color(rgb(if active { t.text } else { t.muted }))
                                     .test_support()
                                     .child(project_item.title.clone()),
@@ -1675,8 +1883,10 @@ impl Render for Sidebar {
                         }))
                         .on_click(cx.listener({
                             let id = project_id.clone();
-                            move |_, _, _, cx| {
-                                cx.emit(Action::ProjectToggle(id.clone()));
+                            move |s, _, _, cx| {
+                                if s.actions_interactive {
+                                    cx.emit(Action::ProjectToggle(id.clone()));
+                                }
                             }
                         }))
                         .on_prepaint(move |mut b, _, _| {
@@ -1691,7 +1901,7 @@ impl Render for Sidebar {
                                 .is_some_and(|(id, _, dragging, _)| *dragging && id == &project_id),
                             |d| d.bg(selected(dark)),
                         )
-                        .hover(move |d| d.bg(wash(dark)))
+                        .when(admitted, |d| d.hover(move |d| d.bg(wash(dark))))
                         .flex()
                         .items_center()
                         .child(
@@ -1707,38 +1917,60 @@ impl Render for Sidebar {
                             div()
                                 .on_prepaint(move |b, _, _| new_anchor.set(Some(b)))
                                 .child(
-                                    icon_button(new_key.clone(), "plus", 24., dark, false)
-                                        .opacity(0.)
-                                        .group_hover("project", |b| b.opacity(0.65))
-                                        .on_hover(cx.listener(move |s, h, w, cx| {
+                                    icon_button_admitted(
+                                        new_key.clone(),
+                                        "plus",
+                                        24.,
+                                        dark,
+                                        false,
+                                        (t.muted, admitted),
+                                    )
+                                    .when(admitted, |b| {
+                                        b.opacity(0.).group_hover("project", |b| b.opacity(0.65))
+                                    })
+                                    .on_hover(
+                                        cx.listener(move |s, h, w, cx| {
                                             s.hover(&new_key, *h, w, cx)
-                                        }))
-                                        .on_click(cx.listener({
-                                            let id = project_id.clone();
-                                            move |_, _, _, cx| {
-                                                cx.stop_propagation();
+                                        }),
+                                    )
+                                    .on_click(cx.listener({
+                                        let id = project_id.clone();
+                                        move |s, _, _, cx| {
+                                            cx.stop_propagation();
+                                            if s.actions_interactive {
                                                 cx.emit(Action::NewSessionIn(id.clone()));
                                             }
-                                        })),
+                                        }
+                                    })),
                                 ),
                         )
                         .child(
                             div()
                                 .on_prepaint(move |b, _, _| remove_anchor.set(Some(b)))
                                 .child(
-                                    icon_button(remove_key.clone(), "trash", 24., dark, true)
-                                        .opacity(0.)
-                                        .group_hover("project", |b| b.opacity(0.65))
-                                        .on_hover(cx.listener(move |s, h, w, cx| {
-                                            s.hover(&remove_key, *h, w, cx)
-                                        }))
-                                        .on_click(cx.listener({
-                                            let id = project_id.clone();
-                                            move |_, _, _, cx| {
-                                                cx.stop_propagation();
-                                                cx.emit(Action::RemoveProject(id.clone()))
+                                    icon_button_admitted(
+                                        remove_key.clone(),
+                                        "trash",
+                                        24.,
+                                        dark,
+                                        true,
+                                        (t.muted, remove_admitted),
+                                    )
+                                    .when(remove_admitted, |b| {
+                                        b.opacity(0.).group_hover("project", |b| b.opacity(0.65))
+                                    })
+                                    .on_hover(cx.listener(move |s, h, w, cx| {
+                                        s.hover(&remove_key, *h, w, cx)
+                                    }))
+                                    .on_click(cx.listener({
+                                        let id = project_id.clone();
+                                        move |s, _, _, cx| {
+                                            cx.stop_propagation();
+                                            if s.actions_interactive && s.remove_project_available {
+                                                cx.emit(Action::RemoveProject(id.clone()));
                                             }
-                                        })),
+                                        }
+                                    })),
                                 ),
                         )
                         // Only the production-sized handle overlays the toggle, never the tools.
@@ -1774,6 +2006,9 @@ impl Render for Sidebar {
                                     MouseButton::Left,
                                     cx.listener(move |s, e: &MouseDownEvent, window, cx| {
                                         cx.stop_propagation();
+                                        if !s.actions_interactive {
+                                            return;
+                                        }
                                         s.focus.focus(window, cx);
                                         s.hint.dismiss();
                                         s.dismiss_context(cx);
@@ -1853,6 +2088,7 @@ impl Render for Sidebar {
                                 .on_prepaint(move |b, _, _| anchor.set(Some(b)))
                                 .child(
                                     BaseButton::new(key)
+                                        .disabled(!admitted)
                                         .track_focus(&row_focus)
                                         .w_full()
                                         .h(px(29.))
@@ -1863,8 +2099,14 @@ impl Render for Sidebar {
                                         .focus_visible(move |b| b.border_color(rgb(t.accent)))
                                         .rounded(px(7.))
                                         .bg(bg)
-                                        .hover(move |b| {
-                                            b.bg(if active { selected(dark) } else { wash(dark) })
+                                        .when(admitted, |b| {
+                                            b.hover(move |b| {
+                                                b.bg(if active {
+                                                    selected(dark)
+                                                } else {
+                                                    wash(dark)
+                                                })
+                                            })
                                         })
                                         .on_hover(cx.listener(move |s, h, w, cx| {
                                             s.hover(&hover_key, *h, w, cx)
@@ -1882,8 +2124,10 @@ impl Render for Sidebar {
                                                 }
                                             },
                                         ))
-                                        .on_click(cx.listener(move |_, _, _, cx| {
-                                            cx.emit(Action::Select(id.clone()))
+                                        .on_click(cx.listener(move |s, _, _, cx| {
+                                            if s.actions_interactive {
+                                                cx.emit(Action::Select(id.clone()));
+                                            }
                                         }))
                                         .child(
                                             div()
@@ -1952,12 +2196,13 @@ impl Render for Sidebar {
                                 )
                                 .when(session.can_archive, |row| {
                                     row.child(
-                                        icon_button(
+                                        icon_button_admitted(
                                             archive_key.clone(),
                                             "archive",
                                             24.,
                                             dark,
                                             false,
+                                            (t.muted, admitted),
                                         )
                                         .track_focus(&archive_focus)
                                         .on_prepaint(move |b, _, _| archive_anchor.set(Some(b)))
@@ -1967,14 +2212,18 @@ impl Render for Sidebar {
                                         .absolute()
                                         .right(px(0.))
                                         .top(px(2.))
-                                        .opacity(if focused { 0.65 } else { 0. })
-                                        .group_hover("session", |b| b.opacity(0.65))
+                                        .when(admitted, |b| {
+                                            b.opacity(if focused { 0.65 } else { 0. })
+                                                .group_hover("session", |b| b.opacity(0.65))
+                                        })
                                         .on_click(
                                             cx.listener({
                                                 let id = session.id.clone();
-                                                move |_, _, _, cx| {
+                                                move |s, _, _, cx| {
                                                     cx.stop_propagation();
-                                                    cx.emit(Action::Archive(id.clone()));
+                                                    if s.actions_interactive {
+                                                        cx.emit(Action::Archive(id.clone()));
+                                                    }
                                                 }
                                             }),
                                         ),
@@ -2012,211 +2261,223 @@ impl Render for Sidebar {
             };
             let name_leading = normal_leading(11.);
             let meta_leading = normal_leading(10.);
-            body = body.child(
-                list(
-                    self.archive_list.clone(),
-                    cx.processor(move |s, index: usize, window, cx| {
-                        let Some(entry) = s.archive_entries.get(index).cloned() else {
-                            return div().into_any_element();
-                        };
-                        if let ArchiveEntry::Heading(group) = entry {
-                            let label = group.clone();
-                            let closed = s.closed_groups.contains(&group);
-                            return div()
-                                .w_full()
-                                .h(px(28.))
-                                .flex_shrink_0()
-                                .child(
-                                    BaseButton::new(format!("archived-group-{group}"))
-                                        .w_full()
-                                        .h(px(22.))
-                                        .flex_shrink_0()
-                                        .mt(px(6.))
-                                        .px(px(5.))
-                                        .justify_start()
-                                        .gap(px(4.))
-                                        .bg(rgba(0x00000000))
-                                        .text_size(px(10.))
-                                        .text_color(rgb(t.muted))
-                                        .on_click(cx.listener(move |s, _, _, cx| {
-                                            if !s.closed_groups.remove(&label) {
-                                                s.closed_groups.insert(label.clone());
-                                            }
-                                            s.rebuild_archive();
-                                            cx.notify();
-                                        }))
-                                        .child(group.to_owned())
-                                        .child(support::icon(
-                                            if closed {
-                                                "chevron-right"
-                                            } else {
-                                                "chevron-down"
-                                            },
-                                            10.,
-                                            t.muted,
-                                        )),
-                                )
-                                .into_any_element();
-                        }
-                        let ArchiveEntry::Session { index, .. } = entry else {
-                            unreachable!()
-                        };
-                        let session = s.props.sessions[index].clone();
-                        let id = session.id.clone();
-                        s.mounted_archive_ids.insert(id.clone());
-                        let session_key = format!("session-{id}");
-                        let session_anchor = s.hint.anchor(&session_key);
-                        let restore_key = format!("restore-{id}");
-                        let restore_anchor = s.hint.anchor(&restore_key);
-                        let active = s.props.active == id;
-                        let (select_focus, restore_focus) = s
-                            .archived_focus
-                            .entry(id.clone())
-                            .or_insert_with(|| (cx.focus_handle(), cx.focus_handle()))
-                            .clone();
-                        let focused =
-                            select_focus.is_focused(window) || restore_focus.is_focused(window);
-                        let details = s.archived_details.get(&id);
-                        let mut meta = div()
-                            .id(format!("archived-meta-{id}"))
-                            .test_support()
-                            .line_height(meta_leading)
-                            .flex()
-                            .gap(px(4.))
-                            .overflow_hidden()
-                            .text_size(px(10.))
-                            .text_color(rgb(t.muted));
-                        if let Some(details) = details {
-                            meta = meta.child(
-                                div()
-                                    .min_w_0()
-                                    .text_ellipsis()
-                                    .whitespace_nowrap()
-                                    .overflow_hidden()
-                                    .child(details.project.clone()),
-                            );
-                            if let Some(model) = &details.model {
-                                meta = meta.child("·").child(
+            body =
+                body.child(
+                    list(
+                        self.archive_list.clone(),
+                        cx.processor(move |s, index: usize, window, cx| {
+                            let Some(entry) = s.archive_entries.get(index).cloned() else {
+                                return div().into_any_element();
+                            };
+                            if let ArchiveEntry::Heading(group) = entry {
+                                let label = group.clone();
+                                let closed = s.closed_groups.contains(&group);
+                                return div()
+                                    .w_full()
+                                    .h(px(28.))
+                                    .flex_shrink_0()
+                                    .child(
+                                        BaseButton::new(format!("archived-group-{group}"))
+                                            .w_full()
+                                            .h(px(22.))
+                                            .flex_shrink_0()
+                                            .mt(px(6.))
+                                            .px(px(5.))
+                                            .justify_start()
+                                            .gap(px(4.))
+                                            .bg(rgba(0x00000000))
+                                            .text_size(px(10.))
+                                            .text_color(rgb(t.muted))
+                                            .on_click(cx.listener(move |s, _, _, cx| {
+                                                if !s.closed_groups.remove(&label) {
+                                                    s.closed_groups.insert(label.clone());
+                                                }
+                                                s.rebuild_archive();
+                                                cx.notify();
+                                            }))
+                                            .child(group.to_owned())
+                                            .child(support::icon(
+                                                if closed {
+                                                    "chevron-right"
+                                                } else {
+                                                    "chevron-down"
+                                                },
+                                                10.,
+                                                t.muted,
+                                            )),
+                                    )
+                                    .into_any_element();
+                            }
+                            let ArchiveEntry::Session { index, .. } = entry else {
+                                unreachable!()
+                            };
+                            let session = s.props.sessions[index].clone();
+                            let id = session.id.clone();
+                            s.mounted_archive_ids.insert(id.clone());
+                            let session_key = format!("session-{id}");
+                            let session_anchor = s.hint.anchor(&session_key);
+                            let restore_key = format!("restore-{id}");
+                            let restore_anchor = s.hint.anchor(&restore_key);
+                            let active = s.props.active == id;
+                            let (select_focus, restore_focus) = s
+                                .archived_focus
+                                .entry(id.clone())
+                                .or_insert_with(|| (cx.focus_handle(), cx.focus_handle()))
+                                .clone();
+                            let focused =
+                                select_focus.is_focused(window) || restore_focus.is_focused(window);
+                            let details = s.archived_details.get(&id);
+                            let mut meta = div()
+                                .id(format!("archived-meta-{id}"))
+                                .test_support()
+                                .line_height(meta_leading)
+                                .flex()
+                                .gap(px(4.))
+                                .overflow_hidden()
+                                .text_size(px(10.))
+                                .text_color(rgb(t.muted));
+                            if let Some(details) = details {
+                                meta = meta.child(
                                     div()
                                         .min_w_0()
                                         .text_ellipsis()
                                         .whitespace_nowrap()
                                         .overflow_hidden()
-                                        .child(model.clone()),
+                                        .child(details.project.clone()),
                                 );
-                            }
-                        }
-                        div()
-                            .id(format!("archived-row-{id}"))
-                            .test_support()
-                            .relative()
-                            .group("archived-row")
-                            .w_full()
-                            .h(px(34.))
-                            .flex_shrink_0()
-                            .rounded(px(6.))
-                            .bg(if active {
-                                selected(dark)
-                            } else {
-                                rgba(0x00000000)
-                            })
-                            .hover(move |d| d.bg(if active { selected(dark) } else { wash(dark) }))
-                            .flex()
-                            .items_stretch()
-                            .child(
-                                BaseButton::new(format!("archived-select-{id}"))
-                                    .track_focus(&select_focus)
-                                    .on_prepaint(move |b, _, _| session_anchor.set(Some(b)))
-                                    .on_hover(cx.listener(move |s, h, w, cx| {
-                                        s.hover(&session_key, *h, w, cx)
-                                    }))
-                                    .flex_1()
-                                    .min_w_0()
-                                    .px(px(7.))
-                                    .py(px(3.))
-                                    .bg(rgba(0x00000000))
-                                    .justify_start()
-                                    .on_click(cx.listener(move |_, _, _, cx| {
-                                        cx.emit(Action::Select(id.clone()))
-                                    }))
-                                    .child(
+                                if let Some(model) = &details.model {
+                                    meta = meta.child("·").child(
                                         div()
-                                            .w_full()
                                             .min_w_0()
-                                            .flex()
-                                            .flex_col()
-                                            .gap(px(2.))
-                                            .child(
-                                                div()
-                                                    .id(format!("archived-name-{}", session.id))
-                                                    .test_support()
-                                                    .min_w_0()
-                                                    .overflow_hidden()
-                                                    .whitespace_nowrap()
-                                                    .text_ellipsis()
-                                                    .text_size(px(11.))
-                                                    .line_height(name_leading)
-                                                    .text_color(rgb(t.text))
-                                                    .child(session.title.clone()),
-                                            )
-                                            .child(meta),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .id(format!("archived-time-{}", session.id))
-                                    .test_support()
-                                    .flex_shrink_0()
-                                    .self_end()
-                                    .pl(px(6.))
-                                    .pr(px(8.))
-                                    .pb(px(4.))
-                                    .text_size(px(10.))
-                                    .line_height(meta_leading)
-                                    .text_color(rgb(t.faint))
-                                    .group_hover("archived-row", |d| d.opacity(0.))
-                                    .when(focused, |d| d.opacity(0.))
-                                    .child(session.time.clone()),
-                            )
-                            .child(
-                                icon_button(
-                                    format!("restore-{}", session.id),
-                                    "archive",
-                                    24.,
-                                    dark,
-                                    false,
+                                            .text_ellipsis()
+                                            .whitespace_nowrap()
+                                            .overflow_hidden()
+                                            .child(model.clone()),
+                                    );
+                                }
+                            }
+                            div()
+                                .id(format!("archived-row-{id}"))
+                                .test_support()
+                                .relative()
+                                .group("archived-row")
+                                .w_full()
+                                .h(px(34.))
+                                .flex_shrink_0()
+                                .rounded(px(6.))
+                                .bg(if active {
+                                    selected(dark)
+                                } else {
+                                    rgba(0x00000000)
+                                })
+                                .when(!admitted, |d| d.opacity(0.5))
+                                .when(admitted, |d| {
+                                    d.hover(move |d| {
+                                        d.bg(if active { selected(dark) } else { wash(dark) })
+                                    })
+                                })
+                                .flex()
+                                .items_stretch()
+                                .child(
+                                    BaseButton::new(format!("archived-select-{id}"))
+                                        .disabled(!admitted)
+                                        .track_focus(&select_focus)
+                                        .on_prepaint(move |b, _, _| session_anchor.set(Some(b)))
+                                        .on_hover(cx.listener(move |s, h, w, cx| {
+                                            s.hover(&session_key, *h, w, cx)
+                                        }))
+                                        .flex_1()
+                                        .min_w_0()
+                                        .px(px(7.))
+                                        .py(px(3.))
+                                        .bg(rgba(0x00000000))
+                                        .justify_start()
+                                        .on_click(cx.listener(move |s, _, _, cx| {
+                                            if s.actions_interactive {
+                                                cx.emit(Action::Select(id.clone()));
+                                            }
+                                        }))
+                                        .child(
+                                            div()
+                                                .w_full()
+                                                .min_w_0()
+                                                .flex()
+                                                .flex_col()
+                                                .gap(px(2.))
+                                                .child(
+                                                    div()
+                                                        .id(format!("archived-name-{}", session.id))
+                                                        .test_support()
+                                                        .min_w_0()
+                                                        .overflow_hidden()
+                                                        .whitespace_nowrap()
+                                                        .text_ellipsis()
+                                                        .text_size(px(11.))
+                                                        .line_height(name_leading)
+                                                        .text_color(rgb(t.text))
+                                                        .child(session.title.clone()),
+                                                )
+                                                .child(meta),
+                                        ),
                                 )
-                                .absolute()
-                                .right(px(2.))
-                                .top(gpui_kit::relative(0.5))
-                                .mt(px(-12.))
-                                .opacity(0.)
-                                .group_hover("archived-row", |b| b.opacity(0.65))
-                                .track_focus(&restore_focus)
-                                .on_prepaint(move |b, _, _| restore_anchor.set(Some(b)))
-                                .on_hover(
-                                    cx.listener(move |s, h, w, cx| {
+                                .child(
+                                    div()
+                                        .id(format!("archived-time-{}", session.id))
+                                        .test_support()
+                                        .flex_shrink_0()
+                                        .self_end()
+                                        .pl(px(6.))
+                                        .pr(px(8.))
+                                        .pb(px(4.))
+                                        .text_size(px(10.))
+                                        .line_height(meta_leading)
+                                        .text_color(rgb(t.faint))
+                                        .group_hover("archived-row", |d| d.opacity(0.))
+                                        .when(focused, |d| d.opacity(0.))
+                                        .child(session.time.clone()),
+                                )
+                                .child(
+                                    icon_button_admitted(
+                                        format!("restore-{}", session.id),
+                                        "archive",
+                                        24.,
+                                        dark,
+                                        false,
+                                        (t.muted, admitted),
+                                    )
+                                    .absolute()
+                                    .right(px(2.))
+                                    .top(gpui_kit::relative(0.5))
+                                    .mt(px(-12.))
+                                    .when(admitted, |b| {
+                                        b.opacity(0.)
+                                            .group_hover("archived-row", |b| b.opacity(0.65))
+                                    })
+                                    .track_focus(&restore_focus)
+                                    .on_prepaint(move |b, _, _| restore_anchor.set(Some(b)))
+                                    .on_hover(cx.listener(move |s, h, w, cx| {
                                         s.hover(&restore_key, *h, w, cx)
-                                    }),
+                                    }))
+                                    .when(focused, |b| b.opacity(0.65))
+                                    .on_click(cx.listener({
+                                        let id = session.id.clone();
+                                        move |s, _, _, cx| {
+                                            cx.stop_propagation();
+                                            if s.actions_interactive {
+                                                cx.emit(Action::Restore(id.clone()));
+                                            }
+                                        }
+                                    })),
                                 )
-                                .when(focused, |b| b.opacity(0.65))
-                                .on_click(cx.listener({
-                                    let id = session.id.clone();
-                                    move |_, _, _, cx| {
-                                        cx.stop_propagation();
-                                        cx.emit(Action::Restore(id.clone()));
-                                    }
-                                })),
-                            )
-                            .into_any_element()
-                    }),
-                )
-                // The flex parent owns the viewport, not the list's intrinsic content size.
-                .with_sizing_behavior(gpui_kit::ListSizingBehavior::Auto)
-                .flex_1()
-                .min_h_0()
-                .w_full(),
-            );
+                                .into_any_element()
+                        }),
+                    )
+                    // The flex parent owns the viewport, not the list's intrinsic content size.
+                    .with_sizing_behavior(gpui_kit::ListSizingBehavior::Auto)
+                    .flex_1()
+                    .min_h_0()
+                    .w_full(),
+                );
         }
         if self.rendered_projects().is_empty() && !self.props.archived {
             body = body.child(
@@ -2258,21 +2519,31 @@ impl Render for Sidebar {
                                 project_bounds.set(Some(b));
                             })
                             .child(
-                                icon_button("open-project", "folder-plus", 28., dark, false)
-                                    .track_focus(&self.focus)
-                                    .on_hover(
-                                        cx.listener(|s, h, w, cx| {
-                                            s.hover("open-project", *h, w, cx)
-                                        }),
-                                    )
-                                    .on_click(cx.listener(|s, _, window, cx| {
+                                icon_button_admitted(
+                                    "open-project",
+                                    "folder-plus",
+                                    28.,
+                                    dark,
+                                    false,
+                                    (t.muted, admitted),
+                                )
+                                .track_focus(&self.focus)
+                                .on_hover(
+                                    cx.listener(|s, h, w, cx| s.hover("open-project", *h, w, cx)),
+                                )
+                                .on_click(cx.listener(
+                                    |s, _, window, cx| {
+                                        if !s.actions_interactive {
+                                            return;
+                                        }
                                         s.project_open = !s.project_open;
                                         s.project_cursor = None;
                                         s.focus.focus(window, cx);
                                         s.version_open = false;
                                         s.hint.dismiss();
                                         cx.notify();
-                                    })),
+                                    },
+                                )),
                             ),
                     )
                     .child(
@@ -2301,6 +2572,8 @@ impl Render for Sidebar {
             .child(
                 div().relative().top(px(1.)).child(
                     BaseButton::new("version")
+                        .accessibility_label(format!("Tau version {}", self.version))
+                        .disabled(!self.version_interactive)
                         .px(px(6.))
                         .h(px(22.5))
                         .line_height(gpui_kit::relative(1.25))
@@ -2314,12 +2587,15 @@ impl Render for Sidebar {
                         .text_color(rgb(if self.version_open { t.text } else { t.muted }))
                         .text_size(px(10.))
                         .font_family(support::mono())
-                        .track_focus(&self.focus)
-                        .on_click(cx.listener(|s, _, _, cx| {
-                            s.version_open = !s.version_open;
-                            s.project_open = false;
-                            s.hint.dismiss();
-                            cx.notify();
+                        .focus_visible(move |b| b.bg(wash(dark)).text_color(rgb(t.text)))
+                        .track_focus(&self.version_focus)
+                        .on_click(cx.listener(|s, _, window, cx| {
+                            if s.version_open {
+                                s.dismiss_version(true, window, cx);
+                            } else {
+                                s.open_version_status(window, cx);
+                                s.version_origin = Some(s.version_focus.clone());
+                            }
                         }))
                         .child(format!("v{}", self.version))
                         .on_prepaint(move |b, _, _| {
@@ -2338,7 +2614,11 @@ impl Render for Sidebar {
             let popover = div()
                 .id("version-popover")
                 .test_support()
-                .w(px(250.))
+                .track_focus(&self.version_surface_focus)
+                .role(gpui_kit::accesskit::Role::Dialog)
+                .aria_label("Tau Update")
+                .w(px(250.).min((window.viewport_size().width - px(18.)).max(px(0.))))
+                .flex_shrink_0()
                 .p(px(8.))
                 .rounded(px(8.))
                 .border_1()
@@ -2352,7 +2632,6 @@ impl Render for Sidebar {
                     )
                     .blur_radius(px(10.)),
                 ])
-                .on_prepaint(move |b, _, _| popover_bounds.set(Some(b)))
                 .occlude()
                 .flex()
                 .flex_col()
@@ -2385,7 +2664,8 @@ impl Render for Sidebar {
                             support::ButtonVariant::Primary,
                             dark,
                         )
-                        .on_click(cx.listener(|_, _, _, cx| cx.emit(Action::CheckUpdates))),
+                        .disabled(true)
+                        .backdrop(t.panel_raised),
                     ),
                 );
             footer = footer.child(
@@ -2394,7 +2674,8 @@ impl Render for Sidebar {
                         .placement(Placement::Top)
                         .align(gpui_kit::base::Align::End)
                         .offset(px(5.))
-                        .margin(px(0.))
+                        .margin(px(9.))
+                        .on_position(move |position| popover_bounds.set(Some(position.bounds)))
                         .child(popover),
                 )
                 .priority(90),
@@ -2446,6 +2727,9 @@ impl Render for Sidebar {
                                 cx.notify();
                             }))
                             .on_click(cx.listener(|s, _, window, cx| {
+                                if !s.actions_interactive {
+                                    return;
+                                }
                                 s.project_open = false;
                                 s.focus.focus(window, cx);
                                 cx.emit(Action::OpenLocalProject);
@@ -2479,6 +2763,9 @@ impl Render for Sidebar {
                                 cx.notify();
                             }))
                             .on_click(cx.listener(|s, _, window, cx| {
+                                if !s.actions_interactive {
+                                    return;
+                                }
                                 s.project_open = false;
                                 s.focus.focus(window, cx);
                                 cx.emit(Action::OpenRemoteProject);
@@ -2535,7 +2822,14 @@ impl Render for Sidebar {
                         .map(IntoElement::into_any_element);
                 }
                 _ if id.starts_with("project-new") => ("New Session", Some("⌘N")),
-                _ if id.starts_with("project-remove") => ("Remove Project", None),
+                _ if id.starts_with("project-remove") => (
+                    if self.remove_project_available {
+                        "Remove Project"
+                    } else {
+                        "Remove Project unavailable in this build"
+                    },
+                    None,
+                ),
                 "open-project" => ("Open Project", Some("⌘O")),
                 "archived" => (
                     if self.props.archived {
@@ -2553,7 +2847,7 @@ impl Render for Sidebar {
                         self.tooltip_details(session_id),
                         self.tooltip_markdown.get(session_id),
                     ) {
-                        return self.hint.session_view(dark, &details, markdown);
+                        return self.hint.session_view(dark, &details, markdown, window, cx);
                     }
                     let session = self
                         .rendered_projects()
@@ -2730,7 +3024,7 @@ impl Render for Sidebar {
             )
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |s, e: &MouseDownEvent, _, cx| {
+                cx.listener(move |s, e: &MouseDownEvent, window, cx| {
                     if s.project_open
                         && !project_bounds_inside
                             .get()
@@ -2743,6 +3037,7 @@ impl Render for Sidebar {
                         cx.notify();
                     }
                     if s.version_open
+                        && s.version_interactive
                         && !version_bounds_inside
                             .get()
                             .is_some_and(|b| b.contains(&e.position))
@@ -2750,12 +3045,11 @@ impl Render for Sidebar {
                             .get()
                             .is_some_and(|b| b.contains(&e.position))
                     {
-                        s.version_open = false;
-                        cx.notify();
+                        s.dismiss_version(false, window, cx);
                     }
                 }),
             )
-            .on_mouse_down_out(cx.listener(move |s, e: &MouseDownEvent, _, cx| {
+            .on_mouse_down_out(cx.listener(move |s, e: &MouseDownEvent, window, cx| {
                 if s.project_open
                     && !project_bounds_out
                         .get()
@@ -2768,6 +3062,7 @@ impl Render for Sidebar {
                     cx.notify();
                 }
                 if s.version_open
+                    && s.version_interactive
                     && !version_bounds_out
                         .get()
                         .is_some_and(|b| b.contains(&e.position))
@@ -2775,8 +3070,7 @@ impl Render for Sidebar {
                         .get()
                         .is_some_and(|b| b.contains(&e.position))
                 {
-                    s.version_open = false;
-                    cx.notify();
+                    s.dismiss_version(false, window, cx);
                 }
             }))
             .flex()
@@ -2805,6 +3099,9 @@ pub struct Header {
     dark: bool,
     editing: Option<String>,
     palette_focus_pending: bool,
+    has_project: bool,
+    new_session_enabled: bool,
+    palette_enabled: bool,
     input: Entity<InputState>,
     input_style: gpui_kit::base::input::InputEditorStyle,
     _input_events: Subscription,
@@ -2891,11 +3188,14 @@ impl Header {
         });
         Self {
             renamable: true,
-            active,
+            active: active.clone(),
             title,
             dark,
             editing: None,
             palette_focus_pending: false,
+            has_project: !active.is_empty(),
+            new_session_enabled: true,
+            palette_enabled: true,
             input,
             input_style: support::input_style(dark),
             _input_events: events,
@@ -2918,6 +3218,9 @@ impl Header {
             self.hint.dismiss();
         }
         if self.active != active || self.title != title {
+            if self.active != active {
+                self.has_project = !active.is_empty();
+            }
             self.active = active;
             self.title = title;
             cx.notify();
@@ -2930,6 +3233,26 @@ impl Header {
                 self.editing = None;
                 self.hint.dismiss();
             }
+            cx.notify();
+        }
+    }
+    pub fn set_action_admission(
+        &mut self,
+        has_project: bool,
+        new_session: bool,
+        palette: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if (
+            self.has_project,
+            self.new_session_enabled,
+            self.palette_enabled,
+        ) != (has_project, new_session, palette)
+        {
+            self.has_project = has_project;
+            self.new_session_enabled = new_session;
+            self.palette_enabled = palette;
+            self.hint.dismiss();
             cx.notify();
         }
     }
@@ -3050,6 +3373,9 @@ impl Render for Header {
         let dark = self.dark;
         let name_anchor = self.hint.anchor("session-name");
         let new_anchor = self.hint.anchor("new-session");
+        if !self.has_project {
+            new_anchor.set(None);
+        }
         let palette_anchor = self.hint.anchor("palette");
         let input_bounds = self.input_bounds.clone();
         let outside_bounds = self.input_bounds.clone();
@@ -3226,22 +3552,52 @@ impl Render for Header {
                     .justify_start()
                     .child(heading),
             )
-            .child(
-                div()
-                    .on_prepaint(move |b, _, _| new_anchor.set(Some(b)))
-                    .child(
-                        icon_button("new-session", "plus", 28., dark, false)
+            .when(self.has_project, |d| {
+                d.child(
+                    div()
+                        .on_prepaint(move |b, _, _| new_anchor.set(Some(b)))
+                        .child(
+                            icon_button_admitted(
+                                "new-session",
+                                "plus",
+                                28.,
+                                dark,
+                                false,
+                                (t.muted, self.new_session_enabled),
+                            )
+                            .w(px(24.))
+                            .h(px(24.))
+                            .accessibility_label("New Session")
                             .on_hover(cx.listener(|s, h, w, cx| s.hover("new-session", *h, w, cx)))
-                            .on_click(cx.listener(|_, _, _, cx| cx.emit(Action::NewSession))),
-                    ),
-            )
+                            .on_click(cx.listener(|s, _, _, cx| {
+                                if s.has_project && s.new_session_enabled {
+                                    cx.emit(Action::NewSession);
+                                }
+                            })),
+                        ),
+                )
+            })
             .child(
                 div()
                     .on_prepaint(move |b, _, _| palette_anchor.set(Some(b)))
                     .child(
-                        icon_button("palette", "search", 28., dark, false)
-                            .on_hover(cx.listener(|s, h, w, cx| s.hover("palette", *h, w, cx)))
-                            .on_click(cx.listener(|_, _, _, cx| cx.emit(Action::Palette))),
+                        icon_button_admitted(
+                            "palette",
+                            "search",
+                            28.,
+                            dark,
+                            false,
+                            (t.muted, self.palette_enabled),
+                        )
+                        .w(px(24.))
+                        .h(px(24.))
+                        .accessibility_label("Open Command Palette")
+                        .on_hover(cx.listener(|s, h, w, cx| s.hover("palette", *h, w, cx)))
+                        .on_click(cx.listener(|s, _, _, cx| {
+                            if s.palette_enabled {
+                                cx.emit(Action::Palette);
+                            }
+                        })),
                     ),
             )
             .when_some(tip, |d, tip| d.child(tip))
@@ -3269,3 +3625,11 @@ mod header_geometry_tests;
 #[cfg(test)]
 #[path = "chrome/behaviour_tests.rs"]
 mod behaviour_tests;
+
+#[cfg(test)]
+#[path = "chrome/version_tests.rs"]
+mod version_tests;
+
+#[cfg(test)]
+#[path = "chrome/sidebar_audit_tests.rs"]
+mod sidebar_audit_tests;

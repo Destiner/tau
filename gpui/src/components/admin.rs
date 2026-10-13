@@ -262,7 +262,7 @@ impl AdminControls {
         self.dismiss(true, cx);
     }
     fn dismiss(&mut self, restore_focus: bool, cx: &mut Context<Self>) {
-        if !self.open || self.busy {
+        if !self.open || (restore_focus && self.busy) {
             return;
         }
         self.open = false;

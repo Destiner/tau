@@ -303,6 +303,7 @@ fn main() -> anyhow::Result<()> {
         "PASS native-app compacted history real get_messages/get_entries + measured Load Earlier prior layer; stable tail identity/content/reader bounds",
         "PASS native-app synthetic history sidebar return retains original draft",
         "PASS native-app busy last CmdW cancel retains actual root/composer and unrelated draft",
+        "PASS native-app measured version trigger + disabled unavailable update click + Escape retain draft",
         "PASS native-app palette visible measured root panel + focused empty input",
         "PASS native-app remote visible measured root panel + focused empty input",
         "PASS native-app reopened root palette visible measured panel + focused empty input",

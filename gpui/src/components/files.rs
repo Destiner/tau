@@ -11,6 +11,11 @@ use gpui_kit::{
 
 use super::{support, syntax};
 
+#[path = "file_preview_path.rs"]
+pub mod preview_path;
+#[path = "file_preview_type.rs"]
+pub mod preview_type;
+
 #[path = "markdown_document.rs"]
 mod markdown_document;
 use markdown_document::MarkdownDocument;
@@ -22,12 +27,28 @@ pub enum FileContent {
     Image,
     Error(String),
     Unsupported,
+    Loading,
 }
 
 #[derive(Clone)]
 pub struct CloseRequested;
 
 const PLAIN_LINE_HEIGHT: f32 = 1.65;
+
+// Base's code projection normalizes CR and supplies a final newline. Plain text
+// is the exact-copy fallback when those transformations would change the snapshot.
+fn highlightable(text: &str) -> bool {
+    text.ends_with('\n') && !text.contains('\r') && text.encode_utf16().count() <= 20_000
+}
+fn source_fence(text: &str, language: &str) -> String {
+    let count = text
+        .lines()
+        .map(|line| line.trim_start().chars().take_while(|c| *c == '~').count())
+        .max()
+        .unwrap_or(0);
+    let fence = "~".repeat(count.max(2) + 1);
+    format!("{fence}{language}\n{}{fence}", text)
+}
 
 fn plain_text_style() -> gpui_kit::TextStyleRefinement {
     gpui_kit::TextStyleRefinement {
@@ -48,7 +69,11 @@ pub struct FileViewer {
     image: Option<Arc<Image>>,
     document: Option<gpui_kit::Entity<MarkdownDocument>>,
     on_link: Arc<dyn Fn(MarkdownLinkRequested) + Send + Sync>,
+    on_context: Option<Arc<super::markdown::LinkContextHandler>>,
     _keys: gpui_kit::Subscription,
+    show_loading: bool,
+    truncated: bool,
+    keyboard_enabled: bool,
 }
 
 impl FileViewer {
@@ -88,20 +113,20 @@ impl FileViewer {
         } else {
             None
         };
-        let source = if matches!(content, FileContent::Text(_)) && !is_document {
-            syntax::language_for_filename(&filename).map(|language| {
-                let code = match &content {
-                    FileContent::Text(text) => text.as_str(),
-                    _ => "",
-                };
-                // A single fenced block retains Base's syntax spans and native selection.
-                // Strip the trailing newline before the fence so the preview has no extra line.
-                let fenced = format!("```{language}\n{}\n```", code.trim_end_matches('\n'));
-                cx.new(|cx| TextViewState::markdown(&fenced, cx).selectable(true))
-            })
-        } else {
-            None
-        };
+        let source =
+            if matches!(&content, FileContent::Text(text) if highlightable(text)) && !is_document {
+                syntax::language_for_filename(&filename).map(|language| {
+                    let code = match &content {
+                        FileContent::Text(text) => text.as_str(),
+                        _ => "",
+                    };
+                    // A collision-free fence retains syntax spans and exact terminal blank lines.
+                    let fenced = source_fence(code, language);
+                    cx.new(|cx| TextViewState::markdown(&fenced, cx).selectable(true))
+                })
+            } else {
+                None
+            };
         let weak = cx.weak_entity();
         let owner_window = window.window_handle();
         let keys = cx.intercept_keystrokes(move |event, window, cx| {
@@ -109,6 +134,7 @@ impl FileViewer {
             let view = scene.read(cx);
             if window.window_handle() != owner_window
                 || view.closed
+                || !view.keyboard_enabled
                 || view
                     .presentation(cx)
                     .is_some_and(|presentation| presentation.read(cx).has_expanded_diagram(cx))
@@ -130,7 +156,11 @@ impl FileViewer {
                     TextSelection::select_all(window, cx);
                 }
                 cx.stop_propagation();
-            } else if !modifiers.platform && !modifiers.control && !modifiers.alt {
+            } else if !modifiers.platform
+                && !modifiers.control
+                && !modifiers.alt
+                && view.close_focus.is_focused(window)
+            {
                 let scroll = &scene.read(cx).scroll;
                 let mut offset = scroll.offset();
                 let page = f32::from(scroll.bounds().size.height) * 0.85;
@@ -161,10 +191,18 @@ impl FileViewer {
             image,
             document,
             on_link,
+            on_context: None,
             _keys: keys,
+            show_loading: false,
+            truncated: false,
+            keyboard_enabled: true,
         }
     }
 
+    /// Central overlay ownership can suspend Escape/selection without moving focus.
+    pub fn set_keyboard_enabled(&mut self, enabled: bool) {
+        self.keyboard_enabled = enabled;
+    }
     pub fn close(&mut self, cx: &mut Context<Self>) {
         if !self.closed {
             self.closed = true;
@@ -202,6 +240,13 @@ impl FileViewer {
         self.selection_source(cx)
             .map_or_else(String::new, |source| source.read(cx).selected_text())
     }
+    #[cfg(test)]
+    pub(crate) fn selection_source_for_test(
+        &self,
+        cx: &gpui_kit::App,
+    ) -> Option<gpui_kit::Entity<TextViewState>> {
+        self.selection_source(cx)
+    }
     fn selection_source(&self, cx: &gpui_kit::App) -> Option<gpui_kit::Entity<TextViewState>> {
         self.document
             .as_ref()
@@ -230,6 +275,29 @@ impl FileViewer {
             document.update(cx, |document, cx| document.set_link_handler(handler, cx));
         }
     }
+    pub fn set_context_handler(
+        &mut self,
+        handler: impl Fn(
+            super::markdown::LinkTarget,
+            &gpui_kit::MouseDownEvent,
+            &mut Window,
+            &mut gpui_kit::App,
+        ) + Send
+        + Sync
+        + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        let handler: Arc<super::markdown::LinkContextHandler> = Arc::new(handler);
+        self.on_context = Some(handler.clone());
+        if let Some(document) = &self.document {
+            document.update(cx, |document, cx| {
+                document.set_context_handler(
+                    move |target, event, window, cx| handler(target, event, window, cx),
+                    cx,
+                )
+            });
+        }
+    }
     pub fn image_loaded(&self, cx: &gpui_kit::App) -> bool {
         matches!(self.content, FileContent::Image)
             && self
@@ -241,7 +309,20 @@ impl FileViewer {
         self.image = Some(image);
         self.set_content(FileContent::Image, cx);
     }
+    /// The shell owns the 200ms delay and 15s deadline, fenced by its request token.
+    pub fn loading_visible(&self) -> bool {
+        matches!(self.content, FileContent::Loading) && self.show_loading
+    }
+    pub fn set_loading_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        self.show_loading = visible;
+        cx.notify();
+    }
+    pub fn set_truncated(&mut self, truncated: bool, cx: &mut Context<Self>) {
+        self.truncated = truncated;
+        cx.notify();
+    }
     pub fn set_content(&mut self, content: FileContent, cx: &mut Context<Self>) {
+        self.show_loading = false;
         self.document = if let FileContent::Text(text) = &content {
             markdown_document::is_document(&self.filename).then(|| {
                 let handler = self.on_link.clone();
@@ -257,6 +338,14 @@ impl FileViewer {
         } else {
             None
         };
+        if let (Some(document), Some(handler)) = (&self.document, self.on_context.clone()) {
+            document.update(cx, |document, cx| {
+                document.set_context_handler(
+                    move |target, event, window, cx| handler(target, event, window, cx),
+                    cx,
+                )
+            });
+        }
         self.source = if let FileContent::Text(text) = &content {
             if self.document.is_some() {
                 None
@@ -278,8 +367,11 @@ impl FileViewer {
         text: &str,
         cx: &mut Context<Self>,
     ) -> Option<gpui_kit::Entity<TextViewState>> {
+        if !highlightable(text) {
+            return None;
+        }
         let language = syntax::language_for_filename(&self.filename)?;
-        let fenced = format!("```{language}\n{}\n```", text.trim_end_matches('\n'));
+        let fenced = source_fence(text, language);
         Some(cx.new(|cx| TextViewState::markdown(&fenced, cx).selectable(true)))
     }
     fn kind(&self) -> &str {
@@ -288,6 +380,7 @@ impl FileViewer {
             FileContent::Image => "image",
             FileContent::Error(_) => "error",
             FileContent::Unsupported => "unsupported",
+            FileContent::Loading => "loading",
         }
     }
 }
@@ -326,10 +419,26 @@ impl Render for FileViewer {
                 div()
                     .flex()
                     .gap(px(7.))
-                    .max_w(px(620.))
+                    .max_w(px(f32::from(window.viewport_size().width)
+                        .mul_add(0.7, 0.)
+                        .min(620.)))
+                    .overflow_hidden()
+                    .items_baseline()
                     .text_size(px(11.))
-                    .child(div().text_color(rgb(colors.text)).child(filename))
-                    .child(div().text_color(rgb(colors.muted)).child(directory)),
+                    .child(
+                        div()
+                            .min_w_0()
+                            .text_ellipsis()
+                            .text_color(rgb(colors.text))
+                            .child(filename),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .text_ellipsis()
+                            .text_color(rgb(colors.muted))
+                            .child(directory),
+                    ),
             );
         let close_focused = self.close_focus.is_focused(window);
         let close = gpui_kit::base::Button::new("close")
@@ -390,7 +499,7 @@ impl Render for FileViewer {
         let content = match kind {
             "image" => content.child(
                 div()
-                    .h(px(654.))
+                    .h_full()
                     .w_full()
                     .flex()
                     .items_center()
@@ -405,9 +514,9 @@ impl Render for FileViewer {
                         )
                     }),
             ),
-            "error" | "unsupported" => content.child(
+            "loading" | "error" | "unsupported" => content.child(
                 div()
-                    .h(px(654.))
+                    .h_full()
                     .w_full()
                     .flex()
                     .items_center()
@@ -416,6 +525,12 @@ impl Render for FileViewer {
                     .text_size(px(11.))
                     .child(if let FileContent::Error(ref message) = self.content {
                         message.clone()
+                    } else if kind == "loading" {
+                        if self.show_loading {
+                            "Loading preview".into()
+                        } else {
+                            String::new()
+                        }
                     } else {
                         "Preview unavailable.".to_string()
                     }),
@@ -477,28 +592,30 @@ impl Render for FileViewer {
                 }
             }
         };
-        page.child(content)
-            .child(header)
-            .child(close)
-            .when(kind == "error", |page| {
+        page.child(content).child(header).child(close).when(
+            self.truncated && kind != "error",
+            |page| {
                 page.child(
                     div()
                         .absolute()
-                        .inset_0()
-                        .flex()
-                        .items_center()
-                        .justify_center()
+                        .right(px(12.))
+                        .bottom(px(10.))
+                        .px(px(7.))
+                        .py(px(3.))
+                        .rounded(px(4.))
+                        .bg(rgb(canvas))
+                        .text_size(px(10.))
                         .text_color(rgb(colors.muted))
-                        .text_size(px(11.))
-                        .child(if let FileContent::Error(ref message) = self.content {
-                            message.clone()
-                        } else {
-                            "Couldn’t preview this file.".to_string()
-                        }),
+                        .child("Showing first 512 KiB"),
                 )
-            })
+            },
+        )
     }
 }
+
+#[cfg(test)]
+#[path = "file_viewer_regression_tests.rs"]
+mod file_regressions;
 
 #[cfg(test)]
 mod tests {
@@ -770,13 +887,26 @@ mod tests {
         });
         window.update(|_, cx| {
             viewer.update(cx, |view, cx| {
-                view.filename = "example.mdx".into();
-                view.set_content(FileContent::Text("# Source, not a document".into()), cx);
-                assert!(view.document.is_none());
-                assert!(view.source.is_some());
-                view.filename = "Dockerfile".into();
-                view.set_content(FileContent::Text("FROM alpine".into()), cx);
-                assert!(view.source.is_some());
+                for (filename, source) in [
+                    ("example.mdx", "# Source, not a document"),
+                    ("Dockerfile", "FROM alpine"),
+                ] {
+                    view.filename = filename.into();
+                    view.set_content(FileContent::Text(source.into()), cx);
+                    assert!(view.document.is_none());
+                    assert!(
+                        view.source.is_none(),
+                        "no final newline must use exact plain text"
+                    );
+                    assert_eq!(view.rendered_text(cx).as_deref(), Some(source));
+                    let terminated = format!("{source}\n");
+                    view.set_content(FileContent::Text(terminated.clone()), cx);
+                    assert!(
+                        view.source.is_some(),
+                        "terminated source must retain highlighting"
+                    );
+                    assert_eq!(view.rendered_text(cx).as_deref(), Some(terminated.as_str()));
+                }
             })
         });
     }
@@ -819,16 +949,48 @@ mod tests {
             text
         });
         let bounds = window.update(|_, cx| text.read(cx).bounds());
-        let at = gpui_kit::point(bounds.left() + px(10.), bounds.top() + px(8.));
+        let at = window.update(|_, cx| {
+            let state = text.read(cx);
+            (0..f32::from(bounds.size.height).ceil() as usize)
+                .find_map(|y| {
+                    (0..f32::from(bounds.size.width).ceil() as usize).find_map(|x| {
+                        let at = bounds.origin + gpui_kit::point(px(x as f32), px(y as f32));
+                        (state.rendered_offset_at(at) == Some(1)).then_some(at)
+                    })
+                })
+                .expect("document link must expose actual shaped hit geometry")
+        });
         window.simulate_mouse_down(at, MouseButton::Left, Modifiers::default());
         window.simulate_mouse_up(at, MouseButton::Left, Modifiers::default());
         assert_eq!(
             requests.lock().unwrap().as_slice(),
             &[MarkdownLinkRequested {
-                target: "docs/related.md".into()
+                target: super::super::markdown::LinkTarget::explicit("docs/related.md").unwrap(),
+                anchor: at,
             }]
         );
-        window.update(|_, cx| assert!(!viewer.read(cx).is_closed()));
+        window.update(|window, cx| {
+            assert!(!viewer.read(cx).is_closed());
+            // Selection owns focus after a pointer press; Tab reaches the inline
+            // control first, then the viewer close button.
+            window.press("tab", cx);
+            assert!(!viewer.read(cx).close_focused(window));
+            window.press("tab", cx);
+            assert!(viewer.read(cx).close_focused(window));
+            window.press("shift-tab", cx);
+            let _ = window.draw(cx);
+        });
+        window.update(|window, cx| window.press("enter", cx));
+        let requests = requests.lock().unwrap();
+        assert_eq!(
+            requests.len(),
+            2,
+            "real keyboard input must activate the document link"
+        );
+        assert_eq!(requests[1].target, requests[0].target);
+        let bounds = window.update(|_, cx| text.read(cx).bounds());
+        assert!(requests[1].anchor.x >= bounds.left() && requests[1].anchor.x <= bounds.right());
+        assert!(requests[1].anchor.y > bounds.top() && requests[1].anchor.y <= bounds.bottom());
     }
 
     #[gpui::test]
@@ -838,7 +1000,7 @@ mod tests {
             FileViewer::new(
                 "note.rs",
                 "src",
-                FileContent::Text("let a = 1;".into()),
+                FileContent::Text("let a = 1;\n".into()),
                 None,
                 false,
                 window,
@@ -867,19 +1029,19 @@ mod tests {
             view.update(cx, |view, cx| {
                 view.set_content(FileContent::Image, cx);
                 assert!(view.source.is_none());
-                view.set_content(FileContent::Text("let b = 2;".into()), cx);
+                view.set_content(FileContent::Text("let b = 2;\n".into()), cx);
             })
         });
         cx.read(|cx| {
             let view = view.read(cx);
-            assert!(matches!(view.content(), FileContent::Text(text) if text == "let b = 2;"));
+            assert!(matches!(view.content(), FileContent::Text(text) if text == "let b = 2;\n"));
             assert!(view.source.is_some());
             assert_eq!(view.selected_text(cx), "");
         });
         cx.update(|cx| {
             view.update(cx, |view, cx| {
                 view.scroll.set_offset(gpui_kit::point(px(0.), px(-50.)));
-                view.set_content(FileContent::Text("let c = 3;".into()), cx);
+                view.set_content(FileContent::Text("let c = 3;\n".into()), cx);
             })
         });
         cx.read(|cx| {
@@ -995,7 +1157,8 @@ mod tests {
             viewer.update(cx, |viewer, cx| {
                 viewer.filename = "note.rs".into();
                 viewer.set_content(FileContent::Text("fn main() {}".into()), cx);
-                assert!(viewer.source.is_some());
+                assert!(viewer.source.is_none());
+                assert_eq!(viewer.rendered_text(cx).as_deref(), Some("fn main() {}"));
             });
         });
     }

@@ -10,6 +10,91 @@ use gpui_kit::{
     px, rgb, rgba, svg,
 };
 
+/// Observe the actual element box without adding a layout/scroll-content child.
+pub fn observe_bounds<E: gpui_kit::IntoElement>(
+    element: E,
+    callback: impl FnOnce(gpui_kit::Bounds<gpui_kit::Pixels>, &mut gpui_kit::Window, &mut gpui_kit::App)
+    + 'static,
+) -> BoundsObserver<E::Element> {
+    BoundsObserver {
+        inner: element.into_element(),
+        callback: Some(Box::new(callback)),
+    }
+}
+
+type BoundsCallback =
+    Box<dyn FnOnce(gpui_kit::Bounds<gpui_kit::Pixels>, &mut gpui_kit::Window, &mut gpui_kit::App)>;
+pub struct BoundsObserver<E> {
+    inner: E,
+    callback: Option<BoundsCallback>,
+}
+impl<E: gpui_kit::Element> gpui_kit::IntoElement for BoundsObserver<E> {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+impl<E: gpui_kit::Element> gpui_kit::Element for BoundsObserver<E> {
+    type RequestLayoutState = E::RequestLayoutState;
+    type PrepaintState = E::PrepaintState;
+    fn id(&self) -> Option<gpui_kit::ElementId> {
+        self.inner.id()
+    }
+    fn a11y_role(&self) -> Option<gpui_kit::accesskit::Role> {
+        self.inner.a11y_role()
+    }
+    fn write_a11y_info(&self, node: &mut gpui_kit::accesskit::Node) {
+        self.inner.write_a11y_info(node);
+    }
+    fn a11y_synthetic_children(
+        &mut self,
+        prepaint: &mut Self::PrepaintState,
+        builder: &mut gpui_kit::A11ySubtreeBuilder,
+    ) {
+        self.inner.a11y_synthetic_children(prepaint, builder);
+    }
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        self.inner.source_location()
+    }
+    fn request_layout(
+        &mut self,
+        id: Option<&gpui_kit::GlobalElementId>,
+        inspector: Option<&gpui_kit::InspectorElementId>,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::App,
+    ) -> (gpui_kit::LayoutId, Self::RequestLayoutState) {
+        self.inner.request_layout(id, inspector, window, cx)
+    }
+    fn prepaint(
+        &mut self,
+        id: Option<&gpui_kit::GlobalElementId>,
+        inspector: Option<&gpui_kit::InspectorElementId>,
+        bounds: gpui_kit::Bounds<gpui_kit::Pixels>,
+        layout: &mut Self::RequestLayoutState,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::App,
+    ) -> Self::PrepaintState {
+        if let Some(callback) = self.callback.take() {
+            callback(bounds, window, cx);
+        }
+        self.inner
+            .prepaint(id, inspector, bounds, layout, window, cx)
+    }
+    fn paint(
+        &mut self,
+        id: Option<&gpui_kit::GlobalElementId>,
+        inspector: Option<&gpui_kit::InspectorElementId>,
+        bounds: gpui_kit::Bounds<gpui_kit::Pixels>,
+        layout: &mut Self::RequestLayoutState,
+        prepaint: &mut Self::PrepaintState,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::App,
+    ) {
+        self.inner
+            .paint(id, inspector, bounds, layout, prepaint, window, cx);
+    }
+}
+
 /// Colours resolved against the canvas where CSS uses translucent washes.
 /// `scrim` alone is RGBA; all other fields are RGB.
 #[derive(Clone, Copy)]
@@ -313,17 +398,18 @@ pub fn icon(name: &str, size: f32, color: u32) -> Svg {
         .text_color(rgb(color))
 }
 
-/// A smaller, pixel-aligned glyph box; the trigger and previous glyph center stay put.
+/// UiSelect's 5px content box plus right/bottom borders, rotated around its center.
 pub fn selector_arrow(color: u32) -> gpui_kit::Div {
-    let extent = 6.;
-    let overhang = (extent - 4.) / 2.;
+    let extent = 6. * std::f32::consts::SQRT_2;
+    let overhang = (extent - 6.) / 2.;
     div()
         .absolute()
         .size(px(extent))
         .flex_shrink_0()
-        .right(px(8.5 - overhang))
+        // Both containing blocks end inside the trigger's 1px border.
+        .right(px(8. - overhang))
         .top(gpui_kit::relative(0.5))
-        .mt(px(-3.5 - overhang))
+        .mt(px(-4. - overhang))
         .child(icon("selector-chevron", extent, color).flex_shrink_0())
 }
 
@@ -332,7 +418,7 @@ pub fn asset(path: &str) -> Option<Cow<'static, [u8]>> {
     let bytes: &'static [u8] = match path {
         "product-icons/search.svg" => include_bytes!("../../assets/product-icons/search.svg"),
         "product-icons/selector-chevron.svg" => {
-            br#"<svg xmlns="http://www.w3.org/2000/svg" width="5.656854" height="5.656854" viewBox="-0.828427 -0.828427 5.656854 5.656854"><path transform="rotate(45 2 2)" d="M3 0H4V4H0V3H3Z"/></svg>"#
+            include_bytes!("../../assets/product-icons/selector-chevron.svg")
         }
         "product-icons/chevron-left.svg" => {
             include_bytes!("../../assets/product-icons/chevron-left.svg")
@@ -372,12 +458,102 @@ pub fn asset(path: &str) -> Option<Cow<'static, [u8]>> {
 mod tests {
     use super::*;
     use gpui_kit::{
-        Context, MouseButton, Refineable, Render, Style, TestApp, Window, test::TestWindowExt,
+        Context, MouseButton, Refineable, Render, Style, TestApp, TestSupportExt, Window,
+        test::TestWindowExt,
     };
     use std::{
         cell::{Cell, RefCell},
         rc::Rc,
     };
+
+    #[test]
+    fn bounds_observer_preserves_border_box_and_fitting_scroll_extent() {
+        struct Host {
+            measured: Rc<Cell<Option<gpui_kit::Bounds<gpui_kit::Pixels>>>>,
+            scroll: gpui_kit::ScrollHandle,
+        }
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let measured = self.measured.clone();
+                div().size_full().child(observe_bounds(
+                    div()
+                        .id("surface")
+                        .test_support()
+                        .absolute()
+                        .left(px(220.))
+                        .top(px(100.))
+                        .w(px(200.))
+                        .h(px(42.))
+                        .p(px(8.))
+                        .border_1()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.scroll)
+                        .flex()
+                        .flex_col()
+                        .child(div().id("row").test_support().h(px(24.)).flex_shrink_0()),
+                    move |bounds, _, _| measured.set(Some(bounds)),
+                ))
+            }
+        }
+        let mut app = TestApp::new();
+        let mut window = app.open_window_with_options(Default::default(), |_, _| Host {
+            measured: Rc::new(Cell::new(None)),
+            scroll: gpui_kit::ScrollHandle::new(),
+        });
+        for _ in 0..3 {
+            window.draw();
+            window.update(|host, w, _| {
+                let surface = w.find("surface").bounds();
+                let row = w.find("row").bounds();
+                assert_eq!(host.measured.get(), Some(surface));
+                assert_eq!(surface.left(), px(220.));
+                assert_eq!(row.top() - surface.top(), px(9.));
+                assert_eq!(surface.bottom() - row.bottom(), px(9.));
+                assert_eq!(host.scroll.max_offset().y, px(0.));
+            });
+        }
+    }
+
+    #[test]
+    fn selector_asset_raster_bounds_match_the_production_rotated_border_not_an_icon_center() {
+        let mut app = TestApp::new();
+        app.update(|cx| {
+            let bytes = asset("product-icons/selector-chevron.svg").unwrap();
+            assert_eq!(
+                bytes.as_ref(),
+                include_bytes!("../../assets/product-icons/selector-chevron.svg")
+            );
+            let renderer = cx.svg_renderer();
+            let parsed = renderer.parse_svg(&bytes).unwrap();
+            let image = renderer
+                .render_parsed(
+                    &parsed,
+                    gpui_kit::SvgSize::ExactSize(gpui_kit::size(512.into(), 512.into())),
+                )
+                .unwrap();
+            let pixels = image.as_bytes(0).unwrap();
+            let mut left = 512;
+            let mut right = 0;
+            let mut top = 512;
+            let mut bottom = 0;
+            for y in 0..512 {
+                for x in 0..512 {
+                    if pixels[(y * 512 + x) * 4 + 3] >= 128 {
+                        left = left.min(x);
+                        right = right.max(x + 1);
+                        top = top.min(y);
+                        bottom = bottom.max(y + 1);
+                    }
+                }
+            }
+            // CSS's 6x6 border box has visible vertices at y=-1/sqrt(2) and 6/sqrt(2).
+            // Inside its rotated viewport that is [5/12, 1], not a vertically centered V.
+            assert!(left <= 2 && right >= 510);
+            assert!((top as f32 / 512. - 5. / 12.).abs() < 0.005);
+            assert!(bottom >= 510);
+            assert!(((top + bottom) as f32 / 1024. - 17. / 24.).abs() < 0.005);
+        });
+    }
 
     struct ButtonHost {
         empty: bool,

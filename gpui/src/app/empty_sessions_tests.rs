@@ -230,6 +230,10 @@ fn actual_new_session_and_project_switch_retire_only_after_valid_target() {
             });
             create(s, "empty", "", w, cx);
             s.new_session(Some("/invalid/project".into()), w, cx);
+            assert!(
+                s.error.is_none(),
+                "stale explicit project targets must not create a foreground incident"
+            );
             assert_eq!(s.active, "empty");
             assert!(s.sessions.contains_key("empty"));
             s.new_session(target_project.clone(), w, cx);

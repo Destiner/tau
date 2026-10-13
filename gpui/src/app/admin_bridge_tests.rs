@@ -1,6 +1,111 @@
 use super::super::tests::with_shell;
 use super::*;
 
+#[test]
+fn production_root_nonmodal_report_outside_click_keeps_row_focus_and_write_ownership() {
+    use super::super::view::confirm_queue_fixture::{Fixture, secondary};
+    use gpui_kit::test::TestWindowExt;
+
+    for state in ["open", "saved", "pending"] {
+        let mut f = Fixture::new();
+        f.root.update(|_, w, cx| {
+            f.shell.update(cx, |s, cx| {
+                s.sessions
+                    .get_mut("a")
+                    .unwrap()
+                    .controller
+                    .set_draft("draft A");
+                s.sessions.get_mut("a").unwrap().dirty = true;
+                super::super::tests::create(s, "b", "draft B", w, cx);
+                s.select("a", w, cx);
+                enable(s, cx);
+                s.open_admin_reporter(w, cx);
+                let editor = s.admin.view.as_ref().unwrap().read(cx).editor();
+                editor.update(cx, |e, cx| e.set_value("accepted report", w, cx));
+                s.sync(w, cx);
+            });
+        });
+        f.sent();
+        f.root.draw();
+        let revision = if state != "open" {
+            f.press(secondary(false));
+            let Command::Admin(admin::Command::Submit { revision, .. }) =
+                f.requests.try_recv().unwrap()
+            else {
+                panic!("expected actual reporter submission")
+            };
+            if state == "saved" {
+                f.root.update(|_, w, cx| {
+                    f.shell.update(cx, |s, cx| {
+                        s.admin_event(
+                            admin::Reply::Submitted {
+                                revision,
+                                saved: true,
+                            },
+                            cx,
+                        );
+                        s.sync(w, cx);
+                    })
+                });
+                f.root.draw();
+            }
+            Some(revision)
+        } else {
+            None
+        };
+        f.root.update(|_, _, cx| {
+            let s = f.shell.read(cx);
+            assert!(s.admin.view.as_ref().unwrap().read(cx).is_open());
+            assert!(s.project_actions_admitted(cx));
+        });
+        f.click("session-status-saved-a");
+        f.root.update(|_, w, cx| {
+            let s = f.shell.read(cx);
+            assert!(
+                !s.admin.view.as_ref().unwrap().read(cx).is_open(),
+                "{state}"
+            );
+            assert_eq!(
+                w.try_find("session-saved-a").unwrap().focused(),
+                Some(true),
+                "{state}"
+            );
+            assert_eq!(s.sessions["a"].controller.state().draft, "draft A");
+            if state == "pending" {
+                assert!(s.admin.pending(revision.unwrap()));
+                assert!(s.admin.view.as_ref().unwrap().read(cx).is_busy());
+            }
+        });
+        f.root
+            .update(|_, w, cx| f.shell.update(cx, |s, cx| s.open_admin_reporter(w, cx)));
+        f.root.draw();
+        f.click("session-status-b");
+        f.root.update(|_, w, cx| {
+            f.shell.update(cx, |s, cx| {
+                assert_eq!(s.active, "b", "outside click must also activate its target");
+                assert_eq!(s.sessions["b"].controller.state().draft, "draft B");
+                if state == "pending" {
+                    let revision = revision.unwrap();
+                    assert!(s.admin.pending(revision));
+                    s.admin_event(
+                        admin::Reply::Submitted {
+                            revision,
+                            saved: true,
+                        },
+                        cx,
+                    );
+                    s.sync(w, cx);
+                    assert!(!s.admin.pending(revision));
+                    let view = s.admin.view.as_ref().unwrap().read(cx);
+                    assert!(!view.is_busy());
+                    assert_eq!(view.editor().read(cx).value().as_ref(), "");
+                }
+                assert_eq!(s.sessions["a"].controller.state().draft, "draft A");
+            })
+        });
+    }
+}
+
 fn enable(s: &mut Shell, cx: &mut Context<Shell>) {
     let admin::Command::SetMode { revision, .. } = s.admin.set_mode(true) else {
         unreachable!()

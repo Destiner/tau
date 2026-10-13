@@ -318,7 +318,7 @@ impl Composer {
         let below = (viewport.height - px(5.) - below_top).max(px(0.));
         let place_below = desired > above && below > above;
         // Keep the Vue minimum where possible, but never overflow a tiny native viewport.
-        let height = desired
+        let max_height = desired
             .min(if place_below { below } else { above })
             .max(px(96.))
             .min(if place_below { below } else { above });
@@ -330,7 +330,10 @@ impl Composer {
             .role(gpui_kit::accesskit::Role::ListBox)
             .aria_label("Commands")
             .w(px(540.).min((bounds.size.width - px(8.)).max(px(0.))))
-            .max_h(height)
+            // Vue's 96px floor applies to max-height, not the natural surface height.
+            // Positioner's flex cross-axis otherwise stretches a one-result menu to that cap.
+            .h(desired.min(max_height))
+            .max_h(max_height)
             .min_h_0()
             .p(px(8.))
             .border_1()
@@ -354,7 +357,6 @@ impl Composer {
             .track_scroll(&self.commands.scroll)
             .flex()
             .flex_col()
-            .on_prepaint(move |bounds, _, _| popup_bounds.set(Some(bounds)))
             .occlude()
             .on_mouse_down(gpui_kit::MouseButton::Left, |_, _, cx| {
                 cx.stop_propagation()
@@ -366,6 +368,8 @@ impl Composer {
             let pending = self.commands.reveal.clone();
             let scroll = self.commands.scroll.clone();
             let mut copy = div()
+                .id(format!("command-copy-{position}"))
+                .test_support()
                 .flex_1()
                 .min_w_0()
                 .flex()
@@ -392,7 +396,7 @@ impl Composer {
                         .child(description.clone()),
                 );
             }
-            menu = menu.child(
+            menu = menu.child(support::observe_bounds(
                 div()
                     .id(format!("command-option-{position}"))
                     .test_support()
@@ -423,12 +427,7 @@ impl Composer {
                     .gap(px(10.))
                     .text_color(rgb(t.text))
                     .when(active, |d| {
-                        d.bg(if self.dark {
-                            rgb(0x475266).opacity(0.2)
-                        } else {
-                            rgb(0x6b7d8f).opacity(0.1)
-                        })
-                        .child(
+                        d.child(
                             div()
                                 .absolute()
                                 .left(px(0.))
@@ -439,27 +438,6 @@ impl Composer {
                                 .rounded_br(px(1.))
                                 .bg(rgb(t.accent)),
                         )
-                    })
-                    .on_prepaint(move |bounds, window, _| {
-                        if !active || !pending.get() {
-                            return;
-                        }
-                        let viewport = scroll.bounds();
-                        let delta = if bounds.top() < viewport.top() + px(9.) {
-                            viewport.top() + px(9.) - bounds.top()
-                        } else if bounds.bottom() > viewport.bottom() - px(9.) {
-                            viewport.bottom() - px(9.) - bounds.bottom()
-                        } else {
-                            px(0.)
-                        };
-                        if delta == px(0.) || bounds.size.height > viewport.size.height - px(18.) {
-                            pending.set(false);
-                        } else {
-                            let mut offset = scroll.offset();
-                            offset.y += delta;
-                            scroll.set_offset(offset);
-                            window.request_animation_frame();
-                        }
                     })
                     .on_mouse_move(cx.listener(move |s, _, _, cx| {
                         if s.commands.cursor != position {
@@ -476,6 +454,8 @@ impl Composer {
                     .child(copy)
                     .child(
                         div()
+                            .id(format!("command-source-{position}"))
+                            .test_support()
                             .flex_shrink_0()
                             .self_end()
                             .text_size(px(10.))
@@ -483,7 +463,28 @@ impl Composer {
                             .text_color(rgb(t.faint))
                             .child(command.source.as_str()),
                     ),
-            );
+                move |bounds, window, _| {
+                    if !active || !pending.get() {
+                        return;
+                    }
+                    let viewport = scroll.bounds();
+                    let delta = if bounds.top() < viewport.top() + px(9.) {
+                        viewport.top() + px(9.) - bounds.top()
+                    } else if bounds.bottom() > viewport.bottom() - px(9.) {
+                        viewport.bottom() - px(9.) - bounds.bottom()
+                    } else {
+                        px(0.)
+                    };
+                    if delta == px(0.) || bounds.size.height > viewport.size.height - px(18.) {
+                        pending.set(false);
+                    } else {
+                        let mut offset = scroll.offset();
+                        offset.y += delta;
+                        scroll.set_offset(offset);
+                        window.request_animation_frame();
+                    }
+                },
+            ));
         }
         Some(
             gpui_kit::deferred(
@@ -503,7 +504,9 @@ impl Composer {
                     ),
                 )
                 .margin(px(0.))
-                .child(menu),
+                .child(support::observe_bounds(menu, move |bounds, _, _| {
+                    popup_bounds.set(Some(bounds));
+                })),
             )
             .with_priority(100)
             .into_any_element(),

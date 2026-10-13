@@ -4,6 +4,7 @@ use gpui_kit::{MouseButton, TestApp, TestAppWindow, base::Root, test::TestWindow
 struct Host {
     composer: Entity<Composer>,
     top: f32,
+    pane_width: f32,
 }
 impl Render for Host {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -12,12 +13,20 @@ impl Render for Host {
                 .absolute()
                 .top(px(self.top))
                 .left(px(12.))
-                .w(px(210.))
+                .w(px(self.pane_width))
                 .child(self.composer.clone()),
         )
     }
 }
 fn fixture(width: f32, height: f32, top: f32) -> (TestApp, TestAppWindow<Root>, Entity<Composer>) {
+    fixture_with_pane(width, height, top, 210.)
+}
+fn fixture_with_pane(
+    width: f32,
+    height: f32,
+    top: f32,
+    pane_width: f32,
+) -> (TestApp, TestAppWindow<Root>, Entity<Composer>) {
     let mut app = TestApp::new();
     app.update(|cx| super::super::init(cx, false));
     let mut composer = None;
@@ -68,6 +77,7 @@ fn fixture(width: f32, height: f32, top: f32) -> (TestApp, TestAppWindow<Root>, 
                 Host {
                     composer: entity,
                     top,
+                    pane_width,
                 }
             });
             Root::new(host, window, cx)
@@ -87,7 +97,10 @@ fn assert_visible(window: &mut TestAppWindow<Root>, row: &str) {
         let list = w.find("model-list").bounds();
         let row = w.find(row.to_owned()).bounds();
         assert!(row.top() >= list.top(), "{row:?} above {list:?}");
-        assert!(row.bottom() <= list.bottom(), "{row:?} below {list:?}");
+        // The Vue viewport-minus-120 cap can be smaller than one option.
+        if row.size.height <= list.size.height {
+            assert!(row.bottom() <= list.bottom(), "{row:?} below {list:?}");
+        }
     });
 }
 
@@ -219,7 +232,11 @@ fn grouping_matches_vue_map_filter_and_explicit_mapping_without_scope_expansion(
     window.simulate_keystroke("cmd-v");
     window.draw();
     assert!(window.read(|_, cx| composer.read(cx).visible_models().is_empty()));
-    window.update(|_, w, _| assert!(w.try_find("model-heading").is_none()));
+    window.update(|_, w, _| {
+        assert!(w.try_find("model-heading").is_none());
+        assert!(w.try_find("model-no-match").is_some());
+        assert!(w.try_find("model-empty").is_none());
+    });
     window.simulate_keystroke("down");
     window.simulate_keystroke("enter");
     assert_eq!(
@@ -307,4 +324,201 @@ fn labels_preserve_protocol_values_and_legacy_heading() {
         window.read(|_, cx| composer.read(cx).model_group(0)),
         "Fixture Heading"
     );
+}
+
+#[test]
+fn root_trigger_caps_use_narrow_main_pane_not_wide_window_and_empty_admission() {
+    for (dark, pane_width) in [(false, 160.), (true, 210.), (false, 350.), (true, 900.)] {
+        let (_app, mut window, composer) = fixture_with_pane(1000., 600., 300., pane_width);
+        window.update(|_, w, cx| {
+            composer.update(cx, |s, cx| {
+                s.set_theme(dark, w, cx);
+                s.efforts = vec![Choice {
+                    id: "future".into(),
+                    label: "Long unbroken effort".repeat(20),
+                    element_id: "future-effort".into(),
+                }];
+                s.effort = 0;
+            })
+        });
+        window.draw();
+        window.draw();
+        window.update(|_, w, _| {
+            let model = w.find("model").bounds();
+            let effort = w.find("effort").bounds();
+            let send = w.find("send").bounds();
+            assert!(model.size.width <= px(210.));
+            assert!(effort.size.width <= px(110.));
+            assert!(
+                send.right() <= px(12. + pane_width),
+                "toolbar escaped its main pane in 1000px window"
+            );
+        });
+        click(&mut window, "model");
+        window.update(|_, w, _| assert!(w.find("model-menu").bounds().size.height <= px(320.)));
+        window.update(|_, _, cx| composer.update(cx, |s, cx| s.set_choices(vec![], vec![], cx)));
+        click(&mut window, "effort");
+        assert_eq!(window.read(|_, cx| composer.read(cx).open_selector()), None);
+        click(&mut window, "model");
+        window.update(|_, w, _| {
+            assert!(w.try_find("model-empty").is_some());
+            assert!(w.try_find("model-no-match").is_none());
+            assert!(w.try_find("model-search").is_none());
+        });
+        window.read(|_, cx| {
+            assert_eq!(
+                composer.read(cx).editor.read(cx).value().as_str(),
+                "draft retained"
+            )
+        });
+    }
+}
+
+#[test]
+fn root_start_stop_pending_modes_clear_and_settings_keep_editing_but_guard_actions() {
+    let (_app, mut window, composer) = fixture(1000., 600., 300.);
+    let events = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let seen = events.clone();
+    window.update(|_, _, cx| {
+        cx.subscribe(&composer, move |_, _, event: &Event, _| {
+            seen.borrow_mut().push(event.clone())
+        })
+        .detach()
+    });
+    for (ready, streaming, stopping, pending, queue_busy, extension, setting) in [
+        (false, false, false, false, false, false, false), // starting
+        (true, true, true, false, false, false, false),    // stopping
+        (true, true, false, true, true, false, false),     // mode write or prompt ack
+        (true, true, false, false, true, false, false),    // queue clear
+        (true, false, false, true, false, false, false),   // ordinary prompt ack
+        (true, true, false, false, false, true, false),    // extension prompt
+        (true, false, false, false, false, false, true),   // settings: send stays admitted
+    ] {
+        events.borrow_mut().clear();
+        window.update(|_, w, cx| {
+            composer.update(cx, |s, cx| {
+                s.set_status(false, streaming, cx);
+                s.set_admission(setting, false, cx);
+                s.set_readiness(ready, stopping, pending, queue_busy, extension, cx);
+                s.editor.update(cx, |e, cx| {
+                    e.set_value("new draft", w, cx);
+                    e.focus(w, cx);
+                });
+            })
+        });
+        window.simulate_input(" edited");
+        window.draw();
+        assert!(window.read(|_, cx| composer.read(cx).editor.read(cx).value().contains("edited")));
+        let before = window.read(|_, cx| composer.read(cx).editor.read(cx).value().to_string());
+        click(&mut window, "send");
+        if setting {
+            assert_eq!(events.borrow().as_slice(), &[Event::Send(before)]);
+        } else {
+            assert!(events.borrow().is_empty());
+            window.read(|_, cx| {
+                assert_eq!(composer.read(cx).editor.read(cx).value().as_str(), before)
+            });
+        }
+    }
+    // Pending queue work must not veto a genuine Stop, but never turns blank Enter into Stop.
+    events.borrow_mut().clear();
+    window.update(|_, w, cx| {
+        composer.update(cx, |s, cx| {
+            s.set_status(false, true, cx);
+            s.set_admission(false, false, cx);
+            s.set_readiness(true, false, true, true, false, cx);
+            s.editor.update(cx, |e, cx| {
+                e.set_value("", w, cx);
+                e.focus(w, cx);
+            });
+        })
+    });
+    window.simulate_keystroke("enter");
+    window.draw();
+    assert!(events.borrow().is_empty());
+    click(&mut window, "send");
+    assert_eq!(events.borrow().as_slice(), &[Event::Stop]);
+}
+
+#[test]
+fn root_composer_ime_and_same_frame_submission_latch_preserve_next_draft() {
+    let (_app, mut window, composer) = fixture(1000., 600., 300.);
+    window.update(|_, w, cx| {
+        composer.update(cx, |s, cx| {
+            s.editor.update(cx, |e, cx| {
+                e.focus(w, cx);
+                e.replace_and_mark_text_in_range(None, "composing", Some(9..9), w, cx);
+            });
+            s.activate(false, true, w, cx);
+            assert!(!s.submission_pending);
+            assert!(!s.editor.read(cx).value().is_empty());
+            s.editor.update(cx, |e, cx| e.unmark_text(w, cx));
+            s.activate(false, false, w, cx);
+            assert!(s.submission_pending);
+            s.editor
+                .update(cx, |e, cx| e.set_value("next draft", w, cx));
+            s.activate(false, false, w, cx);
+            assert_eq!(s.editor.read(cx).value().as_str(), "next draft");
+            s.set_readiness(true, false, false, false, false, cx);
+            s.activate(false, false, w, cx);
+            assert!(s.editor.read(cx).value().is_empty());
+        })
+    });
+}
+
+#[test]
+fn root_readiness_changes_do_not_take_focus_from_shell_or_replace_retained_editor() {
+    let (_app, mut window, composer) = fixture(1000., 600., 300.);
+    let editor = window.read(|_, cx| composer.read(cx).editor());
+    window.update(|_, w, cx| {
+        let shell_focus = cx.focus_handle();
+        shell_focus.focus(w, cx);
+        for (ready, stopping) in [(false, false), (true, false), (true, true), (true, false)] {
+            composer.update(cx, |s, cx| {
+                s.set_status(false, false, cx);
+                s.set_readiness(ready, stopping, false, false, false, cx);
+            });
+            assert!(shell_focus.is_focused(w));
+            assert_eq!(composer.read(cx).editor(), editor);
+        }
+    });
+}
+
+#[test]
+fn root_retry_reason_is_focusable_and_retained_draft_survives_real_state_changes() {
+    let (_app, mut window, composer) = fixture(1000., 600., 300.);
+    window.update(|_, _, cx| {
+        composer.update(cx, |s, cx| {
+            s.set_status(false, true, cx);
+            s.set_retry(
+                Some(retry::RetryPresentation {
+                    attempt: Some(2),
+                    max_attempts: Some(3),
+                    reason: tau_session::session::RetryReason::RateLimit,
+                }),
+                cx,
+            );
+        })
+    });
+    window.draw();
+    window.draw();
+    window.update(|_, w, cx| {
+        assert!(w.try_find("retry-indicator").is_some());
+        let focus = composer.read(cx).retry_focus.clone();
+        focus.focus(w, cx);
+    });
+    window.draw();
+    window.update(|_, w, _| assert!(w.try_find("retry-tooltip").is_some()));
+    window.update(|_, _, cx| composer.update(cx, |s, cx| s.set_retry(None, cx)));
+    window.draw();
+    window.update(|_, w, _| {
+        assert!(w.try_find("retry-indicator").is_none());
+        assert!(w.try_find("retry-tooltip").is_none());
+    });
+    window.read(|_, cx| {
+        assert_eq!(
+            composer.read(cx).editor.read(cx).value().as_str(),
+            "draft retained"
+        )
+    });
 }

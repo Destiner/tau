@@ -17,11 +17,34 @@ use std::{
     time::Duration,
 };
 
+struct QueueHint {
+    dark: bool,
+}
+impl Render for QueueHint {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let t = support::tokens(self.dark);
+        div()
+            .id("queue-clear-tooltip")
+            .test_support()
+            .px(px(7.))
+            .py(px(3.))
+            .rounded(px(4.))
+            .border_1()
+            .border_color(rgb(t.border))
+            .bg(rgb(t.panel_raised))
+            .text_color(rgb(t.text))
+            .text_size(px(10.))
+            .child("Clear All")
+    }
+}
+
 fn preview_bottom(host: gpui_kit::Bounds<Pixels>, anchor_top: Pixels) -> Pixels {
     host.bottom() - anchor_top + px(5.)
 }
 
 pub struct MessageQueue {
+    link_context: Option<std::sync::Arc<markdown::LinkContextHandler>>,
+    link_anchor: Option<gpui_kit::Point<Pixels>>,
     id: String,
     dark: bool,
     props: QueueProps,
@@ -41,6 +64,12 @@ pub struct MessageQueue {
     _presentation_changed: gpui_kit::Subscription,
     chip_focus: Vec<FocusHandle>,
     preview_focus: FocusHandle,
+    review_focus: FocusHandle,
+    recover_focus: FocusHandle,
+    focus_events: Vec<gpui_kit::Subscription>,
+    focus_window: Option<gpui_kit::AnyWindowHandle>,
+    preview_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    suppress_preview_focus: bool,
 }
 impl MessageQueue {
     fn show(&mut self, id: String, kind: String, text: String, cx: &mut Context<Self>) {
@@ -52,6 +81,7 @@ impl MessageQueue {
         self.markdown
             .update(cx, |view, cx| view.set_text(&text, cx));
         self.presentation.update(cx, |p, cx| p.source_changed(cx));
+        self.preview_bounds.set(None);
         self.preview = Some((kind, text));
         cx.notify();
     }
@@ -81,6 +111,7 @@ impl MessageQueue {
                             .markdown
                             .update(cx, |view, cx| view.set_text(&text, cx));
                         scene.presentation.update(cx, |p, cx| p.source_changed(cx));
+                        scene.preview_bounds.set(None);
                         scene.preview = Some((kind, text));
                         cx.notify();
                     }
@@ -88,13 +119,16 @@ impl MessageQueue {
             }
         }));
     }
-    fn leave(&mut self, id: &str, cx: &mut Context<Self>) {
+    fn leave(&mut self, id: &str, window: &Window, cx: &mut Context<Self>) {
         if self.hovered.as_deref() != Some(id) {
             return;
         }
         // Hover uses the clipped hitbox, not the outer border bounds.
         self.hovered = None;
-        if !self.preview_hovered {
+        if !self.preview_hovered
+            && !self.chip_focus.iter().any(|f| f.is_focused(window))
+            && !self.preview_focus.contains_focused(window, cx)
+        {
             self.leave_preview(cx);
         }
     }
@@ -116,9 +150,38 @@ impl MessageQueue {
             }
         }));
     }
-    fn key(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if event.keystroke.key == "escape" && self.preview.is_some() {
+    fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if event.keystroke.key != "escape" {
+            return;
+        }
+        if self.preview.is_some() {
+            // Returning focus must not reopen the preview just dismissed.
+            if let Some(id) = &self.trigger {
+                let index = if id.starts_with("steer") {
+                    id.strip_prefix("steer-")
+                        .and_then(|n| n.parse::<usize>().ok())
+                        .unwrap_or(1)
+                        - 1
+                } else {
+                    self.props.steering.len()
+                        + id.strip_prefix("follow-up-")
+                            .and_then(|n| n.parse::<usize>().ok())
+                            .unwrap_or(1)
+                        - 1
+                };
+                if let Some(focus) = self.chip_focus.get(index)
+                    && !focus.is_focused(window)
+                {
+                    self.suppress_preview_focus = true;
+                    focus.focus(window, cx);
+                }
+            }
             self.hide(cx);
+            cx.stop_propagation();
+        } else if self.details {
+            self.details = false;
+            self.recover_focus.focus(window, cx);
+            cx.notify();
             cx.stop_propagation();
         }
     }
@@ -160,11 +223,31 @@ pub enum QueueEvent {
     Clear,
     Dismiss,
     Recover(usize),
-    OpenLink(String),
+    OpenLink(markdown::LinkTarget),
 }
 impl gpui_kit::EventEmitter<QueueEvent> for MessageQueue {}
 
 impl MessageQueue {
+    pub fn set_context_handler(
+        &mut self,
+        handler: impl Fn(
+            markdown::LinkTarget,
+            &gpui_kit::MouseDownEvent,
+            &mut Window,
+            &mut gpui_kit::App,
+        ) + Send
+        + Sync
+        + 'static,
+    ) {
+        self.link_context = Some(std::sync::Arc::new(handler));
+    }
+    pub fn link_anchor(&self) -> Option<gpui_kit::Point<Pixels>> {
+        self.link_anchor
+    }
+    pub fn set_copy_paths(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.presentation
+            .update(cx, |p, cx| p.set_copy_paths(enabled, cx));
+    }
     pub fn set_theme(&mut self, dark: bool, _window: &mut Window, cx: &mut Context<Self>) {
         if self.dark == dark {
             return;
@@ -181,7 +264,7 @@ impl MessageQueue {
         cx: &mut Context<Self>,
     ) -> Self {
         let chip_focus = (0..props.steering.len() + props.follow_up.len())
-            .map(|_| cx.focus_handle())
+            .map(|_| cx.focus_handle().tab_stop(true))
             .collect();
         let markdown =
             cx.new(|cx| TextViewState::markdown_with_extensions("", markdown::extensions(), cx));
@@ -203,6 +286,8 @@ impl MessageQueue {
             props,
             details: false,
             preview: None,
+            link_context: None,
+            link_anchor: None,
             trigger: None,
             anchor: None,
             host_bounds: Rc::new(Cell::new(None)),
@@ -217,6 +302,12 @@ impl MessageQueue {
             _presentation_changed: changed,
             chip_focus,
             preview_focus: cx.focus_handle(),
+            review_focus: cx.focus_handle(),
+            recover_focus: cx.focus_handle(),
+            focus_events: vec![],
+            focus_window: None,
+            preview_bounds: Rc::new(Cell::new(None)),
+            suppress_preview_focus: false,
         }
     }
     pub fn props(&self) -> &QueueProps {
@@ -226,9 +317,13 @@ impl MessageQueue {
         if self.props.steering != props.steering || self.props.follow_up != props.follow_up {
             self.hide(cx);
             self.pill_bounds.borrow_mut().clear();
+            self.focus_events.clear();
             self.chip_focus = (0..props.steering.len() + props.follow_up.len())
-                .map(|_| cx.focus_handle())
+                .map(|_| cx.focus_handle().tab_stop(true))
                 .collect();
+        }
+        if props.failed.is_empty() {
+            self.details = false;
         }
         self.props = props;
         cx.notify();
@@ -245,11 +340,12 @@ impl MessageQueue {
     pub fn focus_follow_up(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(focus) = self.chip_focus.get(self.props.steering.len()) {
             focus.focus(window, cx);
-            self.preview = Some(("Follow Up".into(), self.props.follow_up[0].clone()));
-            self.trigger = Some("follow-up".into());
-            self.markdown
-                .update(cx, |view, cx| view.set_text(&self.props.follow_up[0], cx));
-            cx.notify();
+            self.show(
+                "follow-up".into(),
+                "Follow Up".into(),
+                self.props.follow_up[0].clone(),
+                cx,
+            );
         }
     }
     pub fn focused_follow_up(&self, window: &Window) -> bool {
@@ -261,6 +357,65 @@ impl MessageQueue {
 impl Render for MessageQueue {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = support::tokens(self.dark);
+        if self.focus_window != Some(window.window_handle()) {
+            self.focus_events.clear();
+            self.focus_window = Some(window.window_handle());
+        }
+        if self.focus_events.is_empty() {
+            for (index, text) in self
+                .props
+                .steering
+                .iter()
+                .chain(&self.props.follow_up)
+                .cloned()
+                .enumerate()
+            {
+                let steering = index < self.props.steering.len();
+                let ordinal = if steering {
+                    index + 1
+                } else {
+                    index - self.props.steering.len() + 1
+                };
+                let base = if steering { "steer" } else { "follow-up" };
+                let id = if ordinal == 1 {
+                    base.into()
+                } else {
+                    format!("{base}-{ordinal}")
+                };
+                let kind = if steering { "Steering" } else { "Follow Up" }.to_owned();
+                let focus = self.chip_focus[index].clone();
+                self.focus_events
+                    .push(cx.on_focus(&focus, window, move |s, _, cx| {
+                        if s.suppress_preview_focus {
+                            s.suppress_preview_focus = false;
+                        } else {
+                            s.show(id.clone(), kind.clone(), text.clone(), cx);
+                        }
+                    }));
+                self.focus_events
+                    .push(cx.on_blur(&focus, window, |s, window, cx| {
+                        if !s.chip_focus.iter().any(|f| f.is_focused(window))
+                            && !s.preview_focus.contains_focused(window, cx)
+                        {
+                            s.leave_preview(cx);
+                        }
+                    }));
+            }
+            self.focus_events
+                .push(cx.on_focus_in(&self.preview_focus, window, |s, _, _cx| {
+                    s.pending += 1;
+                    s.close_timer = None;
+                }));
+            self.focus_events.push(cx.on_focus_out(
+                &self.preview_focus,
+                window,
+                |s, _, window, cx| {
+                    if !s.chip_focus.iter().any(|f| f.is_focused(window)) {
+                        s.leave_preview(cx);
+                    }
+                },
+            ));
+        }
         let chip_max_width = if self.props.steering.len() + self.props.follow_up.len() == 1 {
             let text = self
                 .props
@@ -302,6 +457,7 @@ impl Render for MessageQueue {
             .test_support()
             .flex()
             .gap(px(4.))
+            .min_w(px(0.))
             .max_w_full()
             .overflow_x_scroll();
         let all = self
@@ -388,7 +544,7 @@ impl Render for MessageQueue {
                                 let id = name.clone();
                                 let kind = kind.clone();
                                 let text = text.clone();
-                                move |scene, hovered, _, cx| {
+                                move |scene, hovered, window, cx| {
                                     if *hovered {
                                         scene.show_later(
                                             id.clone(),
@@ -397,7 +553,7 @@ impl Render for MessageQueue {
                                             cx,
                                         );
                                     } else {
-                                        scene.leave(&id, cx);
+                                        scene.leave(&id, window, cx);
                                     }
                                 }
                             }))
@@ -447,24 +603,34 @@ impl Render for MessageQueue {
             .p(px(4.))
             .text_size(px(11.));
         if !self.props.steering.is_empty() || !self.props.follow_up.is_empty() {
+            let dark = self.dark;
             bar = bar.child(
-                Button::new("clear")
-                    .accessibility_label("Clear All")
-                    .disabled(self.props.busy)
-                    .size(px(22.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(4.))
-                    .when(!self.props.busy, |button| {
-                        button.hover(move |s| s.bg(rgb(t.hover)))
-                    })
-                    .on_click(cx.listener(|_, _, _, cx| {
-                        cx.emit(QueueEvent::Clear);
-                    }))
+                div()
+                    .id("clear-tooltip-trigger")
+                    .test_support()
+                    .flex_shrink_0()
+                    .tooltip_show_delay(Duration::from_millis(450))
+                    .tooltip(move |_, cx| cx.new(|_| QueueHint { dark }).into())
                     .child(
-                        support::icon("cross", 12., t.muted)
-                            .when(self.props.busy, |icon| icon.opacity(0.45)),
+                        Button::new("clear")
+                            .accessibility_label("Clear All")
+                            .disabled(self.props.busy)
+                            .flex_shrink_0()
+                            .size(px(22.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(4.))
+                            .when(!self.props.busy, |button| {
+                                button.hover(move |s| s.bg(rgb(t.hover)))
+                            })
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                cx.emit(QueueEvent::Clear);
+                            }))
+                            .child(
+                                support::icon("cross", 12., t.muted)
+                                    .when(self.props.busy, |icon| icon.opacity(0.45)),
+                            ),
                     ),
             );
         }
@@ -474,6 +640,9 @@ impl Render for MessageQueue {
                 div()
                     .id("feedback")
                     .test_support()
+                    .min_w(px(0.))
+                    .max_w((window.viewport_size().width * 0.35).min(px(220.)))
+                    .truncate()
                     .text_color(rgb(t.muted))
                     .text_size(px(10.))
                     .child(self.props.feedback.clone()),
@@ -490,6 +659,12 @@ impl Render for MessageQueue {
                     .rounded(px(4.))
                     .opacity(0.65)
                     .hover(|button| button.opacity(1.))
+                    .on_key_down(cx.listener(|_, event: &KeyDownEvent, _, cx| {
+                        if event.keystroke.key == "escape" {
+                            cx.stop_propagation();
+                            cx.emit(QueueEvent::Dismiss);
+                        }
+                    }))
                     .on_click(cx.listener(|_, _, _, cx| {
                         cx.emit(QueueEvent::Dismiss);
                     }))
@@ -499,24 +674,40 @@ impl Render for MessageQueue {
         if !self.props.failed.is_empty() {
             bar = bar.child(
                 Button::new("recover")
+                    .track_focus(&self.recover_focus)
+                    .flex_shrink_0()
                     .accessibility_label(format!("Review Unsent ({})", self.props.failed.len()))
                     .px(px(4.))
                     .py(px(2.))
                     .text_size(px(10.))
                     .text_color(rgb(t.muted))
                     .hover(move |button| button.bg(rgb(t.hover)))
-                    .on_click(cx.listener(|s, _, _, cx| {
+                    .on_click(cx.listener(|s, _, window, cx| {
                         s.details = !s.details;
+                        if s.details {
+                            s.review_focus.focus(window, cx);
+                        }
                         cx.notify();
                     }))
                     .child(format!("Review Unsent ({})", self.props.failed.len())),
             );
         }
         if self.details {
+            let cap = (window.viewport_size().height * 0.36).min(px(260.));
+            let below = self.host_bounds.get().is_some_and(|bounds| {
+                bounds.top() < cap && window.viewport_size().height - bounds.bottom() > bounds.top()
+            });
             let mut review = div()
                 .id("review-panel")
+                .test_support()
+                .track_focus(&self.review_focus)
+                .on_key_down(cx.listener(Self::key))
+                .max_h(cap)
+                .overflow_y_scroll()
+                .occlude()
                 .absolute()
-                .bottom(relative(1.))
+                .when(below, |panel| panel.top(relative(1.)))
+                .when(!below, |panel| panel.bottom(relative(1.)))
                 .right(px(4.))
                 .left(px(4.))
                 .p(px(8.))
@@ -549,7 +740,8 @@ impl Render for MessageQueue {
                         .px(px(6.))
                         .py(px(4.))
                         .text_color(rgb(t.muted))
-                        .child(text.clone())
+                        .flex_shrink_0()
+                        .child(div().min_w(px(0.)).flex_1().child(text.clone()))
                         .child(
                             support::button_sm(
                                 if i == 0 {
@@ -562,7 +754,21 @@ impl Render for MessageQueue {
                                 self.dark,
                             )
                             .backdrop(t.panel_raised)
+                            .flex_shrink_0()
                             .disabled(!self.props.can_recover)
+                            .on_key_down(cx.listener(move |s, event: &KeyDownEvent, _, cx| {
+                                let k = &event.keystroke;
+                                if k.key == "enter"
+                                    && (k.modifiers.platform || k.modifiers.control)
+                                    && !k.modifiers.alt
+                                    && !k.modifiers.shift
+                                    && !event.is_held
+                                    && s.props.can_recover
+                                {
+                                    cx.stop_propagation();
+                                    cx.emit(QueueEvent::Recover(i));
+                                }
+                            }))
                             .on_click(cx.listener(
                                 move |s, _, _, cx| {
                                     if s.props.can_recover {
@@ -587,13 +793,14 @@ impl Render for MessageQueue {
             }
             review = review.child(div().flex().child(
                 support::button_sm("close", "Close", ButtonVariant::Ghost, self.dark).on_click(
-                    cx.listener(|s, _, _, cx| {
+                    cx.listener(|s, _, window, cx| {
                         s.details = false;
+                        s.recover_focus.focus(window, cx);
                         cx.notify();
                     }),
                 ),
             ));
-            bar = bar.child(review);
+            bar = bar.child(gpui_kit::deferred(review).priority(100));
         }
         let host_bounds = self.host_bounds.clone();
         let preview_visible = self.preview.is_some();
@@ -603,12 +810,7 @@ impl Render for MessageQueue {
             .test_support()
             .relative()
             .w_full()
-            .on_prepaint(move |bounds, _, cx| {
-                let changed = host_bounds.replace(Some(bounds)) != Some(bounds);
-                if changed && preview_visible {
-                    cx.notify(entity_id);
-                }
-            })
+            .on_key_down(cx.listener(Self::key))
             .child(bar);
         if let Some((kind, _)) = &self.preview {
             let anchor = self
@@ -618,31 +820,47 @@ impl Render for MessageQueue {
                 .or(self.anchor);
             let host = self.host_bounds.get();
             let position = anchor.zip(host);
+            let viewport = window.viewport_size();
+            let max_width = (viewport.width - px(16.)).max(px(0.)).min(px(500.));
+            let measured = self.preview_bounds.get();
+            let width = measured.map_or(max_width, |b| b.size.width.min(max_width));
             let x = position.map_or(px(0.), |(b, host)| {
-                b.left().max(host.left() + px(8.)) - host.left()
+                b.left().min(viewport.width - width - px(8.)).max(px(8.)) - host.left()
             });
+            let cap = (viewport.height * 0.45).min(px(340.));
+            let above = anchor.map_or(cap, |b| b.top() - px(13.));
+            let below = anchor.map_or(cap, |b| viewport.height - b.bottom() - px(13.));
+            let open_below = measured.map_or(cap, |b| b.size.height) > above && below > above;
+            let max_height = cap.min(if open_below { below } else { above }).max(px(24.));
             let bottom = position.map_or(px(0.), |(b, host)| preview_bottom(host, b.top()));
-            root = root.child(
+            let preview_bounds = self.preview_bounds.clone();
+            root = root.child(support::observe_bounds(
                 div()
                     .id("preview")
                     .test_support()
                     .track_focus(&self.preview_focus)
                     .on_key_down(cx.listener(Self::key))
                     .absolute()
-                    .bottom(bottom)
+                    .when(!open_below, |d| d.bottom(bottom))
+                    .when(open_below, |d| {
+                        d.top(position.map_or(px(0.), |(b, host)| b.bottom() - host.top() + px(5.)))
+                    })
                     .left(x)
-                    .on_hover(cx.listener(|scene, hovered, _, cx| {
+                    .on_hover(cx.listener(|scene, hovered, window, cx| {
                         scene.preview_hovered = *hovered;
                         if *hovered {
                             scene.pending += 1;
                             scene.timer = None;
                             scene.close_timer = None;
-                        } else if scene.hovered.is_none() {
+                        } else if scene.hovered.is_none()
+                            && !scene.chip_focus.iter().any(|f| f.is_focused(window))
+                            && !scene.preview_focus.contains_focused(window, cx)
+                        {
                             scene.leave_preview(cx);
                         }
                     }))
-                    .max_w(px(500.))
-                    .max_h(px(315.))
+                    .max_w(max_width)
+                    .max_h(max_height)
                     .overflow_y_scroll()
                     .p(px(9.))
                     .rounded(px(6.))
@@ -676,21 +894,61 @@ impl Render for MessageQueue {
                                 window,
                                 cx,
                             )
-                            .on_link_click({
+                            .on_link_activate({
                                 let entity = cx.entity().downgrade();
-                                move |url, _, _, cx| {
-                                    let _ = entity.update(cx, |_, cx| {
-                                        cx.emit(QueueEvent::OpenLink(url.to_string()))
+                                let preview = self.preview.clone();
+                                move |link, event, _, cx| {
+                                    let Some(target) = markdown::activation_target(link, event)
+                                    else {
+                                        return;
+                                    };
+                                    let _ = entity.update(cx, |queue, cx| {
+                                        if queue.preview == preview {
+                                            queue.link_anchor = Some(event.position());
+                                            cx.emit(QueueEvent::OpenLink(target));
+                                        }
                                     });
+                                }
+                            })
+                            .on_link_context_menu({
+                                let entity = cx.entity().downgrade();
+                                let preview = self.preview.clone();
+                                move |raw, event, window, cx| {
+                                    let Some(target) = markdown::link_target(raw) else {
+                                        return;
+                                    };
+                                    let handler = entity.upgrade().and_then(|entity| {
+                                        let queue = entity.read(cx);
+                                        (queue.preview == preview)
+                                            .then(|| queue.link_context.clone())
+                                            .flatten()
+                                    });
+                                    if let Some(handler) = handler {
+                                        handler(target, event, window, cx);
+                                    }
                                 }
                             }),
                         ),
                     ),
-            );
+                move |bounds, _, cx| {
+                    if preview_bounds.replace(Some(bounds)) != Some(bounds) {
+                        cx.notify(entity_id);
+                    }
+                },
+            ));
         }
-        root
+        support::observe_bounds(root, move |bounds, _, cx| {
+            let changed = host_bounds.replace(Some(bounds)) != Some(bounds);
+            if changed && preview_visible {
+                cx.notify(entity_id);
+            }
+        })
     }
 }
+
+#[cfg(test)]
+#[path = "queue_parity_tests.rs"]
+mod parity_tests;
 
 #[cfg(test)]
 mod tests {

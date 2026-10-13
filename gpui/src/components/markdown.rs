@@ -17,11 +17,60 @@ use gpui_kit::{
 };
 use std::time::Duration;
 
+#[path = "file_reference.rs"]
+pub mod file_reference;
+
+/// Explicit links use URI decoding; recognized prose paths must be passed as
+/// `WrittenPath` without decoding (a literal %20 in a filename is meaningful).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LinkTarget {
+    Web(String),
+    WrittenPath(String),
+    DocumentPath(String),
+}
+impl LinkTarget {
+    pub fn explicit(value: &str) -> Option<Self> {
+        if gpui_kit::http_client::Url::parse(value)
+            .is_ok_and(|url| matches!(url.scheme(), "http" | "https"))
+        {
+            return Some(Self::Web(value.into()));
+        }
+        file_reference::parse_markdown_file_destination(value).map(Self::DocumentPath)
+    }
+}
+
+/// Used by transcript and preview owners; no generated path becomes a URL.
+pub fn link_target(target: &gpui_kit::base::text::InlineLinkTarget) -> Option<LinkTarget> {
+    match target {
+        gpui_kit::base::text::InlineLinkTarget::Explicit(value) => LinkTarget::explicit(value),
+        gpui_kit::base::text::InlineLinkTarget::WrittenPath { path, .. } => {
+            Some(LinkTarget::WrittenPath(path.to_string()))
+        }
+    }
+}
+
+pub fn activation_target(
+    target: &gpui_kit::base::text::InlineLinkTarget,
+    event: &gpui_kit::ClickEvent,
+) -> Option<LinkTarget> {
+    let destination = link_target(target)?;
+    if !matches!(destination, LinkTarget::Web(_))
+        && let gpui_kit::ClickEvent::Mouse(click) = event
+        && (click.up.button != gpui_kit::MouseButton::Left
+            || (cfg!(target_os = "macos") && click.up.modifiers.control))
+    {
+        return None;
+    }
+    Some(destination)
+}
+
 pub fn extensions() -> MarkdownExtensions {
     MarkdownExtensions::default()
         .soft_breaks(true)
         .math(false)
         .skip_empty_table_header(true)
+        .inline_links(file_reference::inline_links)
+        .inline_links_revision(1)
 }
 
 pub fn text_style(dark: bool, window: &Window) -> TextViewStyle {
@@ -197,6 +246,9 @@ struct DiagramEntry {
 /// Initialize text with `TextViewState::markdown_with_extensions(source, extensions(), cx)`;
 /// observe this controller for feedback, and use `on_layout` to remeasure the owning row.
 /// Diagrams are pictures, not text hit targets: their logical copy leaf remains parsed code.
+pub type LinkContextHandler =
+    dyn Fn(LinkTarget, &gpui_kit::MouseDownEvent, &mut Window, &mut App) + Send + Sync;
+
 pub struct MarkdownPresentation {
     text: Entity<TextViewState>,
     dark: bool,
@@ -208,6 +260,10 @@ pub struct MarkdownPresentation {
     diagrams: std::collections::VecDeque<DiagramEntry>,
     pending: std::collections::HashSet<BlockKey>,
     on_layout: std::rc::Rc<dyn Fn(&mut App)>,
+    copy_paths: bool,
+    inline_only: bool,
+    file_links: bool,
+    on_context: Option<std::sync::Arc<LinkContextHandler>>,
 }
 
 impl MarkdownPresentation {
@@ -228,6 +284,10 @@ impl MarkdownPresentation {
             diagrams: Default::default(),
             pending: Default::default(),
             on_layout: std::rc::Rc::new(on_layout),
+            copy_paths: false,
+            inline_only: false,
+            file_links: true,
+            on_context: None,
         }
     }
 
@@ -253,6 +313,42 @@ impl MarkdownPresentation {
         self.blocks.clear();
         self.pending.clear();
         self.diagrams.clear();
+        cx.notify();
+    }
+
+    /// Remote generated paths have button semantics (Enter and Space).
+    pub fn set_copy_paths(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if self.copy_paths != enabled {
+            self.copy_paths = enabled;
+            cx.notify();
+        }
+    }
+
+    pub fn set_inline_only(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if self.inline_only != enabled {
+            self.inline_only = enabled;
+            cx.notify();
+        }
+    }
+
+    /// ErrorNotice has no base path and must not decorate written paths.
+    pub fn set_file_links(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if self.file_links != enabled {
+            self.file_links = enabled;
+            cx.notify();
+        }
+    }
+
+    /// Caller captures source/session context and rechecks membership before routing.
+    pub fn set_context_handler(
+        &mut self,
+        handler: impl Fn(LinkTarget, &gpui_kit::MouseDownEvent, &mut Window, &mut App)
+        + Send
+        + Sync
+        + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        self.on_context = Some(std::sync::Arc::new(handler));
         cx.notify();
     }
 
@@ -298,68 +394,98 @@ impl MarkdownPresentation {
         let text = entity.read(cx).text.clone();
         let weak = entity.downgrade();
         let renderer_owner = weak.clone();
-        let configured = extensions().code_block_body_renderer(move |block, _, cx| {
-            let source = diagram_source(block)?;
-            let key = block_key(block);
-            let owner = renderer_owner.upgrade()?;
-            owner.update(cx, |this, cx| {
-                if let Some(entry) = this
-                    .diagrams
-                    .iter()
-                    .find(|entry| entry.key == key && entry.source == source)
-                {
-                    return entry
-                        .entity
-                        .read(cx)
-                        .ready()
-                        .then(|| entry.entity.clone().into_any_element());
+        let copy_paths = entity.read(cx).copy_paths;
+        let file_links = entity.read(cx).file_links;
+        let context_handler = entity.read(cx).on_context.clone();
+        let configured = extensions()
+            .inline_only(entity.read(cx).inline_only)
+            .inline_links(move |leaf| {
+                if !file_links {
+                    return Vec::new();
                 }
-                // The parser supplies identity/closure status. Prepare async resources after paint.
-                // Admission is bounded, not an eviction/reprepare loop: natural-height
-                // documents can project more than 32 blocks in a single frame.
-                if this.diagrams.len() + this.pending.len() < 32 && this.pending.insert(key) {
-                    let revision = this.source_revision;
-                    let weak = cx.entity().downgrade();
-                    cx.defer(move |cx| {
-                        let _ = weak.update(cx, |this, cx| {
-                            if this.source_revision != revision {
-                                return;
-                            }
-                            this.pending.remove(&key);
-                            let diagram = cx.new(|cx| {
-                                super::diagram_view::DiagramBlock::new(
-                                    source.clone(),
-                                    this.dark,
-                                    cx,
-                                )
-                            });
-                            let changed = cx.subscribe(
-                                &diagram,
-                                |this, _, _: &super::diagram_view::DiagramChanged, cx| {
-                                    this.text
-                                        .update(cx, |text, cx| text.invalidate_inline_layout(cx));
-                                    (this.on_layout)(cx);
-                                    cx.notify();
-                                },
-                            );
-                            this.diagrams.push_back(DiagramEntry {
-                                key,
-                                source,
-                                entity: diagram,
-                                _changed: changed,
-                            });
-                            this.text
-                                .update(cx, |text, cx| text.invalidate_inline_layout(cx));
-                            (this.on_layout)(cx);
-                            cx.notify();
-                        });
-                    });
+                let mut links = file_reference::inline_links(leaf);
+                for link in &mut links {
+                    link.button = copy_paths;
                 }
-                None
+                links
             })
-        });
+            .inline_links_revision(if !file_links {
+                3
+            } else if copy_paths {
+                2
+            } else {
+                1
+            })
+            .code_block_body_renderer(move |block, _, cx| {
+                let source = diagram_source(block)?;
+                let key = block_key(block);
+                let owner = renderer_owner.upgrade()?;
+                owner.update(cx, |this, cx| {
+                    if let Some(entry) = this
+                        .diagrams
+                        .iter()
+                        .find(|entry| entry.key == key && entry.source == source)
+                    {
+                        return entry
+                            .entity
+                            .read(cx)
+                            .ready()
+                            .then(|| entry.entity.clone().into_any_element());
+                    }
+                    // The parser supplies identity/closure status. Prepare async resources after paint.
+                    // Admission is bounded, not an eviction/reprepare loop: natural-height
+                    // documents can project more than 32 blocks in a single frame.
+                    if this.diagrams.len() + this.pending.len() < 32 && this.pending.insert(key) {
+                        let revision = this.source_revision;
+                        let weak = cx.entity().downgrade();
+                        cx.defer(move |cx| {
+                            let _ = weak.update(cx, |this, cx| {
+                                if this.source_revision != revision {
+                                    return;
+                                }
+                                this.pending.remove(&key);
+                                let diagram = cx.new(|cx| {
+                                    super::diagram_view::DiagramBlock::new(
+                                        source.clone(),
+                                        this.dark,
+                                        cx,
+                                    )
+                                });
+                                let changed = cx.subscribe(
+                                    &diagram,
+                                    |this, _, _: &super::diagram_view::DiagramChanged, cx| {
+                                        this.text.update(cx, |text, cx| {
+                                            text.invalidate_inline_layout(cx)
+                                        });
+                                        (this.on_layout)(cx);
+                                        cx.notify();
+                                    },
+                                );
+                                this.diagrams.push_back(DiagramEntry {
+                                    key,
+                                    source,
+                                    entity: diagram,
+                                    _changed: changed,
+                                });
+                                this.text
+                                    .update(cx, |text, cx| text.invalidate_inline_layout(cx));
+                                (this.on_layout)(cx);
+                                cx.notify();
+                            });
+                        });
+                    }
+                    None
+                })
+            });
         TextView::new(&text)
             .on_link_click(|_, _, _, _| {})
+            .when_some(context_handler, |view, handler| {
+                view.on_link_context_menu(move |target, event, window, cx| {
+                    if let Some(target) = link_target(target) {
+                        handler(target, event, window, cx);
+                    }
+                })
+            })
             .text_size(px(body))
             .line_height(gpui_kit::relative(1.62))
             .style(text_style_at_size(dark, body, window))
@@ -505,9 +631,13 @@ impl MarkdownPresentation {
     }
 }
 
+type TargetCallback =
+    std::sync::Arc<dyn Fn(LinkTarget, gpui_kit::Point<gpui_kit::Pixels>) + Send + Sync>;
+
 pub struct MarkdownView {
     source: String,
     on_link: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
+    on_target: Option<TargetCallback>,
     dark: bool,
     text: Entity<TextViewState>,
     presentation: Entity<MarkdownPresentation>,
@@ -556,6 +686,7 @@ impl MarkdownView {
             _presentation_changed: changed,
             natural_height: false,
             on_link: std::sync::Arc::new(on_link),
+            on_target: None,
         }
     }
 
@@ -593,6 +724,37 @@ impl MarkdownView {
         cx.notify();
     }
 
+    pub fn set_target_handler(
+        &mut self,
+        handler: impl Fn(LinkTarget) + Send + Sync + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_anchored_target_handler(move |target, _| handler(target), cx);
+    }
+
+    pub fn set_anchored_target_handler(
+        &mut self,
+        handler: impl Fn(LinkTarget, gpui_kit::Point<gpui_kit::Pixels>) + Send + Sync + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        self.on_target = Some(std::sync::Arc::new(handler));
+        cx.notify();
+    }
+
+    pub fn set_context_handler(
+        &mut self,
+        handler: impl Fn(LinkTarget, &gpui_kit::MouseDownEvent, &mut Window, &mut App)
+        + Send
+        + Sync
+        + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        self.presentation.update(cx, |presentation, cx| {
+            presentation.set_context_handler(handler, cx)
+        });
+        cx.notify();
+    }
+
     pub fn source(&self) -> &str {
         &self.source
     }
@@ -608,10 +770,20 @@ impl Render for MarkdownView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = tokens(self.dark);
         let handler = self.on_link.clone();
+        let target_handler = self.on_target.clone();
         let view = MarkdownPresentation::decorate(&self.presentation, 13., self.dark, window, cx)
             .scrollable(!self.natural_height)
             .when(!self.natural_height, |view| view.size_full())
-            .on_link_click(move |url, _, _, _| handler(url.as_ref()));
+            .on_link_activate(move |target, event, _, _| {
+                let Some(destination) = activation_target(target, event) else {
+                    return;
+                };
+                if let Some(handler) = &target_handler {
+                    handler(destination, event.position());
+                } else if let LinkTarget::Web(url) = destination {
+                    handler(&url);
+                }
+            });
         div()
             .w_full()
             .when(!self.natural_height, |root| root.h_full())
@@ -622,6 +794,10 @@ impl Render for MarkdownView {
             .child(view)
     }
 }
+
+#[cfg(test)]
+#[path = "file_reference_renderer_tests.rs"]
+mod file_reference_renderer_tests;
 
 #[cfg(test)]
 #[path = "markdown_parity_tests.rs"]

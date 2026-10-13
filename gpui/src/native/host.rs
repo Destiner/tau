@@ -40,7 +40,11 @@ pub fn reveal_window(target: AnyWindowHandle, cx: &mut App) -> gpui_kit::Result<
 /// Pure menu composition; no handlers or policy are implicitly installed.
 pub fn host_menus(app_name: &str) -> Vec<Menu> {
     vec![
-        Menu::new(app_name.to_owned()).items([MenuItem::action(format!("Quit {app_name}"), Quit)]),
+        Menu::new(app_name.to_owned()).items([
+            MenuItem::action("Check for Updates…", super::CheckForUpdates),
+            MenuItem::separator(),
+            MenuItem::action(format!("Quit {app_name}"), Quit),
+        ]),
         Menu::new("File").items([
             MenuItem::action("New Session", NewSession),
             MenuItem::separator(),
@@ -106,6 +110,7 @@ impl NativeHost {
         });
         let reopen = host.clone();
         cx.on_reopen(move |cx| reopen.reopen(cx));
+        super::menu_version::install(cx);
         cx.set_menus(host_menus(app_name));
         host
     }

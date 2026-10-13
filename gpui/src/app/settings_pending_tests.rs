@@ -91,6 +91,11 @@ fn mounted_setting_write_disables_only_selectors_until_failure_or_timeout() {
             f.respond(request, false, json!({}));
         }
         f.root.update(|_, w, cx| {
+            assert!(w.find("dialog").visible());
+            assert!(!f.shell.read(cx).sessions["a"].controller.setting_pending());
+        });
+        f.click("close");
+        f.root.update(|_, w, cx| {
             for id in ["model", "effort"] {
                 assert_ne!(w.find(id).disabled(), Some(true));
             }
