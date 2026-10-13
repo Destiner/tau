@@ -50,3 +50,18 @@
      }
  
      /// Simulates responding to a `prompt_for_paths` ("Open") dialog.
+--- a/src/window.rs
++++ b/src/window.rs
+@@ -2722,6 +2722,12 @@
+         self.rendered_frame.scene.quads.clone()
+     }
+ 
++    /// Returns painted paths, including native editor selection contours.
++    #[cfg(any(test, feature = "test-support"))]
++    pub fn painted_paths(&self) -> Vec<Path<ScaledPixels>> {
++        self.rendered_frame.scene.paths.clone()
++    }
++
+     /// Returns the underlines in the most recently rendered frame's scene.
+     #[cfg(any(test, feature = "test-support"))]
+     pub fn painted_underlines(&self) -> Vec<Underline> {

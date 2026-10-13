@@ -1,0 +1,26 @@
+--- a/src/text/inline.rs
++++ b/src/text/inline.rs
+@@ -874,9 +874,22 @@
+     type PrepaintState = Hitbox;
+ 
+     fn id(&self) -> Option<ElementId> {
+-        None
++        // Wrapped fragments retain their source identity, not their transient shaped state.
++        let (source, start, end) = match &self.selection_source {
++            Some((source, range)) => (source, range.start, range.end),
++            None => (&self.state, 0, 0),
++        };
++        Some(format!("inline-text-{:p}-{start}-{end}", Arc::as_ptr(source)).into())
+     }
+ 
++    fn a11y_role(&self) -> Option<Role> {
++        Some(Role::Label)
++    }
++
++    fn write_a11y_info(&self, node: &mut gpui::accesskit::Node) {
++        node.set_value(self.text.as_ref());
++    }
++
+     fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+         None
+     }

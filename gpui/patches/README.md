@@ -2,8 +2,8 @@
 
 ## Prepared dependency set
 
-`gpui/scripts/prepare.ts` registers **27 Base patches**, **nine Core patches**,
-and **four macOS patches**, including the native interaction and accessibility
+`gpui/scripts/prepare.ts` registers **30 Base patches**, **ten Core patches**,
+and **five macOS patches**, including the native interaction and accessibility
 fixes below; **two merman-core patches** (parser manifest and ER
 semantic default direction); **one merman-analysis manifest patch**; **four
 merman-render family patches** (class/ER, state/sequence, flowchart and polish);
@@ -40,6 +40,35 @@ These are focused compatibility patches, not a commitment to a long-lived fork. 
 `../scripts/prepare.ts` verifies that archive, extracts it outside the enclosing Git checkout, applies all patches with `git apply --check`, and copies the result into ignored `.cache/crates/gpui-base`. Cargo's `[patch.crates-io]` uses that copy. A patch fingerprint and source-tree hash detect stale or locally altered cached source; the Cargo registry is never edited. The archive is reused from Cargo's cache if available, otherwise downloaded from `static.crates.io` over HTTPS. Build with `bun run --cwd gpui build:native`, not an unprepared bare Cargo invocation.
 
 Extraction outside the checkout is intentional: `git apply` run in a nested dependency directory can silently skip all unprefixed paths and still return zero. Preparation also places the published README at the workspace-relative path required by an upstream test include.
+
+## Bounded image decoding
+
+`image-decode-limits-core.patch` adds optional `ImageDecodeLimits` (retained
+BGRA bytes, frame count, physical axis) via `Image::with_decode_limits`.
+The policy remains on raw Images and participates in cache identity, so both
+validation and asynchronous display decoding enforce it. Unconfigured Images
+keep their existing behavior. The companion macOS clipboard patch initializes
+its existing struct literal with no limits; other platform backends with Image
+struct literals also need that field when porting this patch. Static dimensions are checked before pixel
+decode, with image-crate decoder limits also installed. The actual GIF iterator
+checks cumulative retained bytes/frame count before retaining each frame;
+decoder-limited compositing and one candidate frame are additional scratch,
+with an image-crate allocation allowance of three times the retained budget,
+not a process-wide heap ceiling. Bounded GIFs fail closed on decoder errors
+rather than retry a limit error that may not advance the iterator. Tau retains its cheap GIF/header preflight to
+reject known oversized animations before any frame decode.
+
+`SvgRenderer::render_parsed_with_limits` and
+`render_single_frame_with_limits` check the actual resolved tree's physical
+output after smoothing and proportional 8192-axis clamping, immediately before
+`Pixmap::new`. They use the existing renderer and font resolver; no parallel
+font database or size oracle is introduced. Limit rejection uses the existing
+`usvg::Error::InvalidSize`. These APIs do not bound embedded raster decoding
+inside usvg parsing: Tau therefore retains XML `image`/`feImage` exclusion,
+allows conventional DOCTYPE declarations without an external entity resolver,
+and bounds XML nodes (roxmltree also limits entity expansion). Raw SVG bytes
+with embedded raster resources must not be treated as safely bounded merely
+because output limits were supplied.
 
 ## Native OS integration
 
@@ -252,6 +281,30 @@ The nineteenth Base patch maintains native Markdown typography, layout and
 selection contracts alongside the opt-in style patches above. Keep parser,
 source-selection and rendered geometry regressions together when changing it;
 visual adjustments must not rewrite source offsets or weaken selection behavior.
+
+### `inline-file-links.patch` (Base)
+
+`MarkdownExtensions::inline_links` adds renderer-only subrange link decoration
+in decoded UTF-8 leaf space, with read-only original source segments. Invalid,
+overlapping and existing-link ranges are rejected. The supplemental marks never
+enter the parsed nodes or Copy/source projection. `inline_links_revision` retains
+paint caching for equivalent registrations; callers must change it when captures
+or recognition change. Existing paragraph shaping and InlineFlow wrapping remain
+the only text layout/selection domain.
+
+`TextView::on_link_activate` distinguishes encoded explicit destinations from raw
+written paths. Generated links paint the existing link foreground and hover/key
+focus underline, retain native Link/Button roles and one keyboard control per
+original link across wrapped fragments, and reject middle/right/macOS Control
+clicks, selected-text clicks and drags over four pixels. Explicit link callbacks
+retain their legacy button/modifier contract; applications gate file gestures.
+No default external opener is invoked for a generated path. Tau's production
+MarkdownPresentation and MarkdownDocument consume this API. Context-menu target
+exposure and inline-only parsing are not included.
+
+The patch contains source-map/partial-Copy, precedence, UTF-8/admission and actual
+pointer activation/selection regressions; Tau adds entity-provenance and typed
+activation regressions. These tests are authored, not validated by registration.
 
 ## Validation and maintenance
 

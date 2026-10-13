@@ -49,6 +49,9 @@ const crates = [
       'bounded-modal-focus.patch',
       'dialog-top-layer-dismissal.patch',
       'editor-values.patch',
+      'inline-file-links.patch',
+      'input-undo-boundary.patch',
+      'inline-text-accessibility.patch',
     ],
   },
   {
@@ -66,6 +69,7 @@ const crates = [
       'input-editor-accessibility-core.patch',
       'native-host-quit-core.patch',
       'native-paths-test-support-core.patch',
+      'image-decode-limits-core.patch',
     ],
   },
   {
@@ -78,6 +82,7 @@ const crates = [
       'grayscale-text.patch',
       'native-host-quit-macos.patch',
       'native-save-url-macos.patch',
+      'image-decode-limits-macos.patch',
     ],
   },
   {

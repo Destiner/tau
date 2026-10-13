@@ -1,0 +1,13 @@
+diff --git a/src/pasteboard.rs b/src/pasteboard.rs
+index 92a3c10..b37814d 100644
+--- a/src/pasteboard.rs
++++ b/src/pasteboard.rs
+@@ -102,7 +102,7 @@ impl Pasteboard {
+                     let id = hash(&bytes);
+ 
+                     ClipboardItem {
+-                        entries: vec![ClipboardEntry::Image(Image { format, bytes, id })],
++                        entries: vec![ClipboardEntry::Image(Image { format, bytes, id, decode_limits: None })],
+                     }
+                 })
+             } else {
