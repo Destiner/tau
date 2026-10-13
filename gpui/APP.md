@@ -75,8 +75,10 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
 - Thinking/tool adjacency uses Vue's compact spacing; tool headers include argument
   summaries such as `read  gpui/APP.md`. Multiline/heredoc arguments normalize whitespace
   only in the single-line, bounded header; raw arguments and results remain unchanged.
-  Expanded details own wheel scrolling, including at either edge, and retain their
-  offset across updates/cache eviction. The transient Working/Stopping tail follows
+  Expanded details contain wheel scrolling only when their bounded detail viewport
+  actually overflows, including at either edge; natural-height details leave the reader
+  in control. Offsets survive updates/cache eviction. Raw readonly results remain
+  selectable with exact Copy, including whitespace and terminal newlines. The transient Working/Stopping tail follows
   Vue's assistant/compaction rules and is excluded from transcript data and Copy.
 - Click-to-rename saved sessions through Pi, with bounded names, rollback and registry
   persistence. The title hover/focus wash is 20px high, matching Vue, with a 60ch cap
@@ -91,8 +93,12 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   retained issue reporter. Reports use the existing local feedback service, with an
   unchecked session attachment option. Palette reporting is available only in admin mode.
   Accepted report writes settle even when hidden; no timer invents a retryable failure.
-- Extension input/select/confirm, notifications and editor-text requests. The extension
-  multiline editor still needs its dedicated control.
+- Extension input/select/confirm and explicit multiline editor requests use retained
+  native controls inline in the transcript. Embedded prompts have natural height and
+  the transcript owns reading; standalone dialogs retain bounded scrolling. Keyboard
+  option reveal is separately fenced and does not let editor selection/IME move history.
+  Drafts, marked text, undo and readonly pending-response ownership survive updates.
+  Notifications render actual prose with accessibility on the rendered leaves.
 - Application menus without a Settings surface or Cmd-comma shortcut, owned folder
   chooser, guarded close/quit and draft persistence. Closing the last production
   window quits only after confirmation (when busy), all-draft persistence and
@@ -108,13 +114,25 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
 - Palette titles/details clip independently with reserved shortcut space; its retained
   search editor uses 13px type. Selector glyphs are smaller without shrinking hit areas.
   Shared light/dark scrollbar styles apply to editors, transcript and other scrollers.
-- Bounded presentation cache and incremental changed-row projection. Streaming does
-  not hash or clone unchanged historical text.
+- Generated prose file paths and explicit Markdown destinations preserve immutable
+  source ownership, decode explicit percent spelling once, and resolve document-relative
+  references in their document context. Copy Path and Copy Full Path preserve their
+  respective written/resolved semantics, including literal POSIX backslashes. Local and
+  SSH previews use bounded snapshot services with stale-owner/cancellation fences;
+  this is not authenticated SSH acceptance. Text/Markdown/code and admitted images are
+  supported; PDF, audio and video acceptance is not claimed.
+- One-command menus keep natural row height; selector chevrons follow Vue's glyph,
+  and available compaction dividers expose the source-faithful hover affordance.
+- First-run Pi fallback and Retry Pi preserve draft/workflow ownership. Version controls
+  show the running version. The application-menu Check for Updates… opens that popup:
+  native updates are unavailable and its primary update action is disabled, not simulated.
+- Bounded presentation cache (128 views) and incremental changed-row projection retain
+  source owners independently of evictable views. Streaming does not hash or clone
+  unchanged historical text.
 
-The current slice does **not** finish saved-session removal, unsupported palette commands
-(such as removal, queue recovery or update actions), file previews/media,
-full history/replacement recovery,
-idle eviction, updater or release packaging. Unavailable actions report that boundary;
+The current slice does **not** finish saved-session removal, remaining unsupported palette
+commands, general media support, full history/replacement recovery, idle eviction,
+a native updater or distribution packaging. Unavailable actions report that boundary;
 they are not simulated successes. See [controller limits](../crates/tau-session/README.md).
 
 ## Keyboard and remote projects
@@ -189,9 +207,34 @@ rename/palette, extension-confirm and queue interactions against production sour
 
 This is a focused interaction audit, not a claim that all runtime/recovery parity is
 finished. Settings remains intentionally absent; full recovery, saved-session removal,
-file previews/media, authenticated SSH and release gates remain as documented above.
+general media support, authenticated SSH and release gates remain as documented above.
 
-## Verification
+## Current verification boundary
+
+The latest native checkpoint passed **639 GPUI library tests (1 ignored)**,
+**84 controller tests (1 opt-in canary ignored)**, **63 shared-core tests (1 ignored)**,
+**13 editor integration tests**, strict all-target/all-feature Clippy, and an ordinary
+production-feature-set development build in an isolated target. Both installed-Pi
+credential-free and model-backed native acceptance passed, including reporter outside
+interaction, natural sidebar focus, palette focus restoration and Version unavailable
+presentation. These are local owned-window checks, not packaged/SSH acceptance.
+
+All **42 production Vue/native pairs** were freshly recaptured and inspected after the
+final renderer and palette fixes. Raw selection uses the same blue backdrop, embedded
+prompts retain natural height, and stationary-pointer palette hover follows scrolled
+rows. This is representative comparison, not complete primitive or full-app parity:
+font/device snapping, shadows, fixture differences and the intentional 12px empty-line
+placement difference remain disclosed.
+
+All **16 Tauri library tests** pass from a canonical executable path; the earlier updater
+initialization failure reproduced on baseline under macOS's symlinked `/tmp` path.
+The additional upstream framework Core run retains two historical spring-test failures;
+focused new image guards pass. These separate boundaries do not expand native acceptance.
+
+## Historical verification checkpoints
+
+Counts and comparisons below describe their own earlier source checkpoints, not the
+current suite or current visual acceptance.
 
 The command/header correction passed **469 library tests** (one ignored timing
 benchmark), **13 editor integration tests**, and **64 controller tests** (one opt-in
@@ -214,8 +257,9 @@ by coordinate corrections. This is focused comparison, not full application pari
 Current packaging calls the bundle **Tau.app**, with Tau display/application names,
 while preserving `com.destiner.tau.native-preview`. Packaging rejects existing targets,
 symlinks and system/current-user Applications destinations. It does not replace installed
-Tauri Tau. The preview still has no native updater/feed; **Check for Updates…** is omitted
-rather than wired to the incompatible Tauri updater. Local ad-hoc packaging remains
+Tauri Tau. The preview still has no native updater/feed. The current **Check for Updates…**
+menu opens Version's unavailable panel with its primary action disabled; it is not
+wired to the incompatible Tauri updater. Local ad-hoc packaging remains
 separate from signed/notarized distribution and production cutover.
 
 The previous transcript/UI correction passed **450 library tests** (one ignored timing
@@ -245,9 +289,9 @@ not a full pixel-parity campaign or release certification.
 Intermediate failures remain recorded: an invalid generic accessibility role on passive
 dividers, a stale seeded-leaf wire assumption, inactive keyboard/handle-lifetime test
 fixtures, and incomplete visual-wrapper sizing/activation. Fixes retain real ancestry,
-initial fixture setup, painted-content checks and unchanged native deadlines. A tool-detail
-selection experiment was reverted after losing a terminal newline; no new exact-copy
-support is claimed. No dependency-cache patch or production data migration was added.
+initial fixture setup, painted-content checks and unchanged native deadlines. At that historical checkpoint a tool-detail selection experiment was reverted after
+losing a terminal newline. Current retained readonly exact-copy support supersedes
+that limitation. No dependency-cache patch or production data migration was added.
 
 The earlier behavioural audit passed **422 library tests** (one ignored timing benchmark),
 **13 editor integration tests**, and **52 controller tests** (the opt-in installed-Pi
@@ -360,7 +404,7 @@ and actual `tau` build passed. The full Rust run timed out in the existing Metal
 activity runner, so it is not reported as an all-suite pass. Historical curated
 counts and the unsigned Tauri bundle are not GPUI release proof. No signed/notarized
 GPUI distribution or updater is available yet. A separate, locally ad-hoc-signed
-`Tau Native.app` preview can be built using [PACKAGING.md](PACKAGING.md); it neither
+`Tau.app` preview can be built using [PACKAGING.md](PACKAGING.md); it neither
 replaces Tauri nor isolates data unless explicitly launched with `--isolated`.
 
 The workflow batch adds production-root activity geometry, argument-summary, scoped

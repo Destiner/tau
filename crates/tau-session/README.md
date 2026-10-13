@@ -91,15 +91,36 @@ Queue messages use real `prompt` with `streamingBehavior: "steer" | "followUp"`,
 This is a working protocol core, **not TS runtime parity**:
 
 - History supports current `get_messages` and layered pre-compaction reveal through active-branch `get_entries`. It does not provide branch/fork/navigation, general progressive history loading, or stable durable Pi entry cursors. Compaction success requests a fresh message projection; this remains narrower than the full TS history/replacement lifecycle.
-- Timestamp/occurrence reconciliation assumes actual Pi message timestamps and append-order current history. Synthetic/malformed messages without timestamps, context rewrites, abandoned branches and compaction can change row IDs. Empty/image-only user messages have no image UI; skill envelopes are plain user text, not a dedicated skill row.
+- Timestamp/occurrence reconciliation assumes actual Pi message timestamps and append-order current history. Synthetic/malformed messages without timestamps, context rewrites, abandoned branches and compaction can change row IDs. Empty/image-only user messages have no image UI. Recognized skill envelopes expose a borrowed `Entry::skill()` projection while retaining exact source text; malformed envelopes remain ordinary user text. Host presentation is separate from controller storage.
 - Tool execution events and final assistant tool calls are projected. `toolcall_*` argument streaming is not displayed before the final tool-call/message or tool execution start. Provider-level `done`/`error` updates rely on ordinary Pi `message_end`. Tool/custom renderers and image results are not implemented. Nested tool execution rows may disappear on authoritative hydration because Pi does not store nested calls as independent messages.
 - Replacement detection is limited to bootstrap, agent-start, settlement, handled-command, answered-dialog, explicit refresh, and durability reads. No delayed replacement watcher, retry/backoff, bounded materialization verification, saved-history registration fallback, registry archive mutation, idle eviction or workflow restoration. If a replacement is learned through another read before a predecessor barrier returns, that barrier is conservatively discarded; predecessor registration recovery belongs to a later slice. Events emitted for an undiscovered successor can transiently project under the predecessor and are discarded on rebinding; there is no event-carried identity to infer otherwise. No transfer of live successor stream suffix across that race.
 - A loaded existing history does not itself emit registration; the registry already owns the requested saved source. Registration only follows a live assistant completion barrier. Rename uses correlated `set_session_name` requests, whitespace-normalized names bounded to 240 UTF-16 units, optimistic rollback and authoritative `SessionNameChanged` effects. The host persists those names and owns archive/restore mutations; delayed durability registrations must not overwrite a newer name. `durable` means protocol proof, not successful host registry persistence.
 - Extension select/confirm/input/editor/notify/set_editor_text are handled. TUI statuses/widgets/titles/custom components, extension shortcut/flag/autocomplete controls are intentionally ignored. Dialog requests without Pi timeouts are user waits, not forced 10-second expiries. No host dialog-answer draft persistence API; the shell owns answer controls/drafts. Transport failure drops dialogs; reconnect does not replay responses.
 - No reconnect, process spawning/killing, JSONL byte framing, SSH, ownership fencing, storage, telemetry, retry policies, or UI-selection behavior. Use a new generation after reconnect; never replay a prompt automatically. Late callbacks must be fenced by the host. Active provider/tool hangs are not detectable without host health checks. Stop timeout is feedback, not proof Pi stopped.
-- Errors are generic reviewed local copy; no provider-specific error classifier or retry activity detail. Local notices are retained on hydration but are not TS's fully anchored notice/compaction model. Transcripts/model catalogs are in-memory and not size-limited.
+- Errors remain reviewed local copy, not a provider-specific error classifier. Auto-retry events expose bounded, content-free retry state; host Retry Pi/fallback and retry presentation do not imply controller reconnect or automatic prompt replay. Local notices retain source identity/type through hydration, and the native host renders real prose/accessibility rather than surrogate text. This is not TS's fully anchored notice/compaction model. Transcripts/model catalogs are in-memory and not size-limited.
+
+## Host presentation and service boundary
+
+The native host now retains inline input/select/confirm and explicit multiline editor
+controls with exact draft/undo/IME ownership; readonly accepted responses remain
+transport-owned until the write settles. Embedded prompts use natural transcript
+reader height; standalone dialogs keep their bounded scroll owner. These are host
+contracts, not new controller dialog variants or a parallel extension runtime.
+
+File classification, document-relative resolution, exact path Copy and bounded local/SSH
+snapshot preparation belong to the host/shared services, not this RPC crate. Source owners
+remain distinct from the native 128-view presentation cache. Authenticated SSH and
+PDF/audio/video acceptance are not established by controller or fake-based tests.
 
 ## Verification
+
+The latest checkpoint passed 84 controller tests (1 opt-in Pi canary ignored), 63
+shared-core tests (1 ignored), 639 GPUI library tests (1 ignored), 13 editor integration
+tests, strict all-target/all-feature GPUI Clippy and both installed-Pi native acceptance
+modes. All 42 current production Vue/native pairs were freshly recaptured and inspected;
+representative comparisons do not establish full parity or packaged/SSH acceptance.
+All 16 Tauri library tests pass from a canonical executable path. The extra upstream
+framework Core run's two historical spring failures remain a separate boundary.
 
 Default contract tests follow installed Pi `docs/rpc.md`, `rpc-commands.md`, `json.md`, `rpc-extension-ui.md`, `message-types.md`, `session-format.md`, and Tau's runtime contracts. They use fake JSON and do not launch Pi, read session files, or invoke models. The separately ignored installed-Pi canary is explicit opt-in.
 

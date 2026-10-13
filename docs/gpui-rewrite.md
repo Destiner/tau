@@ -1,6 +1,6 @@
 # GPUI rewrite: current status and delivery plan
 
-Updated 12 October 2026. This supersedes the historical prototype checklist.
+Updated 13 October 2026. This supersedes the historical prototype checklist.
 The requested delivery/decision window was **9–10 October**. The native preview remains
 under active user review and correction; it is not a completed production cutover.
 The remaining release/cutover gates below still require an explicit decision.
@@ -41,7 +41,41 @@ locations and existing destinations, including symlink aliases. It has not repla
 Tauri or been certified for distribution. There is no Developer ID signed/notarized
 GPUI release or GPUI updater. See [packaging](../gpui/PACKAGING.md).
 
-## Evidence and limits
+## Current parity and verification boundary
+
+Generated file paths, explicit decode-once percent destinations, document-relative
+links and exact Copy Path/Full Path now use source-faithful ownership. Bounded local
+and SSH snapshot services support text/Markdown/code and admitted images, without
+claiming authenticated SSH or PDF/audio/video acceptance. Source owners outlive the
+128-view presentation cache. Notices render actual prose and rendered-leaf accessibility;
+readonly tool output retains exact selection/Copy. Only overflowing tool details contain
+wheel input. One-command rows have natural height, chevrons follow Vue, and compaction
+hover is source-faithful.
+
+Inline extension editors retain native draft/undo/IME state. Embedded prompts use the
+transcript's natural reader mode; standalone dialogs remain bounded. Explicit
+`NativeDialog::new_editor` preserves the existing `DialogKind`/`DialogProps` API.
+First-run fallback, Retry Pi and version controls are wired. Check for Updates… opens
+the Version popup with unavailable copy and a disabled primary action. There is still
+no Settings surface or native updater.
+
+Latest checkpoint: **639 GPUI library passes / 1 ignored**, **84 controller passes / 1
+opt-in canary ignored**, **63 shared-core passes / 1 ignored**, **13 editor passes**,
+strict all-target/all-feature Clippy and ordinary production-feature-set development
+build in an isolated target. Both credential-free and model-backed installed-Pi native
+acceptance pass. All **42 production Vue/native pairs** were freshly recaptured and
+inspected after the final renderer and palette fixes. This remains representative
+coverage, with intentional first-line placement, font snapping, fixture differences
+and primitive-coverage gaps disclosed—not blanket parity.
+
+All **16 Tauri library tests** pass using a canonical executable path; baseline also
+reproduces the earlier updater initialization failure under symlinked `/tmp`. The extra
+upstream framework Core run retains two historical spring-test failures; focused new
+image guards pass. Local native gates are not packaged acceptance or production cutover.
+
+## Historical evidence and limits
+
+The following counts and comparisons are checkpoint-specific, not current acceptance.
 
 - Command/header correction: Pi-backed slash command picker, fuzzy source-labelled
   choices, Tab completion without sending, exactly-once Enter, clamped arrows, pointer
@@ -58,8 +92,8 @@ GPUI release or GPUI updater. See [packaging](../gpui/PACKAGING.md).
   half-pixel translation and font rasterization differences remain disclosed. Comparison
   is focused, not full parity certification; temporary comparison machinery stays local.
 - The app/bundle is now named Tau, without changing the separate native-preview identity
-  or installing over Tauri. Check for Updates… remains absent until a real native updater
-  and feed exist; the Tauri update feed is not a compatible native update path.
+  or installing over Tauri. Check for Updates… now opens the unavailable Version popup; its primary update
+  action remains disabled. The Tauri update feed is not a compatible native update path.
 - Core extraction: **57 unit + 2 integration tests passed**, one explicit canary
   ignored. Existing Tauri compatibility tests and unsigned Tauri bundle passed;
   that bundle is not GPUI packaging.
@@ -179,7 +213,7 @@ GPUI release or GPUI updater. See [packaging](../gpui/PACKAGING.md).
   are asserted. The smaller chevrons and quiet queue deliberately differ from Vue;
   residual text rasterization/rounding and platform scrollbar appearance are disclosed.
   This is focused comparison coverage, not full-app visual or packaged acceptance.
-- Latest GPUI library: **450 passed, 0 failed, 1 ignored**, plus **13 passed** editor
+- At the transcript/UI checkpoint, GPUI library: **450 passed, 0 failed, 1 ignored**, plus **13 passed** editor
   integration tests and **62 passed** controller tests (one opt-in Pi canary ignored).
   Formatting, GPUI lint/typecheck, five packaging tests, strict all-target/all-feature
   GPUI Clippy and controller Clippy passed. The actual native application was built
@@ -221,8 +255,10 @@ failures); no speculative activation/focus repair or relabelled visual snapshots
       scoped model choices and Vue-aligned transcript activity presentation.
 - [ ] Finish saved-session removal and remaining unsupported palette actions; prove real
       SSH workflows using existing configuration contracts.
-- [ ] Complete file/media previews, multiline extension editing and applicable
-      extension presentation; preserve local/remote preview security.
+- [x] Implement bounded file snapshots, source-faithful paths/notices and retained
+      inline multiline extension editing with natural embedded reader ownership.
+- [ ] Complete full visual acceptance beyond the 42 inspected pairs, remaining media/extension coverage
+      and authenticated SSH previews; preserve local/remote preview security.
 - [x] Restore non-prose compaction boundaries and earlier active-branch layers through
       real Pi history RPC, preserving source identities, reader position and draft.
 - [ ] Finish remaining history/tree/branch/navigation and compaction lifecycle parity,
@@ -243,7 +279,10 @@ failures); no speculative activation/focus repair or relabelled visual snapshots
       architecture/linkage, ad-hoc signature and five packaging regressions passed.
 - [ ] Verify release-profile packaging and actual packaged local/SSH workflows.
 - [ ] Complete applicable signing, notarization, updater trust and release recovery
-      contracts before shipping. Do not advertise those as implemented today.
+      contracts before shipping. GitHub workflow changes must publish separate compatible
+      native arm64 artifacts and a native feed, not Tauri payloads. See
+      [packaging release requirements](../gpui/PACKAGING.md#github-release-and-updater-requirements).
+      Do not advertise those as implemented today.
 - [ ] Finish relevant automated native/controller/backend checks and fix concrete
       regressions; record final counts only after validation finishes.
 

@@ -82,6 +82,34 @@ or extension execution. Use only trusted runtime configuration. Never replace
 and continue launching with explicit isolation arguments.
 Do not run GUI smoke tests concurrently with another owner's native tests.
 
+## GitHub release and updater requirements
+
+**Yes, GitHub workflow changes are required before native distribution or updates.**
+The current `.github/workflows/release.yml` builds the Vue frontend and invokes
+`bun run release:macos` for Tauri. It uploads four Tauri assets from
+`src-tauri/target/release-assets/$VERSION`: a DMG, updater tarball, signature and
+`latest.json`. Neither that tarball nor that feed is a compatible GPUI update path.
+The existing `.github/workflows/gpui-prototype.yml` is comparison/static-test CI,
+triggered manually or by selected paths on the `gpui` branch; it does not publish a
+native release. Its current push filters include `gpui/**` but not shared `crates/**`.
+
+A native release workflow must prepare the pinned patched dependencies, validate the
+shared controller/backend and native application, build and verify an arm64 release
+bundle, and sign/notarize/staple applicable distribution artifacts. Publish separately
+identified native artifacts and a compatible native feed without replacing Tauri's
+fallback artifacts or directing native clients to Tauri payloads. Extend native CI
+coverage/path filters to shared crates and relevant release tooling. Local preview
+packaging and comparison artifact uploads do not satisfy this gate.
+
+The runtime updater is **not implemented**: Check for Updates… opens the Version popup
+with unavailable copy and a disabled primary action. Before enabling it, implement
+feed/version/platform selection, authenticated artifact verification with pinned trust,
+safe installation/relaunch, failure recovery and rollback. Define the native bundle
+identity/cutover policy and Pi discovery/runtime requirements explicitly: the bundle
+does not include Pi, Node, SSH or provider configuration. Release-profile packaged
+local/SSH acceptance remains outstanding. Future signing/update key custody and
+rotation are a separate release decision, not part of this parity batch.
+
 ## Static regression tests
 
 ```sh
