@@ -46,8 +46,10 @@ app. Failures clean only that invocation's staging directory. A marker in
 `Contents/Resources/tau-native-preview.json` records ownership/version/profile.
 
 The bundle contains `Contents/MacOS/tau`, an Info.plist and the existing Tau ICNS
-icon. Version comes from the GPUI Cargo package; copyright metadata labels the
-build as a GPUI debug/release preview. Shell icons and Inter font are compiled
+icon. Version comes from the GPUI Cargo package, aligned with root/Tauri manifests and
+its local lock entry at **0.2.1**. Runtime Version and bundle metadata use Cargo's
+version, not a display override; read-only regression tests protect that alignment.
+Copyright metadata labels the build as a GPUI debug/release preview. Shell icons and Inter font are compiled
 into the binary (`Assets` delegates to `support::asset` / `include_bytes!`);
 GPUI's embedded assets do not require copying source directories. No separately
 prepared runtime asset directory is needed.
@@ -101,8 +103,9 @@ fallback artifacts or directing native clients to Tauri payloads. Extend native 
 coverage/path filters to shared crates and relevant release tooling. Local preview
 packaging and comparison artifact uploads do not satisfy this gate.
 
-The runtime updater is **not implemented**: Check for Updates… opens the Version popup
-with unavailable copy and a disabled primary action. Before enabling it, implement
+The runtime updater is **not implemented**: Check for Updates… and palette Show Update
+Status open the Version popup with unavailable copy and a disabled primary action.
+Settings is intentionally absent. These status routes do not fetch or mutate updates. Before enabling it, implement
 feed/version/platform selection, authenticated artifact verification with pinned trust,
 safe installation/relaunch, failure recovery and rollback. Define the native bundle
 identity/cutover policy and Pi discovery/runtime requirements explicitly: the bundle
@@ -110,10 +113,23 @@ does not include Pi, Node, SSH or provider configuration. Release-profile packag
 local/SSH acceptance remains outstanding. Future signing/update key custody and
 rotation are a separate release decision, not part of this parity batch.
 
+## Current acceptance boundary
+
+The final source passes the normal-feature native build, 691 GPUI tests / 1 ignored,
+strict all-target/all-feature Clippy, static tooling and eight package/version tests.
+Representative production captures and actual-label glyph controls pass, with the
+selection-paint differences recorded in [APP.md](APP.md). Neither current installed-Pi
+native mode passes: both hit the unchanged five-second busy-close gate with an inactive owned window,
+Close unavailable and no lifecycle callback. The deactivation cause is unproven; no
+activation repair was added. Historical native passes, harness cleanup receipts and
+representative two-scale visual captures do not certify packaged lifecycle acceptance.
+Release-profile local/SSH workflows, signing/notarization, updater trust, production
+cutover, configuration and cross-process profile locking remain unverified.
+
 ## Static regression tests
 
 ```sh
-bun test ./gpui/tests/package.bun.ts
+bun test ./gpui/tests/package.bun.ts ./gpui/tests/version.bun.ts
 ```
 
 These test paths, metadata, fresh-only destination handling and mocked inspection

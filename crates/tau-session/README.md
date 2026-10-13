@@ -37,7 +37,10 @@ Use ordinary persistent RPC mode for saved work; **`--no-session` means in-memor
 - `setting_pending()`, `submission_pending()`, `queue_busy()` expose action-specific admission instead of treating pending read requests as blocked work.
 - `begin_model_scope_read() -> ModelScopeToken`, `apply_model_scope(&token, Option<Value>)`: fence host-owned async settings reads by generation, identity and refresh/read revision. The value is an array of scope patterns, not the entire settings file.
 - `extension_response(id, ExtensionResponse::{Value(String), Confirmed(bool), Cancelled})`. Dialog remains `submitting` until the host calls **`extension_sent(id, success)`** after writing the response. Pi does not emit a normal response to this record. On write failure the dialog is retryable. Fence host callbacks by captured runtime/generation, just like stdout.
-- `request_failed(request_id)` for failed transport writes of ordinary requests. `transport_failed(generation)` for process loss; preserves partial transcript and recoverable drafts, fences further output until a newer generation.
+- `request_failed(request_id)` for correlated ordinary write failure; `input_closed(generation)` blocks new work but retains same-generation final output through `ingest_output(runtime_id, generation, Value)`. Input closure is not output termination. `transport_failed(generation)` fences output after authoritative process/output loss. `backend_stopped(generation)` reconciles an exact physical cleanup receipt even if idle-release admission changed, preserving drafts/transcript/proof and rejecting old output without disconnecting a newer generation.
+- `prepare_exit()` hands every captured completed-output intent to `RegisterSession`, including predecessor/old-generation proof; `durability_pending()` reports outstanding protocol proof, not exit permission or storage success. Hosts must drain effects and await exact storage/recovery/cleanup receipts, including newly completed work during Save.
+- `reconciliation_pending()`, `provisional_replacement()`, `source_recovery()` and exact `acknowledge_source_recovery(&Identity)` expose bounded replacement/recovery ownership. `can_release_runtime()` excludes work, queue/dialog/read/uncertainty/provisional/proof owners; call `release_generation(generation)` only after successful physical cleanup. `resume_reads()` retries reconciliation, never the user operation.
+- `saved_preview_token()` / `apply_saved_preview(&token, messages)` admit a fenced cosmetic projection before authoritative RPC. Preview cannot establish readiness, runtime identity, registration or durability.
 - `tick(now_ms)` using a **nondecreasing logical/monotonic clock** supplied by the host; defaults to zero before the first tick. Feed a tick before dispatching startup/actions, then periodically while connected. Startup, requests, accepted-but-not-started prompts, and Stop are bounded at 10 seconds. This is not a maximum duration for an active model/tool run.
 - `take_recovered_drafts()` drains uncertain/lost queue text for a host-owned review surface. Never automatically resend it.
 
@@ -62,6 +65,19 @@ RPCs. Compaction refresh preserves a fresh streaming suffix without reintroducin
 pre-compaction messages. Hosts must keep boundaries out of prose, Copy and markdown
 view caches, and retain reader position and unchanged source identities when prepending.
 
+### Cosmetic saved preview
+
+The host's existing bounded Pi-file reader supplies preview messages; it is not an RPC,
+authentication or durability source. Tokens fence runtime/generation/identity/revisions.
+Authoritative history matches full JSON Values and duplicate occurrence order through a
+fingerprint bucket index; hashes/timestamps/displayed prose alone never prove identity.
+The ledger retains one raw Value per occurrence, capped at 100,000 entries and 32 MiB
+encoded JSON plus source strings (not an RSS ceiling). Overflow releases all overlap
+proof and rebases cosmetic provenance after projection and on degraded restart; visible
+rows remain. Authoritative RPC resets degradation. Normal indexing is linear in entries
+and wire size, but deliberate hash collisions and unrelated controller/UI merge costs
+are not promised linear.
+
 ### Scoped models
 
 `State::models` retains the available catalogue; `State::selectable_models()` narrows
@@ -82,7 +98,7 @@ controller never opens settings, authentication or transcript files.
 - `RegisterSession { runtime_id, generation, id, path, name }`: register this **captured** identity in host storage, never select a UI row. Treat the effect as a storage instruction, not evidence that the write succeeded; retry storage failures in the host using the captured effect.
 - `IdentityChanged { previous, current }`: runtime rebinding only; **no forced UI selection**. The host decides how to present/adopt/retire registry rows. Same requested path under a different ID yields session-local unsaved-source feedback, not silent substitution of the old registry identity.
 
-A finalized assistant `message_end` dispatches an identity-scoped `get_state`. Its matching successful response is the ordering barrier after Pi's synchronous append/flush. Partial output, user-only history, notifications, command-only runs, and identities with no file path never register. A barrier that first reveals a successor registers the completed **predecessor** with its captured ID/path/name, then rebinds the successor without granting it durability. A newer identity epoch invalidates outstanding predecessor responses. IDs namespace runtime + generation + increasing request sequence; duplicate, unknown, mismatched, superseded, stale-identity and stale-generation responses cannot hydrate current state.
+A completed assistant `message_end` dispatches an identity-scoped `get_state` ordering barrier after Pi's synchronous append/flush. An exact successful barrier can register even empty completed output; fallback after barrier failure requires meaningful completed text/thinking/named-tool proof. Start-only output, aborted/error partial output, user-only history, notifications and pathless identities are not proof. Captured meaningful completion survives barrier failure, successor adoption and generation restart; predecessor handoff keeps original ID/path/name/proof generation without hydrating the successor or granting it durability. Existing host storage validation remains mandatory. Registration dedup means effect handoff, not successful persistence; the host retains exact failed tickets across restart and acknowledges storage separately. IDs namespace runtime + generation + increasing request sequence; superseded/unknown/stale replies cannot hydrate current state or acquire a newer command incarnation's error ownership.
 
 Queue messages use real `prompt` with `streamingBehavior: "steer" | "followUp"`, after serialized acknowledgements of `set_steering_mode: all` and `set_follow_up_mode: one-at-a-time`. **Pi persists these account defaults**, affecting other processes; they are not restored. Snapshots come only from `queue_update`. Clear acknowledges actual `clear_queue` without erasing a newer snapshot. Stop does not clear or replay queues.
 
@@ -93,10 +109,10 @@ This is a working protocol core, **not TS runtime parity**:
 - History supports current `get_messages` and layered pre-compaction reveal through active-branch `get_entries`. It does not provide branch/fork/navigation, general progressive history loading, or stable durable Pi entry cursors. Compaction success requests a fresh message projection; this remains narrower than the full TS history/replacement lifecycle.
 - Timestamp/occurrence reconciliation assumes actual Pi message timestamps and append-order current history. Synthetic/malformed messages without timestamps, context rewrites, abandoned branches and compaction can change row IDs. Empty/image-only user messages have no image UI. Recognized skill envelopes expose a borrowed `Entry::skill()` projection while retaining exact source text; malformed envelopes remain ordinary user text. Host presentation is separate from controller storage.
 - Tool execution events and final assistant tool calls are projected. `toolcall_*` argument streaming is not displayed before the final tool-call/message or tool execution start. Provider-level `done`/`error` updates rely on ordinary Pi `message_end`. Tool/custom renderers and image results are not implemented. Nested tool execution rows may disappear on authoritative hydration because Pi does not store nested calls as independent messages.
-- Replacement detection is limited to bootstrap, agent-start, settlement, handled-command, answered-dialog, explicit refresh, and durability reads. No delayed replacement watcher, retry/backoff, bounded materialization verification, saved-history registration fallback, registry archive mutation, idle eviction or workflow restoration. If a replacement is learned through another read before a predecessor barrier returns, that barrier is conservatively discarded; predecessor registration recovery belongs to a later slice. Events emitted for an undiscovered successor can transiently project under the predecessor and are discarded on rebinding; there is no event-carried identity to infer otherwise. No transfer of live successor stream suffix across that race.
-- A loaded existing history does not itself emit registration; the registry already owns the requested saved source. Registration only follows a live assistant completion barrier. Rename uses correlated `set_session_name` requests, whitespace-normalized names bounded to 240 UTF-16 units, optimistic rollback and authoritative `SessionNameChanged` effects. The host persists those names and owns archive/restore mutations; delayed durability registrations must not overwrite a newer name. `durable` means protocol proof, not successful host registry persistence.
+- Replacement detection includes lifecycle reads and finite delayed identity probes (150/450/1,000/2,000/3,200ms), with bounded materialization verification (250/750/1,500ms) and command-incarnation/serial fences. Completed predecessor intent survives failed reads/adoption/restart and exit handoff. Hosts own source recovery, archive mutations, storage receipts, idle eviction and explicit reconnect. Events for an undiscovered successor may transiently project under the predecessor; no event-carried identity or general live-suffix transfer is invented.
+- Loaded history or cosmetic preview does not itself emit registration; registration requires a live assistant completion with an exact successful barrier, or meaningful captured completion proof handed off by bounded reconciliation, adoption or exit preparation. Rename uses correlated `set_session_name` requests, whitespace-normalized names bounded to 240 UTF-16 units, optimistic rollback and authoritative `SessionNameChanged` effects. The host persists those names and owns archive/restore mutations; delayed durability registrations must not overwrite a newer name. `durable` means protocol proof, not successful host registry persistence.
 - Extension select/confirm/input/editor/notify/set_editor_text are handled. TUI statuses/widgets/titles/custom components, extension shortcut/flag/autocomplete controls are intentionally ignored. Dialog requests without Pi timeouts are user waits, not forced 10-second expiries. No host dialog-answer draft persistence API; the shell owns answer controls/drafts. Transport failure drops dialogs; reconnect does not replay responses.
-- No reconnect, process spawning/killing, JSONL byte framing, SSH, ownership fencing, storage, telemetry, retry policies, or UI-selection behavior. Use a new generation after reconnect; never replay a prompt automatically. Late callbacks must be fenced by the host. Active provider/tool hangs are not detectable without host health checks. Stop timeout is feedback, not proof Pi stopped.
+- No reconnect, process spawning/killing, JSONL byte framing, SSH, ownership fencing, storage, telemetry, retry policies, or UI-selection behavior. Hosts start a new generation after reconnect; never replay a prompt automatically. Late callbacks must be fenced by the host. Active provider/tool hangs are not detectable without host health checks. Stop timeout is feedback, not proof Pi stopped.
 - Errors remain reviewed local copy, not a provider-specific error classifier. Auto-retry events expose bounded, content-free retry state; host Retry Pi/fallback and retry presentation do not imply controller reconnect or automatic prompt replay. Local notices retain source identity/type through hydration, and the native host renders real prose/accessibility rather than surrogate text. This is not TS's fully anchored notice/compaction model. Transcripts/model catalogs are in-memory and not size-limited.
 
 ## Host presentation and service boundary
@@ -114,13 +130,18 @@ PDF/audio/video acceptance are not established by controller or fake-based tests
 
 ## Verification
 
-The latest checkpoint passed 84 controller tests (1 opt-in Pi canary ignored), 63
-shared-core tests (1 ignored), 639 GPUI library tests (1 ignored), 13 editor integration
-tests, strict all-target/all-feature GPUI Clippy and both installed-Pi native acceptance
-modes. All 42 current production Vue/native pairs were freshly recaptured and inspected;
-representative comparisons do not establish full parity or packaged/SSH acceptance.
-All 16 Tauri library tests pass from a canonical executable path. The extra upstream
-framework Core run's two historical spring failures remain a separate boundary.
+Source-matched controller/shared-core checkpoints: **132 / 79 passes**, each with one
+ignored opt-in test. Final GPUI source passed **691 tests / 1 ignored**, strict
+all-target/all-feature Clippy, static tooling, eight package/version tests and a normal
+build after feature checks. **13 editor integrations**, canonical-path Tauri **16** and
+root frontend **894** plus static checks/build pass separately.
+
+Both current installed-Pi native modes fail the unchanged five-second busy-close gate
+with an inactive window, unavailable Close and no lifecycle callback. Cause is unproven;
+no activation repair was added. Fresh ten-case visual comparisons at two scales are
+representative, not whole-UI/packaged/SSH certification. Actual-label descender and
+horizontal-overflow gates pass; remaining selection-paint differences are disclosed in
+[APP.md](../../gpui/APP.md).
 
 Default contract tests follow installed Pi `docs/rpc.md`, `rpc-commands.md`, `json.md`, `rpc-extension-ui.md`, `message-types.md`, `session-format.md`, and Tau's runtime contracts. They use fake JSON and do not launch Pi, read session files, or invoke models. The separately ignored installed-Pi canary is explicit opt-in.
 

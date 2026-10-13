@@ -59,19 +59,48 @@ First-run fallback, Retry Pi and version controls are wired. Check for Updates�
 the Version popup with unavailable copy and a disabled primary action. There is still
 no Settings surface or native updater.
 
-Latest checkpoint: **639 GPUI library passes / 1 ignored**, **84 controller passes / 1
-opt-in canary ignored**, **63 shared-core passes / 1 ignored**, **13 editor passes**,
-strict all-target/all-feature Clippy and ordinary production-feature-set development
-build in an isolated target. Both credential-free and model-backed installed-Pi native
-acceptance pass. All **42 production Vue/native pairs** were freshly recaptured and
-inspected after the final renderer and palette fixes. This remains representative
-coverage, with intentional first-line placement, font snapping, fixture differences
-and primitive-coverage gaps disclosed—not blanket parity.
+Completed runtime contracts include delayed identity/command reconciliation, predecessor
+materialization proof across restart, captured registration retries, cosmetic saved-history
+preview, idle release, registry-only project removal and staged exit storage/drain fences.
+Six eligible inactive runtimes remain warm; work/provisional/read/queue/dialog/registration/
+recovery owners are excluded. Only unchanged idle local registered sources auto-restart;
+remote/interfered runtimes require explicit reconnect without replay.
 
-All **16 Tauri library tests** pass using a canonical executable path; baseline also
-reproduces the earlier updater initialization failure under symlinked `/tmp`. The extra
-upstream framework Core run retains two historical spring-test failures; focused new
-image guards pass. Local native gates are not packaged acceptance or production cutover.
+Writer failure is additive Tau transport `input_closed`, not a Pi wire kind or output exit.
+Final output remains admitted; Tauri ignores that kind and retains write-failure feedback.
+Shutdown Save uses acknowledged `stop_many` with one three-second budget and partial receipts.
+The accepted simple remote policy accepts natural SSH status 0–254 under OpenSSH's remote
+command assumption, not 255 or local kill. Sticky uncertainty blocks cleanup, reconnect
+and normal Quit; no override button or external-cleanup recovery workflow exists.
+
+Palette coverage maps 36 Vue IDs with deliberate scope exclusions and native extras;
+Settings is intentionally absent and update status has no updater backend. Cosmetic
+preview uses the shared 64 MiB reader and an exact-occurrence proof ledger bounded to
+100,000 rows / 32 MiB encoded JSON plus source strings; overflow abandons cosmetic ID
+continuity, not visible history or authority. SourceSelection preserves original Copy
+through normalized CRLF, dehover and nearest-run gaps held across three frames.
+Font-metric paint changes no layout/hit testing; width truncation preserves line height
+and bottom ink. Source owners outlive the 128-view cache. See [APP.md](../gpui/APP.md).
+
+Final source: **691 GPUI passes / 1 ignored**, strict all-target/all-feature Clippy,
+formatting, native tooling lint/typecheck, eight package/version tests and an ordinary
+native build after feature checks. Source-matched separate passing gates: **13 editor**,
+**132 controller / 1 canary ignored**, **79 shared-core / 1 ignored**,
+**16 canonical-path Tauri**, **894 root frontend** plus static checks/build. These checks
+do not establish native lifecycle, packaged or whole-product acceptance.
+
+**Both current installed-Pi native modes fail** the unchanged five-second busy-close gate:
+inactive owned window, unavailable Close, no lifecycle callback. Deactivation origin is
+unproven, not proven external; no activation repair was added. Historical passes below
+do not certify current close/cancel/shutdown.
+
+Fresh production captures cover ten representative cases in both themes at 1×/2× using
+real Root/dark rendering, not the whole UI: **452 source-frozen images**, including 40
+typography controls. Actual-label descender/non-descender and horizontal-overflow gates
+pass, as do twelve literal selected-string pairs and natural paused dehover. Selection
+still differs by one light RGB-channel and one CSS pixel of Retina band coverage.
+Historical upstream Core spring failures remain separate from local native, packaged/SSH
+and cutover acceptance.
 
 ## Historical evidence and limits
 
@@ -162,7 +191,7 @@ The following counts and comparisons are checkpoint-specific, not current accept
   feedback contracts. Native `iddqd` outside fields toggles the same persisted gate;
   the retained reporter and enabled-only palette actions use real worker acknowledgements.
   Accepted writes remain tracked through disable/hide; no timeout invents a failed save.
-- Latest credential-free **and model-enabled** native acceptance passed admin unlock,
+- At that historical checkpoint, credential-free **and model-enabled** native acceptance passed admin unlock,
   actual checkbox/report submission, retained editor dismissal/reopen, persisted disable,
   and the new completion-gated last-Cmd-W quit with all Pi child exit acknowledgements.
   The model run also passed assistant/tools/Stop and rename/archive/restore. This supersedes
@@ -225,7 +254,7 @@ The following counts and comparisons are checkpoint-specific, not current accept
 
 Native acceptance is own-process, renderer-measured evidence, not a full hardware,
 Dock/Spaces or repeated reliability campaign. Intermediate timing failures remain
-preserved; the final credential-free PASS does not erase them.
+preserved; historical credential-free passes do not supersede the current busy-close failure.
 
 ## Accepted native foundation
 
@@ -253,20 +282,23 @@ failures); no speculative activation/focus repair or relabelled visual snapshots
 - [x] Wire saved-session rename and archive/browse/restore using existing contracts.
 - [x] Implement the command palette for supported native workflows, remote import UI,
       scoped model choices and Vue-aligned transcript activity presentation.
-- [ ] Finish saved-session removal and remaining unsupported palette actions; prove real
-      SSH workflows using existing configuration contracts.
+- [x] Complete audited Vue command coverage and registry-only project removal with
+      acknowledged cleanup and retained failure retries. Tree/branch navigation and
+      destructive session-file deletion are not Vue parity gaps in this audit.
+- [ ] Prove authenticated real SSH workflows using existing configuration contracts.
 - [x] Implement bounded file snapshots, source-faithful paths/notices and retained
       inline multiline extension editing with natural embedded reader ownership.
-- [ ] Complete full visual acceptance beyond the 42 inspected pairs, remaining media/extension coverage
-      and authenticated SSH previews; preserve local/remote preview security.
+- [x] Verify actual production descender ink, horizontal clipping, dehover, selection-gap
+      retention and slash selection/scrolling at both scales and themes.
+- [ ] Complete remaining visual/media/extension coverage and authenticated SSH previews;
+      preserve preview security and the disclosed selection-paint differences.
 - [x] Restore non-prose compaction boundaries and earlier active-branch layers through
       real Pi history RPC, preserving source identities, reader position and draft.
-- [ ] Finish remaining history/tree/branch/navigation and compaction lifecycle parity,
-      replacement watching/materialization, recovery/reconnect and idle eviction. Preserve
-      drafts, optimistic prompts, reading position and workflow context.
-- [ ] Preserve per-session runtime/generation/request ownership and stale-result
-      fencing. Never auto-replay uncertain prompts or invent a parallel Pi runtime
-      or session format. Reuse repository-owned contracts and deterministic fakes.
+- [x] Implement bounded replacement probes/materialization, source recovery, explicit
+      reconnect and eligible idle eviction with retained drafts/workflow ownership.
+- [x] Fence per-session runtime/generation/request and command-incarnation ownership;
+      retain predecessor proof and exact storage retries across transport restart.
+      Never replay uncertain prompts or invent a parallel Pi runtime/session format.
 - [x] Restore the shared admin gate and issue reporter behind `iddqd`, with bounded,
       content-free, best-effort diagnostics and explicit opt-in report attachments.
       Native command/lifecycle records are catalog-bound; this does not claim every
@@ -292,9 +324,10 @@ failures); no speculative activation/focus repair or relabelled visual snapshots
       isolated data first, without destructive conversion or concurrent profile writers.
 - [ ] In the packaged app, accept local and SSH send/stream/tools/Stop, session
       switching/drafts, restart, close/cancel/last-window quit and owned async cleanup.
-- [ ] Confirm captured lifecycle identities, essential persistence and runtime
-      shutdown before exit approval; preserve work on cancellation or failure.
-      Latest owned-window local acceptance passes; packaged/SSH acceptance remains.
+- [x] Implement captured lifecycle identities, completed-proof/storage drain, batch
+      shutdown receipts and FIFO exit fence before approval; preserve work on cancellation.
+- [ ] Resolve current owned-window busy-close acceptance failure in both modes without
+      assuming an external cause; packaged/SSH lifecycle acceptance also remains.
 - [ ] Make an explicit ship/continue/revert decision in the 9–10 October window,
       with concrete blockers and safe rollback. Existing Tau remains the fallback.
 
