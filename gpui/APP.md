@@ -59,8 +59,10 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
 - Cmd-K command palette with real session/project/model/effort pages, supported actions
   and shortcuts, search, keyboard navigation, and modal-aware focus restoration.
   Session switching keeps shortcuts on the mounted shell while the destination paints;
-  Cmd-P → switch → Cmd-K works without clicking or reactivating. A starting composer
-  uses shell focus, then receives focus when ready unless another surface owns it.
+  Cmd-P → switch → Cmd-K works without clicking or reactivating. Warm-session navigation
+  returns to the retained composer (or its extension prompt); a newer pointer focus owner
+  or overlay wins over the delayed handoff. A starting composer uses shell focus, then
+  receives focus when ready unless another surface owns it.
 - Leaving a truly empty, unregistered session retires its UI/runtime without deleting
   Pi files. Pending reads defer the decision; only explicitly abandoned candidates are
   revisited. Drafts (including whitespace), history, queued/recovered work, extension
@@ -70,14 +72,17 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
 - Model choices use Pi's scoped-model settings for local or remote sessions, following
   Vue's matching/order/fallback behavior. An out-of-scope current model remains a
   display label, not an extra selectable option. Provider-grouped, searchable menus
-  scroll within the viewport; thinking labels are human-readable (including Extra High).
+  scroll within the viewport. Palette rows show model names without ID subtitles;
+  thinking labels distinguish Max from Extra High.
   Choice revisions avoid rebuilding or serializing the catalogue during streaming.
 - Thinking/tool adjacency uses Vue's compact spacing; tool headers include argument
   summaries such as `read  gpui/APP.md`. Multiline/heredoc arguments normalize whitespace
   only in the single-line, bounded header; raw arguments and results remain unchanged.
-  Expanded details contain wheel scrolling only when their bounded detail viewport
-  actually overflows, including at either edge; natural-height details leave the reader
-  in control. Offsets survive updates/cache eviction. Raw readonly results remain
+  Expanded details have retained, draggable scrollbars. Consumed vertical wheel movement
+  stays inside the reader; fitting content and outward boundary gestures reach the transcript.
+  Diagonal gestures retain their actual vertical component, while purely horizontal input
+  cannot become vertical motion. Offsets survive updates/cache eviction. Short thinking
+  readers do not autoscroll during an in-bounds horizontal text drag. Raw readonly results remain
   selectable with exact Copy, including whitespace and terminal newlines. The transient Working/Stopping tail follows
   Vue's assistant/compaction rules and is excluded from transcript data and Copy.
 - Click-to-rename saved sessions through Pi, with bounded names, rollback and registry
@@ -88,7 +93,10 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   subtitles. Sidebar projections are invalidated at data/status boundaries rather than
   rebuilt for every text chunk; relative times and groups also age while idle.
 - Draft/unread indicators, rich session status/message/time tooltips, SSH project
-  alias/directory tooltips, and animated edge-reveal drag handles.
+  alias/directory tooltips, and animated edge-reveal drag handles. Row exit immediately
+  hides pointer-only archive actions, including rapid motion and native window exit.
+  Native deactivation mutes only Vue's selected live/archive rows and archive-view toggle;
+  it does not dim text, editors or the body-ported palette.
 - `iddqd` outside text fields unlocks the persisted shared admin/telemetry gate and
   retained issue reporter. Reports use the existing local feedback service, with an
   unchecked session attachment option. Palette reporting is available only in admin mode.
@@ -98,7 +106,9 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   the transcript owns reading; standalone dialogs retain bounded scrolling. Keyboard
   option reveal is separately fenced and does not let editor selection/IME move history.
   Drafts, marked text, undo and readonly pending-response ownership survive updates.
-  Notifications render actual prose with accessibility on the rendered leaves.
+  Notifications render actual prose with accessibility on the rendered leaves. Runtime
+  notices retain their occurrence position through RPC hydration; compaction translates
+  live notice anchors into the replacement tail without inventing persisted Pi entries.
 - Application menus without a Settings surface or Cmd-comma shortcut, owned folder
   chooser, guarded close/quit and draft persistence. Closing the last production
   window quits only after confirmation (when busy), all-draft persistence and
@@ -111,15 +121,16 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
 - Pending user bubbles use 0.88 opacity until Pi acknowledges them, without replacing
   their source/selection identity. Busy queue chips dim, Clear stays visible but disabled,
   previews remain usable, and only genuine errors show feedback—not Updating queue….
-- Palette titles/details clip independently with reserved shortcut space; its retained
-  search editor uses 13px type. Selector glyphs are smaller without shrinking hit areas.
+- Palette titles/details clip independently with reserved shortcut space; logical key
+  tokens keep Ctrl+Tab and other modifier chords readable. Its retained search editor uses 13px type. Selector glyphs are smaller without shrinking hit areas.
   Shared light/dark scrollbar styles apply to editors, transcript and other scrollers.
 - Generated prose file paths and explicit Markdown destinations preserve immutable
   source ownership, decode explicit percent spelling once, and resolve document-relative
   references in their document context. Copy Path and Copy Full Path preserve their
   respective written/resolved semantics, including literal POSIX backslashes. Local and
-  SSH previews use bounded snapshot services with stale-owner/cancellation fences;
-  this is not authenticated SSH acceptance. Text/Markdown/code and admitted images are
+  SSH previews use bounded snapshot services with stale-owner/cancellation fences.
+  File viewers overlay the full app viewport, including the sidebar and header, without
+  reflowing the underlying shell. This is not authenticated SSH acceptance. Text/Markdown/code and admitted images are
   supported; PDF, audio and video acceptance is not claimed.
 - One-command menus keep natural row height; selector chevrons follow Vue's glyph,
   and available compaction dividers expose the source-faithful hover affordance.
@@ -257,12 +268,13 @@ release and cutover gates remain as documented above.
 
 ## Current verification boundary
 
-The final source passed **691 GPUI library tests / 1 ignored**, strict all-target/all-feature
-Clippy, formatting, native tooling lint/typecheck, eight packaging/version tests and a
-normal-feature native build after the feature checks. Separate source-matched passing
-gates are shared core **79 / 1 ignored**, controller **132 / 1 opt-in canary ignored**,
-**13 editor integrations**, canonical-path Tauri **16**, and root frontend **894** with
-static checks/build. These gates do not replace native lifecycle or packaged acceptance.
+The interaction-polish checkpoint passed **718 GPUI library tests / 1 ignored**,
+strict all-target/all-feature Clippy, formatting, native tooling lint/typecheck,
+**13 editor integrations**, eight packaging/version tests and controller
+**143 / 1 opt-in canary ignored**. Separate unchanged-source passing gates remain shared
+core **79 / 1 ignored**, canonical-path Tauri **16**, and root frontend **894** with static
+checks/build. A normal-feature `tau` build passed after the feature-enabled checks.
+These gates do not replace native lifecycle or packaged acceptance.
 
 **Current installed-Pi native acceptance is not green in either mode.** Both fresh
 credential-free and model-backed runs fail the unchanged five-second busy-close gate:
@@ -271,7 +283,19 @@ Deactivation's source cause is unproven; an external actor is not established. N
 activation repair, repeated key or widened deadline was added. Earlier free/model passes
 are historical; harness child cleanup is not successful production close.
 
-Fresh production Vue/native captures cover ten representative cases in both themes at
+Subsequent user manual checks passed close/cancel, draft persistence, streaming/session
+switching/queues, history management, macOS input and ordinary extension prompts.
+SSH appeared to work in that review; compaction and complex extension workflows remain
+unverified. These reports are separate from the unresolved automated native gate.
+
+The focused interaction-polish comparison captured **104 original images / 52 Vue/native
+pairs**, covering 13 states in both themes at 1×/2×. Actual Root interactions verify reader
+thumbs/edge handoff, stable held selection, picker labels, pointer-exit timestamp restoration,
+real inactive selection washes and full-window preview coverage. The headless WebKit tool
+thumb is not visibly painted, so scrollbar raster equivalence is not claimed. Existing font,
+inset, shadow/caret and small picker-state differences remain disclosed in the review.
+
+The preceding finalisation's production Vue/native captures cover ten representative cases in both themes at
 1×/2×, using real Root and actual dark rendering. They do not establish whole-UI parity.
 Selection retains a one-RGB-channel light difference and a one-CSS-pixel Retina band
 coverage difference. All **452 captures** (208 Vue, 204 native, 40 typography controls)

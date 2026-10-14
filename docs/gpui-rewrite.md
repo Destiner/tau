@@ -19,8 +19,8 @@ into `tau-core` in `af98b6d`, preserving existing Tauri service compatibility.
 `tau-session` supplies real Pi JSONL RPC orchestration; the shell (`63cba9c`) routes effects
 through those shared services. Local and SSH backends are available, including
 existing remote-project configuration and a new SSH connection/directory import UI.
-**Authenticated real-host SSH acceptance remains unproven.** Pi still owns extensions
-and session files.
+**Automated authenticated real-host SSH acceptance remains unproven.** Ordinary SSH
+appeared to work during subsequent user review. Pi still owns extensions and session files.
 
 Implemented first-slice behavior includes local project import, existing/new
 sessions, model/effort selection, prompt/stream/activity/Stop and queue controls,
@@ -48,9 +48,18 @@ links and exact Copy Path/Full Path now use source-faithful ownership. Bounded l
 and SSH snapshot services support text/Markdown/code and admitted images, without
 claiming authenticated SSH or PDF/audio/video acceptance. Source owners outlive the
 128-view presentation cache. Notices render actual prose and rendered-leaf accessibility;
-readonly tool output retains exact selection/Copy. Only overflowing tool details contain
-wheel input. One-command rows have natural height, chevrons follow Vue, and compaction
-hover is source-faithful.
+readonly tool output retains exact selection/Copy. Tool details have retained draggable
+scrollbars and consume actual vertical movement, handing outward boundary gestures to the
+transcript. Short thinking readers retain horizontal text selection without autoscroll.
+One-command rows have natural height, chevrons follow Vue, and compaction hover is source-faithful.
+
+Warm-session navigation restores the retained composer or extension owner without stealing
+newer pointer focus. Sidebar row exit clears pointer-only archive controls; native window
+inactivity changes only Vue's selected sidebar washes. Palette shortcuts use logical key
+tokens, model rows omit ID subtitles, and Max remains distinct from Extra High. Remote
+picker labels use Go Back and Select with the full path. Runtime notices stay anchored
+through hydration, including live arrivals during compaction. File viewers cover the whole
+app viewport rather than occupying a sibling content column.
 
 Inline extension editors retain native draft/undo/IME state. Embedded prompts use the
 transcript's natural reader mode; standalone dialogs remain bounded. Explicit
@@ -82,19 +91,30 @@ through normalized CRLF, dehover and nearest-run gaps held across three frames.
 Font-metric paint changes no layout/hit testing; width truncation preserves line height
 and bottom ink. Source owners outlive the 128-view cache. See [APP.md](../gpui/APP.md).
 
-Final source: **691 GPUI passes / 1 ignored**, strict all-target/all-feature Clippy,
-formatting, native tooling lint/typecheck, eight package/version tests and an ordinary
-native build after feature checks. Source-matched separate passing gates: **13 editor**,
-**132 controller / 1 canary ignored**, **79 shared-core / 1 ignored**,
-**16 canonical-path Tauri**, **894 root frontend** plus static checks/build. These checks
-do not establish native lifecycle, packaged or whole-product acceptance.
+Interaction-polish checkpoint: **718 GPUI passes / 1 ignored**, strict all-target/all-feature
+Clippy, formatting, native tooling lint/typecheck, eight package/version tests,
+**13 editor integrations**, and **143 controller / 1 canary ignored**. Unchanged-source
+separate passing gates remain **79 shared-core / 1 ignored**, **16 canonical-path Tauri**,
+and **894 root frontend** plus static checks/build. The normal-feature native build also
+passed after feature-enabled checks. These checks do not establish native lifecycle,
+packaged or whole-product acceptance.
 
 **Both current installed-Pi native modes fail** the unchanged five-second busy-close gate:
 inactive owned window, unavailable Close, no lifecycle callback. Deactivation origin is
 unproven, not proven external; no activation repair was added. Historical passes below
-do not certify current close/cancel/shutdown.
+do not certify current close/cancel/shutdown. Subsequent user manual checks passed
+close/cancel, persistence, streaming/switching/queues, history management, macOS input and
+ordinary extension prompts. Compaction and complex extension workflows remain unverified;
+the manual reports do not erase the automated gate's negative evidence.
 
-Fresh production captures cover ten representative cases in both themes at 1×/2× using
+The focused interaction-polish campaign captured **104 originals / 52 Vue/native pairs**:
+13 states, both themes, 1×/2×. Real Root interactions include reader handoff/held selection,
+pickers, timestamp restoration after pointer exit, native inactive selection and full-window
+preview coverage. Headless WebKit's tool thumb is not visibly painted; no scrollbar raster
+equivalence or whole-UI pixel parity is claimed. Existing raster/layout and small picker-state
+differences remain disclosed.
+
+The preceding finalisation's production captures cover ten representative cases in both themes at 1×/2× using
 real Root/dark rendering, not the whole UI: **452 source-frozen images**, including 40
 typography controls. Actual-label descender/non-descender and horizontal-overflow gates
 pass, as do twelve literal selected-string pairs and natural paused dehover. Selection
