@@ -1,4 +1,7 @@
 use super::*;
+
+#[path = "activity_reader_regression_tests.rs"]
+mod reader_regression_tests;
 use gpui_kit::{
     Focusable, MouseButton, TestApp, TestAppWindow, base::Root, point, size, test::TestWindowExt,
 };
@@ -291,11 +294,25 @@ fn shared_prose_has_actual_viewport_cap_conditional_wheel_and_source_owned_offse
                     window.draw();
                     assert!(inner.offset().y < px(0.));
                     assert_eq!(outer.offset().y, px(0.));
-                    for delta in [-100_000., -30., 100_000., 30.] {
-                        window.simulate_scroll(bounds.center(), point(px(0.), px(delta)));
+                    for (edge, delta, outer_start) in [
+                        (px(0.), 30., px(-100.)),
+                        (-inner.max_offset().y, -30., px(0.)),
+                    ] {
+                        inner.set_offset(point(px(0.), edge));
+                        outer.set_offset(point(px(0.), outer_start));
+                        window.update(|_, _, cx| host.update(cx, |_, cx| cx.notify()));
                         window.draw();
-                        assert_eq!(outer.offset().y, px(0.), "overflow must own both edges");
+                        let bounds = window.update(|_, w, _| w.find(id.clone()).bounds());
+                        let pointer = point(bounds.center().x, bounds.bottom() - px(10.));
+                        window.simulate_scroll(pointer, point(px(2.), px(delta)));
+                        window.draw();
+                        assert_eq!(inner.offset().y, edge);
+                        assert_eq!(outer.offset().y, outer_start + px(delta));
                     }
+                    outer.set_offset(point(px(0.), px(0.)));
+                    inner.set_offset(point(px(0.), px(0.)));
+                    window.update(|_, _, cx| host.update(cx, |_, cx| cx.notify()));
+                    window.draw();
                 } else {
                     assert!(bounds.size.height < px(cap));
                     window.simulate_scroll(bounds.center(), point(px(0.), px(-35.)));

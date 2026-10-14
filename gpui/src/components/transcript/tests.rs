@@ -1130,16 +1130,53 @@ fn expanded_tool_consumes_real_wheel_once_including_edges() {
         let position = this.list.logical_scroll_top();
         assert_eq!((position.item_ix, position.offset_in_item), before);
     });
-    for delta in [-100_000., -100., 100_000., 100.] {
+    for (delta, chains) in [
+        (-100_000., false),
+        (-20., true),
+        (100_000., false),
+        (20., true),
+    ] {
+        let before_gesture = window.read(|_, cx| {
+            let p = transcript.read(cx).list.logical_scroll_top();
+            (p.item_ix, p.offset_in_item)
+        });
+        let inner = window.update(|_, window, cx| {
+            let bounds = window
+                .find(format!("transcript-activity-{key}-details"))
+                .bounds();
+            let viewport = transcript.read(cx).list.viewport_bounds();
+            let top = bounds.top().max(viewport.top());
+            let bottom = bounds.bottom().min(viewport.bottom());
+            assert!(bottom > top + px(2.));
+            point(bounds.left() + px(30.), (top + bottom) / 2.)
+        });
+        let edge = if delta < 0. {
+            -scroll.max_offset().y
+        } else {
+            px(0.)
+        };
         window.simulate_scroll(inner, point(px(0.), px(delta)));
         window.draw();
         let after = window.read(|_, cx| {
             let p = transcript.read(cx).list.logical_scroll_top();
             (p.item_ix, p.offset_in_item)
         });
-        assert_eq!(after, before, "nested wheel {delta} moved transcript");
+        assert_eq!(scroll.offset().y, edge, "reader must clamp at its edge");
+        if chains {
+            assert_ne!(after, before_gesture, "outward wheel {delta} must chain");
+        } else {
+            assert_eq!(
+                after, before_gesture,
+                "consumed wheel {delta} must stay inner"
+            );
+        }
+        window.read(|_, cx| assert!(transcript.read(cx).cache.len() <= CACHE_LIMIT));
     }
     assert_eq!(scroll.offset().y, px(0.));
+    let before_control = window.read(|_, cx| {
+        let p = transcript.read(cx).list.logical_scroll_top();
+        (p.item_ix, p.offset_in_item)
+    });
     let viewport = window.read(|_, cx| transcript.read(cx).list.viewport_bounds());
     window.simulate_scroll(
         point(viewport.left() + px(5.), viewport.center().y),
@@ -1150,7 +1187,10 @@ fn expanded_tool_consumes_real_wheel_once_including_edges() {
         let p = transcript.read(cx).list.logical_scroll_top();
         (p.item_ix, p.offset_in_item)
     });
-    assert_ne!(after, before, "wheel outside details must reach transcript");
+    assert_ne!(
+        after, before_control,
+        "wheel outside details must reach transcript"
+    );
 }
 
 #[test]

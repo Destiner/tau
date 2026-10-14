@@ -1,8 +1,28 @@
 //! Register as a child of `transcript` so the oracle reads the real virtual-list position.
 use super::*;
+
+#[path = "activity_transcript_drag_regression_tests.rs"]
+mod drag_regression_tests;
 use gpui_kit::{Pixels, TestApp, TestAppWindow, base::Root, point, size, test::TestWindowExt};
 
 fn fixture(dark: bool, result: &str) -> (TestApp, TestAppWindow<Root>, Entity<Transcript>, u64) {
+    fixture_content(
+        dark,
+        ActivityContent::Tool {
+            name: "read".into(),
+            argument: "fixture.rs".into(),
+            arguments: "{\"path\":\"fixture.rs\"}".into(),
+            result: result.into(),
+            running: false,
+            failed: false,
+        },
+    )
+}
+
+fn fixture_content(
+    dark: bool,
+    content: ActivityContent,
+) -> (TestApp, TestAppWindow<Root>, Entity<Transcript>, u64) {
     let mut app = TestApp::new();
     app.update(|cx| crate::components::init(cx, dark));
     let mut transcript = None;
@@ -17,14 +37,7 @@ fn fixture(dark: bool, result: &str) -> (TestApp, TestAppWindow<Root>, Entity<Tr
                 .collect();
             entries.push(TranscriptEntry {
                 id: "tool".into(),
-                content: TranscriptContent::Activity(ActivityContent::Tool {
-                    name: "read".into(),
-                    argument: "fixture.rs".into(),
-                    arguments: "{\"path\":\"fixture.rs\"}".into(),
-                    result: result.into(),
-                    running: false,
-                    failed: false,
-                }),
+                content: TranscriptContent::Activity(content),
             });
             this.set_entries(entries, cx).unwrap();
             this
@@ -98,7 +111,7 @@ fn fitting_tool_details_pass_genuine_wheel_to_root_transcript_in_both_themes() {
         for delta in [-20., 20.] {
             let before = position(&window, &transcript);
             let inner = inner_point(&mut window, &transcript, key);
-            window.simulate_scroll(inner, point(px(0.), px(delta)));
+            window.simulate_scroll(inner, point(px(3.), px(delta)));
             window.draw();
             assert_ne!(
                 position(&window, &transcript),
@@ -141,7 +154,7 @@ fn tool_overflow_uses_actual_viewport_cap_and_retains_offset_while_resizing() {
         assert!(scroll.max_offset().y > px(0.));
         let before = position(&window, &transcript);
         let inner = inner_point(&mut window, &transcript, key);
-        window.simulate_scroll(inner, point(px(0.), px(-10.)));
+        window.simulate_scroll(inner, point(px(40.), px(-10.)));
         window.draw();
         assert_eq!(position(&window, &transcript), before);
         assert_eq!(scroll.offset().y, px(-100.));
@@ -152,7 +165,101 @@ fn tool_overflow_uses_actual_viewport_cap_and_retains_offset_while_resizing() {
 }
 
 #[test]
-fn overflowing_details_claim_wheel_at_both_edges_and_keep_retained_offset_after_eviction() {
+fn mixed_axis_reader_wheel_preserves_actual_y_once_and_never_remaps_horizontal_input() {
+    for dark in [false, true] {
+        let (_app, mut window, transcript, key) = fixture(dark, &"output line\n".repeat(300));
+        let scroll = window.read(|_, cx| {
+            transcript
+                .read(cx)
+                .rows
+                .last()
+                .unwrap()
+                .details_scroll
+                .clone()
+        });
+        for (x, y) in [
+            (40., -10.),
+            (-40., 10.),
+            (3., -10.),
+            (-3., 10.),
+            (40., 0.),
+            (-40., 0.),
+        ] {
+            scroll.set_offset(point(px(0.), px(-90.)));
+            window.update(|_, _, cx| transcript.update(cx, |_, cx| cx.notify()));
+            window.draw();
+            let before = position(&window, &transcript);
+            let inner = inner_point(&mut window, &transcript, key);
+            window.simulate_scroll(inner, point(px(x), px(y)));
+            window.draw();
+            assert_eq!(scroll.offset(), point(px(0.), px(-90. + y)));
+            assert_eq!(position(&window, &transcript), before);
+            window.read(|_, cx| assert!(transcript.read(cx).cache.len() <= CACHE_LIMIT));
+        }
+    }
+}
+
+#[test]
+fn mixed_axis_edge_handoff_matches_parent_wheel_semantics_without_moving_reader() {
+    for (x, y) in [
+        (40., 10.),
+        (-40., -10.),
+        (3., 10.),
+        (-3., -10.),
+        (40., 0.),
+        (-40., 0.),
+    ] {
+        let (_app, mut window, transcript, key) = fixture(false, &"output line\n".repeat(300));
+        let scroll = window.read(|_, cx| {
+            transcript
+                .read(cx)
+                .rows
+                .last()
+                .unwrap()
+                .details_scroll
+                .clone()
+        });
+        let edge = if y < 0. {
+            -scroll.max_offset().y
+        } else {
+            px(0.)
+        };
+        scroll.set_offset(point(px(0.), edge));
+        window.update(|_, _, cx| transcript.update(cx, |_, cx| cx.notify()));
+        window.draw();
+        let top = window.read(|_, cx| transcript.read(cx).list.logical_scroll_top());
+        let before = position(&window, &transcript);
+        let outside = window.read(|_, cx| {
+            let viewport = transcript.read(cx).list.viewport_bounds();
+            point(viewport.left() + px(5.), viewport.center().y)
+        });
+        window.simulate_scroll(outside, point(px(x), px(y)));
+        window.draw();
+        let expected = position(&window, &transcript);
+        if y == 0. {
+            assert_eq!(expected, before);
+        } else {
+            assert_ne!(expected, before);
+        }
+        window.update(|_, _, cx| {
+            transcript.update(cx, |this, cx| {
+                this.list.scroll_to(top);
+                cx.notify();
+            })
+        });
+        window.draw();
+        assert_eq!(position(&window, &transcript), before);
+        let inner = inner_point(&mut window, &transcript, key);
+        window.simulate_scroll(inner, point(px(x), px(y)));
+        window.draw();
+        assert_eq!(position(&window, &transcript), expected);
+        assert_eq!(scroll.offset(), point(px(0.), edge));
+        window.read(|_, cx| assert!(transcript.read(cx).cache.len() <= CACHE_LIMIT));
+    }
+}
+
+#[test]
+fn overflowing_details_chain_outward_wheel_at_both_edges_and_retain_offset_after_eviction() {
     for dark in [false, true] {
         let (_app, mut window, transcript, key) = fixture(dark, &"output line\n".repeat(300));
         let scroll = window.read(|_, cx| {
@@ -201,26 +308,32 @@ fn overflowing_details_claim_wheel_at_both_edges_and_keep_retained_offset_after_
             assert!(activity.read(cx).expanded());
             assert_eq!(activity.read(cx).details_scroll().offset(), scroll.offset());
         });
-        for delta in [-100_000., -100., 100_000., 100.] {
-            let inner = inner_point(&mut window, &transcript, key);
-            window.simulate_scroll(inner, point(px(0.), px(delta)));
+        for (edge, delta) in [(px(0.), 20.), (-scroll.max_offset().y, -20.)] {
+            scroll.set_offset(point(px(0.), edge));
+            window.update(|_, _, cx| transcript.update(cx, |_, cx| cx.notify()));
             window.draw();
-            assert_eq!(
+            // Mixed-axis gestures still chain their vertical component at the edge.
+            let before_edge = position(&window, &transcript);
+            let inner = inner_point(&mut window, &transcript, key);
+            window.simulate_scroll(inner, point(px(3.), px(delta)));
+            window.draw();
+            assert_ne!(
                 position(&window, &transcript),
-                before,
-                "overflow edge leaked wheel {delta}"
+                before_edge,
+                "outward overflow wheel must chain {delta}"
             );
+            assert_eq!(scroll.offset().y, edge);
         }
-        assert_eq!(scroll.offset().y, px(0.));
         let outside = window.read(|_, cx| {
             let viewport = transcript.read(cx).list.viewport_bounds();
             point(viewport.left() + px(5.), viewport.center().y)
         });
+        let before_control = position(&window, &transcript);
         window.simulate_scroll(outside, point(px(0.), px(20.)));
         window.draw();
         assert_ne!(
             position(&window, &transcript),
-            before,
+            before_control,
             "outer wheel control must move transcript"
         );
     }

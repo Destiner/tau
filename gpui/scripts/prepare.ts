@@ -52,6 +52,7 @@ const crates = [
       'inline-file-links.patch',
       'input-undo-boundary.patch',
       'inline-text-accessibility.patch',
+      'selection-autoscroll-edges.patch',
       'textselection-paint.patch',
     ],
   },

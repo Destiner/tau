@@ -6,8 +6,9 @@ use gpui_kit::{
     Context, Entity, EventEmitter, FocusHandle, IntoElement, Render, ScrollHandle, TestSupportExt,
     Window,
     base::{
-        Button, ElementExt, InputBase, SelectionFormat, TextSelectionDomain,
-        TextSelectionDomainRange, TextViewState, Textarea, input::TextareaState,
+        Button, ElementExt, InputBase, Scrollbar, ScrollbarMode, SelectionFormat,
+        TextSelectionDomain, TextSelectionDomainRange, TextViewState, Textarea,
+        input::TextareaState,
     },
     div,
     prelude::*,
@@ -140,7 +141,40 @@ pub fn tool_details(
     failed: bool,
     dark: bool,
 ) -> impl IntoElement {
-    tool_details_with_scroll(id, arguments, result, failed, dark, px(455.), None, None)
+    StandaloneDetails {
+        id: id.into(),
+        arguments: arguments.into(),
+        result: result.into(),
+        failed,
+        dark,
+    }
+}
+
+#[derive(gpui_kit::IntoElement)]
+struct StandaloneDetails {
+    id: gpui_kit::ElementId,
+    arguments: String,
+    result: String,
+    failed: bool,
+    dark: bool,
+}
+impl gpui_kit::RenderOnce for StandaloneDetails {
+    fn render(self, window: &mut Window, cx: &mut gpui_kit::App) -> impl IntoElement {
+        let retained = window.with_element_namespace(self.id.clone(), |window| {
+            window.use_keyed_state("details-scroll", cx, |_, _| ScrollHandle::new())
+        });
+        let scroll = retained.read(cx).clone();
+        tool_details_with_scroll(
+            self.id,
+            &self.arguments,
+            &self.result,
+            self.failed,
+            self.dark,
+            (window.viewport_size().height * 0.65).min(px(520.)),
+            &scroll,
+            None,
+        )
+    }
 }
 
 #[expect(
@@ -154,14 +188,11 @@ fn tool_details_with_scroll(
     failed: bool,
     dark: bool,
     max_height: gpui_kit::Pixels,
-    scroll: Option<&ScrollHandle>,
+    scroll: &ScrollHandle,
     raw: Option<&[Entity<TextareaState>; 2]>,
 ) -> gpui_kit::AnyElement {
     let t = support::tokens(dark);
-    let scroll = scroll.cloned();
-    let viewport_height = std::rc::Rc::new(std::cell::Cell::new(px(0.)));
-    let field_heights = std::rc::Rc::new(std::cell::Cell::new([px(0.); 2]));
-    let measured_viewport = viewport_height.clone();
+
     let mut details = div()
         .id(id)
         .test_support()
@@ -176,10 +207,8 @@ fn tool_details_with_scroll(
         .gap(px(8.))
         .max_h(max_height)
         .overflow_y_scroll()
-        .when_some(scroll.as_ref(), |details, scroll| {
-            details.track_scroll(scroll)
-        })
-        .on_prepaint(move |bounds, _, _| measured_viewport.set(bounds.size.height));
+        .restrict_scroll_to_axis()
+        .track_scroll(scroll);
     for (index, (label, value)) in [
         ("Arguments", arguments),
         (if failed { "Error" } else { "Result" }, result),
@@ -190,14 +219,8 @@ fn tool_details_with_scroll(
         if value.is_empty() {
             continue;
         }
-        let measured_fields = field_heights.clone();
         details = details.child(
             div()
-                .on_prepaint(move |bounds, _, _| {
-                    let mut heights = measured_fields.get();
-                    heights[index] = bounds.size.height;
-                    measured_fields.set(heights);
-                })
                 .flex()
                 .flex_col()
                 .gap(px(3.))
@@ -235,24 +258,54 @@ fn tool_details_with_scroll(
                 ),
         );
     }
-    // Overflow owns the gesture even at an edge; fitting details pass it to the transcript.
-    // Bubble after descendants and the built-in scroller, without replacing the retained handle.
+    reader_viewport(details, scroll, dark)
+}
+
+/// Replace the built-in scroller's speculative, axis-filtered offset with actual Y input.
+/// Claim only consumed vertical gestures; fitting readers and outward edges chain normally.
+fn reader_viewport(
+    viewport: impl IntoElement,
+    scroll: &ScrollHandle,
+    dark: bool,
+) -> gpui_kit::AnyElement {
+    let before = std::rc::Rc::new(std::cell::Cell::new(scroll.offset()));
+    let measured = before.clone();
+    let line_height = std::rc::Rc::new(std::cell::Cell::new(px(0.)));
+    let measured_line_height = line_height.clone();
+    let current_view = std::rc::Rc::new(std::cell::Cell::new(None));
+    let measured_view = current_view.clone();
+    let measured_scroll = scroll.clone();
+    let wheel_scroll = scroll.clone();
     div()
-        .child(details)
-        .on_scroll_wheel(move |_, _, cx| {
-            let overflowing = if let Some(scroll) = &scroll {
-                scroll.max_offset().y > px(0.)
-            } else {
-                // Standalone details keep GPUI's element-owned offset rather than a fresh handle.
-                let heights = field_heights.get();
-                let gap = if heights.iter().all(|height| *height > px(0.)) {
-                    px(8.)
-                } else {
-                    px(0.)
-                };
-                heights[0] + heights[1] + gap > viewport_height.get()
-            };
-            if overflowing {
+        .relative()
+        .child(viewport)
+        .child(
+            Scrollbar::vertical(scroll)
+                .mode(ScrollbarMode::Always)
+                .styles(move |_| support::scrollbar_styles(dark)),
+        )
+        .on_prepaint(move |_, window, _| {
+            measured.set(measured_scroll.offset());
+            measured_line_height.set(window.line_height());
+            measured_view.set(Some(window.current_view()));
+        })
+        .on_scroll_wheel(move |event, _, cx| {
+            let max = wheel_scroll.max_offset();
+            let offset = before.get();
+            let delta_y = event.delta.pixel_delta(line_height.get()).y;
+            let clamped = gpui_kit::point(
+                offset.x.clamp(-max.x, px(0.)),
+                (offset.y + delta_y).clamp(-max.y, px(0.)),
+            );
+            wheel_scroll.set_offset(clamped);
+            before.set(clamped);
+            if clamped != offset {
+                if let Some(view) = current_view.get() {
+                    cx.notify(view);
+                }
+                cx.stop_propagation();
+            } else if delta_y == px(0.) {
+                // Never let an ancestor remap purely horizontal input into vertical motion.
                 cx.stop_propagation();
             }
         })
@@ -306,6 +359,11 @@ pub struct ActivitySource {
     selection: TextSelectionDomain,
 }
 impl ActivitySource {
+    #[cfg(test)]
+    pub(crate) fn prose_reader(&self, index: usize) -> (Entity<TextViewState>, ScrollHandle) {
+        (self.prose[index].clone(), self.prose_scroll[index].clone())
+    }
+
     pub fn set_copy_paths(&mut self, enabled: bool, cx: &mut Context<Self>) {
         for presentation in &self.presentations {
             presentation.update(cx, |p, cx| p.set_copy_paths(enabled, cx));
@@ -707,7 +765,7 @@ impl Render for ActivityRow {
                 failed,
                 self.dark,
                 (window.viewport_size().height * 0.65).min(px(520.)),
-                Some(&self.details_scroll),
+                &self.details_scroll,
                 Some(&raw),
             ));
         } else if open {
@@ -822,25 +880,19 @@ impl Render for ActivityRow {
                         })
                         .text_size(px(11.))
                         .line_height(gpui_kit::relative(1.62));
-                let wheel_scroll = scroll.clone();
-                field = field.child(
+                field = field.child(reader_viewport(
                     div()
-                        .child(
-                            div()
-                                .id(format!("{}-prose-{field_index}", self.id))
-                                .test_support()
-                                .min_w(px(0.))
-                                .max_h((window.viewport_size().height * 0.65).min(px(520.)))
-                                .overflow_y_scroll()
-                                .track_scroll(&scroll)
-                                .child(view),
-                        )
-                        .on_scroll_wheel(move |_, _, cx| {
-                            if wheel_scroll.max_offset().y > px(0.) {
-                                cx.stop_propagation();
-                            }
-                        }),
-                );
+                        .id(format!("{}-prose-{field_index}", self.id))
+                        .test_support()
+                        .min_w(px(0.))
+                        .max_h((window.viewport_size().height * 0.65).min(px(520.)))
+                        .overflow_y_scroll()
+                        .restrict_scroll_to_axis()
+                        .track_scroll(&scroll)
+                        .child(view),
+                    &scroll,
+                    self.dark,
+                ));
                 details = details.child(field);
             }
             container = container.child(details);

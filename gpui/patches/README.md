@@ -2,7 +2,7 @@
 
 ## Prepared dependency set
 
-`gpui/scripts/prepare.ts` registers **31 Base patches**, **eleven Core patches**,
+`gpui/scripts/prepare.ts` registers **32 Base patches**, **eleven Core patches**,
 and **five macOS patches**, including the native interaction and accessibility
 fixes below; **two merman-core patches** (parser manifest and ER
 semantic default direction); **one merman-analysis manifest patch**; **four
@@ -56,6 +56,15 @@ Markdown opts in at both transcript and compact body sizes, and explicitly suppl
 the production Vue selection colors: RGB `035bd6` at 15% in light mode and
 `3388ff` at 25% in dark mode. Root tests inspect per-row painted quads at both
 backing scales; actual raster parity still requires independent pixel capture.
+
+## Selection autoscroll edges
+
+`selection-autoscroll-edges.patch` prevents overlapping 16px autoscroll bands in
+readers no taller than 32px. A horizontal selection inside a fitting thinking line
+no longer synthesizes vertical wheel events into the transcript. Outside-edge
+selection still scrolls, and taller readers retain their existing inner edge bands.
+Activity regressions exercise held-left selection, parent offsets and genuine edge
+scrolling through the shared selection implementation.
 
 ## Single-line ink overflow
 
