@@ -348,7 +348,7 @@ impl Shell {
         if let Some(focus) = self.shell_focus.clone() {
             focus.focus(w, cx);
         }
-        self.restore_input_focus_from(origin, cx);
+        self.restore_input_focus_in(origin, w, cx);
     }
     fn palette_selected(&mut self, id: &str, w: &mut Window, cx: &mut Context<Self>) {
         let Some(target) = self.palette.targets.get(id).cloned() else {
@@ -951,8 +951,8 @@ impl Shell {
                 );
             }
             for (id, label, shortcut, direction) in [
-                ("session.next", "Next Session", "Ctrl Tab", 1),
-                ("session.previous", "Previous Session", "Ctrl ⇧Tab", -1),
+                ("session.next", "Next Session", "Ctrl+Tab", 1),
+                ("session.previous", "Previous Session", "Ctrl+Shift+Tab", -1),
             ] {
                 if let Some(target) = self.palette_adjacent(direction, cx) {
                     root(id, label, shortcut, Target::Adjacent(Box::new(target)));
@@ -1169,7 +1169,7 @@ impl Shell {
                         3,
                         format!("model:{provider}/{id}"),
                         m["name"].as_str().unwrap_or(id).into(),
-                        id.into(),
+                        "".into(),
                         "",
                         None,
                         Some(Target::Model(provider.into(), id.into())),
@@ -1189,15 +1189,7 @@ impl Shell {
                     );
                 }
                 for effort in &state.thinking_levels {
-                    let label = match effort.as_str() {
-                        "off" => "Off",
-                        "minimal" => "Minimal",
-                        "low" => "Low",
-                        "medium" => "Medium",
-                        "high" => "High",
-                        "xhigh" => "Extra High",
-                        other => other,
-                    };
+                    let label = crate::components::composer::effort_label(effort);
                     add(
                         4,
                         format!("effort:{effort}"),

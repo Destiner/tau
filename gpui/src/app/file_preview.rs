@@ -898,11 +898,11 @@ impl Shell {
             cx.notify();
         }
     }
-    pub(super) fn close_preview(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn close_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let origin = self.preview.origin.clone();
         self.preview.invalidate();
         if !self.preview_blocked(cx) {
-            self.restore_input_focus_from(origin, cx);
+            self.restore_input_focus_in(origin, window, cx);
         }
         cx.notify();
     }
@@ -1169,9 +1169,9 @@ impl Shell {
         self.preview.subscriptions.push(cx.subscribe_in(
             &viewer,
             window,
-            |shell, view, _: &CloseRequested, _, cx| {
+            |shell, view, _: &CloseRequested, window, cx| {
                 if shell.preview.viewer.as_ref() == Some(view) {
-                    shell.close_preview(cx);
+                    shell.close_preview(window, cx);
                 }
             },
         ));

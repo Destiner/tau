@@ -31,19 +31,22 @@ fn dialog() -> (
 fn rows() -> Vec<OptionRow> {
     vec![
         OptionRow {
-            label: "../".into(),
+            label: "Go Back".into(),
             path: "/".into(),
             select: false,
+            back: true,
         },
         OptionRow {
-            label: "Select This Directory".into(),
+            label: "Select /home".into(),
             path: "/home".into(),
             select: true,
+            back: false,
         },
         OptionRow {
             label: "Alpha".into(),
             path: "/home/Alpha".into(),
             select: false,
+            back: false,
         },
     ]
 }

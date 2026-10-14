@@ -55,15 +55,17 @@ impl State {
                 .map(|(p, _)| if p.is_empty() { "/" } else { p })
                 .unwrap_or("/");
             rows.push(OptionRow {
-                label: "../".into(),
+                label: "Go Back".into(),
                 path: parent.into(),
                 select: false,
+                back: true,
             });
         }
         rows.push(OptionRow {
-            label: "Select This Directory".into(),
+            label: format!("Select {}", listing.working_directory),
             path: listing.working_directory.clone(),
             select: true,
+            back: false,
         });
         rows.extend(
             listing
@@ -74,6 +76,7 @@ impl State {
                     label: d.name.clone(),
                     path: d.path.clone(),
                     select: false,
+                    back: false,
                 }),
         );
         rows
@@ -95,6 +98,7 @@ struct OptionRow {
     label: String,
     path: String,
     select: bool,
+    back: bool,
 }
 #[derive(Clone)]
 enum UiEvent {
@@ -747,7 +751,7 @@ impl Render for RemoteDialog {
             .on_action(cx.listener(|s, _: &ParentDirectory, w, cx| {
                 if s.can_act(w, cx)
                     && s.directory
-                    && let Some(row) = s.rows.iter().find(|r| r.label == "../").cloned()
+                    && let Some(row) = s.rows.iter().find(|r| r.back).cloned()
                 {
                     cx.emit(UiEvent::Choose(row));
                 }
@@ -999,19 +1003,22 @@ mod tests {
                 s.directory = true;
                 s.rows = vec![
                     OptionRow {
-                        label: "../".into(),
+                        label: "Go Back".into(),
                         path: "/".into(),
                         select: false,
+                        back: true,
                     },
                     OptionRow {
-                        label: "Select This Directory".into(),
+                        label: "Select /home".into(),
                         path: "/home".into(),
                         select: true,
+                        back: false,
                     },
                     OptionRow {
                         label: "Alpha".into(),
                         path: "/home/Alpha".into(),
                         select: false,
+                        back: false,
                     },
                 ];
                 cx.subscribe(&cx.entity(), move |_, _, event: &UiEvent, _| {
@@ -1117,8 +1124,16 @@ mod tests {
         let rows = state.options();
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].path, "/home");
+        assert_eq!(rows[0].label, "Go Back");
+        assert!(rows[0].back);
+        assert_eq!(rows[1].label, "Select /home/me");
         assert!(rows[1].select);
+        assert!(!rows[1].back);
+        assert!(!rows[2].back);
         state.listing.as_mut().unwrap().working_directory = "/".into();
-        assert!(state.options()[0].select);
+        let rows = state.options();
+        assert!(rows[0].select);
+        assert_eq!(rows[0].label, "Select /");
+        assert!(!rows.iter().any(|row| row.back));
     }
 }

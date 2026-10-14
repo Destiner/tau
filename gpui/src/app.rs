@@ -835,7 +835,7 @@ impl Shell {
             if let Some(focus) = self.shell_focus.clone() {
                 focus.focus(window, cx);
             }
-            self.restore_input_focus(cx);
+            self.restore_input_focus_in(None, window, cx);
         } else if !explicit_project {
             self.error = Some("Import a project before creating a session.".into());
             cx.notify();

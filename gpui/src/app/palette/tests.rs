@@ -22,6 +22,29 @@ fn focus_frames(root: &mut gpui_kit::TestAppWindow<Root>) {
 }
 
 #[test]
+fn session_shortcuts_are_logical_readable_keys() {
+    with_shell(64, |s, w, cx, _| {
+        create(s, "first", "first draft", w, cx);
+        create(s, "second", "second draft", w, cx);
+        create(s, "third", "third draft", w, cx);
+        s.active = "second".into();
+        s.sync(w, cx);
+        s.mount_palette(w, cx);
+        let pages = s.palette_pages(cx).0;
+        let rows = &pages[0].items;
+        for (id, shortcut) in [
+            ("session.next", "Ctrl+Tab"),
+            ("session.previous", "Ctrl+Shift+Tab"),
+        ] {
+            assert_eq!(
+                rows.iter().find(|row| row.id == id).unwrap().shortcut,
+                shortcut
+            );
+        }
+    });
+}
+
+#[test]
 fn shell_rows_use_workspace_and_hide_admin_actions_while_disabled() {
     with_shell(64, |s, w, cx, _| {
         s.workspace = Some(WorkspaceSnapshot {
@@ -257,7 +280,9 @@ fn model_and_effort_choices_allow_pending_boot_reads_but_block_setting_writes() 
                 "get_available_models" => serde_json::json!({"models":[
                     {"provider":"fixture","id":"alpha","name":"Alpha"}
                 ]}),
-                "get_available_thinking_levels" => serde_json::json!({"levels":["high"]}),
+                "get_available_thinking_levels" => {
+                    serde_json::json!({"levels":["high", "xhigh", "max"]})
+                }
                 _ => continue,
             };
             s.ingest(
@@ -281,8 +306,26 @@ fn model_and_effort_choices_allow_pending_boot_reads_but_block_setting_writes() 
         let pages = s.palette_pages(cx).0;
         assert!(pages[0].items.iter().any(|r| r.id == "model.choose"));
         assert!(pages[0].items.iter().any(|r| r.id == "effort.choose"));
-        assert!(pages[3].items.iter().any(|r| r.id == "model:fixture/alpha"));
+        let model = pages[3]
+            .items
+            .iter()
+            .find(|r| r.id == "model:fixture/alpha")
+            .unwrap();
+        assert_eq!(model.label, "Alpha");
+        assert!(
+            model.detail.is_empty(),
+            "Vue model rows show names, not IDs"
+        );
         assert!(pages[4].items.iter().any(|r| r.id == "effort:high"));
+        for (id, label) in [("xhigh", "Extra High"), ("max", "Max")] {
+            let row = pages[4]
+                .items
+                .iter()
+                .find(|r| r.id == format!("effort:{id}"))
+                .unwrap();
+            assert_eq!(row.label, label);
+            assert_eq!(row.label, crate::components::composer::effort_label(id));
+        }
         s.palette_selected("model:fixture/alpha", w, cx);
         assert!(s.sessions["active"].controller.setting_pending());
         let pages = s.palette_pages(cx).0;

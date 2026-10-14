@@ -11,19 +11,22 @@ fn fixture() -> (TestApp, TestAppWindow<Root>, Entity<RemoteDialog>) {
             s.directory = true;
             s.rows = vec![
                 OptionRow {
-                    label: "../".into(),
+                    label: "Go Back".into(),
                     path: "/home".into(),
                     select: false,
+                    back: true,
                 },
                 OptionRow {
-                    label: "Select This Directory".into(),
+                    label: "Select /home/me".into(),
                     path: "/home/me".into(),
                     select: true,
+                    back: false,
                 },
                 OptionRow {
                     label: "Alpha".into(),
                     path: "/home/me/very long directory/Alpha".into(),
                     select: false,
+                    back: false,
                 },
             ];
             cx.notify();
@@ -32,6 +35,36 @@ fn fixture() -> (TestApp, TestAppWindow<Root>, Entity<RemoteDialog>) {
         Root::new(dialog, w, cx)
     });
     (app, window, view.unwrap())
+}
+
+#[test]
+fn directory_navigation_uses_semantics_not_display_labels() {
+    let (_, mut window, view) = fixture();
+    let received = Rc::new(RefCell::new(vec![]));
+    let events = received.clone();
+    let _subscription = window.update(|_, _, cx| {
+        cx.subscribe(&view, move |_, _, e: &UiEvent, _| {
+            events.borrow_mut().push(e.clone())
+        })
+    });
+    window.update(|_, _, cx| {
+        view.update(cx, |s, cx| {
+            s.rows[0].label = "Localized back label".into();
+            s.rows[2].label = "Go Back".into();
+            cx.notify();
+        });
+    });
+    window.draw();
+    window.simulate_keystroke("cmd-up");
+    assert!(
+        matches!(received.borrow().last(), Some(UiEvent::Choose(row))
+        if row.back && row.path == "/home")
+    );
+    window.simulate_keystroke("cmd-enter");
+    assert!(
+        matches!(received.borrow().last(), Some(UiEvent::Choose(row))
+        if row.select && row.path == "/home/me")
+    );
 }
 
 #[test]

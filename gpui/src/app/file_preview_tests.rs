@@ -168,6 +168,151 @@ fn shell_root_delayed_prepare_loading_deadline_actual_close_and_stale_body() {
 }
 
 #[test]
+fn shell_root_full_viewport_blocks_chrome_and_retires_stale_body() {
+    let directory = tempfile::tempdir().unwrap();
+    let snapshot = fixture_snapshot(directory.path(), "README.md", "# Late body\n");
+    let (body, bodies) = async_channel::unbounded();
+    let (app, mut window, shell) = shell_fixture();
+    let (commands, _requests) = async_channel::bounded(256);
+    window.update(|_, _, cx| shell.update(cx, |shell, _| shell.commands = commands));
+    window.update(|_, window, cx| {
+        shell.update(cx, |shell, cx| {
+            shell.create_retained(
+                "b".into(),
+                super::super::tests::project(),
+                String::new(),
+                String::new(),
+                "  retained B 🦀\nexact  ".into(),
+                window,
+                cx,
+            );
+            shell.sync(window, cx);
+        });
+    });
+    window.draw();
+    let blocked = window.update(|_, w, _| {
+        [
+            "session-status-b",
+            "session-name",
+            "version",
+            "sidebar-resize-handle",
+        ]
+        .map(|id| w.find(id).bounds().center())
+    });
+    let (origin, before, request) = window.update(|_, window, cx| {
+        shell.update(cx, |shell, cx| {
+            let origin = window.focused(cx);
+            let before = (
+                window.find("sidebar").bounds(),
+                window.find("header").bounds(),
+            );
+            let ready = snapshot.clone();
+            shell.preview.prepare_worker =
+                Some(Arc::new(move |_| Ok(PreparedPreview::Ready(ready.clone()))));
+            shell.preview.body_receiver = Some(bodies);
+            shell.open_preview_link(
+                "preview-fixture",
+                LinkTarget::DocumentPath("README.md".into()),
+                origin.clone(),
+                window,
+                cx,
+            );
+            (origin, before, shell.preview.owner.pending.clone().unwrap())
+        })
+    });
+    app.run_until_parked();
+    window.draw();
+    window.update(|_, window, cx| {
+        assert_eq!(window.find("sidebar").bounds(), before.0);
+        assert_eq!(window.find("header").bounds(), before.1);
+        let viewport = window.find("shell-viewport").bounds();
+        let overlay = window.find("shell-file-overlay").bounds();
+        assert_eq!(overlay, viewport);
+        assert_eq!(overlay.size, window.viewport_size());
+        assert_eq!(window.find("content").bounds().bottom(), overlay.bottom());
+        assert_eq!(
+            window.find("close").bounds().right(),
+            overlay.right() - px(12.)
+        );
+        assert!(shell.read(cx).preview_open());
+    });
+    // These physical coordinates belonged to sidebar/titlebar controls before opening.
+    for at in blocked {
+        window.simulate_click(at, MouseButton::Left);
+        app.run_until_parked();
+        window.draw();
+        window.update(|_, _, cx| {
+            let shell = shell.read(cx);
+            assert_eq!(shell.active, "preview-fixture");
+            assert!(shell.preview_open());
+            assert!(!shell.header.as_ref().unwrap().read(cx).renaming());
+            assert!(!shell.sidebar.as_ref().unwrap().read(cx).version_open());
+        });
+    }
+    window.simulate_resize(gpui_kit::size(px(1180.), px(820.)));
+    window.update(|_, window, cx| window.bounds_changed(cx));
+    window.draw();
+    window.update(|_, window, _| {
+        assert_eq!(
+            window.find("shell-file-overlay").bounds(),
+            window.find("shell-viewport").bounds()
+        );
+        assert_eq!(
+            window.find("shell-file-overlay").bounds().size,
+            window.viewport_size()
+        );
+    });
+    window.simulate_keystroke("escape");
+    app.run_until_parked();
+    for _ in 0..4 {
+        window.update(|_, w, cx| w.simulate_next_frame(cx));
+        window.draw();
+    }
+    window.update(|_, w, cx| {
+        assert!(!shell.read(cx).preview_open());
+        assert_eq!(w.focused(cx), origin);
+    });
+    let row = window.update(|_, w, _| w.find("session-status-b").bounds().center());
+    window.simulate_click(row, MouseButton::Left);
+    app.run_until_parked();
+    window.draw();
+    body.try_send(load_snapshot(&request, snapshot)).unwrap();
+    app.run_until_parked();
+    window.draw();
+    let row = window.update(|_, w, _| w.find("session-status-preview-fixture").bounds().center());
+    window.simulate_click(row, MouseButton::Left);
+    app.run_until_parked();
+    window.draw();
+    window.update(|_, w, cx| {
+        let shell = shell.read(cx);
+        assert!(!shell.preview_open());
+        assert!(w.try_find("shell-file-overlay").is_none());
+        assert_eq!(shell.active, "preview-fixture");
+        assert_eq!(
+            shell.sessions["preview-fixture"].controller.state().draft,
+            "untouched draft"
+        );
+        assert_eq!(
+            shell.sessions["b"].controller.state().draft,
+            "  retained B 🦀\nexact  "
+        );
+        let saved = shell.pending_saves.last_key_value().unwrap().1;
+        assert!(
+            saved
+                .drafts
+                .iter()
+                .any(|draft| draft.key == "preview-fixture" && draft.text == "untouched draft")
+        );
+        assert!(
+            saved
+                .drafts
+                .iter()
+                .any(|draft| draft.key == "b" && draft.text == "  retained B 🦀\nexact  ")
+        );
+    });
+}
+
+#[test]
 fn shell_root_actual_document_relative_click_replaces_without_changing_return_origin_or_draft() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -504,7 +649,7 @@ fn source_owned_notify_context_and_current_question_do_not_admit_background_link
         shell.open_source_link("preview-fixture", source.clone(), LinkTarget::WrittenPath("question.rs".into()), window.focused(cx), window.mouse_position(), window, cx);
         assert!(shell.preview.owner.pending());
         assert_eq!(shell.sessions["preview-fixture"].shown_draft, "untouched draft");
-        shell.close_preview(cx);
+        shell.close_preview(window, cx);
         shell.sessions.get_mut("preview-fixture").unwrap().controller.begin_generation(66);
         shell.sync(window, cx);
         assert!(!shell.link_source_current("preview-fixture", &source, cx));

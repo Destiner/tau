@@ -14,6 +14,33 @@ use gpui_kit::{
 
 gpui_kit::actions!(native_palette, [NextRow, PreviousRow, KeepFocus]);
 
+fn shortcut_keys(shortcut: &str) -> Vec<String> {
+    if shortcut.contains('+') {
+        return shortcut
+            .split('+')
+            .map(|key| key.trim().to_owned())
+            .filter(|key| !key.is_empty())
+            .collect();
+    }
+    let modifier_end = shortcut
+        .char_indices()
+        .find(|(_, key)| !matches!(key, '⌘' | '⌃' | '⌥' | '⇧'))
+        .map_or(shortcut.len(), |(index, _)| index);
+    let mut keys: Vec<String> = shortcut[..modifier_end]
+        .chars()
+        .map(|key| match key {
+            '⌃' => "Ctrl".into(),
+            '⌥' => "Alt".into(),
+            '⇧' => "Shift".into(),
+            _ => key.to_string(),
+        })
+        .collect();
+    if modifier_end < shortcut.len() {
+        keys.push(shortcut[modifier_end..].to_owned());
+    }
+    keys
+}
+
 #[derive(Clone)]
 pub struct PaletteItem {
     pub id: String,
@@ -538,8 +565,13 @@ impl Palette {
                                                         .font_family(support::mono())
                                                         .text_size(px(11.))
                                                         .text_color(rgb(t.muted))
-                                                        .children(row.shortcut.chars().map(
-                                                            |key| div().child(key.to_string()),
+                                                        .children(shortcut_keys(&row.shortcut).into_iter().enumerate().map(
+                                                            |(key_index, key)| {
+                                                                div()
+                                                                    .id(format!("palette-shortcut-{i}-key-{key_index}"))
+                                                                    .test_support()
+                                                                    .child(if key_index == 0 { key } else { format!("+ {key}") })
+                                                            },
                                                         )),
                                                 )
                                             }),
@@ -597,6 +629,74 @@ impl Render for Palette {
 mod tests {
     use super::*;
     use std::{cell::RefCell, rc::Rc};
+    #[test]
+    fn shortcuts_preserve_named_keys_and_expand_non_command_modifiers() {
+        for (shortcut, expected) in [
+            ("Ctrl+Tab", vec!["Ctrl", "Tab"]),
+            ("Ctrl+Shift+Tab", vec!["Ctrl", "Shift", "Tab"]),
+            ("Ctrl + Tab", vec!["Ctrl", "Tab"]),
+            ("⌃Tab", vec!["Ctrl", "Tab"]),
+            ("⌘⇧Enter", vec!["⌘", "Shift", "Enter"]),
+            ("⌘⌥↑", vec!["⌘", "Alt", "↑"]),
+            ("", vec![]),
+        ] {
+            assert_eq!(shortcut_keys(shortcut), expected, "{shortcut}");
+        }
+    }
+
+    #[test]
+    fn painted_shortcuts_are_logical_tokens_and_preserve_row_space_in_both_themes() {
+        use gpui_kit::test::TestWindowExt;
+        for dark in [false, true] {
+            let mut app = gpui_kit::TestApp::new();
+            app.update(gpui_kit::init);
+            let mut window = app.open_window(|w, cx| {
+                Palette::new(
+                    dark,
+                    vec![PalettePage {
+                        id: "root".into(),
+                        placeholder: "Search commands…".into(),
+                        items: ["Ctrl+Tab", "Ctrl+Shift+Tab", "⌘Enter"]
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, shortcut)| PaletteItem {
+                                id: format!("command-{i}"),
+                                label: "Next Session".into(),
+                                detail: "secondary context ".repeat(80),
+                                shortcut: shortcut.into(),
+                                group: None,
+                                destination: None,
+                            })
+                            .collect(),
+                    }],
+                    w,
+                    cx,
+                )
+            });
+            window.update(|palette, w, cx| palette.open(w, cx));
+            window.draw();
+            window.update(|_, w, _| {
+                for (i, count) in [(0, 2), (1, 3), (2, 2)] {
+                    let shortcut = w.find(format!("palette-shortcut-{i}")).bounds();
+                    let title = w.find(format!("palette-title-{i}")).bounds();
+                    assert!(title.right() <= shortcut.left() - px(9.));
+                    assert!(title.size.width > px(60.));
+                    for key in 0..count {
+                        let bounds = w.find(format!("palette-shortcut-{i}-key-{key}")).bounds();
+                        assert!(shortcut.contains(&bounds.center()));
+                        assert!(bounds.size.height < px(20.));
+                    }
+                    assert!(
+                        w.try_find(format!("palette-shortcut-{i}-key-{count}"))
+                            .is_none()
+                    );
+                }
+                assert!(w.find("palette-shortcut-0-key-0").bounds().size.width > px(15.));
+                assert!(w.find("palette-shortcut-0-key-1").bounds().size.width > px(15.));
+            });
+        }
+    }
+
     #[test]
     fn painted_rows_clip_secondary_first_and_search_uses_vue_type() {
         use gpui_kit::test::TestWindowExt;

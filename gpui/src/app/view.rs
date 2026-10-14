@@ -263,85 +263,118 @@ impl Shell {
         let target = self.window;
         cx.defer(move |cx| {
             if let Some(target) = target {
-                let _ = target.update(cx, |_, window, _| {
-                    // GPUI delivers frame callbacks before drawing. The second callback
-                    // sees the dispatch tree painted by the first frame.
-                    window.on_next_frame(move |window, _| {
-                        window.on_next_frame(move |window, cx| {
-                            let Some(owner) = owner.upgrade() else {
-                                return;
-                            };
-                            let shell = owner.read(cx);
-                            if shell.window != Some(target)
-                                || shell.lifecycle.is_some()
-                                || shell.confirmation.is_some()
-                                || shell.error.is_some()
-                                || shell
-                                    .fallback
-                                    .as_ref()
-                                    .is_some_and(|(_, d)| d.read(cx).is_open())
-                                || shell.picker_busy
-                                || shell.palette.is_open(cx)
-                                || shell.preview_open()
-                                || shell
-                                    .sidebar
-                                    .as_ref()
-                                    .is_some_and(|s| s.read(cx).version_open())
-                            {
-                                return;
-                            }
-                            if shell.remote.is_open() {
-                                owner.update(cx, |s, cx| s.focus_remote(window, cx));
-                                return;
-                            }
-                            if shell.admin_reporter_open(cx) {
-                                owner.update(cx, |s, cx| s.open_admin_reporter(window, cx));
-                                return;
-                            }
-                            if let Some((_, dialog)) = shell
-                                .sessions
-                                .get(&shell.active)
-                                .and_then(|live| live.extension.as_ref())
-                            {
-                                let dialog = dialog.clone();
-                                dialog.update(cx, |dialog, cx| dialog.focus(window, cx));
-                                return;
-                            }
-                            if binding == shell.palette_binding()
-                                && let Some(focus) = origin
-                                && shell.shell_focus.as_ref().is_some_and(|root| {
-                                    root != &focus && root.contains(&focus, window)
-                                })
-                            {
-                                focus.focus(window, cx);
-                                return;
-                            }
-                            if let Some(live) = shell.sessions.get(&shell.active)
-                                && live.controller.state().ready
-                                && !live.starting
-                                && !live.controller.state().stopping
-                                && !live.composer.read(cx).is_disabled()
-                            {
-                                use gpui_kit::Focusable;
-                                let focus =
-                                    live.composer.read(cx).editor().read(cx).focus_handle(cx);
-                                // contains(self) is true even for an unmounted handle.
-                                if shell
-                                    .shell_focus
-                                    .as_ref()
-                                    .is_some_and(|root| root.contains(&focus, window))
-                                {
-                                    focus.focus(window, cx);
-                                    return;
-                                }
-                            }
-                            if let Some(focus) = shell.shell_focus.clone() {
-                                focus.focus(window, cx);
-                            }
-                        });
+                let _ = target.update(cx, |_, window, cx| {
+                    let _ = owner.update(cx, |shell, cx| {
+                        if shell.palette_binding() == binding {
+                            shell.restore_input_focus_in(origin, window, cx);
+                        }
                     });
                 });
             }
+        });
+    }
+
+    // Navigation owns this handoff, not mounting or background session updates.
+    pub(super) fn restore_input_focus_in(
+        &self,
+        origin: Option<gpui_kit::FocusHandle>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let binding = self.palette_binding();
+        let expected = window.focused(cx);
+        let owner = cx.entity().downgrade();
+        let target = self.window;
+        // The second frame sees the newly selected editor's dispatch tree.
+        window.on_next_frame(move |window, _| {
+            window.on_next_frame(move |window, cx| {
+                let Some(owner) = owner.upgrade() else {
+                    return;
+                };
+                let shell = owner.read(cx);
+                let current = window.focused(cx);
+                if shell.window != target
+                    || binding != shell.palette_binding()
+                    || current != expected
+                    || shell.lifecycle.is_some()
+                    || shell.confirmation.is_some()
+                    || shell.error.is_some()
+                    || shell
+                        .fallback
+                        .as_ref()
+                        .is_some_and(|(_, d)| d.read(cx).is_open())
+                    || shell.picker_busy
+                    || shell.palette.is_open(cx)
+                    || shell.preview_open()
+                    || shell
+                        .sidebar
+                        .as_ref()
+                        .is_some_and(|s| s.read(cx).version_open())
+                {
+                    return;
+                }
+                if shell.remote.is_open() {
+                    owner.update(cx, |s, cx| s.focus_remote(window, cx));
+                    return;
+                }
+                if shell.admin_reporter_open(cx) {
+                    owner.update(cx, |s, cx| s.open_admin_reporter(window, cx));
+                    return;
+                }
+                if let Some((_, dialog)) = shell
+                    .sessions
+                    .get(&shell.active)
+                    .and_then(|live| live.extension.as_ref())
+                {
+                    let dialog = dialog.clone();
+                    dialog.update(cx, |dialog, cx| dialog.focus(window, cx));
+                    return;
+                }
+                // A retained rename may reclaim its own origin, never the composer.
+                if let Some(header) = shell.header.as_ref().filter(|h| h.read(cx).renaming()) {
+                    use gpui_kit::Focusable;
+                    let editor = header.read(cx).editor().read(cx).focus_handle(cx);
+                    if origin.as_ref() == Some(&editor)
+                        && shell
+                            .shell_focus
+                            .as_ref()
+                            .is_some_and(|root| root.contains(&editor, window))
+                    {
+                        editor.focus(window, cx);
+                    }
+                    return;
+                }
+                if let Some(focus) = origin
+                    && shell
+                        .shell_focus
+                        .as_ref()
+                        .is_some_and(|root| root != &focus && root.contains(&focus, window))
+                {
+                    focus.focus(window, cx);
+                    return;
+                }
+                if let Some(live) = shell.sessions.get(&shell.active)
+                    && live.controller.state().ready
+                    && !live.starting
+                    && !live.controller.state().stopping
+                    && !live.composer.read(cx).is_disabled()
+                {
+                    use gpui_kit::Focusable;
+                    let focus = live.composer.read(cx).editor().read(cx).focus_handle(cx);
+                    // contains(self) is true even for an unmounted handle.
+                    if shell
+                        .shell_focus
+                        .as_ref()
+                        .is_some_and(|root| root.contains(&focus, window))
+                    {
+                        focus.focus(window, cx);
+                        return;
+                    }
+                }
+                if let Some(focus) = shell.shell_focus.clone() {
+                    focus.focus(window, cx);
+                }
+            });
         });
     }
     pub(super) fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1007,7 +1040,7 @@ impl Shell {
                 .as_ref()
                 .is_some_and(|header| header.read(cx).renaming())
         {
-            self.restore_input_focus(cx);
+            self.restore_input_focus_in(None, window, cx);
         }
         cx.notify();
     }
@@ -1049,6 +1082,7 @@ impl Shell {
             self.navigate_saved_history(cx);
             self.persist(false, cx);
             self.sync(window, cx);
+            self.restore_input_focus_in(None, window, cx);
             return;
         }
         if let Some((project, session)) = self.workspace.as_ref().and_then(|w| {
@@ -1071,6 +1105,7 @@ impl Shell {
                 window,
                 cx,
             );
+            self.restore_input_focus_in(None, window, cx);
         }
     }
     pub(super) fn action(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
@@ -1178,7 +1213,9 @@ impl Render for Shell {
         self.sync_preview_theme(window, cx);
         self.sync_chrome_admission(cx);
         let t = support::tokens(self.dark);
-        let mut body = Self::palette_keymap(div().key_context("TauShell"), cx)
+        let mut body = Self::palette_keymap(div().relative().key_context("TauShell"), cx)
+            .id("shell-viewport")
+            .test_support()
             .when_some(self.shell_focus.as_ref(), |body, focus| {
                 body.track_focus(focus)
             })
@@ -1317,7 +1354,19 @@ impl Render for Shell {
             body = body.child(main);
         }
         body = body
-            .when_some(self.preview_view(), |body, preview| body.child(preview))
+            .when_some(self.preview_view(), |body, preview| {
+                body.child(
+                    div()
+                        .id("shell-file-overlay")
+                        .test_support()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .occlude()
+                        .child(preview),
+                )
+            })
             .when_some(self.preview_menu_view(), |body, menu| body.child(menu))
             .when_some(self.palette.view.clone(), |body, palette| {
                 body.child(palette)
@@ -1372,6 +1421,10 @@ mod shell_integration_tests;
 #[cfg(test)]
 #[path = "layout_tests.rs"]
 mod layout_tests;
+
+#[cfg(test)]
+#[path = "session_focus_tests.rs"]
+mod session_focus_tests;
 
 #[cfg(test)]
 #[path = "confirm_queue_fixture.rs"]
