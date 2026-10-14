@@ -96,7 +96,7 @@ impl<E: gpui_kit::Element> gpui_kit::Element for BoundsObserver<E> {
 }
 
 /// Colours resolved against the canvas where CSS uses translucent washes.
-/// `scrim` alone is RGBA; all other fields are RGB.
+/// `scrim` and `selected` are RGBA; all other fields are RGB.
 #[derive(Clone, Copy)]
 pub struct Tokens {
     pub canvas: u32,
@@ -112,6 +112,8 @@ pub struct Tokens {
     pub hover_border: u32,
     pub danger: u32,
     pub scrim: u32,
+    /// CSS `--selected` row wash, not editor/source text selection.
+    pub selected: u32,
 }
 
 pub fn tokens(dark: bool) -> Tokens {
@@ -130,6 +132,7 @@ pub fn tokens(dark: bool) -> Tokens {
             hover_border: 0x3f4550, // muted 45%, border 55%
             danger: 0xd95757,
             scrim: 0x00000066,
+            selected: 0x4752664d,
         }
     } else {
         Tokens {
@@ -146,8 +149,19 @@ pub fn tokens(dark: bool) -> Tokens {
             hover_border: 0xa9afb5, // muted 45%, border 55%
             danger: 0xe65050,
             scrim: 0x0000001a,
+            selected: 0x6b7d8f33,
         }
     }
+}
+
+/// Vue changes only the row-selection wash on native window deactivation.
+/// Keyboard focus, text selection, accent and disabled policy are independent.
+pub fn tokens_for_window(dark: bool, window: &gpui_kit::Window) -> Tokens {
+    let mut t = tokens(dark);
+    if !window.is_window_active() {
+        t.selected = if dark { 0x47526626 } else { 0x6b7d8f1c };
+    }
+    t
 }
 
 pub fn root(dark: bool) -> gpui_kit::Div {

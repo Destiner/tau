@@ -146,9 +146,6 @@ fn expanded_relative_time(value: &str) -> String {
     format!("{count} {unit}{} ago", if count == 1 { "" } else { "s" })
 }
 
-fn selected(dark: bool) -> gpui_kit::Rgba {
-    rgba(if dark { 0x4752664d } else { 0x6b7d8f33 })
-}
 fn wash(dark: bool) -> gpui_kit::Rgba {
     rgba(if dark { 0x47526633 } else { 0x6b7d8f1a })
 }
@@ -428,9 +425,9 @@ fn icon_button_color(
     size: f32,
     dark: bool,
     danger: bool,
-    foreground: u32,
+    state: (u32, Option<gpui_kit::Rgba>),
 ) -> BaseButton {
-    icon_button_admitted(id, icon, size, dark, danger, (foreground, true))
+    icon_button_styled(id, icon, size, dark, danger, (state.0, true), state.1)
 }
 fn icon_button_admitted(
     id: impl Into<gpui_kit::ElementId>,
@@ -439,6 +436,17 @@ fn icon_button_admitted(
     dark: bool,
     danger: bool,
     state: (u32, bool),
+) -> BaseButton {
+    icon_button_styled(id, icon, size, dark, danger, state, None)
+}
+fn icon_button_styled(
+    id: impl Into<gpui_kit::ElementId>,
+    icon: &str,
+    size: f32,
+    dark: bool,
+    danger: bool,
+    state: (u32, bool),
+    selected_hover: Option<gpui_kit::Rgba>,
 ) -> BaseButton {
     let (foreground, enabled) = state;
     let t = support::tokens(dark);
@@ -457,11 +465,19 @@ fn icon_button_admitted(
                 if danger {
                     b.opacity(1.).text_color(rgb(t.danger))
                 } else {
-                    b.opacity(1.)
+                    let b = b.opacity(1.);
+                    if let Some(bg) = selected_hover {
+                        b.bg(bg)
+                    } else {
+                        b
+                    }
                 }
             })
         })
-        .focus_visible(move |b| b.bg(wash(dark)).opacity(1.))
+        .focus_visible(move |b| {
+            b.bg(selected_hover.unwrap_or_else(|| wash(dark)))
+                .opacity(1.)
+        })
         .child(
             svg()
                 .path(format!("product-icons/{icon}.svg"))
@@ -598,6 +614,9 @@ pub struct Sidebar {
     animations_enabled: bool,
     clock: Rc<dyn Fn() -> Duration>,
     header_hover: BTreeSet<String>,
+    session_hover: BTreeSet<String>,
+    // MouseExited retains GPUI's last position; reject deferred hover until real motion.
+    pointer_outside_window: bool,
     header_slides: BTreeMap<String, HeaderReveal>,
     group_slides: BTreeMap<String, Slide>,
     group_rects: BTreeMap<String, AnchorBounds>,
@@ -720,6 +739,8 @@ impl Sidebar {
             animations_enabled: true,
             clock: Rc::new(move || executor.now().duration_since(epoch)),
             header_hover: BTreeSet::new(),
+            session_hover: BTreeSet::new(),
+            pointer_outside_window: false,
             header_slides: BTreeMap::new(),
             group_slides: BTreeMap::new(),
             group_rects: BTreeMap::new(),
@@ -1333,7 +1354,6 @@ impl Sidebar {
             {
                 if self.hovered_session.as_deref() == id.strip_prefix("session-") {
                     self.hovered_session = None;
-                    cx.notify();
                 }
             }
             if id.starts_with("session-")
@@ -1370,7 +1390,12 @@ impl Sidebar {
             }
             return;
         }
-        if self.resizing || self.version_open || self.project_open || self.project_drag.is_some() {
+        if self.pointer_outside_window
+            || self.resizing
+            || self.version_open
+            || self.project_open
+            || self.project_drag.is_some()
+        {
             return;
         }
         // The select button and its overlaid archive action both receive hover.
@@ -1392,7 +1417,6 @@ impl Sidebar {
         #[cfg(test)]
         {
             self.hovered_session = id.strip_prefix("session-").map(str::to_owned);
-            cx.notify();
         }
         if self.hint.pending.as_deref() == Some(id) {
             return;
@@ -1634,7 +1658,16 @@ impl Render for Sidebar {
                         s.finish_resize(cx);
                         s.resize_hovered = false;
                         s.resize_pointer_focused = false;
+                        s.pointer_outside_window = true;
+                        s.session_hover.clear();
+                        s.header_hover.clear();
+                        #[cfg(test)]
+                        {
+                            s.hovered_session = None;
+                        }
                     }
+                    // Activation changes CSS selection washes even without pointer input.
+                    cx.notify();
                 }));
             self.resize_lifecycle
                 .push(cx.on_blur(&self.resize_focus, window, |s, _, cx| {
@@ -1664,6 +1697,8 @@ impl Render for Sidebar {
                 })
                 .collect()
         };
+        self.session_hover
+            .retain(|id| visible_sessions.contains(id));
         if self.session_focus.iter().any(|(id, (row, archive))| {
             !visible_sessions.contains(id) && (row.is_focused(window) || archive.is_focused(window))
         }) {
@@ -1704,7 +1739,8 @@ impl Render for Sidebar {
             });
             self.mounted_archive_ids.clear();
         }
-        let t = support::tokens(self.dark);
+        let t = support::tokens_for_window(self.dark, window);
+        let selection = rgba(t.selected);
         let dark = self.dark;
         let admitted = self.actions_interactive;
         let remove_admitted = admitted && self.remove_project_available;
@@ -1924,7 +1960,7 @@ impl Render for Sidebar {
                             self.project_drag
                                 .as_ref()
                                 .is_some_and(|(id, _, dragging, _)| *dragging && id == &project_id),
-                            |d| d.bg(selected(dark)),
+                            |d| d.bg(wash(dark)),
                         )
                         .when(admitted, |d| d.hover(move |d| d.bg(wash(dark))))
                         .flex()
@@ -2088,16 +2124,30 @@ impl Render for Sidebar {
                         let status_anchor = self.hint.anchor(&status_key);
                         let title = session.title.clone();
                         let time = session.time.clone();
-                        let bg = if active {
-                            selected(dark)
-                        } else {
-                            rgba(0x00000000)
-                        };
+                        let pointer_hovered =
+                            window.is_window_active() && self.session_hover.contains(&session.id);
+                        let row_hover_id = session.id.clone();
+                        let bg = if active { selection } else { rgba(0x00000000) };
                         // Selected wins over hover: both are translucent washes over the panel.
                         group = group.child(
                             div()
                                 .relative()
-                                .group("session")
+                                .id(format!("session-row-{}", session.id))
+                                .test_support()
+                                .hover_listener_mode(HoverListenerMode::InputModalityIndependent)
+                                .on_hover(cx.listener(move |s, hovered, w, cx| {
+                                    let changed = if *hovered
+                                        && w.is_window_active()
+                                        && !s.pointer_outside_window
+                                    {
+                                        s.session_hover.insert(row_hover_id.clone())
+                                    } else {
+                                        s.session_hover.remove(&row_hover_id)
+                                    };
+                                    if changed {
+                                        cx.notify();
+                                    }
+                                }))
                                 .on_mouse_down(
                                     MouseButton::Right,
                                     cx.listener(move |s, e: &MouseDownEvent, window, cx| {
@@ -2126,11 +2176,7 @@ impl Render for Sidebar {
                                         .bg(bg)
                                         .when(admitted, |b| {
                                             b.hover(move |b| {
-                                                b.bg(if active {
-                                                    selected(dark)
-                                                } else {
-                                                    wash(dark)
-                                                })
+                                                b.bg(if active { selection } else { wash(dark) })
                                             })
                                         })
                                         .on_hover(cx.listener(move |s, h, w, cx| {
@@ -2207,14 +2253,11 @@ impl Render for Sidebar {
                                                         .test_support()
                                                         .text_size(px(10.))
                                                         .text_color(rgb(t.faint))
-                                                        .when(session.can_archive && focused, |d| {
-                                                            d.opacity(0.)
-                                                        })
-                                                        .when(session.can_archive, |d| {
-                                                            d.group_hover("session", |d| {
-                                                                d.opacity(0.)
-                                                            })
-                                                        })
+                                                        .when(
+                                                            session.can_archive
+                                                                && (focused || pointer_hovered),
+                                                            |d| d.opacity(0.),
+                                                        )
                                                         .child(time),
                                                 ),
                                         ),
@@ -2238,8 +2281,11 @@ impl Render for Sidebar {
                                         .right(px(0.))
                                         .top(px(2.))
                                         .when(admitted, |b| {
-                                            b.opacity(if focused { 0.65 } else { 0. })
-                                                .group_hover("session", |b| b.opacity(0.65))
+                                            b.opacity(if focused || pointer_hovered {
+                                                0.65
+                                            } else {
+                                                0.
+                                            })
                                         })
                                         .on_click(
                                             cx.listener({
@@ -2286,223 +2332,218 @@ impl Render for Sidebar {
             };
             let name_leading = normal_leading(11.);
             let meta_leading = normal_leading(10.);
-            body =
-                body.child(
-                    list(
-                        self.archive_list.clone(),
-                        cx.processor(move |s, index: usize, window, cx| {
-                            let Some(entry) = s.archive_entries.get(index).cloned() else {
-                                return div().into_any_element();
-                            };
-                            if let ArchiveEntry::Heading(group) = entry {
-                                let label = group.clone();
-                                let closed = s.closed_groups.contains(&group);
-                                return div()
-                                    .w_full()
-                                    .h(px(28.))
-                                    .flex_shrink_0()
-                                    .child(
-                                        BaseButton::new(format!("archived-group-{group}"))
-                                            .w_full()
-                                            .h(px(22.))
-                                            .flex_shrink_0()
-                                            .mt(px(6.))
-                                            .px(px(5.))
-                                            .justify_start()
-                                            .gap(px(4.))
-                                            .bg(rgba(0x00000000))
-                                            .text_size(px(10.))
-                                            .text_color(rgb(t.muted))
-                                            .on_click(cx.listener(move |s, _, _, cx| {
-                                                if !s.closed_groups.remove(&label) {
-                                                    s.closed_groups.insert(label.clone());
-                                                }
-                                                s.rebuild_archive();
-                                                cx.notify();
-                                            }))
-                                            .child(group.to_owned())
-                                            .child(support::icon(
-                                                if closed {
-                                                    "chevron-right"
-                                                } else {
-                                                    "chevron-down"
-                                                },
-                                                10.,
-                                                t.muted,
-                                            )),
-                                    )
-                                    .into_any_element();
-                            }
-                            let ArchiveEntry::Session { index, .. } = entry else {
-                                unreachable!()
-                            };
-                            let session = s.props.sessions[index].clone();
-                            let id = session.id.clone();
-                            s.mounted_archive_ids.insert(id.clone());
-                            let session_key = format!("session-{id}");
-                            let session_anchor = s.hint.anchor(&session_key);
-                            let restore_key = format!("restore-{id}");
-                            let restore_anchor = s.hint.anchor(&restore_key);
-                            let active = s.props.active == id;
-                            let (select_focus, restore_focus) = s
-                                .archived_focus
-                                .entry(id.clone())
-                                .or_insert_with(|| (cx.focus_handle(), cx.focus_handle()))
-                                .clone();
-                            let focused =
-                                select_focus.is_focused(window) || restore_focus.is_focused(window);
-                            let details = s.archived_details.get(&id);
-                            let mut meta = div()
-                                .id(format!("archived-meta-{id}"))
-                                .test_support()
-                                .line_height(meta_leading)
-                                .flex()
-                                .gap(px(4.))
-                                .overflow_hidden()
-                                .text_size(px(10.))
-                                .text_color(rgb(t.muted));
-                            if let Some(details) = details {
-                                meta = meta.child(
+            body = body.child(
+                list(
+                    self.archive_list.clone(),
+                    cx.processor(move |s, index: usize, window, cx| {
+                        let Some(entry) = s.archive_entries.get(index).cloned() else {
+                            return div().into_any_element();
+                        };
+                        if let ArchiveEntry::Heading(group) = entry {
+                            let label = group.clone();
+                            let closed = s.closed_groups.contains(&group);
+                            return div()
+                                .w_full()
+                                .h(px(28.))
+                                .flex_shrink_0()
+                                .child(
+                                    BaseButton::new(format!("archived-group-{group}"))
+                                        .w_full()
+                                        .h(px(22.))
+                                        .flex_shrink_0()
+                                        .mt(px(6.))
+                                        .px(px(5.))
+                                        .justify_start()
+                                        .gap(px(4.))
+                                        .bg(rgba(0x00000000))
+                                        .text_size(px(10.))
+                                        .text_color(rgb(t.muted))
+                                        .on_click(cx.listener(move |s, _, _, cx| {
+                                            if !s.closed_groups.remove(&label) {
+                                                s.closed_groups.insert(label.clone());
+                                            }
+                                            s.rebuild_archive();
+                                            cx.notify();
+                                        }))
+                                        .child(group.to_owned())
+                                        .child(support::icon(
+                                            if closed {
+                                                "chevron-right"
+                                            } else {
+                                                "chevron-down"
+                                            },
+                                            10.,
+                                            t.muted,
+                                        )),
+                                )
+                                .into_any_element();
+                        }
+                        let ArchiveEntry::Session { index, .. } = entry else {
+                            unreachable!()
+                        };
+                        let session = s.props.sessions[index].clone();
+                        let id = session.id.clone();
+                        s.mounted_archive_ids.insert(id.clone());
+                        let session_key = format!("session-{id}");
+                        let session_anchor = s.hint.anchor(&session_key);
+                        let restore_key = format!("restore-{id}");
+                        let restore_anchor = s.hint.anchor(&restore_key);
+                        let active = s.props.active == id;
+                        let (select_focus, restore_focus) = s
+                            .archived_focus
+                            .entry(id.clone())
+                            .or_insert_with(|| (cx.focus_handle(), cx.focus_handle()))
+                            .clone();
+                        let focused =
+                            select_focus.is_focused(window) || restore_focus.is_focused(window);
+                        let details = s.archived_details.get(&id);
+                        let mut meta = div()
+                            .id(format!("archived-meta-{id}"))
+                            .test_support()
+                            .line_height(meta_leading)
+                            .flex()
+                            .gap(px(4.))
+                            .overflow_hidden()
+                            .text_size(px(10.))
+                            .text_color(rgb(t.muted));
+                        if let Some(details) = details {
+                            meta = meta.child(
+                                div()
+                                    .min_w_0()
+                                    .text_ellipsis()
+                                    .whitespace_nowrap()
+                                    .overflow_hidden()
+                                    .child(details.project.clone()),
+                            );
+                            if let Some(model) = &details.model {
+                                meta = meta.child("·").child(
                                     div()
                                         .min_w_0()
                                         .text_ellipsis()
                                         .whitespace_nowrap()
                                         .overflow_hidden()
-                                        .child(details.project.clone()),
+                                        .child(model.clone()),
                                 );
-                                if let Some(model) = &details.model {
-                                    meta = meta.child("·").child(
-                                        div()
-                                            .min_w_0()
-                                            .text_ellipsis()
-                                            .whitespace_nowrap()
-                                            .overflow_hidden()
-                                            .child(model.clone()),
-                                    );
-                                }
                             }
-                            div()
-                                .id(format!("archived-row-{id}"))
-                                .test_support()
-                                .relative()
-                                .group("archived-row")
-                                .w_full()
-                                .h(px(34.))
-                                .flex_shrink_0()
-                                .rounded(px(6.))
-                                .bg(if active {
-                                    selected(dark)
-                                } else {
-                                    rgba(0x00000000)
-                                })
-                                .when(!admitted, |d| d.opacity(0.5))
-                                .when(admitted, |d| {
-                                    d.hover(move |d| {
-                                        d.bg(if active { selected(dark) } else { wash(dark) })
-                                    })
-                                })
-                                .flex()
-                                .items_stretch()
-                                .child(
-                                    BaseButton::new(format!("archived-select-{id}"))
-                                        .disabled(!admitted)
-                                        .track_focus(&select_focus)
-                                        .on_prepaint(move |b, _, _| session_anchor.set(Some(b)))
-                                        .on_hover(cx.listener(move |s, h, w, cx| {
-                                            s.hover(&session_key, *h, w, cx)
-                                        }))
-                                        .flex_1()
-                                        .min_w_0()
-                                        .px(px(7.))
-                                        .py(px(3.))
-                                        .bg(rgba(0x00000000))
-                                        .justify_start()
-                                        .on_click(cx.listener(move |s, _, _, cx| {
-                                            if s.actions_interactive {
-                                                cx.emit(Action::Select(id.clone()));
-                                            }
-                                        }))
-                                        .child(
-                                            div()
-                                                .w_full()
-                                                .min_w_0()
-                                                .flex()
-                                                .flex_col()
-                                                .gap(px(2.))
-                                                .child(
-                                                    div()
-                                                        .id(format!("archived-name-{}", session.id))
-                                                        .test_support()
-                                                        .min_w_0()
-                                                        .overflow_hidden()
-                                                        .whitespace_nowrap()
-                                                        .text_ellipsis()
-                                                        .text_size(px(11.))
-                                                        .line_height(name_leading)
-                                                        .text_color(rgb(t.text))
-                                                        .child(session.title.clone()),
-                                                )
-                                                .child(meta),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .id(format!("archived-time-{}", session.id))
-                                        .test_support()
-                                        .flex_shrink_0()
-                                        .self_end()
-                                        .pl(px(6.))
-                                        .pr(px(8.))
-                                        .pb(px(4.))
-                                        .text_size(px(10.))
-                                        .line_height(meta_leading)
-                                        .text_color(rgb(t.faint))
-                                        .group_hover("archived-row", |d| d.opacity(0.))
-                                        .when(focused, |d| d.opacity(0.))
-                                        .child(session.time.clone()),
-                                )
-                                .child(
-                                    icon_button_admitted(
-                                        format!("restore-{}", session.id),
-                                        "archive",
-                                        24.,
-                                        dark,
-                                        false,
-                                        (t.muted, admitted),
-                                    )
-                                    .absolute()
-                                    .right(px(2.))
-                                    .top(gpui_kit::relative(0.5))
-                                    .mt(px(-12.))
-                                    .when(admitted, |b| {
-                                        b.opacity(0.)
-                                            .group_hover("archived-row", |b| b.opacity(0.65))
-                                    })
-                                    .track_focus(&restore_focus)
-                                    .on_prepaint(move |b, _, _| restore_anchor.set(Some(b)))
+                        }
+                        div()
+                            .id(format!("archived-row-{id}"))
+                            .test_support()
+                            .relative()
+                            .group("archived-row")
+                            .w_full()
+                            .h(px(34.))
+                            .flex_shrink_0()
+                            .rounded(px(6.))
+                            .bg(if active { selection } else { rgba(0x00000000) })
+                            .when(!admitted, |d| d.opacity(0.5))
+                            .when(admitted, |d| {
+                                d.hover(move |d| d.bg(if active { selection } else { wash(dark) }))
+                            })
+                            .flex()
+                            .items_stretch()
+                            .child(
+                                BaseButton::new(format!("archived-select-{id}"))
+                                    .disabled(!admitted)
+                                    .track_focus(&select_focus)
+                                    .on_prepaint(move |b, _, _| session_anchor.set(Some(b)))
                                     .on_hover(cx.listener(move |s, h, w, cx| {
-                                        s.hover(&restore_key, *h, w, cx)
+                                        s.hover(&session_key, *h, w, cx)
                                     }))
-                                    .when(focused, |b| b.opacity(0.65))
-                                    .on_click(cx.listener({
-                                        let id = session.id.clone();
-                                        move |s, _, _, cx| {
-                                            cx.stop_propagation();
-                                            if s.actions_interactive {
-                                                cx.emit(Action::Restore(id.clone()));
-                                            }
+                                    .flex_1()
+                                    .min_w_0()
+                                    .px(px(7.))
+                                    .py(px(3.))
+                                    .bg(rgba(0x00000000))
+                                    .justify_start()
+                                    .on_click(cx.listener(move |s, _, _, cx| {
+                                        if s.actions_interactive {
+                                            cx.emit(Action::Select(id.clone()));
                                         }
-                                    })),
+                                    }))
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .min_w_0()
+                                            .flex()
+                                            .flex_col()
+                                            .gap(px(2.))
+                                            .child(
+                                                div()
+                                                    .id(format!("archived-name-{}", session.id))
+                                                    .test_support()
+                                                    .min_w_0()
+                                                    .overflow_hidden()
+                                                    .whitespace_nowrap()
+                                                    .text_ellipsis()
+                                                    .text_size(px(11.))
+                                                    .line_height(name_leading)
+                                                    .text_color(rgb(t.text))
+                                                    .child(session.title.clone()),
+                                            )
+                                            .child(meta),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .id(format!("archived-time-{}", session.id))
+                                    .test_support()
+                                    .flex_shrink_0()
+                                    .self_end()
+                                    .pl(px(6.))
+                                    .pr(px(8.))
+                                    .pb(px(4.))
+                                    .text_size(px(10.))
+                                    .line_height(meta_leading)
+                                    .text_color(rgb(t.faint))
+                                    .group_hover("archived-row", |d| d.opacity(0.))
+                                    .when(focused, |d| d.opacity(0.))
+                                    .child(session.time.clone()),
+                            )
+                            .child(
+                                icon_button_admitted(
+                                    format!("restore-{}", session.id),
+                                    "archive",
+                                    24.,
+                                    dark,
+                                    false,
+                                    (t.muted, admitted),
                                 )
-                                .into_any_element()
-                        }),
-                    )
-                    // The flex parent owns the viewport, not the list's intrinsic content size.
-                    .with_sizing_behavior(gpui_kit::ListSizingBehavior::Auto)
-                    .flex_1()
-                    .min_h_0()
-                    .w_full(),
-                );
+                                .absolute()
+                                .right(px(2.))
+                                .top(gpui_kit::relative(0.5))
+                                .mt(px(-12.))
+                                .when(admitted, |b| {
+                                    b.opacity(0.)
+                                        .group_hover("archived-row", |b| b.opacity(0.65))
+                                })
+                                .track_focus(&restore_focus)
+                                .on_prepaint(move |b, _, _| restore_anchor.set(Some(b)))
+                                .on_hover(
+                                    cx.listener(move |s, h, w, cx| {
+                                        s.hover(&restore_key, *h, w, cx)
+                                    }),
+                                )
+                                .when(focused, |b| b.opacity(0.65))
+                                .on_click(cx.listener({
+                                    let id = session.id.clone();
+                                    move |s, _, _, cx| {
+                                        cx.stop_propagation();
+                                        if s.actions_interactive {
+                                            cx.emit(Action::Restore(id.clone()));
+                                        }
+                                    }
+                                })),
+                            )
+                            .into_any_element()
+                    }),
+                )
+                // The flex parent owns the viewport, not the list's intrinsic content size.
+                .with_sizing_behavior(gpui_kit::ListSizingBehavior::Auto)
+                .flex_1()
+                .min_h_0()
+                .w_full(),
+            );
         }
         if self.rendered_projects().is_empty() && !self.props.archived {
             body = body.child(
@@ -2581,10 +2622,13 @@ impl Render for Sidebar {
                                     28.,
                                     dark,
                                     false,
-                                    if self.props.archived { t.text } else { t.muted },
+                                    (
+                                        if self.props.archived { t.text } else { t.muted },
+                                        self.props.archived.then_some(selection),
+                                    ),
                                 )
                                 .when(self.props.archived, move |b| {
-                                    b.bg(selected(dark)).text_color(rgb(t.text))
+                                    b.bg(selection).text_color(rgb(t.text))
                                 })
                                 .on_hover(cx.listener(|s, h, w, cx| s.hover("archived", *h, w, cx)))
                                 .on_click(
@@ -3002,30 +3046,77 @@ impl Render for Sidebar {
                                 cx.stop_propagation();
                             }
                         });
-                        let moving = entity.clone();
-                        window.on_mouse_event(move |e: &gpui_kit::MouseMoveEvent, phase, _, cx| {
+                        let exiting = entity.clone();
+                        window.on_mouse_event(move |_: &gpui_kit::MouseExitEvent, phase, _, cx| {
                             if phase == gpui_kit::DispatchPhase::Capture {
-                                let _ = moving.update(cx, |s, cx| {
-                                    // Capture also sees moves outside the body when another
-                                    // control owns the gesture and hover leave is suppressed.
-                                    if !s.body_bounds.get().is_some_and(|b| b.contains(&e.position))
-                                    {
-                                        s.hold_body_order(false, cx);
-                                    }
-                                    if s.resizing {
-                                        if e.pressed_button == Some(MouseButton::Left) {
-                                            s.resize_to_pointer(e.position, cx);
-                                        } else {
-                                            // A missed release must not leave a latched gesture.
-                                            s.finish_resize_at(e.position, cx);
-                                        }
-                                        cx.stop_propagation();
-                                    } else {
-                                        s.move_project_drag(e.position, cx);
+                                let _ = exiting.update(cx, |s, cx| {
+                                    s.pointer_outside_window = true;
+                                    let changed = !s.session_hover.is_empty()
+                                        || s.hint.pending.is_some()
+                                        || s.hint.visible.is_some();
+                                    s.session_hover.clear();
+                                    s.hint.dismiss();
+                                    s.hold_body_order(false, cx);
+                                    if changed {
+                                        cx.notify();
                                     }
                                 });
                             }
                         });
+                        let moving = entity.clone();
+                        window.on_mouse_event(
+                            move |e: &gpui_kit::MouseMoveEvent, phase, window, cx| {
+                                if phase == gpui_kit::DispatchPhase::Capture {
+                                    let _ = moving.update(cx, |s, cx| {
+                                        if s.pointer_outside_window {
+                                            s.pointer_outside_window = false;
+                                            let hovered: BTreeSet<_> =
+                                                if window.is_window_active() && !s.props.archived {
+                                                    s.hint
+                                                        .anchors
+                                                        .iter()
+                                                        .filter_map(|(id, b)| {
+                                                            id.strip_prefix("session-")
+                                                                .filter(|_| {
+                                                                    b.get().is_some_and(|b| {
+                                                                        b.contains(&e.position)
+                                                                    })
+                                                                })
+                                                                .map(str::to_owned)
+                                                        })
+                                                        .collect()
+                                                } else {
+                                                    BTreeSet::new()
+                                                };
+                                            if s.session_hover != hovered {
+                                                s.session_hover = hovered;
+                                                cx.notify();
+                                            }
+                                        }
+                                        // Capture also sees moves outside the body when another
+                                        // control owns the gesture and hover leave is suppressed.
+                                        if !s
+                                            .body_bounds
+                                            .get()
+                                            .is_some_and(|b| b.contains(&e.position))
+                                        {
+                                            s.hold_body_order(false, cx);
+                                        }
+                                        if s.resizing {
+                                            if e.pressed_button == Some(MouseButton::Left) {
+                                                s.resize_to_pointer(e.position, cx);
+                                            } else {
+                                                // A missed release must not leave a latched gesture.
+                                                s.finish_resize_at(e.position, cx);
+                                            }
+                                            cx.stop_propagation();
+                                        } else {
+                                            s.move_project_drag(e.position, cx);
+                                        }
+                                    });
+                                }
+                            },
+                        );
                         window.on_mouse_event(move |e: &gpui_kit::MouseUpEvent, phase, _, cx| {
                             if phase == gpui_kit::DispatchPhase::Capture
                                 && e.button == MouseButton::Left
@@ -3131,6 +3222,7 @@ pub struct Header {
     input_style: gpui_kit::base::input::InputEditorStyle,
     _input_events: Subscription,
     _blur: Subscription,
+    _activation: Subscription,
     input_bounds: AnchorBounds,
     hint: Hint,
     #[cfg(test)]
@@ -3207,7 +3299,9 @@ impl Header {
         });
         let focus = input.read(cx).focus_handle(cx).clone();
         let blur = cx.on_blur(&focus, window, |s, window, cx| {
-            if !s.palette_focus_pending {
+            // Deactivation emits blur without transferring the editor's focus handle.
+            let retained_focus = s.input.read(cx).focus_handle(cx).is_focused(window);
+            if !s.palette_focus_pending && (window.is_window_active() || !retained_focus) {
                 s.close(true, window, cx);
             }
         });
@@ -3225,6 +3319,12 @@ impl Header {
             input_style: support::input_style(dark),
             _input_events: events,
             _blur: blur,
+            _activation: cx.observe_window_activation(window, |s, w, cx| {
+                if !w.is_window_active() {
+                    s.hint.dismiss();
+                }
+                cx.notify();
+            }),
             input_bounds: Rc::new(Cell::new(None)),
             hint: Hint::new(),
             #[cfg(test)]
@@ -3354,6 +3454,9 @@ impl Header {
             if self.hint.leave(id) {
                 cx.notify();
             }
+            return;
+        }
+        if !window.is_window_active() {
             return;
         }
         let epoch = self.hint.start(id.to_owned());
@@ -3658,3 +3761,7 @@ mod version_tests;
 #[cfg(test)]
 #[path = "chrome/sidebar_audit_tests.rs"]
 mod sidebar_audit_tests;
+
+#[cfg(test)]
+#[path = "chrome/inactive_tests.rs"]
+mod inactive_tests;

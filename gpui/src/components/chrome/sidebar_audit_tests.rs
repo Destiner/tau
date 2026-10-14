@@ -37,7 +37,7 @@ fn props(archived: bool) -> SidebarProps {
         archived,
     }
 }
-fn fixture(
+pub(super) fn fixture(
     dark: bool,
 ) -> (
     TestApp,
@@ -76,10 +76,10 @@ fn fixture(
     let (sidebar, header) = entities.unwrap();
     (app, window, sidebar, header)
 }
-fn bounds(window: &mut TestAppWindow<Root>, id: &str) -> Bounds<Pixels> {
+pub(super) fn bounds(window: &mut TestAppWindow<Root>, id: &str) -> Bounds<Pixels> {
     window.update(|_, w, _| w.find(id.to_owned()).bounds())
 }
-fn click(window: &mut TestAppWindow<Root>, id: &str) {
+pub(super) fn click(window: &mut TestAppWindow<Root>, id: &str) {
     let position = bounds(window, id).center();
     window.simulate_click(position, MouseButton::Left);
     window.draw();
