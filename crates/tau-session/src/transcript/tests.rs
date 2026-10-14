@@ -75,7 +75,14 @@ fn notify_severity_is_wire_owned_and_old_entries_deserialize_as_info() {
     let hydrated = &controller.state().transcript;
     assert_eq!(hydrated.len(), before.len() + 1);
     assert_eq!(hydrated[0].kind, "assistant");
-    assert_eq!(&hydrated[1..], before.as_slice());
+    let expected: Vec<_> = before
+        .into_iter()
+        .map(|mut entry| {
+            entry.anchor = Some(1);
+            entry
+        })
+        .collect();
+    assert_eq!(&hydrated[1..], expected.as_slice());
 }
 
 #[test]

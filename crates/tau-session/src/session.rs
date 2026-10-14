@@ -1,10 +1,15 @@
 use crate::model_scope::{resolved_scope, scope_models, valid_model};
 use crate::transcript::{
-    content_text, history_layers, history_prefix, message_key, project, string, Entry, HistoryLayer,
+    content_text, history_layers, history_prefix, message_key, project, string, Entry, EntryOrigin,
+    HistoryLayer,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
+
+#[cfg(test)]
+#[path = "session_notice_tests.rs"]
+mod notice_tests;
 
 #[path = "session_input_failure.rs"]
 mod input_failure;
@@ -512,11 +517,17 @@ impl Controller {
         self.compaction_snapshot = None;
         self.saved_preview = saved_preview::Admission::default();
         self.message_occurrences.clear();
-        self.state.identity = Identity {
+        let identity = Identity {
             id: id.into(),
             path: path.into(),
             name: String::new(),
         };
+        if !self.state.identity.binding_eq(&identity) {
+            self.state
+                .transcript
+                .retain(|row| row.origin == EntryOrigin::Pi);
+        }
+        self.state.identity = identity;
         self.epoch += 1;
     }
     /// Begin a host settings read. Only the latest read may complete.
@@ -1048,68 +1059,146 @@ impl Controller {
                         [self.history_prefix_len.min(self.state.transcript.len())..]
                         .to_vec();
                     self.state.transcript.clear();
+                    let prior_by_source: HashMap<_, _> = old
+                        .iter()
+                        .map(|row| ((row.source.as_str(), row.kind.as_str()), row))
+                        .collect();
+                    let optimistic: HashMap<_, _> = old
+                        .iter()
+                        .filter(|row| row.source.starts_with("optimistic:"))
+                        .map(|row| ((row.kind.as_str(), row.text.as_str()), row))
+                        .collect();
                     let mut occurrences = BTreeMap::new();
+                    let mut positions = HashMap::new();
                     for (i, m) in messages.iter().enumerate() {
                         let key = occurrence_key(m, &format!("history-{i}"), &mut occurrences);
                         let mut rows = project(m, &key);
                         for r in &mut rows {
-                            if let Some(prior) = old.iter().find(|o| {
-                                let source = if preview_projection {
-                                    matched_sources[i].as_ref().map(|prior| {
-                                        r.source
-                                            .strip_prefix(&key)
-                                            .map(|suffix| format!("{prior}{suffix}"))
-                                            .unwrap_or_else(|| r.source.clone())
-                                    })
-                                } else {
-                                    Some(r.source.clone())
-                                };
-                                source.as_deref() == Some(o.source.as_str()) && o.kind == r.kind
-                            }) {
+                            let source = if preview_projection {
+                                matched_sources[i].as_ref().map(|prior| {
+                                    r.source
+                                        .strip_prefix(&key)
+                                        .map(|suffix| format!("{prior}{suffix}"))
+                                        .unwrap_or_else(|| r.source.clone())
+                                })
+                            } else {
+                                Some(r.source.clone())
+                            };
+                            if let Some(prior) = source
+                                .as_deref()
+                                .and_then(|source| prior_by_source.get(&(source, r.kind.as_str())))
+                            {
                                 r.id = prior.id.clone();
                                 r.revision = prior.revision + 1;
                                 r.text_reset_revision = r.revision;
-                            } else if let Some(prior) = old.iter().find(|o| {
-                                o.kind == r.kind
-                                    && o.text == r.text
-                                    && o.source.starts_with("optimistic:")
-                            }) {
+                            } else if let Some(prior) =
+                                optimistic.get(&(r.kind.as_str(), r.text.as_str()))
+                            {
                                 r.id = prior.id.clone();
                                 r.revision = prior.revision + 1;
                                 r.text_reset_revision = r.revision;
                             }
                         }
-                        self.merge_rows(rows, false);
+                        for mut row in rows {
+                            let identity = (row.source.clone(), row.kind.clone());
+                            if let Some(&index) = positions.get(&identity) {
+                                let prior: &Entry = &self.state.transcript[index];
+                                row.id = prior.id.clone();
+                                if row.kind == "tool" {
+                                    if row.result.is_empty() {
+                                        row.result = prior.result.clone();
+                                        row.is_error = prior.is_error;
+                                    }
+                                    if row.arguments.is_null() {
+                                        row.arguments = prior.arguments.clone();
+                                    }
+                                }
+                                row.revision = prior.revision + 1;
+                                row.text_reset_revision = row.revision;
+                                self.state.transcript[index] = row;
+                            } else {
+                                if row.id.is_empty() {
+                                    row.id = self.next_id();
+                                }
+                                positions.insert(identity, self.state.transcript.len());
+                                self.state.transcript.push(row);
+                            }
+                        }
                     }
                     self.message_occurrences = occurrences;
                     // A continuing run may advance while the compaction read is in flight.
                     let reconciling_compaction = self.compaction_snapshot.is_some();
                     if let Some(snapshot) = self.compaction_snapshot.take() {
-                        for live in old
+                        let live_rows: Vec<_> = old
                             .iter()
                             .filter(|r| snapshot.get(&r.id) != Some(&r.revision))
-                        {
-                            if let Some(index) = self
-                                .state
-                                .transcript
-                                .iter()
-                                .position(|r| r.source == live.source && r.kind == live.kind)
-                            {
-                                self.state.transcript[index] = live.clone();
+                            .collect();
+                        for live in &live_rows {
+                            if matches!(live.origin, EntryOrigin::RuntimeNotice { .. }) {
+                                continue;
+                            }
+                            let identity = (live.source.clone(), live.kind.clone());
+                            if let Some(&index) = positions.get(&identity) {
+                                self.state.transcript[index] = (*live).clone();
                             } else {
                                 // Equal prose is not provenance: repeated messages are valid.
-                                self.state.transcript.push(live.clone());
+                                positions.insert(identity, self.state.transcript.len());
+                                self.state.transcript.push((*live).clone());
                             }
                         }
-                    }
-                    // Local notices and failed/uncertain partial output are not in Pi history.
-                    for r in old {
-                        if !reconciling_compaction
-                            && (r.source.starts_with("local:") || r.interrupted)
-                            && !self.state.transcript.iter().any(|n| n.id == r.id)
-                        {
-                            self.state.transcript.push(r);
+                        // Old anchors count the pre-compaction tail. Place notices before
+                        // their next live Pi row (which may already be in the snapshot),
+                        // or at the new tail end, then retain these translated anchors.
+                        let mut pi_count = 0;
+                        let mut pi_positions = HashMap::new();
+                        for row in &self.state.transcript {
+                            if row.origin == EntryOrigin::Pi {
+                                pi_positions
+                                    .insert((row.source.as_str(), row.kind.as_str()), pi_count);
+                                pi_count += 1;
+                            }
                         }
+                        let mut anchor = pi_count;
+                        let mut notices = vec![];
+                        for live in live_rows.into_iter().rev() {
+                            if matches!(live.origin, EntryOrigin::RuntimeNotice { .. }) {
+                                let mut notice = live.clone();
+                                notice.anchor = Some(anchor);
+                                notices.push(notice);
+                            } else if let Some(&position) =
+                                pi_positions.get(&(live.source.as_str(), live.kind.as_str()))
+                            {
+                                anchor = position;
+                            }
+                        }
+                        notices.reverse();
+                        self.state.transcript = crate::transcript::merge_runtime_notices(
+                            std::mem::take(&mut self.state.transcript),
+                            notices,
+                        );
+                    }
+                    if !reconciling_compaction {
+                        let mut ids: HashSet<_> = self
+                            .state
+                            .transcript
+                            .iter()
+                            .map(|row| row.id.clone())
+                            .collect();
+                        let mut notices = vec![];
+                        for row in old {
+                            if !ids.insert(row.id.clone()) {
+                                continue;
+                            }
+                            if matches!(row.origin, EntryOrigin::RuntimeNotice { .. }) {
+                                notices.push(row);
+                            } else if row.interrupted {
+                                self.state.transcript.push(row);
+                            }
+                        }
+                        self.state.transcript = crate::transcript::merge_runtime_notices(
+                            std::mem::take(&mut self.state.transcript),
+                            notices,
+                        );
                     }
                     self.apply_history_prefix();
                     self.state.history_loading = false;
@@ -1532,11 +1621,18 @@ impl Controller {
             "set_editor_text" => self.state.draft = string(&v["text"]),
             "notify" if v["message"].is_string() => {
                 let source = format!("local:notify:{id}");
-                if !self.state.transcript.iter().any(|r| r.source == source) {
+                if !self.state.transcript.iter().any(|r|
+                    matches!(&r.origin, EntryOrigin::RuntimeNotice { request_id } if request_id == &id)) {
                     let rid = self.next_id();
                     let mut entry = Entry::new(rid, "notice", string(&v["message"]), source);
                     entry.notice_type =
                         crate::transcript::NoticeType::from_notify(&v["notifyType"]);
+                    entry.origin = EntryOrigin::RuntimeNotice { request_id: id };
+                    if self.saved_preview.authoritative {
+                        entry.anchor = Some(self.state.transcript.iter()
+                            .skip(self.history_prefix_len)
+                            .filter(|row| row.origin == EntryOrigin::Pi).count());
+                    }
                     self.state.transcript.push(entry);
                 }
             }

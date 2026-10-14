@@ -20,6 +20,16 @@ impl NoticeType {
     }
 }
 
+/// Runtime notifications are not persisted Pi custom messages.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EntryOrigin {
+    #[default]
+    Pi,
+    RuntimeNotice {
+        request_id: String,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Entry {
     pub id: String,
@@ -48,6 +58,11 @@ pub struct Entry {
     #[serde(default)]
     pub error_label: Option<String>,
     pub source: String,
+    #[serde(default)]
+    pub origin: EntryOrigin,
+    /// Pi-owned tail rows preceding this runtime entry; excludes revealed history.
+    #[serde(default)]
+    pub anchor: Option<usize>,
 }
 /// The exact Pi user envelope; metadata is not inferred from ordinary prose.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -122,6 +137,8 @@ impl Entry {
             notice_type: NoticeType::Info,
             error_label: None,
             source,
+            origin: EntryOrigin::Pi,
+            anchor: None,
         }
     }
     /// Vue's toolSummary: prefer the first nonempty string, then compact JSON.
@@ -289,6 +306,25 @@ fn project_assistant(m: &Value, key: &str) -> Vec<Entry> {
         ));
     }
     rows
+}
+
+pub(crate) fn merge_runtime_notices(rows: Vec<Entry>, mut notices: Vec<Entry>) -> Vec<Entry> {
+    let end = rows.len();
+    for notice in &mut notices {
+        notice.anchor = Some(notice.anchor.unwrap_or(end).min(end));
+    }
+    notices.sort_by_key(|notice| notice.anchor);
+    let mut merged = Vec::with_capacity(end + notices.len());
+    let mut rows = rows.into_iter().enumerate().peekable();
+    for notice in notices {
+        let anchor = notice.anchor.unwrap_or(end);
+        while rows.peek().is_some_and(|(index, _)| *index < anchor) {
+            merged.push(rows.next().unwrap().1);
+        }
+        merged.push(notice);
+    }
+    merged.extend(rows.map(|(_, row)| row));
+    merged
 }
 
 #[derive(Clone, Debug)]
