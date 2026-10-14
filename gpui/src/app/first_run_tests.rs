@@ -215,6 +215,74 @@ fn fast_workspace_load_cancels_delay_and_nonempty_workspace_uses_main_branch() {
 }
 
 #[test]
+fn project_without_a_selected_session_has_blank_content_and_can_start_one() {
+    for dark in [false, true] {
+        for remote in [false, true] {
+            let mut f = Fixture::new();
+            assert!(f.only_admin_load());
+            let mut project = project();
+            if remote {
+                project.connection_string = Some("fixture-host".into());
+            }
+            f.event(Event::Loaded(Ok((
+                WorkspaceSnapshot {
+                    active_project_path: project.path.clone(),
+                    projects: vec![project.clone()],
+                    pi_path: None,
+                },
+                Preferences {
+                    theme: if dark { "dark" } else { "light" }.into(),
+                    ..Default::default()
+                },
+            ))));
+            for _ in 0..3 {
+                f.draw();
+                f.root.update(|_, w, cx| {
+                    let s = f.shell.read(cx);
+                    assert_eq!(s.dark, dark);
+                    assert!(s.active.is_empty() && s.sessions.is_empty());
+                    assert!(s.error.is_none());
+                    let blank = w.find("shell-empty-content").bounds();
+                    let header = w.find("header").bounds();
+                    assert_eq!(blank.top(), header.bottom());
+                    assert_eq!(blank.bottom(), w.viewport_size().height);
+                    assert_eq!(blank.left(), w.find("sidebar").bounds().right());
+                    assert_eq!(blank.right(), w.viewport_size().width);
+                    assert!(w.try_find("shell-composer-area").is_none());
+                    assert!(w.try_find("shell-transcript-slot").is_none());
+                    assert!(w.try_find("session-loading").is_none());
+                    assert!(w.try_find("first-run").is_none());
+                });
+            }
+            assert!(
+                f.requests.try_recv().is_err(),
+                "blankness must not start Pi"
+            );
+            f.click("new-session");
+            f.root.update(|_, w, cx| {
+                let s = f.shell.read(cx);
+                assert_eq!(s.sessions.len(), 1);
+                let live = &s.sessions[&s.active];
+                assert_eq!(live.project.path, project.path);
+                assert!(live.controller.state().draft.is_empty());
+                assert!(live.starting);
+                assert!(w.try_find("shell-empty-content").is_none());
+            });
+            let starts = std::iter::from_fn(|| f.requests.try_recv().ok())
+                .filter(|command| {
+                    matches!(command, Command::Start { project: started, source: None, .. }
+                        if started.path == project.path && started.connection_string == project.connection_string)
+                })
+                .count();
+            assert_eq!(
+                starts, 1,
+                "New Session starts exactly one runtime in this project"
+            );
+        }
+    }
+}
+
+#[test]
 fn workspace_failure_ends_loading_and_keeps_real_fallback_dialog() {
     let mut f = Fixture::new();
     f.advance(200);

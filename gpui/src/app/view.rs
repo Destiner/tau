@@ -1305,13 +1305,7 @@ impl Render for Shell {
                     }
                 }
             } else {
-                main = main.child(div().flex_1()).child(div().p(px(24.)).child(
-                    if self.workspace.is_none() && self.error.is_none() {
-                        "Loading workspace…"
-                    } else {
-                        "Select a session or import a project."
-                    },
-                ));
+                main = main.child(div().id("shell-empty-content").test_support().flex_1());
             }
             if self.retry_workflow_pending() {
                 main = main.child(
