@@ -1,6 +1,6 @@
 # GPUI rewrite: current status and delivery plan
 
-Updated 13 October 2026. This supersedes the historical prototype checklist.
+Updated 15 October 2026. This supersedes the historical prototype checklist.
 The requested delivery/decision window was **9–10 October**. The native preview remains
 under active user review and correction; it is not a completed production cutover.
 The remaining release/cutover gates below still require an explicit decision.
@@ -61,6 +61,18 @@ picker labels use Go Back and Select with the full path. Runtime notices stay an
 through hydration, including live arrivals during compaction. File viewers cover the whole
 app viewport rather than occupying a sibling content column.
 
+Workflow commands admitted to the host transport remain correlated while Pi awaits
+extension preflight or UI, without the ordinary ten-second confirmation timeout. A later
+idle read cannot erase an unresolved write's uncertainty. Dismissing a failure acknowledges
+only its displayed occurrence, so navigation does not replay it; transient notices/errors
+alone no longer retain a genuinely empty unregistered session. Drafts, Pi-owned content and
+pending/recovery/durability owners remain protected.
+
+Active prompt options now paint the hover wash alongside their stripe. Tooltip variants
+retain their actual Vue surface styles; Opening… uses the activated link's occurrence
+bounds and measured viewport clamping. Long SSH/location strings wrap without losing text,
+and first-run hints sit below measured icon bounds rather than the mouse position.
+
 Inline extension editors retain native draft/undo/IME state. Embedded prompts use the
 transcript's natural reader mode; standalone dialogs remain bounded. Explicit
 `NativeDialog::new_editor` preserves the existing `DialogKind`/`DialogProps` API.
@@ -91,7 +103,17 @@ through normalized CRLF, dehover and nearest-run gaps held across three frames.
 Font-metric paint changes no layout/hit testing; width truncation preserves line height
 and bottom ink. Source owners outlive the 128-view cache. See [APP.md](../gpui/APP.md).
 
-Interaction-polish checkpoint: **718 GPUI passes / 1 ignored**, strict all-target/all-feature
+Workflow/tooltip checkpoint: **742 GPUI passes / 1 ignored**, **155 controller passes /
+1 canary ignored**, strict all-target/all-feature Clippy, formatting, native tooling
+lint/typecheck, **13 editor integrations** and eight package/version tests. The fresh
+actual-App campaign contains **56 originals / 28 Vue/native pairs** across seven states,
+both themes and 1×/2×, plus eight successful held-workflow/busy-response smokes. Full long
+SSH locations fit the compact surface, and first-run hints have the measured 6px bottom
+gap. Text wrapping/rasterization, prompt spacing and some focus cues still differ; no exact
+whole-UI parity is claimed. The private reported workflow was not executed, and this does
+not certify real-Pi compaction/complex extensions or packaged SSH acceptance.
+
+Earlier interaction-polish checkpoint: **718 GPUI passes / 1 ignored**, strict all-target/all-feature
 Clippy, formatting, native tooling lint/typecheck, eight package/version tests,
 **13 editor integrations**, and **143 controller / 1 canary ignored**. Unchanged-source
 separate passing gates remain **79 shared-core / 1 ignored**, **16 canonical-path Tauri**,

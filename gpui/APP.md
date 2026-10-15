@@ -56,6 +56,10 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   While streaming, extension commands cannot submit; prompt/skill commands use the normal
   queue path. The bounded popup flips below the first line in the full-height composer.
   Command revisions avoid reparsing an unchanged catalogue on every streaming update.
+  A known extension command admitted to the host transport retains its correlated owner
+  while Pi awaits preflight or UI; the ordinary ten-second message deadline cannot invent
+  a confirmation failure. Real rejection or transport loss still settles ownership, and
+  an intervening idle state read cannot erase an unresolved write's uncertainty.
 - Cmd-K command palette with real session/project/model/effort pages, supported actions
   and shortcuts, search, keyboard navigation, and modal-aware focus restoration.
   Session switching keeps shortcuts on the mounted shell while the destination paints;
@@ -65,8 +69,11 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   receives focus when ready unless another surface owns it.
 - Leaving a truly empty, unregistered session retires its UI/runtime without deleting
   Pi files. Pending reads defer the decision; only explicitly abandoned candidates are
-  revisited. Drafts (including whitespace), history, queued/recovered work, extension
-  prompts, errors and outstanding captured registrations prevent retirement.
+  revisited. Drafts (including whitespace), Pi-owned history, queued/recovered work,
+  extension prompts, unresolved writes/reconciliation and captured registrations prevent
+  retirement. Runtime notices and an acknowledged preflight failure alone are not saved
+  conversation content. Dismissing feedback acknowledges its exact error occurrence;
+  reselecting cannot replay it, and an old dialog cannot clear a newer error or write fence.
 - Empty-session input uses a 4px internal top inset, 12px above the previous placement.
   Outer composer padding, compact input and footer position are unchanged.
 - Model choices use Pi's scoped-model settings for local or remote sessions, following
@@ -93,7 +100,12 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   subtitles. Sidebar projections are invalidated at data/status boundaries rather than
   rebuilt for every text chunk; relative times and groups also age while idle.
 - Draft/unread indicators, rich session status/message/time tooltips, SSH project
-  alias/directory tooltips, and animated edge-reveal drag handles. Row exit immediately
+  alias/directory tooltips, and animated edge-reveal drag handles. Long SSH aliases and
+  paths wrap within the compact tooltip and viewport rather than overflowing an intrinsic
+  text-width box; full source text remains intact. Rich session titles retain their separate
+  Markdown layout. Compact/rich/queue/first-run variants keep their distinct styles.
+  First-run tooltips use measured button bounds, a 450ms delay and bottom placement.
+  Row exit immediately
   hides pointer-only archive actions, including rapid motion and native window exit.
   Native deactivation mutes only Vue's selected live/archive rows and archive-view toggle;
   it does not dim text, editors or the body-ported palette.
@@ -105,6 +117,8 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   native controls inline in the transcript. Embedded prompts have natural height and
   the transcript owns reading; standalone dialogs retain bounded scrolling. Keyboard
   option reveal is separately fenced and does not let editor selection/IME move history.
+  Active options paint Vue's hover wash as well as the accent stripe; accepted/readonly
+  responses retain their highlight without allowing duplicate submission.
   Drafts, marked text, undo and readonly pending-response ownership survive updates.
   Notifications render actual prose with accessibility on the rendered leaves. Runtime
   notices retain their occurrence position through RPC hydration; compaction translates
@@ -129,6 +143,10 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   references in their document context. Copy Path and Copy Full Path preserve their
   respective written/resolved semantics, including literal POSIX backslashes. Local and
   SSH previews use bounded snapshot services with stale-owner/cancellation fences.
+  Delayed Opening…/failure feedback uses the roomier Markdown surface, actual activated
+  link-occurrence bounds (including wrapping), a 6px bottom gap and an 8px viewport clamp.
+  Pointer and keyboard activation share those source bounds; context menus retain their
+  pointer anchor. Non-inline linked images keep their existing activation fallback.
   File viewers overlay the full app viewport, including the sidebar and header, without
   reflowing the underlying shell. This is not authenticated SSH acceptance. Text/Markdown/code and admitted images are
   supported; PDF, audio and video acceptance is not claimed.
@@ -268,7 +286,24 @@ release and cutover gates remain as documented above.
 
 ## Current verification boundary
 
-The interaction-polish checkpoint passed **718 GPUI library tests / 1 ignored**,
+The workflow/tooltip correction passed **742 GPUI library tests / 1 ignored**,
+**155 controller tests / 1 opt-in canary ignored**, strict all-target/all-feature Clippy,
+formatting, native tooling lint/typecheck, **13 editor integrations** and eight
+packaging/version tests. A normal-feature `tau` build passed after the feature-enabled
+visual checks. Deterministic coverage includes admitted extension preflight,
+transport loss after idle reads, exact error acknowledgement, empty-session retirement,
+active prompt wash, source-owned feedback placement and long-tooltip containment.
+
+Fresh actual-App comparison captured **56 originals / 28 Vue/native pairs**: seven states,
+both themes, 1×/2×, plus eight held-workflow/busy-response smokes. Long SSH locations remain
+complete inside the 260px surface; first-run hints sit 6px below their actual icon. Native
+and WebKit still differ in text wrapping/rasterization, some prompt spacing and focus cues;
+this is not pixel-perfect parity. Vue changes its hover cursor on a disabled option while
+native retains it, but both keep the same pending response and admit no duplicate write.
+The reported private `/implement` workflow was not executed; these fixes use Pi's public
+contract and deterministic fixtures, not private extension/authentication data.
+
+The earlier interaction-polish checkpoint passed **718 GPUI library tests / 1 ignored**,
 strict all-target/all-feature Clippy, formatting, native tooling lint/typecheck,
 **13 editor integrations**, eight packaging/version tests and controller
 **143 / 1 opt-in canary ignored**. Separate unchanged-source passing gates remain shared
