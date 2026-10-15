@@ -117,7 +117,7 @@ impl Fixture {
 }
 
 #[test]
-fn disconnected_root_divider_rejects_without_rpc_or_false_busy_and_preserves_work() {
+fn acknowledged_disconnect_root_divider_rejects_without_rpc_or_false_busy_and_preserves_work() {
     let mut f = Fixture::new();
     let before = f.root.update(|_, w, cx| {
         f.shell.update(cx, |s, cx| {
@@ -136,9 +136,32 @@ fn disconnected_root_divider_rejects_without_rpc_or_false_busy_and_preserves_wor
         })
     });
     f.paint();
+    let error = before
+        .2
+        .as_ref()
+        .expect("disconnect incident before acknowledgement");
+    assert!(
+        f.root
+            .accessibility_tree()
+            .unwrap()
+            .nodes
+            .iter()
+            .any(|(_, n)| {
+                n.value()
+                    .or(n.label())
+                    .is_some_and(|text| text.contains(error))
+            })
+    );
     let close = f.root.update(|_, w, _| w.find("close").bounds().center());
     f.root.simulate_click(close, MouseButton::Left);
     f.paint();
+    // Acknowledging the displayed incident does not restore transport admission.
+    f.root.update(|_, _, cx| {
+        let s = f.shell.read(cx);
+        assert!(s.fallback.is_none());
+        assert!(s.sessions["a"].controller.state().error.is_none());
+        assert!(!s.sessions["a"].controller.state().ready);
+    });
     // The connection incident may move the retained reader; navigate back to the divider.
     let viewport = f
         .root
@@ -157,7 +180,12 @@ fn disconnected_root_divider_rejects_without_rpc_or_false_busy_and_preserves_wor
             assert!(!state.transcript[0].history_loading);
             assert_eq!(state.transcript[0].revision, before.0);
             assert_eq!(state.draft, before.1);
-            assert_eq!(state.error, before.2);
+            assert!(
+                state.error.is_none(),
+                "rejected history clicks create no new incident"
+            );
+            assert!(f.shell.read(cx).fallback.is_none());
+            assert!(!state.ready);
             assert_eq!(
                 live.composer.read(cx).editor().read(cx).value().as_ref(),
                 "precious draft"

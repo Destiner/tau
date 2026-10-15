@@ -29,6 +29,8 @@ mod sidebar;
 #[cfg(test)]
 mod tests;
 mod view;
+#[cfg(test)]
+mod workflow_host_tests;
 mod workspace_mutations;
 
 use crate::{
@@ -541,6 +543,17 @@ impl Shell {
         if let Command::CancelStart { runtime, attempt } = &command {
             self.runtime_lifecycle_track_cancel(runtime, *attempt);
         }
+        // Capture only correlation ownership before moving the payload into the worker.
+        let write = match &command {
+            Command::Send {
+                runtime,
+                generation,
+                request,
+            } => request["id"]
+                .as_str()
+                .map(|id| (runtime.clone(), *generation, id.to_owned())),
+            _ => None,
+        };
         let failed = if (matches!(&command, Command::Start { .. }) && self.lifecycle.is_some())
             || matches!(&command, Command::Send { runtime, .. } if self.runtime_cleanup_pending(runtime))
         {
@@ -551,6 +564,12 @@ impl Shell {
                 .err()
                 .map(|failed| failed.into_inner())
         };
+        if failed.is_none()
+            && let Some((runtime, generation, id)) = write
+            && let Some(live) = self.sessions.get_mut(&runtime)
+        {
+            live.controller.request_write_accepted(generation, &id);
+        }
         if let Some(failed) = failed {
             self.sidebar_state.invalidate_projection();
             if self.lifecycle_dispatch_failed(&failed, cx) {

@@ -410,7 +410,7 @@ fn startup_cleanup_failure_blocks_reconnect_until_actual_ack() {
 }
 
 #[test]
-fn dismissed_remote_release_feedback_keeps_reconnect_but_not_modal_palette_ownership() {
+fn acknowledged_remote_release_clears_feedback_without_reconnect_or_modal_palette_ownership() {
     let mut app = app();
     let (commands, requests) = async_channel::bounded(512);
     let shell = app.new_entity(|_| shell(commands));
@@ -457,18 +457,34 @@ fn dismissed_remote_release_feedback_keeps_reconnect_but_not_modal_palette_owner
                 Status::Error
             );
             assert!(s.fallback_is_open(cx));
+            assert!(s.sessions["remote"].controller.state().error.is_some());
+            assert!(!s.sessions["remote"].controller.state().ready);
         })
     });
+    root.activate_accessibility();
     root.draw();
+    let message = "This remote Pi runtime was released while idle. Reconnect to reopen saved history; in-memory extension state was not retained.";
+    assert!(
+        root.accessibility_tree()
+            .unwrap()
+            .nodes
+            .iter()
+            .any(|(_, n)| {
+                n.value()
+                    .or(n.label())
+                    .is_some_and(|text| text.contains(message))
+            })
+    );
     let close = root.update(|_, w, _| w.find("close").bounds().center());
     root.simulate_click(close, MouseButton::Left);
     root.draw();
     root.update(|_, w, cx| {
         shell.update(cx, |s, cx| {
-            assert!(
-                s.fallback.is_some(),
-                "incident remains owned after dismissal"
-            );
+            // Cancel acknowledges the displayed incident, not the disconnected runtime.
+            assert!(s.fallback.is_none());
+            assert!(s.sessions["remote"].controller.state().error.is_none());
+            assert!(!s.sessions["remote"].controller.state().ready);
+            assert!(!s.sessions["remote"].starting);
             assert!(!s.fallback_is_open(cx));
             s.toggle_palette(w, cx);
             assert!(s.palette.is_open(cx));

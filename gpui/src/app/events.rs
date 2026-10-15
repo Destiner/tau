@@ -259,6 +259,7 @@ impl Shell {
                     } else if !success {
                         live.controller.request_failed(id)
                     } else {
+                        live.controller.request_write_accepted(generation, id);
                         vec![]
                     };
                     self.effects(&runtime, effects, cx);

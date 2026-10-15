@@ -120,7 +120,7 @@ fn invalid_and_same_selection_do_not_retire_and_whitespace_is_work() {
 }
 
 #[test]
-fn startup_pending_work_notifications_and_extension_input_are_retained() {
+fn startup_pending_work_and_extension_input_are_retained_but_runtime_notices_are_not_work() {
     for kind in [
         "pending",
         "working",
@@ -164,7 +164,11 @@ fn startup_pending_work_notifications_and_extension_input_are_retained() {
                 }
             }
             create(s, "target", "target draft", w, cx);
-            assert!(s.sessions.contains_key("source"), "lost {kind}");
+            assert_eq!(
+                s.sessions.contains_key("source"),
+                kind != "notice",
+                "wrong retention for {kind}"
+            );
         });
     }
 }

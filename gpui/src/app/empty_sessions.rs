@@ -62,8 +62,12 @@ impl Shell {
             || !live.composer.read(cx).editor().read(cx).value().is_empty()
             || !state.recovered_drafts.is_empty()
             || !live.restored_recovered.is_empty()
-            || !state.transcript.is_empty()
-            || state.error.is_some()
+            || state.transcript.iter().any(|entry| {
+                !matches!(
+                    entry.origin,
+                    tau_session::transcript::EntryOrigin::RuntimeNotice { .. }
+                )
+            })
             || state.working
             || state.compacting
             || state.stopping
@@ -71,8 +75,6 @@ impl Shell {
             || !state.queue.follow_up.is_empty()
             || !state.extension_dialogs.is_empty()
             || live.extension.is_some()
-            || live.controller.submission_pending()
-            || live.controller.provisional_replacement()
             || live.controller.source_recovery().is_some()
         {
             self.empty_candidates.remove(key);
@@ -80,7 +82,9 @@ impl Shell {
         }
         // These barriers must settle before judging history or durability. Retain the
         // selection intent so the final correlated reply can reconsider the session.
-        if live.controller.reconciliation_pending()
+        if live.controller.submission_pending()
+            || live.controller.provisional_replacement()
+            || live.controller.reconciliation_pending()
             || self.runtime_cleanup_pending(key)
             || state.history_loading
             || live.controller.pending_count() > 0

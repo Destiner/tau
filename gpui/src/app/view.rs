@@ -123,9 +123,9 @@ impl Shell {
                     });
                 (
                     format!(
-                        "session:{}:{}:{error}",
+                        "session:{}:{:?}",
                         self.active,
-                        live.controller.generation()
+                        live.controller.error_token()
                     ),
                     if self.runtime_was_released(&self.active) && live.project.connection_string.is_some() && !self.runtime_lifecycle.reconnect_required.contains(&self.active) {
                         "This remote Pi runtime was released while idle. Reconnect to reopen saved history; in-memory extension state was not retained.".into()
@@ -134,6 +134,7 @@ impl Shell {
                         self.active.clone(),
                         live.controller.generation(),
                         live.controller.state().ready,
+                        live.controller.error_token(),
                     )),
                 )
             })
@@ -160,7 +161,7 @@ impl Shell {
         let initialize = !self.loaded && session.is_none();
         let action = if initialize {
             "Try Again"
-        } else if let Some((_, _, ready)) = &session {
+        } else if let Some((_, _, ready, _)) = &session {
             if *ready { "Refresh" } else { "Reconnect" }
         } else if self.retry_workflow_pending() {
             "Retry"
@@ -169,7 +170,7 @@ impl Shell {
         };
         let owned_message = session
             .as_ref()
-            .and_then(|(key, _, _)| self.sessions.get(key))
+            .and_then(|(key, _, _, _)| self.sessions.get(key))
             .and_then(|live| live.controller.state().error.clone())
             .unwrap_or_else(|| message.clone());
         let dialog = cx.new(|cx| {
@@ -206,14 +207,24 @@ impl Shell {
                 {
                     return;
                 }
-                if let Some((key, generation, _)) = &session {
+                if let Some((key, generation, _, token)) = &session {
                     if s.active != *key
                         || !s.sessions.get(key).is_some_and(|live| {
                             live.controller.generation() == *generation
-                                && live.controller.state().error.as_ref() == Some(&owned_message)
+                                && live.controller.error_token().as_ref() == token.as_ref()
                         })
                     {
                         return;
+                    }
+                    if matches!(event, DialogEvent::Cancelled)
+                        && let Some(token) = token
+                        && let Some(live) = s.sessions.get_mut(key)
+                        && live.controller.acknowledge_error(token)
+                    {
+                        live.dirty = true;
+                        live.projection_dirty = true;
+                        s.sidebar_state.invalidate_projection();
+                        s.fallback = None;
                     }
                     if matches!(event, DialogEvent::Submitted(_)) {
                         s.retry_pi(key, cx);

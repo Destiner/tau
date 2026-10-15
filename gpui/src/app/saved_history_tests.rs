@@ -387,7 +387,7 @@ fn actual_root_preview_occurrences_preserve_painted_selection_through_rpc_and_em
 }
 
 #[test]
-fn actual_root_missing_pi_feedback_remains_truthful_and_dismissible_over_saved_history() {
+fn actual_root_missing_pi_feedback_is_truthful_then_acknowledged_over_saved_history() {
     for remote in [false, true] {
         let mut app = app();
         let (commands, _requests) = async_channel::bounded(1024);
@@ -477,11 +477,9 @@ fn actual_root_missing_pi_feedback_remains_truthful_and_dismissible_over_saved_h
         root.draw();
         root.update(|_, _, cx| {
             let s = owner.read(cx);
-            assert!(!s.fallback.as_ref().unwrap().1.read(cx).is_open());
-            assert_eq!(
-                s.sessions["a"].controller.state().error.as_deref(),
-                Some(error.as_str())
-            );
+            // Both Cancel and Escape acknowledge the exact failure shown above.
+            assert!(s.fallback.is_none());
+            assert!(s.sessions["a"].controller.state().error.is_none());
             assert!(!s.sessions["a"].controller.state().ready);
             assert!(!s.sessions["a"].controller.state().durable);
         });
@@ -490,7 +488,8 @@ fn actual_root_missing_pi_feedback_remains_truthful_and_dismissible_over_saved_h
 }
 
 #[test]
-fn actual_root_saved_preview_cancels_loader_survives_missing_pi_and_fences_navigation() {
+fn actual_root_saved_preview_cancels_loader_survives_acknowledged_missing_pi_and_fences_navigation()
+{
     for (remote, failed_start) in [(false, false), (false, true), (true, false), (true, true)] {
         let mut app = app();
         let (commands, requests) = async_channel::bounded(1024);
@@ -590,6 +589,27 @@ fn actual_root_saved_preview_cancels_loader_survives_missing_pi_and_fences_navig
         root.draw();
         painted_user_glyphs(&mut root, 0, "offline history");
         if failed_start {
+            root.activate_accessibility();
+            root.draw();
+            let error = root.update(|_, _, cx| {
+                owner.read(cx).sessions["a"]
+                    .controller
+                    .state()
+                    .error
+                    .clone()
+                    .unwrap()
+            });
+            assert!(
+                root.accessibility_tree()
+                    .unwrap()
+                    .nodes
+                    .iter()
+                    .any(|(_, n)| {
+                        n.value()
+                            .or(n.label())
+                            .is_some_and(|text| text.contains(&error))
+                    })
+            );
             let close = root.update(|_, w, cx| {
                 assert!(
                     owner
@@ -607,23 +627,14 @@ fn actual_root_saved_preview_cancels_loader_survives_missing_pi_and_fences_navig
             root.simulate_click(close, MouseButton::Left);
             root.draw();
             root.update(|_, _, cx| {
-                assert!(
-                    !owner
-                        .read(cx)
-                        .fallback
-                        .as_ref()
-                        .unwrap()
-                        .1
-                        .read(cx)
-                        .is_open()
-                );
-                assert!(
-                    owner.read(cx).sessions["a"]
-                        .controller
-                        .state()
-                        .error
-                        .is_some()
-                );
+                // Clearing feedback leaves the provisional preview and readiness fence intact.
+                let s = owner.read(cx);
+                assert!(s.fallback.is_none());
+                let state = s.sessions["a"].controller.state();
+                assert!(state.error.is_none());
+                assert!(!state.ready);
+                assert!(!state.durable);
+                assert_eq!(state.draft, "keep draft");
             });
         }
         painted_user_text(&mut root, 0, "offline history");

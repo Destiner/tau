@@ -147,7 +147,11 @@ fn work_acquired_while_reconciling_survives() {
             }
             complete_reads(s, "a", 7, messages, cx, &requests);
             s.reconcile_empty_sessions(cx);
-            assert!(s.sessions.contains_key("a"), "lost {kind}");
+            assert_eq!(
+                s.sessions.contains_key("a"),
+                !matches!(kind, "notice" | "error"),
+                "wrong retention for {kind}"
+            );
             assert!(
                 !s.empty_candidates.contains("a"),
                 "retained retirement intent for {kind}"

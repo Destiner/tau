@@ -400,7 +400,7 @@ fn press(root: &mut gpui_kit::TestAppWindow<Root>, key: &str) {
 }
 
 #[test]
-fn root_composer_focus_uses_draft_admission_during_startup_work_and_dismissed_failure() {
+fn root_composer_focus_uses_draft_admission_during_startup_work_and_acknowledged_failure() {
     use gpui_kit::test::TestWindowExt;
     let mut app = app();
     let (commands, requests) = async_channel::bounded(1024);
@@ -470,18 +470,42 @@ fn root_composer_focus_uses_draft_admission_during_startup_work_and_dismissed_fa
                             "failure dialog is genuinely blocking"
                         );
                         assert!(s.fallback.as_ref().unwrap().1.read(cx).is_open());
+                        assert!(s.sessions["active"].controller.state().error.is_some());
+                        assert!(!s.sessions["active"].controller.state().ready);
                     }
                 })
             });
             if phase == "failed" {
+                root.activate_accessibility();
                 root.draw();
+                let error = root.update(|_, _, cx| {
+                    shell.read(cx).sessions["active"]
+                        .controller
+                        .state()
+                        .error
+                        .clone()
+                        .unwrap()
+                });
+                assert!(
+                    root.accessibility_tree()
+                        .unwrap()
+                        .nodes
+                        .iter()
+                        .any(|(_, n)| {
+                            n.value()
+                                .or(n.label())
+                                .is_some_and(|text| text.contains(&error))
+                        })
+                );
                 let close = root.update(|_, w, _| w.find("close").bounds().center());
                 root.simulate_click(close, gpui_kit::MouseButton::Left);
                 root.draw();
                 root.update(|_, _, cx| {
                     let s = shell.read(cx);
-                    assert!(!s.fallback.as_ref().unwrap().1.read(cx).is_open());
-                    assert!(s.sessions["active"].controller.state().error.is_some());
+                    // Acknowledgement clears feedback without repairing failed transport.
+                    assert!(s.fallback.is_none());
+                    assert!(s.sessions["active"].controller.state().error.is_none());
+                    assert!(!s.sessions["active"].controller.state().ready);
                 });
             }
             focus_frames(&mut root);
