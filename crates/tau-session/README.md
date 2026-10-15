@@ -37,11 +37,13 @@ Use ordinary persistent RPC mode for saved work; **`--no-session` means in-memor
 - `setting_pending()`, `submission_pending()`, `queue_busy()` expose action-specific admission instead of treating pending read requests as blocked work.
 - `begin_model_scope_read() -> ModelScopeToken`, `apply_model_scope(&token, Option<Value>)`: fence host-owned async settings reads by generation, identity and refresh/read revision. The value is an array of scope patterns, not the entire settings file.
 - `extension_response(id, ExtensionResponse::{Value(String), Confirmed(bool), Cancelled})`. Dialog remains `submitting` until the host calls **`extension_sent(id, success)`** after writing the response. Pi does not emit a normal response to this record. On write failure the dialog is retryable. Fence host callbacks by captured runtime/generation, just like stdout.
+- `request_write_accepted(generation, request_id) -> bool` transfers a pending request to the host transport owner after successful write admission. Call before a tick can expire it, not only on a delayed physical-write receipt. This is not Pi's semantic acceptance: known extension `prompt` handlers may await preflight or UI indefinitely before their correlated reply. Only those admitted commands leave the 10-second request/agent-start deadline; their reply or transport loss still settles ownership. Generation, request, identity and epoch fence admission. Ordinary prompt/read/queue/Stop timeout policy is unchanged.
+- `error_token() -> Option<ErrorToken>` captures the displayed occurrence; `acknowledge_error(&token) -> bool` dismisses only that runtime/generation/epoch/incident. Capture with the presented error, not at dismissal time. Dismissal never acknowledges an uncertain write, ends reconciliation, or releases a provisional replacement.
 - `request_failed(request_id)` for correlated ordinary write failure; `input_closed(generation)` blocks new work but retains same-generation final output through `ingest_output(runtime_id, generation, Value)`. Input closure is not output termination. `transport_failed(generation)` fences output after authoritative process/output loss. `backend_stopped(generation)` reconciles an exact physical cleanup receipt even if idle-release admission changed, preserving drafts/transcript/proof and rejecting old output without disconnecting a newer generation.
 - `prepare_exit()` hands every captured completed-output intent to `RegisterSession`, including predecessor/old-generation proof; `durability_pending()` reports outstanding protocol proof, not exit permission or storage success. Hosts must drain effects and await exact storage/recovery/cleanup receipts, including newly completed work during Save.
 - `reconciliation_pending()`, `provisional_replacement()`, `source_recovery()` and exact `acknowledge_source_recovery(&Identity)` expose bounded replacement/recovery ownership. `can_release_runtime()` excludes work, queue/dialog/read/uncertainty/provisional/proof owners; call `release_generation(generation)` only after successful physical cleanup. `resume_reads()` retries reconciliation, never the user operation.
 - `saved_preview_token()` / `apply_saved_preview(&token, messages)` admit a fenced cosmetic projection before authoritative RPC. Preview cannot establish readiness, runtime identity, registration or durability.
-- `tick(now_ms)` using a **nondecreasing logical/monotonic clock** supplied by the host; defaults to zero before the first tick. Feed a tick before dispatching startup/actions, then periodically while connected. Startup, requests, accepted-but-not-started prompts, and Stop are bounded at 10 seconds. This is not a maximum duration for an active model/tool run.
+- `tick(now_ms)` using a **nondecreasing logical/monotonic clock** supplied by the host; defaults to zero before the first tick. Feed a tick before dispatching startup/actions, then periodically while connected. Startup, ordinary requests, accepted-but-not-started ordinary prompts, and Stop are bounded at 10 seconds. Admitted extension commands retain their correlated owner until reply or transport loss, including while no agent run has started. This is not a maximum duration for an active model/tool run.
 - `take_recovered_drafts()` drains uncertain/lost queue text for a host-owned review surface. Never automatically resend it.
 
 All action/effect APIs return `Vec<Effect>`; empty effects mean no request was dispatched. Keep text in the composer unless `submit` actually dispatched it. Submission rejection restores exact submitted text ahead of newer input. A timeout means **uncertain acceptance**, so its text goes to `recovered_drafts`, not automatic replay.
@@ -130,11 +132,13 @@ PDF/audio/video acceptance are not established by controller or fake-based tests
 
 ## Verification
 
-Source-matched controller/shared-core checkpoints: **132 / 79 passes**, each with one
-ignored opt-in test. Final GPUI source passed **691 tests / 1 ignored**, strict
-all-target/all-feature Clippy, static tooling, eight package/version tests and a normal
-build after feature checks. **13 editor integrations**, canonical-path Tauri **16** and
-root frontend **894** plus static checks/build pass separately.
+The workflow correction passed **155 controller tests / 1 ignored opt-in canary** and
+**742 GPUI tests / 1 ignored**, strict all-target/all-feature native Clippy, static tooling,
+eight package/version tests and **13 editor integrations**. It covers admitted preflight
+beyond the ordinary deadline, transport loss after an idle state read, exact error
+acknowledgement and preservation of uncertain writes. These are deterministic fixtures,
+not execution of private workflows. Earlier unchanged-source gates remain shared core
+**79 / 1 ignored**, canonical-path Tauri **16** and root frontend **894** plus static checks/build.
 
 Both current installed-Pi native modes fail the unchanged five-second busy-close gate
 with an inactive window, unavailable Close and no lifecycle callback. Cause is unproven;

@@ -299,6 +299,15 @@ pub struct ModelScopeToken {
     revision: u64,
 }
 
+/// Opaque ownership of one displayed error occurrence, not a workflow acknowledgement.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ErrorToken {
+    runtime_id: String,
+    generation: u64,
+    epoch: u64,
+    revision: u64,
+}
+
 #[derive(Clone, Debug)]
 struct Pending {
     command: String,
@@ -313,6 +322,7 @@ struct Pending {
     draft: Option<String>,
     optimistic: Option<String>,
     accepted: bool,
+    write_accepted: bool,
     previous_name: Option<String>,
     purpose: ReadPurpose,
     extension_command: bool,
@@ -484,6 +494,41 @@ impl Controller {
     fn reset_commands(&mut self) {
         self.commands_revision += replace_changed(&mut self.state.commands, vec![]) as u64;
     }
+    pub fn error_token(&self) -> Option<ErrorToken> {
+        self.state.error.as_ref().map(|_| ErrorToken {
+            runtime_id: self.runtime_id.clone(),
+            generation: self.generation,
+            epoch: self.epoch,
+            revision: self.error_revision,
+        })
+    }
+    /// Dismiss only the captured incident; uncertain writes and provisional work remain owned.
+    pub fn acknowledge_error(&mut self, token: &ErrorToken) -> bool {
+        if self.error_token().as_ref() != Some(token) {
+            return false;
+        }
+        self.state.error = None;
+        self.extension_error_owner = None;
+        self.update_status();
+        true
+    }
+    /// Host write admission is not Pi acceptance. Extension handlers can await UI before replying.
+    pub fn request_write_accepted(&mut self, generation: u64, id: &str) -> bool {
+        if !self.connected || generation != self.generation {
+            return false;
+        }
+        let Some(p) = self.pending.get_mut(id) else {
+            return false;
+        };
+        if p.epoch != self.epoch || !p.identity.binding_eq(&self.state.identity) {
+            return false;
+        }
+        p.write_accepted = true;
+        if p.command == "prompt" && p.extension_command {
+            self.admission = None;
+        }
+        true
+    }
     pub fn pending_count(&self) -> usize {
         self.pending.len()
     }
@@ -592,6 +637,7 @@ impl Controller {
                 draft: None,
                 optimistic: None,
                 accepted: false,
+                write_accepted: false,
                 previous_name: None,
                 purpose: ReadPurpose::Ordinary,
                 extension_command: false,
@@ -1905,7 +1951,9 @@ impl Controller {
         }
         if self.state.working
             || self.reconciliation.command
-            || self.pending.values().any(|p| p.accepted)
+            || self.pending.values().any(|p| {
+                p.accepted || (p.command == "prompt" && p.extension_command && p.write_accepted)
+            })
             || self
                 .state
                 .extension_dialogs
@@ -1947,7 +1995,11 @@ impl Controller {
         let expired: Vec<_> = self
             .pending
             .iter()
-            .filter(|(_, p)| p.deadline <= self.now && !(p.command == "prompt" && p.accepted))
+            .filter(|(_, p)| {
+                p.deadline <= self.now
+                    && !(p.command == "prompt"
+                        && (p.accepted || (p.extension_command && p.write_accepted)))
+            })
             .map(|(id, _)| id.clone())
             .collect();
         for id in expired {
@@ -2087,6 +2139,10 @@ fn strings(v: &Value) -> Option<Vec<String>> {
 #[cfg(test)]
 #[path = "session_feedback_ownership_tests.rs"]
 mod feedback_ownership_tests;
+
+#[cfg(test)]
+#[path = "session_workflow_tests.rs"]
+mod workflow_tests;
 
 #[cfg(test)]
 #[path = "session_command_tests.rs"]
