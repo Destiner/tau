@@ -1,21 +1,60 @@
 //! No-project surface. The service owns workspace loading; this state only delays its indicator.
 use super::*;
 use crate::components::menus::{Menu, MenuEvent, MenuItem};
-use gpui_kit::base::{Button, ElementExt};
+use gpui_kit::base::{Button, ElementExt, Placement, Positioner};
 use gpui_kit::{AnyElement, FocusHandle, MouseButton, TestSupportExt, point, relative, svg};
+use std::{cell::Cell, rc::Rc};
 
 const LOADING_DELAY: Duration = Duration::from_millis(200);
 const STATE_KEY: &str = "tau-first-run-state";
 
-struct FirstRunTooltip(&'static str);
+struct FirstRunTooltip {
+    label: &'static str,
+    shortcut: &'static str,
+    dark: bool,
+    palette: bool,
+}
 
 impl Render for FirstRunTooltip {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        gpui_kit::base::Tooltip::new("first-run-tooltip").child(self.0)
+        let shortcut = support::tooltip_shortcut(
+            div()
+                .id("first-run-tooltip-shortcut")
+                .test_support()
+                .flex_shrink_0(),
+            self.dark,
+        )
+        // App.vue's first-run-palette-tooltip uses a plain bordered kbd.
+        .when(self.palette, |d| {
+            d.border_color(support::tooltip_border(self.dark))
+                .font_family("Courier")
+                .rounded(px(3.))
+                .line_height(relative(1.25))
+        })
+        .child(self.shortcut);
+        support::tooltip_surface(
+            div()
+                .id("first-run-tooltip")
+                .test_support()
+                .role(gpui_kit::Role::Tooltip),
+            self.dark,
+        )
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .child(self.label)
+        .child(shortcut)
     }
 }
 
 struct State {
+    hint_pending: Option<usize>,
+    hint_visible: Option<usize>,
+    hint_epoch: usize,
+    hint_task: Option<gpui_kit::Task<()>>,
+    hint_anchors: [Rc<Cell<Option<gpui_kit::Bounds<gpui_kit::Pixels>>>>; 2],
+    hint_admitted: [bool; 2],
+    owner: gpui_kit::WeakEntity<Shell>,
     waiting: bool,
     visible: bool,
     task: Option<gpui_kit::Task<()>>,
@@ -29,6 +68,79 @@ struct State {
     menu_anchor: gpui_kit::Point<gpui_kit::Pixels>,
     _menu_subscription: Subscription,
     _menu_observer: Subscription,
+}
+
+impl State {
+    fn dismiss_hint(&mut self) {
+        self.hint_epoch += 1;
+        self.hint_task = None;
+        self.hint_pending = None;
+        self.hint_visible = None;
+    }
+
+    fn hover_hint(
+        &mut self,
+        index: usize,
+        hovered: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !hovered {
+            if self.hint_pending == Some(index) || self.hint_visible == Some(index) {
+                self.dismiss_hint();
+                cx.notify();
+            }
+            return;
+        }
+        if !self.hint_admitted[index] || self.menu.read(cx).is_open() {
+            return;
+        }
+        self.dismiss_hint();
+        self.hint_pending = Some(index);
+        let epoch = self.hint_epoch;
+        self.hint_task = Some(cx.spawn_in(window, async move |state, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(450))
+                .await;
+            let _ = state.update_in(cx, |state, window, cx| {
+                let admitted = state.owner.upgrade().is_some_and(|owner| {
+                    let shell = owner.read(cx);
+                    shell.project_actions_admitted(cx)
+                        && !shell.palette.is_open(cx)
+                        && !shell
+                            .workspace
+                            .as_ref()
+                            .is_some_and(|w| !w.projects.is_empty())
+                });
+                if state.hint_epoch == epoch
+                    && state.hint_pending == Some(index)
+                    && state.hint_admitted[index]
+                    && admitted
+                    && !state.menu.read(cx).is_open()
+                    && state.hint_anchors[index]
+                        .get()
+                        .is_some_and(|b| b.contains(&window.mouse_position()))
+                {
+                    state.hint_visible = Some(index);
+                    cx.notify();
+                }
+            });
+        }));
+    }
+}
+
+// Measure the button's own hit area, not the pointer or an icon-sized approximation.
+fn hint_anchor(anchor: Rc<Cell<Option<gpui_kit::Bounds<gpui_kit::Pixels>>>>) -> impl IntoElement {
+    gpui_kit::canvas(
+        move |bounds, window, _| {
+            if anchor.replace(Some(bounds)) != Some(bounds) {
+                window.request_animation_frame();
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full()
 }
 
 impl Shell {
@@ -61,6 +173,7 @@ impl Shell {
                 menu
             });
             let observer = cx.observe(&menu, |_, _, cx| cx.notify());
+            let hint_owner = owner.clone();
             let subscription = cx.subscribe_in(&menu, window, move |_, _, event, w, cx| {
                 let action = match event {
                     MenuEvent::Selected(id) if id == "local" => Action::OpenLocalProject,
@@ -70,6 +183,13 @@ impl Shell {
                 let _ = owner.update(cx, |s, cx| s.action(action, w, cx));
             });
             State {
+                hint_pending: None,
+                hint_visible: None,
+                hint_epoch: 0,
+                hint_task: None,
+                hint_anchors: std::array::from_fn(|_| Rc::new(Cell::new(None))),
+                hint_admitted: [false; 2],
+                owner: hint_owner,
                 waiting: false,
                 visible: false,
                 task: None,
@@ -88,6 +208,15 @@ impl Shell {
         let waiting = self.first_run_loading();
         let owner = cx.entity().downgrade();
         state.update(cx, |state, cx| {
+            state.hint_admitted = [
+                project_admitted,
+                palette_admitted && !self.palette.is_open(cx),
+            ];
+            if state.menu.read(cx).is_open()
+                || state.hint_pending.is_some_and(|i| !state.hint_admitted[i])
+            {
+                state.dismiss_hint();
+            }
             if state.menu_admitted != project_admitted {
                 state.menu_admitted = project_admitted;
                 state.menu.update(cx, |menu, cx| {
@@ -127,6 +256,34 @@ impl Shell {
             }
         });
         let retained = state.read(cx);
+        let project_anchor = retained.hint_anchors[0].clone();
+        let palette_anchor = retained.hint_anchors[1].clone();
+        let measured_hint = retained.hint_visible.and_then(|index| {
+            retained.hint_anchors[index]
+                .get()
+                .map(|bounds| (index, bounds))
+        });
+        let hint = measured_hint.map(|(index, anchor)| {
+            let tooltip = cx.new(|_| FirstRunTooltip {
+                label: if index == 0 {
+                    "Open Project"
+                } else {
+                    "Command Palette"
+                },
+                shortcut: if index == 0 { "⌘O" } else { "⌘K" },
+                dark,
+                palette: index == 1,
+            });
+            gpui_kit::deferred(
+                Positioner::side(anchor)
+                    .placement(Placement::Bottom)
+                    .offset(px(6.))
+                    .margin(px(6.))
+                    .child(tooltip),
+            )
+            .priority(100)
+        });
+        let retained = state.read(cx);
         let visible = waiting && retained.visible;
         let project_focus = retained.project_focus.clone();
         let palette_focus = retained.palette_focus.clone();
@@ -136,6 +293,9 @@ impl Shell {
         let menu_open = menu.read(cx).is_open();
         let anchor_state = state.clone();
         let trigger_state = state.clone();
+        let project_hover = state.clone();
+        let palette_hover = state.clone();
+        let palette_click = state.clone();
         let t = support::tokens(self.dark);
         let titlebar = div()
             .id("first-run-titlebar")
@@ -174,11 +334,16 @@ impl Shell {
                             .selected(menu_open)
                             .when(menu_open, |b| b.bg(rgb(t.hover)).text_color(rgb(t.text)))
                             .accessibility_label("Open Project")
-                            .tooltip(|_, cx| {
-                                cx.new(|_| FirstRunTooltip("Open Project · ⌘O")).into()
+                            .relative()
+                            .child(hint_anchor(project_anchor))
+                            .on_hover(move |hovered, window, cx| {
+                                project_hover.update(cx, |state, cx| {
+                                    state.hover_hint(0, *hovered, window, cx)
+                                });
                             })
                             .on_click(move |_, window, cx| {
                                 trigger_state.update(cx, |state, cx| {
+                                    state.dismiss_hint();
                                     let anchor = state.menu_anchor;
                                     let origin = state.project_focus.clone();
                                     state.menu.update(cx, |menu, cx| {
@@ -198,8 +363,16 @@ impl Shell {
                 first_run_icon("first-run-palette", palette_admitted, self.dark)
                     .track_focus(&palette_focus)
                     .accessibility_label("Open Command Palette")
-                    .tooltip(|_, cx| cx.new(|_| FirstRunTooltip("Command Palette · ⌘K")).into())
-                    .on_click(cx.listener(|s, _, w, cx| s.action(Action::Palette, w, cx)))
+                    .relative()
+                    .child(hint_anchor(palette_anchor))
+                    .on_hover(move |hovered, window, cx| {
+                        palette_hover
+                            .update(cx, |state, cx| state.hover_hint(1, *hovered, window, cx));
+                    })
+                    .on_click(cx.listener(move |s, _, w, cx| {
+                        palette_click.update(cx, |state, _| state.dismiss_hint());
+                        s.action(Action::Palette, w, cx);
+                    }))
                     .child(svg().path("product-icons/search.svg").size(px(16.))),
             );
         let empty = self
@@ -296,6 +469,7 @@ impl Shell {
                 .child(titlebar)
                 .child(content)
                 .child(menu)
+                .when_some(hint, |surface, hint| surface.child(hint))
                 .into_any_element(),
         )
     }
@@ -364,3 +538,7 @@ fn first_run_icon(id: &'static str, admitted: bool, dark: bool) -> Button {
 #[cfg(test)]
 #[path = "first_run_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "first_run_tooltip_tests.rs"]
+mod tooltip_tests;

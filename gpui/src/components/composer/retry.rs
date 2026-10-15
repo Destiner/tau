@@ -56,16 +56,7 @@ pub(super) fn indicator(
                 .offset(px(6.))
                 .margin(px(6.))
                 .child(
-                    Tooltip::new("retry-tooltip-surface")
-                        .max_w(px(260.))
-                        .px(px(7.))
-                        .py(px(3.))
-                        .rounded(px(4.))
-                        .border_1()
-                        .border_color(rgb(t.border))
-                        .bg(rgb(t.panel_raised))
-                        .text_color(rgb(t.text))
-                        .text_size(px(10.))
+                    support::tooltip_surface(Tooltip::new("retry-tooltip-surface"), dark)
                         .child(div().id("retry-tooltip").test_support().child(reason)),
                 ),
         )

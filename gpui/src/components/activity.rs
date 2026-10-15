@@ -1,3 +1,4 @@
+use super::markdown::LinkActivationExt as _;
 use super::{
     markdown::{self, MarkdownPresentation},
     support,
@@ -826,11 +827,11 @@ impl Render for ActivityRow {
                                     gpui_kit::FontWeight::SEMIBOLD
                                 }),
                         )
-                        .on_link_activate({
+                        .on_link_activate_at({
                             let entity = cx.entity().downgrade();
                             let source = self.source.clone();
                             let revision = source.read(cx).link_revision;
-                            move |link, event, window, cx| {
+                            move |link, event, anchor, window, cx| {
                                 let Some(target) = markdown::activation_target(link, event) else {
                                     return;
                                 };
@@ -842,7 +843,7 @@ impl Render for ActivityRow {
                                         cx.emit(ActivityEvent::LinkRequested {
                                             target,
                                             origin,
-                                            anchor: event.position(),
+                                            anchor,
                                         });
                                     }
                                 });

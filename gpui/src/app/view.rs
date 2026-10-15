@@ -1406,19 +1406,20 @@ impl Render for Shell {
             self.preview_feedback().zip(self.preview_anchor()),
             |body, (message, anchor)| {
                 body.child(
-                    div()
+                    gpui_kit::base::Positioner::corner(
+                        gpui_kit::Anchor::TopLeft,
+                        gpui_kit::point(anchor.x, anchor.y + px(6.)),
+                    )
+                    .margin(px(8.))
+                    .child(
+                        super::file_preview::feedback_surface(
+                            message,
+                            self.dark,
+                            window.viewport_size().width,
+                        )
                         .id("file-link-feedback")
-                        .test_support()
-                        .absolute()
-                        .left(anchor.x)
-                        .top(anchor.y + px(8.))
-                        .px(px(8.))
-                        .py(px(4.))
-                        .rounded(px(4.))
-                        .bg(rgb(if self.dark { 0x252a34 } else { 0xf0f1f3 }))
-                        .text_color(rgb(if self.dark { 0xe4e7ed } else { 0x252a34 }))
-                        .text_size(px(11.))
-                        .child(message),
+                        .test_support(),
+                    ),
                 )
             },
         )

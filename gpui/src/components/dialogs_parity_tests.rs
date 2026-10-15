@@ -210,7 +210,7 @@ fn root_zero_and_one_option_paint_and_activation() {
 }
 
 #[test]
-fn root_hover_cursor_paints_only_stripe_and_busy_freezes_admission() {
+fn root_hover_cursor_paints_wash_and_stripe_and_busy_freezes_admission() {
     for dark in [false, true] {
         let mut f = Fixture::new(DialogKind::ExtensionSelect, 3, dark, false);
         let at = f.bounds("option-1").center();
@@ -223,9 +223,9 @@ fn root_hover_cursor_paints_only_stripe_and_busy_freezes_admission() {
             let t = tokens(dark);
             let scale = w.scale_factor();
             let scaled_row = row.scale(scale);
-            assert!(!w.painted_quads().iter().any(|q| q.background
+            assert!(w.painted_quads().iter().any(|q| q.background
                 == rgba(if dark { 0x47526633 } else { 0x6b7d8f1a }).into()
-                && q.bounds.contains(&scaled_row.center())));
+                && q.bounds == scaled_row));
             assert!(
                 w.painted_quads()
                     .iter()

@@ -250,6 +250,37 @@ use gpui_kit::{
 };
 use std::time::Duration;
 
+/// MarkdownContent's path feedback is a roomier surface, not UiTooltip.
+/// Placement and source admission remain with the shell.
+pub(super) fn feedback_surface(
+    message: &'static str,
+    dark: bool,
+    viewport_width: Pixels,
+) -> gpui_kit::Div {
+    use crate::components::support;
+    use gpui_kit::{TestSupportExt, div, prelude::*, px, relative, rgb};
+    let t = support::tokens(dark);
+    let error = !matches!(message, "Opening…" | "Copied");
+    div()
+        .max_w(px(240.).min((viewport_width - px(16.)).max(px(0.))))
+        .px(px(8.))
+        .py(px(5.))
+        .border_1()
+        .border_color(support::tooltip_border(dark))
+        .rounded(px(6.))
+        .bg(rgb(t.panel_raised))
+        .shadow(support::tooltip_shadow(dark))
+        .text_color(rgb(if error { t.danger } else { t.text }))
+        .text_size(px(10.))
+        .line_height(relative(1.3))
+        .child(
+            div()
+                .id("file-link-feedback-label")
+                .test_support()
+                .child(message),
+        )
+}
+
 #[derive(Clone, PartialEq, Eq)]
 struct Binding {
     runtime: String,
@@ -937,7 +968,7 @@ impl Shell {
     }
     #[expect(
         clippy::too_many_arguments,
-        reason = "Source admission requires the runtime, origin focus and pointer alongside the link"
+        reason = "Source admission requires the runtime, origin focus and link anchor"
     )]
     pub(super) fn open_source_link(
         &mut self,
@@ -1335,3 +1366,7 @@ impl Shell {
 #[cfg(test)]
 #[path = "file_preview_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tooltip_presentation_tests.rs"]
+mod tooltip_presentation_tests;

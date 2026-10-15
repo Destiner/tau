@@ -1,3 +1,4 @@
+use super::markdown::LinkActivationExt as _;
 use super::{
     markdown::{self, MarkdownPresentation},
     support::{self, ButtonVariant},
@@ -22,18 +23,7 @@ struct QueueHint {
 }
 impl Render for QueueHint {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let t = support::tokens(self.dark);
-        div()
-            .id("queue-clear-tooltip")
-            .test_support()
-            .px(px(7.))
-            .py(px(3.))
-            .rounded(px(4.))
-            .border_1()
-            .border_color(rgb(t.border))
-            .bg(rgb(t.panel_raised))
-            .text_color(rgb(t.text))
-            .text_size(px(10.))
+        support::tooltip_surface(div().id("queue-clear-tooltip").test_support(), self.dark)
             .child("Clear All")
     }
 }
@@ -874,7 +864,7 @@ impl Render for MessageQueue {
                     .p(px(9.))
                     .rounded(px(6.))
                     .border_1()
-                    .border_color(rgb(t.border))
+                    .border_color(support::tooltip_border(self.dark))
                     .bg(rgb(t.panel_raised))
                     .shadow(vec![
                         BoxShadow::new(
@@ -882,7 +872,7 @@ impl Render for MessageQueue {
                             px(5.),
                             rgba(if self.dark { 0x00000073 } else { 0x0000001f }).into(),
                         )
-                        .blur_radius(px(16.)),
+                        .blur_radius(px(8.)),
                     ])
                     .flex()
                     .flex_col()
@@ -903,17 +893,17 @@ impl Render for MessageQueue {
                                 window,
                                 cx,
                             )
-                            .on_link_activate({
+                            .on_link_activate_at({
                                 let entity = cx.entity().downgrade();
                                 let preview = self.preview.clone();
-                                move |link, event, _, cx| {
+                                move |link, event, anchor, _, cx| {
                                     let Some(target) = markdown::activation_target(link, event)
                                     else {
                                         return;
                                     };
                                     let _ = entity.update(cx, |queue, cx| {
                                         if queue.preview == preview {
-                                            queue.link_anchor = Some(event.position());
+                                            queue.link_anchor = Some(anchor);
                                             cx.emit(QueueEvent::OpenLink(target));
                                         }
                                     });

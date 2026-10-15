@@ -64,6 +64,53 @@ pub fn activation_target(
     Some(destination)
 }
 
+/// Inline activations use rendered occurrence geometry. Non-inline linked images
+/// retain their existing activation callback until Base exposes their bounds too.
+pub trait LinkActivationExt {
+    fn on_link_activate_at(
+        self,
+        handler: impl Fn(
+            &gpui_kit::base::text::InlineLinkTarget,
+            &gpui_kit::ClickEvent,
+            gpui_kit::Point<gpui_kit::Pixels>,
+            &mut Window,
+            &mut App,
+        ) + Send
+        + Sync
+        + 'static,
+    ) -> Self;
+}
+
+impl LinkActivationExt for TextView {
+    fn on_link_activate_at(
+        self,
+        handler: impl Fn(
+            &gpui_kit::base::text::InlineLinkTarget,
+            &gpui_kit::ClickEvent,
+            gpui_kit::Point<gpui_kit::Pixels>,
+            &mut Window,
+            &mut App,
+        ) + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        let handler = std::sync::Arc::new(handler);
+        let legacy = handler.clone();
+        self.on_link_activate(move |target, event, w, cx| {
+            legacy(target, event, event.position(), w, cx)
+        })
+        .on_link_activate_anchored(move |target, event, bounds, w, cx| {
+            handler(
+                target,
+                event,
+                gpui_kit::point(bounds.left(), bounds.bottom()),
+                w,
+                cx,
+            );
+        })
+    }
+}
+
 pub fn extensions() -> MarkdownExtensions {
     MarkdownExtensions::default()
         .soft_breaks(true)
@@ -782,12 +829,12 @@ impl Render for MarkdownView {
         let view = MarkdownPresentation::decorate(&self.presentation, 13., self.dark, window, cx)
             .scrollable(!self.natural_height)
             .when(!self.natural_height, |view| view.size_full())
-            .on_link_activate(move |target, event, _, _| {
+            .on_link_activate_at(move |target, event, anchor, _, _| {
                 let Some(destination) = activation_target(target, event) else {
                     return;
                 };
                 if let Some(handler) = &target_handler {
-                    handler(destination, event.position());
+                    handler(destination, anchor);
                 } else if let LinkTarget::Web(url) = destination {
                     handler(&url);
                 }

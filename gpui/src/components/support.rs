@@ -164,6 +164,63 @@ pub fn tokens_for_window(dark: bool, window: &gpui_kit::Window) -> Tokens {
     t
 }
 
+/// Preserve CSS --border alpha on raised tooltip surfaces, not the canvas approximation.
+pub fn tooltip_border(dark: bool) -> gpui_kit::Rgba {
+    if dark {
+        rgb(tokens(true).border)
+    } else {
+        gpui_kit::Rgba {
+            a: 0.24,
+            ..rgb(0x6b7d8f)
+        }
+    }
+}
+
+/// CSS `0 8px 20px var(--shadow-soft)`; GPUI's blur radius is Gaussian sigma.
+pub fn tooltip_shadow(dark: bool) -> Vec<gpui_kit::BoxShadow> {
+    vec![
+        gpui_kit::BoxShadow::new(
+            px(0.),
+            px(8.),
+            rgba(if dark { 0x00000073 } else { 0x0000001f }).into(),
+        )
+        .blur_radius(px(10.)),
+    ]
+}
+
+/// UiTooltip's compact surface only. Owners retain semantics, timing and placement.
+pub fn tooltip_surface<E: Styled>(surface: E, dark: bool) -> E {
+    let t = tokens(dark);
+    surface
+        .max_w(px(260.))
+        .px(px(7.))
+        .py(px(3.))
+        .rounded(px(4.))
+        .border_1()
+        .border_color(tooltip_border(dark))
+        .bg(rgb(t.panel_raised))
+        .shadow(tooltip_shadow(dark))
+        .text_color(rgb(t.text))
+        .text_size(px(10.))
+        .line_height(gpui_kit::relative(1.25))
+}
+
+pub fn tooltip_shortcut<E: Styled>(surface: E, dark: bool) -> E {
+    let t = tokens(dark);
+    surface
+        .px(px(4.))
+        .py(px(1.))
+        .border_1()
+        .border_color(gpui_kit::Rgba {
+            a: 0.35,
+            ..rgb(t.muted)
+        })
+        .rounded(px(3.))
+        .text_color(rgb(t.muted))
+        .text_size(px(10.))
+        .line_height(gpui_kit::relative(1.2))
+}
+
 pub fn root(dark: bool) -> gpui_kit::Div {
     let t = tokens(dark);
     div()

@@ -679,7 +679,7 @@ impl Render for AdminControls {
                                     .py(px(3.))
                                     .rounded(px(4.))
                                     .border_1()
-                                    .border_color(rgb(t.border))
+                                    .border_color(support::tooltip_border(self.dark))
                                     .bg(rgb(t.panel_raised))
                                     .shadow(vec![
                                         BoxShadow::new(

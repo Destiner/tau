@@ -2,7 +2,7 @@
 
 ## Prepared dependency set
 
-`gpui/scripts/prepare.ts` registers **32 Base patches**, **eleven Core patches**,
+`gpui/scripts/prepare.ts` registers **33 Base patches**, **eleven Core patches**,
 and **five macOS patches**, including the native interaction and accessibility
 fixes below; **two merman-core patches** (parser manifest and ER
 semantic default direction); **one merman-analysis manifest patch**; **four
@@ -41,9 +41,24 @@ These are focused compatibility patches, not a commitment to a long-lived fork. 
 
 Extraction outside the checkout is intentional: `git apply` run in a nested dependency directory can silently skip all unprefixed paths and still return zero. Preparation also places the published README at the workspace-relative path required by an upstream test include.
 
+## Link activation geometry
+
+`link-activation-bounds.patch` adds `TextView::on_link_activate_anchored` without
+changing `on_link_activate`, context-menu events or `ClickEvent`. Inline prepaint
+records shaped LinkMark range bounds. InlineFlow unions the current rendered
+fragments by their original source-range occurrence, not URL, and clears those
+bounds before each prepaint. Mouse and keyboard activation resolve the same
+occurrence's union after layout; no cold document projection or font-height guess
+is used. Tau forwards its bottom-left through the existing Point event chain.
+Feedback measures its owned surface with Positioner corner/TopLeft and margin8.
+Tau's adapter retains the legacy activation callback for non-inline linked images,
+which do not participate in Inline/InlineFlow link-range geometry; no image bounds
+are invented. Generated links always use the anchored callback.
+Registration requires official serial preparation before compiling consumers.
+
 ## Font-metric text selection paint
 
-`textselection-paint.patch` is applied last to Base. The opt-in
+`textselection-paint.patch` precedes `link-activation-bounds.patch` in Base. The opt-in
 `TextViewStyle::with_font_metric_selection(true)` paints each selected row using
 its resolved shaped ascent plus absolute descent, centered on the existing text
 baseline. InlineFlow shares the largest resolved text metrics on each row across

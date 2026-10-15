@@ -1,3 +1,4 @@
+use super::markdown::LinkActivationExt as _;
 use super::{
     markdown::{self, MarkdownPresentation},
     menus::{Menu, MenuEvent, MenuItem},
@@ -1013,7 +1014,7 @@ impl NativeDialog {
                             .scrollable(false)
                             .text_size(px(13.))
                             .line_height(gpui_kit::relative(1.62))
-                            .on_link_activate(move |link, event, window, cx| {
+                            .on_link_activate_at(move |link, event, anchor, window, cx| {
                                 let Some(target) = markdown::activation_target(link, event) else {
                                     return;
                                 };
@@ -1025,13 +1026,7 @@ impl NativeDialog {
                                     (dialog.on_target_link.clone(), dialog.on_link.clone())
                                 };
                                 if let Some(handler) = &title_target {
-                                    handler(
-                                        target,
-                                        window.focused(cx),
-                                        event.position(),
-                                        window,
-                                        cx,
-                                    );
+                                    handler(target, window.focused(cx), anchor, window, cx);
                                 } else if let markdown::LinkTarget::Web(url) = target {
                                     title_link(&url, window, cx);
                                 }
@@ -1060,8 +1055,8 @@ impl NativeDialog {
                                 markdown::text_style_at_size(self.dark, 13., window)
                                     .with_foreground(rgb(t.muted).into()),
                             )
-                            .on_link_activate(
-                                move |link, event, window, cx| {
+                            .on_link_activate_at(
+                                move |link, event, anchor, window, cx| {
                                     let Some(target) = markdown::activation_target(link, event)
                                     else {
                                         return;
@@ -1074,13 +1069,7 @@ impl NativeDialog {
                                         (dialog.on_target_link.clone(), dialog.on_link.clone())
                                     };
                                     if let Some(handler) = &message_target {
-                                        handler(
-                                            target,
-                                            window.focused(cx),
-                                            event.position(),
-                                            window,
-                                            cx,
-                                        );
+                                        handler(target, window.focused(cx), anchor, window, cx);
                                     } else if let markdown::LinkTarget::Web(url) = target {
                                         message_link(&url, window, cx);
                                     }
@@ -1105,6 +1094,7 @@ impl NativeDialog {
                 let scroll = self.content_scroll.clone();
                 let reveal = self.reveal_cursor.clone();
                 let cursor = self.cursor == ix;
+                let wash = rgba(if self.dark { 0x47526633 } else { 0x6b7d8f1a });
                 let embedded = self.embedded;
                 let reveal_option = self.reveal_option.clone();
                 options = options.child(
@@ -1168,6 +1158,9 @@ impl NativeDialog {
                                 .cursor_default()
                                 .text_color(rgb(t.text))
                                 .opacity(if disabled { 0.45 } else { 1. })
+                                // UiPickRow uses --hover for both pointer and keyboard cursor.
+                                .when(cursor, |s| s.bg(wash))
+                                .hover(move |s| if cursor || !disabled { s.bg(wash) } else { s })
                                 .when(self.cursor == ix, |s| {
                                     s.child(
                                         div()
@@ -1410,6 +1403,10 @@ impl Render for NativeDialog {
         page.when(self.open, |page| page.child(self.context_menu.clone()))
     }
 }
+
+#[cfg(test)]
+#[path = "dialogs_option_wash_tests.rs"]
+mod option_wash_tests;
 
 #[cfg(test)]
 #[path = "dialogs_parity_tests.rs"]

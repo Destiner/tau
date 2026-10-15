@@ -776,7 +776,7 @@ fn viewer_context_never_activates_and_escape_cannot_close_the_document_under_its
     });
 }
 
-fn production_link_fixture() -> (TestApp, TestAppWindow<Root>, Entity<Shell>) {
+pub(super) fn production_link_fixture() -> (TestApp, TestAppWindow<Root>, Entity<Shell>) {
     let (app, mut window, shell) = shell_fixture();
     window.update(|_, window, cx| shell.update(cx, |shell, cx| {
         let live = shell.sessions.get_mut("preview-fixture").unwrap();
@@ -793,7 +793,7 @@ fn production_link_fixture() -> (TestApp, TestAppWindow<Root>, Entity<Shell>) {
     (app, window, shell)
 }
 
-fn production_context_point(
+pub(super) fn production_context_point(
     window: &mut TestAppWindow<Root>,
     shell: &Entity<Shell>,
 ) -> Point<Pixels> {
@@ -849,6 +849,8 @@ fn production_transcript_root_context_full_copy_and_genuine_activation_delayed_f
         })
     });
     window.simulate_click(anchor, MouseButton::Left);
+    let link_anchor = window.update(|_, _, cx| shell.read(cx).preview.request_anchor.unwrap());
+    assert!(link_anchor.x <= anchor.x && link_anchor.y > anchor.y);
     let elsewhere = window.update(|_, window, _| window.find("editor").bounds().center());
     window.simulate_mouse_move(elsewhere);
     app.run_until_parked();
@@ -860,8 +862,11 @@ fn production_transcript_root_context_full_copy_and_genuine_activation_delayed_f
     window.draw();
     window.update(|_, window, cx| {
         assert_eq!(shell.read(cx).preview_feedback(), Some("Opening…"));
-        assert_eq!(shell.read(cx).preview_anchor(), Some(anchor));
-        assert_eq!(window.find("file-link-feedback").bounds().left(), anchor.x);
+        assert_eq!(shell.read(cx).preview_anchor(), Some(link_anchor));
+        assert_eq!(
+            window.find("file-link-feedback").bounds().left(),
+            link_anchor.x
+        );
         assert!(shell.read(cx).error.is_none());
     });
     sender
@@ -874,7 +879,10 @@ fn production_transcript_root_context_full_copy_and_genuine_activation_delayed_f
             shell.read(cx).preview_feedback(),
             Some("Preview unavailable")
         );
-        assert_eq!(window.find("file-link-feedback").bounds().left(), anchor.x);
+        assert_eq!(
+            window.find("file-link-feedback").bounds().left(),
+            link_anchor.x
+        );
         assert!(shell.read(cx).error.is_none());
     });
 }
@@ -1287,7 +1295,8 @@ fn root_delayed_opening_and_error_feedback_use_the_captured_pointer_not_latest_p
         assert_eq!(shell.read(cx).preview_anchor(), Some(anchor));
         let bounds = window.find("file-link-feedback").bounds();
         assert_eq!(bounds.left(), anchor.x);
-        assert_eq!(bounds.top(), anchor.y + px(8.));
+        assert_eq!(bounds.top(), anchor.y + px(6.));
+        assert!(bounds.size.width > px(0.) && bounds.size.height > px(0.));
         assert!(shell.read(cx).error.is_none());
     });
     sender

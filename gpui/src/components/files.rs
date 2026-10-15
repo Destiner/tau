@@ -962,13 +962,19 @@ mod tests {
         });
         window.simulate_mouse_down(at, MouseButton::Left, Modifiers::default());
         window.simulate_mouse_up(at, MouseButton::Left, Modifiers::default());
-        assert_eq!(
-            requests.lock().unwrap().as_slice(),
-            &[MarkdownLinkRequested {
-                target: super::super::markdown::LinkTarget::explicit("docs/related.md").unwrap(),
-                anchor: at,
-            }]
-        );
+        let anchor = {
+            let requests = requests.lock().unwrap();
+            assert_eq!(requests.len(), 1);
+            assert_eq!(
+                requests[0].target,
+                super::super::markdown::LinkTarget::explicit("docs/related.md").unwrap()
+            );
+            let anchor = requests[0].anchor;
+            assert!(bounds.size.width > px(0.) && bounds.size.height > px(0.));
+            assert_eq!(anchor.x, bounds.left());
+            assert!(anchor.y > at.y && anchor.y <= bounds.bottom());
+            anchor
+        };
         window.update(|window, cx| {
             assert!(!viewer.read(cx).is_closed());
             // Selection owns focus after a pointer press; Tab reaches the inline
@@ -988,6 +994,7 @@ mod tests {
             "real keyboard input must activate the document link"
         );
         assert_eq!(requests[1].target, requests[0].target);
+        assert_eq!(requests[1].anchor, anchor);
         let bounds = window.update(|_, cx| text.read(cx).bounds());
         assert!(requests[1].anchor.x >= bounds.left() && requests[1].anchor.x <= bounds.right());
         assert!(requests[1].anchor.y > bounds.top() && requests[1].anchor.y <= bounds.bottom());

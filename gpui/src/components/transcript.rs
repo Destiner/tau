@@ -1,4 +1,5 @@
 //! Session-local transcript. Sources outlive the bounded presentation cache.
+use super::markdown::LinkActivationExt as _;
 use super::{
     activity::{ActivityContent, ActivityEvent, ActivityRow, ActivitySource},
     dialogs::NativeDialog,
@@ -1459,12 +1460,12 @@ impl Render for Transcript {
                             .when(notice.is_some(), |prose| {
                                 prose.line_height(gpui_kit::relative(1.5))
                             })
-                            .on_link_activate(move |link, event, window, cx| {
+                            .on_link_activate_at(move |link, event, anchor, window, cx| {
                                 let Some(target) = markdown::activation_target(link, event) else { return; };
                                 let origin = window.focused(cx);
                                 let _ = notify.update(cx, |this, cx| {
                                     if this.prose_index(key).is_some_and(|ix| this.rows[ix].link_revision == link_revision) && matches!(this.cache.get(&key), Some(Mounted { view: View::Prose(_, current), .. }) if current == &source_presentation) {
-                                        cx.emit(TranscriptEvent::LinkRequested { key, target, origin, anchor: event.position() });
+                                        cx.emit(TranscriptEvent::LinkRequested { key, target, origin, anchor });
                                     }
                                 });
                             })

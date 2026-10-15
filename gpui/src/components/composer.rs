@@ -1295,47 +1295,20 @@ impl Render for Composer {
                         .offset(px(6.))
                         .margin(px(6.))
                         .child(
-                            Tooltip::new("composer-tooltip")
-                                .max_w(px(260.))
-                                .px(px(7.))
-                                .py(px(3.))
-                                .border_1()
-                                .border_color(rgb(t.border))
-                                .rounded(px(4.))
-                                .bg(rgb(t.panel_raised))
-                                .text_color(rgb(t.text))
-                                .text_size(px(10.))
-                                .line_height(gpui_kit::relative(1.25))
-                                .shadow(vec![
-                                    BoxShadow::new(
-                                        px(0.),
-                                        px(8.),
-                                        rgba(if self.dark { 0x00000073 } else { 0x0000001f })
-                                            .into(),
-                                    )
-                                    .blur_radius(px(10.)),
-                                ])
+                            support::tooltip_surface(Tooltip::new("composer-tooltip"), self.dark)
                                 .flex()
                                 .items_center()
                                 .gap(px(8.))
                                 .child(label)
                                 .child(
-                                    div()
-                                        .id("composer-tooltip-shortcut")
-                                        .test_support()
-                                        .flex_shrink_0()
-                                        .px(px(4.))
-                                        .py(px(1.))
-                                        .border_1()
-                                        .border_color(gpui_kit::Rgba {
-                                            a: 0.35,
-                                            ..rgb(t.muted)
-                                        })
-                                        .rounded(px(3.))
-                                        .text_color(rgb(t.muted))
-                                        .text_size(px(10.))
-                                        .line_height(gpui_kit::relative(1.2))
-                                        .child(shortcut),
+                                    support::tooltip_shortcut(
+                                        div()
+                                            .id("composer-tooltip-shortcut")
+                                            .test_support()
+                                            .flex_shrink_0(),
+                                        self.dark,
+                                    )
+                                    .child(shortcut),
                                 ),
                         ),
                 )

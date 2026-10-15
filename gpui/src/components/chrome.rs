@@ -172,6 +172,8 @@ struct Hint {
     surface_bounds: AnchorBounds,
     #[cfg(test)]
     rendered_label: RefCell<Option<String>>,
+    #[cfg(test)]
+    label_layout: RefCell<Option<gpui_kit::gpui::TextLayout>>,
 }
 impl Hint {
     fn new() -> Self {
@@ -183,6 +185,8 @@ impl Hint {
             surface_bounds: Rc::new(Cell::new(None)),
             #[cfg(test)]
             rendered_label: RefCell::new(None),
+            #[cfg(test)]
+            label_layout: RefCell::new(None),
         }
     }
     fn anchor(&mut self, id: &str) -> AnchorBounds {
@@ -295,7 +299,7 @@ impl Hint {
             .py(px(9.))
             .rounded(px(4.))
             .border_1()
-            .border_color(rgb(t.border))
+            .border_color(support::tooltip_border(dark))
             .bg(rgb(t.panel_raised))
             .shadow(vec![
                 BoxShadow::new(
@@ -354,6 +358,7 @@ impl Hint {
         bottom: bool,
         label: &str,
         shortcut: Option<&str>,
+        window: &Window,
     ) -> Option<impl IntoElement> {
         let id = self.visible.as_ref()?;
         let anchor = self.anchors.iter().find(|(name, _)| name == id)?.1.get()?;
@@ -362,43 +367,20 @@ impl Hint {
             Some(shortcut) => format!("{label} {shortcut}"),
             None => label.to_owned(),
         }));
-        let t = support::tokens(dark);
-        let surface = div()
-            .max_w(px(260.))
-            .px(px(7.))
-            .py(px(3.))
-            .rounded(px(4.))
-            .border_1()
-            .border_color(rgb(t.border))
-            .bg(rgb(t.panel_raised))
-            .shadow(vec![
-                BoxShadow::new(
-                    px(0.),
-                    px(8.),
-                    rgba(if dark { 0x00000073 } else { 0x0000001f }).into(),
-                )
-                // GPUI takes Gaussian sigma; CSS's 20px blur uses half that value.
-                .blur_radius(px(10.)),
-            ])
-            .text_size(px(10.))
-            .line_height(gpui_kit::relative(1.25))
-            .text_color(rgb(t.text))
+        let surface = support::tooltip_surface(div(), dark)
+            .max_w(px(260.).min((window.viewport_size().width - px(12.)).max(px(0.))))
             .flex()
             .items_center()
             .gap(px(8.))
-            .child(label.to_owned())
+            // A bare text flex item keeps its intrinsic width despite the surface cap.
+            .child(div().min_w_0().child({
+                let text = gpui_kit::gpui::StyledText::new(label.to_owned());
+                #[cfg(test)]
+                self.label_layout.replace(Some(text.layout().clone()));
+                text
+            }))
             .when_some(shortcut.map(str::to_owned), move |d, shortcut| {
-                d.child(
-                    div()
-                        .px(px(4.))
-                        .py(px(1.))
-                        .border_1()
-                        .border_color(rgba(if dark { 0x6c738059 } else { 0x6e757f59 }))
-                        .rounded(px(3.))
-                        .text_size(px(10.))
-                        .text_color(rgb(t.muted))
-                        .child(shortcut),
-                )
+                d.child(support::tooltip_shortcut(div().flex_shrink_0(), dark).child(shortcut))
             });
         let surface = div().id("chrome-tooltip").test_support().child(surface);
         Some(
@@ -2887,7 +2869,7 @@ impl Render for Sidebar {
                         .find(|project| project.id == project_id)?;
                     return self
                         .hint
-                        .view(dark, true, &project.location, None)
+                        .view(dark, true, &project.location, None, window)
                         .map(IntoElement::into_any_element);
                 }
                 _ if id.starts_with("project-new") => ("New Session", Some("⌘N")),
@@ -2925,7 +2907,7 @@ impl Render for Sidebar {
                         .find(|s| s.id == session_id)?;
                     return self
                         .hint
-                        .view(dark, true, &session.title, None)
+                        .view(dark, true, &session.title, None, window)
                         .map(IntoElement::into_any_element);
                 }
             };
@@ -2935,6 +2917,7 @@ impl Render for Sidebar {
                     id.starts_with("project-") || id.starts_with("session-"),
                     label,
                     shortcut,
+                    window,
                 )
                 .map(IntoElement::into_any_element)
         });
@@ -3600,7 +3583,7 @@ impl Render for Header {
                 "palette" => ("Command Palette", "⌘K"),
                 _ => return None,
             };
-            self.hint.view(dark, true, name, Some(shortcut))
+            self.hint.view(dark, true, name, Some(shortcut), window)
         });
         div()
             .id("header")
@@ -3765,3 +3748,7 @@ mod sidebar_audit_tests;
 #[cfg(test)]
 #[path = "chrome/inactive_tests.rs"]
 mod inactive_tests;
+
+#[cfg(test)]
+#[path = "chrome/tooltip_overflow_tests.rs"]
+mod tooltip_overflow_tests;
