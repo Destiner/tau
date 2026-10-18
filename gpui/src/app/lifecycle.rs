@@ -8,11 +8,19 @@ mod runtimes;
 mod source_recovery;
 use tau_session::session::Identity;
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct RuntimeToken {
+pub(super) const STARTUP_CLEANUP_ERROR: &str = "Pi startup cleanup remains unconfirmed; reconnecting is blocked. Retrying cannot prove remote exit after a transport failure.";
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct RuntimeToken {
     runtime: String,
     attempt: u64,
     generation: u64,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum WorkflowErrorToken {
+    Release(RuntimeToken),
+    Recovery(String, String, u64),
+    Cleanup(String, u64, Option<u64>),
 }
 #[derive(Clone)]
 enum ReleaseReason {
@@ -39,9 +47,14 @@ pub(super) struct State {
     imports: BTreeMap<String, u64>,
     activity: BTreeMap<String, u64>,
     releases: BTreeMap<RuntimeToken, Release>,
+    blocked_cleanup: std::collections::BTreeSet<(String, u64, Option<u64>)>,
+    acknowledged_releases: std::collections::BTreeSet<RuntimeToken>,
+    release_exits: std::collections::BTreeSet<RuntimeToken>,
+    acknowledged_cleanup: std::collections::BTreeSet<(String, u64, Option<u64>)>,
     removals: BTreeMap<String, Removal>,
     removed: std::collections::BTreeSet<String>,
     recoveries: BTreeMap<(String, String, u64), Recovery>,
+    acknowledged_recoveries: std::collections::BTreeSet<(String, String, u64)>,
     cancelled: std::collections::BTreeSet<(String, u64)>,
     pub(super) released: std::collections::BTreeSet<String>,
     pub(super) reconnect_required: std::collections::BTreeSet<String>,
@@ -65,7 +78,8 @@ impl Shell {
             || self.runtime_lifecycle.exit_fence_pending.is_some()
     }
     pub(super) fn retry_exit(&mut self, request: Request, shutdown: bool, cx: &mut Context<Self>) {
-        if self.lifecycle != Some(request)
+        if self.exit_cleanup_blocked()
+            || self.lifecycle != Some(request)
             || !cx.global::<NativeHost>().lifecycle().is_pending(request)
             || self.exit_revision.is_some()
             || !self
@@ -132,6 +146,10 @@ impl Shell {
             return;
         }
         self.drain_exit_durability(cx);
+        if self.exit_cleanup_blocked() {
+            self.quit_error = Some((request, "Remote Pi exit is unconfirmed. Cleanup ownership is retained and closing remains blocked; retry cannot confirm remote exit.".into()));
+            return;
+        }
         if self.quit_error.is_some()
             || self.runtime_lifecycle.exit_fence_pending.is_some()
             || self.exit_storage_pending()
@@ -213,12 +231,16 @@ impl Shell {
                 .cancelled
                 .remove(&(runtime.clone(), attempt));
             self.register_retries.retain(|c| !matches!(c, Command::CancelStart { runtime: r, attempt: a } if r == &runtime && *a == attempt));
+            self.runtime_lifecycle
+                .blocked_cleanup
+                .remove(&(runtime.clone(), attempt, None));
+            self.runtime_lifecycle
+                .acknowledged_cleanup
+                .remove(&(runtime, attempt, None));
         } else {
             if !self.register_retries.iter().any(|c| matches!(c, Command::CancelStart { runtime: r, attempt: a } if r == &runtime && *a == attempt)) {
                 self.register_retries.push(Command::CancelStart { runtime, attempt });
             }
-            self.error =
-                Some("Pi startup cleanup remains unconfirmed; reconnecting is blocked. Retrying cannot prove remote exit after a transport failure.".into());
         }
         self.refresh_window(cx);
     }
@@ -227,10 +249,100 @@ impl Shell {
             .as_ref()
             .is_some_and(|(_, dialog)| dialog.read(cx).is_open())
     }
+    pub(super) fn exit_cleanup_blocked(&self) -> bool {
+        !self.runtime_lifecycle.blocked_cleanup.is_empty()
+    }
+    pub(super) fn cleanup_retry_allowed(&self, command: &Command) -> bool {
+        let owner = match command {
+            Command::CancelStart { runtime, attempt } => (runtime.clone(), *attempt, None),
+            Command::ReleaseRuntime {
+                runtime,
+                attempt,
+                generation,
+            }
+            | Command::DisposeEmpty {
+                runtime,
+                attempt,
+                generation,
+            } => (runtime.clone(), *attempt, Some(*generation)),
+            _ => return true,
+        };
+        !self.runtime_lifecycle.blocked_cleanup.contains(&owner)
+    }
+    pub(super) fn acknowledge_empty_cleanup(
+        &mut self,
+        runtime: &str,
+        attempt: u64,
+        generation: u64,
+    ) {
+        let owner = (runtime.into(), attempt, Some(generation));
+        self.runtime_lifecycle.blocked_cleanup.remove(&owner);
+        self.runtime_lifecycle.acknowledged_cleanup.remove(&owner);
+    }
+    pub(super) fn block_cleanup(&mut self, runtime: String, attempt: u64, generation: Option<u64>) {
+        let owned = match generation {
+            Some(generation) => {
+                self.runtime_lifecycle.releases.contains_key(&RuntimeToken {
+                    runtime: runtime.clone(),
+                    attempt,
+                    generation,
+                }) || self
+                    .empty_disposals
+                    .contains(&(runtime.clone(), attempt, generation))
+            }
+            None => self
+                .runtime_lifecycle
+                .cancelled
+                .contains(&(runtime.clone(), attempt)),
+        };
+        if owned
+            && self
+                .runtime_lifecycle
+                .blocked_cleanup
+                .insert((runtime, attempt, generation))
+            && let Some(request) = self.lifecycle
+        {
+            self.quit_error = Some((request, "Remote Pi exit is unconfirmed. Cleanup ownership is retained and closing remains blocked; retry cannot confirm remote exit.".into()));
+            // Recreate the existing close surface without an ineffective action.
+            self.confirmation = None;
+        }
+    }
+    pub(super) fn fallback_retry_pending(&self) -> bool {
+        if self.error.is_none()
+            && let Some((WorkflowErrorToken::Cleanup(runtime, attempt, generation), _)) =
+                self.workflow_failure(&self.active)
+        {
+            return !self
+                .runtime_lifecycle
+                .blocked_cleanup
+                .contains(&(runtime, attempt, generation));
+        }
+        if self.error.is_none()
+            && let Some((WorkflowErrorToken::Release(token), _)) =
+                self.workflow_failure(&self.active)
+        {
+            return self.cleanup_retry_allowed(&Command::ReleaseRuntime {
+                runtime: token.runtime.clone(),
+                attempt: token.attempt,
+                generation: token.generation,
+            });
+        }
+        self.retry_workflow_pending()
+    }
     pub(super) fn retry_workflow_pending(&self) -> bool {
         self.save_failed
-            || !self.register_retries.is_empty()
-            || self.runtime_lifecycle.releases.values().any(|op| op.failed)
+            || self
+                .register_retries
+                .iter()
+                .any(|command| self.cleanup_retry_allowed(command))
+            || self.runtime_lifecycle.releases.iter().any(|(token, op)| {
+                op.failed
+                    && !self.runtime_lifecycle.blocked_cleanup.contains(&(
+                        token.runtime.clone(),
+                        token.attempt,
+                        Some(token.generation),
+                    ))
+            })
             || self.runtime_lifecycle.removals.values().any(|op| op.failed)
             || self
                 .runtime_lifecycle
@@ -256,19 +368,54 @@ impl Shell {
             || !self.runtime_lifecycle.cancelled.is_empty()
     }
     pub(super) fn retry_workflow_operations(&mut self, cx: &mut Context<Self>) {
+        // An old dialog cannot acknowledge the next failed physical attempt.
+        self.fallback = None;
         let retries = std::mem::take(&mut self.register_retries);
         for command in retries {
-            self.dispatch(command, cx);
+            if self.cleanup_retry_allowed(&command) {
+                match &command {
+                    Command::CancelStart { runtime, attempt } => {
+                        self.runtime_lifecycle.acknowledged_cleanup.remove(&(
+                            runtime.clone(),
+                            *attempt,
+                            None,
+                        ));
+                    }
+                    Command::DisposeEmpty {
+                        runtime,
+                        attempt,
+                        generation,
+                    } => {
+                        self.runtime_lifecycle.acknowledged_cleanup.remove(&(
+                            runtime.clone(),
+                            *attempt,
+                            Some(*generation),
+                        ));
+                    }
+                    _ => {}
+                }
+                self.dispatch(command, cx);
+            } else {
+                // A blocked operation still owns its acknowledgement and exit fence.
+                self.register_retries.push(command);
+            }
         }
         let releases: Vec<_> = self
             .runtime_lifecycle
             .releases
             .iter_mut()
             .filter_map(|(token, op)| {
-                if !op.failed {
+                if !op.failed
+                    || self.runtime_lifecycle.blocked_cleanup.contains(&(
+                        token.runtime.clone(),
+                        token.attempt,
+                        Some(token.generation),
+                    ))
+                {
                     return None;
                 }
                 op.failed = false;
+                self.runtime_lifecycle.acknowledged_releases.remove(token);
                 Some(Command::ReleaseRuntime {
                     runtime: token.runtime.clone(),
                     attempt: token.attempt,
@@ -300,6 +447,11 @@ impl Shell {
                     return None;
                 }
                 op.failed = false;
+                self.runtime_lifecycle.acknowledged_recoveries.remove(&(
+                    project.clone(),
+                    id.clone(),
+                    *revision,
+                ));
                 Some(Command::ArchiveSource {
                     project: project.clone(),
                     id: id.clone(),

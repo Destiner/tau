@@ -59,6 +59,29 @@ impl RegistrationTickets {
     }
 }
 
+pub(super) fn stop_cleanup(
+    pi: &PiState,
+    owner: &str,
+    runtime: &str,
+    attempt: u64,
+    generation: Option<u64>,
+    events: &Sender<Event>,
+) -> bool {
+    match pi.stop_checked(owner, runtime) {
+        Ok(_) => true,
+        Err(failure) => {
+            if !failure.retryable {
+                let _ = events.send_blocking(Event::CleanupBlocked {
+                    runtime: runtime.into(),
+                    attempt,
+                    generation,
+                });
+            }
+            false
+        }
+    }
+}
+
 pub(super) fn release_runtime(
     runtime: &str,
     attempt: u64,
@@ -106,6 +129,69 @@ mod registration_review_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn fake_ssh_eof_exit_classifies_release_without_transport_or_auth() {
+        use std::os::unix::fs::PermissionsExt;
+        for code in [0, 255] {
+            let dir = tempfile::tempdir().unwrap();
+            let ssh = dir.path().join("ssh");
+            std::fs::write(
+                &ssh,
+                format!("#!/bin/sh\nwhile IFS= read -r line; do :; done\nexit {code}\n"),
+            )
+            .unwrap();
+            std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let pi = PiState::default();
+            let revision = pi.read_revision().unwrap();
+            pi.claim("owner".into(), revision).unwrap();
+            let generation = pi
+                .start_remote(
+                    "owner".into(),
+                    "remote".into(),
+                    format!("'{}' unused", ssh.to_str().unwrap().replace('\'', "'\\''")),
+                    "/unused".into(),
+                    None,
+                    PiSink::new(Arc::new(|_: PiEvent| {})),
+                )
+                .unwrap();
+            let mut starts = HashMap::from([("remote".into(), 9)]);
+            let mut generations = HashMap::from([("remote".into(), generation)]);
+            let mut registry = generations.clone();
+            let (events, receipts) = async_channel::bounded(8);
+            let success = release_runtime(
+                "remote",
+                9,
+                generation,
+                &mut starts,
+                &mut generations,
+                &mut registry,
+                || {
+                    stop_cleanup(&pi, "owner", "remote", 9, Some(generation), &events)
+                        .then_some(())
+                        .ok_or(())
+                },
+            );
+            assert_eq!(success, code == 0);
+            if code == 0 {
+                assert!(receipts.try_recv().is_err());
+                assert!(starts.is_empty());
+                assert!(generations.is_empty());
+                assert!(registry.is_empty());
+            } else {
+                assert!(
+                    matches!(receipts.try_recv().unwrap(), Event::CleanupBlocked {
+                    runtime, attempt: 9, generation: Some(g),
+                } if runtime == "remote" && g == generation)
+                );
+                assert_eq!(starts["remote"], 9);
+                assert_eq!(generations["remote"], generation);
+                assert_eq!(registry["remote"], generation);
+                assert!(!pi.stop_checked("owner", "remote").err().unwrap().retryable);
+            }
+        }
+    }
+
     #[test]
     fn failed_stop_retains_ack_ownership_and_stale_release_never_stops_successor() {
         let mut starts = HashMap::from([("r".into(), 2)]);

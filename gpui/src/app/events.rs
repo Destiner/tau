@@ -61,6 +61,13 @@ impl Shell {
                 attempt,
                 success,
             } => self.finish_start_cancel(runtime, attempt, success, cx),
+            Event::CleanupBlocked {
+                runtime,
+                attempt,
+                generation,
+            } => {
+                self.block_cleanup(runtime, attempt, generation);
+            }
             Event::RuntimeReleased {
                 runtime,
                 attempt,
@@ -266,6 +273,12 @@ impl Shell {
                 }
             }
             Event::Pi(event) => {
+                if event.kind == "exited"
+                    && (self.reconcile_failed_release_exit(&event.runtime_id, event.generation, cx)
+                        || self.defer_release_exit(&event.runtime_id, event.generation))
+                {
+                    return;
+                }
                 if self.runtime_was_released(&event.runtime_id)
                     && !self
                         .sessions
@@ -346,8 +359,14 @@ impl Shell {
                 stopped,
             } => {
                 self.sidebar_state.invalidate_projection();
-                if let Some(mut saved) = self.pending_saves.remove(&revision)
-                    && success
+                let snapshot = self.pending_saves.remove(&revision);
+                let advances_baseline =
+                    success && snapshot.is_some() && revision > self.saved_revision;
+                if advances_baseline {
+                    self.saved_revision = revision;
+                }
+                if let Some(mut saved) = snapshot
+                    && advances_baseline
                 {
                     for draft in &saved.drafts {
                         if let Some(live) = self.sessions.get_mut(&draft.key) {
@@ -361,8 +380,12 @@ impl Shell {
                             live.persisted_recovered = 0;
                         }
                     }
-                    saved.sidebar_width = self.preferences.sidebar_width;
-                    self.preferences = saved;
+                    // A newer attempt can fail after this write succeeded. Keep
+                    // its durable draft baseline without reinstalling old UI state.
+                    if revision == self.save_revision {
+                        saved.sidebar_width = self.preferences.sidebar_width;
+                        self.preferences = saved;
+                    }
                 }
                 // A physical stop receipt is not itself a storage receipt.
                 // Handoff observed completed output before clearing protocol state.
@@ -387,7 +410,9 @@ impl Shell {
                     live.dirty = true;
                 }
                 if !success {
-                    self.save_failed = true;
+                    if revision == self.save_revision {
+                        self.save_failed = true;
+                    }
                     if let Some((expected, request)) = self
                         .exit_revision
                         .filter(|(expected, _)| *expected == revision)
@@ -395,11 +420,14 @@ impl Shell {
                         let _ = expected;
                         self.quit_error = Some((request, "Draft saving or Pi cleanup remains unconfirmed. Tau will not reconnect automatically. Retrying cannot prove remote exit after a transport failure; closing remains blocked.".into()));
                         self.exit_revision = None;
-                    } else {
+                    } else if revision == self.save_revision {
                         self.error = Some("Drafts could not be saved. Try again.".into());
                     }
                 } else if revision == self.save_revision {
                     self.save_failed = false;
+                    if self.error.as_deref() == Some("Drafts could not be saved. Try again.") {
+                        self.error = None;
+                    }
                 }
                 if success
                     && let Some((expected, request)) = self.exit_revision

@@ -88,12 +88,12 @@ impl Shell {
         };
         if !success {
             op.failed = true;
-            if self.active == op.runtime {
-                self.error = Some("The stale session could not be archived. Retry; your unsent source is retained.".into());
-            }
             return true;
         }
         let op = self.runtime_lifecycle.recoveries.remove(&token).unwrap();
+        self.runtime_lifecycle
+            .acknowledged_recoveries
+            .remove(&token);
         if let Some(workspace) = &mut self.workspace
             && let Some(row) = workspace
                 .projects

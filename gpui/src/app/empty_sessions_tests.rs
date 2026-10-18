@@ -198,7 +198,11 @@ fn cleanup_failure_keeps_one_retry_and_acknowledgement_releases_it() {
             })
             .unwrap();
         assert!(s.discard_empty_before_switch("valid-target", cx));
-        assert!(s.error.is_some());
+        assert!(
+            s.error.is_none(),
+            "cleanup feedback has its own occurrence owner"
+        );
+        assert!(s.workflow_failure(&s.active).is_some());
         assert_eq!(s.register_retries.len(), 1);
         let _ = requests.try_recv();
         let Command::DisposeEmpty {

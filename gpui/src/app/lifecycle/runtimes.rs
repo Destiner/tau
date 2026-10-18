@@ -1,27 +1,171 @@
 use super::*;
 
+pub(super) const CLEANUP_ERROR: &str = "Pi could not be stopped. Tau retained cleanup ownership and blocked reconnecting. Retry cleanup; no submitted work will be replayed.";
+pub(super) const REMOTE_CLEANUP_ERROR: &str = "Pi cleanup remains unconfirmed. Tau retained cleanup ownership and blocked reconnecting. Retrying cannot prove remote exit after a transport failure; no submitted work will be replayed.";
+
+pub(super) const RECOVERY_ERROR: &str =
+    "The stale session could not be archived. Retry; your unsent source is retained.";
+
 impl Shell {
-    pub(in crate::app) fn present_workflow_failure(&mut self, key: &str) {
-        if self
+    pub(in crate::app) fn workflow_failure(
+        &self,
+        key: &str,
+    ) -> Option<(WorkflowErrorToken, &'static str)> {
+        let failed = self
             .runtime_lifecycle
             .releases
             .iter()
-            .any(|(token, op)| token.runtime == key && op.failed)
-        {
-            self.error = Some(
-                "Pi cleanup remains unconfirmed. Tau retained cleanup ownership and blocked reconnecting. Retrying cannot prove remote exit after a transport failure; no submitted work will be replayed.".into(),
-            );
-        } else if self
+            .find(|(token, op)| {
+                (token.runtime == key || matches!(op.reason, ReleaseReason::Removed(_)))
+                    && op.failed
+                    && !self
+                        .runtime_lifecycle
+                        .acknowledged_releases
+                        .contains(*token)
+            })
+            .map(|(token, _)| token.clone());
+        if let Some(token) = failed {
+            let blocked = self.runtime_lifecycle.blocked_cleanup.contains(&(
+                token.runtime.clone(),
+                token.attempt,
+                Some(token.generation),
+            ));
+            Some((
+                WorkflowErrorToken::Release(token),
+                if blocked {
+                    REMOTE_CLEANUP_ERROR
+                } else {
+                    CLEANUP_ERROR
+                },
+            ))
+        } else if let Some(token) = self
             .runtime_lifecycle
             .recoveries
-            .values()
-            .any(|op| op.runtime == key && op.failed)
+            .iter()
+            .find(|(token, op)| {
+                op.runtime == key
+                    && op.failed
+                    && !self
+                        .runtime_lifecycle
+                        .acknowledged_recoveries
+                        .contains(*token)
+            })
+            .map(|(token, _)| token.clone())
         {
-            self.error = Some(
-                "The stale session could not be archived. Retry; your unsent source is retained."
-                    .into(),
-            );
+            Some((
+                WorkflowErrorToken::Recovery(token.0, token.1, token.2),
+                RECOVERY_ERROR,
+            ))
+        } else {
+            self.register_retries.iter().find_map(|command| {
+                let (runtime, attempt, generation, message) = match command {
+                    Command::CancelStart { runtime, attempt } => {
+                        (runtime, *attempt, None, STARTUP_CLEANUP_ERROR)
+                    }
+                    Command::DisposeEmpty {
+                        runtime,
+                        attempt,
+                        generation,
+                    } => (
+                        runtime,
+                        *attempt,
+                        Some(*generation),
+                        empty_sessions::CLEANUP_ERROR,
+                    ),
+                    _ => return None,
+                };
+                if (runtime == key || !self.sessions.contains_key(runtime))
+                    && !self.runtime_lifecycle.acknowledged_cleanup.contains(&(
+                        runtime.clone(),
+                        attempt,
+                        generation,
+                    ))
+                {
+                    Some((
+                        WorkflowErrorToken::Cleanup(runtime.clone(), attempt, generation),
+                        message,
+                    ))
+                } else {
+                    None
+                }
+            })
         }
+    }
+    pub(in crate::app) fn acknowledge_workflow_failure(
+        &mut self,
+        token: &WorkflowErrorToken,
+    ) -> bool {
+        if self
+            .workflow_failure(&self.active)
+            .as_ref()
+            .map(|(owner, _)| owner)
+            != Some(token)
+        {
+            return false;
+        }
+        match token {
+            WorkflowErrorToken::Release(token) => {
+                self.runtime_lifecycle
+                    .acknowledged_releases
+                    .insert(token.clone());
+            }
+            WorkflowErrorToken::Recovery(project, id, revision) => {
+                self.runtime_lifecycle.acknowledged_recoveries.insert((
+                    project.clone(),
+                    id.clone(),
+                    *revision,
+                ));
+            }
+            WorkflowErrorToken::Cleanup(runtime, attempt, generation) => {
+                self.runtime_lifecycle.acknowledged_cleanup.insert((
+                    runtime.clone(),
+                    *attempt,
+                    *generation,
+                ));
+            }
+        }
+        true
+    }
+    pub(in crate::app) fn defer_release_exit(&mut self, runtime: &str, generation: u64) -> bool {
+        let token = self
+            .runtime_lifecycle
+            .releases
+            .iter()
+            .find(|(token, op)| {
+                token.runtime == runtime && token.generation == generation && !op.failed
+            })
+            .map(|(token, _)| token.clone());
+        if let Some(token) = token {
+            // Stop drains stdout before its receipt; its terminal event is not
+            // an unexpected transport loss. RPC records still reconcile normally.
+            self.runtime_lifecycle.release_exits.insert(token);
+            true
+        } else {
+            false
+        }
+    }
+    pub(in crate::app) fn reconcile_failed_release_exit(
+        &mut self,
+        runtime: &str,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.runtime_lifecycle.releases.iter().any(|(token, op)| {
+            token.runtime == runtime && token.generation == generation && op.failed
+        }) {
+            return false;
+        }
+        // A retained failed owner has no outstanding receipt to drain this exit.
+        // Disconnect now without treating local transport exit as remote proof.
+        if let Some(live) = self.sessions.get_mut(runtime)
+            && live.controller.generation() == generation
+        {
+            let effects = live.controller.backend_stopped(generation);
+            live.dirty = true;
+            live.projection_dirty = true;
+            self.effects(runtime, effects, cx);
+        }
+        true
     }
     pub(in crate::app) fn touch_runtime(&mut self, key: &str) {
         self.runtime_lifecycle.sequence += 1;
@@ -159,10 +303,14 @@ impl Shell {
         };
         if !success {
             op.failed = true;
-            if matches!(op.reason, ReleaseReason::Removed(_)) || self.active == runtime {
-                self.error = Some(
-                    "Pi cleanup remains unconfirmed. Tau retained cleanup ownership and blocked reconnecting. Retrying cannot prove remote exit after a transport failure; no submitted work will be replayed.".into(),
-                );
+            if self.runtime_lifecycle.release_exits.remove(&token)
+                && let Some(live) = self.sessions.get_mut(&runtime)
+                && live.controller.generation() == generation
+            {
+                let effects = live.controller.backend_stopped(generation);
+                live.dirty = true;
+                live.projection_dirty = true;
+                self.effects(&runtime, effects, cx);
             }
             return;
         }
@@ -197,6 +345,13 @@ impl Shell {
         }
         // Keep the operation owner until the stopped generation is reconciled.
         self.runtime_lifecycle.releases.remove(&token);
+        self.runtime_lifecycle.release_exits.remove(&token);
+        self.runtime_lifecycle.acknowledged_releases.remove(&token);
+        self.runtime_lifecycle.blocked_cleanup.remove(&(
+            runtime.clone(),
+            attempt,
+            Some(generation),
+        ));
         if resume && self.active == runtime {
             self.resume_runtime(&runtime, cx);
         }

@@ -61,7 +61,7 @@ fn pending_retry_has_no_footer_and_palette_dispatches_owned_cleanup_once() {
                 cx,
             );
             s.sync(w, cx);
-            assert!(s.error.is_some());
+            assert!(s.workflow_failure(&s.active).is_some());
             assert!(s.retry_workflow_pending());
             assert_eq!(s.register_retries.len(), 1);
             assert_eq!(s.empty_disposals.len(), 1);
@@ -76,7 +76,7 @@ fn pending_retry_has_no_footer_and_palette_dispatches_owned_cleanup_once() {
             let s = shell.read(cx);
             assert_eq!(s.register_retries.len(), 1);
             assert_eq!(s.empty_disposals.len(), 1);
-            assert!(s.error.is_some());
+            assert!(s.workflow_failure(&s.active).is_some());
         });
     }
     assert!(requests.try_recv().is_err(), "render must not retry work");
@@ -98,7 +98,15 @@ fn pending_retry_has_no_footer_and_palette_dispatches_owned_cleanup_once() {
                 && !s.remote.is_open(),
             "no modal blocks palette"
         );
-        assert!(s.error.is_none(), "incident dismissed: {:?}", s.error);
+        assert!(
+            s.error.is_none(),
+            "unowned error remains clear: {:?}",
+            s.error
+        );
+        assert!(
+            s.workflow_failure(&s.active).is_none(),
+            "incident acknowledged"
+        );
         assert!(s.loaded);
         assert!(s.palette.view.is_some());
     });

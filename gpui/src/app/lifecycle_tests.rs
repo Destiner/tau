@@ -8,6 +8,8 @@ use serde_json::json;
 mod batch_stop_review_tests;
 #[path = "lifecycle_cancel_review_tests.rs"]
 mod cancel_review_tests;
+#[path = "cleanup_recovery_tests.rs"]
+mod cleanup_recovery_tests;
 #[cfg(unix)]
 #[path = "input_drain_review_tests.rs"]
 mod input_drain_review_tests;

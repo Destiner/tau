@@ -1,7 +1,8 @@
 //! Empty-session retirement is selection-driven, never a background eviction policy.
 use super::*;
 
-const CLEANUP_ERROR: &str = "An empty session could not stop. Retry cleanup to continue.";
+pub(super) const CLEANUP_ERROR: &str =
+    "An empty session could not stop. Tau retained cleanup ownership and blocked reconnecting.";
 
 impl Shell {
     pub(super) fn discard_empty_before_switch(
@@ -139,7 +140,6 @@ impl Shell {
         {
             self.register_retries.push(command);
         }
-        self.error = Some(CLEANUP_ERROR.into());
         cx.notify();
     }
 
@@ -155,16 +155,13 @@ impl Shell {
             let owned = self
                 .empty_disposals
                 .remove(&(runtime.clone(), attempt, generation));
+            if owned {
+                self.acknowledge_empty_cleanup(&runtime, attempt, generation);
+            }
             self.register_retries.retain(|command| {
                 !matches!(command, Command::DisposeEmpty { runtime: key, attempt: a, generation: g }
                     if key == &runtime && *a == attempt && *g == generation)
             });
-            if owned
-                && self.empty_disposals.is_empty()
-                && self.error.as_deref() == Some(CLEANUP_ERROR)
-            {
-                self.error = None;
-            }
         } else {
             // No automatic tight loop: retry through the existing save/close path.
             let command = Command::DisposeEmpty {

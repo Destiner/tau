@@ -15,7 +15,7 @@ mod admin_backend;
 mod lifecycle;
 #[path = "service_remote.rs"]
 mod remote;
-use lifecycle::{release_runtime, retry_claim};
+use lifecycle::{release_runtime, retry_claim, stop_cleanup};
 pub use remote::{RemoteCommand, RemoteEvent, RemoteOperation, RemoteResult};
 
 #[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -168,6 +168,11 @@ pub enum Event {
         attempt: u64,
         generation: u64,
         success: bool,
+    },
+    CleanupBlocked {
+        runtime: String,
+        attempt: u64,
+        generation: Option<u64>,
     },
     ProjectRemoved {
         project: String,
@@ -523,7 +528,8 @@ fn worker_with_backend(
             }
             Command::CancelStart { runtime, attempt } => {
                 let current = start_attempts.get(&runtime) == Some(&attempt);
-                let success = !current || pi.stop(&owner, &runtime).is_ok();
+                let success =
+                    !current || stop_cleanup(&pi, &owner, &runtime, attempt, None, &events);
                 if current && success {
                     generations.remove(&runtime);
                     registry_generations.remove(&runtime);
@@ -548,7 +554,11 @@ fn worker_with_backend(
                     &mut start_attempts,
                     &mut generations,
                     &mut registry_generations,
-                    || pi.stop(&owner, &runtime).map(|_| ()).map_err(|_| ()),
+                    || {
+                        stop_cleanup(&pi, &owner, &runtime, attempt, Some(generation), &events)
+                            .then_some(())
+                            .ok_or(())
+                    },
                 );
                 if success && !start_attempts.contains_key(&runtime) {
                     runtime_projects.remove(&runtime);
@@ -575,13 +585,12 @@ fn worker_with_backend(
                     &mut retired_attempts,
                 );
                 let success = if matches {
-                    match pi.stop(&owner, &runtime) {
-                        Ok(_) => {
-                            start_attempts.remove(&runtime);
-                            runtime_projects.remove(&runtime);
-                            true
-                        }
-                        Err(_) => false,
+                    if stop_cleanup(&pi, &owner, &runtime, attempt, Some(generation), &events) {
+                        start_attempts.remove(&runtime);
+                        runtime_projects.remove(&runtime);
+                        true
+                    } else {
+                        false
                     }
                 } else {
                     true

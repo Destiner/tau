@@ -26,6 +26,7 @@ pub(super) fn shell(commands: async_channel::Sender<Command>) -> Shell {
         fallback: None,
         preview: file_preview::State::default(),
         save_revision: 0,
+        saved_revision: 0,
         exit_revision: None,
         requested_session: None,
         epoch: Instant::now(),

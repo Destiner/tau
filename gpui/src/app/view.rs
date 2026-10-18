@@ -109,12 +109,23 @@ impl Shell {
 
     fn sync_fallback(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let session = self.sessions.get(&self.active).filter(|live| {
-            live.controller.state().status == Status::Error
+            // The correlated cleanup receipt owns stop failures, not Reconnect.
+            !self.runtime_cleanup_pending(&self.active)
+                && live.controller.state().status == Status::Error
                 && live.controller.state().error.is_some()
                 && !Self::extension_failure_owned(live)
         });
+        // Workflow receipts own their occurrence independently of the app-error
+        // slot, so suppression/navigation cannot acknowledge an unseen failure.
+        let workflow = self
+            .error
+            .is_none()
+            .then(|| self.workflow_failure(&self.active))
+            .flatten();
         let incident = if let Some(error) = &self.error {
             Some((format!("app:{error}"), error.clone(), None))
+        } else if let Some((token, message)) = &workflow {
+            Some((format!("workflow:{token:?}"), (*message).into(), None))
         } else {
             session.map(|live| {
                 let error =
@@ -158,12 +169,12 @@ impl Shell {
         {
             return;
         }
-        let initialize = !self.loaded && session.is_none();
+        let initialize = !self.loaded && session.is_none() && workflow.is_none();
         let action = if initialize {
             "Try Again"
         } else if let Some((_, _, ready, _)) = &session {
             if *ready { "Refresh" } else { "Reconnect" }
-        } else if self.retry_workflow_pending() {
+        } else if self.fallback_retry_pending() {
             "Retry"
         } else {
             ""
@@ -205,6 +216,25 @@ impl Shell {
                     .as_ref()
                     .is_some_and(|(current, dialog)| current == &incident_id && dialog == &source)
                 {
+                    return;
+                }
+                if let Some((token, _)) = &workflow {
+                    if s.error.is_some()
+                        || s.workflow_failure(&s.active)
+                            .as_ref()
+                            .map(|(owner, _)| owner)
+                            != Some(token)
+                    {
+                        return;
+                    }
+                    if matches!(event, DialogEvent::Cancelled) {
+                        s.acknowledge_workflow_failure(token);
+                        s.fallback = None;
+                    } else if matches!(event, DialogEvent::Submitted(_)) {
+                        s.retry_workflows(cx);
+                    }
+                    s.refresh_window(cx);
+                    s.restore_input_focus(cx);
                     return;
                 }
                 if let Some((key, generation, _, token)) = &session {
@@ -974,7 +1004,16 @@ impl Shell {
                     };
                     let dialog = cx.new(|cx| NativeDialog::new(props, dark, window, cx));
                     dialog.update(cx, |d, cx| {
-                        d.set_action_label(if quitting { "Quit" } else { "Close" }, cx)
+                        d.set_action_label(
+                            if self.exit_cleanup_blocked() {
+                                ""
+                            } else if quitting {
+                                "Quit"
+                            } else {
+                                "Close"
+                            },
+                            cx,
+                        )
                     });
                     self.subscriptions.push(cx.subscribe(
                         &dialog,
@@ -1090,7 +1129,6 @@ impl Shell {
                 _ => {}
             }
             self.active = key.clone();
-            self.present_workflow_failure(&key);
             self.mark_sidebar_read(&key);
             self.resume_runtime(&key, cx);
             self.navigate_saved_history(cx);
