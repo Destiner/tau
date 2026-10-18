@@ -333,6 +333,15 @@ struct Pending {
 mod saved_preview;
 pub use saved_preview::SavedPreviewToken;
 
+/// Display-only snapshot. It carries no runtime identity, readiness or admission.
+#[derive(Clone)]
+pub struct SettingsPresentation {
+    pub models: Vec<Value>,
+    pub model: Value,
+    pub efforts: Vec<String>,
+    pub effort: String,
+}
+
 pub struct Controller {
     runtime_id: String,
     generation: u64,
@@ -357,6 +366,13 @@ pub struct Controller {
     scope_revision: u64,
     model_choices_revision: u64,
     commands_revision: u64,
+    commands_loaded: bool,
+    scope_known: bool,
+    model_state_known: bool,
+    presentation_state_floor: u64,
+    catalogue_known: bool,
+    runtime_scope_settled: bool,
+    efforts_known: bool,
     // Idle compaction must not invent a stream when it finishes.
     compaction_working: bool,
     history_layers: Vec<HistoryLayer>,
@@ -394,6 +410,13 @@ impl Controller {
             scope_revision: 0,
             model_choices_revision: 0,
             commands_revision: 0,
+            commands_loaded: false,
+            scope_known: false,
+            model_state_known: false,
+            presentation_state_floor: 0,
+            catalogue_known: false,
+            runtime_scope_settled: false,
+            efforts_known: false,
             compaction_working: false,
             history_layers: vec![],
             first_history_layer: 0,
@@ -491,7 +514,42 @@ impl Controller {
     pub fn commands_revision(&self) -> u64 {
         self.commands_revision
     }
+    pub fn settings_presentation(&self) -> Option<SettingsPresentation> {
+        if !self.connected
+            || !self.state.ready
+            || !self.scope_known
+            || !self.model_state_known
+            || !self.catalogue_known
+            || !self.runtime_scope_settled
+            || !self.efforts_known
+            || self.setting_pending()
+            || self.state.stopping
+            || self.state.compacting
+            || self.state.models.is_empty()
+            || self.state.thinking_levels.is_empty()
+            || !valid_model(&self.state.model)
+            || !self.state.thinking_levels.contains(&self.state.effort)
+        {
+            return None;
+        }
+        Some(SettingsPresentation {
+            models: self
+                .state
+                .selectable_models()
+                .into_iter()
+                .cloned()
+                .collect(),
+            model: self.state.model.clone(),
+            efforts: self.state.thinking_levels.clone(),
+            effort: self.state.effort.clone(),
+        })
+    }
+    pub fn commands_presentation(&self) -> Option<Vec<Value>> {
+        (self.connected && self.state.ready && !self.state.stopping && self.commands_loaded)
+            .then(|| self.state.commands.clone())
+    }
     fn reset_commands(&mut self) {
+        self.commands_loaded = false;
         self.commands_revision += replace_changed(&mut self.state.commands, vec![]) as u64;
     }
     pub fn error_token(&self) -> Option<ErrorToken> {
@@ -577,6 +635,7 @@ impl Controller {
     }
     /// Begin a host settings read. Only the latest read may complete.
     pub fn begin_model_scope_read(&mut self) -> ModelScopeToken {
+        self.scope_known = false;
         self.scope_revision += 1;
         self.model_scope_token()
     }
@@ -592,6 +651,7 @@ impl Controller {
         if !self.connected || *token != self.model_scope_token() {
             return false;
         }
+        self.scope_known = patterns.as_ref().is_some_and(Value::is_array);
         let patterns = match patterns {
             None => Vec::new(),
             Some(Value::Array(patterns)) => patterns
@@ -605,6 +665,11 @@ impl Controller {
         true
     }
     fn reset_model_scope(&mut self) {
+        self.scope_known = false;
+        self.model_state_known = false;
+        self.catalogue_known = false;
+        self.runtime_scope_settled = false;
+        self.efforts_known = false;
         self.scope_revision += 1;
         let changed = replace_changed(&mut self.state.models, Vec::new())
             | replace_changed(&mut self.state.model_scope, Vec::new())
@@ -619,6 +684,18 @@ impl Controller {
         )
     }
     fn send(&mut self, command: &str, mut payload: Value, barrier: bool) -> Effect {
+        // Retained values remain visible locally, but cannot seed another session mid-discovery.
+        match command {
+            "set_model" | "set_thinking_level" => {
+                self.model_state_known = false;
+                self.presentation_state_floor = self.sequence;
+            }
+            "get_state" => self.model_state_known = false,
+            "get_available_models" => self.catalogue_known = false,
+            "get_scoped_models" => self.runtime_scope_settled = false,
+            "get_available_thinking_levels" => self.efforts_known = false,
+            _ => {}
+        }
         let id = self.next_id();
         payload["type"] = json!(command);
         payload["id"] = json!(id);
@@ -942,6 +1019,11 @@ impl Controller {
             return vec![];
         }
         if v["success"] != true {
+            // A correlated rejection proves the optional capability is unavailable; transport
+            // failures and timeouts do not establish a successful host-only discovery round.
+            if p.command == "get_scoped_models" {
+                self.runtime_scope_settled = true;
+            }
             let rename = p.command == "set_session_name";
             self.reject(p, false);
             self.update_status();
@@ -1075,6 +1157,8 @@ impl Controller {
                     };
                     effects.push(self.send_read("get_messages", purpose));
                 }
+                // Old reads still own reconciliation, but not post-mutation presentation.
+                self.model_state_known = p.serial > self.presentation_state_floor;
                 effects.push(self.send("get_available_thinking_levels", json!({}), false));
             }
             "get_messages" => {
@@ -1274,6 +1358,7 @@ impl Controller {
                 }
             }
             "get_available_models" => {
+                self.catalogue_known = d["models"].is_array();
                 let models = array(&d["models"])
                     .into_iter()
                     .filter(valid_model)
@@ -1282,14 +1367,17 @@ impl Controller {
                     replace_changed(&mut self.state.models, models) as u64;
             }
             "get_scoped_models" => {
+                self.runtime_scope_settled = resolved_scope(d).is_some();
                 self.model_choices_revision +=
                     replace_changed(&mut self.state.scoped_models, resolved_scope(d)) as u64;
             }
             "get_commands" => {
+                self.commands_loaded = true;
                 self.commands_revision +=
                     replace_changed(&mut self.state.commands, array(&d["commands"])) as u64;
             }
             "get_available_thinking_levels" => {
+                self.efforts_known = d["levels"].is_array();
                 self.model_choices_revision += replace_changed(
                     &mut self.state.thinking_levels,
                     strings(&d["levels"]).unwrap_or_default(),
@@ -1324,12 +1412,15 @@ impl Controller {
                 effects.push(self.send("get_state", json!({}), false));
             }
             "set_model" => {
+                self.presentation_state_floor = self.sequence;
                 effects.push(self.send("get_state", json!({}), false));
                 effects.extend(self.refresh_models());
             }
-            "set_thinking_level" | "set_session_name" => {
-                effects.push(self.send("get_state", json!({}), false))
+            "set_thinking_level" => {
+                self.presentation_state_floor = self.sequence;
+                effects.push(self.send("get_state", json!({}), false));
             }
+            "set_session_name" => effects.push(self.send("get_state", json!({}), false)),
             "set_steering_mode" | "set_follow_up_mode" => effects.extend(self.continue_queue()),
             "clear_queue" => {
                 self.state.queue_feedback = None;
@@ -1548,6 +1639,7 @@ impl Controller {
         if self.generation == 0 || !self.connected {
             return vec![];
         }
+        self.scope_known = false;
         self.scope_revision += 1;
         vec![
             self.send("get_available_models", json!({}), false),
@@ -1826,6 +1918,11 @@ impl Controller {
         }
     }
     fn reject(&mut self, p: Pending, timeout: bool) {
+        if matches!(p.command.as_str(), "set_model" | "set_thinking_level") {
+            // Reads issued before confirmation cannot resolve a possibly applied mutation.
+            self.model_state_known = false;
+            self.presentation_state_floor = self.sequence;
+        }
         if self.reconciliation_failed(&p) {
             return;
         }
