@@ -51,7 +51,12 @@ fn graceful_remote_reader_cleanup_allows_replacement() {
         true,
     )
     .unwrap();
-    assert_eq!(state.stop("owner-a", "runtime").unwrap(), Some(generation));
+    assert_eq!(
+        state
+            .stop_checked("owner-a", "runtime")
+            .unwrap_or_else(|failure| panic!("{}", failure.message)),
+        Some(generation)
+    );
     assert!(state.inner.lock().unwrap().processes.is_empty());
     let mut replacement = Command::new("sh");
     replacement.args(["-c", "while IFS= read -r line; do :; done; exit 0"]);
@@ -144,7 +149,9 @@ fn killed_ssh_transport_cannot_be_laundered_by_stop_start_or_shutdown() {
         .stop("owner-a", "runtime")
         .unwrap_err()
         .contains("unconfirmed"));
-    assert!(state.stop("owner-a", "runtime").is_err());
+    let failure = state.stop_checked("owner-a", "runtime").err().unwrap();
+    assert!(!failure.retryable);
+    assert!(failure.message.contains("unconfirmed"));
     assert!(state
         .send("owner-a", "runtime".into(), json!({"type": "get_state"}))
         .unwrap_err()

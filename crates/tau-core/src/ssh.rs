@@ -96,7 +96,8 @@ impl SshConnection {
         command
             .args(REMOTE_PI_KEEPALIVE_OPTIONS)
             .args(options)
-            .args(["-S", "none"])
+            // RPC needs byte streams and channel EOF, never terminal semantics.
+            .args(["-S", "none", "-T"])
             .args(SSH_OPTIONS)
             .arg(destination)
             .arg(remote_command);
@@ -451,7 +452,7 @@ mod tests {
 
         {
             let connection = SshConnection::parse(
-                "ssh -o ServerAliveInterval=0 -o ServerAliveCountMax=9 -S /tmp/shared.sock -J jump -p 2222 user@example",
+                "ssh -tt -o RequestTTY=force -o ServerAliveInterval=0 -o ServerAliveCountMax=9 -S /tmp/shared.sock -J jump -p 2222 user@example",
             )
             .expect("remote Pi connection");
             let arguments = connection
@@ -478,6 +479,12 @@ mod tests {
                 .position(|pair| pair == ["-S", "none"])
                 .expect("disabled control socket");
             assert!(disabled_socket > supplied_socket);
+            let no_tty = arguments
+                .iter()
+                .position(|arg| arg == "-T")
+                .expect("RPC disables PTY allocation");
+            let forced_tty = arguments.iter().position(|arg| arg == "-tt").unwrap();
+            assert!(no_tty > forced_tty);
             assert_eq!(arguments.last().map(String::as_str), Some("remote-pi"));
             assert_eq!(
                 arguments.get(arguments.len() - 2).map(String::as_str),
@@ -501,6 +508,7 @@ mod tests {
                 .iter()
                 .any(|argument| argument == "ServerAliveCountMax=3"));
             assert!(!arguments.windows(2).any(|pair| pair == ["-S", "none"]));
+            assert!(!arguments.iter().any(|argument| argument == "-T"));
             assert_eq!(&arguments[..2], ["-p", "2222"]);
         }
     }

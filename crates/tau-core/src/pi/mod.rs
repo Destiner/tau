@@ -11,6 +11,13 @@ pub use transport::PiEvent;
 
 pub type StopOutcome = (String, Result<Option<u64>, String>);
 
+/// Cleanup failures may retain ownership without offering a useful retry.
+#[derive(Debug)]
+pub struct StopFailure {
+    pub message: String,
+    pub retryable: bool,
+}
+
 /// `emit` returns only after accepting the event into the consumer's ordered
 /// queue (or processing it). Deferred enqueueing cannot establish a Stop drain.
 /// Bounded consumers must keep draining while a worker awaits Stop.
@@ -208,6 +215,22 @@ impl PiState {
                 (runtime, result)
             })
             .collect())
+    }
+    pub fn stop_checked(&self, owner: &str, runtime: &str) -> Result<Option<u64>, StopFailure> {
+        self.stop(owner, runtime).map_err(|message| {
+            let unconfirmed = self.inner.lock().ok().is_some_and(|manager| {
+                manager.processes.get(runtime).is_some_and(|process| {
+                    process.owner_id == owner
+                        && process
+                            .remote_uncertain
+                            .load(std::sync::atomic::Ordering::Acquire)
+                })
+            });
+            StopFailure {
+                message,
+                retryable: !unconfirmed,
+            }
+        })
     }
     pub fn stop(&self, owner: &str, runtime: &str) -> Result<Option<u64>, String> {
         let mut manager = self
