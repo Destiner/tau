@@ -66,8 +66,9 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   Cmd-P → switch → Cmd-K works without clicking or reactivating. Warm-session navigation
   returns to the retained composer (or its extension prompt); a newer pointer focus owner
   or overlay wins over the delayed handoff. A starting composer uses shell focus, then
-  receives focus when ready unless another surface owns it. Failed pending operations
-  remain retryable through Cmd-K → Retry Pending Operations; there is no global bottom
+  receives focus when ready unless another surface owns it. Actionable failed operations
+  remain retryable through Cmd-K → Retry Pending Operations; permanently unconfirmed remote
+  cleanup stays owned but is not offered as a futile retry. There is no global bottom
   retry strip. Removing that layout does not acknowledge or discard pending work.
 - Leaving a truly empty, unregistered session retires its UI/runtime without deleting
   Pi files. Pending reads defer the decision; only explicitly abandoned candidates are
@@ -149,6 +150,10 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
 - Palette titles/details clip independently with reserved shortcut space; logical key
   tokens keep Ctrl+Tab and other modifier chords readable. Its retained search editor uses 13px type. Selector glyphs are smaller without shrinking hit areas.
   Shared light/dark scrollbar styles apply to editors, transcript and other scrollers.
+- Unordered Markdown markers use twice the body font size inside the existing marker
+  column, with unchanged body layout, ordered markers and task controls. This is an
+  intentional enlargement beyond Vue, not pixel parity; actual native top-level ink
+  grew from 4.5px to 8.5px across at 2× backing scale.
 - Generated prose file paths and explicit Markdown destinations preserve immutable
   source ownership, decode explicit percent spelling once, and resolve document-relative
   references in their document context. Copy Path and Copy Full Path preserve their
@@ -206,7 +211,17 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
 - Remote cleanup uses the accepted simple policy: natural SSH status 0–254 is proof
   under OpenSSH's remote-command-status assumption; status 255 or local kill is not.
   Uncertainty stays sticky and blocks replacement/reconnect and normal Quit. There is
-  no override button or external-cleanup recovery workflow.
+  no override button or external-cleanup recovery workflow. Typed release/cancel/empty
+  cleanup outcomes distinguish permanent uncertainty from retryable failure, without
+  parsing error prose. Background release feedback stays with its runtime; exact dialog
+  dismissal acknowledges only that occurrence, not physical cleanup. Navigation and
+  suppressed dialogs cannot acknowledge unseen failures. A drained terminal event during
+  an outstanding stop waits for its receipt; a late exit after failure disconnects
+  immediately while retaining uncertainty. RPC output remains admitted throughout.
+- Successful preference writes advance the durable draft baseline monotonically even
+  when a newer write is pending or fails. Only the current save attempt may adopt UI
+  preferences or change visible save-failure state. Bulk shutdown retains its existing
+  aggregate receipt; this is not a complete typed bulk-shutdown failure-model rewrite.
 
 General media, authenticated SSH, broader extension coverage, release packaging and
 production cutover remain unverified. Tree/branch navigation and destructive saved-session
@@ -268,13 +283,20 @@ rename/palette, extension-confirm and queue interactions against production sour
   captures each project's membership/order; arrivals stay hidden until pointer exit,
   including in held-empty projects. Real removals close gaps; phantom materialization
   retains its source association and captured outgoing IDs win during replacement.
-  Footer/titlebar hover is outside this hold; native deactivation releases it.
+  Footer/titlebar hover is outside this hold; native deactivation releases it. The later
+  audit also guards stale deferred hover after exit/blur without forbidding fresh entry
+  in inactive windows. Materialized unregistered phases no longer get phantom priority,
+  and unrelated row updates no longer dismiss a surviving context-menu target.
+  This is not exact Vue parity: Ctrl-Tab uses held/displayed native order versus Vue's
+  live order; submission-clock timing and unregistered multi-phase continuity also differ.
+  Archived ordering is not hover-frozen in either implementation.
 - Sidebar archive controls have the delayed action tooltip and shortcut. Measured
   overlapping action/row hit areas choose one tooltip owner. Archived rows have details
   tooltips; read-only header titles do not advertise Rename.
 - Empty-runtime cleanup has separate pending and failed ownership. Accepted cleanup
-  never paints Retry Save; genuine enqueue/worker failures offer retry. Cleanup still
-  gates shutdown and successful acknowledgements clear only its owned error.
+  never paints Retry Save; retryable enqueue/worker failures offer retry. Permanently
+  uncertain remote cleanup keeps its shutdown fence without an ineffective Retry.
+  Successful acknowledgements retire only their owned feedback.
 - `ComposerBar.vue` / `useTau/composer.ts`: empty or whitespace Enter/Cmd-Enter does
   nothing, even while working. Stop remains an explicit button or Cmd-period action.
 - `useTau/settings.ts`: pending model/effort writes disable and close both selectors,
@@ -297,7 +319,17 @@ release and cutover gates remain as documented above.
 
 ## Current verification boundary
 
-The archive/selection/retry-layout corrections passed **753 GPUI library tests / 1 ignored**,
+The marker/hover/cleanup corrections passed **776 GPUI library tests / 1 ignored**,
+**82 Core / 1 ignored**, **155 controller / 1 opt-in canary ignored**, **16 Tauri compatibility
+checks**, **13 editor integrations**, strict Clippy/static checks and both offscreen Metal
+regressions. Genuine baseline negatives cover normal-exit ordering, deferred hover and marker
+ink. Focused Vue/native marker captures preserve original frames; all changed native pixels
+were confined to unordered markers. The normal-feature optimized release build passed last.
+The repeated-feedback and retry-availability defects are fixed; the reported remote incident's
+exact physical stop outcome remains unknown. Read-only remote version/public-RPC checks found
+EOF shutdown support, not an exit receipt. No remote processes or user data were changed.
+
+The preceding archive/selection/retry-layout corrections passed **753 GPUI library tests / 1 ignored**,
 **155 controller / 1 opt-in canary ignored**, **13 editor integrations**, eight package/version
 checks, strict Clippy/static checks and the offscreen composer regression. A normal-feature
 optimized arm64 release build passed last. Actual Root regressions reproduce the historical

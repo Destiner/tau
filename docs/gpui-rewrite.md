@@ -106,7 +106,19 @@ through normalized CRLF, dehover and nearest-run gaps held across three frames.
 Font-metric paint changes no layout/hit testing; width truncation preserves line height
 and bottom ink. Source owners outlive the 128-view cache. See [APP.md](../gpui/APP.md).
 
-Current archive/selection/retry-layout correction: **753 GPUI passes / 1 ignored**,
+Current marker/hover/cleanup correction: **776 GPUI passes / 1 ignored**, **82 Core /
+1 ignored**, **155 controller / 1 canary ignored**, **16 Tauri compatibility checks**,
+**13 editor integrations**, strict Clippy/static checks, both offscreen Metal regressions
+and an optimized normal-feature build. Unordered marker ink is intentionally enlarged
+beyond Vue; body/ordered/task pixels remain unchanged in focused captures. Hover holds
+retain live row contents, protect inactive entry/stale events, and preserve context menus.
+Exact Vue parity is not claimed: keyboard adjacency, activity ingress and unregistered
+multi-phase continuity still differ. Cleanup feedback now has exact occurrence ownership,
+permanently unconfirmed stops do not offer futile Retry, and normal drained exits are
+reconciled by their stop receipt. Remote incident attribution and bulk-shutdown outcome
+refinement remain unproven/out of scope; no uncertain owner is discarded.
+
+Preceding archive/selection/retry-layout correction: **753 GPUI passes / 1 ignored**,
 **155 controller / 1 canary ignored**, **13 editor integrations**, eight package/version
 checks, strict Clippy/static checks, headless composer ink and an optimized normal-feature
 release build. Root regressions reproduce held-row aliasing and stopped-release selection;
