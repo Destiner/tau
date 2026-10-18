@@ -66,6 +66,11 @@ path = "tests/composer-clipping.rs"
 harness = false
 
 [[test]]
+name = "composer-tail"
+path = "tests/composer-tail.rs"
+harness = false
+
+[[test]]
 name = "diagram-paint"
 path = "tests/diagram-paint.rs"
 harness = false

@@ -1,0 +1,91 @@
+--- a/src/input/base/element.rs
++++ b/src/input/base/element.rs
+@@ -313,6 +313,22 @@
+ ) -> Pixels {
+     if mode.is_auto_grow() {
+         scroll_top.clamp((input_height - scroll_height).min(px(0.)), px(0.))
++    } else {
++        scroll_top
++    }
++}
++
++fn reveal_auto_grow_row(
++    scroll_top: Pixels,
++    row_top: Pixels,
++    line_height: Pixels,
++    viewport_top: Pixels,
++    viewport_bottom: Pixels,
++) -> Pixels {
++    if row_top + scroll_top + line_height > viewport_bottom {
++        viewport_bottom - row_top - line_height
++    } else if row_top + scroll_top < viewport_top {
++        viewport_top - row_top
+     } else {
+         scroll_top
+     }
+@@ -538,7 +554,7 @@
+         last_layout: &LastLayout,
+         bounds: &mut Bounds<Pixels>,
+         scroll_size: Size<Pixels>,
+-        _: &mut Window,
++        window: &mut Window,
+         cx: &mut App,
+     ) -> (Vec<CursorRenderInfo>, Point<Pixels>, Option<usize>) {
+         let state = self.state.read(cx);
+@@ -551,6 +567,7 @@
+         let active_id = state.active_selection().id;
+         let mut scroll_offset = state.scroll_handle.offset();
+         let mut current_row = None;
++        let mut reveal_row = None;
+         let mut cursor_infos: Vec<CursorRenderInfo> = Vec::with_capacity(state.selections.len());
+ 
+         // Padding kept between the cursor and the viewport's top/bottom
+@@ -633,6 +650,9 @@
+                 let selection_changed = state.last_selected_range != Some(selected_range);
+                 let auto_scrolling = state.auto_scroll.is_active();
+                 if selection_changed && !is_selected_all {
++                    if state.mode.is_auto_grow() && !auto_scrolling {
++                        reveal_row = Some(cursor_pos.y);
++                    }
+                     // For Right alignment use 0 margin: cursor is clamped to bounds separately,
+                     // so we never scroll the text for cursor-at-edge, avoiding a first-click jump.
+                     let safety_margin = match last_layout.text_align {
+@@ -738,6 +758,18 @@
+ 
+         if let Some(deferred_scroll_offset) = state.deferred_scroll_offset {
+             scroll_offset = deferred_scroll_offset;
++        }
++        if let Some(row_top) = reveal_row {
++            // Deferred targets can use the previous wrap/scroll geometry. Validate the
++            // whole row against this frame's padded clip, not just its origin/inset.
++            let clip = window.content_mask().bounds;
++            scroll_offset.y = reveal_auto_grow_row(
++                scroll_offset.y,
++                row_top,
++                line_height,
++                clip.top() - bounds.top(),
++                clip.bottom() - bounds.top(),
++            );
+         }
+         scroll_offset.y = clamp_auto_grow_vertical_scroll_offset(
+             &state.mode,
+@@ -4080,6 +4112,19 @@
+     }
+ 
+     #[test]
++    fn auto_grow_reveal_checks_full_row_after_deferred_target() {
++        // A 13px origin inset leaves 3px clipped with a 19px row and 3px padding.
++        let reveal =
++            |offset, row| reveal_auto_grow_row(px(offset), px(row), px(19.), px(-4.), px(191.));
++        assert_eq!(reveal(-34., 209.), px(-37.));
++        assert_eq!(reveal(-37., 209.), px(-37.));
++        // Preserve fractional geometry and an already visible row; no bottom pin.
++        assert_eq!(reveal(-34.25, 209.5), px(-37.5));
++        assert_eq!(reveal(-40.25, 209.5), px(-40.25));
++        assert_eq!(reveal(-40.25, 20.), px(-24.));
++    }
++
++    #[test]
+     fn auto_grow_caret_reveal_margin_is_opt_in_and_bounded() {
+         let style = crate::input::InputEditorStyle::default();
+         assert_eq!(style.auto_grow_cursor_margin, None);

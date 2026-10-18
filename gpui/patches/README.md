@@ -2,7 +2,7 @@
 
 ## Prepared dependency set
 
-`gpui/scripts/prepare.ts` registers **36 Base patches**, **eleven Core patches**,
+`gpui/scripts/prepare.ts` registers **37 Base patches**, **eleven Core patches**,
 and **five macOS patches**, including the native interaction and accessibility
 fixes below; **two merman-core patches** (parser manifest and ER
 semantic default direction); **one merman-analysis manifest patch**; **four
@@ -451,6 +451,36 @@ frames under `TAU_MARKER_CAPTURE`. The focused `--lib markdown_marker` tests
 protect production list/body metrics, row geometry, task-box quads and exact
 plain/source selection. Native backing scale is reported, not forced: the
 current offscreen renderer supplies 2×, not an independent 1× native capture.
+
+### `composer-tail-reveal.patch` (Base37)
+
+At the auto-grow cap, the 13px caret-origin reveal inset can leave the rest of a
+19px row below the padded viewport. A deferred target from the previous layout
+also overrides the fresh layout's origin-based reveal. Base34's vertical clip
+is correct and remains unchanged.
+
+After resolving the deferred target, Base37 checks the entire active caret row
+against the **current frame's padded content mask**, relative to the current
+unscrolled input origin, then uses the existing current scroll-size clamp. This
+runs only for changed, non-select-all selections while edge autoscroll is inactive.
+It does not bottom-pin a stationary caret, change the 13px preferred inset, alter
+font/line metrics or padding, or permit paint outside the padded viewport.
+Single-line inputs and code editors keep their existing policies.
+
+`tests/composer-tail.rs` is a harness-free actual Root/Composer offscreen Metal
+regression: Shift+Enter and typed descender glyphs through KeyDown/KeyUp, hard and
+soft-wrapped drafts, fractional host positions, fresh viewport geometry, full
+caret/row containment and ink escape/recovery checks, optional captures through
+`TAU_COMPOSER_TAIL_CAPTURE`, stationary-caret scrolling, undo/redo and retained
+IME state. Twelve cases genuinely fail on Base36 and pass on officially prepared
+Base37, including the first complete paint after newline and each typed key
+without an intervening executor pump or hidden settling frame. At native 2×,
+the dark-theme cases expose 275 final-row ink pixels versus 244 on Base36;
+Base37 already paints all 275, with no recovery tolerance. The unchanged composer-clipping
+harness, 13 editor integration tests and 16 focused IME tests also pass.
+This establishes offscreen 2× rendering and TestApp behavior, not independent
+1× OS rendering or live-app acceptance. The standalone Base helper tests could
+not run through the root workspace because Base is an excluded patched dependency.
 
 ## Validation and maintenance
 

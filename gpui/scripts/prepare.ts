@@ -58,6 +58,7 @@ const crates = [
       'textarea-viewport-clipping.patch',
       'selection-gesture-paragraph.patch',
       'markdown-marker-ink.patch',
+      'composer-tail-reveal.patch',
     ],
   },
   {
