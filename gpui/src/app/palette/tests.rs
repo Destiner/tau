@@ -22,6 +22,39 @@ fn focus_frames(root: &mut gpui_kit::TestAppWindow<Root>) {
 }
 
 #[test]
+fn live_session_palette_uses_skill_presentation_without_naming_pi() {
+    use crate::app::tests::{rpc, started};
+    use serde_json::json;
+    with_shell(256, |s, w, cx, _| {
+        create(s, "skill", "sacred draft", w, cx);
+        started(s, "skill", 1, cx);
+        s.ingest(rpc("skill", 1, json!({"type":"response", "id":"tau:skill:g1:1", "command":"get_state", "success":true, "data":{"sessionId":"invented", "sessionFile":"/invented/session.jsonl"}})), cx);
+        s.ingest(rpc("skill", 1, json!({"type":"message_start", "message":{"role":"user", "timestamp":123, "content":"<skill name=\"triage\" location=\"/invented/SKILL.md\">\nInstructions\n</skill>"}})), cx);
+        let (pages, targets) = s.palette_pages(cx);
+        let id = targets
+            .iter()
+            .find_map(|(id, target)| {
+                matches!(target, Target::Live(key, ..) if key == "skill").then_some(id)
+            })
+            .unwrap();
+        let row = pages
+            .iter()
+            .flat_map(|page| &page.items)
+            .find(|row| &row.id == id)
+            .unwrap();
+        assert_eq!(row.label, "/skill:triage");
+        assert!(
+            s.sessions["skill"]
+                .controller
+                .state()
+                .identity
+                .name
+                .is_empty()
+        );
+    });
+}
+
+#[test]
 fn session_shortcuts_are_logical_readable_keys() {
     with_shell(64, |s, w, cx, _| {
         create(s, "first", "first draft", w, cx);

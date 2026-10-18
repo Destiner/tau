@@ -230,11 +230,10 @@ impl Shell {
                         .copied();
                     let live_name = key
                         .and_then(|key| self.sessions.get(key))
-                        .map(|live| live.controller.state().identity.name.as_str())
-                        .filter(|s| !s.is_empty());
+                        .map(|live| super::view::title_with_saved(live, Some(session)));
                     source.push(ArchiveMetadata {
                         id: session.id.clone(),
-                        title: live_name.unwrap_or(&session.title).into(),
+                        title: live_name.unwrap_or_else(|| session.title.clone()),
                         project: project.name.clone(),
                         model: session.model.clone(),
                         sort_at: session.sort_at,
@@ -301,6 +300,7 @@ impl Shell {
             self.sidebar_state.invalidate_projection();
         }
         if kind == "message_start" && event["message"]["role"] == "user" {
+            self.sidebar_state.invalidate_metadata();
             let value = &event["message"]["timestamp"];
             let timestamp = value.as_u64().or_else(|| {
                 value
@@ -433,10 +433,9 @@ impl Shell {
                     } else {
                         relative_time(timestamp, &session.last_active, now_ms)
                     };
-                    let name = state
-                        .map(|s| s.identity.name.as_str())
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or(&session.title);
+                    let name = live
+                        .map(|live| super::view::title_with_saved(live, Some(session)))
+                        .unwrap_or_else(|| session.title.clone());
                     let id = session.id.clone();
                     // Metadata is title Markdown, never a tool-output-derived fake last message.
                     details.insert(
@@ -448,9 +447,11 @@ impl Shell {
                                 status_label(status)
                             }
                             .into(),
-                            message: tooltip_markdown(
-                                session.title_markdown.as_deref().unwrap_or(name),
-                            ),
+                            message: tooltip_markdown(if name == session.title {
+                                session.title_markdown.as_deref().unwrap_or(&name)
+                            } else {
+                                &name
+                            }),
                             relative_time: (!time.is_empty()).then_some(time.clone()),
                         },
                     );
@@ -460,7 +461,7 @@ impl Shell {
                             timestamp,
                             SessionItem {
                                 id,
-                                title: name.into(),
+                                title: name,
                                 time,
                                 status,
                                 unread,
@@ -487,15 +488,17 @@ impl Shell {
                         &state.draft,
                         unread,
                     );
-                    let name = if state.identity.name.is_empty() {
-                        tau_session::session::normalize_session_name(&state.draft)
+                    let name = if state.identity.name.is_empty()
+                        && !state.transcript.iter().any(|entry| entry.kind == "user")
+                    {
+                        let draft = tau_session::session::normalize_session_name(&state.draft);
+                        if draft.is_empty() {
+                            "New Session".into()
+                        } else {
+                            draft
+                        }
                     } else {
-                        state.identity.name.clone()
-                    };
-                    let name = if name.is_empty() {
-                        "New Session".into()
-                    } else {
-                        name
+                        super::view::title(live)
                     };
                     let id = if binding.pi_id.is_empty() {
                         key.clone()
@@ -730,6 +733,8 @@ impl Shell {
 
 #[cfg(test)]
 mod painted_tests;
+#[cfg(test)]
+mod skill_title_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

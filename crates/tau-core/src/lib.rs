@@ -6,5 +6,6 @@ pub mod pi;
 pub mod profile;
 pub mod saved_transcript;
 pub mod settings;
+pub mod skill;
 pub mod ssh;
 pub mod storage;

@@ -334,6 +334,8 @@ impl Shell {
                         for s in &mut p.sessions {
                             if s.id == id && s.path == path {
                                 s.title = name.clone();
+                                s.title_markdown = Some(name.chars().take(240).collect());
+                                s.title_is_derived = false;
                             }
                         }
                     }
@@ -342,6 +344,8 @@ impl Shell {
             for s in &mut live.project.sessions {
                 if s.id == id && s.path == path {
                     s.title = name.clone();
+                    s.title_markdown = Some(name.chars().take(240).collect());
+                    s.title_is_derived = false;
                 }
             }
         } else {

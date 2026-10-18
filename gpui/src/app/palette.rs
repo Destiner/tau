@@ -801,13 +801,10 @@ impl Shell {
                     add(
                         1,
                         format!("live:{target:?}"),
-                        if identity.name.is_empty() {
-                            saved
-                                .map(|(_, s, _)| s.title)
-                                .unwrap_or_else(|| "New Session".into())
-                        } else {
-                            identity.name.clone()
-                        },
+                        super::view::title_with_saved(
+                            live,
+                            saved.as_ref().map(|(_, session, _)| session),
+                        ),
                         if key == &self.active {
                             "Current".into()
                         } else {

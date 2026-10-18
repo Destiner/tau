@@ -1,6 +1,6 @@
 # tau-session
 
-Standalone, framework-independent Rust session controller for installed Pi's **actual JSONL RPC**. Dependencies: `std`, `serde`, `serde_json`. No process launcher, backend, GPUI, Tauri, model calls, credentials, session-file writer, or extension runtime.
+Framework-independent Rust session controller for installed Pi's **actual JSONL RPC**. Uses `serde`, `serde_json` and the shared skill-envelope parser in `tau-core`. The controller itself does not launch processes, access credentials/session files, invoke models, or execute extensions, and has no GPUI/Tauri dependency.
 
 ## Host integration
 
@@ -133,12 +133,12 @@ PDF/audio/video acceptance are not established by controller or fake-based tests
 ## Verification
 
 The workflow correction passed **155 controller tests / 1 ignored opt-in canary** and
-**742 GPUI tests / 1 ignored**, strict all-target/all-feature native Clippy, static tooling,
+**746 GPUI tests / 1 ignored**, strict all-target/all-feature native Clippy, static tooling,
 eight package/version tests and **13 editor integrations**. It covers admitted preflight
 beyond the ordinary deadline, transport loss after an idle state read, exact error
 acknowledgement and preservation of uncertain writes. These are deterministic fixtures,
 not execution of private workflows. Earlier unchanged-source gates remain shared core
-**79 / 1 ignored**, canonical-path Tauri **16** and root frontend **894** plus static checks/build.
+**82 / 1 ignored**, canonical-path Tauri **16** and root frontend **894** plus static checks/build.
 
 Both current installed-Pi native modes fail the unchanged five-second busy-close gate
 with an inactive window, unavailable Close and no lifecycle callback. Cause is unproven;

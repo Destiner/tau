@@ -17,6 +17,7 @@ fn only_accepted_registration_produces_correlated_success() {
         id: "p".into(),
         path: "/p".into(),
         title: "P".into(),
+        title_is_derived: false,
         title_markdown: None,
         model: String::new(),
         last_active: String::new(),

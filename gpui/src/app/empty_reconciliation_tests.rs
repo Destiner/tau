@@ -239,6 +239,7 @@ fn predecessor_registration_success_releases_only_its_captured_identity() {
                 id: "p".into(),
                 path: "/predecessor-p".into(),
                 title: "Predecessor".into(),
+                title_is_derived: false,
                 title_markdown: None,
                 model: String::new(),
                 last_active: String::new(),

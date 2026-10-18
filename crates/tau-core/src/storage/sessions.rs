@@ -199,6 +199,8 @@ fn local_session_summary(
         id: parsed.id,
         path: path.to_string_lossy().into_owned(),
         title: single_line(&title),
+        title_is_derived: parsed.name.is_empty()
+            && record.name.as_deref().unwrap_or_default().is_empty(),
         title_markdown: Some(markdown_title(&title)),
         model: parsed.model,
         last_active: if sort_at == 0 {
@@ -355,6 +357,7 @@ pub(super) fn list_remote_sessions(remote: &RemoteProjectRecord) -> Vec<SessionS
                 id: session.id.clone(),
                 path: session.path.clone(),
                 title: single_line(title),
+                title_is_derived: session.name.as_deref().unwrap_or_default().is_empty(),
                 title_markdown: Some(markdown_title(title)),
                 // Remote registries do not carry a model; the archived list
                 // omits the model line when it is empty.
@@ -464,6 +467,8 @@ fn list_sessions_in_with(
             id: parsed.id,
             path: path.to_string_lossy().into_owned(),
             title: single_line(&title),
+            title_is_derived: parsed.name.is_empty()
+                && record.name.as_deref().unwrap_or_default().is_empty(),
             title_markdown: Some(markdown_title(&title)),
             model: parsed.model,
             last_active: if sort_at == 0 {
@@ -485,10 +490,13 @@ fn list_sessions_in_with(
 /// the session, so a name in the session file outranks Tau's own copy, which
 /// also holds titles derived from the first user message.
 fn session_title(pi_name: &str, tau_name: Option<&str>, first_message: &str) -> String {
-    for candidate in [pi_name, tau_name.unwrap_or_default(), first_message] {
+    for candidate in [pi_name, tau_name.unwrap_or_default()] {
         if !candidate.is_empty() {
             return candidate.to_string();
         }
+    }
+    if !first_message.is_empty() {
+        return crate::skill::first_message_title(first_message);
     }
     "New Session".into()
 }
@@ -567,6 +575,10 @@ pub(super) fn set_active_session_inner(
     }
     write_projects_if_changed(&mut projects, &project_path)
 }
+
+#[cfg(test)]
+#[path = "session_skill_title_tests.rs"]
+mod skill_title_tests;
 
 #[cfg(test)]
 mod tests {

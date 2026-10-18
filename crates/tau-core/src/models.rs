@@ -105,6 +105,9 @@ pub struct SessionSummary {
     pub id: String,
     pub path: String,
     pub title: String,
+    /// Presentation provenance only; explicit names must never be envelope-parsed.
+    #[serde(default)]
+    pub title_is_derived: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title_markdown: Option<String>,
     #[serde(default)]

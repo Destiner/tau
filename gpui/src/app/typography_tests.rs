@@ -38,6 +38,7 @@ fn root_session_palette_and_high_effort_keep_authored_geometry() {
                         id: format!("ink-{i}"),
                         path: format!("/fixture/ink-{i}.jsonl"),
                         title,
+                        title_is_derived: false,
                         title_markdown: None,
                         model: String::new(),
                         last_active: String::new(),

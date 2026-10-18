@@ -474,7 +474,10 @@ impl Shell {
             let heading = self
                 .sessions
                 .get(&self.active)
-                .map(title)
+                .map(|live| {
+                    let saved = self.saved_session(&self.active);
+                    title_with_saved(live, saved.as_ref().map(|(_, session, _)| session))
+                })
                 .unwrap_or_else(|| "Tau".into());
             header.update(cx, |h, cx| {
                 h.set_session(self.active.clone(), heading, window, cx);
@@ -1204,15 +1207,29 @@ impl Shell {
         }
     }
 }
-fn title(live: &LiveSession) -> String {
-    let name = &live.controller.state().identity.name;
+pub(super) fn title(live: &LiveSession) -> String {
+    title_with_saved(live, None)
+}
+
+pub(super) fn title_with_saved(
+    live: &LiveSession,
+    saved: Option<&tau_core::models::SessionSummary>,
+) -> String {
+    let state = live.controller.state();
+    let name = &state.identity.name;
+    let saved = saved.or_else(|| {
+        live.project.sessions.iter().find(|s| {
+            s.id == live.source_id || (!state.identity.id.is_empty() && s.id == state.identity.id)
+        })
+    });
     if !name.is_empty() {
         name.clone()
+    } else if let Some(saved) = saved.filter(|saved| !saved.title_is_derived) {
+        saved.title.clone()
+    } else if let Some(entry) = state.transcript.iter().find(|entry| entry.kind == "user") {
+        tau_core::skill::first_message_title(&entry.text)
     } else {
-        live.project
-            .sessions
-            .iter()
-            .find(|s| s.id == live.source_id)
+        saved
             .map(|s| s.title.clone())
             .unwrap_or_else(|| "New Session".into())
     }

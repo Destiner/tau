@@ -19,6 +19,7 @@ fn row(id: &str, path: &str) -> tau_core::models::SessionSummary {
         id: id.into(),
         path: path.into(),
         title: id.into(),
+        title_is_derived: false,
         title_markdown: None,
         model: String::new(),
         last_active: String::new(),
