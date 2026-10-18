@@ -106,7 +106,15 @@ through normalized CRLF, dehover and nearest-run gaps held across three frames.
 Font-metric paint changes no layout/hit testing; width truncation preserves line height
 and bottom ink. Source owners outlive the 128-view cache. See [APP.md](../gpui/APP.md).
 
-Final skill-title/composer correction: **746 GPUI passes / 1 ignored**, **82 Core /
+Current archive/selection/retry-layout correction: **753 GPUI passes / 1 ignored**,
+**155 controller / 1 canary ignored**, **13 editor integrations**, eight package/version
+checks, strict Clippy/static checks, headless composer ink and an optimized normal-feature
+release build. Root regressions reproduce held-row aliasing and stopped-release selection;
+telemetry cannot attribute the exact live incidents. Logical paragraph triple-click now
+spans text/code/emphasis/link fragments; inline objects retain prior visual-row semantics.
+The entire bottom retry strip is removed; Cmd-K retains the same owned retry action.
+
+Preceding skill-title/composer correction: **746 GPUI passes / 1 ignored**, **82 Core /
 1 ignored**, **155 controller / 1 canary ignored**, **16 Tauri compatibility tests**,
 strict Clippy/static checks, **13 editor integrations**, the offscreen composer regression
 in both themes, and eight package/version tests. The optimized normal-feature arm64
@@ -383,12 +391,16 @@ failures); no speculative activation/focus repair or relabelled visual snapshots
 - Additional existing-profile checks and the unresolved automated busy-close investigation
   are deferred by the user. Existing storage/draft/compatibility tests pass; neither this
   decision nor manual success converts historical negative automation into a pass.
-- [ ] Complete native updater verification/install/relaunch/recovery and release CI on `gpui`.
-- [ ] Merge the releasable native path, then retire Vue/Tauri and migration-only tooling
-      while preserving durable tests and unrelated local work.
+- [ ] Remove Vue/Tauri first, preserving the native app and shared runtime/storage contracts.
+- [ ] Then remove temporary migration/bridge tooling, harnesses and docs, preserving durable
+      native tests, licences and unrelated local work.
+- [ ] Open a PR for review after those cleanups. **Do not automatically merge.**
+- [ ] Complete native updater verification/install/relaunch/recovery and release CI before
+      advertising native distribution as ready; cleanup alone does not provide them.
 
-**Next checkpoint: release automation, native updater and canonical CI**, then merge
-and legacy removal. No further general dogfooding/compaction/media campaign is required.
+**Next repository checkpoint: Vue/Tauri removal → temporary migration cleanup → PR.**
+This supersedes the previous merge-before-removal sequence. No further general
+dogfooding/compaction/media campaign is required.
 
 ## Scope and repository safety
 

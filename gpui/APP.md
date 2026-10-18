@@ -66,7 +66,9 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   Cmd-P → switch → Cmd-K works without clicking or reactivating. Warm-session navigation
   returns to the retained composer (or its extension prompt); a newer pointer focus owner
   or overlay wins over the delayed handoff. A starting composer uses shell focus, then
-  receives focus when ready unless another surface owns it.
+  receives focus when ready unless another surface owns it. Failed pending operations
+  remain retryable through Cmd-K → Retry Pending Operations; there is no global bottom
+  retry strip. Removing that layout does not acknowledge or discard pending work.
 - Leaving a truly empty, unregistered session retires its UI/runtime without deleting
   Pi files. Pending reads defer the decision; only explicitly abandoned candidates are
   revisited. Drafts (including whitespace), Pi-owned history, queued/recovered work,
@@ -105,6 +107,9 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   virtualized, globally sorted within local-calendar groups and include project/model
   subtitles. Sidebar projections are invalidated at data/status boundaries rather than
   rebuilt for every text chunk; relative times and groups also age while idle.
+  Saved workflow predecessors and replacements have distinct held-row identities, even
+  when they share a runtime. Only an empty session's first materialization transfers
+  its runtime-backed row identity.
 - Draft/unread indicators, rich session status/message/time tooltips, SSH project
   alias/directory tooltips, and animated edge-reveal drag handles. Long SSH aliases and
   paths wrap within the compact tooltip and viewport rather than overflowing an intrinsic
@@ -292,7 +297,17 @@ release and cutover gates remain as documented above.
 
 ## Current verification boundary
 
-The final skill-title/composer corrections passed **746 GPUI library tests / 1 ignored**,
+The archive/selection/retry-layout corrections passed **753 GPUI library tests / 1 ignored**,
+**155 controller / 1 opt-in canary ignored**, **13 editor integrations**, eight package/version
+checks, strict Clippy/static checks and the offscreen composer regression. A normal-feature
+optimized arm64 release build passed last. Actual Root regressions reproduce the historical
+held-row alias and stopped-release gesture defects; they do not identify the exact live
+incidents from telemetry. Text/code/emphasis/link triple-click selects one logical paragraph
+with exact source/Copy; inline-object paragraphs preserve their existing visual-row behavior.
+Outside controls cannot initiate a reader drag, and release or button-free motion ends it
+without erasing a completed interval. No new desktop or broad paired-visual campaign is claimed.
+
+The preceding skill-title/composer corrections passed **746 GPUI library tests / 1 ignored**,
 **82 Core / 1 ignored**, **155 controller / 1 opt-in canary ignored**, **16 Tauri compatibility
 tests**, strict all-target/all-feature Clippy, formatting, native lint/typecheck and eight
 package/version tests. All **13 editor integrations** and the new offscreen composer
@@ -338,9 +353,12 @@ The user subsequently reported complex workflow execution/resumption and SSH wor
 while using GPUI as the main app. These are accepted manual checks for the cold-turkey
 cutover, not automated authenticated-host proof. Additional compaction, automated busy-close
 and existing-profile acceptance campaigns are explicitly deferred, not passing gates.
-Media expansion is excluded from rewrite completion. The remaining critical path is
-native release automation, updater implementation and canonical native CI, then merge
-and legacy removal. Do not reopen broad acceptance campaigns without a concrete regression.
+Media expansion is excluded from rewrite completion. The requested repository order is
+remove Vue/Tauri, remove temporary migration/bridge tooling, harnesses and docs, then open
+a PR for review. Do not automatically merge. Preserve durable native tests and unrelated
+local work. Native release automation, updater implementation and canonical CI remain
+engineering work, not implied by cleanup. Do not reopen broad acceptance campaigns
+without a concrete regression.
 
 The focused interaction-polish comparison captured **104 original images / 52 Vue/native
 pairs**, covering 13 states in both themes at 1×/2×. Actual Root interactions verify reader
