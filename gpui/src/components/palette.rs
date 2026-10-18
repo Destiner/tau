@@ -14,31 +14,41 @@ use gpui_kit::{
 
 gpui_kit::actions!(native_palette, [NextRow, PreviousRow, KeepFocus]);
 
-fn shortcut_keys(shortcut: &str) -> Vec<String> {
-    if shortcut.contains('+') {
-        return shortcut
-            .split('+')
-            .map(|key| key.trim().to_owned())
-            .filter(|key| !key.is_empty())
-            .collect();
+fn shortcut_chord(shortcut: &str) -> String {
+    let mut remaining = shortcut.trim();
+    let mut chord = String::new();
+    while !remaining.is_empty() {
+        let first = remaining.chars().next().unwrap();
+        if matches!(first, '⌘' | '⌃' | '⌥' | '⇧') {
+            chord.push(first);
+            remaining = &remaining[first.len_utf8()..];
+        } else {
+            let end = remaining
+                .find(|c: char| c == '+' || c.is_whitespace() || matches!(c, '⌘' | '⌃' | '⌥' | '⇧'))
+                .unwrap_or(remaining.len());
+            let modifier = match remaining[..end].to_ascii_lowercase().as_str() {
+                "command" | "cmd" | "meta" => '⌘',
+                "option" | "alt" => '⌥',
+                "shift" => '⇧',
+                "control" | "ctrl" => '⌃',
+                _ => {
+                    // The remainder is the key, not a list of characters (including literal +).
+                    chord.extend(remaining.chars().filter(|c| !c.is_whitespace()));
+                    break;
+                }
+            };
+            chord.push(modifier);
+            remaining = &remaining[end..];
+        }
+        remaining = remaining.trim_start();
+        if let Some(rest) = remaining.strip_prefix('+') {
+            // A final + is itself the key; only consume a separator with a following key.
+            if !rest.trim().is_empty() {
+                remaining = rest.trim_start();
+            }
+        }
     }
-    let modifier_end = shortcut
-        .char_indices()
-        .find(|(_, key)| !matches!(key, '⌘' | '⌃' | '⌥' | '⇧'))
-        .map_or(shortcut.len(), |(index, _)| index);
-    let mut keys: Vec<String> = shortcut[..modifier_end]
-        .chars()
-        .map(|key| match key {
-            '⌃' => "Ctrl".into(),
-            '⌥' => "Alt".into(),
-            '⇧' => "Shift".into(),
-            _ => key.to_string(),
-        })
-        .collect();
-    if modifier_end < shortcut.len() {
-        keys.push(shortcut[modifier_end..].to_owned());
-    }
-    keys
+    chord
 }
 
 #[derive(Clone)]
@@ -560,19 +570,10 @@ impl Palette {
                                                         .id(format!("palette-shortcut-{i}"))
                                                         .test_support()
                                                         .flex_shrink_0()
-                                                        .flex()
-                                                        .gap(px(2.))
-                                                        .font_family(support::mono())
+                                                        .font_family("Courier")
                                                         .text_size(px(11.))
                                                         .text_color(rgb(t.muted))
-                                                        .children(shortcut_keys(&row.shortcut).into_iter().enumerate().map(
-                                                            |(key_index, key)| {
-                                                                div()
-                                                                    .id(format!("palette-shortcut-{i}-key-{key_index}"))
-                                                                    .test_support()
-                                                                    .child(if key_index == 0 { key } else { format!("+ {key}") })
-                                                            },
-                                                        )),
+                                                        .child(shortcut_chord(&row.shortcut)),
                                                 )
                                             }),
                                     ),
@@ -630,38 +631,49 @@ mod tests {
     use super::*;
     use std::{cell::RefCell, rc::Rc};
     #[test]
-    fn shortcuts_preserve_named_keys_and_expand_non_command_modifiers() {
+    fn shortcuts_use_compact_symbols_and_preserve_named_and_literal_keys() {
         for (shortcut, expected) in [
-            ("Ctrl+Tab", vec!["Ctrl", "Tab"]),
-            ("Ctrl+Shift+Tab", vec!["Ctrl", "Shift", "Tab"]),
-            ("Ctrl + Tab", vec!["Ctrl", "Tab"]),
-            ("⌃Tab", vec!["Ctrl", "Tab"]),
-            ("⌘⇧Enter", vec!["⌘", "Shift", "Enter"]),
-            ("⌘⌥↑", vec!["⌘", "Alt", "↑"]),
-            ("", vec![]),
+            ("Ctrl+Tab", "⌃Tab"),
+            ("Ctrl+Shift+Tab", "⌃⇧Tab"),
+            ("Ctrl + Tab", "⌃Tab"),
+            ("⌃⇧Tab", "⌃⇧Tab"),
+            ("⌘⇧P", "⌘⇧P"),
+            ("⌘⇧Enter", "⌘⇧Enter"),
+            ("⌘⌥↑", "⌘⌥↑"),
+            ("Command+Option+W", "⌘⌥W"),
+            ("Option+Command+W", "⌥⌘W"),
+            ("Alt+Shift+Space", "⌥⇧Space"),
+            ("Cmd+⌥W", "⌘⌥W"),
+            ("⌘+Option+W", "⌘⌥W"),
+            ("Meta+Control+Enter", "⌘⌃Enter"),
+            ("+", "+"),
+            ("Ctrl++", "⌃+"),
+            ("⌘+", "⌘+"),
+            ("Cmd + +", "⌘+"),
+            ("", ""),
         ] {
-            assert_eq!(shortcut_keys(shortcut), expected, "{shortcut}");
+            assert_eq!(shortcut_chord(shortcut), expected, "{shortcut}");
         }
     }
 
     #[test]
-    fn painted_shortcuts_are_logical_tokens_and_preserve_row_space_in_both_themes() {
-        use gpui_kit::test::TestWindowExt;
+    fn root_painted_compact_shortcuts_preserve_narrow_row_space_in_both_themes() {
+        use gpui_kit::{base::Root, size, test::TestWindowExt};
         for dark in [false, true] {
             let mut app = gpui_kit::TestApp::new();
             app.update(gpui_kit::init);
             let mut window = app.open_window(|w, cx| {
-                Palette::new(
+                let palette = cx.new(|cx| Palette::new(
                     dark,
                     vec![PalettePage {
                         id: "root".into(),
                         placeholder: "Search commands…".into(),
-                        items: ["Ctrl+Tab", "Ctrl+Shift+Tab", "⌘Enter"]
+                        items: ["Ctrl+Tab", "Ctrl+Shift+Tab", "⌘Enter", "Command+Option+W"]
                             .into_iter()
                             .enumerate()
                             .map(|(i, shortcut)| PaletteItem {
                                 id: format!("command-{i}"),
-                                label: "Next Session".into(),
+                                label: "A very long session title that must truncate without colliding".into(),
                                 detail: "secondary context ".repeat(80),
                                 shortcut: shortcut.into(),
                                 group: None,
@@ -671,28 +683,31 @@ mod tests {
                     }],
                     w,
                     cx,
-                )
+                ));
+                palette.update(cx, |p, cx| p.open(w, cx));
+                Root::new(palette, w, cx)
             });
-            window.update(|palette, w, cx| palette.open(w, cx));
+            window.simulate_resize(size(px(320.), px(480.)));
+            window.update(|_, w, cx| w.bounds_changed(cx));
             window.draw();
             window.update(|_, w, _| {
-                for (i, count) in [(0, 2), (1, 3), (2, 2)] {
+                let surface = w.find("palette-surface").bounds();
+                assert!(surface.size.width <= px(292.));
+                let mut right = None;
+                for i in 0..4 {
                     let shortcut = w.find(format!("palette-shortcut-{i}")).bounds();
                     let title = w.find(format!("palette-title-{i}")).bounds();
                     assert!(title.right() <= shortcut.left() - px(9.));
                     assert!(title.size.width > px(60.));
-                    for key in 0..count {
-                        let bounds = w.find(format!("palette-shortcut-{i}-key-{key}")).bounds();
-                        assert!(shortcut.contains(&bounds.center()));
-                        assert!(bounds.size.height < px(20.));
+                    assert!(shortcut.size.height < px(20.));
+                    assert!(shortcut.size.width > px(10.));
+                    assert!(surface.contains(&shortcut.center()));
+                    if let Some(right) = right {
+                        assert!((shortcut.right() - right).abs() < px(1.));
                     }
-                    assert!(
-                        w.try_find(format!("palette-shortcut-{i}-key-{count}"))
-                            .is_none()
-                    );
+                    right = Some(shortcut.right());
+                    assert!(w.try_find(format!("palette-shortcut-{i}-key-0")).is_none());
                 }
-                assert!(w.find("palette-shortcut-0-key-0").bounds().size.width > px(15.));
-                assert!(w.find("palette-shortcut-0-key-1").bounds().size.width > px(15.));
             });
         }
     }
