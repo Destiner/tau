@@ -39,9 +39,10 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
 - Local and remote project import, session selection and new sessions. Remote import
   uses the existing SSH probe/directory browser and storage contracts; network reads
   do not block Pi writes or Stop. Authenticated real-host SSH acceptance remains outstanding.
-- Cold saved-session opens reserve the main pane immediately and show a centered
-  loading indicator after 200ms. Fast hydration and new blank sessions do not flash it;
-  selection/start/identity fencing cancels stale timers and startup errors reveal Retry Pi.
+- Cold saved-session opens reserve the history area immediately while keeping the
+  admitted composer mounted and editable. The centered loading indicator appears after
+  200ms; fast hydration and new blank sessions do not flash it. Selection/start/identity
+  fencing cancels stale timers and startup errors reveal Retry Pi.
 - Collapse/reorder update optimistically with revision-fenced persistence and rollback.
   Selection and new-session metadata writes no longer rescan every project's histories;
   registration/import merge returned rows/projects instead of reloading the workspace.
@@ -49,6 +50,12 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   choices, visibly rendered prompts/streaming prose/activity, Stop, queue submission
   and clear. While working, Enter or Send queues steering; Cmd-Enter queues a follow-up.
   Shift-Enter inserts a newline. When idle, Cmd-Enter sends an ordinary prompt.
+- New sessions can reuse known model/effort and command presentation from the same
+  project, working directory and connection. Model scope and completed discovery are
+  required; uncertain settings writes cannot seed another session. Pi still starts in
+  its own isolated runtime, and fresh bootstrap replaces the cosmetic cache without
+  inheriting readiness or Send/settings authority. Clean sync skips unchanged history
+  permission scans; launch metadata no longer copies a project's saved-row collection.
 - Typing `/` at the start of the composer opens Pi's session-owned command catalogue.
   Fuzzy filtering, source labels, clamped Up/Down navigation, pointer choice and Escape
   match Vue. Tab completes the active name without sending; Enter sends it once.
@@ -65,8 +72,9 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   Session switching keeps shortcuts on the mounted shell while the destination paints;
   Cmd-P → switch → Cmd-K works without clicking or reactivating. Warm-session navigation
   returns to the retained composer (or its extension prompt); a newer pointer focus owner
-  or overlay wins over the delayed handoff. A starting composer uses shell focus, then
-  receives focus when ready unless another surface owns it. Actionable failed operations
+  or overlay wins over the delayed handoff. Cold navigation focuses the mounted draft
+  editor before Pi readiness; loading completion cannot reclaim a newer focus owner.
+  Actionable failed operations
   remain retryable through Cmd-K → Retry Pending Operations; permanently unconfirmed remote
   cleanup stays owned but is not offered as a futile retry. There is no global bottom
   retry strip. Removing that layout does not acknowledge or discard pending work.
