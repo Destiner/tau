@@ -7,6 +7,10 @@ mod lifecycle_pruning;
 #[derive(Default)]
 pub(super) struct SessionActions {
     pub(super) archived: bool,
+    #[cfg(test)]
+    pub(super) lookup_runtime_visits: std::cell::Cell<usize>,
+    #[cfg(test)]
+    pub(super) lookup_saved_visits: std::cell::Cell<usize>,
     revision: u64,
     archives: BTreeMap<(String, String), ArchiveIntent>,
     errors: BTreeMap<String, String>,
@@ -27,36 +31,64 @@ impl Shell {
         &self,
         id: &str,
     ) -> Option<(ProjectSummary, SessionSummary, Option<String>)> {
-        self.workspace.as_ref()?.projects.iter().find_map(|p| {
-            p.sessions.iter().find_map(|s| {
-                let live = self
-                    .sessions
-                    .iter()
-                    .find(|(k, l)| {
-                        let current = &l.controller.state().identity.id;
-                        let saved_id = if current.is_empty() {
-                            &l.source_id
-                        } else {
-                            current
-                        };
-                        l.project.path == p.path
-                            && saved_id == &s.id
-                            && (k.as_str() == id || s.id == id)
-                    })
-                    .map(|(k, _)| k.clone());
-                (s.id == id || live.is_some()).then(|| (p.clone(), s.clone(), live))
-            })
+        self.saved_session_ref(id).map(|(project, session, live)| {
+            (
+                launch_project(project),
+                session.clone(),
+                live.map(str::to_owned),
+            )
         })
+    }
+    pub(super) fn saved_session_ref(
+        &self,
+        id: &str,
+    ) -> Option<(&ProjectSummary, &SessionSummary, Option<&str>)> {
+        // Resolve runtime aliases once, not once per saved row. Preserve registry order
+        // and the first runtime for duplicate identities, including replacement sources.
+        let mut aliases = BTreeMap::new();
+        for (key, live) in &self.sessions {
+            #[cfg(test)]
+            self.session_actions
+                .lookup_runtime_visits
+                .set(self.session_actions.lookup_runtime_visits.get() + 1);
+            let current = &live.controller.state().identity.id;
+            let saved_id = if current.is_empty() {
+                &live.source_id
+            } else {
+                current
+            };
+            if key == id || saved_id == id {
+                aliases
+                    .entry((live.project.path.as_str(), saved_id.as_str()))
+                    .or_insert(key.as_str());
+            }
+        }
+        self.workspace
+            .as_ref()?
+            .projects
+            .iter()
+            .find_map(|project| {
+                project.sessions.iter().find_map(|session| {
+                    #[cfg(test)]
+                    self.session_actions
+                        .lookup_saved_visits
+                        .set(self.session_actions.lookup_saved_visits.get() + 1);
+                    let live = aliases
+                        .get(&(project.path.as_str(), session.id.as_str()))
+                        .copied();
+                    (session.id == id || live.is_some()).then_some((project, session, live))
+                })
+            })
     }
     pub(super) fn archived_items(&self) -> Vec<SessionItem> {
         self.project_archived_items()
     }
     pub(super) fn can_archive(&self, id: &str) -> bool {
         self.lifecycle.is_none()
-            && self.saved_session(id).is_some_and(|(_, s, key)| {
+            && self.saved_session_ref(id).is_some_and(|(_, s, key)| {
                 !s.archived
                     && key.is_none_or(|k| {
-                        let l = &self.sessions[&k];
+                        let l = &self.sessions[k];
                         !l.starting
                             && !l.controller.state().working
                             && !l.controller.state().stopping
@@ -65,7 +97,7 @@ impl Shell {
     }
     pub(super) fn can_rename(&self) -> bool {
         self.lifecycle.is_none()
-            && self.saved_session(&self.active).is_some()
+            && self.saved_session_ref(&self.active).is_some()
             && self
                 .sessions
                 .get(&self.active)
@@ -73,7 +105,7 @@ impl Shell {
     }
     pub(super) fn session_action_error(&self) -> Option<&str> {
         let saved = self
-            .saved_session(&self.active)
+            .saved_session_ref(&self.active)
             .map(|(p, s, _)| format!("{}\0{}", p.path, s.id));
         self.session_actions
             .errors
@@ -272,7 +304,7 @@ impl Shell {
     ) {
         self.sidebar_state.invalidate_metadata();
         if self
-            .saved_session(runtime)
+            .saved_session_ref(runtime)
             .is_some_and(|(_, session, _)| session.title == identity.name)
             && !self.session_actions.errors.contains_key(runtime)
         {

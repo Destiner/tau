@@ -104,7 +104,7 @@ impl Fixture {
             assert!(w.find("session-loading").visible());
             assert_eq!(w.try_find("session-loading-label").is_some(), visible);
             assert_eq!(w.try_find("working-spinner").is_some(), visible);
-            assert!(w.try_find("shell-composer-area").is_none());
+            assert!(w.find("shell-composer-area").visible());
             assert!(w.try_find("shell-transcript-slot").is_none());
         });
     }

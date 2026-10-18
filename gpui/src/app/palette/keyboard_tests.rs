@@ -133,13 +133,7 @@ fn session_selection_keeps_shortcuts_on_the_current_shell_focus_path() {
                 s.shell_focus.as_ref().unwrap().contains(&focused, w),
                 "{case}: focus must be mounted"
             );
-            if case == "cold" {
-                assert!(
-                    s.shell_focus.as_ref().unwrap().is_focused(w),
-                    "cold: not-yet-ready session uses shell fallback"
-                );
-            }
-            if matches!(case, "same" | "warm") {
+            if matches!(case, "cold" | "same" | "warm") {
                 assert!(
                     s.sessions[&s.active]
                         .composer

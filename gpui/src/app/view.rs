@@ -48,7 +48,7 @@ impl Shell {
         if let Some(header) = &self.header {
             header.update(cx, |header, cx| {
                 header.set_action_admission(
-                    self.selected_project().is_some(),
+                    self.selected_project_ref().is_some(),
                     actions && !palette,
                     actions && !prompt,
                     cx,
@@ -395,9 +395,8 @@ impl Shell {
                     return;
                 }
                 if let Some(live) = shell.sessions.get(&shell.active)
-                    && live.controller.state().ready
-                    && !live.starting
                     && !live.controller.state().stopping
+                    && live.controller.state().extension_dialogs.is_empty()
                     && !live.composer.read(cx).is_disabled()
                 {
                     use gpui_kit::Focusable;
@@ -409,6 +408,11 @@ impl Shell {
                         .is_some_and(|root| root.contains(&focus, window))
                     {
                         focus.focus(window, cx);
+                        owner.update(cx, |shell, _| {
+                            if let Some(live) = shell.sessions.get_mut(&shell.active) {
+                                live.draft_focus_delivered = true;
+                            }
+                        });
                         return;
                     }
                 }
@@ -505,8 +509,8 @@ impl Shell {
                 .sessions
                 .get(&self.active)
                 .map(|live| {
-                    let saved = self.saved_session(&self.active);
-                    title_with_saved(live, saved.as_ref().map(|(_, session, _)| session))
+                    let saved = self.saved_session_ref(&self.active);
+                    title_with_saved(live, saved.map(|(_, session, _)| session))
                 })
                 .unwrap_or_else(|| "Tau".into());
             header.update(cx, |h, cx| {
@@ -577,8 +581,17 @@ impl Shell {
                 focus_ready_composer = true;
             }
             let copy_paths = live.project.connection_string.is_some();
-            live.transcript.update(cx, |t, cx| {
-                t.set_copy_paths(copy_paths, cx);
+            live.transcript
+                .update(cx, |t, cx| t.set_copy_paths(copy_paths, cx));
+            if live.projection_dirty
+                || live.file_sources_directory.as_deref()
+                    != Some(live.project.working_directory.as_str())
+            {
+                live.file_sources_directory = Some(live.project.working_directory.clone());
+                #[cfg(test)]
+                {
+                    live.file_source_visits += state.transcript.len();
+                }
                 let disabled = state
                     .transcript
                     .iter()
@@ -593,8 +606,9 @@ impl Shell {
                     })
                     .map(|entry| entry.id.clone())
                     .collect();
-                t.set_disabled_file_sources(disabled, cx);
-            });
+                live.transcript
+                    .update(cx, |t, cx| t.set_disabled_file_sources(disabled, cx));
+            }
             live.queue.update(cx, |q, cx| {
                 q.set_copy_paths(copy_paths, cx);
                 if q.props().can_recover != can_recover {
@@ -639,11 +653,23 @@ impl Shell {
                 let editor = live.composer.read(cx).editor();
                 editor.update(cx, |e, cx| e.set_value(&draft, window, cx));
             }
+            // Fresh state owns the displayed selection as soon as Pi is ready.
+            // Inherited data never enters the controller or authorizes an action.
+            if state.ready {
+                if live.inherited_choices.take().is_some() {
+                    live.choices = None;
+                }
+                if live.inherited_commands.take().is_some() {
+                    live.command_choices = None;
+                }
+            }
             let commands_revision = live.controller.commands_revision();
             if live.command_choices != Some(commands_revision) {
                 live.command_choices = Some(commands_revision);
-                let commands = state
-                    .commands
+                let commands = live
+                    .inherited_commands
+                    .as_ref()
+                    .unwrap_or(&state.commands)
                     .iter()
                     .filter_map(|command| serde_json::from_value(command.clone()).ok())
                     .collect();
@@ -654,7 +680,13 @@ impl Shell {
             let choice_revision = live.controller.model_choices_revision();
             if live.choices != Some(choice_revision) {
                 live.choices = Some(choice_revision);
-                let selectable_models = state.selectable_models();
+                let inherited = live.inherited_choices.as_ref();
+                let selectable_models = inherited
+                    .map(|p| p.models.iter().collect())
+                    .unwrap_or_else(|| state.selectable_models());
+                let displayed_model = inherited.map_or(&state.model, |p| &p.model);
+                let displayed_effort = inherited.map_or(&state.effort, |p| &p.effort);
+                let displayed_efforts = inherited.map_or(&state.thinking_levels, |p| &p.efforts);
                 let models = selectable_models
                     .iter()
                     .filter_map(|m| {
@@ -667,8 +699,7 @@ impl Shell {
                         })
                     })
                     .collect();
-                let efforts = state
-                    .thinking_levels
+                let efforts = displayed_efforts
                     .iter()
                     .map(|level| Choice {
                         id: level.clone(),
@@ -678,24 +709,25 @@ impl Shell {
                     .collect();
                 let model = format!(
                     "{}\u{1f}{}",
-                    state.model["provider"].as_str().unwrap_or_default(),
-                    state.model["id"].as_str().unwrap_or_default()
+                    displayed_model["provider"].as_str().unwrap_or_default(),
+                    displayed_model["id"].as_str().unwrap_or_default()
                 );
                 live.composer.update(cx, |c, cx| {
                     c.set_choices(models, efforts, cx);
                     c.set_model(&model, cx);
                     c.set_model_fallback(
-                        state.model["name"]
+                        displayed_model["name"]
                             .as_str()
-                            .or(state.model["id"].as_str())
+                            .or(displayed_model["id"].as_str())
                             .unwrap_or("Select Model"),
                         cx,
                     );
-                    c.set_effort(&state.effort, cx);
+                    c.set_effort(displayed_effort, cx);
                 });
             }
             let status_changed = live.ui_status != Some(status);
             focus_ready_composer |= status_changed
+                && !live.draft_focus_delivered
                 && !status.0
                 && key == self.active
                 && self
@@ -1080,14 +1112,14 @@ impl Shell {
                 });
             }
         }
-        let loading_finished = self.sync_session_loading(cx);
+        self.sync_session_loading(cx);
         self.sync_remote(window, cx);
         self.sync_admin(window, cx);
         self.sync_palette(window, cx);
         self.sync_fallback(window, cx);
         self.sync_chrome_admission(cx);
         if restore_ready_focus
-            && (focus_ready_composer || loading_finished)
+            && focus_ready_composer
             && !self
                 .header
                 .as_ref()
@@ -1101,6 +1133,15 @@ impl Shell {
         if !self.project_actions_admitted(cx) {
             return;
         }
+        use gpui_kit::Focusable;
+        let handoff_editor = self.sessions.get(&self.active).is_some_and(|live| {
+            live.composer
+                .read(cx)
+                .editor()
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window)
+        });
         if let Some(previous) = self.sessions.get(&self.active) {
             previous
                 .transcript
@@ -1117,7 +1158,9 @@ impl Shell {
             .map(|(key, _)| key.clone())
         {
             self.discard_empty_before_switch(&key, cx);
-            self.sessions.get_mut(&key).unwrap().dirty = true;
+            let live = self.sessions.get_mut(&key).unwrap();
+            live.dirty = true;
+            live.draft_focus_delivered = false;
             match self.saved_session(&key) {
                 Some((project, session, _)) if !session.archived => {
                     self.select_workspace(project.path, session.id, cx);
@@ -1134,6 +1177,9 @@ impl Shell {
             self.navigate_saved_history(cx);
             self.persist(false, cx);
             self.sync(window, cx);
+            if handoff_editor && let Some(focus) = self.shell_focus.clone() {
+                focus.focus(window, cx);
+            }
             self.restore_input_focus_in(None, window, cx);
             return;
         }
@@ -1142,7 +1188,7 @@ impl Shell {
                 p.sessions
                     .iter()
                     .find(|s| s.id == id)
-                    .map(|s| (p.clone(), s.clone()))
+                    .map(|s| (launch_project(p), s.clone()))
             })
         }) {
             if !session.archived {
@@ -1157,6 +1203,9 @@ impl Shell {
                 window,
                 cx,
             );
+            if handoff_editor && let Some(focus) = self.shell_focus.clone() {
+                focus.focus(window, cx);
+            }
             self.restore_input_focus_in(None, window, cx);
         }
     }
@@ -1245,21 +1294,12 @@ impl Shell {
         }
     }
 }
-pub(super) fn title(live: &LiveSession) -> String {
-    title_with_saved(live, None)
-}
-
 pub(super) fn title_with_saved(
     live: &LiveSession,
     saved: Option<&tau_core::models::SessionSummary>,
 ) -> String {
     let state = live.controller.state();
     let name = &state.identity.name;
-    let saved = saved.or_else(|| {
-        live.project.sessions.iter().find(|s| {
-            s.id == live.source_id || (!state.identity.id.is_empty() && s.id == state.identity.id)
-        })
-    });
     if !name.is_empty() {
         name.clone()
     } else if let Some(saved) = saved.filter(|saved| !saved.title_is_derived) {
@@ -1328,9 +1368,16 @@ impl Render for Shell {
                 );
             }
             if let Some(live) = self.sessions.get(&self.active) {
-                if self.active_session_loading()
+                let loading = self.active_session_loading();
+                let empty = !loading
+                    && live.transcript.read(cx).is_empty()
+                    && live.transcript.read(cx).working_indicator().is_none()
                     && live.controller.state().extension_dialogs.is_empty()
-                {
+                    && !live.controller.state().compacting;
+                live.composer.update(cx, |composer, cx| {
+                    composer.set_fill_height(empty, cx);
+                });
+                if loading && live.controller.state().extension_dialogs.is_empty() {
                     main = main.child(
                         div()
                             .id("session-loading")
@@ -1368,13 +1415,6 @@ impl Render for Shell {
                             }),
                     );
                 } else {
-                    let empty = live.transcript.read(cx).is_empty()
-                        && live.transcript.read(cx).working_indicator().is_none()
-                        && live.controller.state().extension_dialogs.is_empty()
-                        && !live.controller.state().compacting;
-                    live.composer.update(cx, |composer, cx| {
-                        composer.set_fill_height(empty, cx);
-                    });
                     if !empty {
                         main = main.child(
                             div()
@@ -1387,25 +1427,25 @@ impl Render for Shell {
                                 .child(live.transcript.clone()),
                         );
                     }
-                    if live.controller.state().extension_dialogs.is_empty() {
-                        main = main.child(live.queue.clone());
-                        main = main.child(
-                            div()
-                                .id("shell-composer-area")
-                                .test_support()
-                                .flex()
-                                .flex_col()
-                                .min_h_0()
-                                .flex_shrink_0()
-                                .pt(px(6.))
-                                .pr(px(8.))
-                                .pb(px(8.))
-                                .pl(px(6.))
-                                .when(empty, |area| area.flex_1())
-                                .when(!empty, |area| area.border_t_1().border_color(rgb(t.border)))
-                                .child(live.composer.clone()),
-                        );
-                    }
+                }
+                if live.controller.state().extension_dialogs.is_empty() {
+                    main = main.child(live.queue.clone());
+                    main = main.child(
+                        div()
+                            .id("shell-composer-area")
+                            .test_support()
+                            .flex()
+                            .flex_col()
+                            .min_h_0()
+                            .flex_shrink_0()
+                            .pt(px(6.))
+                            .pr(px(8.))
+                            .pb(px(8.))
+                            .pl(px(6.))
+                            .when(empty, |area| area.flex_1())
+                            .when(!empty, |area| area.border_t_1().border_color(rgb(t.border)))
+                            .child(live.composer.clone()),
+                    );
                 }
             } else {
                 main = main.child(div().id("shell-empty-content").test_support().flex_1());
@@ -1489,6 +1529,9 @@ mod retry_layout_tests;
 #[cfg(test)]
 #[path = "session_focus_tests.rs"]
 mod session_focus_tests;
+#[cfg(test)]
+#[path = "session_performance_tests.rs"]
+mod session_performance_tests;
 
 #[cfg(test)]
 #[path = "confirm_queue_fixture.rs"]

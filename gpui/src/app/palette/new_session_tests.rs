@@ -3,7 +3,7 @@ use crate::app::tests::{rpc, started};
 use serde_json::json;
 
 #[test]
-fn new_session_focuses_shell_until_ready_without_reclaiming_palette_focus() {
+fn new_session_focuses_current_editor_before_ready_without_reclaiming_palette_focus() {
     for open_palette in [false, true] {
         let mut app = app();
         let (commands, _requests) = async_channel::bounded(256);
@@ -22,7 +22,16 @@ fn new_session_focuses_shell_until_ready_without_reclaiming_palette_focus() {
         });
         focus_frames(&mut root);
         root.update(|_, w, cx| {
-            assert!(shell.read(cx).shell_focus.as_ref().unwrap().is_focused(w));
+            let s = shell.read(cx);
+            assert!(
+                s.sessions[&s.active]
+                    .composer
+                    .read(cx)
+                    .editor()
+                    .read(cx)
+                    .focus_handle(cx)
+                    .is_focused(w)
+            );
         });
         let key = app.update(|cx| shell.read(cx).active.clone());
         let modifier = if cfg!(target_os = "macos") {

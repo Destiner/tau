@@ -506,7 +506,8 @@ impl Shell {
                             draft
                         }
                     } else {
-                        super::view::title(live)
+                        // This loop contains only runtimes absent from current saved rows.
+                        super::view::title_with_saved(live, None)
                     };
                     let id = if binding.pi_id.is_empty() {
                         key.clone()

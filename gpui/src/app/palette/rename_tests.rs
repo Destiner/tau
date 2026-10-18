@@ -312,7 +312,16 @@ fn pointer_outside_commits_old_name_once_but_palette_preserves_rename() {
                 );
                 if target == "new-session" {
                     assert_ne!(s.active, "a");
-                    assert!(s.shell_focus.as_ref().unwrap().is_focused(w));
+                    assert!(
+                        s.sessions[&s.active]
+                            .composer
+                            .read(cx)
+                            .editor()
+                            .read(cx)
+                            .focus_handle(cx)
+                            .is_focused(w)
+                    );
+                    assert!(s.sessions[&s.active].controller.state().draft.is_empty());
                 } else {
                     assert_eq!(s.active, "a");
                 }

@@ -392,6 +392,21 @@ impl Composer {
         extension_blocked: bool,
         cx: &mut Context<Self>,
     ) {
+        if (
+            self.ready,
+            self.stopping,
+            self.submission_pending,
+            self.queue_busy,
+            self.extension_blocked,
+        ) == (
+            ready,
+            stopping,
+            submission_pending,
+            queue_busy,
+            extension_blocked,
+        ) {
+            return;
+        }
         self.ready = ready;
         self.stopping = stopping;
         self.submission_pending = submission_pending;
@@ -537,8 +552,13 @@ impl Composer {
         cx.notify();
     }
     pub fn set_effort(&mut self, id: &str, cx: &mut Context<Self>) {
-        if let Some(ix) = self.efforts.iter().position(|choice| choice.id == id) {
-            self.effort = ix;
+        let selected = self
+            .efforts
+            .iter()
+            .position(|choice| choice.id == id)
+            .unwrap_or(usize::MAX);
+        if self.effort != selected {
+            self.effort = selected;
             cx.notify();
         }
     }

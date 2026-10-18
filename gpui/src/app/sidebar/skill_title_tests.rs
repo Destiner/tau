@@ -5,6 +5,13 @@ use serde_json::json;
 
 const SKILL: &str = "<skill name=\"triage\" location=\"/invented/skills/triage/SKILL.md\">\nInvented instructions.\n</skill>\n\nFix the invented report.";
 
+fn live_title(s: &Shell) -> String {
+    super::super::view::title_with_saved(
+        &s.sessions["skill-live"],
+        s.saved_session_ref("skill-live").map(|(_, saved, _)| saved),
+    )
+}
+
 fn root_title_case(source: &str, expected: &str, history: bool, explicit: &str) {
     let mut app = app();
     let (commands, requests) = async_channel::bounded(1024);
@@ -30,7 +37,7 @@ fn root_title_case(source: &str, expected: &str, history: bool, explicit: &str) 
             let token = live.controller.saved_preview_token().unwrap();
             assert!(live.controller.apply_saved_preview(&token, &[json!({"role":"user", "timestamp":123, "content":source})]));
             // The saved title must work before get_state (including named previews).
-            assert_eq!(super::super::view::title(live), expected);
+            assert_eq!(live_title(s), expected);
         }
         started(s, "skill-live", 1, cx);
         let bootstrap: Vec<_> = std::iter::from_fn(|| requests.try_recv().ok()).collect();
@@ -49,7 +56,7 @@ fn root_title_case(source: &str, expected: &str, history: bool, explicit: &str) 
         }
         s.mount(w, cx);
         s.sync(w, cx);
-        assert_eq!(super::super::view::title(&s.sessions["skill-live"]), expected);
+        assert_eq!(live_title(s), expected);
         let sidebar = s.palette_sidebar_projects();
         assert_eq!(sidebar[0].sessions[0].title, expected);
         assert_eq!(s.sessions["skill-live"].controller.state().identity.name, explicit);
@@ -129,10 +136,7 @@ fn root_title_case(source: &str, expected: &str, history: bool, explicit: &str) 
                 cx
             ));
             s.sync(w, cx);
-            assert_eq!(
-                super::super::view::title(&s.sessions["skill-live"]),
-                "Named after skill"
-            );
+            assert_eq!(live_title(s), "Named after skill");
             assert_eq!(s.sidebar_state.archive_rows[0].title, "Named after skill");
             assert_eq!(
                 s.sessions["skill-live"].controller.state().transcript[0].text,

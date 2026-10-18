@@ -80,6 +80,19 @@ impl AssetSource for Assets {
     }
 }
 
+// Runtime launch metadata never needs the workspace's saved-session vector.
+fn launch_project(project: &ProjectSummary) -> ProjectSummary {
+    ProjectSummary {
+        path: project.path.clone(),
+        name: project.name.clone(),
+        working_directory: project.working_directory.clone(),
+        connection_string: project.connection_string.clone(),
+        collapsed: project.collapsed,
+        selected: project.selected,
+        sessions: vec![],
+    }
+}
+
 struct LiveSession {
     project: ProjectSummary,
     source_id: String,
@@ -101,6 +114,12 @@ struct LiveSession {
     restored_recovered: Vec<String>,
     dirty: bool,
     projection_dirty: bool,
+    file_sources_directory: Option<String>,
+    draft_focus_delivered: bool,
+    #[cfg(test)]
+    file_source_visits: usize,
+    inherited_choices: Option<tau_session::session::SettingsPresentation>,
+    inherited_commands: Option<Vec<serde_json::Value>>,
     ui_status: Option<(bool, bool)>,
     choices: Option<u64>,
     command_choices: Option<u64>,
@@ -813,18 +832,18 @@ impl Shell {
             })
     }
     fn selected_project(&self) -> Option<ProjectSummary> {
+        self.selected_project_ref().map(launch_project)
+    }
+    fn selected_project_ref(&self) -> Option<&ProjectSummary> {
         if let Some(live) = self.sessions.get(&self.active) {
-            return Some(live.project.clone());
+            return Some(&live.project);
         }
-        self.workspace
-            .as_ref()
-            .and_then(|w| {
-                w.projects
-                    .iter()
-                    .find(|p| p.path == w.active_project_path)
-                    .or(w.projects.first())
-            })
-            .cloned()
+        self.workspace.as_ref().and_then(|w| {
+            w.projects
+                .iter()
+                .find(|p| p.path == w.active_project_path)
+                .or(w.projects.first())
+        })
     }
     fn new_session(
         &mut self,
@@ -837,10 +856,13 @@ impl Shell {
         }
         let explicit_project = project.is_some();
         let project = match project {
-            Some(path) => self
-                .workspace
-                .as_ref()
-                .and_then(|workspace| workspace.projects.iter().find(|p| p.path == path).cloned()),
+            Some(path) => self.workspace.as_ref().and_then(|workspace| {
+                workspace
+                    .projects
+                    .iter()
+                    .find(|p| p.path == path)
+                    .map(launch_project)
+            }),
             None => self.selected_project(),
         };
         if let Some(project) = project {
@@ -873,7 +895,6 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.discard_empty_before_switch(&key, cx);
         self.initialize_workspace_session(&project, &source_path, cx);
         self.create_retained(
             key.clone(),
@@ -884,6 +905,8 @@ impl Shell {
             window,
             cx,
         );
+        // Capture valid presentation before retiring an unused predecessor.
+        self.discard_empty_before_switch(&key, cx);
         self.active = key.clone();
         self.mark_sidebar_read(&key);
         self.touch_runtime(&key);
@@ -907,6 +930,28 @@ impl Shell {
             return;
         }
         let ephemeral = source_id.is_empty() && source_path.is_empty();
+        // Cached presentation is limited to new sessions in the exact launch scope.
+        // A saved session's own settings must never be guessed.
+        let sources: Vec<_> = self
+            .sessions
+            .get(&self.active)
+            .into_iter()
+            .chain(self.sessions.values().rev())
+            .filter(|live| {
+                ephemeral
+                    && live.project.path == project.path
+                    && live.project.working_directory == project.working_directory
+                    && live.project.connection_string == project.connection_string
+                    && live.controller.state().ready
+                    && !live.starting
+            })
+            .collect();
+        let inherited_choices = sources
+            .iter()
+            .find_map(|live| live.controller.settings_presentation());
+        let inherited_commands = sources
+            .iter()
+            .find_map(|live| live.controller.commands_presentation());
         let mut controller = Controller::new(&key);
         controller.tick(self.epoch.elapsed().as_millis() as u64);
         if !source_id.is_empty() {
@@ -1157,7 +1202,7 @@ impl Shell {
         self.sessions.insert(
             key.clone(),
             LiveSession {
-                project: project.clone(),
+                project: launch_project(&project),
                 source_id,
                 source_path: source_path.clone(),
                 ephemeral,
@@ -1177,6 +1222,12 @@ impl Shell {
                 restored_recovered: vec![],
                 dirty: true,
                 projection_dirty: true,
+                file_sources_directory: None,
+                draft_focus_delivered: false,
+                #[cfg(test)]
+                file_source_visits: 0,
+                inherited_choices,
+                inherited_commands,
                 ui_status: None,
                 choices: None,
                 command_choices: None,
