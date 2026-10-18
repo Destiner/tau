@@ -1372,13 +1372,6 @@ impl Render for Shell {
             } else {
                 main = main.child(div().id("shell-empty-content").test_support().flex_1());
             }
-            if self.retry_workflow_pending() {
-                main = main.child(
-                    Button::new("retry-storage")
-                        .child("Retry Changes")
-                        .on_click(cx.listener(|s, _, _, cx| s.retry_workflows(cx))),
-                );
-            }
             body = body.child(main);
         }
         body = body
@@ -1450,6 +1443,10 @@ mod shell_integration_tests;
 #[cfg(test)]
 #[path = "layout_tests.rs"]
 mod layout_tests;
+
+#[cfg(test)]
+#[path = "retry_layout_tests.rs"]
+mod retry_layout_tests;
 
 #[cfg(test)]
 #[path = "session_focus_tests.rs"]
