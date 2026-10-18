@@ -859,6 +859,10 @@ mod file_reference_renderer_tests;
 mod parity_tests;
 
 #[cfg(test)]
+#[path = "markdown_marker_tests.rs"]
+mod marker_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use gpui_kit::{

@@ -51,6 +51,11 @@ debug = 1
 exclude = [".cache/crates/gpui-base", ".cache/crates/gpui-pre", ".cache/crates/gpui-pre-macos", ".cache/crates/merman-core", ".cache/crates/merman-analysis", ".cache/crates/merman-render", ".cache/crates/merman-layout-elk"]
 
 [[test]]
+name = "markdown-markers"
+path = "tests/markdown-markers.rs"
+harness = false
+
+[[test]]
 name = "activity-paint"
 path = "tests/activity.rs"
 harness = false

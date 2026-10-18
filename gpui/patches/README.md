@@ -2,7 +2,7 @@
 
 ## Prepared dependency set
 
-`gpui/scripts/prepare.ts` registers **35 Base patches**, **eleven Core patches**,
+`gpui/scripts/prepare.ts` registers **36 Base patches**, **eleven Core patches**,
 and **five macOS patches**, including the native interaction and accessibility
 fixes below; **two merman-core patches** (parser manifest and ER
 semantic default direction); **one merman-analysis manifest patch**; **four
@@ -429,6 +429,28 @@ all-feature Clippy, and the optimized native build. Standalone Base framework te
 remain unexecuted: their independent lockfile cannot resolve under `--locked`.
 These deterministic routes establish defects, not attribution of the user's
 specific running-app session-switch incident. No live-app acceptance is claimed.
+
+### `markdown-marker-ink.patch` (Base36)
+
+Only unordered markers in views already opting into `with_list_style` receive
+2× body-sized glyph ink, with their original line height and a local position
+correction inside the unchanged marker column. This is Timur's intentional
+roughly 2× native-size preference, not a Vue parity claim: actual production
+Root/MarkdownView Metal captures measured Base35 at 4.5×4.5 logical pixels
+(~12.4px² coverage), and actual Vue WebKit at about 5×5 (~17.2px²). Base36
+measures 8.5×8.5 (~50.8px²) at native 2× backing scale in both themes.
+Nested glyph identities, marker colors, body origins/baselines, column widths,
+row spacing, source mapping and selection remain unchanged. Ordered markers,
+task checkboxes and unstyled lists do not enter the new branch. Body fonts
+and the 13px/11px style profiles are unchanged.
+
+`cargo test --locked --offline --manifest-path gpui/Cargo.toml --test markdown-markers`
+uses actual production Root/MarkdownView in offscreen Metal (no OS window),
+checks real marker ink dimensions/coverage in both themes, and optionally saves
+frames under `TAU_MARKER_CAPTURE`. The focused `--lib markdown_marker` tests
+protect production list/body metrics, row geometry, task-box quads and exact
+plain/source selection. Native backing scale is reported, not forced: the
+current offscreen renderer supplies 2×, not an independent 1× native capture.
 
 ## Validation and maintenance
 
