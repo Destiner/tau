@@ -57,6 +57,8 @@ pub(super) struct State {
     minute: Option<u64>,
     creation_sequence: u64,
     created: HashMap<String, u64>,
+    created_at: HashMap<String, u64>,
+    phase_at: HashMap<SessionIdentity, u64>,
     #[cfg(test)]
     projection_builds: usize,
     #[cfg(test)]
@@ -78,6 +80,10 @@ impl State {
     pub(super) fn runtime_created(&mut self, runtime: &str) {
         self.creation_sequence += 1;
         self.created.insert(runtime.into(), self.creation_sequence);
+        self.created_at.insert(
+            runtime.into(),
+            Local::now().timestamp_millis().max(0) as u64,
+        );
         self.invalidate_metadata();
     }
 }
@@ -459,6 +465,8 @@ impl Shell {
                         rows.push((
                             false,
                             timestamp,
+                            false,
+                            0,
                             SessionItem {
                                 id,
                                 title: name,
@@ -505,15 +513,50 @@ impl Shell {
                     } else {
                         binding.pi_id.clone()
                     };
+                    let phantom = binding.pi_id.is_empty();
+                    let timestamp = self
+                        .sidebar_state
+                        .phase_at
+                        .get(&binding)
+                        .or_else(|| self.sidebar_state.created_at.get(key))
+                        .copied()
+                        .unwrap_or_default()
+                        .max(
+                            self.sidebar_state
+                                .last_user
+                                .get(&binding)
+                                .copied()
+                                .unwrap_or_default(),
+                        );
+                    let time = if state.working
+                        || !state
+                            .transcript
+                            .iter()
+                            .any(|entry| entry.kind == "user" || entry.kind == "assistant")
+                    {
+                        String::new()
+                    } else {
+                        relative_time(timestamp, "now", now_ms)
+                    };
                     details.insert(
                         id.clone(),
                         SessionDetails {
                             status: status_label(status).into(),
                             message: tooltip_markdown(&name),
-                            relative_time: None,
+                            relative_time: (!time.is_empty()).then_some(time.clone()),
                         },
                     );
                     rows.push((
+                        phantom,
+                        if phantom {
+                            self.sidebar_state
+                                .created
+                                .get(key)
+                                .copied()
+                                .unwrap_or_default()
+                        } else {
+                            timestamp
+                        },
                         true,
                         self.sidebar_state
                             .created
@@ -523,14 +566,19 @@ impl Shell {
                         SessionItem {
                             id,
                             title: name,
-                            time: String::new(),
+                            time,
                             status,
                             unread,
                             can_archive: false,
                         },
                     ));
                 }
-                rows.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+                rows.sort_by(|a, b| {
+                    b.0.cmp(&a.0)
+                        .then_with(|| b.1.cmp(&a.1))
+                        .then_with(|| b.2.cmp(&a.2))
+                        .then_with(|| a.3.cmp(&b.3))
+                });
                 projects.push(ProjectItem {
                     id: project.path.clone(),
                     title: project.name.clone(),
@@ -541,7 +589,7 @@ impl Shell {
                         .map(|connection| format!("{connection} · {}", project.working_directory))
                         .unwrap_or_else(|| project.working_directory.clone()),
                     collapsed: project.collapsed,
-                    sessions: rows.into_iter().map(|(_, _, row)| row).collect(),
+                    sessions: rows.into_iter().map(|(_, _, _, _, row)| row).collect(),
                 });
             }
         }
@@ -583,6 +631,26 @@ impl Shell {
         if metadata_changed {
             for (runtime, live) in &self.sessions {
                 let binding = SessionIdentity::live(runtime, live);
+                // An unregistered workflow phase has its own activity clock, not
+                // its runtime's creation rank. Empty first materialization keeps its clock.
+                let first_materialization = self
+                    .sidebar_state
+                    .runtime_identity
+                    .get(runtime)
+                    .is_none_or(|previous| !previous.ephemeral.is_empty());
+                let initial = if first_materialization {
+                    self.sidebar_state
+                        .created_at
+                        .get(runtime)
+                        .copied()
+                        .unwrap_or(now_ms)
+                } else {
+                    now_ms
+                };
+                self.sidebar_state
+                    .phase_at
+                    .entry(binding.clone())
+                    .or_insert(initial);
                 if let Some(previous) = self
                     .sidebar_state
                     .runtime_identity
@@ -611,6 +679,18 @@ impl Shell {
             self.sidebar_state
                 .created
                 .retain(|runtime, _| self.sessions.contains_key(runtime));
+            self.sidebar_state
+                .created_at
+                .retain(|runtime, _| self.sessions.contains_key(runtime));
+            let live_bindings: HashSet<_> = self
+                .sidebar_state
+                .runtime_identity
+                .values()
+                .cloned()
+                .collect();
+            self.sidebar_state
+                .phase_at
+                .retain(|binding, _| live_bindings.contains(binding));
         }
         let index = (projection_changed || metadata_changed).then(|| runtime_index(&self.sessions));
         let projection =
@@ -736,6 +816,8 @@ impl Shell {
     }
 }
 
+#[cfg(test)]
+mod hover_tests;
 #[cfg(test)]
 mod painted_tests;
 #[cfg(test)]

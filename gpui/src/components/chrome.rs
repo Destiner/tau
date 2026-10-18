@@ -943,6 +943,22 @@ impl Sidebar {
         self.version_open = false;
         self.project_open = false;
         self.hint.dismiss();
+        self.menu_target = target;
+        let items = Self::context_items(self.menu_target.as_ref());
+        let width = if self.menu_target.is_some() {
+            152.
+        } else {
+            176.
+        };
+        self.context_menu.update(cx, |menu, cx| {
+            menu.set_items(items, cx);
+            menu.set_min_width(px(width), cx);
+            menu.open_at(position, origin, window, cx);
+        });
+        self.menu_focus = window.focused(cx);
+        cx.notify();
+    }
+    fn context_items(target: Option<&(String, SessionItem)>) -> Vec<MenuItem> {
         let item = |id: &str, label: &str, shortcut: Option<&str>| MenuItem {
             id: id.into(),
             element_id: format!("sidebar-menu-{id}"),
@@ -950,7 +966,7 @@ impl Sidebar {
             shortcut: shortcut.map(str::to_owned),
             disabled: false,
         };
-        let items = if let Some((_, session)) = &target {
+        if let Some((_, session)) = target {
             let mut items = vec![item(
                 "read",
                 if session.unread {
@@ -970,16 +986,7 @@ impl Sidebar {
                 item("remote", "Open Remote Project", None),
                 item("archived", "Show Archived Sessions", None),
             ]
-        };
-        let width = if target.is_some() { 152. } else { 176. };
-        self.menu_target = target;
-        self.context_menu.update(cx, |menu, cx| {
-            menu.set_items(items, cx);
-            menu.set_min_width(px(width), cx);
-            menu.open_at(position, origin, window, cx);
-        });
-        self.menu_focus = window.focused(cx);
-        cx.notify();
+        }
     }
     pub fn set_projects(&mut self, projects: Vec<ProjectItem>, cx: &mut Context<Self>) {
         self.set_projects_with_identities(projects, BTreeMap::new(), cx);
@@ -1002,7 +1009,24 @@ impl Sidebar {
             {
                 self.project_drag = None;
             }
-            self.dismiss_context(cx);
+            if let Some((project_id, target)) = &self.menu_target {
+                let current = projects
+                    .iter()
+                    .find(|p| &p.id == project_id)
+                    .filter(|p| !p.collapsed)
+                    .and_then(|p| p.sessions.iter().find(|row| row.id == target.id));
+                if let Some(current) = current {
+                    let previous_items = Self::context_items(self.menu_target.as_ref());
+                    self.menu_target = Some((project_id.clone(), current.clone()));
+                    let items = Self::context_items(self.menu_target.as_ref());
+                    if items != previous_items {
+                        self.context_menu
+                            .update(cx, |menu, cx| menu.set_items(items, cx));
+                    }
+                } else {
+                    self.dismiss_context(cx);
+                }
+            }
             // Rebase visual offsets when the parent accepts the release order.
             let old = self.rendered_projects();
             let tops = |projects: &[ProjectItem]| {
@@ -1526,6 +1550,11 @@ impl Sidebar {
             .cloned()
             .collect()
     }
+    pub(crate) fn body_hover(&mut self, hovered: bool, cx: &mut Context<Self>) {
+        if !hovered || !self.pointer_outside_window {
+            self.hold_body_order(hovered, cx);
+        }
+    }
     fn hold_body_order(&mut self, hovered: bool, cx: &mut Context<Self>) {
         if hovered {
             if self.held_session_order.is_none() {
@@ -1735,7 +1764,9 @@ impl Render for Sidebar {
             .on_prepaint(move |bounds, _, _| body_bounds.set(Some(bounds)))
             // Recency stays frozen under a stationary pointer, including while typing.
             .hover_listener_mode(HoverListenerMode::InputModalityIndependent)
-            .on_hover(cx.listener(|s, hovered, _, cx| s.hold_body_order(*hovered, cx)))
+            .on_hover(cx.listener(|s, hovered: &bool, _, cx| {
+                s.body_hover(*hovered, cx);
+            }))
             .flex_1()
             .min_h_0()
             .p(px(6.))
@@ -3053,6 +3084,14 @@ impl Render for Sidebar {
                                     let _ = moving.update(cx, |s, cx| {
                                         if s.pointer_outside_window {
                                             s.pointer_outside_window = false;
+                                            // A real move can re-enter an inactive body without
+                                            // another hover transition at GPUI's retained position.
+                                            if s.body_bounds
+                                                .get()
+                                                .is_some_and(|b| b.contains(&e.position))
+                                            {
+                                                s.hold_body_order(true, cx);
+                                            }
                                             let hovered: BTreeSet<_> =
                                                 if window.is_window_active() && !s.props.archived {
                                                     s.hint
