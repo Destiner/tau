@@ -55,6 +55,7 @@ const crates = [
       'selection-autoscroll-edges.patch',
       'textselection-paint.patch',
       'link-activation-bounds.patch',
+      'textarea-viewport-clipping.patch',
     ],
   },
   {

@@ -1,0 +1,14 @@
+--- a/src/input/base/state.rs
++++ b/src/input/base/state.rs
+@@ -4805,6 +4805,11 @@
+             .when(!self.is_multi_line(), |this| this.flex().items_center())
+             .flex_grow_1()
+             .overflow_x_hidden()
++            // Plain textareas are vertical viewports too. Clip at the padded frame,
++            // not the text's line box, so first/last-row descenders keep their inset.
++            .when(self.is_multi_line() && !self.is_code_editor(), |this| {
++                this.overflow_y_hidden()
++            })
+             .when(self.is_multi_line(), |this| {
+                 this.pt(self.editor_paddings.top)
+                     .pr(self.editor_paddings.right)

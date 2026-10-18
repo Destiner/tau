@@ -2,7 +2,7 @@
 
 ## Prepared dependency set
 
-`gpui/scripts/prepare.ts` registers **33 Base patches**, **eleven Core patches**,
+`gpui/scripts/prepare.ts` registers **34 Base patches**, **eleven Core patches**,
 and **five macOS patches**, including the native interaction and accessibility
 fixes below; **two merman-core patches** (parser manifest and ER
 semantic default direction); **one merman-analysis manifest patch**; **four
@@ -257,6 +257,14 @@ Rounded thumbs need no dependency patch: Tau projects a 4px radius via Base's `S
 **Signal:** Base's auto-grow textarea always retains a full line-height between the caret's row origin and the viewport bottom. At the ten-row cap, appending to an eleven-line draft scrolled 19px while WebKit's textarea scrolled 13px, hiding the first line entirely and moving the final line 6px too high. The browser's scrollTop and Base's own scroll offset exposed the discrepancy without hardcoding a post-input scroll position.
 
 `InputEditorStyle::auto_grow_cursor_margin` opts a single auto-growing textarea into a 13px reveal inset; the default remains one shaped line. The inset is bounded between zero and half the viewport, and does not affect ordinary inputs, code editors, wheel scroll, dragging, or content/history. An upstream unit regression checks defaults and bounds; the native/browser multiline editing fixture checks the real-key path and rendered output in both themes. The composer retains Base's scrolling/idle scrollbar mode and projects the same 4px thumb radius as the accepted Tau textarea. Immediately after editing, Base still paints its thumb during the idle hold; browser overlay scrollbars are hidden in the capture.
+
+### `textarea-viewport-clipping.patch`
+
+**Signal:** capped composer drafts paint text/selection above and below the input while scrolling. The input frame only declared horizontal clipping; Core's correct visible-axis mask preservation exposed the enclosing Root's vertical mask instead of an editor viewport.
+
+Plain textareas now explicitly hide vertical overflow at their existing padded frame. This scopes the fix to the textarea, including its custom glyph/selection/caret paint, without changing Core masks, single-line ink safety, code editors, line metrics, wrapping, insets, scrolling or retained editing state. The 4px/3px top/bottom composer padding remains inside the clip, rather than clipping each line box and shaving descenders.
+
+`cargo test --manifest-path gpui/Cargo.toml --test composer-clipping` is an offscreen Metal regression using the actual Composer inside Base Root, both themes, a long wrapped paragraph followed by hard lines, repeated top/fractional/middle/bottom scrolls, both-axis clamps, and retained entity/draft/selection. It checks actual rasterized glyph/selection pixels against the editor viewport and the scene's selection/caret masks. It does not capture an OS window. The same regression failed on Base33 with actual glyph pixels outside the viewport and passed in both themes after official Base34 preparation. The existing 13 editor integration tests also pass; single-line ink policy is unchanged.
 
 ### `textarea-vertical-edges.patch`
 
