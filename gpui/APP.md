@@ -75,7 +75,9 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   conversation content. Dismissing feedback acknowledges its exact error occurrence;
   reselecting cannot replay it, and an old dialog cannot clear a newer error or write fence.
 - Empty-session input uses a 4px internal top inset, 12px above the previous placement.
-  Outer composer padding, compact input and footer position are unchanged.
+  Outer composer padding, compact input and footer position are unchanged. Scrolling plain
+  textareas clip glyphs, selections and carets to their padded viewport, including at the
+  multiline cap; single-line descender ink and retained editor state remain unchanged.
 - Model choices use Pi's scoped-model settings for local or remote sessions, following
   Vue's matching/order/fallback behavior. An out-of-scope current model remains a
   display label, not an extra selectable option. Provider-grouped, searchable menus
@@ -92,6 +94,10 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   readers do not autoscroll during an in-bounds horizontal text drag. Raw readonly results remain
   selectable with exact Copy, including whitespace and terminal newlines. The transient Working/Stopping tail follows
   Vue's assistant/compaction rules and is excluded from transcript data and Copy.
+- Unnamed sessions derive `/skill:name` from a well-formed first skill invocation across
+  header, sidebar, archive and palette, including saved previews/reloads. Explicit Pi or
+  saved names take precedence. Shared parsing never rewrites transcript source or persists
+  a derived title as a Pi name.
 - Click-to-rename saved sessions through Pi, with bounded names, rollback and registry
   persistence. The title hover/focus wash is 20px high, matching Vue, with a 60ch cap
   and clipped long titles; the rename editor and title baseline are unchanged. Archive idle saved sessions; browsing archives does not restore them,
@@ -286,7 +292,15 @@ release and cutover gates remain as documented above.
 
 ## Current verification boundary
 
-The workflow/tooltip correction passed **742 GPUI library tests / 1 ignored**,
+The final skill-title/composer corrections passed **746 GPUI library tests / 1 ignored**,
+**82 Core / 1 ignored**, **155 controller / 1 opt-in canary ignored**, **16 Tauri compatibility
+tests**, strict all-target/all-feature Clippy, formatting, native lint/typecheck and eight
+package/version tests. All **13 editor integrations** and the new offscreen composer
+pixel/mask regression pass. The latter reproduced actual glyph escape before Base34,
+then passed with the same containment contract after preparation. A normal-feature
+optimized arm64 release build passed after renderer validation.
+
+The preceding workflow/tooltip correction passed **742 GPUI library tests / 1 ignored**,
 **155 controller tests / 1 opt-in canary ignored**, strict all-target/all-feature Clippy,
 formatting, native tooling lint/typecheck, **13 editor integrations** and eight
 packaging/version tests. A normal-feature `tau` build passed after the feature-enabled
@@ -294,7 +308,7 @@ visual checks. Deterministic coverage includes admitted extension preflight,
 transport loss after idle reads, exact error acknowledgement, empty-session retirement,
 active prompt wash, source-owned feedback placement and long-tooltip containment.
 
-Fresh actual-App comparison captured **56 originals / 28 Vue/native pairs**: seven states,
+That checkpoint's actual-App comparison captured **56 originals / 28 Vue/native pairs**: seven states,
 both themes, 1×/2×, plus eight held-workflow/busy-response smokes. Long SSH locations remain
 complete inside the 260px surface; first-run hints sit 6px below their actual icon. Native
 and WebKit still differ in text wrapping/rasterization, some prompt spacing and focus cues;
@@ -311,8 +325,8 @@ core **79 / 1 ignored**, canonical-path Tauri **16**, and root frontend **894** 
 checks/build. A normal-feature `tau` build passed after the feature-enabled checks.
 These gates do not replace native lifecycle or packaged acceptance.
 
-**Current installed-Pi native acceptance is not green in either mode.** Both fresh
-credential-free and model-backed runs fail the unchanged five-second busy-close gate:
+**The last installed-Pi native automated acceptance was not green in either mode.**
+Those credential-free and model-backed runs failed the unchanged five-second busy-close gate:
 the owned window is inactive, Close is unavailable, and no lifecycle callback runs.
 Deactivation's source cause is unproven; an external actor is not established. No
 activation repair, repeated key or widened deadline was added. Earlier free/model passes
@@ -320,8 +334,13 @@ are historical; harness child cleanup is not successful production close.
 
 Subsequent user manual checks passed close/cancel, draft persistence, streaming/session
 switching/queues, history management, macOS input and ordinary extension prompts.
-SSH appeared to work in that review; compaction and complex extension workflows remain
-unverified. These reports are separate from the unresolved automated native gate.
+The user subsequently reported complex workflow execution/resumption and SSH working
+while using GPUI as the main app. These are accepted manual checks for the cold-turkey
+cutover, not automated authenticated-host proof. Additional compaction, automated busy-close
+and existing-profile acceptance campaigns are explicitly deferred, not passing gates.
+Media expansion is excluded from rewrite completion. The remaining critical path is
+native release automation, updater implementation and canonical native CI, then merge
+and legacy removal. Do not reopen broad acceptance campaigns without a concrete regression.
 
 The focused interaction-polish comparison captured **104 original images / 52 Vue/native
 pairs**, covering 13 states in both themes at 1×/2×. Actual Root interactions verify reader

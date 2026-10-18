@@ -4,9 +4,9 @@ This builds the real `src/bin/tau.rs` application (`app::run`, shared `tau-core`
 and `tau-session`), not a showcase or prototype launcher. It produces a standalone
 **Tau.app**, bundle ID `com.destiner.tau.native-preview`, with display name **Tau**, distinct in identity from
 Tauri's **Tau.app** / `com.destiner.tau`. The existing Tauri fallback, release
-signing, updater and installed app are untouched. Production cutover remains
-**NO-GO**: these are local previews, not Developer ID signed, notarized, stapled
-or updater artifacts.
+signing, updater and installed app are untouched. Public distribution is not ready:
+these are local ad-hoc previews, not Developer ID signed, notarized, stapled or updater
+artifacts. Normal-feature optimized arm64 builds now pass alongside debug validation.
 
 ## Package
 
@@ -64,9 +64,10 @@ The bundle declares macOS 15+, and builds for the host architecture, not univers
 
 ## Safe manual launch (separate from packaging)
 
-**Do not double-click the preview:** the actual shell defaults to production
-storage without `--isolated`. A distinct bundle ID does not isolate its data.
-Use a disposable project and profile; packaging intentionally never launches:
+**Double-clicking uses production storage:** the shell defaults to it without
+`--isolated`; a distinct bundle ID does not isolate data. The user's cold-turkey
+switch intentionally uses that profile, with the old app closed. For isolated validation,
+use a disposable project/profile instead; packaging intentionally never launches:
 
 ```sh
 sandbox=$(mktemp -d /tmp/tau-native-profile-XXXXXX)
@@ -115,16 +116,21 @@ rotation are a separate release decision, not part of this parity batch.
 
 ## Current acceptance boundary
 
-The final source passes the normal-feature native build, 691 GPUI tests / 1 ignored,
-strict all-target/all-feature Clippy, static tooling and eight package/version tests.
-Representative production captures and actual-label glyph controls pass, with the
-selection-paint differences recorded in [APP.md](APP.md). Neither current installed-Pi
-native mode passes: both hit the unchanged five-second busy-close gate with an inactive owned window,
-Close unavailable and no lifecycle callback. The deactivation cause is unproven; no
-activation repair was added. Historical native passes, harness cleanup receipts and
-representative two-scale visual captures do not certify packaged lifecycle acceptance.
-Release-profile local/SSH workflows, signing/notarization, updater trust, production
-cutover, configuration and cross-process profile locking remain unverified.
+The current source passes an optimized normal-feature arm64 build, **746 GPUI tests /
+1 ignored**, **82 Core / 1 ignored**, **155 Session / 1 ignored**, **16 Tauri compatibility
+tests**, strict Clippy/static checks, **13 editor integrations**, the offscreen composer
+paint regression and eight package/version tests. Prior paired captures remain
+checkpoint-specific; see [APP.md](APP.md).
+
+The user reports normal workflows, unfinished-run resumption and SSH working in GPUI.
+Additional compaction, existing-profile and automated busy-close campaigns are explicitly
+deferred for this cold-turkey cutover. The last automated busy-close failures remain
+negative evidence with an unproven cause; no activation repair was added. This is a scope
+decision, not a passing automated result. Cross-process profile locking is not certified;
+do not run both apps against the same profile.
+
+Signing/notarization, native updater trust/install/recovery, release CI and the canonical
+repository cutover remain engineering work. Media expansion is not a rewrite blocker.
 
 ## Static regression tests
 

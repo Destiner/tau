@@ -1,9 +1,11 @@
 # GPUI rewrite: current status and delivery plan
 
-Updated 15 October 2026. This supersedes the historical prototype checklist.
-The requested delivery/decision window was **9–10 October**. The native preview remains
-under active user review and correction; it is not a completed production cutover.
-The remaining release/cutover gates below still require an explicit decision.
+Updated 18 October 2026. This supersedes the historical prototype checklist.
+The user is using GPUI as the main app and plans a cold-turkey switch, not parallel
+Vue/native operation. Complex workflow execution/resumption and SSH have passed user
+review. Media expansion, additional compaction testing, the unresolved automated
+busy-close check and a separate existing-profile audit are deferred, not release blockers.
+The remaining work is native release/update engineering and repository cutover.
 
 ## Current boundary: first real native application implemented
 
@@ -19,8 +21,9 @@ into `tau-core` in `af98b6d`, preserving existing Tauri service compatibility.
 `tau-session` supplies real Pi JSONL RPC orchestration; the shell (`63cba9c`) routes effects
 through those shared services. Local and SSH backends are available, including
 existing remote-project configuration and a new SSH connection/directory import UI.
-**Automated authenticated real-host SSH acceptance remains unproven.** Ordinary SSH
-appeared to work during subsequent user review. Pi still owns extensions and session files.
+**Automated authenticated real-host SSH acceptance remains unproven.** The user's normal
+SSH workflow is reported working and accepted for this cutover. Pi still owns extensions
+and session files.
 
 Implemented first-slice behavior includes local project import, existing/new
 sessions, model/effort selection, prompt/stream/activity/Stop and queue controls,
@@ -103,7 +106,15 @@ through normalized CRLF, dehover and nearest-run gaps held across three frames.
 Font-metric paint changes no layout/hit testing; width truncation preserves line height
 and bottom ink. Source owners outlive the 128-view cache. See [APP.md](../gpui/APP.md).
 
-Workflow/tooltip checkpoint: **742 GPUI passes / 1 ignored**, **155 controller passes /
+Final skill-title/composer correction: **746 GPUI passes / 1 ignored**, **82 Core /
+1 ignored**, **155 controller / 1 canary ignored**, **16 Tauri compatibility tests**,
+strict Clippy/static checks, **13 editor integrations**, the offscreen composer regression
+in both themes, and eight package/version tests. The optimized normal-feature arm64
+release build passed. Skill-derived titles now share canonical parsing and explicit-name
+provenance; scrolling textareas clip to their padded frame without changing single-line
+ink or editor lifetime. Actual glyph overflow failed before the patch and passes after it.
+
+Preceding workflow/tooltip checkpoint: **742 GPUI passes / 1 ignored**, **155 controller passes /
 1 canary ignored**, strict all-target/all-feature Clippy, formatting, native tooling
 lint/typecheck, **13 editor integrations** and eight package/version tests. The fresh
 actual-App campaign contains **56 originals / 28 Vue/native pairs** across seven states,
@@ -121,13 +132,14 @@ and **894 root frontend** plus static checks/build. The normal-feature native bu
 passed after feature-enabled checks. These checks do not establish native lifecycle,
 packaged or whole-product acceptance.
 
-**Both current installed-Pi native modes fail** the unchanged five-second busy-close gate:
+**Both last installed-Pi native automated runs failed** the unchanged five-second busy-close gate:
 inactive owned window, unavailable Close, no lifecycle callback. Deactivation origin is
 unproven, not proven external; no activation repair was added. Historical passes below
 do not certify current close/cancel/shutdown. Subsequent user manual checks passed
 close/cancel, persistence, streaming/switching/queues, history management, macOS input and
-ordinary extension prompts. Compaction and complex extension workflows remain unverified;
-the manual reports do not erase the automated gate's negative evidence.
+ordinary extension prompts. Later manual checks also covered complex workflow execution
+and resumption, plus SSH. The user explicitly deferred additional compaction and automated
+busy-close testing; that decision does not erase or relabel the earlier negative evidence.
 
 The focused interaction-polish campaign captured **104 originals / 52 Vue/native pairs**:
 13 states, both themes, 1×/2×. Real Root interactions include reader handoff/held selection,
@@ -327,13 +339,14 @@ failures); no speculative activation/focus repair or relabelled visual snapshots
 - [x] Complete audited Vue command coverage and registry-only project removal with
       acknowledged cleanup and retained failure retries. Tree/branch navigation and
       destructive session-file deletion are not Vue parity gaps in this audit.
-- [ ] Prove authenticated real SSH workflows using existing configuration contracts.
+- [x] Accept the user's configured SSH and complex-workflow/resumption checks.
+      Separate authenticated-host automation is not a cutover prerequisite.
 - [x] Implement bounded file snapshots, source-faithful paths/notices and retained
       inline multiline extension editing with natural embedded reader ownership.
 - [x] Verify actual production descender ink, horizontal clipping, dehover, selection-gap
       retention and slash selection/scrolling at both scales and themes.
-- [ ] Complete remaining visual/media/extension coverage and authenticated SSH previews;
-      preserve preview security and the disclosed selection-paint differences.
+- Media expansion and additional compaction/extension acceptance campaigns are deferred.
+  Preserve preview security and disclosed visual differences without broadening scope.
 - [x] Restore non-prose compaction boundaries and earlier active-branch layers through
       real Pi history RPC, preserving source identities, reader position and draft.
 - [x] Implement bounded replacement probes/materialization, source recovery, explicit
@@ -351,30 +364,31 @@ failures); no speculative activation/focus repair or relabelled visual snapshots
 - [x] Package the production `tau` entrypoint as a standalone native preview, not a
       renamed playground or the existing Tauri bundle. Debug bundle, Info.plist,
       architecture/linkage, ad-hoc signature and five packaging regressions passed.
-- [ ] Verify release-profile packaging and actual packaged local/SSH workflows.
+- [x] Build the optimized normal-feature arm64 application after focused regression gates.
+- [ ] Automate verified native release packaging and distribution.
 - [ ] Complete applicable signing, notarization, updater trust and release recovery
       contracts before shipping. GitHub workflow changes must publish separate compatible
       native arm64 artifacts and a native feed, not Tauri payloads. See
       [packaging release requirements](../gpui/PACKAGING.md#github-release-and-updater-requirements).
       Do not advertise those as implemented today.
-- [ ] Finish relevant automated native/controller/backend checks and fix concrete
-      regressions; record final counts only after validation finishes.
+- [x] Finish the focused native/controller/backend checks and reported title/composer fixes.
+- [ ] Make native CI/dev commands canonical, including clean preparation and shared crates.
 
-### 3. Local/SSH data-safe acceptance and GO/NO-GO
+### 3. Canonical native cutover
 
-- [ ] Verify existing projects, sessions, drafts/settings and restart recovery with
-      isolated data first, without destructive conversion or concurrent profile writers.
-- [ ] In the packaged app, accept local and SSH send/stream/tools/Stop, session
-      switching/drafts, restart, close/cancel/last-window quit and owned async cleanup.
-- [x] Implement captured lifecycle identities, completed-proof/storage drain, batch
-      shutdown receipts and FIFO exit fence before approval; preserve work on cancellation.
-- [ ] Resolve current owned-window busy-close acceptance failure in both modes without
-      assuming an external cause; packaged/SSH lifecycle acceptance also remains.
-- [ ] Make an explicit ship/continue/revert decision in the 9–10 October window,
-      with concrete blockers and safe rollback. Existing Tau remains the fallback.
+- [x] Retain captured lifecycle identities, storage/drain receipts and FIFO exit fencing.
+- [x] Use the user's cold-turkey plan rather than building an elaborate side-by-side migration.
+      Pi transcripts and workspace storage are shared; native UI drafts/preferences remain
+      separate. Do not run both shells as concurrent profile writers.
+- Additional existing-profile checks and the unresolved automated busy-close investigation
+  are deferred by the user. Existing storage/draft/compatibility tests pass; neither this
+  decision nor manual success converts historical negative automation into a pass.
+- [ ] Complete native updater verification/install/relaunch/recovery and release CI on `gpui`.
+- [ ] Merge the releasable native path, then retire Vue/Tauri and migration-only tooling
+      while preserving durable tests and unrelated local work.
 
-**Next checkpoint: remaining workflow/recovery parity and packaged local/SSH
-acceptance**, then release/cutover—not another prototype visual shell.
+**Next checkpoint: release automation, native updater and canonical CI**, then merge
+and legacy removal. No further general dogfooding/compaction/media campaign is required.
 
 ## Scope and repository safety
 
