@@ -102,6 +102,15 @@ pub struct NativeDialog {
     _input_events: Subscription,
 }
 impl gpui_kit::EventEmitter<DialogEvent> for NativeDialog {}
+
+fn inline_markdown_style(dark: bool, window: &Window) -> gpui_kit::base::TextViewStyle {
+    let style = markdown::text_style_at_size(dark, 13., window);
+    // Current Vue tables reset to normal: Inter 12.22px measures 15px in both browser engines.
+    // Base has no CSS normal leading; keep this override local to dialog title/message tables.
+    let table = style.table().clone().line_height(px(15.));
+    style.with_table(table)
+}
+
 impl NativeDialog {
     pub fn set_theme(&mut self, dark: bool, _window: &mut Window, cx: &mut Context<Self>) {
         if self.dark == dark {
@@ -1014,6 +1023,7 @@ impl NativeDialog {
                             .scrollable(false)
                             .text_size(px(13.))
                             .line_height(gpui_kit::relative(1.62))
+                            .style(inline_markdown_style(self.dark, window))
                             .on_link_activate_at(move |link, event, anchor, window, cx| {
                                 let Some(target) = markdown::activation_target(link, event) else {
                                     return;
@@ -1051,10 +1061,7 @@ impl NativeDialog {
                             .scrollable(false)
                             .text_size(px(13.))
                             .line_height(gpui_kit::relative(1.62))
-                            .style(
-                                markdown::text_style_at_size(self.dark, 13., window)
-                                    .with_foreground(rgb(t.muted).into()),
-                            )
+                            .style(inline_markdown_style(self.dark, window))
                             .on_link_activate_at(
                                 move |link, event, anchor, window, cx| {
                                     let Some(target) = markdown::activation_target(link, event)

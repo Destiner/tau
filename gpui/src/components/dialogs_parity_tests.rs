@@ -476,6 +476,108 @@ fn persistent_transcript_large_prompt_routes_real_wheel_and_keeps_cancel_reachab
     }
 }
 
+const WORKFLOW_TABLE: &str = "| | |\n| --- | --- |\n| Planning | Claude Opus · xhigh |\n| Implementation | Claude Opus · medium |\n| Review | Skip |\n| Post-merge | Monitor + Test |";
+
+#[test]
+fn workflow_table_matches_current_vue_normal_rows_in_title_and_message() {
+    for dark in [false, true] {
+        for width in [880., 360.] {
+            for (kind, confirm) in [
+                (DialogKind::ExtensionInput, false),
+                (DialogKind::ExtensionSelect, false),
+                (DialogKind::ExtensionSelect, true),
+            ] {
+                for in_title in [false, true] {
+                    let mut f = Fixture::with_sources(
+                        kind,
+                        1,
+                        dark,
+                        confirm,
+                        if in_title { WORKFLOW_TABLE } else { "Start?" },
+                        if in_title {
+                            "Plain message"
+                        } else {
+                            WORKFLOW_TABLE
+                        },
+                    );
+                    f.window.simulate_resize(size(px(width), px(400.)));
+                    f.window.update(|_, w, cx| w.bounds_changed(cx));
+                    f.window.draw();
+                    let table_id = if in_title {
+                        "extension-title"
+                    } else {
+                        "extension-message"
+                    };
+                    let plain_id = if in_title {
+                        "extension-message"
+                    } else {
+                        "extension-title"
+                    };
+                    // Four 15px rows + cell padding/rules = 113px. TestApp's fake font
+                    // wraps one extra line at 360; real Inter stays 113px (capture fixture).
+                    assert_eq!(
+                        f.bounds(table_id).size.height,
+                        px(if width == 360. { 128. } else { 113. }),
+                        "dark={dark} width={width} kind={kind:?} confirm={confirm} title={in_title}"
+                    );
+                    let line = f.window.update(|_, w, _| w.pixel_snap(px(13. * 1.62)));
+                    assert_eq!(f.bounds(plain_id).size.height, line);
+                    let action = if confirm {
+                        "confirm"
+                    } else if kind == DialogKind::ExtensionInput {
+                        "submit"
+                    } else {
+                        "cancel"
+                    };
+                    assert_eq!(f.bounds(action).size.height, px(22.));
+                    if confirm && !in_title {
+                        assert_eq!(
+                            f.bounds("confirm").top(),
+                            px(if width == 360. { 195. } else { 180. })
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn dialog_table_normal_leading_matches_bundled_inter_metrics() {
+    let face = rustybuzz::Face::from_slice(
+        include_bytes!("../../assets/product-fonts/TauInter-400.ttf"),
+        0,
+    )
+    .unwrap();
+    let normal = f32::from(face.ascender() - face.descender() + face.line_gap()) * (13. * 0.94)
+        / face.units_per_em() as f32;
+    assert_eq!(normal.ceil(), 15.);
+    assert_eq!(normal.ceil() * 4. + 12. * 4. + 3. + 2., 113.);
+}
+
+#[test]
+fn dialog_markdown_style_is_local_and_uses_computed_vue_text_foreground() {
+    for dark in [false, true] {
+        let mut f = Fixture::new(DialogKind::ExtensionInput, 0, dark, false);
+        f.window.update(|_, w, cx| {
+            let shared = markdown::text_style_at_size(dark, 13., w);
+            let local = inline_markdown_style(dark, w);
+            // Browser computed --text, not --muted (light rgb(92,97,102), dark rgb(191,189,182)).
+            let expected = rgb(if dark { 0xbfbdb6 } else { 0x5c6166 }).into();
+            assert_eq!(local.foreground(), expected);
+            assert_ne!(local.foreground(), local.muted_foreground());
+            assert_eq!(local.table(), &shared.table().clone().line_height(px(15.)));
+            assert_eq!(local.table_cell(), shared.table_cell());
+            assert_eq!(local.table_head(), shared.table_head());
+            assert!(local.table_fit_content() && local.table_css_cells());
+            let d = f.dialog.read(cx);
+            assert_ne!(d.title.entity_id(), d.message.entity_id());
+            assert_eq!(d.props.title, "Question **with emphasis**");
+            assert_eq!(d.props.description, "Optional `message`");
+        });
+    }
+}
+
 #[test]
 fn root_confirm_has_accurate_actions_not_synthetic_yes_no_options() {
     for (id, expected) in [("confirm", "Yes"), ("reject", "No")] {
