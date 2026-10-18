@@ -201,6 +201,57 @@ fn chrome_hold_materialization_and_replacement_use_source_identity_but_captured_
 }
 
 #[test]
+fn legacy_runtime_alias_negative_control_duplicates_a_surviving_workflow_row() {
+    let mut app = gpui_kit::TestApp::new();
+    app.update(gpui_kit::init);
+    let mut window = app.open_window(|_, cx| {
+        Sidebar::new(
+            props(),
+            vec![project("first", &["plan", "implement"])],
+            "1".into(),
+            false,
+            cx,
+        )
+    });
+    window.update(|s, _, cx| {
+        // Historical caller projection: distinct Pi identities shared one runtime object key.
+        s.set_projects_with_identities(
+            vec![project("first", &["plan", "implement"])],
+            BTreeMap::from([
+                ("plan".into(), "runtime".into()),
+                ("implement".into(), "runtime".into()),
+            ]),
+            cx,
+        );
+        s.hold_body_order(true, cx);
+        s.set_projects_with_identities(
+            vec![project("first", &["implement"])],
+            BTreeMap::from([("implement".into(), "runtime".into())]),
+            cx,
+        );
+        assert_eq!(
+            s.ordered_sessions(&s.projects[0])
+                .iter()
+                .map(|row| row.id.as_str())
+                .collect::<Vec<_>>(),
+            ["implement", "implement"]
+        );
+        // Canonical saved IDs close the predecessor's gap rather than reusing its object.
+        s.hold_body_order(false, cx);
+        s.set_projects(vec![project("first", &["plan", "implement"])], cx);
+        s.hold_body_order(true, cx);
+        s.set_projects(vec![project("first", &["implement"])], cx);
+        assert_eq!(
+            s.ordered_sessions(&s.projects[0])
+                .iter()
+                .map(|row| row.id.as_str())
+                .collect::<Vec<_>>(),
+            ["implement"]
+        );
+    });
+}
+
+#[test]
 fn chrome_hold_scope_excludes_titlebar_footer_and_resets_on_archive_mode_change() {
     let mut app = gpui_kit::TestApp::new();
     app.update(gpui_kit::init);

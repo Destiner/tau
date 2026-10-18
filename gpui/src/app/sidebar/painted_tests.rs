@@ -264,6 +264,197 @@ fn root_hover_negative_control_legacy_runtime_row_id_breaks_the_painted_oracle()
 }
 
 #[test]
+fn root_archive_workflow_predecessor_is_not_the_active_replacement_or_a_held_alias() {
+    for target in ["plan", "implement"] {
+        for success in [false, true] {
+            let (_app, mut root, shell, requests) = fixture();
+            root.update(|_, w, cx| {
+                shell.update(cx, |s, cx| {
+                    s.workspace.as_mut().unwrap().projects[0].sessions =
+                        vec![saved("plan", 400_000), saved("implement", 300_000)];
+                    s.sidebar_state.invalidate_metadata();
+                    s.select("plan", w, cx);
+                    s.sync(w, cx);
+                })
+            });
+            root.draw();
+            let runtime = root.update(|_, _, cx| shell.read(cx).active.clone());
+            let expected = painted(
+                &mut root,
+                &["session-status-plan", "session-status-implement"],
+            );
+            root.update(|_, w, cx| {
+                shell.update(cx, |s, cx| {
+                    started(s, &runtime, 1, cx);
+                    s.sync(w, cx);
+                })
+            });
+            hydrate_painted(&mut root, &shell, &requests, &runtime, "plan", &expected);
+            root.update(|_, w, cx| {
+                shell.update(cx, |s, cx| {
+                    s.ingest(rpc(&runtime, 1, json!({"type":"session_info_changed"})), cx);
+                    let request = loop {
+                        if let Command::Send { request, .. } = requests.try_recv().unwrap()
+                            && request["type"] == "get_state"
+                        {
+                            break request;
+                        }
+                    };
+                    s.ingest(
+                        rpc(
+                            &runtime,
+                            1,
+                            json!({"type":"response","id":request["id"],
+                    "command":"get_state","success":true,"data":{"sessionId":"implement",
+                    "sessionFile":"/implement","sessionName":"implement"}}),
+                        ),
+                        cx,
+                    );
+                    s.sessions
+                        .get_mut(&runtime)
+                        .unwrap()
+                        .controller
+                        .set_draft("replacement draft");
+                    s.sync(w, cx);
+                    assert_eq!(s.sessions[&runtime].source_id, "implement");
+                    let predecessor = s.saved_session("plan").unwrap();
+                    assert_eq!(predecessor.1.id, "plan");
+                    assert_eq!(predecessor.1.path, "/plan");
+                    assert_eq!(predecessor.1.title, "plan");
+                    assert_eq!(predecessor.2, None);
+                    assert_eq!(s.saved_session(&runtime).unwrap().1.id, "implement");
+                })
+            });
+            root.draw();
+            let pointer =
+                root.update(|_, w, _| w.find(format!("session-{target}")).bounds().center());
+            root.simulate_mouse_move(pointer);
+            root.draw();
+            let pointer =
+                root.update(|_, w, _| w.find(format!("archive-{target}")).bounds().center());
+            root.simulate_mouse_move(pointer);
+            root.simulate_click(pointer, MouseButton::Left);
+            root.draw();
+            let (project, revision) = loop {
+                if let Command::Archive {
+                    project,
+                    id,
+                    revision,
+                    archived,
+                } = requests.try_recv().unwrap()
+                {
+                    assert_eq!(id, target);
+                    assert!(archived);
+                    break (project, revision);
+                }
+            };
+            root.update(|_, w, cx| {
+                shell.update(cx, |s, cx| {
+                    assert_eq!(s.active == runtime, target == "plan");
+                    assert_eq!(
+                        s.sessions[&runtime].controller.state().draft,
+                        "replacement draft"
+                    );
+                    assert_eq!(
+                        s.sessions[&runtime].controller.state().identity.id,
+                        "implement"
+                    );
+                    assert_eq!(s.sessions[&runtime].controller.generation(), 1);
+                    let mut refresh = s.workspace.clone().unwrap();
+                    for row in &mut refresh.projects[0].sessions {
+                        row.archived = false;
+                    }
+                    s.ingest(Event::Workspace(Ok(refresh)), cx);
+                    s.sync(w, cx);
+                    assert!(
+                        s.workspace.as_ref().unwrap().projects[0]
+                            .sessions
+                            .iter()
+                            .find(|row| row.id == target)
+                            .unwrap()
+                            .archived
+                    );
+                })
+            });
+            root.draw();
+            root.update(|_, w, _| {
+                assert!(w.try_find(format!("session-status-{target}")).is_none());
+                let survivor = if target == "plan" {
+                    "implement"
+                } else {
+                    "plan"
+                };
+                assert_eq!(
+                    w.find(format!("session-status-{survivor}")).bounds().top(),
+                    expected[0].1.top()
+                );
+            });
+            root.update(|_, w, cx| {
+                shell.update(cx, |s, cx| {
+                    s.finish_archive(project, target.into(), revision, true, success);
+                    s.sync(w, cx);
+                    assert_eq!(
+                        s.workspace.as_ref().unwrap().projects[0]
+                            .sessions
+                            .iter()
+                            .find(|row| row.id == target)
+                            .unwrap()
+                            .archived,
+                        success
+                    );
+                    assert_eq!(s.workspace.as_ref().unwrap().projects[0].sessions.len(), 2);
+                    assert_eq!(
+                        s.sessions[&runtime].controller.state().draft,
+                        "replacement draft"
+                    );
+                })
+            });
+            root.draw();
+            root.update(|_, w, _| {
+                assert_eq!(
+                    w.try_find(format!("session-status-{target}")).is_none(),
+                    success
+                );
+            });
+            if target == "plan" {
+                root.update(|_, w, cx| {
+                    shell.update(cx, |s, cx| {
+                        // Two pending writes: an older restore succeeds, then the latest archive fails.
+                        s.session_action(&Action::Restore("plan".into()), w, cx);
+                        s.session_action(&Action::Archive("plan".into()), w, cx);
+                        let writes: Vec<_> = std::iter::from_fn(|| requests.try_recv().ok())
+                            .filter_map(|command| match command {
+                                Command::Archive {
+                                    project,
+                                    id,
+                                    revision,
+                                    archived,
+                                } => Some((project, id, revision, archived)),
+                                _ => None,
+                            })
+                            .collect();
+                        assert_eq!(writes.len(), 2);
+                        for (index, (project, id, revision, archived)) in
+                            writes.into_iter().enumerate()
+                        {
+                            s.finish_archive(project, id, revision, archived, index == 0);
+                            s.sync(w, cx);
+                        }
+                        assert_eq!(s.active, runtime);
+                        assert_eq!(
+                            s.sessions[&runtime].controller.state().draft,
+                            "replacement draft"
+                        );
+                        assert!(!s.workspace.as_ref().unwrap().projects[0].sessions[0].archived);
+                    })
+                });
+                assert_painted(&mut root, &expected);
+            }
+        }
+    }
+}
+
+#[test]
 fn root_held_phantom_materializes_then_exact_saved_predecessor_wins_replacement() {
     let (_app, mut root, shell, _requests) = fixture();
     root.update(|_, w, cx| {
@@ -348,10 +539,7 @@ fn root_held_phantom_materializes_then_exact_saved_predecessor_wins_replacement(
                 s.sidebar_state.row_sources["materialized"],
                 "phantom-runtime"
             );
-            assert_eq!(
-                s.sidebar_state.row_sources["replacement"],
-                "phantom-runtime"
-            );
+            assert!(!s.sidebar_state.row_sources.contains_key("replacement"));
         })
     });
     assert_painted(&mut root, &captured);

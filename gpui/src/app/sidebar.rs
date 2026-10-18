@@ -592,6 +592,11 @@ impl Shell {
                     && !previous.ephemeral.is_empty()
                     && !binding.pi_id.is_empty()
                 {
+                    // Only a genuinely empty identity materializes into the same held row.
+                    // A saved predecessor and its replacement are distinct rows, even in one runtime.
+                    self.sidebar_state
+                        .row_sources
+                        .insert(binding.pi_id.clone(), runtime.clone());
                     if self.sidebar_state.unread.remove(&previous) {
                         self.sidebar_state.unread.insert(binding.clone());
                     }
@@ -638,7 +643,7 @@ impl Shell {
                 } else {
                     &binding.pi_id
                 };
-                if rows.contains(id.as_str()) {
+                if binding.pi_id.is_empty() && rows.contains(id.as_str()) {
                     state.row_sources.insert(id.clone(), runtime.clone());
                 }
             }

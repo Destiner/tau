@@ -33,8 +33,14 @@ impl Shell {
                     .sessions
                     .iter()
                     .find(|(k, l)| {
+                        let current = &l.controller.state().identity.id;
+                        let saved_id = if current.is_empty() {
+                            &l.source_id
+                        } else {
+                            current
+                        };
                         l.project.path == p.path
-                            && (l.source_id == s.id || l.controller.state().identity.id == s.id)
+                            && saved_id == &s.id
                             && (k.as_str() == id || s.id == id)
                     })
                     .map(|(k, _)| k.clone());
