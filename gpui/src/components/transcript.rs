@@ -20,6 +20,10 @@ use gpui_kit::{
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 
+#[cfg(test)]
+#[path = "transcript/selection_reports_tests.rs"]
+mod selection_reports_tests;
+
 #[path = "transcript/notice.rs"]
 mod notice;
 pub use notice::{Notice, NoticeSeverity};

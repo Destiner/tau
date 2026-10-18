@@ -1,0 +1,269 @@
+diff --git a/src/text_selection.rs b/src/text_selection.rs
+--- a/src/text_selection.rs
++++ b/src/text_selection.rs
+@@ -507,6 +507,7 @@
+     layout: TextLayout,
+     /// The run's window-coordinate paint bounds.
+     bounds: Bounds<Pixels>,
++    paragraph: Option<usize>,
+ }
+ 
+ impl TextSelectionRun {
+@@ -514,10 +515,16 @@
+     pub fn new(text: impl Into<SharedString>, layout: TextLayout, bounds: Bounds<Pixels>) -> Self {
+         Self {
+             document_order: 0,
++            paragraph: None,
+             text: text.into(),
+             layout,
+             bounds,
+         }
++    }
++
++    pub(crate) fn with_paragraph(mut self, paragraph: usize) -> Self {
++        self.paragraph = Some(paragraph);
++        self
+     }
+ 
+     /// Sets the run's logical order within the participant.
+@@ -683,6 +690,21 @@
+     let run = runs.iter().find(|run| run.bounds.contains(&position))?;
+     if run.text.len() != run.layout.len() {
+         return None;
++    }
++    if click_count >= 3
++        && let Some(paragraph) = run.paragraph
++    {
++        let mut fragments = runs.iter().filter(|run| run.paragraph == Some(paragraph));
++        let first = fragments.next()?;
++        let last = fragments.next_back().unwrap_or(first);
++        // Resolve within the painted row, not its shared top edge. Bias the
++        // trailing caret outward so coordinate rounding cannot drop its last glyph.
++        return Some((
++            first.layout.position_for_index(0)?
++                + point(Pixels::ZERO, first.layout.line_height().half()),
++            last.layout.position_for_index(last.text.len())?
++                + point(px(0.1), last.layout.line_height().half()),
++        ));
+     }
+     let offset = run.layout.index_for_position(position).ok()?;
+     let range = match click_count {
+@@ -2204,6 +2226,12 @@
+             self.clear(cx);
+         }
+         let endpoint = self.endpoint(position, window.as_deref(), cx);
++        // Nearest-participant fallback is for extending an admitted drag, not
++        // for starting one on unrelated controls or outside the reader.
++        if !endpoint.inside {
++            self.pending_extension_anchor = None;
++            return;
++        }
+         let focus_participant = endpoint
+             .inside
+             .then(|| endpoint.participant.clone())
+@@ -3137,7 +3165,9 @@
+             GlobalState::init(cx);
+             GlobalState::reset_text_selection_suppression(cx);
+             let handlers = state.update(cx, |state, cx| {
+-                if state.mouse_down_prepared {
++                if state.mouse_down_prepared
++                    || !state.endpoint(event.position, Some(window), cx).inside_text
++                {
+                     return Vec::new();
+                 }
+                 state.mouse_down_prepared = true;
+@@ -3289,15 +3319,21 @@
+                 if state.touch.drag.is_some() {
+                     return;
+                 }
+-                state.update_in_window(event.position, window, cx)
++                if event.pressed_button == Some(MouseButton::Left) {
++                    state.update_in_window(event.position, window, cx)
++                } else {
++                    state.end(cx)
++                }
+             });
+             WindowSelectionState::resolve_content_keys(&state, cx);
+         }
+     });
+ 
+     let mouse_up_state = state.downgrade();
+-    window.on_mouse_event(move |_: &MouseUpEvent, phase, _, cx| {
+-        if phase.bubble()
++    window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
++        // Controls may stop bubble delivery. Gesture completion is window-owned.
++        if phase.capture()
++            && event.button == MouseButton::Left
+             && let Some(state) = mouse_up_state.upgrade()
+         {
+             state.update(cx, |state, cx| {
+@@ -3825,6 +3861,68 @@
+         assert_eq!(reversed.ranges(), &[Some(1..7)]);
+         assert!(forward.is_active());
+         assert!(reversed.is_active());
++    }
++
++    #[gpui::test]
++    fn unrelated_press_cannot_admit_or_resume_a_nearest_participant_drag(cx: &mut TestAppContext) {
++        cx.update(|cx| {
++            let participant = FakeParticipant::new("retained", cx);
++            let mut state = WindowSelectionState::default();
++            participant.register(&mut state, 0., TextSelectionScopeId::default(), 0, cx);
++            state.begin(point(px(-20.), px(2.)), false, cx);
++            assert!(!state.is_selecting());
++            state.update(point(px(80.), px(2.)), cx);
++            assert!(state.snapshot().is_none());
++            state.begin(point(px(2.), px(2.)), false, cx);
++            state.update(point(px(40.), px(2.)), cx);
++            state.end(cx);
++            let retained = state.snapshot();
++            assert!(retained.is_some());
++            state.update(point(px(90.), px(2.)), cx);
++            assert_eq!(state.snapshot(), retained);
++        });
++    }
++
++    #[gpui::test]
++    fn paragraph_group_spans_wrapped_fragments_but_not_adjacent_paragraphs(
++        cx: &mut TestAppContext,
++    ) {
++        let layouts = laid_out_runs(
++            &[
++                "before",
++                "remaining café",
++                "gpui",
++                "and release 👩‍💻",
++                "after",
++            ],
++            cx,
++        );
++        let runs: Vec<_> = layouts
++            .into_iter()
++            .enumerate()
++            .map(|(ix, (text, layout))| {
++                text_run(ix as u64, text, layout).with_paragraph(if (1..=3).contains(&ix) {
++                    7
++                } else {
++                    ix
++                })
++            })
++            .collect();
++        for ix in 1..=3 {
++            let click = runs[ix].layout.position_for_index(2).unwrap();
++            let (a, b) = points_for_multi_click(&runs, click, 3).unwrap();
++            let forward = project_ranges(Some(plain_snapshot(a, b)), &runs);
++            let reverse = project_ranges(Some(plain_snapshot(b, a)), &runs);
++            let expected = [
++                None,
++                Some(0..runs[1].text.len()),
++                Some(0..runs[2].text.len()),
++                Some(0..runs[3].text.len()),
++                None,
++            ];
++            assert_eq!(forward.ranges(), &expected);
++            assert_eq!(reverse.ranges(), &expected);
++        }
+     }
+ 
+     #[gpui::test]
+diff --git a/src/text/inline.rs b/src/text/inline.rs
+--- a/src/text/inline.rs
++++ b/src/text/inline.rs
+@@ -208,6 +208,8 @@
+     selection_bounds: Option<Bounds<Pixels>>,
+     selection_paint_bounds: Option<Bounds<Pixels>>,
+     selection_source: Option<(Arc<Mutex<InlineState>>, Range<usize>)>,
++    selection_paragraph: Option<usize>,
++    preserve_object_line_selection: bool,
+     /// Range highlight backgrounds, painted behind the text.
+     range_backgrounds: Vec<(Range<usize>, Hsla)>,
+     /// The start of a pending reveal, when it is in this text.
+@@ -376,6 +378,8 @@
+             selection_bounds: None,
+             selection_paint_bounds: None,
+             selection_source: None,
++            selection_paragraph: None,
++            preserve_object_line_selection: false,
+             range_backgrounds: Vec::new(),
+             reveal: None,
+             link_click_handler,
+@@ -412,6 +416,12 @@
+ 
+     pub(super) fn selection_paint_bounds(mut self, bounds: Bounds<Pixels>) -> Self {
+         self.selection_paint_bounds = Some(bounds);
++        self
++    }
++
++    pub(super) fn selection_paragraph(mut self, paragraph: usize, contains_objects: bool) -> Self {
++        self.selection_paragraph = Some(paragraph);
++        self.preserve_object_line_selection = contains_objects;
+         self
+     }
+ 
+@@ -1296,6 +1306,10 @@
+                             self.text.clone(),
+                             text_layout.clone(),
+                             bounds,
++                        )
++                        .with_paragraph(
++                            self.selection_paragraph
++                                .unwrap_or(Arc::as_ptr(&self.state) as usize),
+                         ),
+                         offset,
+                     );
+@@ -1308,7 +1322,9 @@
+                 let inline_state = self.state.clone();
+                 let text = self.text.clone();
+                 let text_view_state = GlobalState::global(cx).text_view_state().cloned();
+-                let line_bounds = self.selection_bounds;
++                let object_line_bounds = self
++                    .selection_bounds
++                    .filter(|_| self.preserve_object_line_selection);
+                 move |event: &MouseDownEvent, phase, window, cx| {
+                     if !phase.bubble()
+                         || !hitbox.is_hovered(window)
+@@ -1318,8 +1334,10 @@
+                         return;
+                     }
+ 
++                    // Object endpoints are not yet part of Root's paragraph groups.
++                    // Preserve the existing visual-row selection for these flows.
+                     if event.click_count == 3
+-                        && let Some(line_bounds) = line_bounds
++                        && let Some(line_bounds) = object_line_bounds
+                     {
+                         GlobalState::suppress_text_selection(cx);
+                         if let Some(view) = &text_view_state {
+@@ -1328,6 +1346,10 @@
+                             });
+                         }
+                         cx.notify(current_view);
++                        return;
++                    }
++                    // Text-only paragraphs use Root's logical fragment group.
++                    if event.click_count >= 3 {
+                         return;
+                     }
+ 
+diff --git a/src/text/inline_flow.rs b/src/text/inline_flow.rs
+--- a/src/text/inline_flow.rs
++++ b/src/text/inline_flow.rs
+@@ -525,6 +525,10 @@
+                 links.clear_bounds();
+             }
+         }
++        let contains_objects = self
++            .items
++            .iter()
++            .any(|item| matches!(item, InlineFlowItem::Object { .. }));
+         for (fragment_ix, fragment) in layout.fragments.iter().enumerate() {
+             match fragment {
+                 PositionedFragment::Object {
+@@ -629,6 +633,7 @@
+                         self.link_click_handler.clone(),
+                     )
+                     .selection_source(source_state.clone(), source_range.clone())
++                    .selection_paragraph(Rc::as_ptr(&frame_state) as usize, contains_objects)
+                     .link_source({
+                         super::link_source::observe(|stats| stats.fragments += 1);
+                         source_links.clone()

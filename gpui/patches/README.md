@@ -2,7 +2,7 @@
 
 ## Prepared dependency set
 
-`gpui/scripts/prepare.ts` registers **34 Base patches**, **eleven Core patches**,
+`gpui/scripts/prepare.ts` registers **35 Base patches**, **eleven Core patches**,
 and **five macOS patches**, including the native interaction and accessibility
 fixes below; **two merman-core patches** (parser manifest and ER
 semantic default direction); **one merman-analysis manifest patch**; **four
@@ -385,6 +385,50 @@ frames in both drag directions.
 The patch contains source-map/partial-Copy, precedence, UTF-8/admission and actual
 pointer activation/selection regressions; Tau adds entity-provenance and typed
 activation regressions. These tests are authored, not validated by registration.
+
+### `selection-gesture-paragraph.patch` (Base35; production Root regressions validated)
+
+Root admits a mouse selection only when the press hits a participant. Its nearest
+participant fallback remains available to an already-admitted drag, including
+virtualized paragraph gaps, but cannot start a Markdown gesture on an unrelated
+session control. Left mouse-up ends the gesture in capture even when a control
+stops bubbling. A move without a held left button also ends, rather than extends,
+the gesture. Completion retains the selected interval; it does not clear all
+selections or change focus, editor state, IME or history. Capture prepares a new
+selection only on actual painted text hits, preserving completed reader selection
+when a control consumes the press. Paragraph endpoints resolve within their
+painted rows, with an outward trailing-caret rounding bias.
+
+TextView's InlineFlow previously intercepted triple-click to select its visual
+row. Text-only flows now leave paragraph selection to Root. Flows containing
+selectable inline objects retain the former visual-row path until Root's paragraph
+groups support object endpoints, preserving leading/trailing object selection when
+clicking neighboring text. Tau's production Markdown math configuration is unchanged.
+Painted text runs carry
+a private paragraph identity: one retained InlineFlow frame state for all its
+fragments, or the ordinary Inline state for a plain paragraph. Root expands to
+that group's first/last real shaped caret positions, not the containing message,
+list item, visual row or entire block. Source-domain endpoint resolution and Copy
+remain the existing UTF-8 mapping; no cold projection or alternate renderer is
+introduced. Double-click word selection and inline-object multi-click are
+unchanged.
+
+The patch contains focused framework admission and grouped-range regressions;
+`src/components/transcript/selection_reports_tests.rs` adds production
+Root/Transcript/TextView coverage for the exact reported Markdown, code/emphasis/
+links, plain-text controls, list/adjacent paragraphs, reverse drag, exact source
+mapping/Root Copy, both widths/themes, and unrelated switch controls with stopped
+mouse-up bubbling. An explicitly math-enabled Base Root/custom-object fixture
+additionally covers leading/trailing objects, neighboring-text triple-click, object
+double/triple-click, exact plain/source Copy and adjacent-paragraph exclusion.
+All four production selection regressions pass after official Base35 preparation. Base34 fails both the reported-paragraph oracle and an isolated
+stopped-release oracle; the latter leaves an admitted text drag live. The complete
+GPUI library passes (753 passed, one pre-existing ignored test), as do editor,
+read-only activity, renderer and headless composer-ink regressions, strict all-target/
+all-feature Clippy, and the optimized native build. Standalone Base framework tests
+remain unexecuted: their independent lockfile cannot resolve under `--locked`.
+These deterministic routes establish defects, not attribution of the user's
+specific running-app session-switch incident. No live-app acceptance is claimed.
 
 ## Validation and maintenance
 

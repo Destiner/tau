@@ -56,6 +56,7 @@ const crates = [
       'textselection-paint.patch',
       'link-activation-bounds.patch',
       'textarea-viewport-clipping.patch',
+      'selection-gesture-paragraph.patch',
     ],
   },
   {
