@@ -17,12 +17,6 @@ const mainSessionState = {
   model: { provider: 'fixture', id: 'alpha', name: 'Alpha' },
   thinkingLevel: 'high',
 } as const;
-const backupSessionState = {
-  ...mainSessionState,
-  sessionId: 'session-backup',
-  sessionFile: `${fixtureProjectPath}/session-backup.jsonl`,
-  sessionName: 'Backup',
-} as const;
 
 function successfulBootstrapSteps(
   runtime: string,
@@ -100,7 +94,6 @@ function successfulBootstrapSteps(
 }
 
 export {
-  backupSessionState,
   fixtureModels,
   fixtureProjectPath,
   fixtureThinkingLevels,

@@ -5,7 +5,7 @@ use gpui_kit::{
     div, platform, point, prelude::*, px, rgb, size, test::TestWindowExt,
 };
 use std::{cell::RefCell, sync::Arc};
-use tau_gpui_prototype::components::{
+use tau_gpui::components::{
     Assets,
     composer::{Composer, ComposerOptions},
     init, support,

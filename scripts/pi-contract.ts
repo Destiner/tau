@@ -1,16 +1,11 @@
 #!/usr/bin/env bun
 
-import {
-  execFile,
-  spawn,
-  type ChildProcessWithoutNullStreams,
-} from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
-import { promisify } from 'node:util';
 
 const STARTUP_TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 5_000;
@@ -582,31 +577,8 @@ async function main(): Promise<void> {
     validateEntries(await rpc.request('get_entries'));
     await rpc.close();
 
-    try {
-      await promisify(execFile)(
-        'cargo',
-        [
-          'test',
-          '--manifest-path',
-          'src-tauri/Cargo.toml',
-          '--lib',
-          'real_pi_saved_projection_parity',
-          '--',
-          '--ignored',
-        ],
-        {
-          env: { ...process.env, TAU_PI_PATH: command },
-          timeout: 120_000,
-        },
-      );
-    } catch (error) {
-      throw new ContractError(
-        `Saved transcript projection diverged from real Pi or its parity test could not run (${error instanceof Error ? error.message : 'unknown failure'}).`,
-      );
-    }
-
     console.log(
-      `Pi RPC and saved transcript parity passed with pi ${version}: ${methods.join(', ')}.`,
+      `Pi read-only RPC contract passed with pi ${version}: ${methods.join(', ')}.`,
     );
   } finally {
     try {

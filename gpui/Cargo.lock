@@ -7240,7 +7240,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "tau-gpui-prototype"
+name = "tau-gpui"
 version = "0.2.1"
 dependencies = [
  "anyhow",

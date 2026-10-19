@@ -1,5 +1,11 @@
 import { expect, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+} from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -25,6 +31,19 @@ test('defaults build the real release binary, never a prototype or prepare', () 
   expect(plan(['--debug']).build).not.toContain('--release');
   expect(plan(['--debug', '--no-build']).binary).toEndWith('/target/debug/tau');
   expect(plan(['--no-build']).noBuild).toBe(true);
+});
+
+test('packaging owns native app icons and retains editable artwork', () => {
+  const asset = (name: string): Buffer =>
+    readFileSync(new URL(`../assets/app-icons/${name}`, import.meta.url));
+  expect(asset('icon.icns').subarray(0, 4).toString()).toBe('icns');
+  expect([...asset('icon.png').subarray(0, 8)]).toEqual([
+    137, 80, 78, 71, 13, 10, 26, 10,
+  ]);
+  expect(asset('icon.svg').toString()).toContain('<svg');
+  expect(
+    readFileSync(new URL('../scripts/package.ts', import.meta.url), 'utf8'),
+  ).toContain("join(root, 'assets/app-icons/icon.icns')");
 });
 
 test('output requires absolute app name and rejects unknown options', () => {

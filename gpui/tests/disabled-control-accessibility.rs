@@ -8,7 +8,7 @@ use gpui_kit::{
     px,
     test::TestWindowExt,
 };
-use tau_gpui_prototype::components::{
+use tau_gpui::components::{
     self,
     composer::{Composer, ComposerOptions},
     support::{self, ButtonVariant},

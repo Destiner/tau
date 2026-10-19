@@ -3,7 +3,7 @@ use gpui_kit::{
     Bounds, Context, Entity, IntoElement, MouseButton, Render, Window, WindowBounds, WindowOptions,
     div, point, prelude::*, px, size, test::TestWindowExt,
 };
-use tau_gpui_prototype::components::{
+use tau_gpui::components::{
     Assets,
     activity::{ActivityContent, ActivityRow},
     init, support,

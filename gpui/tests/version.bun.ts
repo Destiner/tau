@@ -14,20 +14,27 @@ const packageVersion = (toml: string): string | undefined =>
 test('native Cargo and its local lock entry match the production version', () => {
   const version = JSON.parse(read('../../package.json')).version;
   expect(version).toBe('0.2.1');
-  expect(JSON.parse(read('../../src-tauri/tauri.conf.json')).version).toBe(
-    version,
-  );
-  expect(packageVersion(read('../../src-tauri/Cargo.toml'))).toBe(version);
   expect(packageVersion(read('../Cargo.toml'))).toBe(version);
   const native = read('../Cargo.lock')
     .split('[[package]]')
-    .find((entry) => /^name = "tau-gpui-prototype"$/m.test(entry));
+    .find((entry) => /^name = "tau-gpui"$/m.test(entry));
   expect(native?.match(/^version = "([^"]+)"$/m)?.[1]).toBe(version);
   for (const debug of [false, true]) {
     const xml = plist(version, debug);
     for (const key of ['CFBundleShortVersionString', 'CFBundleVersion'])
       expect(xml).toContain(`<key>${key}</key><string>${version}</string>`);
   }
+});
+
+test('Cargo declares tau as the sole product binary and default run target', () => {
+  const cargo = read('../Cargo.toml');
+  expect(cargo).toMatch(/^name = "tau-gpui"$/m);
+  expect(cargo).toMatch(/^default-run = "tau"$/m);
+  expect(cargo).toMatch(/^autobins = false$/m);
+  const bins = cargo.split('[[bin]]').slice(1);
+  expect(bins).toHaveLength(1);
+  expect(bins[0]?.split(/\n\[/)[0]).toContain('name = "tau"');
+  expect(bins[0]?.split(/\n\[/)[0]).toContain('path = "src/bin/tau.rs"');
 });
 
 test('production UI and packager use native Cargo metadata, not a display override', () => {

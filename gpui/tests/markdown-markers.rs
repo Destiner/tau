@@ -5,7 +5,7 @@ use gpui_kit::{
     WindowBounds, WindowOptions, base::Root, div, platform, prelude::*, px, size,
 };
 use std::sync::Arc;
-use tau_gpui_prototype::components::{Assets, init, markdown::MarkdownView, support};
+use tau_gpui::components::{Assets, init, markdown::MarkdownView, support};
 const SOURCE: &str = "- Marker one\n- Marker two\n  - Nested circle\n    - Nested square\n\n7. Ordered control\n8. Ordered control two\n\n- [ ] Task control\n- [x] Checked control";
 struct Host {
     markdown: Entity<MarkdownView>,

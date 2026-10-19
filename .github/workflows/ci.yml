@@ -3,104 +3,97 @@ name: CI
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-pr-${{ github.event.pull_request.number }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  frontend:
-    runs-on: macos-15
-    timeout-minutes: 30
+  tooling:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: '1.3.0'
+          bun-version: '1.4.2'
       - uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
-      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun run lint
-      - run: bun run build
-      - run: bun run test
-
-  browser:
-    runs-on: macos-15
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: '1.3.0'
-      - uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
-      - run: bun install --frozen-lockfile
-      - name: Install browsers
-        run: bun x playwright install chromium webkit
-      - name: Browser tests
-        run: bun x playwright test --project=chromium --project=webkit --retries=1
+      - run: bun run typecheck
+      - run: bun run test:tooling
 
   native:
     runs-on: macos-15
     timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_TARGET_DIR: ${{ github.workspace }}/gpui/target
+      CARGO_PROFILE_DEV_SPLIT_DEBUGINFO: 'off'
+      CARGO_PROFILE_TEST_SPLIT_DEBUGINFO: 'off'
     steps:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: '1.3.0'
+          bun-version: '1.4.2'
       - uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
-      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile --ignore-scripts
       - name: Set up Rust
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+          rustup toolchain install 1.98.1 --profile minimal --component clippy --component rustfmt
+          rustup default 1.98.1
+      - name: Verify Metal compiler
+        run: |
+          if ! xcrun metal --version; then
+            xcodebuild -downloadComponent MetalToolchain
+            xcrun metal --version
+          fi
+      - run: bun run prepare
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri -> target
-          key: macos-15-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/rust-toolchain*', 'crates/*/Cargo.lock') }}
-      - run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
-      # Tauri embeds frontendDist even during Cargo checks and tests.
-      # Typechecking runs in the frontend lane; native Pi fakes also need Bun.
-      - run: bun x vite build
-      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-      - run: cargo test --manifest-path src-tauri/Cargo.toml
-      - name: Shared native services and session contracts
-        env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target
+          workspaces: gpui -> target
+          key: native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('gpui/Cargo.lock', 'crates/*/Cargo.lock', 'gpui/patches/*.patch') }}
+      - name: Rust formatting and strict Clippy
+        run: bun scripts/native.ts check
+      - name: Shared service and session contracts
+        run: bun run test:core
+      - name: Native UI and retained editor regressions
+        run: bun run test:native
+      - name: Optimized product build
+        run: bun run build
+      - name: Record rendering coverage boundary
+        if: always()
         run: |
-          for manifest in crates/tau-core/Cargo.toml crates/tau-session/Cargo.toml crates/tau-observability/Cargo.toml; do
-            cargo fmt --check --manifest-path "$manifest"
-            cargo clippy --locked --manifest-path "$manifest" --all-targets --all-features -- -D warnings
-            cargo test --locked --manifest-path "$manifest" --all-features
-          done
-      - run: bun test ./gpui/tests/package.bun.ts
+          echo 'Hosted checks cover native library/editor and shared Rust tests, not Metal paint execution.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Run bun run test:metal on a Mac with an available Metal device before handoff.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Native OS and real-Pi acceptance remain explicit opt-ins.' >> "$GITHUB_STEP_SUMMARY"
 
   check:
     if: always()
-    needs: [frontend, browser, native]
+    needs: [tooling, native]
     runs-on: ubuntu-latest
     steps:
-      - name: Require all lanes to pass
+      - name: Require both lanes to pass
         env:
           RESULTS: ${{ join(needs.*.result, ',') }}
         run: |
-          if [[ "$RESULTS" != "success,success,success" ]]; then
-            echo "CI lanes did not all pass: $RESULTS"
+          if [[ "$RESULTS" != "success,success" ]]; then
+            echo "CI lanes did not both pass: $RESULTS"
             exit 1
           fi

@@ -33,7 +33,7 @@ mod macos {
         rc::Rc,
         time::{Duration, Instant},
     };
-    use tau_gpui_prototype::components::{Assets, init};
+    use tau_gpui::components::{Assets, init};
 
     type Id = *mut Object;
     const SINGLE: &str = "Owned readonly single";

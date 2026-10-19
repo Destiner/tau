@@ -1,4 +1,4 @@
-//! All Vue registry identities, including the deliberately scoped feedback action.
+//! Native command routes, including deliberately excluded and dialog-scoped actions.
 use super::*;
 use crate::app::tests::{rpc, started};
 use serde_json::json;
@@ -52,15 +52,17 @@ const COVERAGE: [(&str, &str); 36] = [
 ];
 
 #[test]
-fn every_vue_command_has_an_explicit_native_route_or_scope_exclusion() {
-    let vue = include_str!("../../../../src/App.vue");
+fn every_expected_command_has_an_explicit_native_route_or_scope_exclusion() {
     let native = include_str!("../palette.rs");
     let mut ids = std::collections::BTreeSet::new();
     for (id, scope) in COVERAGE {
         assert!(ids.insert(id), "duplicate {id}");
         assert!(
-            vue.contains(&format!("'{id}'")),
-            "Vue identity changed: {id}"
+            scope.starts_with("safe/")
+                || scope.starts_with("navigation/")
+                || scope.starts_with("excluded/")
+                || scope.starts_with("dialog scoped/"),
+            "missing native scope: {id}"
         );
         if !scope.starts_with("excluded/") && id != "feedback.action" {
             assert!(

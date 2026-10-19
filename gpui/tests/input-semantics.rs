@@ -73,7 +73,7 @@ impl Render for Host {
 #[test]
 fn rendered_editor_semantics_and_real_accessibility_focus() {
     let mut app = TestApp::new();
-    app.update(|cx| tau_gpui_prototype::components::init(cx, false));
+    app.update(|cx| tau_gpui::components::init(cx, false));
     let mut window = app.open_window(|w, cx| Host {
         trap: cx.focus_handle(),
         button: cx.focus_handle(),
@@ -221,7 +221,7 @@ fn rendered_editor_semantics_and_real_accessibility_focus() {
 #[test]
 fn legacy_wrapper_action_does_not_reach_editor_negative_control() {
     let mut app = TestApp::new();
-    app.update(|cx| tau_gpui_prototype::components::init(cx, false));
+    app.update(|cx| tau_gpui::components::init(cx, false));
     let mut window = app.open_window(|w, cx| Host {
         trap: cx.focus_handle(),
         button: cx.focus_handle(),

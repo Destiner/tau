@@ -172,7 +172,7 @@ fn main() -> anyhow::Result<()> {
     };
     if std::env::args().nth(1).as_deref() == Some("--owned-app") {
         let root = PathBuf::from(std::env::args().nth(2).expect("owned directory"));
-        return tau_gpui_prototype::app::run_native_smoke(
+        return tau_gpui::app::run_native_smoke(
             root.clone(),
             root.join("project").to_string_lossy().into_owned(),
             check_native_menus,

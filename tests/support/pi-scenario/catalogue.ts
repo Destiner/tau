@@ -1,102 +1,11 @@
-import archivedSessionsReview from './archived-sessions-review';
-import commandListScrolling from './command-list-scrolling';
-import crossProjectSidebarMetadataActions from './cross-project-sidebar-metadata-actions';
-import delayedSuccessorVerification from './delayed-successor-verification';
-import emptyWorkspace from './empty-workspace';
-import phantomCommandOnly from './phantom-command-only';
-import phantomCommandRegistration from './phantom-command-registration';
-import phantomCommandReplacement from './phantom-command-replacement';
-import phantomFirstPromptRegistration from './phantom-first-prompt-registration';
-import planImplementReplacement from './plan-implement-replacement';
-import savedSessionAutoRetry from './saved-session-auto-retry';
-import savedSessionCommandReplacement from './saved-session-command-replacement';
-import savedSessionCompaction from './saved-session-compaction';
-import savedSessionCompactionNotifications from './saved-session-compaction-notifications';
-import savedSessionExtensionPrompt, {
-  emptySessionExtensionPrompt,
-  escapeCancellationPrompt,
-  savedSessionExtensionPromptProjectSwitching,
-} from './saved-session-extension-prompt';
-import savedSessionExtensionPromptCycling from './saved-session-extension-prompt-navigation';
-import {
-  savedSessionExtensionEditorNavigation,
-  savedSessionExtensionInputNavigation,
-} from './saved-session-extension-text-prompt-navigation';
-import {
-  savedSessionHistory,
-  savedSessionLongHistory,
-  savedSessionShortHistory,
-} from './saved-session-history';
-import savedSessionMessageQueue from './saved-session-message-queue';
-import {
-  remotePhantomPromptProcessExit,
-  remoteSavedSessionProcessExit,
-  savedSessionBootstrapProcessExit,
-  savedSessionPromptProcessExit,
-} from './saved-session-process-failures';
-import savedSessionPromptAdmission from './saved-session-prompt-admission';
-import savedSessionQueuePills from './saved-session-queue-pills';
-import savedSessionQueueRejection from './saved-session-queue-rejection';
-import savedSessionSteeringBoundary from './saved-session-steering-boundary';
-import {
-  savedSessionBootstrap,
-  savedSessionConversation,
-  savedSessionStaleGeneration,
-} from './saved-session-stream-then-stale-generation';
-import savedSessionUnacknowledgedAbort from './saved-session-unacknowledged-abort';
+import savedSessionConversation from './saved-session-conversation';
 
-import type { PiScenario, PiScenarioMetadata } from './index';
-
-const scenarios = [
-  emptyWorkspace,
-  commandListScrolling,
-  crossProjectSidebarMetadataActions,
-  delayedSuccessorVerification,
-  savedSessionBootstrap,
-  savedSessionAutoRetry,
-  savedSessionConversation,
-  savedSessionCompaction,
-  savedSessionCompactionNotifications,
-  savedSessionPromptAdmission,
-  savedSessionMessageQueue,
-  savedSessionQueuePills,
-  savedSessionQueueRejection,
-  savedSessionSteeringBoundary,
-  savedSessionStaleGeneration,
-  savedSessionCommandReplacement,
-  planImplementReplacement,
-  phantomCommandRegistration,
-  phantomCommandReplacement,
-  phantomFirstPromptRegistration,
-  phantomCommandOnly,
-  savedSessionUnacknowledgedAbort,
-  remotePhantomPromptProcessExit,
-  remoteSavedSessionProcessExit,
-  savedSessionBootstrapProcessExit,
-  savedSessionPromptProcessExit,
-  savedSessionHistory,
-  savedSessionShortHistory,
-  savedSessionLongHistory,
-  savedSessionExtensionPrompt,
-  savedSessionExtensionPromptProjectSwitching,
-  savedSessionExtensionPromptCycling,
-  savedSessionExtensionInputNavigation,
-  savedSessionExtensionEditorNavigation,
-  emptySessionExtensionPrompt,
-  escapeCancellationPrompt,
-  archivedSessionsReview,
-] as const satisfies readonly PiScenario[];
-
-const catalogue = new Map<string, PiScenario>(
-  scenarios.map((scenario) => [scenario.metadata.name, scenario]),
-);
-
-function piScenarioCatalogue(): readonly PiScenarioMetadata[] {
-  return scenarios.map((scenario) => scenario.metadata);
-}
+import type { PiScenario } from './index';
 
 function findPiScenario(name: string): PiScenario | undefined {
-  return catalogue.get(name);
+  return name === savedSessionConversation.metadata.name
+    ? savedSessionConversation
+    : undefined;
 }
 
-export { findPiScenario, piScenarioCatalogue };
+export { findPiScenario };

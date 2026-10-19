@@ -1,7 +1,0 @@
-# Queue · native candidate 7
-
-Run `cargo run --manifest-path gpui/Cargo.toml --bin queue-probe` for an isolated GPUI window. Close the window to exit. For headless Metal screenshots/checks use `--capture /tmp/tau-queue-light` and add `--dark` for the dark theme; `--list-checks` lists checkpoints.
-
-Controls: hover a pill to request a preview after 180 ms; Tab focus reveals it immediately. Move into the preview to read/select Markdown and scroll a long entry. Escape closes and restores the originating pill; hover must leave and re-enter before reopening. **Add Follow Up**, **Remove First Follow Up**, and **Reorder Follow Ups** mutate the synthetic queue while retaining IDs; steering precedes numbered follow-ups. The sample Markdown includes a local-only HTTPS link and highlighted Rust code. No URL is opened.
-
-Scope: a standalone UI interaction probe, not Pi queue integration, recovery, clear-all, or a persistent application window. Base TextView supplies selectable Markdown and its internal block-list scrolling; Base Popup positions the bounded preview. Headless `Wait` advances GPUI's simulated clock, so captures check hover unopened at 179 ms and open at 180 ms, preview retention across the exit delay, close at 90 ms after exit, immediate Tab focus reveal, Escape suppression and re-entry, local link handling, selection, internal scrolling, and stale opens after removal/reordering. Actual OS focus and pointer delivery in a live window remain untested by headless capture.

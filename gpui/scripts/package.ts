@@ -232,7 +232,7 @@ export function packageApp(args: string[], exec: Runner = run): string {
     copyFileSync(options.binary, join(app, 'Contents/MacOS/tau'));
     chmodSync(join(app, 'Contents/MacOS/tau'), 0o755);
     copyFileSync(
-      join(root, '../src-tauri/icons/icon.icns'),
+      join(root, 'assets/app-icons/icon.icns'),
       join(app, 'Contents/Resources/icon.icns'),
     );
     writeFileSync(join(app, 'Contents/Info.plist'), metadata);

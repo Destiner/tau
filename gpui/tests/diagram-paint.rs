@@ -22,7 +22,7 @@ mod metal {
         sync::Arc,
         time::{Duration, Instant},
     };
-    use tau_gpui_prototype::components::{Assets, diagram_view::DiagramBlock, init, support};
+    use tau_gpui::components::{Assets, diagram_view::DiagramBlock, init, support};
 
     struct Host {
         block: Entity<DiagramBlock>,
@@ -41,7 +41,7 @@ mod metal {
     }
     struct CopyHost {
         editor: Entity<gpui_kit::base::input::InputState>,
-        markdown: Entity<tau_gpui_prototype::components::markdown::MarkdownView>,
+        markdown: Entity<tau_gpui::components::markdown::MarkdownView>,
         dark: bool,
     }
     impl Render for CopyHost {
@@ -59,7 +59,7 @@ mod metal {
     }
 
     fn copy_paint(dark: bool) {
-        use tau_gpui_prototype::components::markdown::MarkdownView;
+        use tau_gpui::components::markdown::MarkdownView;
         let mut cx = HeadlessAppContext::with_platform(
             platform::current_platform(true).text_system(),
             Arc::new(Assets),
@@ -350,15 +350,12 @@ mod metal {
                 );
                 // Genuine input, with captures before the asynchronous worker can settle.
                 // Compare text-colored ink to the production SVG raster, never the dot grid.
-                let renderer =
-                    tau_gpui_prototype::components::diagram::DiagramRenderer::new().unwrap();
-                let op = tau_gpui_prototype::components::diagram::Operation::new(
-                    Duration::from_secs(30),
-                );
+                let renderer = tau_gpui::components::diagram::DiagramRenderer::new().unwrap();
+                let op = tau_gpui::components::diagram::Operation::new(Duration::from_secs(30));
                 let diagram = renderer
                     .render(
                         source,
-                        tau_gpui_prototype::components::diagram::DiagramTheme::ayu(dark),
+                        tau_gpui::components::diagram::DiagramTheme::ayu(dark),
                         &op,
                     )
                     .unwrap();
@@ -447,8 +444,8 @@ mod metal {
                         let expected = renderer
                             .rasterize(
                                 &diagram,
-                                tau_gpui_prototype::components::diagram::RasterCamera {
-                                    viewport: tau_gpui_prototype::components::diagram::ViewBox {
+                                tau_gpui::components::diagram::RasterCamera {
+                                    viewport: tau_gpui::components::diagram::ViewBox {
                                         x: -tx / zoom,
                                         y: -ty / zoom,
                                         width: 900. / zoom,

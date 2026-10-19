@@ -187,6 +187,33 @@ fn production_percent_entity_whitespace_and_filename_edges() {
 
 #[test]
 fn transcript_resolution_is_not_preview_normalization() {
+    let base = "/work/project\\root";
+    for (written, expected) in [
+        ("a\\b.txt", "/work/project\\root/a\\b.txt"),
+        ("./a%5Cb.txt", "/work/project\\root/a%5Cb.txt"),
+        ("/absolute\\root/a\\b.txt", "/absolute\\root/a\\b.txt"),
+        ("src/../a%20b.txt", "/work/project\\root/a%20b.txt"),
+    ] {
+        assert_eq!(resolve_file_path(base, written, None), expected);
+    }
+    let decoded = parse_markdown_file_destination("a%5Cb.txt").unwrap();
+    assert_eq!(decoded, "a\\b.txt");
+    assert_eq!(
+        resolve_file_path(base, &decoded, None),
+        "/work/project\\root/a\\b.txt"
+    );
+    assert_eq!(
+        parse_markdown_file_destination("a%255Cb.txt").as_deref(),
+        Some("a%5Cb.txt")
+    );
+    assert_eq!(
+        resolve_file_path(base, "~/a\\b%20.txt", Some("/home/user\\root")),
+        "/home/user\\root/a\\b%20.txt"
+    );
+    assert_eq!(
+        resolve_file_path(base, "~/a\\b%20.txt", None),
+        "~/a\\b%20.txt"
+    );
     assert_eq!(
         resolve_file_path("/work/tau", "../../../etc/hosts", None),
         "/etc/hosts"

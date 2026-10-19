@@ -1,9 +1,14 @@
 [package]
-name = "tau-gpui-prototype"
+name = "tau-gpui"
 version = "0.2.1"
 edition = "2024"
 publish = false
 default-run = "tau"
+autobins = false
+
+[[bin]]
+name = "tau"
+path = "src/bin/tau.rs"
 
 [features]
 native-os-tests = []
