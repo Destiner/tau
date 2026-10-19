@@ -80,10 +80,12 @@ conversion. Pi owns transcripts; native UI preferences/drafts use `native-ui.jso
   retry strip. Removing that layout does not acknowledge or discard pending work.
 - Leaving a truly empty, unregistered session retires its UI/runtime without deleting
   Pi files. Pending reads defer the decision; only explicitly abandoned candidates are
-  revisited. Drafts (including whitespace), Pi-owned history, queued/recovered work,
-  extension prompts, unresolved writes/reconciliation and captured registrations prevent
-  retirement. Runtime notices and an acknowledged preflight failure alone are not saved
-  conversation content. Dismissing feedback acknowledges its exact error occurrence;
+  revisited. Drafts (including whitespace), real conversation/tool history, queued/recovered
+  work, extension prompts, unresolved writes/reconciliation and captured registrations
+  prevent retirement. Runtime notices and unpersisted custom progress alone are not saved
+  conversation content. A command-only session left while running retires after its owned
+  reconciliation finishes; reselection cancels that intent. Provisional workflow successors
+  remain protected even with empty or custom-only history. Dismissing feedback acknowledges its exact error occurrence;
   reselecting cannot replay it, and an old dialog cannot clear a newer error or write fence.
 - Empty-session input uses a 4px internal top inset, 12px above the previous placement.
   Outer composer padding, compact input and footer position are unchanged. Scrolling plain

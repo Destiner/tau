@@ -63,27 +63,35 @@ impl Shell {
             || !live.composer.read(cx).editor().read(cx).value().is_empty()
             || !state.recovered_drafts.is_empty()
             || !live.restored_recovered.is_empty()
-            || state.transcript.iter().any(|entry| {
-                !matches!(
-                    entry.origin,
-                    tau_session::transcript::EntryOrigin::RuntimeNotice { .. }
-                )
-            })
-            || state.working
+            || state
+                .transcript
+                .iter()
+                .any(|entry| !is_non_conversation_notice(entry))
+            || live.controller.source_recovery().is_some()
+        {
+            self.empty_candidates.remove(key);
+            return false;
+        }
+        // Activity outside a submitted/reconciling operation is independent work, not
+        // evidence that a command-only session has finished.
+        let active_work = state.working
             || state.compacting
             || state.stopping
             || !state.queue.steering.is_empty()
             || !state.queue.follow_up.is_empty()
             || !state.extension_dialogs.is_empty()
-            || live.extension.is_some()
-            || live.controller.source_recovery().is_some()
+            || live.extension.is_some();
+        if active_work
+            && !live.controller.submission_pending()
+            && !live.controller.reconciliation_pending()
         {
             self.empty_candidates.remove(key);
             return false;
         }
         // These barriers must settle before judging history or durability. Retain the
         // selection intent so the final correlated reply can reconsider the session.
-        if live.controller.submission_pending()
+        if active_work
+            || live.controller.submission_pending()
             || live.controller.provisional_replacement()
             || live.controller.reconciliation_pending()
             || self.runtime_cleanup_pending(key)
@@ -266,6 +274,16 @@ impl Shell {
     }
 }
 
+fn is_non_conversation_notice(entry: &tau_session::transcript::Entry) -> bool {
+    use tau_session::transcript::EntryOrigin;
+    match entry.origin {
+        EntryOrigin::RuntimeNotice { .. } => true,
+        // Pi projection emits notice/custom:* only for displayed custom messages.
+        // Unknown notice sources and all conversation/tool rows remain protected.
+        EntryOrigin::Pi => entry.kind == "notice" && entry.source.starts_with("custom:"),
+    }
+}
+
 fn disposal_identity(command: &Command) -> (String, u64, u64) {
     let Command::DisposeEmpty {
         runtime,
@@ -303,3 +321,7 @@ mod reconciliation_tests;
 #[cfg(test)]
 #[path = "empty_storage_tests.rs"]
 mod storage_tests;
+
+#[cfg(test)]
+#[path = "empty_command_retirement_tests.rs"]
+mod command_retirement_tests;

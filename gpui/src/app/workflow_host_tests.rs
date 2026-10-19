@@ -502,13 +502,14 @@ fn workflow_host_incomplete_command_and_acknowledged_uncertain_write_remain_owne
 }
 
 #[test]
-fn workflow_host_only_typed_runtime_notices_are_ignored_not_pi_content() {
+fn workflow_host_retains_conversation_and_tools_but_not_custom_only_output() {
     for message in [
         json!({"role":"user", "content":"user work"}),
         json!({"role":"assistant", "content":[{"type":"text", "text":"Pi failure"}], "stopReason":"error", "errorMessage":"meaningful failure"}),
         json!({"role":"toolResult", "toolCallId":"tool", "toolName":"bash", "content":[{"type":"text", "text":"git failed"}], "isError":true}),
         json!({"role":"custom", "customType":"error-notice", "content":"Pi-owned custom failure", "display":true}),
     ] {
+        let retains_conversation = message["role"] != "custom";
         with_shell(512, |s, w, cx, requests| {
             ready(s, w, cx, &requests);
             let effects = s.sessions.get_mut("a").unwrap().controller.refresh();
@@ -523,7 +524,12 @@ fn workflow_host_only_typed_runtime_notices_are_ignored_not_pi_content() {
                     .any(|r| r.origin == tau_session::transcript::EntryOrigin::Pi)
             );
             create(s, "b", "keep", w, cx);
-            assert!(s.sessions.contains_key("a"));
+            assert_eq!(s.sessions.contains_key("a"), retains_conversation);
+            let disposals = std::iter::from_fn(|| requests.try_recv().ok())
+                .filter(|command| matches!(command, Command::DisposeEmpty { runtime, .. } if runtime == "a"))
+                .count();
+            assert_eq!(disposals, usize::from(!retains_conversation));
+            assert_eq!(s.sessions["b"].controller.state().draft, "keep");
         });
     }
 }
