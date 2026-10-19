@@ -100,7 +100,7 @@ test('Mach-O, architecture, linkage and rpaths are inspected without a GUI', () 
     'Mach-O 64-bit executable arm64',
     'arm64',
     'tau:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1)',
-    'cmd LC_RPATH\n cmdsize 32\n path /usr/lib/ (offset 12)',
+    'Load command 1\n cmd LC_BUILD_VERSION\n cmdsize 32\n platform 1\n minos 15.0\n sdk 26.0\nLoad command 2\n cmd LC_RPATH\n cmdsize 32\n path /usr/lib/ (offset 12)',
   ];
   const exec = (args: string[]): string => {
     calls.push(args);
@@ -117,13 +117,99 @@ test('Mach-O, architecture, linkage and rpaths are inspected without a GUI', () 
     [0, 'ELF executable'],
     [1, 'i386'],
     [2, 'tau:\n\t/opt/homebrew/lib/libfoo.dylib (compatibility version 1)'],
-    [3, 'cmd LC_RPATH\n cmdsize 32\n path /Users/test/build (offset 12)'],
+    [3, responses[3]!.replace('/usr/lib/', '/Users/test/build')],
   ] as const) {
     const changed = [...responses];
     changed[index] = value;
     let i = 0;
     expect(() => verifyBinary('/tmp/tau', () => changed[i++]!)).toThrow();
   }
+});
+
+test('every Mach-O slice requires a supported macOS deployment no newer than 15.0', () => {
+  const modern = (version: string, platform = '1'): string =>
+    `Load command 1\n cmd LC_BUILD_VERSION\n cmdsize 32\n platform ${platform}\n minos ${version}\n sdk 26.0\n`;
+  const legacy = (version: string): string =>
+    `Load command 1\n cmd LC_VERSION_MIN_MACOSX\n cmdsize 16\n version ${version}\n sdk 26.0\n`;
+  const libraries =
+    'tau:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1)\n';
+  const inspect = (
+    commands: string,
+    arch = 'arm64',
+    links = libraries,
+  ): string =>
+    verifyBinary('/tmp/tau', (args) => {
+      if (args[0] === '/usr/bin/file') return 'Mach-O executable';
+      if (args[0] === '/usr/bin/lipo') return arch;
+      return args[1] === '-L' ? links : commands;
+    });
+  for (const version of ['15.0', '15.0.0', '14.5', '10.15.7']) {
+    expect(inspect(modern(version))).toBe('arm64');
+    expect(inspect(legacy(version))).toBe('arm64');
+  }
+  expect(inspect(modern('15.0', 'MACOS'))).toBe('arm64');
+  for (const version of [
+    '15.1',
+    '26.0',
+    '15.0.1',
+    '15.10',
+    '',
+    'oops',
+    '15',
+    '15.0beta',
+    '15.0.0.0',
+  ]) {
+    expect(() => inspect(modern(version))).toThrow();
+    expect(() => inspect(legacy(version))).toThrow();
+  }
+  for (const commands of [
+    '',
+    'Load command 1\n cmd LC_UUID\n cmdsize 24\n',
+    modern('15.0', '2'),
+    modern('15.0', 'garbage'),
+    modern('15.0').replace(' platform 1\n', ''),
+    modern('15.0').replace(' platform 1\n', ' platform 1\n platform 2\n'),
+    modern('15.0').replace(' minos 15.0\n', ''),
+    modern('15.0') + modern('15.0'),
+    modern('15.0') + legacy('14.0'),
+    modern('15.0').replace(' minos 15.0', ' minos 15.0\n minos 14.0'),
+  ])
+    expect(() => inspect(commands)).toThrow();
+  const slice = (arch: string, content: string): string =>
+    `tau (architecture ${arch}):\n${content}`;
+  const universalLinks =
+    slice('arm64', libraries.split('\n').slice(1).join('\n')) +
+    slice('x86_64', libraries.split('\n').slice(1).join('\n'));
+  expect(
+    inspect(
+      slice('arm64', modern('15.0')) + slice('x86_64', legacy('14.0')),
+      'arm64 x86_64',
+      universalLinks,
+    ),
+  ).toBe('arm64 x86_64');
+  for (const commands of [
+    modern('15.0'),
+    slice('arm64', modern('15.0')),
+    slice('arm64', modern('15.0')) + slice('arm64', modern('15.0')),
+    slice('arm64', modern('15.0')) + slice('x86_64', modern('15.1')),
+    slice('arm64', '') + slice('x86_64', modern('15.0')),
+  ])
+    expect(() => inspect(commands, 'arm64 x86_64', universalLinks)).toThrow();
+  const universal =
+    slice('arm64', modern('15.0')) + slice('x86_64', modern('15.0'));
+  expect(() =>
+    inspect(
+      universal,
+      'arm64 x86_64',
+      universalLinks.replace(
+        'x86_64):\n\t/usr/lib/',
+        'x86_64):\n\t/opt/homebrew/lib/',
+      ),
+    ),
+  ).toThrow('Non-system');
+  expect(() => inspect(universal, 'arm64 x86_64', libraries)).toThrow(
+    'architecture records',
+  );
 });
 
 test('Applications destinations reject lexical and symlink aliases even when fresh', () => {

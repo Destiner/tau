@@ -75,6 +75,10 @@ jobs:
         run: bun run test:core
       - name: Native UI and retained editor regressions
         run: bun run test:native
+      - name: Candidate packaging regressions (no Apple credentials)
+        run: bun run test:packaging
+      - name: Signing helper compile and pure checks (no Keychain APIs)
+        run: bun run test:keychain
       - name: Optimized product build
         run: bun run build
       - name: Record rendering coverage boundary

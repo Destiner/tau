@@ -1,0 +1,189 @@
+name: Native package candidate
+
+# Workflow artifacts in a public repository may be downloadable. These are not GitHub releases.
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Exact reviewed main commit (40 lowercase hex characters)
+        required: true
+        type: string
+      version:
+        description: Exact root/native/lock version (x.y.z; public vVERSION tag must not exist)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: native-package-candidate
+  cancel-in-progress: false
+
+env:
+  COMMIT: ${{ inputs.commit }}
+  VERSION: ${{ inputs.version }}
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main' && inputs.commit == github.sha
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      CARGO_BUILD_JOBS: 2
+    outputs:
+      tar_sha256: ${{ steps.archive.outputs.sha256 }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require macOS 15 arm64
+        run: |
+          test "$(uname -m)" = arm64
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 15
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.4.2'
+      - name: Exact source, CI workflow and tag preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun scripts/macos/package-preflight.ts
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Set up Rust
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal
+          rustup default 1.98.1
+      - name: Verify Metal compiler
+        run: |
+          if ! xcrun metal --version; then
+            xcodebuild -downloadComponent MetalToolchain
+            xcrun metal --version
+          fi
+      - run: bun run prepare
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: gpui -> target
+          key: native-package-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('gpui/Cargo.lock', 'crates/*/Cargo.lock', 'gpui/patches/*.patch') }}
+      - run: bun run test:packaging
+      - name: Compile helper and run pure tests
+        run: |
+          ROOT="$(cd "$RUNNER_TEMP" && pwd -P)/tau-native-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -m 700 "$ROOT"
+          echo "CANDIDATE_ROOT=$ROOT" >> "$GITHUB_ENV"
+          xcrun swiftc -O -target arm64-apple-macosx15.0 -D KEYCHAIN_TESTS -parse-as-library scripts/macos/signing-keychain.swift scripts/macos/signing-keychain-tests.swift -o "$ROOT/keychain-tests"
+          "$ROOT/keychain-tests"
+          xcrun swiftc -O -target arm64-apple-macosx15.0 -parse-as-library scripts/macos/signing-keychain.swift -o "$ROOT/keychain-helper"
+      - name: Disposable runner synthetic Keychain acceptance (no production credentials)
+        run: |
+          set +x
+          umask 077
+          bun scripts/macos/keychain-smoke.ts "$CANDIDATE_ROOT/keychain-helper" "$CANDIDATE_ROOT"
+      - name: Build normal-feature optimized unsigned app LAST
+        run: bun scripts/macos-release.ts prepare --version "$VERSION" --commit "$COMMIT" --output "$CANDIDATE_ROOT/unsigned"
+      - name: Preserve unsigned files and modes in one archive
+        id: archive
+        run: |
+          tar -czf "$CANDIDATE_ROOT/unsigned.tar.gz" -C "$CANDIDATE_ROOT/unsigned" Tau.app build.json
+          echo "sha256=$(shasum -a 256 "$CANDIDATE_ROOT/unsigned.tar.gz" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        id: upload
+        with:
+          name: unsigned-native-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.CANDIDATE_ROOT }}/unsigned.tar.gz
+          if-no-files-found: error
+          retention-days: 2
+          overwrite: false
+
+  sign:
+    needs: build
+    if: github.ref == 'refs/heads/main' && inputs.commit == github.sha
+    environment: release
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.4.2'
+      - name: Recheck exact CI and public tag absence before protected signing setup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun scripts/macos/package-preflight.ts
+      - name: Credential-free setup and helper compilation
+        run: |
+          test "$(uname -m)" = arm64
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 15
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          bun install --frozen-lockfile --ignore-scripts
+          ROOT="$(cd "$RUNNER_TEMP" && pwd -P)/tau-sign-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -m 700 "$ROOT"
+          mkdir -m 700 "$ROOT/download"
+          echo "CANDIDATE_ROOT=$ROOT" >> "$GITHUB_ENV"
+          xcrun swiftc -O -target arm64-apple-macosx15.0 -parse-as-library scripts/macos/signing-keychain.swift -o "$ROOT/keychain-helper"
+      - name: Download only this run's immutable unsigned artifact ID
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          path: ${{ env.CANDIDATE_ROOT }}/download
+          merge-multiple: true
+      - name: Verify trusted tar digest BEFORE extraction and verify unsigned inventory
+        env:
+          EXPECTED_SHA256: ${{ needs.build.outputs.tar_sha256 }}
+        run: |
+          [[ "$EXPECTED_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          test "$(shasum -a 256 "$CANDIDATE_ROOT/download/unsigned.tar.gz" | cut -d' ' -f1)" = "$EXPECTED_SHA256"
+          mkdir -m 700 "$CANDIDATE_ROOT/unsigned"
+          tar -xzf "$CANDIDATE_ROOT/download/unsigned.tar.gz" -C "$CANDIDATE_ROOT/unsigned"
+          bun scripts/macos-release.ts verify-input --version "$VERSION" --commit "$COMMIT" --input "$CANDIDATE_ROOT/unsigned"
+      - name: Sign and notarize protected candidate (never launch app)
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set +x
+          umask 077
+          bun scripts/macos-release.ts sign --version "$VERSION" --commit "$COMMIT" --input "$CANDIDATE_ROOT/unsigned" --output "$CANDIDATE_ROOT/final" --work "$CANDIDATE_ROOT/work" --keychain-helper "$CANDIDATE_ROOT/keychain-helper"
+      - name: Always clean only marker-owned work; preserve unknown or pending failures
+        if: always() && env.CANDIDATE_ROOT != ''
+        run: |
+          if test -f "$CANDIDATE_ROOT/work/.tau-release-owner.json"; then
+            bun scripts/macos-release.ts cleanup --work "$CANDIDATE_ROOT/work" --keychain-helper "$CANDIDATE_ROOT/keychain-helper"
+          elif test -e "$CANDIDATE_ROOT/work"; then
+            echo 'Unowned work preserved; refusing cleanup.' >&2
+            exit 1
+          fi
+      - name: Upload only the closed final candidate output
+        id: final
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.CANDIDATE_ROOT }}/final/tau-${{ inputs.version }}-apple-silicon.dmg
+            ${{ env.CANDIDATE_ROOT }}/final/manifest.json
+            ${{ env.CANDIDATE_ROOT }}/final/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: false
+      - name: Candidate source and acceptance boundaries
+        env:
+          ARTIFACT_URL: ${{ steps.final.outputs.artifact-url }}
+          ARTIFACT_ID: ${{ steps.final.outputs.artifact-id }}
+          TAR_SHA256: ${{ needs.build.outputs.tar_sha256 }}
+        run: |
+          {
+            echo "Candidate artifact: $ARTIFACT_URL (ID $ARTIFACT_ID)"
+            echo "Source: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$COMMIT; version $VERSION; com.destiner.tau; arm64/macOS 15+."
+            echo "Unsigned tar SHA256: $TAR_SHA256 (not the uploader ZIP digest)."
+            echo 'App and DMG signatures, separate Accepted notarizations, stapled tickets, Gatekeeper and readonly mounted layout validated by sign; receipt IDs are in manifest.json.'
+            echo 'App never launched; no installation, public release, tag, updater feed or runtime/UI acceptance. Public-repository workflow artifacts may be downloadable.'
+          } >> "$GITHUB_STEP_SUMMARY"

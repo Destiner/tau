@@ -80,11 +80,15 @@ export function plan(args: string[]): {
   };
 }
 
-export function plist(version: string, debug: boolean): string {
+export function plist(
+  version: string,
+  debug: boolean,
+  kind: 'preview' | 'production' = 'preview',
+): string {
   if (!/^\d+\.\d+\.\d+$/.test(version))
     throw new Error('Expected a numeric Cargo package version');
   const values = {
-    CFBundleIdentifier: bundleId,
+    CFBundleIdentifier: kind === 'preview' ? bundleId : 'com.destiner.tau',
     CFBundleName: 'Tau',
     CFBundleDisplayName: 'Tau',
     CFBundleExecutable: 'tau',
@@ -94,7 +98,10 @@ export function plist(version: string, debug: boolean): string {
     CFBundleVersion: version,
     CFBundleInfoDictionaryVersion: '6.0',
     LSMinimumSystemVersion: '15.0',
-    NSHumanReadableCopyright: `Tau ${version} — GPUI ${debug ? 'debug' : 'release'} preview; local ad-hoc build`,
+    NSHumanReadableCopyright:
+      kind === 'preview'
+        ? `Tau ${version} — GPUI ${debug ? 'debug' : 'release'} preview; local ad-hoc build`
+        : `Tau ${version}`,
     NSHighResolutionCapable: true,
   };
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n${Object.entries(
@@ -107,6 +114,56 @@ export function plist(version: string, debug: boolean): string {
     .join('\n')}\n</dict></plist>\n`;
 }
 
+// Universal otool output repeats headers; inspect every slice, not just the first.
+function architectureRecords(
+  output: string,
+  architectures: string[],
+): string[] {
+  const headers = [...output.matchAll(/^.*\(architecture ([^)]+)\):[ \t]*$/gm)];
+  if (architectures.length === 1 && headers.length === 0) return [output];
+  if (
+    headers.length !== architectures.length ||
+    new Set(headers.map((header) => header[1])).size !== architectures.length ||
+    headers.some((header) => !architectures.includes(header[1]!))
+  )
+    throw new Error('Missing or ambiguous Mach-O architecture records');
+  return headers.map((header, index) =>
+    output.slice(header.index! + header[0].length, headers[index + 1]?.index),
+  );
+}
+
+function verifyDeployment(commands: string): void {
+  const deployments = commands
+    .split(/(?=^\s*cmd LC_)/m)
+    .filter((command) =>
+      /^\s*cmd LC_(BUILD_VERSION|VERSION_MIN_MACOSX)\s*$/m.test(command),
+    );
+  if (deployments.length !== 1)
+    throw new Error('Missing or ambiguous macOS deployment target');
+  const command = deployments[0]!;
+  const modern = /^\s*cmd LC_BUILD_VERSION\s*$/m.test(command);
+  if (modern) {
+    const platforms = [...command.matchAll(/^\s*platform (\S+)\s*$/gm)];
+    if (platforms.length !== 1 || !/^(1|MACOS)$/.test(platforms[0]![1]!))
+      throw new Error('Unsupported Mach-O deployment platform');
+  }
+  const targets = [
+    ...command.matchAll(
+      modern ? /^\s*minos (\S+)\s*$/gm : /^\s*version (\S+)\s*$/gm,
+    ),
+  ];
+  const target = targets[0]?.[1];
+  if (targets.length !== 1 || !target || !/^\d+\.\d+(?:\.\d+)?$/.test(target))
+    throw new Error('Malformed macOS deployment target');
+  const [major, minor, patch = 0] = target.split('.').map(Number);
+  if (
+    ![major, minor, patch].every(Number.isSafeInteger) ||
+    major! > 15 ||
+    (major === 15 && (minor! > 0 || patch > 0))
+  )
+    throw new Error('Mach-O deployment target exceeds macOS 15.0');
+}
+
 export function verifyBinary(binary: string, exec: Runner): string {
   const file = exec(['/usr/bin/file', '-b', binary]);
   if (!file.includes('Mach-O') || !file.includes('executable'))
@@ -114,20 +171,30 @@ export function verifyBinary(binary: string, exec: Runner): string {
   const arch = exec(['/usr/bin/lipo', '-archs', binary]).trim();
   if (!/^(arm64|x86_64)( (arm64|x86_64))?$/.test(arch))
     throw new Error(`Unsupported architecture: ${arch}`);
-  const libraries = exec(['/usr/bin/otool', '-L', binary])
-    .trim()
-    .split('\n')
-    .slice(1);
-  if (
-    !libraries.length ||
-    libraries.some(
-      (line) => !/^\s+(\/System\/Library\/|\/usr\/lib\/)/.test(line),
+  const architectures = arch.split(' ');
+  if (new Set(architectures).size !== architectures.length)
+    throw new Error('Duplicate Mach-O architecture');
+  for (const record of architectureRecords(
+    exec(['/usr/bin/otool', '-L', binary]),
+    architectures,
+  )) {
+    const libraries = record
+      .trimEnd()
+      .split('\n')
+      .filter((line) => line.trim() && !/^\S.*:$/.test(line));
+    if (
+      !libraries.length ||
+      libraries.some(
+        (line) => !/^\s+(\/System\/Library\/|\/usr\/lib\/)/.test(line),
+      )
     )
-  )
-    throw new Error(
-      'Non-system dynamic library dependency; cannot package portably',
-    );
+      throw new Error(
+        'Non-system dynamic library dependency; cannot package portably',
+      );
+  }
   const commands = exec(['/usr/bin/otool', '-l', binary]);
+  for (const record of architectureRecords(commands, architectures))
+    verifyDeployment(record);
   for (const match of commands.matchAll(
     /cmd LC_RPATH\s+cmdsize \d+\s+path (.*?) \(offset/g,
   )) {
