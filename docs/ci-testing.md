@@ -7,8 +7,8 @@ Bun installation, pinned native dependency preparation, tooling lint/typecheck,
 Rust formatting/Clippy and deterministic tests for shared crates and the GPUI app.
 Vue, Tauri and Playwright lanes are no longer product gates. The `tooling` lane
 runs lint, TypeScript and Bun tests on Ubuntu; the `native` lane prepares dependencies,
-runs Rust formatting/Clippy, shared crate tests, native library/editor tests and the
-optimized build on macOS. The aggregate `check` requires both lanes. Installs use
+runs Rust formatting/Clippy, macOS fake-process packaging and pure Swift helper
+checks, shared crate tests, native library/editor tests and the optimized build on macOS. The aggregate `check` requires both lanes. Installs use
 `--ignore-scripts` so only the native lane explicitly prepares patched Rust sources.
 
 The repository-root workflow is:
@@ -21,10 +21,30 @@ bun run test
 bun run build
 ```
 
-`check` is static analysis; `test` runs deterministic Bun tooling tests, shared Rust
-suites, GPUI library/editor integrations and Metal regressions. The optimized native
+`check` is static analysis; `test` runs Linux-compatible Bun tooling/policy tests,
+macOS packaging fakes, pure Swift helper checks, shared Rust suites, GPUI
+library/editor integrations and Metal regressions. The optimized native
 build is a separate validation step. Direct Cargo commands work after prepare with
 `--manifest-path gpui/Cargo.toml`; shared crate manifests remain independently usable.
+
+## Packaging gates
+
+- `bun run test:tooling`: existing Linux-compatible suites plus native-package
+  workflow/preflight policy, dependency-notice collection and fake synthetic-Keychain-smoke tests.
+- `bun run test:packaging`: macos-bundle and macos-release fake-process suites.
+  These use the actual Darwin filesystem/exclusive publication primitive but do
+  not invoke live Keychain, signing/notary, Pi or GUI operations.
+- `bun run test:keychain`: compiles/runs pure Swift helper checks, with **no
+  live Keychain APIs**. This is not evidence that legacy file-Keychain/SPI behavior
+  works on a real runner.
+
+The dispatch-only `native-package.yml` candidate workflow is separate from the
+aggregate CI gate. After approved reviewed merge/dispatch it runs generated-P12
+synthetic Keychain smoke on disposable hosted CI before the protected `release`
+environment's real Apple step. No signed candidate/runtime acceptance has completed.
+See [release safety](releases.md) for exact inputs, provenance and approval boundaries.
+Neither policy tests nor metadata audits substitute for actual Apple validation or
+separately authorized final-artifact launch/install smoke.
 
 ## Metal and hosted runners
 

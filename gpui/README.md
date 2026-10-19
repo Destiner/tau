@@ -14,7 +14,8 @@ cargo test --locked --manifest-path gpui/Cargo.toml --lib
 ```
 
 - [APP.md](APP.md) - Product behavior, lifecycle and verification boundaries.
-- [PACKAGING.md](PACKAGING.md) - Fresh ad-hoc preview bundles; public distribution is blocked.
+- [PACKAGING.md](PACKAGING.md) - Fresh ad-hoc preview bundles.
+- [Release safety](../docs/releases.md) - Production candidate infrastructure (in review), protected signing flow and public-release blockers.
 - [CI and tests](../docs/ci-testing.md) - Deterministic suites, Metal and explicit OS acceptance.
 - [Development storage](../docs/development-storage.md) - Isolation and production safety.
 - [Dependency patches](patches/README.md) - Pinned native dependency maintenance.

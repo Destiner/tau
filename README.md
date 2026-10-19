@@ -34,9 +34,13 @@ bun run package
 ```
 
 `build` produces the optimized native binary; `package` creates a fresh ad-hoc macOS
-preview. **Public native distribution and updates are not implemented.** The old
-v0.2.1 GitHub DMG is a historical Vue/Tauri build, not this native application.
-See [packaging](gpui/PACKAGING.md) before building or launching a preview.
+preview (`com.destiner.tau.native-preview`, aligned version 0.3.0). Production
+packaging infrastructure for `com.destiner.tau` is implemented/in review, but no
+signed candidate or packaged runtime acceptance has completed. **Public release
+remains blocked; the native updater is not implemented.** The old v0.2.1 GitHub DMG
+is a historical Vue/Tauri build, not this native application. See
+[packaging](gpui/PACKAGING.md) before building or launching a preview and
+[release safety](docs/releases.md) for protected candidate commands and approval gates.
 
 The canonical app remains in `gpui/` to preserve workspace/cache paths: Cargo package
 `tau-gpui`, binary `tau`. Shared crates provide storage/process services, Pi RPC

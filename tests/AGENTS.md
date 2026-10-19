@@ -4,6 +4,10 @@ Deterministic Pi wire fixtures for the native Rust process tests; no browser or 
 
 ## Commands
 
+- `bun run test:tooling` - Linux-compatible tooling and native-package policy tests; no live Apple processes.
+- `bun run test:packaging` - macOS bundle/release fake-process suites using actual Darwin filesystem publication; no Keychain, Pi or GUI.
+- `bun run test:keychain` - Compile/run 49 pure Swift helper checks; no live Keychain APIs.
+
 - `bun build scripts/pi-stdio-adapter.ts scripts/pi-contract.ts --target=bun --outdir=/tmp/tau-pi-test-build` - Check the standalone helper bundles without launching Pi.
 - `cargo test --manifest-path crates/tau-core/Cargo.toml` - Run shared service tests, including the Bun-backed stdio fake.
 - `cargo test --manifest-path crates/tau-session/Cargo.toml` - Run deterministic session-controller tests.
@@ -16,6 +20,9 @@ Deterministic Pi wire fixtures for the native Rust process tests; no browser or 
 - `support/pi-scenario/saved-session-conversation.ts` - Stdio round-trip fixture consumed by `crates/tau-core/src/pi/tests/transport.rs`.
 - `support/pi-scenario/catalogue.ts` - Only scenarios consumed by retained native tests.
 - `tooling/native.bun.ts` - Root command safety and native validation-target coverage; runs without launching the application.
+- `tooling/native-package.bun.ts` - Workflow/preflight policy and fake synthetic-smoke process checks; Linux-compatible.
+- `tooling/macos-{bundle,release}.bun.ts` - Injected native-command fakes, integrity, fresh outputs and owned cleanup regressions on Darwin.
+- `../scripts/macos/signing-keychain-tests.swift` - Pure input/path/ownership/ACL-format checks, not live signing acceptance.
 - `../scripts/pi-stdio-adapter.ts` - Fake Pi executable; requires Bun on PATH even when invoked by Rust.
 - `../scripts/pi-contract.ts` - Opt-in read-only installed-Pi RPC canary in temporary offline storage; never part of default tests.
 

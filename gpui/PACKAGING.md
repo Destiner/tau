@@ -1,12 +1,14 @@
 # Tau macOS preview packaging
 
 Packaging builds the canonical `tau` application, not a showcase. It creates
-**Tau.app**, bundle ID **com.destiner.tau.native-preview**, version **0.2.1**.
-The preview identity/version are unchanged by the repository cutover.
+**Tau.app**, bundle ID **com.destiner.tau.native-preview**, with the aligned
+root/native version **0.3.0**.
 
-**Public native distribution is not implemented.** These are local ad-hoc previews,
-not Developer ID signed, notarized, stapled or updater artifacts. The historical
-Tauri DMG/feed is not a native distribution path.
+These are local ad-hoc previews, not Developer ID signed, notarized, stapled or
+updater artifacts. Separate production candidate infrastructure is implemented/in
+review, but no signed candidate or runtime acceptance has completed. See
+[release safety](../docs/releases.md) for the protected candidate flow and public
+release blockers. The historical Tauri DMG/feed is not a native distribution path.
 
 ## Package from root
 
@@ -73,12 +75,14 @@ Node, SSH or provider configuration. Isolation is not an OS sandbox and does not
 isolate credentials, extension execution or remote sessions. Do not run GUI acceptance
 concurrently with another owner's native tests.
 
-## Distribution and updater work still required
+## Production candidates and updater boundary
 
-There is no automatic public release workflow. Before public native distribution,
-implement and verify native signing/notarization/stapling, artifact provenance,
-architecture/platform selection and an explicit bundle identity/cutover policy.
-Define Pi discovery/runtime requirements and packaged acceptance separately.
+`bun run package:macos` prepares unsigned production input for `com.destiner.tau`,
+arm64/macOS 15+; it does not change this preview command. `bun run verify:macos`
+inspects final signed candidates without launching or installing them. Exact
+arguments, canonical fresh-path rules, protected workflow approvals, legal payload
+and remaining public-release requirements live in [release safety](../docs/releases.md).
+Do not dispatch or access Apple credentials merely to build a preview.
 
 The updater is **not implemented**. Check for Updates… / Show Update Status open the
 unavailable Version popup with its primary action disabled; they do not fetch or
