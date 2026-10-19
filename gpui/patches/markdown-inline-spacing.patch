@@ -1,0 +1,553 @@
+diff --git a/src/text/style.rs b/src/text/style.rs
+--- a/src/text/style.rs
++++ b/src/text/style.rs
+@@ -21,6 +21,7 @@
+     paragraph_gap: Rems,
+     strong_weight: Option<FontWeight>,
+     list_style: Option<(gpui::Pixels, gpui::Pixels, Hsla)>,
++    inline_code_padding: Option<gpui::Pixels>,
+     heading: Arc<dyn Fn(u8) -> StyleRefinement + Send + Sync + 'static>,
+     code_block: StyleRefinement,
+     code_block_horizontal_scroll: bool,
+@@ -38,6 +39,7 @@
+     fn eq(&self, other: &Self) -> bool {
+         self.strong_weight == other.strong_weight
+             && self.list_style == other.list_style
++            && self.inline_code_padding == other.inline_code_padding
+             && self.paragraph_gap == other.paragraph_gap
+             && self.foreground == other.foreground
+             && self.muted_foreground == other.muted_foreground
+@@ -90,6 +92,7 @@
+             paragraph_gap: rems(1.),
+             strong_weight: None,
+             list_style: None,
++            inline_code_padding: None,
+             heading: Arc::new(|_| StyleRefinement::default()),
+             code_block: StyleRefinement::default(),
+             code_block_horizontal_scroll: false,
+@@ -176,6 +179,18 @@
+ 
+     pub fn list_style(&self) -> Option<(gpui::Pixels, gpui::Pixels, Hsla)> {
+         self.list_style
++    }
++
++    /// Sets horizontal padding on inline code without changing the source or selection.
++    /// The default retains Base’s 2px padding.
++    pub fn with_inline_code_padding(mut self, padding: gpui::Pixels) -> Self {
++        self.inline_code_padding = Some(padding.max(gpui::Pixels::ZERO));
++        self
++    }
++
++    pub fn inline_code_padding(&self) -> gpui::Pixels {
++        self.inline_code_padding
++            .unwrap_or(gpui::px(super::inline_flow::INLINE_CODE_PADDING))
+     }
+ 
+     /// Sets the style refinement for headings, selected by heading level (1-6).
+diff --git a/src/text/inline_flow.rs b/src/text/inline_flow.rs
+--- a/src/text/inline_flow.rs
++++ b/src/text/inline_flow.rs
+@@ -30,6 +30,7 @@
+     id: ElementId,
+     items: Vec<InlineFlowItem>,
+     link_click_handler: Option<Arc<LinkClickHandlerFn>>,
++    inline_code_padding: Pixels,
+ }
+ 
+ pub(super) type InlineRenderer = dyn Fn(&super::InlineRenderContext, &mut Window, &mut App) -> Option<super::InlineElement>
+@@ -165,6 +166,7 @@
+     text_style: TextStyle,
+     rem_size: Pixels,
+     line_height: Pixels,
++    inline_code_padding: Pixels,
+ }
+ 
+ #[derive(Default)]
+@@ -251,7 +253,13 @@
+             id: id.into(),
+             items,
+             link_click_handler,
+-        }
++            inline_code_padding: px(INLINE_CODE_PADDING),
++        }
++    }
++
++    pub(super) fn inline_code_padding(mut self, padding: Pixels) -> Self {
++        self.inline_code_padding = padding;
++        self
+     }
+ 
+     fn image_element(
+@@ -338,6 +346,7 @@
+             text_style: window.text_style(),
+             rem_size: window.rem_size(),
+             line_height: window.line_height(),
++            inline_code_padding: self.inline_code_padding,
+         };
+         let image_sizes = measure_items
+             .iter()
+@@ -401,6 +410,7 @@
+                                 &objects,
+                                 &typography.text_style,
+                                 wrap_width,
++                                typography.inline_code_padding,
+                                 window,
+                                 cx,
+                             )
+@@ -542,7 +552,7 @@
+ 
+                     let is_code = highlights.iter().any(|(_, h)| h.font_size_scale.is_some());
+                     let padding = if is_code {
+-                        px(INLINE_CODE_PADDING)
++                        typography.inline_code_padding
+                     } else {
+                         Pixels::ZERO
+                     };
+@@ -762,8 +772,9 @@
+ }
+ 
+ /// Intrinsic width for table sizing, using the same objects and wrapping inputs as painting.
+-pub(super) fn intrinsic_width(
++pub(super) fn intrinsic_width_with_padding(
+     items: &[InlineFlowItem],
++    padding: Pixels,
+     window: &mut Window,
+     cx: &mut App,
+ ) -> Pixels {
+@@ -791,11 +802,18 @@
+             _ => None,
+         })
+         .collect::<Vec<_>>();
+-    layout_flow(&items, &images, &window.text_style(), None, window, cx)
+-        .size
+-        .width
+-}
+-
++    layout_flow_with_padding(
++        &items,
++        &images,
++        &window.text_style(),
++        None,
++        padding,
++        window,
++        cx,
++    )
++    .size
++    .width
++}
+ fn prepare_objects(
+     items: &[MeasureItem],
+     text_style: &TextStyle,
+@@ -835,11 +853,32 @@
+         .collect()
+ }
+ 
++#[cfg(test)]
+ fn layout_flow(
+     items: &[MeasureItem],
+     image_sizes: &[Option<Size<Pixels>>],
+     text_style: &TextStyle,
+     wrap_width: Option<Pixels>,
++    window: &mut Window,
++    cx: &mut App,
++) -> InlineFlowLayout {
++    layout_flow_with_padding(
++        items,
++        image_sizes,
++        text_style,
++        wrap_width,
++        px(INLINE_CODE_PADDING),
++        window,
++        cx,
++    )
++}
++
++fn layout_flow_with_padding(
++    items: &[MeasureItem],
++    image_sizes: &[Option<Size<Pixels>>],
++    text_style: &TextStyle,
++    wrap_width: Option<Pixels>,
++    padding: Pixels,
+     window: &mut Window,
+     cx: &mut App,
+ ) -> InlineFlowLayout {
+@@ -850,6 +889,7 @@
+         &objects,
+         text_style,
+         wrap_width,
++        padding,
+         window,
+         cx,
+     )
+@@ -867,6 +907,7 @@
+     prepared_objects: &[Option<MeasuredInlineObject>],
+     text_style: &TextStyle,
+     wrap_width: Option<Pixels>,
++    padding: Pixels,
+     window: &mut Window,
+     _cx: &mut App,
+ ) -> InlineFlowLayout {
+@@ -883,7 +924,15 @@
+         .iter()
+         .map(|object| object.clone().map(|object| object.fit_text(wrap_width)))
+         .collect::<Vec<_>>();
+-    let line_ranges = line_ranges(items, image_sizes, &objects, text_style, wrap_width, window);
++    let line_ranges = line_ranges(
++        items,
++        image_sizes,
++        &objects,
++        text_style,
++        wrap_width,
++        padding,
++        window,
++    );
+     let font_size = text_style.font_size.to_pixels(rem_size);
+     let mut fragments = Vec::new();
+     let mut max_width = Pixels::ZERO;
+@@ -946,11 +995,7 @@
+                         let shaped_line =
+                             shape_line(subtext.clone(), segment_font_size, &runs, window);
+                         let is_code = highlights.iter().any(|(_, h)| h.font_size_scale.is_some());
+-                        let padding = if is_code {
+-                            px(INLINE_CODE_PADDING * 2.)
+-                        } else {
+-                            Pixels::ZERO
+-                        };
++                        let padding = if is_code { padding * 2. } else { Pixels::ZERO };
+                         let width = shaped_line.width() + padding;
+                         // Measure the run by its glyph box. The body strut already
+                         // carries the line's leading, so a run only has to fit its
+@@ -1150,6 +1195,7 @@
+     objects: &[Option<MeasuredInlineObject>],
+     text_style: &TextStyle,
+     wrap_width: Option<Pixels>,
++    padding: Pixels,
+     window: &mut Window,
+ ) -> Vec<Range<usize>> {
+     let total_len = items.iter().map(MeasureItem::len).sum::<usize>();
+@@ -1199,6 +1245,7 @@
+                                 start..end,
+                                 text_style,
+                                 wrap_width,
++                                padding,
+                                 window,
+                             );
+                         }
+@@ -1257,6 +1304,7 @@
+     range: Range<usize>,
+     text_style: &TextStyle,
+     wrap_width: Pixels,
++    padding: Pixels,
+     window: &mut Window,
+ ) {
+     let font_size = text_style.font_size.to_pixels(window.rem_size());
+@@ -1291,7 +1339,7 @@
+                 .width
+         };
+         let padding = if highlight.font_size_scale.is_some() {
+-            px(INLINE_CODE_PADDING * 2.)
++            padding * 2.
+         } else {
+             Pixels::ZERO
+         };
+@@ -1803,6 +1851,59 @@
+     }
+ 
+     #[test]
++    fn opt_in_inline_code_padding_reserves_wrap_and_paint_width() {
++        use super::super::inline::test_fonts::{BODY, MONO, WideMonoTextSystem};
++        use gpui::{Empty, TestApp};
++
++        let mut app = TestApp::with_text_system(Arc::new(WideMonoTextSystem));
++        let mut window = app.open_window(|_, _| Empty);
++        let style = TextStyle {
++            font_family: BODY.into(),
++            font_size: AbsoluteLength::Pixels(px(16.)),
++            ..Default::default()
++        };
++        let items = [MeasureItem::Text {
++            text: "a code z".into(),
++            links: vec![],
++            highlights: vec![(
++                2..6,
++                InlineHighlight {
++                    font_family: Some(MONO.into()),
++                    font_size_scale: Some(0.875),
++                    ..Default::default()
++                },
++            )],
++        }];
++        window.update(|_, window, cx| {
++            let original = layout_flow(&items, &[None], &style, None, window, cx);
++            let padded =
++                layout_flow_with_padding(&items, &[None], &style, None, px(8.), window, cx);
++            assert_eq!(padded.size.width - original.size.width, px(12.));
++            let code_width = |layout: &InlineFlowLayout| {
++                layout
++                    .fragments
++                    .iter()
++                    .find_map(|fragment| match fragment {
++                        PositionedFragment::Text { text, size, .. } if text.as_ref() == "code" => {
++                            Some(size.width)
++                        }
++                        _ => None,
++                    })
++                    .expect("code fragment")
++            };
++            assert_eq!(code_width(&padded) - code_width(&original), px(12.));
++            let narrow = original.size.width - px(3.);
++            let wrapped =
++                layout_flow_with_padding(&items, &[None], &style, Some(narrow), px(8.), window, cx);
++            assert!(wrapped.size.height > padded.size.height);
++            assert_eq!(
++                layout_flow(&items, &[None], &style, None, window, cx).size,
++                original.size
++            );
++        });
++    }
++
++    #[test]
+     fn inline_code_line_is_as_tall_as_a_plain_line_when_glyphs_overflow_it() {
+         use super::super::inline::test_fonts::{BODY, MONO, WideMonoTextSystem};
+         use gpui::{Empty, TestApp};
+diff --git a/src/text/node.rs b/src/text/node.rs
+--- a/src/text/node.rs
++++ b/src/text/node.rs
+@@ -2239,6 +2239,7 @@
+                 self.inline_flow_items(fade_key, fades, backgrounds, node_cx, cx),
+                 node_cx.link_click_handler.clone(),
+             )
++            .inline_code_padding(node_cx.style.inline_code_padding())
+             .into_any_element();
+         }
+ 
+@@ -2680,7 +2681,12 @@
+                 .any(|node| node.custom.is_some())
+             {
+                 let items = cell.children.inline_flow_items(None, &[], &[], node_cx, cx);
+-                let width = super::inline_flow::intrinsic_width(&items, window, cx);
++                let width = super::inline_flow::intrinsic_width_with_padding(
++                    &items,
++                    node_cx.style.inline_code_padding(),
++                    window,
++                    cx,
++                );
+                 let border = if ix + 1 < col_count {
+                     CELL_BORDER_PX
+                 } else {
+@@ -2723,7 +2729,7 @@
+                         |range, highlight| (range, highlight.clone()),
+                     );
+                     if highlights.iter().any(|(_, h)| h.font_size_scale.is_some()) {
+-                        line_w += px(crate::text::inline_flow::INLINE_CODE_PADDING * 2.);
++                        line_w += node_cx.style.inline_code_padding() * 2.;
+                     }
+                     let runs = text_runs(range.len(), &text_style, &highlights);
+                     line_w += window
+@@ -2929,10 +2935,26 @@
+             .items_start()
+             .content_start()
+             .when(!options.todo && checked.is_none(), |this| {
+-                let prefix =
+-                    list_item_prefix(ix, options.list_start, options.ordered, options.depth);
++                let prefix = if style.list_style().is_some() && options.ordered {
++                    format!("{}. ", ordered_list_ordinal(options.list_start, ix))
++                } else {
++                    list_item_prefix(ix, options.list_start, options.ordered, options.depth)
++                };
+                 if let Some((indent, _, marker)) = style.list_style() {
+-                    this.child(div().w(indent).flex_none().text_color(marker).child(prefix))
++                    this.child(
++                        div()
++                            .w(indent)
++                            .flex_none()
++                            .relative()
++                            .text_color(marker)
++                            .child(
++                                div()
++                                    .absolute()
++                                    .left(px(3.))
++                                    .whitespace_nowrap()
++                                    .child(prefix),
++                            ),
++                    )
+                 } else {
+                     this.child(prefix)
+                 }
+@@ -3042,17 +3064,27 @@
+                                 ));
+                             }
+                             BlockNode::List { .. } => {
+-                                items.push(div().ml(rems(1.)).child(child.render_block(
+-                                    NodeRenderOptions {
+-                                        depth: options.depth + 1,
+-                                        todo: checked.is_some(),
+-                                        is_last: true,
+-                                        ..options
+-                                    },
+-                                    node_cx,
+-                                    window,
+-                                    cx,
+-                                )));
++                                items.push(
++                                    div()
++                                        .ml(node_cx
++                                            .style
++                                            .list_style()
++                                            .map_or(px(16.), |(indent, _, _)| indent))
++                                        .when(node_cx.style.list_style().is_some(), |this| {
++                                            this.mt(px(1.95))
++                                        })
++                                        .child(child.render_block(
++                                            NodeRenderOptions {
++                                                depth: options.depth + 1,
++                                                todo: checked.is_some(),
++                                                is_last: true,
++                                                ..options
++                                            },
++                                            node_cx,
++                                            window,
++                                            cx,
++                                        )),
++                                );
+                             }
+                             BlockNode::Root { .. }
+                             | BlockNode::Heading { .. }
+@@ -3507,7 +3539,20 @@
+             } => div()
+                 .w_full()
+                 .min_w_0()
+-                .pb(mb)
++                .when(
++                    node_cx.style.list_style().is_some() && options.depth == 0 && options.ix > 0,
++                    |this| this.mt(px(-2.1)),
++                )
++                .when(
++                    node_cx.style.list_style().is_some() && options.depth == 0 && !options.is_last,
++                    |this| this.pb(px(9.1)),
++                )
++                .when(
++                    !(node_cx.style.list_style().is_some()
++                        && options.depth == 0
++                        && !options.is_last),
++                    |this| this.pb(mb),
++                )
+                 .children({
+                     let mut items = Vec::with_capacity(children.len());
+                     let mut item_index = 0;
+diff --git a/src/text/text_view.rs b/src/text/text_view.rs
+--- a/src/text/text_view.rs
++++ b/src/text/text_view.rs
+@@ -2647,6 +2647,112 @@
+         }
+     }
+ 
++    #[gpui::test]
++    fn padded_inline_code_drag_selects_across_code_boundaries(cx: &mut TestAppContext) {
++        struct Root {
++            text: Entity<TextViewState>,
++        }
++        impl Render for Root {
++            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++                div().w(px(210.)).child(crate::TextSelectionLayer).child(
++                    TextView::new(&self.text)
++                        .selectable(true)
++                        .style(TextViewStyle::default().with_inline_code_padding(px(8.))),
++                )
++            }
++        }
++        cx.update(crate::init);
++        let (root, cx) = cx.add_window_view(|_, cx| Root {
++            text: cx.new(|cx| TextViewState::markdown("before `code` after", cx)),
++        });
++        let cx: &mut VisualTestContext = cx;
++        cx.run_until_parked();
++        cx.simulate_mouse_down(
++            point(px(2.), px(8.)),
++            MouseButton::Left,
++            Modifiers::default(),
++        );
++        cx.update(|window, cx| {
++            let _ = window.draw(cx);
++        });
++        cx.simulate_mouse_move(
++            point(px(205.), px(8.)),
++            Some(MouseButton::Left),
++            Modifiers::default(),
++        );
++        cx.update(|window, cx| {
++            let _ = window.draw(cx);
++        });
++        cx.simulate_mouse_up(
++            point(px(205.), px(8.)),
++            MouseButton::Left,
++            Modifiers::default(),
++        );
++        cx.update(|window, cx| {
++            let _ = window.draw(cx);
++        });
++        let selected = root.read_with(cx, |root, cx| root.text.read(cx).selected_text());
++        assert_eq!(selected.trim(), "before code after");
++    }
++
++    #[test]
++    fn inline_code_padding_changes_painted_wrap_without_changing_selection_or_defaults() {
++        use gpui::TestApp;
++
++        const SOURCE: &str = "Before `code` after and another `token` at the edge";
++        struct Root {
++            default: Entity<TextViewState>,
++            padded: Entity<TextViewState>,
++        }
++        impl Render for Root {
++            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++                div()
++                    .w(px(165.))
++                    .text_size(px(13.))
++                    .child(crate::TextSelectionLayer)
++                    .child(TextView::new(&self.default).selectable(true))
++                    .child(
++                        TextView::new(&self.padded)
++                            .selectable(true)
++                            .style(TextViewStyle::default().with_inline_code_padding(px(8.))),
++                    )
++            }
++        }
++        let mut app = TestApp::new();
++        app.update(crate::init);
++        let mut window = app.open_window(|_, cx| Root {
++            default: cx.new(|cx| TextViewState::markdown(SOURCE, cx)),
++            padded: cx.new(|cx| TextViewState::markdown(SOURCE, cx)),
++        });
++        window.draw();
++        app.run_until_parked();
++        window.draw();
++        window.read(|root, cx| {
++            let lines =
++                |view: &Entity<TextViewState>| view.read(cx).selection_adapter.text_bounds().len();
++            assert!(lines(&root.padded) >= lines(&root.default));
++            assert_eq!(TextViewStyle::default().inline_code_padding(), px(2.));
++        });
++        window.update(|root, _, cx| {
++            root.default.update(cx, |state, cx| state.select_all(cx));
++            root.padded.update(cx, |state, cx| state.select_all(cx));
++        });
++        window.draw();
++        window.read(|root, cx| {
++            let plain = root.default.read(cx);
++            let padded = root.padded.read(cx);
++            assert_eq!(
++                plain.rendered_text().as_str(),
++                padded.rendered_text().as_str()
++            );
++            assert_eq!(plain.selected_text(), padded.selected_text());
++            assert_eq!(
++                padded.selected_text().trim(),
++                "Before code after and another token at the edge"
++            );
++        });
++    }
++
+     #[test]
+     fn opt_in_list_style_changes_rendered_indent_and_item_spacing_only() {
+         use gpui::TestApp;

@@ -1,0 +1,99 @@
+--- a/src/input/base/state.rs
++++ b/src/input/base/state.rs
+@@ -1079,6 +1079,7 @@
+         self
+     }
+ 
++    /// If disabling an already-focused input, the owner must move focus using its window.
+     pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
+         if self.disabled == disabled {
+             return;
+@@ -1298,6 +1299,9 @@
+ 
+     /// Focus the input field.
+     pub fn focus(&self, window: &mut Window, cx: &mut Context<Self>) {
++        if self.disabled {
++            return;
++        }
+         self.focus_handle.focus(window, cx);
+         self.blink_cursor.update(cx, |cursor, cx| {
+             cursor.start(cx);
+@@ -2287,7 +2291,7 @@
+     ) {
+         // A token that consumed the press (a double click selecting it) must
+         // not also place the caret.
+-        if window.default_prevented() {
++        if self.disabled || window.default_prevented() {
+             return;
+         }
+         self.undo_manager.break_transaction_coalescing();
+@@ -4428,7 +4432,7 @@
+         let element = div()
+             .id("input-state")
+             .key_context(CONTEXT)
+-            .track_focus(&self.focus_handle)
++            .when(!self.disabled, |this| this.track_focus(&self.focus_handle))
+             .when(self.is_editable(), |this| {
+                 this.on_action(window.listener_for(&entity, InputBaseState::backspace))
+                     .on_action(window.listener_for(&entity, InputBaseState::delete))
+@@ -4911,8 +4915,60 @@
+                 f(crate::input::InputState::new(window, cx))
+             })
+         }
++    }
++
++    fn disabled_focus_contract<M: InputModeKind>(view: InputView<M>, cx: &mut TestAppContext) {
++        let mut cx = VisualTestContext::from_window(view.window_handle.into(), cx);
++        let input = view.input;
++        cx.update(|window, cx| {
++            input.update(cx, |state, cx| state.set_disabled(true, cx));
++            window.draw(cx).clear(cx);
++            input.update(cx, |state, cx| state.focus(window, cx));
++            window.focus_next(cx);
++        });
++        cx.update(|window, cx| assert!(!input.read(cx).focus_handle.is_focused(window)));
++        let position = input.read_with(&cx, |state, _| state.input_bounds.center());
++        cx.simulate_mouse_down(position, MouseButton::Left, Default::default());
++        cx.simulate_mouse_up(position, MouseButton::Left, Default::default());
++        cx.update(|window, cx| {
++            assert!(!input.read(cx).focus_handle.is_focused(window));
++        });
++        input.read_with(&cx, |state, _| {
++            assert!(!state.selecting);
++            assert_eq!(state.cursor(), 0);
++        });
++
++        cx.update(|window, cx| {
++            input.update(cx, |state, cx| state.set_disabled(false, cx));
++            window.draw(cx).clear(cx);
++            window.focus_next(cx);
++        });
++        cx.update(|window, cx| assert!(input.read(cx).focus_handle.is_focused(window)));
++        cx.update(|window, cx| {
++            window.blur(cx);
++            input.update(cx, |state, cx| state.set_readonly(true, cx));
++            window.draw(cx).clear(cx);
++            window.focus_next(cx);
++        });
++        cx.update(|window, cx| assert!(input.read(cx).focus_handle.is_focused(window)));
+     }
+ 
++    #[gpui::test]
++    fn disabled_input_cannot_focus(cx: &mut TestAppContext) {
++        disabled_focus_contract(
++            InputView::build(cx, |state| state.default_value("hello")),
++            cx,
++        );
++    }
++
++    #[gpui::test]
++    fn disabled_textarea_cannot_focus(cx: &mut TestAppContext) {
++        disabled_focus_contract(
++            InputView::build_textarea(cx, |state| state.default_value("hello")),
++            cx,
++        );
++    }
++
+     /// The frame is laid out by the application, which should not have to
+     /// center a single line inside it.
+     #[gpui::test]

@@ -1,0 +1,58 @@
+--- a/src/focus_trap.rs
++++ b/src/focus_trap.rs
+@@ -82,16 +82,23 @@
+ 
+     /// Find which focus trap contains the currently focused element
+     fn find_active_trap(window: &Window, cx: &App) -> Option<FocusHandle> {
+-        for (_id, container_handle) in Self::global(cx).traps.iter() {
++        let mut active: Option<FocusHandle> = None;
++        for container_handle in Self::global(cx).traps.values() {
+             let Some(container) = container_handle.upgrade() else {
+                 continue;
+             };
+ 
+-            if container.contains_focused(window, cx) {
+-                return Some(container.clone());
++            // All matching traps lie on the focused dispatch path. Choose the
++            // innermost one, independent of the map's iteration order.
++            if container.contains_focused(window, cx)
++                && active
++                    .as_ref()
++                    .is_none_or(|outer| outer.contains(&container, window))
++            {
++                active = Some(container);
+             }
+         }
+-        None
++        active
+     }
+ 
+     /// Cleanup any traps with dropped handles
+--- a/src/root.rs
++++ b/src/root.rs
+@@ -221,6 +221,13 @@
+                     }
+                 }
+             }
++            // A large dispatch tree can exhaust the bounded search before
++            // wrapping. Never leave the modal when that happens.
++            if !container_focus_handle.contains_focused(window, cx) {
++                before_focus
++                    .unwrap_or(container_focus_handle)
++                    .focus(window, cx);
++            }
+             return;
+         }
+ 
+@@ -255,6 +262,11 @@
+                         break;
+                     }
+                 }
++            }
++            if !container_focus_handle.contains_focused(window, cx) {
++                before_focus
++                    .unwrap_or(container_focus_handle)
++                    .focus(window, cx);
+             }
+             return;
+         }

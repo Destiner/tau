@@ -1,0 +1,93 @@
+--- a/src/diagrams/er.rs
++++ b/src/diagrams/er.rs
+@@ -634,6 +634,7 @@
+ 
+ fn construct_er_semantic_source(
+     code: &str,
++    meta: &ParseMetadata,
+     control: &OperationControl,
+ ) -> OperationControlResult<std::result::Result<ErSemanticSource, Box<ErSemanticFailure>>> {
+     let syntax = ErSyntax::lex(code, control)?;
+@@ -649,6 +650,12 @@
+     };
+ 
+     let mut db = ErDb::new();
++    if let Some(direction) = meta.effective_config.get_str("er.defaultDirection") {
++        let direction = direction.to_ascii_uppercase();
++        if matches!(direction.as_str(), "TB" | "BT" | "LR" | "RL") {
++            db.direction = direction;
++        }
++    }
+     for (index, a) in actions.into_iter().enumerate() {
+         if index % 128 == 0 {
+             control.checkpoint()?;
+@@ -660,7 +667,7 @@
+ }
+ 
+ fn parse_er_semantic_source(code: &str, meta: &ParseMetadata) -> Result<ErSemanticSource> {
+-    construct_er_semantic_source(code, &OperationControl::new())
++    construct_er_semantic_source(code, meta, &OperationControl::new())
+         .expect("a private parse control cannot be cancelled")
+         .map_err(|failure| (*failure).into_parse_error(meta, code.len()))
+ }
+@@ -678,7 +685,7 @@
+     meta: &ParseMetadata,
+     control: &OperationControl,
+ ) -> OperationControlResult<Result<ErDiagramRenderModel>> {
+-    let construction = construct_er_semantic_source(code, control)?;
++    let construction = construct_er_semantic_source(code, meta, control)?;
+     let source = match construction {
+         Ok(source) => source,
+         Err(failure) => return Ok(Err((*failure).into_parse_error(meta, code.len()))),
+@@ -696,7 +703,7 @@
+     meta: &ParseMetadata,
+     control: &OperationControl,
+ ) -> OperationControlResult<crate::family::CombinedSemanticParse> {
+-    let construction = construct_er_semantic_source(code, control)?;
++    let construction = construct_er_semantic_source(code, meta, control)?;
+     let parsed = crate::family::CombinedSemanticParse::from_construction(
+         construction,
+         |ErSemanticSource { db, editor_facts }| (db.into_model(meta), editor_facts),
+@@ -2176,6 +2183,42 @@
+     }
+ 
+     #[test]
++    fn er_site_default_direction_preserves_explicit_source_and_default_mermaid() {
++        let source = "erDiagram\n A ||--o{ B : contains";
++        assert_eq!(
++            parse_er_model_for_render(source, &meta())
++                .unwrap()
++                .direction,
++            "TB"
++        );
++        let mut configured = meta();
++        configured.effective_config =
++            MermaidConfig::from_value(json!({"er":{"defaultDirection":"LR"}}));
++        assert_eq!(
++            parse_er_model_for_render(source, &configured)
++                .unwrap()
++                .direction,
++            "LR"
++        );
++        assert_eq!(parse_er(source, &configured).unwrap()["direction"], "LR");
++        let explicit = "erDiagram\n direction BT\n A ||--o{ B : contains";
++        assert_eq!(
++            parse_er_model_for_render(explicit, &configured)
++                .unwrap()
++                .direction,
++            "BT"
++        );
++        configured.effective_config =
++            MermaidConfig::from_value(json!({"er":{"defaultDirection":"invalid"}}));
++        assert_eq!(
++            parse_er_model_for_render(source, &configured)
++                .unwrap()
++                .direction,
++            "TB"
++        );
++    }
++
++    #[test]
+     fn er_direction_lexer_preserves_ecmascript_line_terminators() {
+         // Test raw lexer rules before Engine preprocessing normalizes line endings.
+         for separator in ['\r', '\u{2028}', '\u{2029}'] {

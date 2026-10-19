@@ -1,0 +1,83 @@
+diff --git a/src/text/style.rs b/src/text/style.rs
+index 2088b21..fd9e486 100644
+--- a/src/text/style.rs
++++ b/src/text/style.rs
+@@ -1,6 +1,6 @@
+ use std::sync::Arc;
+ 
+-use gpui::{HighlightStyle, Hsla, Rems, StyleRefinement, rems};
++use gpui::{FontWeight, HighlightStyle, Hsla, Rems, StyleRefinement, rems};
+ 
+ use crate::ColorTokens;
+ 
+@@ -19,6 +19,7 @@ pub struct TextViewStyle {
+     code_background: Hsla,
+     border: Hsla,
+     paragraph_gap: Rems,
++    strong_weight: Option<FontWeight>,
+     heading: Arc<dyn Fn(u8) -> StyleRefinement + Send + Sync + 'static>,
+     code_block: StyleRefinement,
+     code_block_horizontal_scroll: bool,
+@@ -34,7 +35,8 @@ pub struct TextViewStyle {
+ 
+ impl PartialEq for TextViewStyle {
+     fn eq(&self, other: &Self) -> bool {
+-        self.paragraph_gap == other.paragraph_gap
++        self.strong_weight == other.strong_weight
++            && self.paragraph_gap == other.paragraph_gap
+             && self.foreground == other.foreground
+             && self.muted_foreground == other.muted_foreground
+             && self.link == other.link
+@@ -84,6 +86,7 @@ impl TextViewStyle {
+             code_background: colors.accent,
+             border: colors.border,
+             paragraph_gap: rems(1.),
++            strong_weight: None,
+             heading: Arc::new(|_| StyleRefinement::default()),
+             code_block: StyleRefinement::default(),
+             code_block_horizontal_scroll: false,
+@@ -146,6 +149,16 @@ impl TextViewStyle {
+         self
+     }
+ 
++    /// Overrides bold mark weight for a view; None retains Base bold.
++    pub fn with_strong_weight(mut self, weight: FontWeight) -> Self {
++        self.strong_weight = Some(weight);
++        self
++    }
++
++    pub fn strong_weight(&self) -> Option<FontWeight> {
++        self.strong_weight
++    }
++
+     /// Sets the style refinement for headings, selected by heading level (1-6).
+     pub fn with_heading<F>(mut self, heading: F) -> Self
+     where
+@@ -338,4 +351,14 @@ mod tests {
+     use super::*;
+ 
++    #[test]
++    fn strong_weight_is_opt_in_and_part_of_the_style_fingerprint() {
++        let base = TextViewStyle::default();
++        assert_eq!(base.strong_weight(), None);
++        let thinking = base.clone().with_strong_weight(FontWeight::NORMAL);
++        assert_eq!(thinking.strong_weight(), Some(FontWeight::NORMAL));
++        assert!(thinking != base);
++        assert!(thinking == thinking.clone());
++    }
++
+     #[test]
+     fn selection_layout_fingerprint_covers_callback_table_and_theme_fields() {
+diff --git a/src/text/node.rs b/src/text/node.rs
+index 7b910db..c0ac7ae 100644
+--- a/src/text/node.rs
++++ b/src/text/node.rs
+@@ -2159,7 +2159,7 @@ impl PartialEq for NodeContext {
+ fn mark_highlight(mark: &TextMark, node_cx: &NodeContext, cx: &App) -> InlineHighlight {
+     let mut highlight = HighlightStyle::default();
+     if mark.bold {
+-        highlight.font_weight = Some(FontWeight::BOLD);
++        highlight.font_weight = Some(node_cx.style.strong_weight().unwrap_or(FontWeight::BOLD));
+     }
+     if mark.italic {
+         highlight.font_style = Some(FontStyle::Italic);

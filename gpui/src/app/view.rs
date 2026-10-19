@@ -1,0 +1,1550 @@
+use super::*;
+use gpui_kit::base::{Button, ElementExt};
+
+impl Shell {
+    pub(super) fn project_actions_admitted(&self, cx: &App) -> bool {
+        self.loaded
+            && !self.project_removal_inflight()
+            && self.lifecycle.is_none()
+            && self.confirmation.is_none()
+            && self.error.is_none()
+            && !self.picker_busy
+            && !self.remote.is_open()
+            && !self.preview_open()
+            && !self
+                .fallback
+                .as_ref()
+                .is_some_and(|(_, d)| d.read(cx).is_open())
+            && self.empty_disposals.is_empty()
+            && self.register_retries.is_empty()
+    }
+
+    pub(super) fn sync_chrome_admission(&self, cx: &mut Context<Self>) {
+        let actions = self.project_actions_admitted(cx);
+        let prompt = self
+            .sessions
+            .get(&self.active)
+            .is_some_and(|live| !live.controller.state().extension_dialogs.is_empty());
+        let palette = self.palette.is_open(cx);
+        let version = actions && !prompt && !self.admin_reporter_open(cx);
+        if let Some(sidebar) = &self.sidebar {
+            sidebar.update(cx, |sidebar, cx| {
+                sidebar.set_actions_interactive(actions && !palette, cx);
+                sidebar.set_remove_project_available(
+                    actions
+                        && !palette
+                        && self
+                            .selected_project()
+                            .is_some_and(|p| self.remove_project_available(&p.path)),
+                    cx,
+                );
+                if version && palette {
+                    sidebar.preserve_version_under_palette(cx);
+                } else {
+                    sidebar.set_version_interactive(version, cx);
+                }
+            });
+        }
+        if let Some(header) = &self.header {
+            header.update(cx, |header, cx| {
+                header.set_action_admission(
+                    self.selected_project_ref().is_some(),
+                    actions && !palette,
+                    actions && !prompt,
+                    cx,
+                )
+            });
+        }
+    }
+
+    fn extension_failure_owned(live: &LiveSession) -> bool {
+        live.extension_error
+            .as_ref()
+            .is_some_and(|(generation, id, _)| {
+                *generation == live.controller.generation()
+                    && live
+                        .controller
+                        .state()
+                        .extension_dialogs
+                        .first()
+                        .is_some_and(|r| &r.id == id)
+                    && live.controller.extension_delivery_error_owned(id)
+            })
+    }
+
+    pub(super) fn retry_pi(&mut self, key: &str, cx: &mut Context<Self>) {
+        if self.runtime_cleanup_pending(key) {
+            return;
+        }
+        let source = self.resumable_source(key);
+        let Some(live) = self.sessions.get_mut(key) else {
+            return;
+        };
+        if live.starting {
+            return;
+        }
+        live.dirty = true;
+        if live.controller.state().ready {
+            let effects = live.controller.refresh();
+            self.effects(key, effects, cx);
+        } else {
+            live.starting = true;
+            live.startup_events.clear();
+            live.start_attempt += 1;
+            live.start_deadline = self.epoch.elapsed().as_millis() as u64 + 10_000;
+            let attempt = live.start_attempt;
+            let project = live.project.clone();
+            self.dispatch(
+                Command::Start {
+                    runtime: key.into(),
+                    attempt,
+                    project,
+                    source,
+                },
+                cx,
+            );
+        }
+        self.refresh_window(cx);
+    }
+
+    fn sync_fallback(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let session = self.sessions.get(&self.active).filter(|live| {
+            // The correlated cleanup receipt owns stop failures, not Reconnect.
+            !self.runtime_cleanup_pending(&self.active)
+                && live.controller.state().status == Status::Error
+                && live.controller.state().error.is_some()
+                && !Self::extension_failure_owned(live)
+        });
+        // Workflow receipts own their occurrence independently of the app-error
+        // slot, so suppression/navigation cannot acknowledge an unseen failure.
+        let workflow = self
+            .error
+            .is_none()
+            .then(|| self.workflow_failure(&self.active))
+            .flatten();
+        let incident = if let Some(error) = &self.error {
+            Some((format!("app:{error}"), error.clone(), None))
+        } else if let Some((token, message)) = &workflow {
+            Some((format!("workflow:{token:?}"), (*message).into(), None))
+        } else {
+            session.map(|live| {
+                let error =
+                    live.controller.state().error.clone().unwrap_or_else(|| {
+                        "Pi could not complete this operation. Try again.".into()
+                    });
+                (
+                    format!(
+                        "session:{}:{:?}",
+                        self.active,
+                        live.controller.error_token()
+                    ),
+                    if self.runtime_was_released(&self.active) && live.project.connection_string.is_some() && !self.runtime_lifecycle.reconnect_required.contains(&self.active) {
+                        "This remote Pi runtime was released while idle. Reconnect to reopen saved history; in-memory extension state was not retained.".into()
+                    } else { error },
+                    Some((
+                        self.active.clone(),
+                        live.controller.generation(),
+                        live.controller.state().ready,
+                        live.controller.error_token(),
+                    )),
+                )
+            })
+        };
+        let Some((id, message, session)) = incident else {
+            self.fallback = None;
+            return;
+        };
+        if self.lifecycle.is_some()
+            || self.confirmation.is_some()
+            || self.remote.is_open()
+            || self.preview_open()
+        {
+            self.fallback = None;
+            return;
+        }
+        if self
+            .fallback
+            .as_ref()
+            .is_some_and(|(current, _)| current == &id)
+        {
+            return;
+        }
+        let initialize = !self.loaded && session.is_none() && workflow.is_none();
+        let action = if initialize {
+            "Try Again"
+        } else if let Some((_, _, ready, _)) = &session {
+            if *ready { "Refresh" } else { "Reconnect" }
+        } else if self.fallback_retry_pending() {
+            "Retry"
+        } else {
+            ""
+        };
+        let owned_message = session
+            .as_ref()
+            .and_then(|(key, _, _, _)| self.sessions.get(key))
+            .and_then(|live| live.controller.state().error.clone())
+            .unwrap_or_else(|| message.clone());
+        let dialog = cx.new(|cx| {
+            NativeDialog::new(
+                DialogProps {
+                    kind: DialogKind::Feedback,
+                    title: if initialize {
+                        "Workspace unavailable"
+                    } else {
+                        "Operation failed"
+                    }
+                    .into(),
+                    description: message,
+                    placeholder: String::new(),
+                    options: vec![],
+                },
+                self.dark,
+                window,
+                cx,
+            )
+        });
+        dialog.update(cx, |d, cx| {
+            d.set_action_label(action, cx);
+            d.set_dismissible(!initialize, cx);
+        });
+        let incident_id = id.clone();
+        self.subscriptions.push(cx.subscribe(
+            &dialog,
+            move |s, source, event: &DialogEvent, cx| {
+                if !s
+                    .fallback
+                    .as_ref()
+                    .is_some_and(|(current, dialog)| current == &incident_id && dialog == &source)
+                {
+                    return;
+                }
+                if let Some((token, _)) = &workflow {
+                    if s.error.is_some()
+                        || s.workflow_failure(&s.active)
+                            .as_ref()
+                            .map(|(owner, _)| owner)
+                            != Some(token)
+                    {
+                        return;
+                    }
+                    if matches!(event, DialogEvent::Cancelled) {
+                        s.acknowledge_workflow_failure(token);
+                        s.fallback = None;
+                    } else if matches!(event, DialogEvent::Submitted(_)) {
+                        s.retry_workflows(cx);
+                    }
+                    s.refresh_window(cx);
+                    s.restore_input_focus(cx);
+                    return;
+                }
+                if let Some((key, generation, _, token)) = &session {
+                    if s.active != *key
+                        || !s.sessions.get(key).is_some_and(|live| {
+                            live.controller.generation() == *generation
+                                && live.controller.error_token().as_ref() == token.as_ref()
+                        })
+                    {
+                        return;
+                    }
+                    if matches!(event, DialogEvent::Cancelled)
+                        && let Some(token) = token
+                        && let Some(live) = s.sessions.get_mut(key)
+                        && live.controller.acknowledge_error(token)
+                    {
+                        live.dirty = true;
+                        live.projection_dirty = true;
+                        s.sidebar_state.invalidate_projection();
+                        s.fallback = None;
+                    }
+                    if matches!(event, DialogEvent::Submitted(_)) {
+                        s.retry_pi(key, cx);
+                    }
+                    source.update(cx, |d, cx| {
+                        d.set_busy(matches!(event, DialogEvent::Submitted(_)), cx)
+                    });
+                    s.refresh_window(cx);
+                    if matches!(event, DialogEvent::Cancelled) {
+                        s.restore_input_focus(cx);
+                    }
+                    return;
+                } else {
+                    if s.error.as_ref() != Some(&owned_message) || (initialize && s.loaded) {
+                        return;
+                    }
+                    if matches!(event, DialogEvent::Submitted(_)) {
+                        if initialize {
+                            s.dispatch(Command::Load { project: None }, cx);
+                        } else {
+                            s.fallback = None;
+                            s.retry_workflows(cx);
+                            s.restore_input_focus(cx);
+                            return;
+                        }
+                    }
+                }
+                s.error = None;
+                s.fallback = None;
+                s.refresh_window(cx);
+                s.restore_input_focus(cx);
+            },
+        ));
+        self.fallback = Some((id, dialog));
+    }
+
+    pub(super) fn restore_input_focus(&self, cx: &mut Context<Self>) {
+        self.restore_input_focus_from(None, cx);
+    }
+    pub(super) fn restore_input_focus_from(
+        &self,
+        origin: Option<gpui_kit::FocusHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        let binding = self.palette_binding();
+        let owner = cx.entity().downgrade();
+        let target = self.window;
+        cx.defer(move |cx| {
+            if let Some(target) = target {
+                let _ = target.update(cx, |_, window, cx| {
+                    let _ = owner.update(cx, |shell, cx| {
+                        if shell.palette_binding() == binding {
+                            shell.restore_input_focus_in(origin, window, cx);
+                        }
+                    });
+                });
+            }
+        });
+    }
+
+    // Navigation owns this handoff, not mounting or background session updates.
+    pub(super) fn restore_input_focus_in(
+        &self,
+        origin: Option<gpui_kit::FocusHandle>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let binding = self.palette_binding();
+        let expected = window.focused(cx);
+        let owner = cx.entity().downgrade();
+        let target = self.window;
+        // The second frame sees the newly selected editor's dispatch tree.
+        window.on_next_frame(move |window, _| {
+            window.on_next_frame(move |window, cx| {
+                let Some(owner) = owner.upgrade() else {
+                    return;
+                };
+                let shell = owner.read(cx);
+                let current = window.focused(cx);
+                if shell.window != target
+                    || binding != shell.palette_binding()
+                    || current != expected
+                    || shell.lifecycle.is_some()
+                    || shell.confirmation.is_some()
+                    || shell.error.is_some()
+                    || shell
+                        .fallback
+                        .as_ref()
+                        .is_some_and(|(_, d)| d.read(cx).is_open())
+                    || shell.picker_busy
+                    || shell.palette.is_open(cx)
+                    || shell.preview_open()
+                    || shell
+                        .sidebar
+                        .as_ref()
+                        .is_some_and(|s| s.read(cx).version_open())
+                {
+                    return;
+                }
+                if shell.remote.is_open() {
+                    owner.update(cx, |s, cx| s.focus_remote(window, cx));
+                    return;
+                }
+                if shell.admin_reporter_open(cx) {
+                    owner.update(cx, |s, cx| s.open_admin_reporter(window, cx));
+                    return;
+                }
+                if let Some((_, dialog)) = shell
+                    .sessions
+                    .get(&shell.active)
+                    .and_then(|live| live.extension.as_ref())
+                {
+                    let dialog = dialog.clone();
+                    dialog.update(cx, |dialog, cx| dialog.focus(window, cx));
+                    return;
+                }
+                // A retained rename may reclaim its own origin, never the composer.
+                if let Some(header) = shell.header.as_ref().filter(|h| h.read(cx).renaming()) {
+                    use gpui_kit::Focusable;
+                    let editor = header.read(cx).editor().read(cx).focus_handle(cx);
+                    if origin.as_ref() == Some(&editor)
+                        && shell
+                            .shell_focus
+                            .as_ref()
+                            .is_some_and(|root| root.contains(&editor, window))
+                    {
+                        editor.focus(window, cx);
+                    }
+                    return;
+                }
+                if let Some(focus) = origin
+                    && shell
+                        .shell_focus
+                        .as_ref()
+                        .is_some_and(|root| root != &focus && root.contains(&focus, window))
+                {
+                    focus.focus(window, cx);
+                    return;
+                }
+                if let Some(live) = shell.sessions.get(&shell.active)
+                    && !live.controller.state().stopping
+                    && live.controller.state().extension_dialogs.is_empty()
+                    && !live.composer.read(cx).is_disabled()
+                {
+                    use gpui_kit::Focusable;
+                    let focus = live.composer.read(cx).editor().read(cx).focus_handle(cx);
+                    // contains(self) is true even for an unmounted handle.
+                    if shell
+                        .shell_focus
+                        .as_ref()
+                        .is_some_and(|root| root.contains(&focus, window))
+                    {
+                        focus.focus(window, cx);
+                        owner.update(cx, |shell, _| {
+                            if let Some(live) = shell.sessions.get_mut(&shell.active) {
+                                live.draft_focus_delivered = true;
+                            }
+                        });
+                        return;
+                    }
+                }
+                if let Some(focus) = shell.shell_focus.clone() {
+                    focus.focus(window, cx);
+                }
+            });
+        });
+    }
+    pub(super) fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_with_focus_policy(window, cx, true);
+    }
+    pub(super) fn sync_with_focus_policy(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        restore_ready_focus: bool,
+    ) {
+        self.sync_saved_history();
+        let dark = self.theme_dark(window);
+        Theme::global_mut(cx).appearance = if dark {
+            ThemeAppearance::Dark
+        } else {
+            ThemeAppearance::Light
+        };
+        let changed = self.dark != dark;
+        self.dark = dark;
+        if changed {
+            support::install_scrollbar_theme(dark, cx);
+        }
+        self.sync_preview(cx);
+        self.sync_preview_theme(window, cx);
+        self.sync_model_scopes(cx);
+        if self.loaded && !self.restored {
+            self.restored = true;
+            let drafts = self.preferences.drafts.clone();
+            for draft in drafts {
+                if let Some(project) = self
+                    .workspace
+                    .as_ref()
+                    .and_then(|w| w.projects.iter().find(|p| p.path == draft.project))
+                    .cloned()
+                {
+                    let key = draft.key.clone();
+                    self.create_retained(
+                        draft.key,
+                        project,
+                        draft.source_id,
+                        draft.source_path,
+                        draft.text,
+                        window,
+                        cx,
+                    );
+                    if let Some(live) = self.sessions.get_mut(&key) {
+                        live.persisted_recovered = draft.recovered.len();
+                        live.restored_recovered = draft.recovered;
+                    }
+                }
+            }
+            let selected = self
+                .workspace
+                .as_ref()
+                .and_then(|w| {
+                    w.projects
+                        .iter()
+                        .flat_map(|p| p.sessions.iter().map(move |s| (p, s)))
+                        .find(|(p, s)| {
+                            self.requested_session
+                                .as_ref()
+                                .map(|wanted| wanted == &s.id || wanted == &s.path)
+                                .unwrap_or(
+                                    p.path == w.active_project_path && s.selected && !s.archived,
+                                )
+                        })
+                })
+                .map(|(_, s)| s.id.clone());
+            let selected = if self.requested_session.is_none()
+                && self.sessions.contains_key(&self.preferences.selected_draft)
+            {
+                Some(self.preferences.selected_draft.clone())
+            } else {
+                selected
+            };
+            if let Some(id) = selected {
+                self.select(&id, window, cx);
+            } else if self.requested_session.is_some() {
+                self.error = Some("The requested session is not registered in this workspace. Select a saved session or import its project.".into());
+            }
+        }
+        self.sync_chrome_admission(cx);
+        self.sync_sidebar(window, cx);
+        if let Some(header) = &self.header {
+            let heading = self
+                .sessions
+                .get(&self.active)
+                .map(|live| {
+                    let saved = self.saved_session_ref(&self.active);
+                    title_with_saved(live, saved.map(|(_, session, _)| session))
+                })
+                .unwrap_or_else(|| "Tau".into());
+            header.update(cx, |h, cx| {
+                h.set_session(self.active.clone(), heading, window, cx);
+                h.set_renamable(self.can_rename(), cx);
+                if changed {
+                    h.set_theme(dark, window, cx);
+                }
+            });
+        }
+        if self
+            .sessions
+            .get(&self.active)
+            .is_some_and(|live| !live.controller.state().extension_dialogs.is_empty())
+            && self.palette.is_open(cx)
+            && let Some(palette) = &self.palette.view
+        {
+            palette.update(cx, |p, cx| p.dismiss(cx));
+        }
+        let keys: Vec<_> = self.sessions.keys().cloned().collect();
+        let mut focus_ready_composer = false;
+        for key in keys {
+            let cleanup_pending = self.runtime_cleanup_pending(&key);
+            let can_recover = self.can_recover_queue(&key, cx);
+            let can_answer = self.loaded
+                && self.lifecycle.is_none()
+                && self.confirmation.is_none()
+                && !self.picker_busy
+                && !self.remote.is_open()
+                && !self.preview_open()
+                && !self.admin_reporter_open(cx)
+                && !self.palette.is_open(cx)
+                && !self
+                    .fallback
+                    .as_ref()
+                    .is_some_and(|(_, d)| d.read(cx).is_open())
+                && self.empty_disposals.is_empty()
+                && self.register_retries.is_empty();
+            let draft_blocked =
+                cleanup_pending || !self.project_actions_admitted(cx) || self.palette.is_open(cx);
+            let live = self.sessions.get_mut(&key).unwrap();
+            if key == self.active
+                && can_answer
+                && live.extension.is_none()
+                && !live.controller.state().extension_dialogs.is_empty()
+            {
+                live.dirty = true;
+            }
+            let state = live.controller.state();
+            let retry_focus =
+                live.composer.read(cx).retry_has_focus(window) && state.retry.is_none();
+            live.composer.update(cx, |c, cx| {
+                c.set_admission(live.controller.setting_pending(), state.compacting, cx);
+                c.set_readiness(
+                    state.ready && !live.starting && !cleanup_pending,
+                    state.stopping,
+                    live.controller.submission_pending(),
+                    live.controller.queue_busy(),
+                    !state.extension_dialogs.is_empty(),
+                    cx,
+                );
+                c.set_retry(state.retry.as_ref().map(Into::into), cx);
+                if c.is_disabled() != draft_blocked {
+                    c.set_status(draft_blocked, state.working, cx);
+                }
+            });
+            if retry_focus && key == self.active {
+                focus_ready_composer = true;
+            }
+            let copy_paths = live.project.connection_string.is_some();
+            live.transcript
+                .update(cx, |t, cx| t.set_copy_paths(copy_paths, cx));
+            if live.projection_dirty
+                || live.file_sources_directory.as_deref()
+                    != Some(live.project.working_directory.as_str())
+            {
+                live.file_sources_directory = Some(live.project.working_directory.clone());
+                #[cfg(test)]
+                {
+                    live.file_source_visits += state.transcript.len();
+                }
+                let disabled = state
+                    .transcript
+                    .iter()
+                    .filter(|entry| {
+                        entry.kind == "error"
+                            || (entry.kind == "notice"
+                                && super::file_preview::notice_file_base(
+                                    entry,
+                                    &live.project.working_directory,
+                                )
+                                .is_none())
+                    })
+                    .map(|entry| entry.id.clone())
+                    .collect();
+                live.transcript
+                    .update(cx, |t, cx| t.set_disabled_file_sources(disabled, cx));
+            }
+            live.queue.update(cx, |q, cx| {
+                q.set_copy_paths(copy_paths, cx);
+                if q.props().can_recover != can_recover {
+                    let mut props = q.props().clone();
+                    props.can_recover = can_recover;
+                    q.set_props(props, cx);
+                }
+            });
+            if let Some((_, dialog)) = &live.extension {
+                dialog.update(cx, |d, cx| {
+                    d.set_copy_paths(copy_paths, cx);
+                    d.set_readonly(!can_answer, cx);
+                });
+            }
+            let status = (
+                cleanup_pending
+                    || !state.ready
+                    || live.starting
+                    || state.stopping
+                    || self.lifecycle.is_some(),
+                state.working,
+            );
+            live.dirty |= live.ui_status != Some(status);
+            if !live.dirty && !changed {
+                continue;
+            }
+            live.dirty = false;
+            let state = live.controller.state();
+            live.transcript
+                .update(cx, |t, cx| t.set_compacting(state.compacting, cx));
+            if live.projection_dirty {
+                live.projection
+                    .sync(&state.transcript, &live.transcript, cx);
+                live.projection_dirty = false;
+            }
+            live.transcript.update(cx, |t, cx| {
+                t.set_working_indicator(projection::working_indicator(state), cx);
+            });
+            if state.draft != live.shown_draft {
+                let draft = state.draft.clone();
+                live.shown_draft = draft.clone();
+                let editor = live.composer.read(cx).editor();
+                editor.update(cx, |e, cx| e.set_value(&draft, window, cx));
+            }
+            // Fresh state owns the displayed selection as soon as Pi is ready.
+            // Inherited data never enters the controller or authorizes an action.
+            if state.ready {
+                if live.inherited_choices.take().is_some() {
+                    live.choices = None;
+                }
+                if live.inherited_commands.take().is_some() {
+                    live.command_choices = None;
+                }
+            }
+            let commands_revision = live.controller.commands_revision();
+            if live.command_choices != Some(commands_revision) {
+                live.command_choices = Some(commands_revision);
+                let commands = live
+                    .inherited_commands
+                    .as_ref()
+                    .unwrap_or(&state.commands)
+                    .iter()
+                    .filter_map(|command| serde_json::from_value(command.clone()).ok())
+                    .collect();
+                live.composer
+                    .update(cx, |composer, cx| composer.set_commands(commands, cx));
+            }
+            // Check the mutation token before projecting or serializing any model data.
+            let choice_revision = live.controller.model_choices_revision();
+            if live.choices != Some(choice_revision) {
+                live.choices = Some(choice_revision);
+                let inherited = live.inherited_choices.as_ref();
+                let selectable_models = inherited
+                    .map(|p| p.models.iter().collect())
+                    .unwrap_or_else(|| state.selectable_models());
+                let displayed_model = inherited.map_or(&state.model, |p| &p.model);
+                let displayed_effort = inherited.map_or(&state.effort, |p| &p.effort);
+                let displayed_efforts = inherited.map_or(&state.thinking_levels, |p| &p.efforts);
+                let models = selectable_models
+                    .iter()
+                    .filter_map(|m| {
+                        let provider = m["provider"].as_str()?;
+                        let id = m["id"].as_str()?;
+                        Some(Choice {
+                            id: format!("{provider}\u{1f}{id}"),
+                            label: m["name"].as_str().unwrap_or(id).into(),
+                            element_id: format!("model-{provider}-{id}"),
+                        })
+                    })
+                    .collect();
+                let efforts = displayed_efforts
+                    .iter()
+                    .map(|level| Choice {
+                        id: level.clone(),
+                        label: components::composer::effort_label(level).into(),
+                        element_id: format!("effort-{level}"),
+                    })
+                    .collect();
+                let model = format!(
+                    "{}\u{1f}{}",
+                    displayed_model["provider"].as_str().unwrap_or_default(),
+                    displayed_model["id"].as_str().unwrap_or_default()
+                );
+                live.composer.update(cx, |c, cx| {
+                    c.set_choices(models, efforts, cx);
+                    c.set_model(&model, cx);
+                    c.set_model_fallback(
+                        displayed_model["name"]
+                            .as_str()
+                            .or(displayed_model["id"].as_str())
+                            .unwrap_or("Select Model"),
+                        cx,
+                    );
+                    c.set_effort(displayed_effort, cx);
+                });
+            }
+            let status_changed = live.ui_status != Some(status);
+            focus_ready_composer |= status_changed
+                && !live.draft_focus_delivered
+                && !status.0
+                && key == self.active
+                && self
+                    .shell_focus
+                    .as_ref()
+                    .is_some_and(|focus| focus.is_focused(window));
+            live.ui_status = Some(status);
+            live.composer.update(cx, |c, cx| {
+                c.set_admission(live.controller.setting_pending(), state.compacting, cx);
+                if status_changed {
+                    if state.error.is_some() && state.working {
+                        c.set_status(draft_blocked, false, cx);
+                    }
+                    c.set_status(draft_blocked, status.1, cx);
+                }
+                if changed {
+                    c.set_theme(dark, window, cx);
+                }
+            });
+            live.queue.update(cx, |q, cx| {
+                q.set_props(
+                    QueueProps {
+                        steering: state.queue.steering.clone(),
+                        follow_up: state.queue.follow_up.clone(),
+                        failed: live
+                            .restored_recovered
+                            .iter()
+                            .chain(&state.recovered_drafts)
+                            .cloned()
+                            .collect(),
+                        feedback: live.controller.queue_feedback().unwrap_or_default().into(),
+                        busy: live.controller.queue_busy(),
+                        can_recover,
+                    },
+                    cx,
+                );
+                if changed {
+                    q.set_theme(dark, window, cx);
+                }
+            });
+            if changed {
+                live.transcript
+                    .update(cx, |t, cx| t.set_theme(dark, window, cx));
+            }
+            let request = state.extension_dialogs.first().cloned();
+            let generation = live.controller.generation();
+            if request.as_ref().map(|r| &r.id) != live.extension.as_ref().map(|(id, _)| id)
+                || live.extension_generation != Some(generation)
+            {
+                live.extension = None;
+                live.extension_subscription = None;
+                live.extension_error = None;
+                live.extension_generation = Some(generation);
+                if let Some(request) = request.filter(|_| key == self.active && can_answer) {
+                    let method = request.request["method"].as_str().unwrap_or("input");
+                    let select = matches!(method, "select" | "confirm");
+                    let options = if method == "confirm" {
+                        vec![
+                            DialogOption {
+                                id: "yes".into(),
+                                label: "Yes".into(),
+                            },
+                            DialogOption {
+                                id: "no".into(),
+                                label: "No".into(),
+                            },
+                        ]
+                    } else {
+                        request.request["options"]
+                            .as_array()
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|v| v.as_str())
+                                    .enumerate()
+                                    .map(|(index, s)| DialogOption {
+                                        id: format!("extension-option-{index}"),
+                                        label: s.into(),
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default()
+                    };
+                    let props = DialogProps {
+                        kind: if select {
+                            DialogKind::ExtensionSelect
+                        } else {
+                            DialogKind::ExtensionInput
+                        },
+                        title: request.request["title"]
+                            .as_str()
+                            .unwrap_or("Extension Prompt")
+                            .into(),
+                        description: request.request["message"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .into(),
+                        placeholder: request.request["placeholder"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .into(),
+                        options,
+                    };
+                    let dialog = cx.new(|cx| {
+                        let dialog = if method == "editor" {
+                            NativeDialog::new_editor(props, dark, window, cx)
+                        } else {
+                            NativeDialog::new(props, dark, window, cx)
+                        }
+                        .embedded()
+                        .keyboard_submission();
+                        if method == "confirm" {
+                            dialog.confirm_shortcuts()
+                        } else {
+                            dialog
+                        }
+                    });
+                    if let Some(prefill) = request.request["prefill"]
+                        .as_str()
+                        .or_else(|| request.request["value"].as_str())
+                        .or_else(|| request.request["text"].as_str())
+                    {
+                        dialog.update(cx, |d, cx| d.set_value(prefill, window, cx));
+                    }
+                    let id = request.id.clone();
+                    let event_key = key.clone();
+                    let confirm = method == "confirm";
+                    let subscription =
+                        cx.subscribe(&dialog, move |s, source, event: &DialogEvent, cx| {
+                            if s.active != event_key
+                                || s.lifecycle.is_some()
+                                || s.confirmation.is_some()
+                                || s.picker_busy
+                                || s.remote.is_open()
+                                || s.preview_open()
+                                || s.admin_reporter_open(cx)
+                                || s.palette.is_open(cx)
+                                || s.fallback
+                                    .as_ref()
+                                    .is_some_and(|(_, d)| d.read(cx).is_open())
+                            {
+                                s.refresh_window(cx);
+                                return;
+                            }
+                            if let Some(live) = s.sessions.get_mut(&event_key) {
+                                if live.controller.generation() != generation
+                                    || !live.extension.as_ref().is_some_and(|(current, dialog)| {
+                                        current == &id && dialog == &source
+                                    })
+                                    || !live
+                                        .controller
+                                        .state()
+                                        .extension_dialogs
+                                        .first()
+                                        .is_some_and(|request| request.id == id)
+                                {
+                                    return;
+                                }
+                                live.dirty = true;
+                                let response = match event {
+                                    DialogEvent::Cancelled => ExtensionResponse::Cancelled,
+                                    DialogEvent::Submitted(value) if confirm => {
+                                        ExtensionResponse::Confirmed(
+                                            value.eq_ignore_ascii_case("yes"),
+                                        )
+                                    }
+                                    DialogEvent::Submitted(value) => {
+                                        ExtensionResponse::Value(value.clone())
+                                    }
+                                };
+                                let effects = live.controller.extension_response(&id, response);
+                                // Keep failure provenance until delivery completes; retry intent
+                                // alone must not promote its generic controller duplicate.
+                                s.effects(&event_key, effects, cx);
+                                s.refresh_window(cx);
+                            }
+                        });
+                    let link_key = key.clone();
+                    let link_id = request.id.clone();
+                    let link_dialog = dialog.downgrade();
+                    let owner = cx.entity().downgrade();
+                    let context_key = link_key.clone();
+                    let context_id = link_id.clone();
+                    let context_dialog = link_dialog.clone();
+                    let context_owner = owner.clone();
+                    dialog.update(cx, |d, cx| {
+                        d.set_copy_paths(copy_paths, cx);
+                        d.set_context_handler(
+                            move |target, event, window, cx| {
+                                let Some(entity) = context_dialog.upgrade() else {
+                                    return;
+                                };
+                                let _ = context_owner.update(cx, |shell, cx| {
+                                    if shell.sessions.get(&context_key).is_some_and(|live| {
+                                        live.controller.generation() == generation
+                                    }) {
+                                        shell.open_link_menu(
+                                            &context_key,
+                                            super::file_preview::LinkSource::Dialog {
+                                                id: context_id.clone(),
+                                                entity,
+                                            },
+                                            target,
+                                            event.position,
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                });
+                            },
+                            cx,
+                        );
+                        d.set_anchored_link_handler(move |target, origin, anchor, window, cx| {
+                            let Some(source) = link_dialog.upgrade() else {
+                                return;
+                            };
+                            let _ = owner.update(cx, |s, cx| {
+                                if s.sessions.get(&link_key).is_some_and(|live| {
+                                    live.controller.generation() == generation
+                                        && live.extension.as_ref().is_some_and(|(id, dialog)| {
+                                            id == &link_id && dialog == &source
+                                        })
+                                        && live
+                                            .controller
+                                            .state()
+                                            .extension_dialogs
+                                            .first()
+                                            .is_some_and(|r| r.id == link_id)
+                                }) {
+                                    s.open_source_link(
+                                        &link_key,
+                                        super::file_preview::LinkSource::Dialog {
+                                            id: link_id.clone(),
+                                            entity: source.clone(),
+                                        },
+                                        target,
+                                        origin,
+                                        anchor,
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            });
+                        })
+                    });
+                    live.extension_subscription = Some(subscription);
+                    live.extension = Some((request.id, dialog));
+                }
+            }
+            if let Some((_, dialog)) = &live.extension {
+                let busy = live
+                    .controller
+                    .state()
+                    .extension_dialogs
+                    .first()
+                    .is_some_and(|d| d.submitting);
+                dialog.update(cx, |d, cx| {
+                    d.set_busy(busy, cx);
+                    d.set_readonly(!can_answer, cx);
+                    d.set_error(
+                        live.extension_error
+                            .as_ref()
+                            .filter(|_| !busy)
+                            .map(|(_, _, error)| error.as_str())
+                            .unwrap_or_default(),
+                        cx,
+                    );
+                    if changed {
+                        d.set_theme(dark, window, cx);
+                    }
+                });
+            }
+            let prompt = live.extension.as_ref().map(|(_, dialog)| dialog.clone());
+            live.transcript
+                .update(cx, |t, cx| t.set_extension_prompt(prompt, cx));
+        }
+        if let Some(request) = self.lifecycle {
+            let failed = self
+                .quit_error
+                .as_ref()
+                .is_some_and(|(owner, _)| *owner == request);
+            if self.confirmation.is_none() && (!self.exit_phase_owned(request) || failed) {
+                let busy = self.is_busy();
+                if !failed && !busy && self.loaded && !self.picker_busy && !self.save_failed {
+                    self.begin_exit(request, matches!(request.intent(), Intent::Quit), cx);
+                } else {
+                    let quitting = matches!(request.intent(), Intent::Quit);
+                    let active = self
+                        .sessions
+                        .values()
+                        .filter(|live| {
+                            live.starting
+                                || live.controller.state().working
+                                || live.controller.state().stopping
+                        })
+                        .count();
+                    let props = DialogProps {
+                        kind: DialogKind::Quit,
+                        title: if quitting { "Quit Tau?" } else { "Close Tau?" }.into(),
+                        description: match active {
+                            0 => String::new(),
+                            1 => "1 session is still in progress.".into(),
+                            n => format!("{n} sessions are still in progress."),
+                        },
+                        placeholder: String::new(),
+                        options: vec![],
+                    };
+                    let dialog = cx.new(|cx| NativeDialog::new(props, dark, window, cx));
+                    dialog.update(cx, |d, cx| {
+                        d.set_action_label(
+                            if self.exit_cleanup_blocked() {
+                                ""
+                            } else if quitting {
+                                "Quit"
+                            } else {
+                                "Close"
+                            },
+                            cx,
+                        )
+                    });
+                    self.subscriptions.push(cx.subscribe(
+                        &dialog,
+                        move |s, source, event: &DialogEvent, cx| {
+                            if s.lifecycle != Some(request)
+                                || (s.exit_phase_owned(request) && s.quit_error.is_none())
+                                || s.exit_revision.is_some()
+                                || s.confirmation.as_ref() != Some(&source)
+                            {
+                                return;
+                            }
+                            match event {
+                                DialogEvent::Cancelled => {
+                                    cx.global::<NativeHost>()
+                                        .lifecycle()
+                                        .resolve(request, false, cx);
+                                }
+                                DialogEvent::Submitted(_) => {
+                                    if s.picker_busy || s.remote.is_busy() {
+                                        s.quit_error = Some((request,
+                                        if s.remote.is_busy() {
+                                            "Wait for the remote project operation before closing."
+                                        } else {
+                                            "Finish or cancel the folder picker before closing."
+                                        }
+                                        .into(),
+                                    ));
+                                    } else {
+                                        if s.quit_error
+                                            .as_ref()
+                                            .is_some_and(|(owner, _)| *owner == request)
+                                        {
+                                            s.retry_exit(request, true, cx);
+                                        } else {
+                                            s.begin_exit(request, true, cx);
+                                        }
+                                    }
+                                }
+                            }
+                            s.refresh_window(cx);
+                        },
+                    ));
+                    self.confirmation = Some(dialog);
+                }
+            }
+            if let Some(dialog) = &self.confirmation {
+                dialog.update(cx, |d, cx| {
+                    d.set_busy(
+                        self.exit_phase_owned(request)
+                            && !self
+                                .quit_error
+                                .as_ref()
+                                .is_some_and(|(owner, _)| *owner == request),
+                        cx,
+                    );
+                    d.set_error(
+                        self.quit_error
+                            .as_ref()
+                            .filter(|(owner, _)| *owner == request)
+                            .map(|(_, error)| error.as_str())
+                            .unwrap_or_default(),
+                        cx,
+                    );
+                });
+            }
+        }
+        self.sync_session_loading(cx);
+        self.sync_remote(window, cx);
+        self.sync_admin(window, cx);
+        self.sync_palette(window, cx);
+        self.sync_fallback(window, cx);
+        self.sync_chrome_admission(cx);
+        if restore_ready_focus
+            && focus_ready_composer
+            && !self
+                .header
+                .as_ref()
+                .is_some_and(|header| header.read(cx).renaming())
+        {
+            self.restore_input_focus_in(None, window, cx);
+        }
+        cx.notify();
+    }
+    pub(super) fn select(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.project_actions_admitted(cx) {
+            return;
+        }
+        use gpui_kit::Focusable;
+        let handoff_editor = self.sessions.get(&self.active).is_some_and(|live| {
+            live.composer
+                .read(cx)
+                .editor()
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window)
+        });
+        if let Some(previous) = self.sessions.get(&self.active) {
+            previous
+                .transcript
+                .update(cx, |t, cx| t.clear_selection(cx));
+        }
+        if let Some(key) = self
+            .sessions
+            .iter()
+            .find(|(key, live)| {
+                key.as_str() == id
+                    || live.source_id == id
+                    || live.controller.state().identity.id == id
+            })
+            .map(|(key, _)| key.clone())
+        {
+            self.discard_empty_before_switch(&key, cx);
+            let live = self.sessions.get_mut(&key).unwrap();
+            live.dirty = true;
+            live.draft_focus_delivered = false;
+            match self.saved_session(&key) {
+                Some((project, session, _)) if !session.archived => {
+                    self.select_workspace(project.path, session.id, cx);
+                }
+                None => {
+                    let project = self.sessions[&key].project.path.clone();
+                    self.select_workspace(project, String::new(), cx);
+                }
+                _ => {}
+            }
+            self.active = key.clone();
+            self.mark_sidebar_read(&key);
+            self.resume_runtime(&key, cx);
+            self.navigate_saved_history(cx);
+            self.persist(false, cx);
+            self.sync(window, cx);
+            if handoff_editor && let Some(focus) = self.shell_focus.clone() {
+                focus.focus(window, cx);
+            }
+            self.restore_input_focus_in(None, window, cx);
+            return;
+        }
+        if let Some((project, session)) = self.workspace.as_ref().and_then(|w| {
+            w.projects.iter().find_map(|p| {
+                p.sessions
+                    .iter()
+                    .find(|s| s.id == id)
+                    .map(|s| (launch_project(p), s.clone()))
+            })
+        }) {
+            if !session.archived {
+                self.select_workspace(project.path.clone(), session.id.clone(), cx);
+            }
+            self.create_live(
+                uuid::Uuid::new_v4().to_string(),
+                project,
+                session.id,
+                session.path,
+                String::new(),
+                window,
+                cx,
+            );
+            if handoff_editor && let Some(focus) = self.shell_focus.clone() {
+                focus.focus(window, cx);
+            }
+            self.restore_input_focus_in(None, window, cx);
+        }
+    }
+    pub(super) fn action(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.project_actions_admitted(cx) || self.preview_open() {
+            return;
+        }
+        if self.session_action(&action, window, cx) {
+            return;
+        }
+        if self.handle_read_state(&action) {
+            self.sync(window, cx);
+            return;
+        }
+        match action {
+            Action::Palette => {
+                self.toggle_palette(window, cx);
+                self.sync_chrome_admission(cx);
+            }
+            Action::CheckUpdates => {
+                if self.admin_reporter_open(cx) {
+                    return;
+                }
+                if let Some(sidebar) = &self.sidebar {
+                    sidebar.update(cx, |s, cx| s.open_version_status(window, cx));
+                }
+            }
+            Action::RemoveProject(project) => self.remove_project(&project, cx),
+            Action::OpenRemoteProject => self.open_remote(window, cx),
+            Action::Select(id) => self.select(&id, window, cx),
+            Action::NewSession => self.new_session(None, window, cx),
+            Action::NewSessionIn(project) => self.new_session(Some(project), window, cx),
+            Action::ProjectToggle(project) => {
+                let collapsed = self
+                    .workspace
+                    .as_ref()
+                    .and_then(|w| w.projects.iter().find(|p| p.path == project))
+                    .is_some_and(|p| !p.collapsed);
+                self.mutate_workspace(
+                    workspace_mutations::Mutation::Collapse { project, collapsed },
+                    cx,
+                );
+                self.sync(window, cx);
+            }
+            Action::ReorderProjects(projects) => {
+                self.mutate_workspace(workspace_mutations::Mutation::Order(projects), cx);
+                self.sync(window, cx);
+            }
+            Action::OpenLocalProject => {
+                if let Some(picker) = self.picker.clone() {
+                    let weak = cx.entity().downgrade();
+                    if let Some(target) = window.window_handle().downcast::<Root>() {
+                        self.picker_busy = true;
+                        cx.defer(move |cx| {
+                            let callback_owner = weak.clone();
+                            let result = target.update(cx, |_, window, cx| {
+                                picker.select(PathOperation::ProjectFolder, window, cx, move |_, outcome, _, cx| {
+                                    let _ = callback_owner.update(cx, |s, cx| {
+                                        s.picker_busy = false;
+                                        match outcome { PathOutcome::Selected(path) => s.dispatch(Command::Import(path.to_string_lossy().into_owned()), cx), PathOutcome::Cancelled => {}, PathOutcome::Failed(_) => { s.error = Some("The folder picker failed. Try importing again.".into()); cx.notify(); } }
+                                    });
+                                })
+                            });
+                            if !matches!(result, Ok(crate::native::PathStart::Started)) {
+                                let _ = weak.update(cx, |s, cx| { s.picker_busy = false; s.error = Some("Finish the current folder picker before opening another.".into()); cx.notify(); });
+                            }
+                        });
+                    }
+                }
+            }
+            Action::FocusComposer => {
+                if let Some(live) = self.sessions.get(&self.active) {
+                    use gpui_kit::Focusable;
+                    live.composer
+                        .read(cx)
+                        .editor()
+                        .read(cx)
+                        .focus_handle(cx)
+                        .focus(window, cx);
+                }
+            }
+            _ => {
+                self.error = Some("This action is not available in the native app yet.".into());
+                cx.notify();
+            }
+        }
+    }
+}
+pub(super) fn title_with_saved(
+    live: &LiveSession,
+    saved: Option<&tau_core::models::SessionSummary>,
+) -> String {
+    let state = live.controller.state();
+    let name = &state.identity.name;
+    if !name.is_empty() {
+        name.clone()
+    } else if let Some(saved) = saved.filter(|saved| !saved.title_is_derived) {
+        saved.title.clone()
+    } else if let Some(entry) = state.transcript.iter().find(|entry| entry.kind == "user") {
+        tau_core::skill::first_message_title(&entry.text)
+    } else {
+        saved
+            .map(|s| s.title.clone())
+            .unwrap_or_else(|| "New Session".into())
+    }
+}
+impl Render for Shell {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        use gpui_kit::TestSupportExt;
+        self.sync_preview(cx);
+        self.sync_preview_theme(window, cx);
+        self.sync_chrome_admission(cx);
+        let t = support::tokens(self.dark);
+        let mut body = Self::palette_keymap(div().relative().key_context("TauShell"), cx)
+            .id("shell-viewport")
+            .test_support()
+            .when_some(self.shell_focus.as_ref(), |body, focus| {
+                body.track_focus(focus)
+            })
+            .capture_key_down(cx.listener(Self::admin_key))
+            .flex()
+            .size_full()
+            .bg(rgb(t.canvas))
+            .text_color(rgb(t.text));
+        if let Some(first_run) = self.first_run_view(window, cx) {
+            body = body.child(first_run);
+        } else {
+            if let Some(sidebar) = &self.sidebar {
+                body = body.child(sidebar.clone());
+            }
+            let mut main = div().flex().flex_col().flex_1().min_w_0().h_full();
+            if let Some(header) = &self.header {
+                let composer = self
+                    .sessions
+                    .get(&self.active)
+                    .map(|live| live.composer.clone());
+                main = main.child(
+                    div()
+                        .w_full()
+                        .flex_shrink_0()
+                        .on_prepaint(move |bounds, _, cx| {
+                            if let Some(composer) = &composer {
+                                composer.update(cx, |composer, cx| {
+                                    composer.set_command_top_boundary(bounds.bottom(), cx);
+                                });
+                            }
+                        })
+                        .child(header.clone()),
+                );
+            }
+            if let Some(error) = self.session_action_error() {
+                main = main.child(
+                    div().px(px(24.)).child(error.to_owned()).child(
+                        Button::new("retry-session-action")
+                            .child("Retry")
+                            .on_click(cx.listener(|s, _, window, cx| {
+                                s.retry_session_action(window, cx);
+                            })),
+                    ),
+                );
+            }
+            if let Some(live) = self.sessions.get(&self.active) {
+                let loading = self.active_session_loading();
+                let empty = !loading
+                    && live.transcript.read(cx).is_empty()
+                    && live.transcript.read(cx).working_indicator().is_none()
+                    && live.controller.state().extension_dialogs.is_empty()
+                    && !live.controller.state().compacting;
+                live.composer.update(cx, |composer, cx| {
+                    composer.set_fill_height(empty, cx);
+                });
+                if loading && live.controller.state().extension_dialogs.is_empty() {
+                    main = main.child(
+                        div()
+                            .id("session-loading")
+                            .test_support()
+                            .flex_1()
+                            .min_h_0()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .justify_center()
+                            .pb(px(24.))
+                            .text_size(px(12.))
+                            .text_color(rgb(t.muted))
+                            .when(self.loading_indicator_visible(), |loading| {
+                                loading.child(
+                                    div()
+                                        .id("session-loading-content")
+                                        .test_support()
+                                        .flex()
+                                        .flex_col()
+                                        .items_center()
+                                        .gap(px(10.))
+                                        .child(components::transcript::working_spinner(
+                                            "Loading session".into(),
+                                            t.muted,
+                                            cx.reduce_motion(),
+                                        ))
+                                        .child(
+                                            div()
+                                                .id("session-loading-label")
+                                                .test_support()
+                                                .child("Loading"),
+                                        ),
+                                )
+                            }),
+                    );
+                } else {
+                    if !empty {
+                        main = main.child(
+                            div()
+                                .id("shell-transcript-slot")
+                                .test_support()
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .min_h_0()
+                                .child(live.transcript.clone()),
+                        );
+                    }
+                }
+                if live.controller.state().extension_dialogs.is_empty() {
+                    main = main.child(live.queue.clone());
+                    main = main.child(
+                        div()
+                            .id("shell-composer-area")
+                            .test_support()
+                            .flex()
+                            .flex_col()
+                            .min_h_0()
+                            .flex_shrink_0()
+                            .pt(px(6.))
+                            .pr(px(8.))
+                            .pb(px(8.))
+                            .pl(px(6.))
+                            .when(empty, |area| area.flex_1())
+                            .when(!empty, |area| area.border_t_1().border_color(rgb(t.border)))
+                            .child(live.composer.clone()),
+                    );
+                }
+            } else {
+                main = main.child(div().id("shell-empty-content").test_support().flex_1());
+            }
+            body = body.child(main);
+        }
+        body = body
+            .when_some(self.preview_view(), |body, preview| {
+                body.child(
+                    div()
+                        .id("shell-file-overlay")
+                        .test_support()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .occlude()
+                        .child(preview),
+                )
+            })
+            .when_some(self.preview_menu_view(), |body, menu| body.child(menu))
+            .when_some(self.palette.view.clone(), |body, palette| {
+                body.child(palette)
+            });
+        if self.confirmation.is_none() {
+            body = body.when_some(self.remote.view.clone(), |body, remote| body.child(remote));
+        }
+        let overlay = self.confirmation.as_ref().or_else(|| {
+            self.fallback
+                .as_ref()
+                .map(|(_, dialog)| dialog)
+                .filter(|dialog| dialog.read(cx).is_open())
+        });
+        if let Some(dialog) = overlay {
+            // Standalone dialogs have a full-size root; keep it out of pane flex sizing.
+            body = body.child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .child(dialog.clone()),
+            );
+        }
+        body.on_action(cx.listener(Self::copy_link)).when_some(
+            self.preview_feedback().zip(self.preview_anchor()),
+            |body, (message, anchor)| {
+                body.child(
+                    gpui_kit::base::Positioner::corner(
+                        gpui_kit::Anchor::TopLeft,
+                        gpui_kit::point(anchor.x, anchor.y + px(6.)),
+                    )
+                    .margin(px(8.))
+                    .child(
+                        super::file_preview::feedback_surface(
+                            message,
+                            self.dark,
+                            window.viewport_size().width,
+                        )
+                        .id("file-link-feedback")
+                        .test_support(),
+                    ),
+                )
+            },
+        )
+    }
+}
+
+#[cfg(test)]
+#[path = "shell_integration_tests.rs"]
+mod shell_integration_tests;
+
+#[cfg(test)]
+#[path = "layout_tests.rs"]
+mod layout_tests;
+
+#[cfg(test)]
+#[path = "retry_layout_tests.rs"]
+mod retry_layout_tests;
+
+#[cfg(test)]
+#[path = "session_focus_tests.rs"]
+mod session_focus_tests;
+#[cfg(test)]
+#[path = "session_performance_tests.rs"]
+mod session_performance_tests;
+
+#[cfg(test)]
+#[path = "confirm_queue_fixture.rs"]
+pub(super) mod confirm_queue_fixture;
+#[cfg(test)]
+#[path = "confirm_shortcut_tests.rs"]
+mod confirm_shortcut_tests;
+#[cfg(test)]
+#[path = "extension_provenance_tests.rs"]
+mod extension_provenance_tests;
+#[cfg(test)]
+#[path = "queue_pending_tests.rs"]
+mod queue_pending_tests;
+#[cfg(test)]
+#[path = "settings_pending_tests.rs"]
+mod settings_pending_tests;

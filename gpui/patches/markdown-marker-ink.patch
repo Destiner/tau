@@ -1,0 +1,16 @@
+--- a/src/text/node.rs
++++ b/src/text/node.rs
+@@ -3422,6 +3422,13 @@
+                                         .absolute()
+                                         .left(px(3.))
+                                         .whitespace_nowrap()
++                                        .when(!options.ordered, |this| {
++                                            // Enlarge only marker ink within the unchanged list column.
++                                            this.text_size(body_size * 2.)
++                                                .line_height(line_height)
++                                                .left(px(3.) - body_size * 0.28125)
++                                                .top(-body_size * 0.05)
++                                        })
+                                         .child(prefix),
+                                 ),
+                         )

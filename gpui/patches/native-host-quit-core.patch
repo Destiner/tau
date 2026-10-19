@@ -1,0 +1,195 @@
+--- a/src/app.rs
++++ b/src/app.rs
+@@ -323,6 +323,7 @@
+ pub(crate) type KeystrokeObserver =
+     Box<dyn FnMut(&KeystrokeEvent, &mut Window, &mut App) -> bool + 'static>;
+ type QuitHandler = Box<dyn FnOnce(&mut App) -> LocalBoxFuture<'static, ()> + 'static>;
++type AppShouldQuit = dyn Fn(&mut App) -> bool;
+ type WindowClosedHandler = Box<dyn FnMut(&mut App, WindowId)>;
+ type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut App) + 'static>;
+ type NewEntityListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
+@@ -834,6 +835,8 @@
+     flushing_effects: bool,
+     pending_updates: usize,
+     quit_mode: QuitMode,
++    should_quit: Option<Rc<AppShouldQuit>>,
++    evaluating_should_quit: bool,
+     quitting: bool,
+ 
+     // We need to ensure the leak detector drops last, after all tasks, callbacks and things have been dropped.
+@@ -929,6 +932,8 @@
+                 #[cfg(any(feature = "inspector", debug_assertions))]
+                 inspector_element_registry: InspectorElementRegistry::default(),
+                 quit_mode: QuitMode::default(),
++                should_quit: None,
++                evaluating_should_quit: false,
+                 quitting: false,
+                 cursor_hide_mode: CursorHideMode::default(),
+                 reduce_motion: false,
+@@ -1008,6 +1013,9 @@
+                 };
+                 match cx.try_borrow_mut() {
+                     Ok(mut cx) => {
++                        if !cx.update(|cx| cx.should_quit()) {
++                            return false;
++                        }
+                         cx.shutdown();
+                         true
+                     }
+@@ -1110,6 +1118,35 @@
+         );
+         activate();
+         subscription
++    }
++
++    /// Install a synchronous veto before platform termination and cleanup.
++    /// Return false while the host owns asynchronous confirmation or shutdown,
++    /// then call `quit` again after approval. Recursive evaluations fail closed.
++    /// This replaces the previous guard, not the platform callback or delegate.
++    pub fn on_app_should_quit(&mut self, guard: impl Fn(&mut App) -> bool + 'static) {
++        self.should_quit = Some(Rc::new(guard));
++    }
++
++    fn should_quit(&mut self) -> bool {
++        if self.evaluating_should_quit {
++            return false;
++        }
++        self.evaluating_should_quit = true;
++        let guard = self.should_quit.clone();
++        let allowed = guard.is_none_or(|guard| guard(self));
++        self.evaluating_should_quit = false;
++        allowed
++    }
++
++    /// Install the explicit host callback for platform reopen events.
++    pub fn on_reopen(&mut self, mut callback: impl FnMut(&mut App) + 'static) {
++        let this = self.this.clone();
++        self.platform.on_reopen(Box::new(move || {
++            if let Some(app) = this.upgrade() {
++                app.borrow_mut().update(|cx| callback(cx));
++            }
++        }));
+     }
+ 
+     /// Gracefully quit the application via the platform's standard routine.
+--- a/src/app/test_app.rs
++++ b/src/app/test_app.rs
+@@ -123,6 +123,34 @@
+         self.background_executor.run_until_parked();
+     }
+ 
++    /// Deliver the platform termination callback without terminating the test process.
++    pub fn simulate_quit(&mut self) -> bool {
++        let allowed = self.platform.simulate_quit();
++        self.run_until_parked();
++        allowed
++    }
++
++    /// Deliver native termination while AppCell is borrowed; Core must veto.
++    pub fn simulate_quit_while_borrowed(&mut self) -> bool {
++        let allowed = {
++            let _borrow = self.app.borrow_mut();
++            self.platform.simulate_quit()
++        };
++        self.run_until_parked();
++        allowed
++    }
++
++    /// Number of platform termination requests accepted by Core.
++    pub fn accepted_quits(&self) -> usize {
++        self.platform.accepted_quits.get()
++    }
++
++    /// Deliver a platform reopen callback.
++    pub fn simulate_reopen(&mut self) {
++        self.platform.simulate_reopen();
++        self.run_until_parked();
++    }
++
+     /// Inspect the automatic quit policy (TestPlatform itself does not terminate).
+     pub fn quit_mode(&self) -> crate::QuitMode {
+         self.app.borrow().quit_mode
+--- a/src/platform/test/platform.rs
++++ b/src/platform/test/platform.rs
+@@ -54,6 +54,9 @@
+         Option<Box<dyn Fn() -> anyhow::Result<Option<Box<dyn PlatformHeadlessRenderer>>>>>,
+     weak: Weak<Self>,
+     menus: RefCell<Vec<OwnedMenu>>,
++    quit_callback: RefCell<Option<Box<dyn FnMut() -> bool>>>,
++    reopen_callback: RefCell<Option<Box<dyn FnMut()>>>,
++    pub(crate) accepted_quits: Cell<usize>,
+ }
+ 
+ #[derive(Clone)]
+@@ -121,6 +124,26 @@
+ }
+ 
+ impl TestPlatform {
++    pub(crate) fn simulate_quit(&self) -> bool {
++        let Some(mut callback) = self.quit_callback.borrow_mut().take() else {
++            return false;
++        };
++        let allowed = callback();
++        self.quit_callback.borrow_mut().get_or_insert(callback);
++        if allowed {
++            self.accepted_quits.set(self.accepted_quits.get() + 1);
++        }
++        allowed
++    }
++
++    pub(crate) fn simulate_reopen(&self) {
++        let callback = self.reopen_callback.borrow_mut().take();
++        if let Some(mut callback) = callback {
++            callback();
++            self.reopen_callback.borrow_mut().get_or_insert(callback);
++        }
++    }
++
+     #[cfg(any(test, feature = "test-support"))]
+     pub fn new(executor: BackgroundExecutor, foreground_executor: ForegroundExecutor) -> Rc<Self> {
+         Self::with_platform(
+@@ -172,6 +195,9 @@
+             text_system,
+             headless_renderer_factory,
+             menus: Default::default(),
++            quit_callback: Default::default(),
++            reopen_callback: Default::default(),
++            accepted_quits: Cell::new(0),
+         })
+     }
+ 
+@@ -433,7 +459,16 @@
+         unimplemented!()
+     }
+ 
+-    fn quit(&self) {}
++    fn quit(&self) {
++        let weak = self.weak.clone();
++        self.foreground_executor
++            .spawn(async move {
++                if let Some(platform) = weak.upgrade() {
++                    platform.simulate_quit();
++                }
++            })
++            .detach();
++    }
+ 
+     fn restart(&self, path: Option<PathBuf>, arguments: Vec<std::ffi::OsString>) {
+         if let Some(tx) = self.expect_restart.take() {
+@@ -582,10 +617,12 @@
+         unimplemented!()
+     }
+ 
+-    fn on_quit(&self, _callback: Box<dyn FnMut() -> bool>) {}
+-
+-    fn on_reopen(&self, _callback: Box<dyn FnMut()>) {
+-        unimplemented!()
++    fn on_quit(&self, callback: Box<dyn FnMut() -> bool>) {
++        *self.quit_callback.borrow_mut() = Some(callback);
++    }
++
++    fn on_reopen(&self, callback: Box<dyn FnMut()>) {
++        *self.reopen_callback.borrow_mut() = Some(callback);
+     }
+ 
+     fn on_system_sleep(&self, _callback: Box<dyn FnMut()>) {}

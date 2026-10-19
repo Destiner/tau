@@ -1,52 +1,67 @@
 # Local observability
 
-## Admin mode
+## Admin mode and privacy
 
-Telemetry and the issue reporter are off in an ordinary run: nothing is recorded, no telemetry directory is created, and the sidebar shows no report button. Both are unlocked together by admin mode, which is turned on and off by typing `iddqd` anywhere outside a text field.
+Telemetry and the issue reporter are off by default. Outside admin mode nothing is
+recorded, no telemetry directory is created and no report button is shown. Typing
+`iddqd` outside text fields toggles both together. The shared native setting is
+persisted in `preferences.json` and read before telemetry initialization. Enabling
+starts collection; disabling flushes recorded work, stops collection and invalidates
+outstanding measurement tokens.
 
-The setting is persisted natively in `preferences.json` beside the telemetry and feedback directories (the disposable profile in development, application-data `tau/` in production) and is read before the app records anything, so a run outside admin mode observes nothing at all rather than recording and discarding. Toggling it takes effect immediately: enabling starts the run's telemetry where a launch in admin mode would have begun it, and disabling flushes what was recorded, drops what the frontend still had queued, and stops.
+`crates/tau-observability` owns preferences, feedback append, telemetry validation,
+retention and optional OTLP export. The GPUI service worker uses those services and
+formats. Initialize an explicit `tau-core` profile before `Telemetry::init`;
+initialization never silently opens production storage.
 
-When admin mode is on, Tau continuously writes content-free OpenTelemetry JSONL under its profile data directory:
+Telemetry is bounded, content-free and best-effort. Its failure never fails product
+operations. Reviewed catalog names and fixed outcomes describe operations, lifecycle
+state, timings and counts, with relevant session/runtime identifiers. Never record
+prompts, transcripts, drafts, tool/extension payloads, file/clipboard contents, paths,
+SSH commands/connection strings, stderr, credentials or raw errors. Do not introduce
+free-form diagnostic labels or a parallel reporting schema.
 
-- development: `<temporary-root>/tau/telemetry/`
-- production: `tau/telemetry/`
-- signals: `traces.jsonl`, `logs.jsonl`, and `metrics.jsonl`, plus rotated segments
+## Local files
 
-Retention is bounded to seven days and 256 MiB. Telemetry failure does not fail product operations. Records contain operation names, lifecycle state, timings, outcomes, counts, sanitized source basenames, and relevant session/runtime identifiers. Pi frontend ownership records distinguish initial claims, replacements, rejected claims, and cleanup failures, including only the stale direct-child count. Children stopped during replacement have a matching `pi.process.stopped` record with the fixed `ownership_replaced` reason. Owner tokens and native failure text are never recorded. Records do not contain prompts, transcripts, drafts, tool or extension payloads, file/clipboard contents, paths, SSH commands, connection strings, stderr, credentials, or raw errors.
+Under the selected profile's Tau data directory:
 
-## Action milestones
+- `telemetry/traces.jsonl`, `logs.jsonl`, `metrics.jsonl` and rotated segments
+- `feedback/issues.jsonl` for user reports; `feedback/done.jsonl` for manual resolutions
 
-`startActionMilestones(name, scope?)` from `src/lib/telemetry` returns `{ span, mark, afterRender, cancel }`. Use `span.context` for child invokes/RPCs and end `span` as usual. Selection/new-session actions watch the originating controller for `ready`, `readable_memory`/`readable_saved`/`readable_rpc`, and `hydrated`; they mark `persisted` only when their selection write settles successfully, or `persistence_failed` on failure. Superseded views cancel pending measurements, including frames and delayed writes. After applying the UI mutation, `await nextTick(); milestones.afterRender()` schedules two animation frames. Do not await frames to show a hidden window. Call `cancel()` on replacement/unmount/failure to discard pending frame work; it does not end the action span.
+Production uses application-data `tau/` (on macOS,
+`~/Library/Application Support/tau/`). An explicit isolated profile uses
+`<profile>/tau/`. Isolated profiles persist until explicitly removed; no automatic
+per-process temporary cleanup applies. See [development storage](development-storage.md).
+Telemetry retention is bounded to seven days and 256 MiB. Local persistence remains
+authoritative even if optional external delivery is unavailable.
 
-A milestone is a once-only, content-free `action.milestone` log linked to the action's trace/span, with allowlisted action name, fixed milestone kind (`ready`, `persisted`, `persistence_failed`, `readable_memory`, `readable_saved`, `readable_rpc`, `hydrated`, `paint_opportunity`, `paint_unavailable`), bounded elapsed milliseconds and optional reviewed scope IDs. `paint_opportunity` is **not** proof of compositing or pixels on screen. Hidden windows and a five-second frame timeout report `paint_unavailable`, never a fabricated paint. Disable/re-enable of admin mode invalidates pending milestones; outside admin mode they record nothing and schedule no frames. The existing bounded queue and native ingest validation apply. Missing readiness/persistence markers are not success signals: only emit them at the corresponding confirmed boundary. No free-form labels, paths, or content may be passed as dimensions.
+## Reporter acknowledgement and triage
 
-## User issue reports
+The retained reporter is available only in admin mode. A report contains the user's
+description, submission time and current Pi session ID **only when explicitly opted
+in**; it is separate from content-free telemetry. Reports remain local until manually
+removed. Submission waits for actual append acknowledgement even when the reporter
+is hidden or admin mode changes. Delay is not proof of failure and must not admit a
+duplicate retry. Preference-write failure uses fixed copy and reconciles with the
+backend's actual live gate.
 
-The report button in the sidebar footer is part of admin mode and is not shown otherwise. Reports submitted from it are stored separately from content-free telemetry:
-
-- development: `<temporary-root>/tau/feedback/issues.jsonl`
-- production: `tau/feedback/issues.jsonl`
-
-Each JSON line contains the user's description, its submission time, and the current Pi session ID only when the user explicitly includes it. Reports stay local and are retained until the file is removed. Native development reports are disposable along with the workspace: copy them before closing the app if needed. The startup terminal output identifies the current profile; see [development storage](development-storage.md).
-
-`issues.jsonl` is the inbox and Tau only ever appends to it. Reports that have been dealt with are moved by hand to `done.jsonl` beside it, keeping their original fields and gaining `resolvedAt`, a `resolution` of `fixed`, `deferred` or `not-an-issue`, the `commit` that fixed it where there is one, and a short `note`. Nothing reads either file: the split is a convention for working through reports, so an empty `issues.jsonl` means none are outstanding.
+Tau only appends to `issues.jsonl`. Resolutions are moved manually to `done.jsonl`,
+preserving original fields and adding `resolvedAt`, `resolution` (`fixed`, `deferred`
+or `not-an-issue`), a fixing `commit` where known and a short `note`. This is a human
+convention, not a runtime consumer. Re-read immediately before editing the inbox to
+preserve concurrent appends; only resolve with user confirmation. See the
+[triage skill](../.agents/skills/triage/SKILL.md).
 
 ## Optional development OTLP export
 
-External export is disabled by default and no collector is bundled. Build with the opt-in feature:
+Export is disabled by default; no collector is bundled. The shared observability
+crate has an opt-in `otlp_export` feature. Do not assume the app forwards that feature:
+verify current Cargo feature wiring before enabling an export build.
 
-```sh
-cargo run --manifest-path src-tauri/Cargo.toml --features otlp_export
-```
-
-Configure a plain HTTP/JSON OTLP endpoint using standard variables:
-
-```sh
-OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
-OTEL_EXPORTER_OTLP_PROTOCOL=http/json \
-  cargo run --manifest-path src-tauri/Cargo.toml --features otlp_export
-```
-
-Signal-specific endpoint and protocol variables are also supported, such as `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`. `OTEL_EXPORTER_OTLP_HEADERS` supplies comma-separated headers. HTTPS, gRPC, and protobuf transport are intentionally unsupported by this lightweight development path; use a local Collector HTTP receiver.
-
-External delivery is best-effort through a bounded background queue. Local persistence remains authoritative and continues if the endpoint is unavailable.
+The lightweight exporter supports plain HTTP/JSON OTLP via
+`OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`, with
+signal-specific endpoint/protocol variables and optional `OTEL_EXPORTER_OTLP_HEADERS`.
+HTTPS, gRPC and protobuf are not supported by this development path; use a local
+Collector HTTP receiver. Keep headers out of logs, source and visible arguments.
+Delivery uses a bounded best-effort background queue and remains subject to the same
+admin gate and content-free policy. No GUI telemetry viewer is promised.

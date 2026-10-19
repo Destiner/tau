@@ -1,0 +1,1297 @@
+[
+  {
+    "name": "FLOWCHART",
+    "source": "graph TD\n  Prompt[Prompt] --> Answer[Answer]\n",
+    "expected": {
+      "nodes": [
+        {
+          "id": "Prompt",
+          "label": "Prompt",
+          "shape": "rectangle"
+        },
+        {
+          "id": "Answer",
+          "label": "Answer",
+          "shape": "rectangle"
+        }
+      ],
+      "edges": [
+        {
+          "source": "Prompt",
+          "target": "Answer",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "SEQUENCE",
+    "source": "sequenceDiagram\n  Tau->>Pi: prompt\n"
+  },
+  {
+    "name": "REPORTED_FLOWCHART",
+    "source": "flowchart TD\n  Plan[Approved plan] --> Fixture[Synthetic fixture]\n  Plan --> Review{Approved?}\n  Fixture --> Regression[Browser regression]\n  Review -->|No| Fixture\n  Review -->|Yes| Regression\n  Regression -- two<br/>lines --> Topology[Topology assertions]\n  Topology -- count \u2264 7 --> Viewer[Diagram viewer]\n  Viewer -- count > 7 --> Complete[/Ready to ship/]\n",
+    "expected": {
+      "nodes": [
+        {
+          "id": "Plan",
+          "label": "Approved plan",
+          "shape": "rectangle"
+        },
+        {
+          "id": "Fixture",
+          "label": "Synthetic fixture",
+          "shape": "rectangle"
+        },
+        {
+          "id": "Review",
+          "label": "Approved?",
+          "shape": "diamond"
+        },
+        {
+          "id": "Regression",
+          "label": "Browser regression",
+          "shape": "rectangle"
+        },
+        {
+          "id": "Topology",
+          "label": "Topology assertions",
+          "shape": "rectangle"
+        },
+        {
+          "id": "Viewer",
+          "label": "Diagram viewer",
+          "shape": "rectangle"
+        },
+        {
+          "id": "Complete",
+          "label": "Ready to ship",
+          "shape": "parallelogram"
+        }
+      ],
+      "edges": [
+        {
+          "source": "Plan",
+          "target": "Fixture",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "Plan",
+          "target": "Review",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "Fixture",
+          "target": "Regression",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "Review",
+          "target": "Fixture",
+          "label": "No",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "Review",
+          "target": "Regression",
+          "label": "Yes",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "Regression",
+          "target": "Topology",
+          "label": "two\nlines",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "Topology",
+          "target": "Viewer",
+          "label": "count \u2264 7",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "Viewer",
+          "target": "Complete",
+          "label": "count > 7",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "COMPACT_DOTTED_FLOWCHART",
+    "source": "flowchart TD\n  S[Start; \u03b1] --> R{Retry?}\n  R --> Q[Queue]\n  R --> P[Primary]\n  R --> F[Fallback]\n  F --> P2[Secondary] --> OK[Accepted; \u2713]\n  P & P2 --> W[Wait]\n  E[External] --> W\n  W --> Z[Retry timer]\n  Z --> R\n  W --> T[Timeout]\n  R -.remaining-deadline fires.-> T",
+    "expected": {
+      "nodes": [
+        {
+          "id": "S",
+          "label": "Start; \u03b1",
+          "shape": "rectangle"
+        },
+        {
+          "id": "R",
+          "label": "Retry?",
+          "shape": "diamond"
+        },
+        {
+          "id": "Q",
+          "label": "Queue",
+          "shape": "rectangle"
+        },
+        {
+          "id": "P",
+          "label": "Primary",
+          "shape": "rectangle"
+        },
+        {
+          "id": "F",
+          "label": "Fallback",
+          "shape": "rectangle"
+        },
+        {
+          "id": "P2",
+          "label": "Secondary",
+          "shape": "rectangle"
+        },
+        {
+          "id": "OK",
+          "label": "Accepted; \u2713",
+          "shape": "rectangle"
+        },
+        {
+          "id": "W",
+          "label": "Wait",
+          "shape": "rectangle"
+        },
+        {
+          "id": "E",
+          "label": "External",
+          "shape": "rectangle"
+        },
+        {
+          "id": "Z",
+          "label": "Retry timer",
+          "shape": "rectangle"
+        },
+        {
+          "id": "T",
+          "label": "Timeout",
+          "shape": "rectangle"
+        }
+      ],
+      "edges": [
+        {
+          "source": "S",
+          "target": "R",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "R",
+          "target": "Q",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "R",
+          "target": "P",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "R",
+          "target": "F",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "F",
+          "target": "P2",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "P2",
+          "target": "OK",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "P",
+          "target": "W",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "P2",
+          "target": "W",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "E",
+          "target": "W",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "W",
+          "target": "Z",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "Z",
+          "target": "R",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "W",
+          "target": "T",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "R",
+          "target": "T",
+          "label": "remaining-deadline fires",
+          "style": "dotted",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "MULTILINE_FLOWCHART",
+    "source": "flowchart LR\n  E[Planner] --> F{Route exists\nfor both sides?}\n  F -->|No| G[Decline]\n  F -->|Yes| H[Price]\n  E --> I{Delivery only\n+ dynamic preview\n+ no result?}\n  I -->|Yes| J[Use fallback]",
+    "expected": {
+      "nodes": [
+        {
+          "id": "E",
+          "label": "Planner",
+          "shape": "rectangle"
+        },
+        {
+          "id": "F",
+          "label": "Route exists\nfor both sides?",
+          "shape": "diamond"
+        },
+        {
+          "id": "G",
+          "label": "Decline",
+          "shape": "rectangle"
+        },
+        {
+          "id": "H",
+          "label": "Price",
+          "shape": "rectangle"
+        },
+        {
+          "id": "I",
+          "label": "Delivery only\n+ dynamic preview\n+ no result?",
+          "shape": "diamond"
+        },
+        {
+          "id": "J",
+          "label": "Use fallback",
+          "shape": "rectangle"
+        }
+      ],
+      "edges": [
+        {
+          "source": "E",
+          "target": "F",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "F",
+          "target": "G",
+          "label": "No",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "F",
+          "target": "H",
+          "label": "Yes",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "E",
+          "target": "I",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "I",
+          "target": "J",
+          "label": "Yes",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "codeLabels",
+    "source": "flowchart LR\n  A[\"metadata.calls = request.tasks ?? []\"] --> B[\"execute([bundle])\"]\n  B --> C[\"execute([parent, ...children])\"]\n  C --> D[\"submit {proofs: []}, sponsored: true\"]",
+    "expected": {
+      "nodes": [
+        {
+          "id": "A",
+          "label": "metadata.calls = request.tasks ?? []",
+          "shape": "rectangle"
+        },
+        {
+          "id": "B",
+          "label": "execute([bundle])",
+          "shape": "rectangle"
+        },
+        {
+          "id": "C",
+          "label": "execute([parent, ...children])",
+          "shape": "rectangle"
+        },
+        {
+          "id": "D",
+          "label": "submit {proofs: []}, sponsored: true",
+          "shape": "rectangle"
+        }
+      ],
+      "edges": [
+        {
+          "source": "A",
+          "target": "B",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "B",
+          "target": "C",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "C",
+          "target": "D",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "reportedFlowchart",
+    "source": "flowchart TD\n  Plan[Approved plan] --> Fixture[Synthetic fixture]\n  Plan --> Review{Approved?}\n  Fixture --> Regression[Browser regression]\n  Review -->|No| Fixture\n  Review -->|Yes| Regression\n  Regression -- two<br/>lines --> Topology[Topology assertions]\n  Topology -- count \u2264 7 --> Viewer[Diagram viewer]\n  Viewer -- count > 7 --> Complete[/Ready to ship/]",
+    "expected": {
+      "nodes": [
+        {
+          "id": "Plan",
+          "label": "Approved plan",
+          "shape": "rectangle"
+        },
+        {
+          "id": "Fixture",
+          "label": "Synthetic fixture",
+          "shape": "rectangle"
+        },
+        {
+          "id": "Review",
+          "label": "Approved?",
+          "shape": "diamond"
+        },
+        {
+          "id": "Regression",
+          "label": "Browser regression",
+          "shape": "rectangle"
+        },
+        {
+          "id": "Topology",
+          "label": "Topology assertions",
+          "shape": "rectangle"
+        },
+        {
+          "id": "Viewer",
+          "label": "Diagram viewer",
+          "shape": "rectangle"
+        },
+        {
+          "id": "Complete",
+          "label": "Ready to ship",
+          "shape": "parallelogram"
+        }
+      ],
+      "edges": [
+        {
+          "source": "Plan",
+          "target": "Fixture",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "Plan",
+          "target": "Review",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "Fixture",
+          "target": "Regression",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "Review",
+          "target": "Fixture",
+          "label": "No",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "Review",
+          "target": "Regression",
+          "label": "Yes",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "Regression",
+          "target": "Topology",
+          "label": "two\nlines",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "Topology",
+          "target": "Viewer",
+          "label": "count \u2264 7",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "Viewer",
+          "target": "Complete",
+          "label": "count > 7",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "forwardDefinitions",
+    "source": "graph TD\n  D1 --> E\n  F --> G\n  E{\"root authority\"} --> F\n  G[\"submit {proofs: []}, sponsored: true\"] --> H\n  E{\"final authority\"}\n  H --> E",
+    "expected": {
+      "nodes": [
+        {
+          "id": "D1",
+          "label": "D1",
+          "shape": "rectangle"
+        },
+        {
+          "id": "E",
+          "label": "final authority",
+          "shape": "diamond"
+        },
+        {
+          "id": "F",
+          "label": "F",
+          "shape": "rectangle"
+        },
+        {
+          "id": "G",
+          "label": "submit {proofs: []}, sponsored: true",
+          "shape": "rectangle"
+        },
+        {
+          "id": "H",
+          "label": "H",
+          "shape": "rectangle"
+        }
+      ],
+      "edges": [
+        {
+          "source": "D1",
+          "target": "E",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "F",
+          "target": "G",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "E",
+          "target": "F",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "G",
+          "target": "H",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "H",
+          "target": "E",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "compactDottedTopology",
+    "source": "flowchart TD\n  S[Start; \u03b1] --> R{Retry?}\n  R --> Q[Queue]\n  R --> P[Primary]\n  R --> F[Fallback]\n  F --> P2[Secondary] --> OK[Accepted; \u2713]\n  P & P2 --> W[Wait]\n  E[External] --> W\n  W --> Z[Retry timer]\n  Z --> R\n  W --> T[Timeout]\n  R -.remaining-deadline fires.-> T",
+    "expected": {
+      "nodes": [
+        {
+          "id": "S",
+          "label": "Start; \u03b1",
+          "shape": "rectangle"
+        },
+        {
+          "id": "R",
+          "label": "Retry?",
+          "shape": "diamond"
+        },
+        {
+          "id": "Q",
+          "label": "Queue",
+          "shape": "rectangle"
+        },
+        {
+          "id": "P",
+          "label": "Primary",
+          "shape": "rectangle"
+        },
+        {
+          "id": "F",
+          "label": "Fallback",
+          "shape": "rectangle"
+        },
+        {
+          "id": "P2",
+          "label": "Secondary",
+          "shape": "rectangle"
+        },
+        {
+          "id": "OK",
+          "label": "Accepted; \u2713",
+          "shape": "rectangle"
+        },
+        {
+          "id": "W",
+          "label": "Wait",
+          "shape": "rectangle"
+        },
+        {
+          "id": "E",
+          "label": "External",
+          "shape": "rectangle"
+        },
+        {
+          "id": "Z",
+          "label": "Retry timer",
+          "shape": "rectangle"
+        },
+        {
+          "id": "T",
+          "label": "Timeout",
+          "shape": "rectangle"
+        }
+      ],
+      "edges": [
+        {
+          "source": "S",
+          "target": "R",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "R",
+          "target": "Q",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "R",
+          "target": "P",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "R",
+          "target": "F",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "F",
+          "target": "P2",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "P2",
+          "target": "OK",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "P",
+          "target": "W",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "P2",
+          "target": "W",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "E",
+          "target": "W",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "W",
+          "target": "Z",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "Z",
+          "target": "R",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "W",
+          "target": "T",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "R",
+          "target": "T",
+          "label": "remaining-deadline fires",
+          "style": "dotted",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "source",
+    "source": "graph LR\n  subgraph group [Group]\n    A & B -->|yes| C\n    C --> D\n    D{\"final\"}:::hot\n  end\n  A -- maybe --> B\n  class D quiet\n  style D fill:#fff\n  linkStyle 0 stroke:#123",
+    "expected": {
+      "nodes": [
+        {
+          "id": "A",
+          "label": "A",
+          "shape": "rectangle"
+        },
+        {
+          "id": "B",
+          "label": "B",
+          "shape": "rectangle"
+        },
+        {
+          "id": "C",
+          "label": "C",
+          "shape": "rectangle"
+        },
+        {
+          "id": "D",
+          "label": "final",
+          "shape": "diamond"
+        }
+      ],
+      "edges": [
+        {
+          "source": "A",
+          "target": "C",
+          "label": "yes",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "B",
+          "target": "C",
+          "label": "yes",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "C",
+          "target": "D",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "A",
+          "target": "B",
+          "label": "maybe",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "slash_chain",
+    "source": "graph LR\n A[/one/] --> B[\\two\\] --> C[/three\\] --> D[\\four/]\n D --> E\n E[/named/]:::hot",
+    "expected": {
+      "nodes": [
+        {
+          "id": "A",
+          "label": "one",
+          "shape": "parallelogram"
+        },
+        {
+          "id": "B",
+          "label": "two",
+          "shape": "parallelogram-alt"
+        },
+        {
+          "id": "C",
+          "label": "three",
+          "shape": "trapezoid"
+        },
+        {
+          "id": "D",
+          "label": "four",
+          "shape": "trapezoid-alt"
+        },
+        {
+          "id": "E",
+          "label": "named",
+          "shape": "parallelogram"
+        }
+      ],
+      "edges": [
+        {
+          "source": "A",
+          "target": "B",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "B",
+          "target": "C",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "C",
+          "target": "D",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        },
+        {
+          "source": "D",
+          "target": "E",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "quoted_multiline",
+    "source": "graph TD\r\n A[\"execute([bundle])\r\n\r\nnext<br>line\\nend\"] --> B",
+    "expected": {
+      "nodes": [
+        {
+          "id": "A",
+          "label": "execute([bundle])\n\nnext\nline\nend",
+          "shape": "rectangle"
+        },
+        {
+          "id": "B",
+          "label": "B",
+          "shape": "rectangle"
+        }
+      ],
+      "edges": [
+        {
+          "source": "A",
+          "target": "B",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "quoted_multiline_adapted",
+    "source": "graph TD\n A[\"execute([bundle])\\n\\nnext<br>line\\nend\"] --> B",
+    "expected": {
+      "nodes": [
+        {
+          "id": "A",
+          "label": "execute([bundle])\n\nnext\nline\nend",
+          "shape": "rectangle"
+        },
+        {
+          "id": "B",
+          "label": "B",
+          "shape": "rectangle"
+        }
+      ],
+      "edges": [
+        {
+          "source": "A",
+          "target": "B",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "escaped_multiline",
+    "source": "graph LR\n A[/first\\nsecond/] --> B[\\opposite\\]",
+    "expected": {
+      "nodes": [
+        {
+          "id": "A",
+          "label": "first\nsecond",
+          "shape": "parallelogram"
+        },
+        {
+          "id": "B",
+          "label": "opposite",
+          "shape": "parallelogram-alt"
+        }
+      ],
+      "edges": [
+        {
+          "source": "A",
+          "target": "B",
+          "style": "solid",
+          "hasArrowStart": false,
+          "hasArrowEnd": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "quoted_doublecircle",
+    "source": "graph TD\n A(((\"inner ))) --> {[]()} & caf\u00e9's &amp;\")))",
+    "expected": {
+      "nodes": [
+        {
+          "id": "A",
+          "label": "inner ))) --> {[]()} & caf\u00e9's &amp;",
+          "shape": "doublecircle"
+        }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "quoted_stadium",
+    "source": "graph TD\n A([\"inner ]) --> {[]()} & caf\u00e9's &amp;\"])",
+    "expected": {
+      "nodes": [
+        {
+          "id": "A",
+          "label": "inner ]) --> {[]()} & caf\u00e9's &amp;",
+          "shape": "stadium"
+        }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "quoted_circle",
+    "source": "graph TD\n A((\"inner )) --> {[]()} & caf\u00e9's &amp;\"))",
+    "expected": {
+      "nodes": [
+        {
+          "id": "A",
+          "label": "inner )) --> {[]()} & caf\u00e9's &amp;",
+          "shape": "circle"
+        }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "quoted_subroutine",
+    "source": "graph TD\n A[[\"inner ]] --> {[]()} & caf\u00e9's &amp;\"]]",
+    "expected": {
+      "nodes": [
+        {
+          "id": "A",
+          "label": "inner ]] --> {[]()} & caf\u00e9's &amp;",
+          "shape": "subroutine"
+        }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "quoted_cylinder",
+    "source": "graph TD\n A[(\"inner )] --> {[]()} & caf\u00e9's &amp;\")]",
+    "expected": {
+      "nodes": [
+        {
+          "id": "A",
+          "label": "inner )] --> {[]()} & caf\u00e9's &amp;",
+          "shape": "cylinder"
+        }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "quoted_parallelogram",
+    "source": "graph TD\n A[/\"inner /] --> {[]()} & caf\u00e9's &amp;\"/]",
+    "expected": {
+      "nodes": [
+        {
+          "id": "A",
+          "label": "inner /] --> {[]()} & caf\u00e9's &amp;",
+          "shape": "parallelogram"
+        }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "quoted_parallelogram-alt",
+    "source": "graph TD\n A[\\\"inner \\] --> {[]()} & caf\u00e9's &amp;\"\\]",
+    "expected": {
+      "nodes": [
+        {
+          "id": "A",
+          "label": "inner \\] --> {[]()} & caf\u00e9's &amp;",
+          "shape": "parallelogram-alt"
+        }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "quoted_trapezoid",
+    "source": "graph TD\n A[/\"inner \\] --> {[]()} & caf\u00e9's &amp;\"\\]",
+    "expected": {
+      "nodes": [
+        {
+          "id": "A",
+          "label": "inner \\] --> {[]()} & caf\u00e9's &amp;",
+          "shape": "trapezoid"
+        }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "quoted_trapezoid-alt",
+    "source": "graph TD\n A[\\\"inner /] --> {[]()} & caf\u00e9's &amp;\"/]",
+    "expected": {
+      "nodes": [
+        {
+          "id": "A",
+          "label": "inner /] --> {[]()} & caf\u00e9's &amp;",
+          "shape": "trapezoid-alt"
+        }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "quoted_asymmetric",
+    "source": "graph TD\n A>\"inner ] --> {[]()} & caf\u00e9's &amp;\"]",
+    "expected": {
+      "nodes": [
+        {
+          "id": "A",
+          "label": "inner ] --> {[]()} & caf\u00e9's &amp;",
+          "shape": "asymmetric"
+        }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "quoted_hexagon",
+    "source": "graph TD\n A{{\"inner }} --> {[]()} & caf\u00e9's &amp;\"}}",
+    "expected": {
+      "nodes": [
+        {
+          "id": "A",
+          "label": "inner }} --> {[]()} & caf\u00e9's &amp;",
+          "shape": "hexagon"
+        }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "quoted_rectangle",
+    "source": "graph TD\n A[\"inner ] --> {[]()} & caf\u00e9's &amp;\"]",
+    "expected": {
+      "nodes": [
+        {
+          "id": "A",
+          "label": "inner ] --> {[]()} & caf\u00e9's &amp;",
+          "shape": "rectangle"
+        }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "quoted_rounded",
+    "source": "graph TD\n A(\"inner ) --> {[]()} & caf\u00e9's &amp;\")",
+    "expected": {
+      "nodes": [
+        {
+          "id": "A",
+          "label": "inner ) --> {[]()} & caf\u00e9's &amp;",
+          "shape": "rounded"
+        }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "quoted_diamond",
+    "source": "graph TD\n A{\"inner } --> {[]()} & caf\u00e9's &amp;\"}",
+    "expected": {
+      "nodes": [
+        {
+          "id": "A",
+          "label": "inner } --> {[]()} & caf\u00e9's &amp;",
+          "shape": "diamond"
+        }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "state",
+    "source": "stateDiagram-v2\n [*] --> Idle\n Idle --> Active : prompt\n Active --> [*]"
+  },
+  {
+    "name": "class",
+    "source": "classDiagram\n Session : +load()\n Session <|-- LiveSession"
+  },
+  {
+    "name": "er",
+    "source": "erDiagram\n SESSION ||--o{ MESSAGE : contains\n SESSION {\n string id PK\n }\n MESSAGE {\n string content\n }"
+  },
+  {
+    "name": "xy",
+    "source": "xychart-beta\n title \"Latency\"\n x-axis [Jan, Feb, Mar]\n y-axis \"ms\" 0 --> 100\n bar [10, 20, 30]\n line [15, 25, 35]"
+  },
+  {
+    "name": "bad_0",
+    "source": "graph TD\n A[\"broken}"
+  },
+  {
+    "name": "bad_1",
+    "source": "graph TD\n A --> B garbage"
+  },
+  {
+    "name": "bad_2",
+    "source": "graph TD\n A -->"
+  },
+  {
+    "name": "bad_3",
+    "source": "graph TD\n A[ok]:::"
+  },
+  {
+    "name": "bad_4",
+    "source": "graph TD\n R -.label.-> T trailing garbage"
+  },
+  {
+    "name": "bad_5",
+    "source": "graph TD\n R -.label.->"
+  },
+  {
+    "name": "bad_6",
+    "source": "graph TD\n R -.label"
+  },
+  {
+    "name": "bad_7",
+    "source": "graph TD\n A[/unfinished\n B --> C"
+  },
+  {
+    "name": "bad_8",
+    "source": "graph TD\n A[unfinished\n B -.retry.-> C"
+  },
+  {
+    "name": "bad_9",
+    "source": "graph TD\n A[valid]:::hot! --> B"
+  },
+  {
+    "name": "entity",
+    "source": "graph TD\n A[\"fish &amp; chips\"]",
+    "expected": {
+      "nodes": [
+        {
+          "id": "A",
+          "label": "fish &amp; chips",
+          "shape": "rectangle"
+        }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "untrusted",
+    "source": "flowchart TD\n A[\"<img src=https://example.invalid/a onerror=alert(1)> <script>alert(1)</script>\"] --> B\n click B \"https://example.invalid\""
+  },
+  {
+    "name": "extra_bad_0",
+    "source": "graph TD\n A(((unfinished))"
+  },
+  {
+    "name": "extra_bad_1",
+    "source": "graph TD\n A[valid] leftover"
+  },
+  {
+    "name": "extra_bad_2",
+    "source": "graph TD\n A[valid]::: --> B"
+  },
+  {
+    "name": "extra_bad_3",
+    "source": "graph TD\n A &"
+  },
+  {
+    "name": "extra_bad_4",
+    "source": "graph TD\n A --> B &"
+  },
+  {
+    "name": "extra_bad_5",
+    "source": "graph TD\n A[\"quoted\" garbage]"
+  },
+  {
+    "name": "extra_bad_6",
+    "source": "graph TD\n A[\"ambiguous \\\" quote\"]"
+  },
+  {
+    "name": "extra_bad_7",
+    "source": "graph TD\n A[\\unfinished"
+  },
+  {
+    "name": "extra_bad_8",
+    "source": "graph TD\n A[/valid/] garbage"
+  },
+  {
+    "name": "extra_bad_9",
+    "source": "graph TD\n R -.label.-"
+  },
+  {
+    "name": "extra_bad_10",
+    "source": "graph TD\n R -. .-> T"
+  },
+  {
+    "name": "extra_bad_11",
+    "source": "graph TD\n R -.label.-> T &"
+  },
+  {
+    "name": "security_0",
+    "source": "flowchart LR\n A@{ img: \"file:///tmp/secret.png\", label: \"Local\" } --> B@{ img: \"https://example.invalid/a.png\", label: \"Remote\" }"
+  },
+  {
+    "name": "security_1",
+    "source": "flowchart TD\n A --> B\n style A fill:url(https://example.invalid/a.svg)"
+  },
+  {
+    "name": "security_2",
+    "source": "%%{init: {\"securityLevel\":\"loose\", \"themeCSS\":\"@import url(https://example.invalid/font.css);\"}}%%\nflowchart TD\n A[\"<img src=https://example.invalid/a>\"] --> B"
+  },
+  {
+    "name": "security_3",
+    "source": "flowchart TD\n A --> B\n click A \"javascript:alert(1)\""
+  }
+]

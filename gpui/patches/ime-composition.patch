@@ -1,0 +1,55 @@
+diff --git a/src/input/base/state.rs b/src/input/base/state.rs
+index f0e5906..5c951e2 100644
+--- a/src/input/base/state.rs
++++ b/src/input/base/state.rs
+@@ -405,6 +405,7 @@ pub struct InputBaseState<M: InputModeKind> {
+     pub(crate) text_align: TextAlign,
+     pub(super) masked: bool,
+     pub(super) clean_on_escape: bool,
++    protect_ime_keys: bool,
+     pub(super) submit_on_enter: bool,
+     pub(super) show_whitespaces: bool,
+     /// This flag tells the renderer to prefer the end of the current visual line.
+@@ -740,6 +741,7 @@ impl<M: InputModeKind> InputBaseState<M> {
+             text_align: TextAlign::Left,
+             masked: false,
+             clean_on_escape: false,
++            protect_ime_keys: false,
+             submit_on_enter: false,
+             show_whitespaces: false,
+             loading: false,
+@@ -1142,6 +1144,13 @@ impl<M: InputModeKind> InputBaseState<M> {
+         self
+     }
+ 
++    /// Keep application-delivered Enter and Escape local while text is marked.
++    /// AppKit normally consumes candidate keys before application dispatch; this
++    /// guards fallback delivery without suppressing the next key after commit.
++    pub fn set_protect_ime_keys(&mut self, protect: bool) {
++        self.protect_ime_keys = protect;
++    }
++
+     pub fn set_clean_on_escape(&mut self, clean: bool) {
+         self.clean_on_escape = clean;
+     }
+@@ -1981,6 +1990,9 @@ impl<M: InputModeKind> InputBaseState<M> {
+     }
+ 
+     pub(super) fn enter(&mut self, action: &Enter, window: &mut Window, cx: &mut Context<Self>) {
++        if self.protect_ime_keys && self.ime_marked_range.is_some() {
++            return;
++        }
+         if M::handle_context_menu_action(self, Box::new(action.clone()), window, cx) {
+             return;
+         }
+@@ -2104,6 +2116,10 @@ impl<M: InputModeKind> InputBaseState<M> {
+     }
+ 
+     pub(super) fn escape(&mut self, action: &Escape, window: &mut Window, cx: &mut Context<Self>) {
++        if self.protect_ime_keys && self.ime_marked_range.is_some() {
++            self.unmark_text(window, cx);
++            return;
++        }
+         if M::handle_context_menu_action(self, Box::new(action.clone()), window, cx) {
+             return;
+         }

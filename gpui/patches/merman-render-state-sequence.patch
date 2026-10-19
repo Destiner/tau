@@ -1,0 +1,906 @@
+diff --git a/src/sequence/actors.rs b/src/sequence/actors.rs
+index b3499f6..e9c52dc 100644
+--- a/src/sequence/actors.rs
++++ b/src/sequence/actors.rs
+@@ -72,6 +72,23 @@ pub(super) fn plan_sequence_actors<'a>(
+     let actor_index = actor_index(&ctx)?;
+     let (actor_to_message_width, message_metrics) = actor_message_widths(&ctx, &actor_index)?;
+     let actor_margins = actor_margins(&ctx, &actor_widths, &actor_to_message_width)?;
++    let actor_margins =
++        if super::config::SequenceConfigView::new(ctx.math_config.as_value()).compact() {
++            let config = super::config::SequenceConfigView::new(ctx.math_config.as_value());
++            (0..actor_widths.len())
++                .map(|i| {
++                    if let Some(next) = actor_widths.get(i + 1) {
++                        (config.presentation_number("actorCenterGap", 140.0)
++                            - (actor_widths[i] + next) / 2.0)
++                            .max(40.0)
++                    } else {
++                        40.0
++                    }
++                })
++                .collect::<Vec<_>>()
++        } else {
++            actor_margins
++        };
+     let (mut box_layouts, box_title_height) = measure_boxes(
+         &ctx,
+         &actor_index,
+@@ -158,13 +175,16 @@ fn measure_actor_boxes(
+         } else {
+             (text_w + 2.0 * ctx.wrap_padding).max(ctx.actor_width_min)
+         };
+-        let stack_height = if ctx.is_neo {
+-            sequence_actor_stack_height(text_h)
+-        } else if a.wrap {
+-            text_h
+-        } else {
+-            0.0
+-        };
++        let stack_height =
++            if super::config::SequenceConfigView::new(ctx.math_config.as_value()).compact() {
++                text_h + 12.0
++            } else if ctx.is_neo {
++                sequence_actor_stack_height(text_h)
++            } else if a.wrap {
++                text_h
++            } else {
++                0.0
++            };
+         actor_text_heights.push(text_h);
+         actor_base_heights.push(ctx.actor_height.max(stack_height).max(1.0));
+         actor_widths.push(width.max(1.0));
+diff --git a/src/sequence/config.rs b/src/sequence/config.rs
+index 76040b8..bf386d7 100644
+--- a/src/sequence/config.rs
++++ b/src/sequence/config.rs
+@@ -14,6 +14,19 @@ impl<'a> SequenceConfigView<'a> {
+         }
+     }
+ 
++    pub(crate) fn compact(&self) -> bool {
++        self.sequence_config
++            .get("presentationProfile")
++            .and_then(Value::as_str)
++            == Some("compact")
++    }
++
++    pub(crate) fn presentation_number(&self, key: &str, default: f64) -> f64 {
++        crate::config::config_f64(self.sequence_config, &["presentation", key])
++            .unwrap_or(default)
++            .max(0.0)
++    }
++
+     pub(crate) fn sequence_bool(&self, key: &str, default: bool) -> bool {
+         self.sequence_config_bool(key).unwrap_or(default)
+     }
+@@ -111,7 +124,14 @@ impl<'a> SequenceConfigView<'a> {
+         weight_key: &str,
+     ) -> TextStyle {
+         let font_family = self
+-            .font_value("fontFamily", family_key)
++            .compact()
++            .then(|| {
++                self.sequence_config
++                    .get("presentation")
++                    .and_then(|p| p.get(family_key))
++            })
++            .flatten()
++            .or_else(|| self.font_value("fontFamily", family_key))
+             .and_then(Value::as_str)
+             .map(str::to_owned);
+         // svgDraw.parseFontSize accepts numeric strings and explicit px lengths as well
+@@ -120,7 +140,34 @@ impl<'a> SequenceConfigView<'a> {
+             .font_value("fontSize", size_key)
+             .and_then(crate::config::json_f64_css_px)
+             .unwrap_or(16.0);
+-        let font_weight = self.font_weight(weight_key);
++        let font_size = if self.compact() {
++            self.presentation_number(
++                size_key,
++                if size_key == "actorFontSize" {
++                    13.0
++                } else {
++                    11.0
++                },
++            )
++            .max(1.0)
++        } else {
++            font_size
++        };
++        let font_weight = if self.compact() {
++            Some(
++                self.presentation_number(
++                    weight_key,
++                    if weight_key == "actorFontWeight" {
++                        500.0
++                    } else {
++                        400.0
++                    },
++                )
++                .to_string(),
++            )
++        } else {
++            self.font_weight(weight_key)
++        };
+ 
+         TextStyle {
+             font_family,
+@@ -131,20 +178,20 @@ impl<'a> SequenceConfigView<'a> {
+     }
+ }
+ 
+-pub(super) struct SequenceLayoutSettings {
+-    pub(super) diagram_margin_x: f64,
++pub(crate) struct SequenceLayoutSettings {
++    pub(crate) diagram_margin_x: f64,
+     pub(super) diagram_margin_y: f64,
+     pub(super) bottom_margin_adj: f64,
+     pub(super) box_margin: f64,
+     pub(super) actor_margin: f64,
+-    pub(super) sequence_default_width: f64,
+-    pub(super) actor_height: f64,
+-    pub(super) wrap_padding: f64,
++    pub(crate) sequence_default_width: f64,
++    pub(crate) actor_height: f64,
++    pub(crate) wrap_padding: f64,
+     pub(super) note_margin: f64,
+     pub(super) box_text_margin: f64,
+     pub(super) label_box_height: f64,
+     pub(super) label_box_width: f64,
+-    pub(super) mirror_actors: bool,
++    pub(crate) mirror_actors: bool,
+     pub(super) right_angles: bool,
+     pub(super) is_neo: bool,
+     pub(super) activation_width: f64,
+@@ -154,7 +201,7 @@ pub(super) struct SequenceLayoutSettings {
+ }
+ 
+ impl SequenceLayoutSettings {
+-    pub(super) fn from_effective_config(effective_config: &Value) -> Self {
++    pub(crate) fn from_effective_config(effective_config: &Value) -> Self {
+         let config = SequenceConfigView::new(effective_config);
+ 
+         let diagram_margin_x = config.sequence_compat_f64("diagramMarginX", 50.0);
+@@ -180,6 +227,32 @@ impl SequenceLayoutSettings {
+         let msg_text_style =
+             config.text_style("messageFontFamily", "messageFontSize", "messageFontWeight");
+ 
++        let (
++            diagram_margin_x,
++            diagram_margin_y,
++            sequence_default_width,
++            actor_height,
++            wrap_padding,
++            mirror_actors,
++        ) = if config.compact() {
++            (
++                config.presentation_number("outerPadding", 30.0),
++                config.presentation_number("outerPadding", 30.0),
++                config.presentation_number("actorMinWidth", 80.0),
++                config.presentation_number("actorHeight", 40.0),
++                config.presentation_number("actorPaddingX", 16.0),
++                false,
++            )
++        } else {
++            (
++                diagram_margin_x,
++                diagram_margin_y,
++                sequence_default_width,
++                actor_height,
++                wrap_padding,
++                mirror_actors,
++            )
++        };
+         Self {
+             diagram_margin_x,
+             diagram_margin_y,
+diff --git a/src/sequence/messages.rs b/src/sequence/messages.rs
+index e554b0c..3637a28 100644
+--- a/src/sequence/messages.rs
++++ b/src/sequence/messages.rs
+@@ -310,7 +310,7 @@ pub(super) fn layout_sequence_message(
+     } else {
+         None
+     };
+-    let vertical = message_vertical_geometry(
++    let mut vertical = message_vertical_geometry(
+         effective_text,
+         is_math_message,
+         is_self,
+@@ -318,6 +318,39 @@ pub(super) fn layout_sequence_message(
+         &ctx,
+     )?;
+ 
++    let config = super::config::SequenceConfigView::new(ctx.math_config.as_value());
++    if config.compact() {
++        vertical.line_y = ctx.cursor_y;
++        vertical.label_y = ctx.cursor_y
++            - 6.0
++            - (crate::text::split_html_br_lines(effective_text)
++                .len()
++                .saturating_sub(1) as f64
++                * ctx.msg_text_style.font_size
++                * 1.3);
++        // Grow rows for multiline/math labels; the base row belongs to the timeline, not font metrics.
++        vertical.cursor_step = config.presentation_number("messageRowHeight", 40.0).max(
++            ctx.msg_text_style.font_size
++                * 1.3
++                * crate::text::split_html_br_lines(effective_text).len() as f64
++                + 12.0,
++        ) + if is_self {
++            config.presentation_number("selfMessageHeight", 30.0)
++        } else {
++            0.0
++        };
++        if is_math_message {
++            vertical.cursor_step = vertical
++                .cursor_step
++                .max(vertical.inserted_bottom_y - ctx.cursor_y + 12.0);
++        }
++        vertical.inserted_bottom_y = ctx.cursor_y
++            + if is_self {
++                config.presentation_number("selfMessageHeight", 30.0)
++            } else {
++                0.0
++            };
++    }
+     let x1 = startx;
+     let x2 = stopx;
+     let label = message_label(
+diff --git a/src/sequence/orchestration.rs b/src/sequence/orchestration.rs
+index db6f3e0..9a95d29 100644
+--- a/src/sequence/orchestration.rs
++++ b/src/sequence/orchestration.rs
+@@ -123,7 +123,14 @@ impl<'a> SequenceLayoutLoopState<'a> {
+         let actor_center_bounds = actor_center_bounds.unwrap_or((bounds_start_x, bounds_stop_x));
+ 
+         Ok(Self {
+-            cursor_y: ctx.actor_top_offset_y + ctx.max_actor_layout_height,
++            cursor_y: ctx.actor_top_offset_y + ctx.max_actor_layout_height + {
++                let config = super::config::SequenceConfigView::new(ctx.math_config.as_value());
++                if config.compact() {
++                    config.presentation_number("headerGap", 20.0)
++                } else {
++                    0.0
++                }
++            },
+             block_stopy_stack: Vec::new(),
+             open_sequence_blocks: Vec::new(),
+             block_layouts_by_id: rustc_hash::FxHashMap::default(),
+@@ -526,7 +533,12 @@ pub(super) fn build_sequence_layout_graph(
+         }
+     }
+ 
+-    let bottom_margin = 2.0 * ctx.box_margin;
++    let bottom_margin =
++        if super::config::SequenceConfigView::new(ctx.math_config.as_value()).compact() {
++            0.0
++        } else {
++            2.0 * ctx.box_margin
++        };
+     let bottom_box_top_y = state.cursor_y + bottom_margin;
+ 
+     state
+diff --git a/src/sequence/root_bounds.rs b/src/sequence/root_bounds.rs
+index 46285e0..5a15cfd 100644
+--- a/src/sequence/root_bounds.rs
++++ b/src/sequence/root_bounds.rs
+@@ -41,6 +41,10 @@ pub(super) struct SequenceRootBoundsContext<'a> {
+ 
+ pub(super) fn sequence_root_bounds(ctx: SequenceRootBoundsContext<'_>) -> Result<Bounds> {
+     let mut content = sequence_content_bounds(&ctx)?;
++    let compact = super::config::SequenceConfigView::new(ctx.math_config.as_value()).compact();
++    if compact {
++        content.include_y(ctx.bottom_box_top_y);
++    }
+ 
+     include_actor_popup_bottoms(&mut content, &ctx)?;
+     include_actor_popup_widths(&mut content, &ctx)?;
+diff --git a/src/state/config.rs b/src/state/config.rs
+index a85263f..d4c2784 100644
+--- a/src/state/config.rs
++++ b/src/state/config.rs
+@@ -134,15 +134,47 @@ impl<'a> StateConfigView<'a> {
+         }
+     }
+ 
++    pub(crate) fn compact(&self) -> bool {
++        self.state_config
++            .get("presentationProfile")
++            .and_then(Value::as_str)
++            == Some("compact")
++    }
++
++    pub(crate) fn presentation_number(&self, key: &str, default: f64) -> f64 {
++        config_f64(self.state_config, &["presentation", key])
++            .unwrap_or(default)
++            .max(0.0)
++    }
++
+     pub(super) fn layout_settings(&self, direction: &str) -> StateLayoutSettings {
+         let html_labels = config_effective_html_labels(self.effective_config);
+         StateLayoutSettings {
++            compact: self.compact(),
++            padding_x: self.presentation_number("paddingX", 20.0),
++            padding_y: self.presentation_number("paddingY", 10.0),
+             graph: GraphLabel {
+                 rankdir: rank_dir_from(direction),
+-                nodesep: self.layout_spacing("nodeSpacing", DEFAULT_STATE_NODE_SPACING),
+-                ranksep: self.layout_spacing("rankSpacing", DEFAULT_STATE_RANK_SPACING),
+-                marginx: 8.0,
+-                marginy: 8.0,
++                nodesep: if self.compact() {
++                    self.presentation_number("nodeSpacing", 28.0)
++                } else {
++                    self.layout_spacing("nodeSpacing", DEFAULT_STATE_NODE_SPACING)
++                },
++                ranksep: if self.compact() {
++                    self.presentation_number("layerSpacing", 48.0)
++                } else {
++                    self.layout_spacing("rankSpacing", DEFAULT_STATE_RANK_SPACING)
++                },
++                marginx: if self.compact() {
++                    self.presentation_number("outerPadding", 12.0)
++                } else {
++                    8.0
++                },
++                marginy: if self.compact() {
++                    self.presentation_number("outerPadding", 12.0)
++                } else {
++                    8.0
++                },
+                 ..Default::default()
+             },
+             html_labels,
+@@ -186,7 +218,13 @@ impl<'a> StateConfigView<'a> {
+         // global `#id{font-size: ...}` rule (defaults to 16px). The 10px
+         // `g.stateGroup text{font-size:10px}` rule applies to SVG `<text>` elements, not HTML
+         // labels.
+-        let font_family = config_string_or_first_array(self.effective_config, &["fontFamily"])
++        let font_family = self
++            .compact()
++            .then(|| {
++                config_string_or_first_array(self.state_config, &["presentation", "fontFamily"])
++            })
++            .flatten()
++            .or_else(|| config_string_or_first_array(self.effective_config, &["fontFamily"]))
+             .or_else(|| {
+                 config_string_or_first_array(
+                     self.effective_config,
+@@ -196,16 +234,33 @@ impl<'a> StateConfigView<'a> {
+             .or_else(|| Some(DEFAULT_STATE_FONT_FAMILY.to_string()));
+         // Mermaid CLI baselines show state labels inheriting the SVG root font-size rule
+         // (`themeVariables.fontSize`, typically a `"NNpx"` string).
+-        let font_size =
+-            crate::config::config_theme_or_root_font_size_px(self.effective_config, 16.0).max(1.0);
++        let font_size = if self.compact() {
++            self.presentation_number("fontSize", 13.0).max(1.0)
++        } else {
++            crate::config::config_theme_or_root_font_size_px(self.effective_config, 16.0).max(1.0)
++        };
+         TextStyle {
+             font_family,
+             font_size,
+-            font_weight: None,
++            font_weight: self
++                .compact()
++                .then(|| self.presentation_number("fontWeight", 500.0).to_string()),
+             font_style: None,
+         }
+     }
+ 
++    pub(crate) fn edge_text_style(&self) -> TextStyle {
++        let mut style = self.text_style();
++        if self.compact() {
++            style.font_size = self.presentation_number("edgeFontSize", 11.0).max(1.0);
++            style.font_weight = Some(
++                self.presentation_number("edgeFontWeight", 400.0)
++                    .to_string(),
++            );
++        }
++        style
++    }
++
+     pub(crate) fn state_label_min_width(&self) -> f64 {
+         self.state_compat_f64("minNodeWidth")
+             .unwrap_or(DEFAULT_STATE_LABEL_MIN_WIDTH)
+@@ -260,6 +315,9 @@ impl<'a> StateConfigView<'a> {
+ }
+ 
+ pub(super) struct StateLayoutSettings {
++    pub(super) compact: bool,
++    pub(super) padding_x: f64,
++    pub(super) padding_y: f64,
+     pub(super) graph: GraphLabel,
+     pub(super) html_labels: bool,
+     pub(super) wrap_mode: WrapMode,
+diff --git a/src/state/elk.rs b/src/state/elk.rs
+index 83c688f..7289182 100644
+--- a/src/state/elk.rs
++++ b/src/state/elk.rs
+@@ -173,8 +173,20 @@ pub(super) fn layout(
+             continue;
+         }
+         let label = crate::text::mermaid_html_breaks_to_newlines(&edge.label);
+-        let (width, height) =
+-            edge_label_metrics(&label, measurer, &settings.text_style, settings.wrap_mode);
++        let profile = StateConfigView::new(config);
++        let (width, height) = if profile.compact() && !label.is_empty() {
++            let style = profile.edge_text_style();
++            let metrics = measurer.measure_wrapped(&label, &style, None, settings.wrap_mode);
++            (
++                metrics.width + 8.0,
++                crate::text::split_html_br_lines(&label).len().max(1) as f64
++                    * style.font_size
++                    * 1.3
++                    + 6.0,
++            )
++        } else {
++            edge_label_metrics(&label, measurer, &settings.text_style, settings.wrap_mode)
++        };
+         edges.push(elk::Edge {
+             id: edge.id.clone(),
+             source: canonical(&edge.start),
+diff --git a/src/state/layout.rs b/src/state/layout.rs
+index 59d9462..192e62d 100644
+--- a/src/state/layout.rs
++++ b/src/state/layout.rs
+@@ -1473,6 +1473,28 @@ pub(super) fn state_node_dimensions(
+         .map(value_to_label_text)
+         .unwrap_or_else(|| n.id.clone());
+ 
++    if settings.compact {
++        if matches!(n.shape.as_str(), "stateStart" | "stateEnd") {
++            return Ok((28.0, 28.0));
++        }
++        if n.shape == "rect" {
++            let (tw, _) = node_label_metrics(
++                &label_text,
++                settings.wrapping_width,
++                &n.css_compiled_styles,
++                &n.css_styles,
++                measurer,
++                &settings.text_style,
++                settings.wrap_mode,
++            );
++            let lines = crate::text::split_html_br_lines(&label_text).len().max(1);
++            return Ok((
++                (tw + 2.0 * settings.padding_x).max(60.0),
++                (lines as f64 * settings.text_style.font_size * 1.3 + 2.0 * settings.padding_y)
++                    .max(36.0),
++            ));
++        }
++    }
+     let (w, h) = match n.shape.as_str() {
+         "stateStart" => (14.0, 14.0),
+         "stateEnd" => (14.0, 14.0),
+@@ -1672,13 +1694,30 @@ fn build_state_diagram_dagre_input(
+         {
+             continue;
+         }
+-        let (lw, lh) = edge_label_metrics(&e.label, measurer, &text_style, wrap_mode);
++        let config = StateConfigView::new(effective_config);
++        let (lw, lh) = if config.compact() && !e.label.is_empty() {
++            let style = config.edge_text_style();
++            let metrics = measurer.measure_wrapped(&e.label, &style, None, wrap_mode);
++            (
++                metrics.width + 8.0,
++                crate::text::split_html_br_lines(&e.label).len().max(1) as f64
++                    * style.font_size
++                    * 1.3
++                    + 6.0,
++            )
++        } else {
++            edge_label_metrics(&e.label, measurer, &text_style, wrap_mode)
++        };
+         let mut base = EdgeLabel {
+             width: lw,
+             height: lh,
+             labelpos: LabelPos::C,
+             labeloffset: 10.0,
+-            minlen: 1,
++            minlen: if settings.compact && !e.label.is_empty() {
++                2
++            } else {
++                1
++            },
+             weight: 1.0,
+             ..Default::default()
+         };
+diff --git a/src/svg/parity/sequence/messages.rs b/src/svg/parity/sequence/messages.rs
+index e4fcff6..ba4df18 100644
+--- a/src/svg/parity/sequence/messages.rs
++++ b/src/svg/parity/sequence/messages.rs
+@@ -330,10 +330,17 @@ pub(super) fn render_sequence_messages(
+             let bounded_width = (p0.x - p1.x).abs().max(0.0);
+             // Mermaid aligns message label text based on `sequence.messageAlign`.
+             let label_start_x = p0.x.min(p1.x);
+-            let (label_x, label_anchor) = match ctx.message_align {
+-                "right" => (label_start_x + bounded_width - ctx.wrap_padding, "end"),
+-                "left" => (label_start_x + ctx.wrap_padding, "start"),
+-                _ => (lbl.x, "middle"),
++            let (label_x, label_anchor) = if (p0.x - p1.x).abs() < f64::EPSILON
++                && crate::sequence::config::SequenceConfigView::new(ctx.sanitize_config.as_value())
++                    .compact()
++            {
++                (p0.x + 38.0, "start")
++            } else {
++                match ctx.message_align {
++                    "right" => (label_start_x + bounded_width - ctx.wrap_padding, "end"),
++                    "left" => (label_start_x + ctx.wrap_padding, "start"),
++                    _ => (lbl.x, "middle"),
++                }
+             };
+             if let Some(katex) = sequence_katex_label(
+                 text,
+@@ -417,7 +424,17 @@ pub(super) fn render_sequence_messages(
+         if from == to {
+             let startx = p0.x;
+             let y = p0.y;
+-            let d = if ctx.right_angles {
++            let profile =
++                crate::sequence::config::SequenceConfigView::new(ctx.sanitize_config.as_value());
++            let d = if profile.compact() {
++                format!(
++                    "M {x},{y} H {hx} V {vy} H {x}",
++                    x = fmt(startx),
++                    y = fmt(y),
++                    hx = fmt(startx + 30.0),
++                    vy = fmt(y + profile.presentation_number("selfMessageHeight", 30.0))
++                )
++            } else if ctx.right_angles {
+                 let actor_w = ctx
+                     .nodes_by_id
+                     .get(format!("actor-top-{from}").as_str())
+@@ -562,22 +579,40 @@ fn render_sequence_message_text_lines<'a>(
+     let mut preceding_height = 0.0;
+     for (i, raw) in raw_lines.into_iter().enumerate() {
+         checkpoints.checkpoint_loop(i)?;
+-        let y = sequence_drawn_text_y(layout.label_y, layout.margin, preceding_height);
++        let compact =
++            crate::sequence::config::SequenceConfigView::new(layout.config.as_value()).compact();
++        let y = if compact {
++            layout.label_y + i as f64 * layout.style.font_size * 1.3
++        } else {
++            sequence_drawn_text_y(layout.label_y, layout.margin, preceding_height)
++        };
+         let decoded = merman_core::entities::decode_mermaid_entities_to_unicode(raw);
+         let line = if decoded.as_ref().is_empty() {
+             "\u{200B}"
+         } else {
+             decoded.as_ref()
+         };
+-        let _ = write!(
+-            out,
+-            r#"<text x="{x}" y="{y}" text-anchor="{anchor}" dominant-baseline="middle" alignment-baseline="middle" class="messageText" dy="1em" style="{css}">{text}</text>"#,
+-            x = fmt(layout.label_x.round()),
+-            y = fmt(y),
+-            anchor = layout.label_anchor,
+-            css = escape_attr(&css),
+-            text = escape_xml(line)
+-        );
++        if compact {
++            let _ = write!(
++                out,
++                r#"<text x="{}" y="{}" text-anchor="{}" class="messageText" style="{}">{}</text>"#,
++                fmt(layout.label_x),
++                fmt(y),
++                layout.label_anchor,
++                escape_attr(&css),
++                escape_xml(line)
++            );
++        } else {
++            let _ = write!(
++                out,
++                r#"<text x="{x}" y="{y}" text-anchor="{anchor}" dominant-baseline="middle" alignment-baseline="middle" class="messageText" dy="1em" style="{css}">{text}</text>"#,
++                x = fmt(layout.label_x.round()),
++                y = fmt(y),
++                anchor = layout.label_anchor,
++                css = escape_attr(&css),
++                text = escape_xml(line)
++            );
++        }
+         if layout.margin > 0.0 {
+             preceding_height += measure_sequence_drawn_line_height(
+                 layout.measurer,
+diff --git a/src/svg/parity/sequence/settings.rs b/src/svg/parity/sequence/settings.rs
+index 1257bc5..9987cc7 100644
+--- a/src/svg/parity/sequence/settings.rs
++++ b/src/svg/parity/sequence/settings.rs
+@@ -55,6 +55,27 @@ impl SequenceRenderSettings {
+         let actor_text_style =
+             config.text_style("actorFontFamily", "actorFontSize", "actorFontWeight");
+         let note_text_style = config.text_style("noteFontFamily", "noteFontSize", "noteFontWeight");
++        let (mirror_actors, diagram_margin_x, actor_height, wrap_padding, sequence_width) =
++            if config.compact() {
++                let layout = crate::sequence::config::SequenceLayoutSettings::from_effective_config(
++                    effective_config,
++                );
++                (
++                    layout.mirror_actors,
++                    layout.diagram_margin_x,
++                    layout.actor_height,
++                    layout.wrap_padding,
++                    layout.sequence_default_width,
++                )
++            } else {
++                (
++                    mirror_actors,
++                    diagram_margin_x,
++                    actor_height,
++                    wrap_padding,
++                    sequence_width,
++                )
++            };
+         let actor_wrap_width = (sequence_width - 2.0 * wrap_padding).max(1.0);
+         let rect_default_fill =
+             crate::config::config_string(effective_config, &["themeVariables", "rectBkgColor"])
+diff --git a/src/svg/parity/state/edge.rs b/src/svg/parity/state/edge.rs
+index 1d7f8cb..e03f9a4 100644
+--- a/src/svg/parity/state/edge.rs
++++ b/src/svg/parity/state/edge.rs
+@@ -462,6 +462,7 @@ pub(super) fn state_edge_prepare_geometry(
+     origin_x: f64,
+     origin_y: f64,
+ ) -> StatePreparedEdgeGeometry {
++    let arrow_type_end = if ctx.compact { None } else { arrow_type_end };
+     if ctx.uses_elk_adapter_dom {
+         let points = ctx
+             .elk_edge_paths
+@@ -787,6 +788,36 @@ pub(super) fn render_state_edge_label(
+     let w = lbl.width.max(0.0);
+     let h = lbl.height.max(0.0);
+ 
++    if ctx.compact {
++        let w = w + 8.0;
++        let h = h + 10.0;
++        let style = &ctx.edge_text_style;
++        let lines = crate::text::split_html_br_lines(label_text);
++        let _ = write!(
++            out,
++            r#"<g class="edgeLabel" transform="translate({}, {})" style="font-family:{};font-size:{}px;font-weight:{}"><rect class="background" x="{}" y="{}" width="{}" height="{}"/>"#,
++            fmt_display(label_position.x),
++            fmt_display(label_position.y),
++            escape_xml_display(style.font_family.as_deref().unwrap_or("sans-serif")),
++            fmt_display(style.font_size),
++            escape_xml_display(style.font_weight.as_deref().unwrap_or("400")),
++            fmt_display(-w / 2.0),
++            fmt_display(-h / 2.0),
++            fmt_display(w),
++            fmt_display(h)
++        );
++        for (i, line) in lines.iter().enumerate() {
++            let y = (i as f64 - (lines.len() as f64 - 1.0) / 2.0) * style.font_size * 1.3;
++            let _ = write!(
++                out,
++                r#"<text text-anchor="middle" dominant-baseline="central" y="{}" style="font-size:inherit;font-family:inherit;font-weight:inherit">{}</text>"#,
++                fmt_display(y),
++                escape_xml_display(line)
++            );
++        }
++        out.push_str("</g>");
++        return;
++    }
+     write_visible_edge_label(
+         out,
+         &edge.id,
+diff --git a/src/svg/parity/state/mod.rs b/src/svg/parity/state/mod.rs
+index eb5f16b..b47e7d3 100644
+--- a/src/svg/parity/state/mod.rs
++++ b/src/svg/parity/state/mod.rs
+@@ -44,6 +44,7 @@ struct StateRenderCtx<'a> {
+     html_label_wrapping_width: f64,
+     label_min_width: f64,
+     state_padding: f64,
++    compact: bool,
+     node_order: Vec<&'a str>,
+     nodes_by_id: FxHashMap<&'a str, &'a StateSvgNode>,
+     layout_nodes_by_id: FxHashMap<&'a str, &'a LayoutNode>,
+@@ -60,6 +61,7 @@ struct StateRenderCtx<'a> {
+     include_nodes: bool,
+     measurer: &'a dyn TextMeasurer,
+     text_style: crate::text::TextStyle,
++    edge_text_style: crate::text::TextStyle,
+     theme_defaults: StateThemeDefaults,
+     rough_cache: StateRoughCache,
+ }
+diff --git a/src/svg/parity/state/node.rs b/src/svg/parity/state/node.rs
+index a783b09..bd665e8 100644
+--- a/src/svg/parity/state/node.rs
++++ b/src/svg/parity/state/node.rs
+@@ -99,6 +99,36 @@ pub(super) fn render_state_node_svg(
+         String::new()
+     };
+ 
++    if ctx.compact && matches!(node.shape.as_str(), "stateStart" | "stateEnd") {
++        let color = ctx.theme_defaults.text_color.as_str();
++        let radius = w.min(h) / 2.0 - 2.0;
++        let _ = write!(
++            out,
++            r#"<g class="node default" id="{}" transform="translate({}, {})">"#,
++            node_dom_id,
++            fmt_display(cx),
++            fmt_display(cy)
++        );
++        if node.shape == "stateStart" {
++            let _ = write!(
++                out,
++                r#"<circle r="{}" fill="{}" stroke="none"/>"#,
++                fmt_display(radius),
++                escape_xml_display(color)
++            );
++        } else {
++            let _ = write!(
++                out,
++                r#"<circle r="{}" fill="none" stroke="{}" stroke-width="1.5"/><circle r="{}" fill="{}" stroke="none"/>"#,
++                fmt_display(radius),
++                escape_xml_display(color),
++                fmt_display((radius - 4.0).max(0.0)),
++                escape_xml_display(color)
++            );
++        }
++        out.push_str("</g>");
++        return;
++    }
+     match node.shape.as_str() {
+         "stateStart" => {
+             let _g_emit = detail_guard(timing, &mut details.leaf_nodes_emit);
+@@ -613,6 +643,45 @@ pub(super) fn render_state_node_svg(
+                 }
+             }
+ 
++            if ctx.compact {
++                let line_height = measure_style.font_size * 1.3;
++                let lines = crate::text::split_html_br_lines(&label);
++                let family = measure_style.font_family.as_deref().unwrap_or("sans-serif");
++                let weight = measure_style.font_weight.as_deref().unwrap_or("500");
++                let _ = write!(
++                    out,
++                    r#"{}<g class="{}" id="{}" transform="translate({}, {})"{}><rect class="basic label-container" x="{}" y="{}" width="{}" height="{}" rx="6" style="{}"/><g class="label" style="font-family:{};font-size:{}px;font-weight:{};{}">"#,
++                    link_open,
++                    escape_xml_display(&node_class),
++                    node_dom_id,
++                    fmt_display(cx),
++                    fmt_display(cy),
++                    node_title_attr,
++                    fmt_display(-w / 2.0),
++                    fmt_display(-h / 2.0),
++                    fmt_display(w),
++                    fmt_display(h),
++                    escape_xml_display(&shape_style_attr),
++                    escape_xml_display(family),
++                    fmt_display(measure_style.font_size),
++                    escape_xml_display(weight),
++                    escape_xml_display(&text_style_attr)
++                );
++                for (i, line) in lines.iter().enumerate() {
++                    let y = (i as f64 - (lines.len() as f64 - 1.0) / 2.0) * line_height;
++                    let _ = write!(
++                        out,
++                        r#"<text text-anchor="middle" dominant-baseline="central" y="{}" style="font-size:inherit;font-family:inherit;font-weight:inherit">{}</text>"#,
++                        fmt_display(y),
++                        escape_xml_display(
++                            merman_core::entities::decode_mermaid_entities_to_unicode(line)
++                                .as_ref()
++                        )
++                    );
++                }
++                let _ = write!(out, "</g></g>{}", link_close);
++                return;
++            }
+             let fill_attr = fill_override.unwrap_or(ctx.theme_defaults.state_bkg.as_str());
+             let stroke_attr = stroke_override.unwrap_or(ctx.theme_defaults.state_border.as_str());
+             let stroke_width_attr = stroke_width_override
+diff --git a/src/svg/parity/state/render.rs b/src/svg/parity/state/render.rs
+index 5ee35e6..2de484e 100644
+--- a/src/svg/parity/state/render.rs
++++ b/src/svg/parity/state/render.rs
+@@ -35,7 +35,12 @@ pub(in crate::svg::parity) fn render_state_diagram_svg_model(
+     //
+     // Keep the top-level origin at (0,0) and derive `viewBox` / `max-width` later from the emitted
+     // SVG bounds approximation (see below).
+-    let viewport_padding = 8.0;
++    let state_profile = crate::state::StateConfigView::new(effective_config);
++    let viewport_padding = if state_profile.compact() {
++        state_profile.presentation_number("outerPadding", 12.0)
++    } else {
++        8.0
++    };
+     let origin_x = 0.0;
+     let origin_y = 0.0;
+ 
+@@ -112,6 +117,7 @@ pub(in crate::svg::parity) fn render_state_diagram_svg_model(
+         html_label_wrapping_width: state_render_settings.html_label_wrapping_width,
+         label_min_width: state_render_settings.label_min_width,
+         state_padding: state_render_settings.state_padding,
++        compact: state_profile.compact(),
+         node_order,
+         nodes_by_id,
+         layout_nodes_by_id,
+@@ -128,6 +134,7 @@ pub(in crate::svg::parity) fn render_state_diagram_svg_model(
+         include_nodes: options.debug.include_nodes,
+         measurer,
+         text_style,
++        edge_text_style: state_profile.edge_text_style(),
+         theme_defaults: StateThemeDefaults::from_config(effective_config),
+         rough_cache,
+     };
+@@ -375,6 +382,26 @@ pub(in crate::svg::parity) fn render_state_diagram_svg_model(
+             max_y: 100.0,
+         });
+     drop(_g_scan);
++    if state_profile.compact() {
++        if let Some(structural) = state_viewport_bounds_from_layout(layout) {
++            content_bounds = structural;
++        }
++        // The generic source renderer retains its 40px safety margin when expanding
++        // graph bounds for arrowheads and labels, independently of outer graph padding.
++        for edge in &layout.edges {
++            options.checkpoint_emit()?;
++            for point in &edge.points {
++                content_bounds.max_x = content_bounds.max_x.max(point.x + 48.0 - viewport_padding);
++                content_bounds.max_y = content_bounds.max_y.max(point.y + 48.0 - viewport_padding);
++            }
++            if let Some(label) = &edge.label
++                && label.width > 0.0
++            {
++                content_bounds.max_x = content_bounds.max_x.max(label.x + 100.0 - viewport_padding);
++                content_bounds.max_y = content_bounds.max_y.max(label.y + 60.0 - viewport_padding);
++            }
++        }
++    }
+ 
+     let mut title_svg = String::new();
+     if let Some(title) = diagram_title.as_deref() {
+diff --git a/src/svg/parity/state/style.rs b/src/svg/parity/state/style.rs
+index 1687351..678a812 100644
+--- a/src/svg/parity/state/style.rs
++++ b/src/svg/parity/state/style.rs
+@@ -4,6 +4,7 @@ use super::*;
+ pub(super) struct StateThemeDefaults {
+     pub(super) background: String,
+     pub(super) line_color: String,
++    pub(super) text_color: String,
+     pub(super) main_bkg: String,
+     pub(super) state_bkg: String,
+     pub(super) state_border: String,
+@@ -38,6 +39,7 @@ impl StateThemeDefaults {
+         Self {
+             background: theme.background,
+             line_color: theme.common.line_color,
++            text_color: theme.common.text_color,
+             main_bkg: theme.main_bkg,
+             state_bkg: theme.state_bkg,
+             state_border: theme.state_border,
+@@ -136,6 +138,17 @@ pub(super) fn state_markers(
+ ) {
+     let theme = PresentationTheme::new(effective_config).state_diagram();
+     let transition_color = theme.transition_color.as_str();
++    if crate::state::StateConfigView::new(effective_config).compact() {
++        for suffix in ["", "-margin"] {
++            let _ = write!(
++                out,
++                r#"<defs><marker id="{diagram_id}_stateDiagram-barbEnd{suffix}" markerWidth="8" markerHeight="5" refX="7" refY="2.5" markerUnits="userSpaceOnUse" orient="auto"><polygon points="0 0, 8 2.5, 0 5" fill="{}" stroke="{}" stroke-width="0.75" stroke-linejoin="round"/></marker></defs>"#,
++                escape_xml(transition_color),
++                escape_xml(transition_color)
++            );
++        }
++        return;
++    }
+ 
+     if theme.common.is_neo() {
+         let _ = write!(
+@@ -733,6 +746,12 @@ where
+         }
+     }
+ 
++    if crate::state::StateConfigView::new(effective_config).compact() {
++        let _ = write!(
++            &mut css,
++            r#"#{id} .node rect.basic{{rx:6px;ry:6px;stroke-width:0.75px;}}#{id} .transition{{stroke-width:1px;}}"#
++        );
++    }
+     css
+ }
+ 

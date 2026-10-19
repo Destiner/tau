@@ -1,0 +1,20 @@
+diff --git a/src/input/base/state.rs b/src/input/base/state.rs
+--- a/src/input/base/state.rs
++++ b/src/input/base/state.rs
+@@ -1263,6 +1263,16 @@
+         // The text will be set during prepare_if_need in element.rs
+         self._pending_update = true;
+         self
++    }
++
++    /// Prevent subsequent edits from coalescing with the current undo transaction.
++    ///
++    /// Owners that submit without invoking the editor's Enter action need this
++    /// boundary so editing a retained draft after a failed submission can be
++    /// undone independently. Text, selection, IME composition, and existing
++    /// undo/redo history are preserved; no input event or notification is emitted.
++    pub fn break_undo_transaction(&mut self) {
++        self.undo_manager.break_transaction_coalescing();
+     }
+ 
+     /// Return the value of the input field as an owned string.

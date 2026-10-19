@@ -1,0 +1,1722 @@
+diff --git a/src/elements/list/estimated_layout.rs b/src/elements/list/estimated_layout.rs
+new file mode 100644
+index 0000000..528c376
+--- /dev/null
++++ b/src/elements/list/estimated_layout.rs
+@@ -0,0 +1,242 @@
++use super::*;
++
++impl StateInner {
++    pub(super) fn layout_estimated_items(
++        &mut self,
++        available_width: Option<Pixels>,
++        available_height: Pixels,
++        padding: &Edges<Pixels>,
++        render_item: &mut RenderItemFn,
++        window: &mut Window,
++        cx: &mut App,
++    ) -> LayoutItemsResponse {
++        let items = self.items.clone();
++        let epoch = self.geometry_epoch;
++        let needs_visit = |summary: &ListItemSummary| {
++            summary.height != px(0.)
++                || summary.unrendered_count > 0
++                || summary.oldest_epoch.is_some_and(|old| old < epoch)
++        };
++        let space = size(
++            available_width.map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
++            AvailableSpace::MinContent,
++        );
++        let count = items.summary().count;
++        let mut top = self.logical_scroll_top();
++        if self.follow_state.is_following() {
++            top = ListOffset {
++                item_ix: count,
++                offset_in_item: px(0.),
++            };
++            self.logical_scroll_top = Some(top);
++        }
++        let anchor = top.item_ix;
++        let mut cursor = items.cursor::<Count>(());
++        cursor.seek(&Count(anchor), Bias::Right);
++        if matches!(cursor.item(), Some(ListItem::Measured { size, epoch: old, .. })
++            if size.height == px(0.) && *old == epoch)
++        {
++            top.offset_in_item = px(0.);
++            self.pending_scroll = None;
++            if self.logical_scroll_top.is_some() {
++                self.logical_scroll_top = Some(top);
++            }
++        }
++        let mut budget = VIEWPORT_STEP_BUDGET;
++        let mut layouts = VecDeque::new();
++        let mut height = padding.top;
++        let mut max_width = px(0.);
++        let mut pending = false;
++        let mut reached_end = false;
++        loop {
++            if height - top.offset_in_item >= available_height + self.overdraw {
++                break;
++            }
++            if cursor.item_summary().is_some_and(|s| !needs_visit(s)) {
++                cursor.search_forward(needs_visit);
++            }
++            let Some(item) = cursor.item() else {
++                reached_end = true;
++                break;
++            };
++            if budget == 0 {
++                pending = true;
++                break;
++            }
++            budget -= 1;
++            let ix = cursor.start().0;
++            self.geometry_visits += 1;
++            let mut element = render_item(ix, window, cx);
++            let measured = element.layout_as_root(space, window, cx);
++            self.replace_item(
++                ix,
++                ListItem::Measured {
++                    epoch,
++                    size: measured,
++                    focus_handle: item.focus_handle(),
++                },
++            );
++            self.exact_items.insert(ix);
++            if ix == anchor {
++                if let Some(adjustment) = self.pending_scroll.take() {
++                    top.offset_in_item = match adjustment {
++                        PendingScroll::Absolute { item_ix, offset } if item_ix == ix => {
++                            offset.min(measured.height)
++                        }
++                        PendingScroll::Proportional(p) if p.item_ix == ix => {
++                            measured.height * p.fraction
++                        }
++                        _ => top.offset_in_item,
++                    };
++                    self.logical_scroll_top = Some(top);
++                }
++            }
++            if height - top.offset_in_item < available_height && measured.height > px(0.) {
++                layouts.push_back(ItemLayout {
++                    index: ix,
++                    element,
++                    size: measured,
++                });
++            }
++            height += measured.height;
++            max_width = max_width.max(measured.width);
++            cursor.search_forward(needs_visit);
++        }
++        reached_end |= cursor.item().is_none();
++        height += padding.bottom;
++        // Never clamp an anchor at an unmeasured frontier: it is not the physical end.
++        cursor.seek(&Count(anchor), Bias::Right);
++        if reached_end && height - top.offset_in_item < available_height {
++            let mut first = anchor;
++            while height < available_height {
++                cursor.search_backward(needs_visit);
++                let Some(item) = cursor.item() else {
++                    first = 0;
++                    break;
++                };
++                if budget == 0 {
++                    pending = true;
++                    break;
++                }
++                budget -= 1;
++                let ix = cursor.start().0;
++                self.geometry_visits += 1;
++                let mut element = render_item(ix, window, cx);
++                let measured = element.layout_as_root(space, window, cx);
++                self.replace_item(
++                    ix,
++                    ListItem::Measured {
++                        epoch,
++                        size: measured,
++                        focus_handle: item.focus_handle(),
++                    },
++                );
++                self.exact_items.insert(ix);
++                first = ix;
++                height += measured.height;
++                max_width = max_width.max(measured.width);
++                if measured.height > px(0.) {
++                    layouts.push_front(ItemLayout {
++                        index: ix,
++                        element,
++                        size: measured,
++                    });
++                }
++            }
++            top = ListOffset {
++                item_ix: first,
++                offset_in_item: height - available_height,
++            };
++            if self.alignment == ListAlignment::Top {
++                top.offset_in_item = top.offset_in_item.max(px(0.));
++            }
++            if !pending {
++                self.logical_scroll_top = match self.alignment {
++                    ListAlignment::Top => Some(top),
++                    ListAlignment::Bottom => None,
++                };
++            }
++        }
++        let mut leading = top.offset_in_item;
++        while !pending && leading < self.overdraw {
++            cursor.search_backward(needs_visit);
++            let Some(item) = cursor.item() else {
++                break;
++            };
++            if budget == 0 {
++                pending = true;
++                break;
++            }
++            budget -= 1;
++            let ix = cursor.start().0;
++            let measured = match item {
++                ListItem::Measured {
++                    size, epoch: old, ..
++                } if *old == epoch => *size,
++                _ => {
++                    self.geometry_visits += 1;
++                    let measured = render_item(ix, window, cx).layout_as_root(space, window, cx);
++                    self.replace_item(
++                        ix,
++                        ListItem::Measured {
++                            epoch,
++                            size: measured,
++                            focus_handle: item.focus_handle(),
++                        },
++                    );
++                    self.exact_items.insert(ix);
++                    measured
++                }
++            };
++            leading += measured.height;
++        }
++        self.trim_exact_cache();
++        self.viewport_pending = pending;
++        if pending {
++            window.request_animation_frame();
++        }
++        if !pending
++            && reached_end
++            && self.wheel_reached_end
++            && self.follow_state.has_stopped_following()
++        {
++            let total = self.items.summary().height + padding.top + padding.bottom;
++            if self.scroll_top(&top) + available_height >= total - px(1.) {
++                self.follow_state.start_following();
++            }
++        }
++        // Keep the boundary intent through viewport continuation, not through a reversal.
++        if !pending {
++            self.wheel_reached_end = false;
++        }
++        let focused_visible = layouts.iter().any(|layout| {
++            items
++                .find::<Count, _>((), &Count(layout.index), Bias::Right)
++                .2
++                .is_some_and(|item| item.contains_focused(window, cx))
++        });
++        if !focused_visible {
++            let mut focused = items.filter::<_, Count>((), |s| s.has_focus_handles);
++            focused.next();
++            while let Some(item) = focused.item() {
++                if item.contains_focused(window, cx) {
++                    self.geometry_visits += 1;
++                    let mut element = render_item(focused.start().0, window, cx);
++                    let size = element.layout_as_root(space, window, cx);
++                    layouts.push_back(ItemLayout {
++                        index: focused.start().0,
++                        element,
++                        size,
++                    });
++                    break;
++                }
++                focused.next();
++            }
++        }
++        LayoutItemsResponse {
++            max_item_width: max_width,
++            scroll_top: top,
++            item_layouts: layouts,
++        }
++    }
++}
+diff --git a/src/elements/list/estimated_tests.rs b/src/elements/list/estimated_tests.rs
+new file mode 100644
+index 0000000..4dc39bc
+--- /dev/null
++++ b/src/elements/list/estimated_tests.rs
+@@ -0,0 +1,466 @@
++use super::*;
++use crate::{self as gpui, AppContext, Context, Render, TestAppContext, VisualTestContext, canvas};
++use std::cell::Cell;
++
++pub(super) struct Rows {
++    pub(super) state: ListState,
++    pub(super) heights: Rc<RefCell<Vec<f32>>>,
++    pub(super) visits: Rc<Cell<usize>>,
++    pub(super) painted: Rc<RefCell<BTreeSet<usize>>>,
++}
++impl Render for Rows {
++    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++        let heights = self.heights.clone();
++        let visits = self.visits.clone();
++        let painted = self.painted.clone();
++        list(self.state.clone(), move |ix, _, _| {
++            visits.set(visits.get() + 1);
++            let painted = painted.clone();
++            canvas(
++                |_, _, _| {},
++                move |_, _, _, _| {
++                    painted.borrow_mut().insert(ix);
++                },
++            )
++            .h(px(heights.borrow()[ix]))
++            .w_full()
++            .into_any()
++        })
++        .size_full()
++    }
++}
++pub(super) fn draw(cx: &mut VisualTestContext, rows: &Rows, width: f32, height: f32) {
++    cx.draw(
++        point(px(0.), px(0.)),
++        size(px(width), px(height)),
++        |_, cx| {
++            cx.new(|_| Rows {
++                state: rows.state.clone(),
++                heights: rows.heights.clone(),
++                visits: rows.visits.clone(),
++                painted: rows.painted.clone(),
++            })
++            .into_any_element()
++        },
++    );
++}
++pub(super) fn wheel(cx: &mut VisualTestContext, distance: f32) {
++    cx.simulate_event(ScrollWheelEvent {
++        position: point(px(1.), px(1.)),
++        delta: ScrollDelta::Pixels(point(px(0.), px(-distance))),
++        ..Default::default()
++    });
++}
++pub(super) fn rows(count: usize, hint: f32) -> Rows {
++    Rows {
++        state: ListState::new(count, ListAlignment::Top, px(0.))
++            .with_estimated_item_size(size(px(0.), px(hint))),
++        heights: Rc::new(RefCell::new(
++            (0..count).map(|ix| 13. + (ix % 7) as f32 * 10.).collect(),
++        )),
++        visits: Rc::new(Cell::new(0)),
++        painted: Rc::default(),
++    }
++}
++pub(super) fn physical(rows: &Rows) -> f32 {
++    let top = rows.state.logical_scroll_top();
++    rows.heights.borrow()[..top.item_ix].iter().sum::<f32>() + top.offset_in_item.0
++}
++fn settle(cx: &mut VisualTestContext, rows: &Rows, width: f32, height: f32) {
++    for _ in 0..100 {
++        draw(cx, rows, width, height);
++        if rows.state.0.borrow().wheel_input.is_empty() && !rows.state.0.borrow().viewport_pending {
++            return;
++        }
++    }
++    panic!("wheel continuation did not settle");
++}
++
++#[gpui::test]
++fn width_change_stale_zero_suffix_is_not_exact(cx: &mut TestAppContext) {
++    let cx = cx.add_empty_window();
++    let rows = rows(10000, 10.);
++    rows.heights.borrow_mut().fill(0.);
++    settle(cx, &rows, 200., 200.);
++    assert_eq!(rows.state.0.borrow().items.summary().rendered_count, 10000);
++    rows.state.scroll_to(ListOffset {
++        item_ix: 0,
++        offset_in_item: px(0.),
++    });
++    rows.heights.borrow_mut().fill(10.);
++    let visits = rows.visits.get();
++    draw(cx, &rows, 300., 200.);
++    assert!(rows.visits.get() - visits <= VIEWPORT_STEP_BUDGET);
++    assert!(!rows.state.0.borrow().viewport_pending);
++    assert_eq!(rows.state.is_scrolled_to_end(), None);
++
++    // Only the relevant suffix must be exact, not the entire history.
++    rows.state.scroll_to(ListOffset {
++        item_ix: 9960,
++        offset_in_item: px(0.),
++    });
++    draw(cx, &rows, 300., 400.);
++    draw(cx, &rows, 300., 200.);
++    assert_eq!(rows.state.is_scrolled_to_end(), Some(false));
++    rows.state.scroll_to_end();
++    draw(cx, &rows, 300., 200.);
++    assert_eq!(rows.state.is_scrolled_to_end(), Some(true));
++}
++
++#[gpui::test]
++fn width_change_implicit_bottom_intent_has_empty_suffix(cx: &mut TestAppContext) {
++    let cx = cx.add_empty_window();
++    let rows = rows(10000, 10.);
++    rows.state.0.borrow_mut().alignment = ListAlignment::Bottom;
++    rows.heights.borrow_mut().fill(0.);
++    settle(cx, &rows, 200., 200.);
++    assert!(rows.state.0.borrow().logical_scroll_top.is_none());
++    rows.heights.borrow_mut().fill(10.);
++    draw(cx, &rows, 300., 200.);
++    assert!(rows.state.0.borrow().logical_scroll_top.is_none());
++    assert_eq!(rows.state.logical_scroll_top().item_ix, 10000);
++    // The first viewport has no known overflow, so the query is not scrollable yet.
++    assert_eq!(rows.state.is_scrolled_to_end(), None);
++    draw(cx, &rows, 300., 100.);
++    // None is an implicit end intent here, not a reader anchor at item zero.
++    assert!(rows.state.0.borrow().logical_scroll_top.is_none());
++    assert_eq!(rows.state.is_scrolled_to_end(), Some(true));
++}
++
++#[gpui::test]
++fn cold_wheels_are_physical_and_history_independent(cx: &mut TestAppContext) {
++    let cx = cx.add_empty_window();
++    for count in [1000, 10000] {
++        for hint in [1., 30., 500.] {
++            let rows = rows(count, hint);
++            draw(cx, &rows, 200., 200.);
++            assert!(rows.visits.get() < 25);
++            let initial = rows.visits.get();
++            let mut expected = 0.;
++            for distance in [0.25, 550., -0.5, 1700., -550., -0.25, -900., 123.75] {
++                wheel(cx, distance);
++                expected = (expected + distance).max(0.);
++                settle(cx, &rows, 200., 200.);
++                assert!(
++                    (physical(&rows) - expected).abs() < 0.01,
++                    "count={count}, hint={hint}, delta={distance}: {} != {expected}",
++                    physical(&rows)
++                );
++                assert!(rows.state.estimated_geometry_stats().1 <= EXACT_CACHE_LIMIT);
++            }
++            assert!(rows.visits.get() - initial < 350);
++            assert_eq!(rows.state.estimated_geometry_stats().0, rows.visits.get());
++        }
++    }
++}
++
++#[gpui::test]
++fn multiple_inputs_keep_fifo_and_bottom_reversal(cx: &mut TestAppContext) {
++    let cx = cx.add_empty_window();
++    let rows = rows(1000, 1.);
++    draw(cx, &rows, 200., 200.);
++    for distance in [550., 0.25, -130., 900.] {
++        wheel(cx, distance);
++    }
++    settle(cx, &rows, 200., 200.);
++    assert!((physical(&rows) - 1320.25).abs() < 0.01);
++    rows.state.set_follow_mode(FollowMode::Tail);
++    draw(cx, &rows, 200., 200.);
++    let bottom = physical(&rows);
++    wheel(cx, 1000.);
++    wheel(cx, -55.25);
++    settle(cx, &rows, 200., 200.);
++    assert!((physical(&rows) - (bottom - 55.25)).abs() < 0.01);
++    assert!(!rows.state.is_following_tail());
++}
++
++#[gpui::test]
++fn hints_persist_through_insertion_reset_and_width(cx: &mut TestAppContext) {
++    let cx = cx.add_empty_window();
++    let rows = rows(10000, 80.);
++    draw(cx, &rows, 200., 200.);
++    rows.state.splice_with_size_hints(
++        10000..10000,
++        [(Some(size(px(0.), px(150.))), None), (None, None)],
++    );
++    rows.heights.borrow_mut().extend([150., 80.]);
++    let state = rows.state.0.borrow();
++    assert_eq!(
++        state
++            .items
++            .find::<Count, _>((), &Count(10000), Bias::Right)
++            .2
++            .unwrap()
++            .size_hint()
++            .unwrap()
++            .height,
++        px(150.)
++    );
++    assert_eq!(
++        state
++            .items
++            .find::<Count, _>((), &Count(10001), Bias::Right)
++            .2
++            .unwrap()
++            .size_hint()
++            .unwrap()
++            .height,
++        px(80.)
++    );
++    drop(state);
++    rows.state.scroll_to(ListOffset {
++        item_ix: 5000,
++        offset_in_item: px(5.25),
++    });
++    draw(cx, &rows, 200., 200.);
++    let visits = rows.visits.get();
++    draw(cx, &rows, 100., 200.);
++    draw(cx, &rows, 200., 200.);
++    draw(cx, &rows, 200., 300.);
++    assert_eq!(rows.state.logical_scroll_top().item_ix, 5000);
++    assert_eq!(rows.state.logical_scroll_top().offset_in_item, px(5.25));
++    assert!(rows.visits.get() - visits < 50);
++    assert!(rows.state.estimated_geometry_stats().2 < 50);
++    rows.state.reset(10000);
++    assert_eq!(rows.state.0.borrow().items.summary().height, px(800000.));
++}
++
++#[gpui::test]
++fn distant_seek_settles_locally_and_cache_is_bounded(cx: &mut TestAppContext) {
++    let cx = cx.add_empty_window();
++    let rows = rows(10000, 500.);
++    draw(cx, &rows, 200., 200.);
++    let expected_ix = rows
++        .state
++        .0
++        .borrow()
++        .items
++        .find::<ListItemSummary, _>((), &Height(px(2500100.)), Bias::Right)
++        .0
++        .count;
++    rows.state
++        .set_offset_from_scrollbar(point(px(0.), px(-2500100.)));
++    draw(cx, &rows, 200., 200.);
++    let top = rows.state.logical_scroll_top();
++    assert_eq!(top.item_ix, expected_ix);
++    assert!(top.offset_in_item <= px(rows.heights.borrow()[expected_ix]));
++    assert!(rows.visits.get() < 30);
++    for ix in (0..10000).step_by(25) {
++        rows.state.scroll_to(ListOffset {
++            item_ix: ix,
++            offset_in_item: px(3.),
++        });
++        draw(cx, &rows, 200., 200.);
++    }
++    assert_eq!(rows.state.estimated_geometry_stats().1, EXACT_CACHE_LIMIT);
++    let invalidations = rows.state.estimated_geometry_stats().2;
++    draw(cx, &rows, 100., 200.);
++    assert_eq!(
++        rows.state.estimated_geometry_stats().2 - invalidations,
++        EXACT_CACHE_LIMIT
++    );
++    assert!(rows.state.estimated_geometry_stats().1 < 20);
++}
++
++#[gpui::test]
++fn streaming_removal_and_tail_intent(cx: &mut TestAppContext) {
++    let cx = cx.add_empty_window();
++    let rows = rows(1000, 500.);
++    rows.state.set_follow_mode(FollowMode::Tail);
++    draw(cx, &rows, 200., 200.);
++    assert!(rows.state.is_following_tail());
++    rows.heights.borrow_mut()[999] += 100.;
++    rows.state.remeasure_items(999..1000);
++    draw(cx, &rows, 200., 200.);
++    let total: f32 = rows.heights.borrow().iter().sum();
++    assert!((physical(&rows) - (total - 200.)).abs() < 0.02);
++    wheel(cx, -550.25);
++    settle(cx, &rows, 200., 200.);
++    assert!(!rows.state.is_following_tail());
++    let anchor = rows.state.logical_scroll_top();
++    rows.heights.borrow_mut()[999] += 200.;
++    rows.state.remeasure_items(999..1000);
++    rows.heights.borrow_mut().push(50.);
++    rows.state.splice(1000..1000, 1);
++    draw(cx, &rows, 200., 200.);
++    assert_eq!(rows.state.logical_scroll_top().item_ix, anchor.item_ix);
++    assert_eq!(
++        rows.state.logical_scroll_top().offset_in_item,
++        anchor.offset_in_item
++    );
++    assert!(!rows.state.is_following_tail());
++    rows.state
++        .remeasure_items(anchor.item_ix..anchor.item_ix + 1);
++    rows.heights.borrow_mut()[anchor.item_ix] += 100.;
++    draw(cx, &rows, 200., 200.);
++    assert_eq!(
++        rows.state.logical_scroll_top().offset_in_item,
++        anchor.offset_in_item
++    );
++    rows.state.splice(0..10, 0);
++    rows.heights.borrow_mut().drain(0..10);
++    draw(cx, &rows, 200., 200.);
++    assert_eq!(rows.state.logical_scroll_top().item_ix, anchor.item_ix - 10);
++    wheel(cx, 5000.);
++    settle(cx, &rows, 200., 200.);
++    assert!(rows.state.is_following_tail());
++}
++
++#[gpui::test]
++fn zero_rows_wheel_retains_residual_and_terminates(cx: &mut TestAppContext) {
++    let cx = cx.add_empty_window();
++    for (count, zero_end) in [(1000, 800), (10000, 9000)] {
++        let rows = rows(count, 10.);
++        for ix in 20..zero_end {
++            rows.heights.borrow_mut()[ix] = 0.;
++        }
++        draw(cx, &rows, 200., 200.);
++        wheel(cx, 1500.25);
++        settle(cx, &rows, 200., 200.);
++        assert!((physical(&rows) - 1500.25).abs() < 0.01);
++        wheel(cx, -1500.25);
++        settle(cx, &rows, 200., 200.);
++        assert_eq!(physical(&rows), 0.);
++    }
++}
++
++#[gpui::test]
++fn fractional_row_geometry_uses_actual_layout_oracle(cx: &mut TestAppContext) {
++    let cx = cx.add_empty_window();
++    let rows = rows(1000, 500.);
++    for (ix, height) in rows.heights.borrow_mut().iter_mut().enumerate() {
++        *height += (ix % 4) as f32 * 0.25;
++    }
++    // Taffy/platform pixel rounding means style heights are not an exact physical oracle.
++    // Measure a separate reference list; the list under test remains cold and lazy.
++    let reference = Rows {
++        state: ListState::new(1000, ListAlignment::Top, px(0.)).measure_all(),
++        heights: rows.heights.clone(),
++        visits: Rc::new(Cell::new(0)),
++        painted: Rc::default(),
++    };
++    draw(cx, &reference, 200., 200.);
++    let actual: Vec<f32> = reference
++        .state
++        .0
++        .borrow()
++        .items
++        .iter()
++        .map(|item| item.size().unwrap().height.0)
++        .collect();
++    draw(cx, &rows, 200., 200.);
++    let mut expected: f32 = 0.;
++    for delta in [0.25, 550., -0.5, 1750.25, -1100.75, -550., 0.75] {
++        wheel(cx, delta);
++        settle(cx, &rows, 200., 200.);
++        expected = (expected + delta).max(0.);
++        let top = rows.state.logical_scroll_top();
++        let observed = actual[..top.item_ix].iter().sum::<f32>() + top.offset_in_item.0;
++        assert!(
++            (observed - expected).abs() < 0.01,
++            "{observed} != {expected}"
++        );
++    }
++    assert!(rows.visits.get() < 300);
++}
++
++#[gpui::test]
++fn bottom_alignment_wheels_and_scroll_by_use_rendered_anchor(cx: &mut TestAppContext) {
++    let cx = cx.add_empty_window();
++    let mut rows = rows(1000, 500.);
++    rows.state = ListState::new(1000, ListAlignment::Bottom, px(0.))
++        .with_estimated_item_size(size(px(0.), px(500.)));
++    draw(cx, &rows, 200., 200.);
++    let bottom = rows.heights.borrow().iter().sum::<f32>() - 200.;
++    wheel(cx, -550.25);
++    settle(cx, &rows, 200., 200.);
++    assert!(
++        (physical(&rows) - (bottom - 550.25)).abs() < 0.01,
++        "observed={}, expected={}, logical={:?}, painted={:?}",
++        physical(&rows),
++        bottom - 550.25,
++        rows.state.logical_scroll_top(),
++        rows.state.0.borrow().last_painted_scroll_top
++    );
++    wheel(cx, 1000.);
++    settle(cx, &rows, 200., 200.);
++    // Bottom alignment keeps its public implicit end anchor; read the actual painted anchor.
++    let anchor = rows.state.0.borrow().last_painted_scroll_top.unwrap();
++    let observed =
++        rows.heights.borrow()[..anchor.item_ix].iter().sum::<f32>() + anchor.offset_in_item.0;
++    assert!((observed - bottom).abs() < 0.01);
++    rows.state.scroll_by(px(-55.25));
++    settle(cx, &rows, 200., 200.);
++    assert!((physical(&rows) - (bottom - 55.25)).abs() < 0.01);
++}
++
++#[gpui::test]
++fn large_wheel_has_bounded_visits_and_frame_continuation(cx: &mut TestAppContext) {
++    let cx = cx.add_empty_window();
++    let rows = rows(10000, 1.);
++    draw(cx, &rows, 200., 200.);
++    wheel(cx, 50000.25);
++    let mut frames = 0;
++    loop {
++        let visits = rows.visits.get();
++        draw(cx, &rows, 200., 200.);
++        assert!(rows.visits.get() - visits <= WHEEL_STEP_BUDGET + 25);
++        assert!(rows.state.estimated_geometry_stats().1 <= EXACT_CACHE_LIMIT);
++        frames += 1;
++        if rows.state.0.borrow().wheel_input.is_empty() {
++            break;
++        }
++        assert!(frames < 20);
++        assert!(cx.update(|window, cx| window.simulate_next_frame(cx)) > 0);
++    }
++    assert!(frames > 1);
++    assert!((physical(&rows) - 50000.25).abs() < 0.01);
++    wheel(cx, -50000.25);
++    settle(cx, &rows, 200., 200.);
++    assert_eq!(physical(&rows), 0.);
++}
++
++#[gpui::test]
++fn width_reflow_height_only_and_paused_tail(cx: &mut TestAppContext) {
++    let cx = cx.add_empty_window();
++    let rows = rows(10000, 1.);
++    draw(cx, &rows, 200., 200.);
++    rows.state.scroll_to(ListOffset {
++        item_ix: 5000,
++        offset_in_item: px(5.25),
++    });
++    draw(cx, &rows, 200., 200.);
++    for height in rows.heights.borrow_mut().iter_mut() {
++        *height *= 2.;
++    }
++    draw(cx, &rows, 100., 200.);
++    assert_eq!(rows.state.logical_scroll_top().item_ix, 5000);
++    assert_eq!(rows.state.logical_scroll_top().offset_in_item, px(5.25));
++    let invalidations = rows.state.estimated_geometry_stats().2;
++    draw(cx, &rows, 100., 400.);
++    assert_eq!(rows.state.estimated_geometry_stats().2, invalidations);
++    for height in rows.heights.borrow_mut().iter_mut() {
++        *height /= 2.;
++    }
++    draw(cx, &rows, 200., 200.);
++    assert_eq!(rows.state.logical_scroll_top().item_ix, 5000);
++    assert_eq!(rows.state.logical_scroll_top().offset_in_item, px(5.25));
++    rows.state.set_follow_mode(FollowMode::Tail);
++    draw(cx, &rows, 200., 200.);
++    rows.heights.borrow_mut().push(133.);
++    rows.state.splice(10000..10000, 1);
++    draw(cx, &rows, 200., 200.);
++    assert!(rows.state.is_following_tail());
++    let total: f32 = rows.heights.borrow().iter().sum();
++    assert!((physical(&rows) - (total - 200.)).abs() < 0.02);
++    rows.state.pause_following_tail();
++    rows.state.remeasure_items(9999..10001);
++    draw(cx, &rows, 200., 200.);
++    assert!(
++        !rows.state.is_following_tail(),
++        "geometry refinement is not user tail intent"
++    );
++    wheel(cx, 1.);
++    settle(cx, &rows, 200., 200.);
++    assert!(rows.state.is_following_tail());
++}
+diff --git a/src/elements/list/viewport_tests.rs b/src/elements/list/viewport_tests.rs
+new file mode 100644
+index 0000000..e7bfcdd
+--- /dev/null
++++ b/src/elements/list/viewport_tests.rs
+@@ -0,0 +1,151 @@
++use super::estimated_tests::{draw, physical, rows, wheel};
++use super::*;
++use crate::{self as gpui, TestAppContext, VisualTestContext};
++
++fn bounded_settle(
++    cx: &mut VisualTestContext,
++    rows: &super::estimated_tests::Rows,
++    width: f32,
++) -> usize {
++    for frame in 1..=100 {
++        let limit = if rows.state.0.borrow().wheel_input.is_empty() {
++            VIEWPORT_STEP_BUDGET
++        } else {
++            VIEWPORT_STEP_BUDGET + WHEEL_STEP_BUDGET + 1
++        };
++        let callbacks = rows.visits.get();
++        let measurements = rows.state.estimated_geometry_stats().0;
++        draw(cx, rows, width, 200.);
++        let delta = rows.visits.get() - callbacks;
++        assert!(delta <= limit, "callbacks={delta}");
++        assert_eq!(
++            rows.state.estimated_geometry_stats().0 - measurements,
++            delta
++        );
++        let state = rows.state.0.borrow();
++        if !state.viewport_pending && state.wheel_input.is_empty() {
++            return frame;
++        }
++    }
++    panic!("viewport continuation did not terminate");
++}
++
++#[gpui::test]
++fn ten_thousand_zero_rows_cold_known_resize_and_visible_paint(cx: &mut TestAppContext) {
++    let cx = cx.add_empty_window();
++    let rows = rows(10001, 20.);
++    rows.heights.borrow_mut().fill(0.);
++    rows.heights.borrow_mut()[10000] = 300.;
++    assert!(bounded_settle(cx, &rows, 200.) > 1);
++    assert_eq!(rows.visits.get(), 10001);
++    assert_eq!(*rows.painted.borrow(), BTreeSet::from([10000]));
++    assert_eq!(rows.state.item_is_below_viewport(10000), Some(false));
++    // All zero rows remain known even though the positive-height hot cache is bounded.
++    for _ in 0..3 {
++        let before = rows.visits.get();
++        assert_eq!(bounded_settle(cx, &rows, 200.), 1);
++        assert_eq!(rows.visits.get() - before, 1);
++    }
++    assert!(bounded_settle(cx, &rows, 220.) > 1);
++    assert_eq!(bounded_settle(cx, &rows, 220.), 1);
++    assert_eq!(physical(&rows), 0.);
++    rows.heights.borrow_mut()[5000] = 50.;
++    rows.state.remeasure_items(5000..5001);
++    rows.painted.borrow_mut().clear();
++    assert_eq!(bounded_settle(cx, &rows, 220.), 1);
++    assert!(rows.painted.borrow().contains(&5000));
++    assert!(rows.painted.borrow().contains(&10000));
++}
++
++#[gpui::test]
++fn zero_run_tail_bottom_and_all_zero_termination(cx: &mut TestAppContext) {
++    let cx = cx.add_empty_window();
++    for all_zero in [false, true] {
++        let rows = rows(10001, 20.);
++        rows.heights.borrow_mut().fill(0.);
++        if !all_zero {
++            rows.heights.borrow_mut()[0] = 300.;
++        }
++        rows.state.set_follow_mode(FollowMode::Tail);
++        assert!(bounded_settle(cx, &rows, 200.) > 1);
++        assert!(rows.state.is_following_tail());
++        assert_eq!(physical(&rows), if all_zero { 0. } else { 100. });
++        assert_eq!(bounded_settle(cx, &rows, 200.), 1);
++        if !all_zero {
++            assert_eq!(*rows.painted.borrow(), BTreeSet::from([0]));
++            assert_eq!(rows.state.item_is_above_viewport(0), Some(false));
++            wheel(cx, -0.25);
++            bounded_settle(cx, &rows, 200.);
++            assert!(!rows.state.is_following_tail());
++            assert!((physical(&rows) - 99.75).abs() < 0.01);
++            wheel(cx, 0.25);
++            bounded_settle(cx, &rows, 200.);
++            assert!(rows.state.is_following_tail());
++        }
++    }
++}
++
++#[gpui::test]
++fn zero_run_leading_overdraw_bottom_alignment_and_anchor(cx: &mut TestAppContext) {
++    let cx = cx.add_empty_window();
++    let rows = rows(10001, 20.);
++    rows.heights.borrow_mut().fill(0.);
++    rows.heights.borrow_mut()[10000] = 300.;
++    rows.state.0.borrow_mut().overdraw = px(50.);
++    rows.state.scroll_to(ListOffset {
++        item_ix: 10000,
++        offset_in_item: px(0.),
++    });
++    assert!(bounded_settle(cx, &rows, 200.) > 1);
++    assert_eq!(bounded_settle(cx, &rows, 200.), 1);
++    assert_eq!(rows.state.logical_scroll_top().item_ix, 10000);
++    rows.state.scroll_to(ListOffset {
++        item_ix: 5000,
++        offset_in_item: px(100.),
++    });
++    assert_eq!(bounded_settle(cx, &rows, 200.), 1);
++    assert_eq!(physical(&rows), 0.);
++    rows.state.0.borrow_mut().alignment = ListAlignment::Bottom;
++    rows.state.scroll_to(ListOffset {
++        item_ix: 10001,
++        offset_in_item: px(0.),
++    });
++    assert_eq!(bounded_settle(cx, &rows, 200.), 1);
++    let painted = rows.state.0.borrow().last_painted_scroll_top.unwrap();
++    assert_eq!(painted.item_ix, 10000);
++    assert_eq!(painted.offset_in_item, px(100.));
++    rows.state.0.borrow_mut().overdraw = px(150.);
++    rows.state.remeasure_items(0..10001);
++    assert!(bounded_settle(cx, &rows, 200.) > 1);
++    let painted = rows.state.0.borrow().last_painted_scroll_top.unwrap();
++    assert_eq!(painted.item_ix, 10000);
++    assert_eq!(painted.offset_in_item, px(100.));
++    assert_eq!(bounded_settle(cx, &rows, 200.), 1);
++}
++
++#[gpui::test]
++fn viewport_continuation_interrupt_seek_and_fifo_reversal(cx: &mut TestAppContext) {
++    let cx = cx.add_empty_window();
++    let rows = rows(10002, 20.);
++    rows.heights.borrow_mut().fill(0.);
++    rows.heights.borrow_mut()[0] = 250.;
++    rows.heights.borrow_mut()[10001] = 300.;
++    rows.state.scroll_to(ListOffset {
++        item_ix: 1,
++        offset_in_item: px(0.),
++    });
++    draw(cx, &rows, 200., 200.);
++    assert!(rows.state.0.borrow().viewport_pending);
++    rows.state.scroll_to(ListOffset {
++        item_ix: 0,
++        offset_in_item: px(0.),
++    });
++    assert_eq!(bounded_settle(cx, &rows, 200.), 1);
++    assert_eq!(physical(&rows), 0.);
++    wheel(cx, 275.25);
++    wheel(cx, -25.5);
++    assert!(bounded_settle(cx, &rows, 200.) > 1);
++    assert!((physical(&rows) - 249.75).abs() < 0.01);
++    assert!(rows.painted.borrow().contains(&10001));
++    assert_eq!(rows.state.item_is_below_viewport(10001), Some(false));
++}
+diff --git a/src/elements/list.rs b/src/elements/list.rs
+index fa21d10..167e98c 100644
+--- a/src/elements/list.rs
++++ b/src/elements/list.rs
+@@ -15,9 +15,14 @@ use crate::{
+ };
+ use collections::VecDeque;
+ use refineable::Refineable as _;
+-use std::{cell::RefCell, ops::Range, rc::Rc};
++use std::{cell::RefCell, collections::BTreeSet, ops::Range, rc::Rc};
++
+ use sum_tree::{Bias, Dimensions, SumTree};
+ 
++const EXACT_CACHE_LIMIT: usize = 1024;
++const WHEEL_STEP_BUDGET: usize = 256;
++const VIEWPORT_STEP_BUDGET: usize = 256;
++
+ type RenderItemFn = dyn FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static;
+ 
+ /// Construct a new list element
+@@ -62,6 +67,7 @@ impl std::fmt::Debug for ListState {
+ struct StateInner {
+     last_layout_bounds: Option<Bounds<Pixels>>,
+     last_padding: Option<Edges<Pixels>>,
++    last_painted_scroll_top: Option<ListOffset>,
+     items: SumTree<ListItem>,
+     logical_scroll_top: Option<ListOffset>,
+     alignment: ListAlignment,
+@@ -73,6 +79,14 @@ struct StateInner {
+     measuring_behavior: ListMeasuringBehavior,
+     pending_scroll: Option<PendingScroll>,
+     follow_state: FollowState,
++    default_size_hint: Option<Size<Pixels>>,
++    exact_items: BTreeSet<usize>,
++    wheel_input: VecDeque<Pixels>,
++    wheel_reached_end: bool,
++    geometry_visits: usize,
++    width_invalidations: usize,
++    geometry_epoch: usize,
++    viewport_pending: bool,
+ }
+ 
+ /// Deferred scroll adjustment applied after the scroll-top item has been remeasured.
+@@ -248,6 +262,7 @@ enum ListItem {
+         focus_handle: Option<FocusHandle>,
+     },
+     Measured {
++        epoch: usize,
+         size: Size<Pixels>,
+         focus_handle: Option<FocusHandle>,
+     },
+@@ -296,6 +311,7 @@ struct ListItemSummary {
+     height: Pixels,
+     has_focus_handles: bool,
+     has_unknown_height: bool,
++    oldest_epoch: Option<usize>,
+ }
+ 
+ #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+@@ -315,6 +331,7 @@ impl ListState {
+         let this = Self(Rc::new(RefCell::new(StateInner {
+             last_layout_bounds: None,
+             last_padding: None,
++            last_painted_scroll_top: None,
+             items: SumTree::default(),
+             logical_scroll_top: None,
+             alignment,
+@@ -325,6 +342,14 @@ impl ListState {
+             measuring_behavior: ListMeasuringBehavior::default(),
+             pending_scroll: None,
+             follow_state: FollowState::default(),
++            default_size_hint: None,
++            exact_items: BTreeSet::new(),
++            wheel_input: VecDeque::new(),
++            wheel_reached_end: false,
++            geometry_visits: 0,
++            width_invalidations: 0,
++            geometry_epoch: 0,
++            viewport_pending: false,
+         })));
+         this.splice(0..0, item_count);
+         this
+@@ -334,7 +359,11 @@ impl ListState {
+     ///
+     /// This is useful for ensuring that the scrollbar size is correct instead of based on only rendered elements.
+     pub fn measure_all(self) -> Self {
+-        self.0.borrow_mut().measuring_behavior = ListMeasuringBehavior::Measure(false);
++        let mut state = self.0.borrow_mut();
++        state.measuring_behavior = ListMeasuringBehavior::Measure(false);
++        state.default_size_hint = None;
++        state.exact_items.clear();
++        drop(state);
+         self
+     }
+ 
+@@ -349,6 +378,77 @@ impl ListState {
+         self
+     }
+ 
++    /// Opt into lazy estimated geometry and physically exact wheel traversal.
++    ///
++    /// The hint persists across reset, insertion and width changes. Exact geometry
++    /// is cached for at most 1024 positive-height rows; evicted geometry remains
++    /// an estimate. Zero-height geometry is retained in the sum tree and lazily
++    /// invalidated by a width epoch, so repeated paints skip known zero subtrees.
++    /// Hints must be finite and nonnegative. No semantic text anchor is implied.
++    /// Explicit `measure_all()` opts back out of lazy geometry. Wheel input (and
++    /// `scroll_by`) is deferred until layout, in FIFO direction groups, with bounded traversal
++    /// and continuation. Viewport filling is also bounded to 256 rows per layout.
++    /// Known zero-height subtrees are skipped until geometry is invalidated.
++    pub fn with_estimated_item_size(self, size_hint: Size<Pixels>) -> Self {
++        assert!(size_hint.width.0.is_finite() && size_hint.width >= px(0.));
++        assert!(size_hint.height.0.is_finite() && size_hint.height >= px(0.));
++        let mut state = self.0.borrow_mut();
++        let mut exact_items = BTreeSet::new();
++        state.items = SumTree::from_iter(
++            state.items.iter().enumerate().map(|(ix, item)| match item {
++                ListItem::Unmeasured {
++                    size_hint: hint,
++                    focus_handle,
++                } => ListItem::Unmeasured {
++                    size_hint: hint.or(Some(size_hint)),
++                    focus_handle: focus_handle.clone(),
++                },
++                ListItem::Measured { .. } => {
++                    exact_items.insert(ix);
++                    item.clone()
++                }
++            }),
++            (),
++        );
++        state.exact_items = exact_items;
++        state.trim_exact_cache();
++        state.default_size_hint = Some(size_hint);
++        state.measuring_behavior = ListMeasuringBehavior::Visible;
++        drop(state);
++        self
++    }
++
++    /// Replace rows with optional per-row estimates and focus handles.
++    /// Missing estimates use the persistent default, if enabled. Use
++    /// [`Self::with_estimated_item_size`] to retain hints across width changes
++    /// and enable exact wheel traversal.
++    pub fn splice_with_size_hints(
++        &self,
++        old_range: Range<usize>,
++        items: impl IntoIterator<Item = (Option<Size<Pixels>>, Option<FocusHandle>)>,
++    ) {
++        self.splice_items(old_range, items);
++    }
++
++    /// Content-free geometry diagnostics: render/measurement callbacks, positive-height
++    /// exact cache entries, eagerly invalidated entries on width changes.
++    /// Zero-height entries are retained separately in the tree and invalidated lazily.
++    #[cfg(any(test, feature = "test-support"))]
++    pub fn estimated_geometry_stats(&self) -> (usize, usize, usize) {
++        let state = self.0.borrow();
++        (
++            state.geometry_visits,
++            state.exact_items.len(),
++            state.width_invalidations,
++        )
++    }
++
++    /// Whether budgeted viewport filling has requested a continuation frame.
++    #[cfg(any(test, feature = "test-support"))]
++    pub fn estimated_viewport_pending(&self) -> bool {
++        self.0.borrow().viewport_pending
++    }
++
+     /// Reset this instantiation of the list state.
+     ///
+     /// Note that this will cause scroll events to be dropped until the next paint.
+@@ -356,6 +456,9 @@ impl ListState {
+         let old_count = {
+             let state = &mut *self.0.borrow_mut();
+             state.reset = true;
++            state.wheel_input.clear();
++            state.exact_items.clear();
++            state.last_painted_scroll_top = None;
+             state.measuring_behavior.reset();
+             state.logical_scroll_top = None;
+             state.pending_scroll = None;
+@@ -380,6 +483,10 @@ impl ListState {
+             height,
+         };
+         let mut state = self.0.borrow_mut();
++        state.exact_items.clear();
++        if let Some(hint) = state.default_size_hint.as_mut() {
++            hint.height = height;
++        }
+         let new_items = state
+             .items
+             .iter()
+@@ -471,6 +578,7 @@ impl ListState {
+             new_items
+         };
+         state.items = new_items;
++        state.exact_items.retain(|ix| !range.contains(ix));
+         state.measuring_behavior.reset();
+     }
+ 
+@@ -481,6 +589,8 @@ impl ListState {
+ 
+     /// Whether the list is scrolled to the end, or `None` if the list is
+     /// not scrollable or the total content height is not yet known.
++    /// In estimated mode, estimates after the reader anchor are not exact
++    /// enough to answer this query; it returns `None` until that suffix is measured.
+     pub fn is_scrolled_to_end(&self) -> Option<bool> {
+         let state = self.0.borrow();
+         let bounds = state.last_layout_bounds?;
+@@ -488,6 +598,19 @@ impl ListState {
+         if summary.has_unknown_height {
+             return None;
+         }
++        if state.default_size_hint.is_some() {
++            let mut cursor = state.items.cursor::<Count>(());
++            cursor.seek(&Count(state.logical_scroll_top().item_ix), Bias::Right);
++            let suffix = cursor.suffix();
++            let summary = suffix.summary();
++            if summary.unrendered_count > 0
++                || summary
++                    .oldest_epoch
++                    .is_some_and(|epoch| epoch < state.geometry_epoch)
++            {
++                return None;
++            }
++        }
+         let padding = state.last_padding.unwrap_or_default();
+         let content_height = summary.height + padding.top + padding.bottom;
+         let scroll_max = (content_height - bounds.size.height).max(px(0.));
+@@ -512,6 +635,17 @@ impl ListState {
+         &self,
+         old_range: Range<usize>,
+         focus_handles: impl IntoIterator<Item = Option<FocusHandle>>,
++    ) {
++        self.splice_items(
++            old_range,
++            focus_handles.into_iter().map(|handle| (None, handle)),
++        );
++    }
++
++    fn splice_items(
++        &self,
++        old_range: Range<usize>,
++        items: impl IntoIterator<Item = (Option<Size<Pixels>>, Option<FocusHandle>)>,
+     ) {
+         let state = &mut *self.0.borrow_mut();
+ 
+@@ -521,10 +655,14 @@ impl ListState {
+ 
+         let mut spliced_count = 0;
+         new_items.extend(
+-            focus_handles.into_iter().map(|focus_handle| {
++            items.into_iter().map(|(hint, focus_handle)| {
++                if let Some(hint) = hint {
++                    assert!(hint.width.0.is_finite() && hint.width >= px(0.));
++                    assert!(hint.height.0.is_finite() && hint.height >= px(0.));
++                }
+                 spliced_count += 1;
+                 ListItem::Unmeasured {
+-                    size_hint: None,
++                    size_hint: hint.or(state.default_size_hint),
+                     focus_handle,
+                 }
+             }),
+@@ -533,6 +671,41 @@ impl ListState {
+         new_items.append(old_items.suffix(), ());
+         drop(old_items);
+         state.items = new_items;
++        state.exact_items = state
++            .exact_items
++            .iter()
++            .filter_map(|&ix| {
++                if ix < old_range.start {
++                    Some(ix)
++                } else if ix >= old_range.end {
++                    Some(ix - old_range.len() + spliced_count)
++                } else {
++                    None
++                }
++            })
++            .collect();
++        if state.default_size_hint.is_some()
++            && let Some(pending) = state.pending_scroll.as_mut()
++        {
++            let ix = match pending {
++                PendingScroll::Absolute { item_ix, .. } => item_ix,
++                PendingScroll::Proportional(pending) => &mut pending.item_ix,
++            };
++            if old_range.contains(ix) {
++                state.pending_scroll = None;
++            } else if old_range.end <= *ix {
++                *ix = *ix - old_range.len() + spliced_count;
++            }
++        }
++
++        if let Some(top) = state.last_painted_scroll_top.as_mut() {
++            if old_range.contains(&top.item_ix) {
++                top.item_ix = old_range.start;
++                top.offset_in_item = px(0.);
++            } else if old_range.end <= top.item_ix {
++                top.item_ix = top.item_ix - old_range.len() + spliced_count;
++            }
++        }
+ 
+         if let Some(ListOffset {
+             item_ix,
+@@ -569,6 +742,16 @@ impl ListState {
+ 
+         let current_offset = self.logical_scroll_top();
+         let state = &mut *self.0.borrow_mut();
++        if state.default_size_hint.is_some() {
++            if state.logical_scroll_top.is_none() {
++                state.logical_scroll_top = state.last_painted_scroll_top;
++            }
++            if distance < px(0.) {
++                state.follow_state.stop_following();
++            }
++            state.enqueue_wheel(distance);
++            return;
++        }
+ 
+         if distance < px(0.) {
+             state.follow_state.stop_following();
+@@ -604,6 +787,10 @@ impl ListState {
+         let state = &mut *self.0.borrow_mut();
+         let item_count = state.items.summary().count;
+         state.pending_scroll = None;
++        state.wheel_input.clear();
++        if state.default_size_hint.is_some() {
++            state.follow_state.start_following();
++        }
+         state.logical_scroll_top = Some(ListOffset {
+             item_ix: item_count,
+             offset_in_item: px(0.),
+@@ -617,6 +804,10 @@ impl ListState {
+     pub fn set_follow_mode(&self, mode: FollowMode) {
+         let state = &mut *self.0.borrow_mut();
+ 
++        if state.default_size_hint.is_some() {
++            state.wheel_input.clear();
++            state.pending_scroll = None;
++        }
+         match mode {
+             FollowMode::Normal => {
+                 state.follow_state = FollowState::Normal;
+@@ -644,7 +835,11 @@ impl ListState {
+     /// diagram) and the current position should stay put rather than snapping
+     /// to the end.
+     pub fn pause_following_tail(&self) {
+-        self.0.borrow_mut().follow_state.stop_following();
++        let mut state = self.0.borrow_mut();
++        if state.default_size_hint.is_some() && state.logical_scroll_top.is_none() {
++            state.logical_scroll_top = state.last_painted_scroll_top;
++        }
++        state.follow_state.stop_following();
+     }
+ 
+     /// Returns whether the list is currently actively following the
+@@ -669,6 +864,7 @@ impl ListState {
+             state.follow_state.stop_following();
+         }
+ 
++        state.wheel_input.clear();
+         state.rebase_pending_scroll(scroll_top);
+         state.logical_scroll_top = Some(scroll_top);
+     }
+@@ -676,6 +872,7 @@ impl ListState {
+     /// Scroll the list to the given item, such that the item is fully visible.
+     pub fn scroll_to_reveal_item(&self, ix: usize) {
+         let state = &mut *self.0.borrow_mut();
++        state.wheel_input.clear();
+ 
+         let mut scroll_top = state.logical_scroll_top();
+         let height = state
+@@ -842,6 +1039,170 @@ impl ListState {
+ }
+ 
+ impl StateInner {
++    fn enqueue_wheel(&mut self, distance: Pixels) {
++        if distance == px(0.) {
++            return;
++        }
++        if let Some(last) = self.wheel_input.back_mut() {
++            if (last.0 > 0.) == (distance.0 > 0.) {
++                *last += distance;
++                return;
++            }
++        }
++        self.wheel_input.push_back(distance);
++    }
++
++    fn replace_item(&mut self, ix: usize, item: ListItem) {
++        let mut cursor = self.items.cursor::<Count>(());
++        let mut tree = cursor.slice(&Count(ix), Bias::Right);
++        cursor.seek(&Count(ix + 1), Bias::Right);
++        tree.push(item, ());
++        tree.append(cursor.suffix(), ());
++        drop(cursor);
++        self.items = tree;
++    }
++
++    fn invalidate_exact(&mut self, ix: usize) {
++        let (_, _, item) = self.items.find::<Count, _>((), &Count(ix), Bias::Right);
++        if let Some(item) = item {
++            let item = ListItem::Unmeasured {
++                size_hint: item.size_hint(),
++                focus_handle: item.focus_handle(),
++            };
++            self.replace_item(ix, item);
++        }
++    }
++
++    fn trim_exact_cache(&mut self) {
++        // Zero rows retain compact geometry in the tree, not the bounded hot cache.
++        // Epoch summaries invalidate this knowledge lazily on width changes.
++        self.exact_items.retain(|ix| {
++            self.items
++                .find::<Count, _>((), &Count(*ix), Bias::Right)
++                .2
++                .and_then(ListItem::size)
++                .is_none_or(|size| size.height != px(0.))
++        });
++        while self.exact_items.len() > EXACT_CACHE_LIMIT {
++            let ix = self.exact_items.pop_first().unwrap();
++            self.invalidate_exact(ix);
++        }
++    }
++
++    fn wheel_item_height(
++        &mut self,
++        ix: usize,
++        space: Size<AvailableSpace>,
++        render_item: &mut RenderItemFn,
++        window: &mut Window,
++        cx: &mut App,
++    ) -> Pixels {
++        let (_, _, item) = self.items.find::<Count, _>((), &Count(ix), Bias::Right);
++        let item = item.unwrap();
++        if let ListItem::Measured { size, epoch, .. } = item {
++            if size.height != px(0.) || *epoch == self.geometry_epoch {
++                return size.height;
++            }
++        }
++        let focus_handle = item.focus_handle();
++        self.geometry_visits += 1;
++        let size = render_item(ix, window, cx).layout_as_root(space, window, cx);
++        self.replace_item(
++            ix,
++            ListItem::Measured {
++                epoch: self.geometry_epoch,
++                size,
++                focus_handle,
++            },
++        );
++        self.exact_items.insert(ix);
++        self.trim_exact_cache();
++        size.height
++    }
++
++    // Wheel distances are local physical distances, never positions in the estimate tree.
++    // Coalesce adjacent same-direction inputs, but keep reversals and residuals in FIFO
++    // order so reversal before the next paint cannot erase a boundary hit.
++    fn apply_wheel_input(
++        &mut self,
++        space: Size<AvailableSpace>,
++        render_item: &mut RenderItemFn,
++        window: &mut Window,
++        cx: &mut App,
++    ) {
++        if self.wheel_input.is_empty() {
++            return;
++        }
++        let mut top = self
++            .logical_scroll_top
++            .or(self.last_painted_scroll_top)
++            .unwrap_or_else(|| self.logical_scroll_top());
++        let count = self.items.summary().count;
++        let mut budget = WHEEL_STEP_BUDGET;
++        if let Some(mut distance) = self.wheel_input.pop_front() {
++            self.wheel_reached_end = distance > px(0.);
++            if distance < px(0.) {
++                self.follow_state.stop_following();
++            }
++            if top.item_ix < count {
++                let height = self.wheel_item_height(top.item_ix, space, render_item, window, cx);
++                if let Some(pending) = self.pending_scroll.take() {
++                    top.offset_in_item = match pending {
++                        PendingScroll::Absolute { item_ix, offset } if item_ix == top.item_ix => {
++                            offset.min(height)
++                        }
++                        PendingScroll::Proportional(pending) if pending.item_ix == top.item_ix => {
++                            height * pending.fraction
++                        }
++                        _ => top.offset_in_item.min(height),
++                    };
++                } else {
++                    top.offset_in_item = top.offset_in_item.min(height);
++                }
++            }
++            while distance != px(0.) && budget > 0 {
++                budget -= 1;
++                if distance > px(0.) {
++                    if top.item_ix >= count {
++                        self.wheel_reached_end = true;
++                        distance = px(0.);
++                        break;
++                    }
++                    let height =
++                        self.wheel_item_height(top.item_ix, space, render_item, window, cx);
++                    let remaining = (height - top.offset_in_item).max(px(0.));
++                    if distance < remaining {
++                        top.offset_in_item += distance;
++                        distance = px(0.);
++                    } else {
++                        distance -= remaining;
++                        top.item_ix += 1;
++                        top.offset_in_item = px(0.);
++                    }
++                } else if top.offset_in_item > px(0.) {
++                    let moved = (-distance).min(top.offset_in_item);
++                    top.offset_in_item -= moved;
++                    distance += moved;
++                } else if top.item_ix > 0 {
++                    top.item_ix -= 1;
++                    top.offset_in_item =
++                        self.wheel_item_height(top.item_ix, space, render_item, window, cx);
++                } else {
++                    distance = px(0.);
++                }
++            }
++            if distance != px(0.) {
++                self.wheel_input.push_front(distance);
++            }
++            // Layout clamps this input at the physical bottom before a later reversal.
++        }
++        self.pending_scroll = None;
++        self.logical_scroll_top = Some(top);
++        if !self.wheel_input.is_empty() {
++            window.request_animation_frame();
++        }
++    }
++
+     /// Re-anchor a pending scroll adjustment from a remeasure onto a newly set
+     /// scroll position, so it clamps to the remeasured item's new height on
+     /// the next layout instead of reverting the scroll.
+@@ -910,6 +1271,30 @@ impl StateInner {
+             return;
+         }
+ 
++        if self.default_size_hint.is_some() {
++            if self.logical_scroll_top.is_none() {
++                self.logical_scroll_top = Some(*scroll_top);
++            }
++            if delta.y > px(0.) {
++                self.follow_state.stop_following();
++            }
++            self.enqueue_wheel(-delta.y);
++            if let Some(handler) = self.scroll_handler.as_mut() {
++                handler(
++                    &ListScrollEvent {
++                        visible_range: Self::visible_range(&self.items, height, scroll_top),
++                        count: self.items.summary().count,
++                        is_scrolled: true,
++                        is_following_tail: self.follow_state.is_following(),
++                    },
++                    window,
++                    cx,
++                );
++            }
++            cx.notify(current_view);
++            return;
++        }
++
+         let padding = self.last_padding.unwrap_or_default();
+         let scroll_max =
+             (self.items.summary().height + padding.top + padding.bottom - height).max(px(0.));
+@@ -1011,11 +1396,13 @@ impl StateInner {
+ 
+         for (ix, item) in cursor.enumerate() {
+             let size = item.size().unwrap_or_else(|| {
++                self.geometry_visits += 1;
+                 let mut element = render_item(ix, window, cx);
+                 element.layout_as_root(available_item_space, window, cx)
+             });
+ 
+             measured_items.push(ListItem::Measured {
++                epoch: self.geometry_epoch,
+                 size,
+                 focus_handle: item.focus_handle(),
+             });
+@@ -1033,6 +1420,16 @@ impl StateInner {
+         window: &mut Window,
+         cx: &mut App,
+     ) -> LayoutItemsResponse {
++        if self.default_size_hint.is_some() {
++            return self.layout_estimated_items(
++                available_width,
++                available_height,
++                padding,
++                render_item,
++                window,
++                cx,
++            );
++        }
+         let old_items = self.items.clone();
+         let mut measured_items = VecDeque::new();
+         let mut item_layouts = VecDeque::new();
+@@ -1073,6 +1470,7 @@ impl StateInner {
+             // If we're within the visible area or the height wasn't cached, render and measure the item's element
+             if visible_height < available_height || size.is_none() {
+                 let item_index = scroll_top.item_ix + ix;
++                self.geometry_visits += 1;
+                 let mut element = render_item(item_index, window, cx);
+                 let element_size = element.layout_as_root(available_item_space, window, cx);
+                 size = Some(element_size);
+@@ -1118,6 +1516,7 @@ impl StateInner {
+             rendered_height += size.height;
+             max_item_width = max_item_width.max(size.width);
+             measured_items.push_back(ListItem::Measured {
++                epoch: self.geometry_epoch,
+                 size,
+                 focus_handle: item.focus_handle(),
+             });
+@@ -1134,11 +1533,13 @@ impl StateInner {
+                 cursor.prev();
+                 if let Some(item) = cursor.item() {
+                     let item_index = cursor.start().0;
++                    self.geometry_visits += 1;
+                     let mut element = render_item(item_index, window, cx);
+                     let element_size = element.layout_as_root(available_item_space, window, cx);
+                     let focus_handle = item.focus_handle();
+                     rendered_height += element_size.height;
+                     measured_items.push_front(ListItem::Measured {
++                        epoch: self.geometry_epoch,
+                         size: element_size,
+                         focus_handle,
+                     });
+@@ -1183,12 +1584,14 @@ impl StateInner {
+                 let size = if let ListItem::Measured { size, .. } = item {
+                     *size
+                 } else {
++                    self.geometry_visits += 1;
+                     let mut element = render_item(cursor.start().0, window, cx);
+                     element.layout_as_root(available_item_space, window, cx)
+                 };
+ 
+                 leading_overdraw += size.height;
+                 measured_items.push_front(ListItem::Measured {
++                    epoch: self.geometry_epoch,
+                     size,
+                     focus_handle: item.focus_handle(),
+                 });
+@@ -1204,11 +1607,18 @@ impl StateInner {
+         cursor.seek(&Count(measured_range.end), Bias::Right);
+         new_items.append(cursor.suffix(), ());
+         self.items = new_items;
++        if self.default_size_hint.is_some() {
++            self.exact_items.extend(measured_range.clone());
++            self.trim_exact_cache();
++        }
+ 
+         // If follow_tail mode is on but the user scrolled away
+         // (is_following is false), check whether the current scroll
+         // position has returned to the bottom.
+-        if self.follow_state.has_stopped_following() {
++        if self.follow_state.has_stopped_following()
++            && (self.default_size_hint.is_none()
++                || (self.wheel_reached_end && measured_range.end == self.items.summary().count))
++        {
+             let padding = self.last_padding.unwrap_or_default();
+             let total_height = self.items.summary().height + padding.top + padding.bottom;
+             let scroll_offset = self.scroll_top(&scroll_top);
+@@ -1217,6 +1627,8 @@ impl StateInner {
+             }
+         }
+ 
++        self.wheel_reached_end = false;
++
+         // If none of the visible items are focused, check if an off-screen item is focused
+         // and include it to be rendered after the visible items so keyboard interaction continues
+         // to work for it.
+@@ -1228,6 +1640,7 @@ impl StateInner {
+             while let Some(item) = cursor.item() {
+                 if item.contains_focused(window, cx) {
+                     let item_index = cursor.start().0;
++                    self.geometry_visits += 1;
+                     let mut element = render_item(cursor.start().0, window, cx);
+                     let size = element.layout_as_root(available_item_space, window, cx);
+                     item_layouts.push_back(ItemLayout {
+@@ -1258,6 +1671,17 @@ impl StateInner {
+         cx: &mut App,
+     ) -> Result<LayoutItemsResponse, ListOffset> {
+         window.transact(|window| {
++            if autoscroll {
++                self.apply_wheel_input(
++                    size(
++                        AvailableSpace::Definite(bounds.size.width),
++                        AvailableSpace::MinContent,
++                    ),
++                    render_item,
++                    window,
++                    cx,
++                );
++            }
+             match self.measuring_behavior {
+                 ListMeasuringBehavior::Measure(has_measured) if !has_measured => {
+                     self.layout_all_items(bounds.size.width, render_item, window, cx);
+@@ -1369,6 +1793,7 @@ impl StateInner {
+     // Scrollbar support
+ 
+     fn set_offset_from_scrollbar(&mut self, point: Point<Pixels>) {
++        self.wheel_input.clear();
+         let Some(bounds) = self.last_layout_bounds else {
+             return;
+         };
+@@ -1413,6 +1838,12 @@ impl StateInner {
+                 offset_in_item: new_scroll_top - start.height,
+             };
+             self.rebase_pending_scroll(scroll_top);
++            if self.default_size_hint.is_some() {
++                self.pending_scroll = Some(PendingScroll::Absolute {
++                    item_ix: scroll_top.item_ix,
++                    offset: scroll_top.offset_in_item,
++                });
++            }
+             self.logical_scroll_top = Some(scroll_top);
+         }
+     }
+@@ -1545,15 +1976,31 @@ impl Element for List {
+             .last_layout_bounds
+             .is_none_or(|last_bounds| last_bounds.size.width != bounds.size.width)
+         {
+-            let new_items = SumTree::from_iter(
+-                state.items.iter().map(|item| ListItem::Unmeasured {
+-                    size_hint: None,
+-                    focus_handle: item.focus_handle(),
+-                }),
+-                (),
+-            );
+-
+-            state.items = new_items;
++            if state.default_size_hint.is_some() {
++                if !state.follow_state.is_following() && state.pending_scroll.is_none() {
++                    let top = state.logical_scroll_top();
++                    if top.item_ix < state.items.summary().count {
++                        state.pending_scroll = Some(PendingScroll::Absolute {
++                            item_ix: top.item_ix,
++                            offset: top.offset_in_item,
++                        });
++                    }
++                }
++                state.geometry_epoch += 1;
++                let exact = std::mem::take(&mut state.exact_items);
++                state.width_invalidations += exact.len();
++                for ix in exact {
++                    state.invalidate_exact(ix);
++                }
++            } else {
++                state.items = SumTree::from_iter(
++                    state.items.iter().map(|item| ListItem::Unmeasured {
++                        size_hint: None,
++                        focus_handle: item.focus_handle(),
++                    }),
++                    (),
++                );
++            }
+             state.measuring_behavior.reset();
+         }
+ 
+@@ -1573,6 +2020,7 @@ impl Element for List {
+ 
+         state.last_layout_bounds = Some(bounds);
+         state.last_padding = Some(padding);
++        state.last_painted_scroll_top = Some(layout.scroll_top);
+         ListPrepaintState { hitbox, layout }
+     }
+ 
+@@ -1600,8 +2048,12 @@ impl Element for List {
+         let mut accumulated_scroll_delta = ScrollDelta::default();
+         window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+             if phase == DispatchPhase::Bubble && hitbox_id.should_handle_scroll(window) {
+-                accumulated_scroll_delta = accumulated_scroll_delta.coalesce(event.delta);
+-                let pixel_delta = accumulated_scroll_delta.pixel_delta(px(20.));
++                let pixel_delta = if list_state.0.borrow().default_size_hint.is_some() {
++                    event.delta.pixel_delta(px(20.))
++                } else {
++                    accumulated_scroll_delta = accumulated_scroll_delta.coalesce(event.delta);
++                    accumulated_scroll_delta.pixel_delta(px(20.))
++                };
+                 list_state.0.borrow_mut().scroll(
+                     &scroll_top,
+                     height,
+@@ -1654,9 +2106,12 @@ impl sum_tree::Item for ListItem {
+                 },
+                 has_focus_handles: focus_handle.is_some(),
+                 has_unknown_height: size_hint.is_none(),
++                oldest_epoch: None,
+             },
+             ListItem::Measured {
+-                size, focus_handle, ..
++                size,
++                focus_handle,
++                epoch,
+             } => ListItemSummary {
+                 count: 1,
+                 rendered_count: 1,
+@@ -1664,6 +2119,7 @@ impl sum_tree::Item for ListItem {
+                 height: size.height,
+                 has_focus_handles: focus_handle.is_some(),
+                 has_unknown_height: false,
++                oldest_epoch: Some(*epoch),
+             },
+         }
+     }
+@@ -1681,6 +2137,10 @@ impl sum_tree::ContextLessSummary for ListItemSummary {
+         self.height += summary.height;
+         self.has_focus_handles |= summary.has_focus_handles;
+         self.has_unknown_height |= summary.has_unknown_height;
++        self.oldest_epoch = match (self.oldest_epoch, summary.oldest_epoch) {
++            (Some(a), Some(b)) => Some(a.min(b)),
++            (a, b) => a.or(b),
++        };
+     }
+ }
+ 
+@@ -1716,6 +2176,17 @@ impl sum_tree::SeekTarget<'_, ListItemSummary, ListItemSummary> for Height {
+     }
+ }
+ 
++#[path = "list/estimated_layout.rs"]
++mod estimated_layout;
++
++#[cfg(test)]
++#[path = "list/estimated_tests.rs"]
++mod estimated_tests;
++
++#[cfg(test)]
++#[path = "list/viewport_tests.rs"]
++mod viewport_tests;
++
+ #[cfg(test)]
+ mod test {
+ 

@@ -1,0 +1,105 @@
+[package]
+name = "tau-gpui"
+version = "0.2.1"
+edition = "2024"
+publish = false
+default-run = "tau"
+autobins = false
+
+[[bin]]
+name = "tau"
+path = "src/bin/tau.rs"
+
+[features]
+native-os-tests = []
+
+[dependencies]
+tau-core = { path = "../crates/tau-core" }
+tau-session = { path = "../crates/tau-session" }
+tau-observability = { path = "../crates/tau-observability" }
+chrono = "0.4"
+async-channel = "2"
+uuid = { version = "1", features = ["v4"] }
+tempfile = "3"
+gpui-kit = { version = "=0.7.0", default-features = false, features = ["test-support"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+syntect = { version = "=5.3.0", default-features = false, features = ["default-fancy"] }
+two-face = { version = "=0.4.5", default-features = false, features = ["syntect-fancy"] }
+merman = { version = "=0.8.0", default-features = false, features = ["svg", "layout-elk", "diagram-flowchart", "diagram-state", "diagram-sequence", "diagram-class", "diagram-er", "diagram-xychart", "system-timing"] }
+resvg = { version = "=0.47.0", default-features = false, features = ["text"] }
+roxmltree = "=0.21.1"
+rustybuzz = "=0.20.1"
+serde-saphyr = { version = "=1.3.0", default-features = false, features = ["deserialize"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+gpui_macos = { package = "gpui-pre-macos", version = "=0.3.7", features = ["font-kit"] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+objc = "=0.2.7"
+tempfile = "3"
+
+[patch.crates-io]
+merman-core = { path = ".cache/crates/merman-core" }
+merman-analysis = { path = ".cache/crates/merman-analysis" }
+merman-render = { path = ".cache/crates/merman-render" }
+merman-layout-elk = { path = ".cache/crates/merman-layout-elk" }
+gpui-base = { path = ".cache/crates/gpui-base" }
+gpui-pre = { path = ".cache/crates/gpui-pre" }
+gpui-pre-macos = { path = ".cache/crates/gpui-pre-macos" }
+
+[profile.dev]
+debug = 1
+
+[workspace]
+exclude = [".cache/crates/gpui-base", ".cache/crates/gpui-pre", ".cache/crates/gpui-pre-macos", ".cache/crates/merman-core", ".cache/crates/merman-analysis", ".cache/crates/merman-render", ".cache/crates/merman-layout-elk"]
+
+[[test]]
+name = "markdown-markers"
+path = "tests/markdown-markers.rs"
+harness = false
+
+[[test]]
+name = "activity-paint"
+path = "tests/activity.rs"
+harness = false
+
+[[test]]
+name = "composer-clipping"
+path = "tests/composer-clipping.rs"
+harness = false
+
+[[test]]
+name = "composer-tail"
+path = "tests/composer-tail.rs"
+harness = false
+
+[[test]]
+name = "diagram-paint"
+path = "tests/diagram-paint.rs"
+harness = false
+
+[[test]]
+name = "native-os"
+path = "tests/native-os/runner.rs"
+harness = false
+required-features = ["native-os-tests"]
+
+[[test]]
+name = "native-host"
+path = "tests/native-os/host.rs"
+harness = false
+required-features = ["native-os-tests"]
+
+[[test]]
+name = "native-app"
+path = "tests/native-os/app.rs"
+harness = false
+required-features = ["native-os-tests"]
+
+[[test]]
+name = "native-accessibility"
+path = "tests/native-os/accessibility.rs"
+harness = false
+required-features = ["native-os-tests"]

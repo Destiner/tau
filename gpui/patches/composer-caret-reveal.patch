@@ -1,0 +1,136 @@
+diff --git a/src/input/base/element.rs b/src/input/base/element.rs
+index f6fcd90..af1ba39 100644
+--- a/src/input/base/element.rs
++++ b/src/input/base/element.rs
+@@ -406,6 +406,16 @@ pub(super) fn cursor_surrounding_padding(
+     raw.min(viewport_half)
+ }
+ 
++pub(super) fn auto_grow_cursor_margin(
++    override_margin: Option<Pixels>,
++    line_height: Pixels,
++    viewport: Pixels,
++) -> Pixels {
++    override_margin
++        .unwrap_or(line_height)
++        .clamp(px(0.), viewport / 2.)
++}
++
+ /// Pixel height of the empty area below the last line in the editor's
+ /// scrollable region. Backs [`InputBaseState::scroll_beyond_last_line`].
+ ///
+@@ -545,12 +555,20 @@ impl<M: InputModeKind> TextElement<M> {
+ 
+         // Padding kept between the cursor and the viewport's top/bottom
+         // edges, used by the auto-scroll-into-view computation below.
+-        let top_bottom_margin = cursor_surrounding_padding(
+-            state.mode.is_auto_grow(),
+-            state.cursor_surrounding_lines,
+-            viewport_visible_lines(bounds.size.height, line_height),
+-            line_height,
+-        );
++        let top_bottom_margin = if state.mode.is_auto_grow() {
++            auto_grow_cursor_margin(
++                state.editor_style.auto_grow_cursor_margin,
++                line_height,
++                bounds.size.height,
++            )
++        } else {
++            cursor_surrounding_padding(
++                false,
++                state.cursor_surrounding_lines,
++                viewport_visible_lines(bounds.size.height, line_height),
++                line_height,
++            )
++        };
+ 
+         // Resolve a cursor or selection endpoint to a content-space position.
+         let visible_buffer_lines = &last_layout.visible_buffer_lines;
+@@ -4061,6 +4079,28 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn auto_grow_caret_reveal_margin_is_opt_in_and_bounded() {
++        let style = crate::input::InputEditorStyle::default();
++        assert_eq!(style.auto_grow_cursor_margin, None);
++        assert_eq!(
++            auto_grow_cursor_margin(style.auto_grow_cursor_margin, px(19.), px(188.)),
++            px(19.)
++        );
++        assert_eq!(
++            auto_grow_cursor_margin(Some(px(13.)), px(19.), px(188.)),
++            px(13.)
++        );
++        assert_eq!(
++            auto_grow_cursor_margin(Some(px(200.)), px(19.), px(188.)),
++            px(94.)
++        );
++        assert_eq!(
++            auto_grow_cursor_margin(Some(px(-2.)), px(19.), px(188.)),
++            px(0.)
++        );
++    }
++
+     #[test]
+     fn test_plain_text_decorations_include_unstyled_gaps() {
+         let decoration = HighlightStyle {
+diff --git a/src/input/base/state.rs b/src/input/base/state.rs
+index d3b7b56..f0e5906 100644
+--- a/src/input/base/state.rs
++++ b/src/input/base/state.rs
+@@ -2634,17 +2634,22 @@ impl<M: InputModeKind> InputBaseState<M> {
+         // `TextElement::layout_cursors` so both scroll-into-view paths agree
+         // (a mismatch flickered on `Down` at end-of-buffer with a small
+         // `cursor_surrounding_lines` override).
+-        let edge_height =
+-            if matches!(padding, ScrollPadding::SurroundingLines) && self.is_code_editor() {
+-                super::element::cursor_surrounding_padding(
+-                    self.mode.is_auto_grow(),
+-                    self.cursor_surrounding_lines,
+-                    super::element::viewport_visible_lines(bounds.size.height, line_height),
+-                    line_height,
+-                )
+-            } else {
+-                line_height
+-            };
++        let edge_height = if self.mode.is_auto_grow() {
++            super::element::auto_grow_cursor_margin(
++                self.editor_style.auto_grow_cursor_margin,
++                line_height,
++                bounds.size.height,
++            )
++        } else if matches!(padding, ScrollPadding::SurroundingLines) && self.is_code_editor() {
++            super::element::cursor_surrounding_padding(
++                false,
++                self.cursor_surrounding_lines,
++                super::element::viewport_visible_lines(bounds.size.height, line_height),
++                line_height,
++            )
++        } else {
++            line_height
++        };
+         if row_offset_y - edge_height + line_height < -scroll_offset.y {
+             // Scroll up
+             scroll_offset.y = -row_offset_y + edge_height - line_height;
+diff --git a/src/input/editor/highlighting.rs b/src/input/editor/highlighting.rs
+index e5ab0a0..7a238ef 100644
+--- a/src/input/editor/highlighting.rs
++++ b/src/input/editor/highlighting.rs
+@@ -120,6 +120,8 @@ pub struct InputEditorStyle {
+     pub caret_visible: bool,
+     pub unfocused_selection: bool,
+     pub disabled_opacity: f32,
++    /// Optional caret reveal inset for auto-growing textareas; other input modes ignore it.
++    pub auto_grow_cursor_margin: Option<Pixels>,
+     pub diagnostics: DiagnosticColors,
+     pub highlight_styles: SharedHighlightStyleResolver,
+     pub editor_invisible: Option<Hsla>,
+@@ -181,6 +183,7 @@ impl Default for InputEditorStyle {
+             caret_visible: true,
+             unfocused_selection: false,
+             disabled_opacity: 0.5,
++            auto_grow_cursor_margin: None,
+             diagnostics: DiagnosticColors::default(),
+             highlight_styles: Arc::new(NoHighlightStyles),
+             editor_invisible: None,

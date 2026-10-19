@@ -1,0 +1,196 @@
+--- a/src/input/base/state.rs
++++ b/src/input/base/state.rs
+@@ -1082,8 +1082,11 @@
+         }
+     }
+ 
+-    /// Opt in to editor-owned role, name, status and existing-handle accessibility focus.
+-    /// Does not expose text, values or selections. Suppress any caller wrapper textbox role.
++    /// Opt in to editor-owned semantics, bounded plain-text value and existing-handle focus.
++    /// Values up to 64 KiB are complete; larger or masked values are omitted, never truncated.
++    /// SetValue is limited to input/textarea modes and uses their input handler and undo history;
++    /// code-editor values are read-only through accessibility. No text-range/layout API is provided.
++    /// Suppress any caller wrapper textbox role.
+     pub fn accessibility_label(mut self, label: impl Into<SharedString>) -> Self {
+         self.accessibility_label = Some(label.into());
+         self
+@@ -4553,6 +4556,13 @@
+             self._pending_update = false;
+         }
+ 
++        // Named Tau fields opt in; arbitrary generic/large ropes are never projected.
++        const A11Y_VALUE_LIMIT: usize = 64 * 1024;
++        let a11y_value = (self.accessibility_label.is_some()
++            && !self.masked
++            && self.text.len() <= A11Y_VALUE_LIMIT)
++            .then(|| self.text.to_string());
++
+         let element = div()
+             .id("input-state")
+             .when_some(self.accessibility_label.clone(), |this, label| {
+@@ -4566,6 +4576,46 @@
+                 .aria_label(label)
+                 .aria_readonly(self.readonly)
+                 .aria_disabled(self.disabled)
++                .when_some(a11y_value, |this, value| {
++                    this.aria_value(value).when(
++                        !self.is_code_editor()
++                            && self.is_editable()
++                            && self.ime_marked_range.is_none(),
++                        |this| {
++                            let entity = entity.clone();
++                            this.on_a11y_action(
++                                gpui::accesskit::Action::SetValue,
++                                move |data, window, cx| {
++                                    let Some(gpui::accesskit::ActionData::Value(value)) = data
++                                    else {
++                                        return;
++                                    };
++                                    entity.update(cx, |state, cx| {
++                                        // Provider objects/actions can outlive the rendered policy.
++                                        if state.is_code_editor()
++                                            || state.accessibility_label.is_none()
++                                            || state.masked
++                                            || !state.is_editable()
++                                            || state.ime_marked_range.is_some()
++                                            || state.text.len() > A11Y_VALUE_LIMIT
++                                            || value.len() > A11Y_VALUE_LIMIT
++                                        {
++                                            return;
++                                        }
++                                        if let Some(trap) = crate::active_focus_trap(window, cx) {
++                                            if !trap.contains(&state.focus_handle, window) {
++                                                return;
++                                            }
++                                        }
++                                        let range = state.range_to_utf16(&(0..state.text.len()));
++                                        state.undo_manager.set_pending_intent(EditIntent::Atomic);
++                                        state.replace_text_in_range(Some(range), value, window, cx);
++                                    });
++                                },
++                            )
++                        },
++                    )
++                })
+                 .when(!self.disabled, |this| {
+                     let entity = entity.clone();
+                     this.on_a11y_action(gpui::accesskit::Action::Focus, move |_, window, cx| {
+@@ -4761,6 +4811,10 @@
+         M::register_actions(element, &entity, window)
+     }
+ }
++
++#[cfg(test)]
++#[path = "accessibility_tests.rs"]
++mod accessibility_tests;
+ 
+ #[cfg(test)]
+ mod tests {
+--- /dev/null
++++ b/src/input/base/accessibility_tests.rs
+@@ -0,0 +1,105 @@
++//! Mutate live policy without notifying: the delivered enabled listener must still fail closed.
++use super::*;
++use crate::input::{Input, InputBase, InputState};
++use core::prelude::v1::test;
++use gpui::{
++    TestApp,
++    accesskit::{Action, ActionData, ActionRequest, TreeId},
++};
++
++struct Host(Entity<InputState>);
++impl Render for Host {
++    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++        InputBase::new("shell")
++            .role(None)
++            .w(px(300.))
++            .h(px(40.))
++            .child(Input::new(&self.0))
++    }
++}
++#[test]
++fn accessibility_value_retained_enabled_listener_checks_live_policy() {
++    let mut app = TestApp::new();
++    app.update(crate::init);
++    let mut window = app.open_window(|w, cx| {
++        Host(cx.new(|cx| {
++            InputState::new(w, cx)
++                .accessibility_label("Field")
++                .default_value("private😀")
++        }))
++    });
++    window.activate_accessibility();
++    for guard in 0..6 {
++        // Restore directly and then genuinely render an enabled action.
++        window.update(|s, _, cx| {
++            s.0.update(cx, |s, cx| {
++                s.disabled = false;
++                s.readonly = false;
++                s.masked = false;
++                s.ime_marked_range = None;
++                s.accessibility_label = Some("Field".into());
++                s.text = Rope::from("private😀");
++                cx.notify();
++            })
++        });
++        window.draw();
++        let tree = window.accessibility_tree().unwrap();
++        let (id, n) = tree
++            .nodes
++            .iter()
++            .find(|(_, n)| n.label() == Some("Field"))
++            .unwrap();
++        assert!(n.supports_action(Action::SetValue));
++        let id = *id;
++        // No notify or redraw: this intentionally retains the actual rendered listener.
++        window.update(|s, _, cx| {
++            s.0.update(cx, |s, _| match guard {
++                0 => s.disabled = true,
++                1 => s.readonly = true,
++                2 => s.masked = true,
++                3 => s.ime_marked_range = Some((0..1).into()),
++                4 => s.text = Rope::from("x".repeat(64 * 1024 + 1)),
++                5 => s.accessibility_label = None,
++                _ => unreachable!(),
++            })
++        });
++        assert!(
++            window
++                .accessibility_tree()
++                .unwrap()
++                .nodes
++                .iter()
++                .find(|(node, _)| *node == id)
++                .unwrap()
++                .1
++                .supports_action(Action::SetValue),
++            "must still be the delivered enabled action, not a redraw rejection"
++        );
++        window.dispatch_accessibility_action(ActionRequest {
++            action: Action::SetValue,
++            target_tree: TreeId::ROOT,
++            target_node: id,
++            data: Some(ActionData::Value("overwrite".into())),
++        });
++        window.read(|s, cx| {
++            let s = s.0.read(cx);
++            assert_eq!(
++                s.value().as_ref(),
++                if guard == 4 {
++                    "x".repeat(64 * 1024 + 1)
++                } else {
++                    "private😀".into()
++                }
++            );
++            assert!(
++                !s.undo_manager.can_undo(),
++                "rejected action must not enter history"
++            );
++            if guard == 3 {
++                assert!(s.ime_marked_range.is_some());
++            }
++        });
++    }
++    drop(window);
++    app.update(|cx| cx.shutdown());
++}

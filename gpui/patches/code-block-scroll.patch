@@ -1,0 +1,335 @@
+diff --git a/src/text/node.rs b/src/text/node.rs
+index 9fb6b37..9044f7c 100644
+--- a/src/text/node.rs
++++ b/src/text/node.rs
+@@ -7,9 +7,9 @@ use std::{
+ use gpui::{
+     AnyElement, App, DefiniteLength, Div, ElementId, FontStyle, FontWeight, HighlightStyle, Hsla,
+     Image, ImageFormat, ImageSource, InteractiveElement as _, IntoElement, IsZero as _, Length,
+-    ObjectFit, Overflow, ParentElement, Pixels, Rems, ScrollHandle, SharedString, SharedUri,
+-    StatefulInteractiveElement, StyleRefinement, Styled, StyledImage as _, WhiteSpace, Window, div,
+-    img, prelude::FluentBuilder as _, px, relative, rems,
++    ObjectFit, Overflow, ParentElement, Pixels, Refineable, Rems, ScrollHandle, SharedString,
++    SharedUri, StatefulInteractiveElement, StyleRefinement, Styled, StyledImage as _, WhiteSpace,
++    Window, div, img, prelude::FluentBuilder as _, px, relative, rems,
+ };
+ use markdown::mdast;
+ 
+@@ -1921,6 +1921,45 @@ impl CodeBlock {
+         let style = &node_cx.style;
+         let leaf_key = self.span.map(|span| TextLeafKey::block(span.start));
+ 
++        let highlights = fade_highlights(
++            node_cx
++                .code_block_highlighter
++                .as_ref()
++                .map(|highlighter| self.highlighted_styles(highlighter))
++                .unwrap_or_default()
++                .into_iter()
++                .map(|(range, style)| (range, InlineHighlight::from(style)))
++                .collect(),
++            node_cx.stream_fades(leaf_key),
++        );
++        let inline = Inline::new(
++            self.state.clone(),
++            vec![],
++            highlights.clone(),
++            node_cx.link_click_handler.clone(),
++        )
++        .range_backgrounds(node_cx.range_backgrounds(leaf_key).to_vec())
++        .reveal(node_cx.reveal_at(leaf_key, 0, self.code().len()));
++        let content = if style.code_block_horizontal_scroll() {
++            let scroll_handle = window
++                .use_keyed_state(
++                    block_element_id("code-scroll", self.span, options.ix),
++                    cx,
++                    |_, _| ScrollHandle::default(),
++                )
++                .read(cx)
++                .clone();
++            let width = measure_code_width(&self.code(), &highlights, style, window, cx);
++            horizontal_scroll_area(
++                block_element_id("code-viewport", self.span, options.ix),
++                &scroll_handle,
++                &StyleRefinement::default(),
++                div().min_w_full().w(width + px(1.)).child(inline),
++            )
++            .into_any_element()
++        } else {
++            inline.into_any_element()
++        };
+         let block = div()
+             .w_full()
+             .min_w_0()
+@@ -1929,45 +1968,53 @@ impl CodeBlock {
+             .font_family(cx.theme().tokens.typography.mono.clone())
+             .text_size(cx.theme().tokens.typography.mono_md.size)
+             .relative()
+-            .refine_style(&style.code_block())
+-            .child(
+-                Inline::new(
+-                    self.state.clone(),
+-                    vec![],
+-                    fade_highlights(
+-                        node_cx
+-                            .code_block_highlighter
+-                            .as_ref()
+-                            .map(|highlighter| self.highlighted_styles(highlighter))
+-                            .unwrap_or_default()
+-                            .into_iter()
+-                            .map(|(range, style)| (range, InlineHighlight::from(style)))
+-                            .collect(),
+-                        node_cx.stream_fades(leaf_key),
+-                    ),
+-                    node_cx.link_click_handler.clone(),
+-                )
+-                .range_backgrounds(node_cx.range_backgrounds(leaf_key).to_vec())
+-                .reveal(node_cx.reveal_at(leaf_key, 0, self.code().len())),
+-            );
++            .refine_style(&style.code_block());
+         // The id scopes the caller's action ids per code block, so plain ids
+         // like `"copy"` don't collide across blocks; without actions nothing
+         // under the block needs element state.
+-        let block = match node_cx.code_block_actions.clone() {
+-            Some(actions) => block
+-                .id(block_element_id("codeblock", self.span, options.ix))
+-                .child(
+-                    div()
+-                        .id("actions")
+-                        .absolute()
+-                        .top_2()
+-                        .right_2()
+-                        .bg(style.code_background())
+-                        .rounded(cx.theme().tokens.radius.md)
+-                        .child(actions(&self, window, cx)),
+-                )
+-                .into_any_element(),
+-            None => block.into_any_element(),
++        let block = if style.code_block_horizontal_scroll() {
++            // Reserve the action's actual laid-out width rather than hiding
++            // the final code glyphs beneath an absolute overlay.
++            let row = div()
++                .w_full()
++                .min_w_0()
++                .flex()
++                .items_start()
++                .child(div().min_w_0().flex_1().child(content));
++            let row = match node_cx.code_block_actions.clone() {
++                Some(actions) => row
++                    .id(block_element_id("codeblock", self.span, options.ix))
++                    .child(
++                        div()
++                            .id("actions")
++                            .flex_none()
++                            .ml_2()
++                            .bg(style.code_background())
++                            .rounded(cx.theme().tokens.radius.md)
++                            .child(actions(&self, window, cx)),
++                    )
++                    .into_any_element(),
++                None => row.into_any_element(),
++            };
++            block.child(row).into_any_element()
++        } else {
++            let block = block.child(content);
++            match node_cx.code_block_actions.clone() {
++                Some(actions) => block
++                    .id(block_element_id("codeblock", self.span, options.ix))
++                    .child(
++                        div()
++                            .id("actions")
++                            .absolute()
++                            .top_2()
++                            .right_2()
++                            .bg(style.code_background())
++                            .rounded(cx.theme().tokens.radius.md)
++                            .child(actions(&self, window, cx)),
++                    )
++                    .into_any_element(),
++                None => block.into_any_element(),
++            }
+         };
+ 
+         gapped(
+@@ -1981,6 +2028,41 @@ impl CodeBlock {
+     }
+ }
+ 
++/// Maximum shaped hard-line width in the exact mono font and highlighted runs
++/// rendered by the code block. Newlines contribute height, not width.
++fn measure_code_width(
++    code: &str,
++    highlights: &[(Range<usize>, InlineHighlight)],
++    style: &TextViewStyle,
++    window: &mut Window,
++    cx: &App,
++) -> Pixels {
++    let mut text_style = window.text_style();
++    text_style.font_family = cx.theme().tokens.typography.mono.clone();
++    text_style.font_size = cx.theme().tokens.typography.mono_md.size.into();
++    text_style.refine(&style.code_block().text);
++    let font_size = text_style.font_size.to_pixels(window.rem_size());
++    let mut start = 0;
++    let mut width = Pixels::ZERO;
++    for line in code.split('\n') {
++        let end = start + line.len();
++        if !line.is_empty() {
++            let line_highlights = slice_ranges(highlights, start, end, |range, highlight| {
++                (range, highlight.clone())
++            });
++            let runs = text_runs(line.len(), &text_style, &line_highlights);
++            width = width.max(
++                window
++                    .text_system()
++                    .layout_line(line, font_size, &runs, None)
++                    .width,
++            );
++        }
++        start = end + 1;
++    }
++    width
++}
++
+ /// A context for rendering nodes, contains link references.
+ #[derive(Default, Clone)]
+ pub(crate) struct NodeContext {
+@@ -3604,6 +3686,38 @@ mod tests {
+         });
+     }
+ 
++    #[test]
++    fn code_scroll_width_shapes_hard_lines_in_the_rendered_mono_font() {
++        use crate::text::inline::test_fonts::{MONO, WideMonoTextSystem};
++        use gpui::{Empty, TestApp};
++
++        let mut app = TestApp::with_text_system(Arc::new(WideMonoTextSystem));
++        let mut window = app.open_window(|_, _| Empty);
++        window.update(|_, window, cx| {
++            let mut theme = crate::Theme::default();
++            theme.tokens.typography.mono = MONO.into();
++            cx.set_global(theme);
++            let code = "🦀iii\nW\n";
++            let font_size = cx.theme().tokens.typography.mono_md.size;
++            let actual = measure_code_width(code, &[], &TextViewStyle::default(), window, cx);
++            let expected = WideMonoTextSystem::width_of("🦀iii", MONO, font_size);
++            assert_eq!(
++                actual, expected,
++                "hard newlines must not contribute to line width"
++            );
++            assert_ne!(
++                actual,
++                WideMonoTextSystem::width_of("🦀iii", ".SystemUIFont", font_size)
++            );
++            let override_style = TextViewStyle::default()
++                .with_code_block(StyleRefinement::default().text_size(px(26.)));
++            assert_eq!(
++                measure_code_width(code, &[], &override_style, window, cx),
++                WideMonoTextSystem::width_of("🦀iii", MONO, px(26.))
++            );
++        });
++    }
++
+     /// Table columns are sized from shaped text, so a column of inline code
+     /// has to be measured in the code family. Measured in the body font, the
+     /// wide-mono test font makes `col_w` come out at half the rendered width.
+diff --git a/src/text/style.rs b/src/text/style.rs
+index 70dfcb2..603d126 100644
+--- a/src/text/style.rs
++++ b/src/text/style.rs
+@@ -21,6 +21,7 @@ pub struct TextViewStyle {
+     paragraph_gap: Rems,
+     heading: Arc<dyn Fn(u8) -> StyleRefinement + Send + Sync + 'static>,
+     code_block: StyleRefinement,
++    code_block_horizontal_scroll: bool,
+     table: StyleRefinement,
+     table_head: StyleRefinement,
+     table_cell: StyleRefinement,
+@@ -39,6 +40,7 @@ impl PartialEq for TextViewStyle {
+             && self.border == other.border
+             && (1..=6).all(|level| (self.heading)(level) == (other.heading)(level))
+             && self.code_block == other.code_block
++            && self.code_block_horizontal_scroll == other.code_block_horizontal_scroll
+             && self.table == other.table
+             && self.table_head == other.table_head
+             && self.table_cell == other.table_cell
+@@ -78,6 +80,7 @@ impl TextViewStyle {
+             paragraph_gap: rems(1.),
+             heading: Arc::new(|_| StyleRefinement::default()),
+             code_block: StyleRefinement::default(),
++            code_block_horizontal_scroll: false,
+             table: StyleRefinement::default(),
+             table_head: StyleRefinement::default(),
+             table_cell: StyleRefinement::default(),
+@@ -149,6 +152,18 @@ impl TextViewStyle {
+         self
+     }
+ 
++    /// Opts fenced code blocks into intrinsic-width horizontal scrolling instead
++    /// of wrapping. Ordinary prose and the default code layout are unchanged.
++    pub fn with_code_block_horizontal_scroll(mut self, enabled: bool) -> Self {
++        self.code_block_horizontal_scroll = enabled;
++        self
++    }
++
++    /// Whether fenced code blocks scroll horizontally.
++    pub fn code_block_horizontal_scroll(&self) -> bool {
++        self.code_block_horizontal_scroll
++    }
++
+     /// Sets the highlight style for inline code spans.
+     ///
+     /// When `background_color` is `None`, the neutral code background is used,
+diff --git a/src/text/text_view.rs b/src/text/text_view.rs
+index 3e04ccf..e6ca4f9 100644
+--- a/src/text/text_view.rs
++++ b/src/text/text_view.rs
+@@ -1765,6 +1765,49 @@ mod tests {
+         }
+     }
+ 
++    #[gpui::test]
++    fn code_scroll_is_opt_in_and_keeps_actions_at_viewport_edge(cx: &mut TestAppContext) {
++        struct CodeRoot {
++            scroll: bool,
++        }
++        impl Render for CodeRoot {
++            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++                div().w(px(260.)).child(
++                    TextView::markdown(
++                        "code-scroll-geometry",
++                        "```rust\nwide_🦀_abcdefghijklmnopqrstuvwxyz_ABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789\nshort\n```\n\n```rust\nnext\n```",
++                    )
++                    .style(TextViewStyle::default().with_code_block_horizontal_scroll(self.scroll))
++                    .code_block_actions(|block, _, _| {
++                        let selector = if block.code().contains("wide") { "wide-action" } else { "next-action" };
++                        div().debug_selector(move || selector.into()).child("Copy")
++                    }),
++                )
++            }
++        }
++        let mut next_tops = Vec::new();
++        for scroll in [false, true] {
++            cx.update(crate::init);
++            let (_, window) = cx.add_window_view(move |_, _| CodeRoot { scroll });
++            let window: &mut VisualTestContext = window;
++            window.run_until_parked();
++            window.update(|window, cx| {
++                let _ = window.draw(cx);
++            });
++            let action = window.debug_bounds("wide-action").unwrap();
++            let next = window.debug_bounds("next-action").unwrap();
++            assert!(
++                action.right() < px(260.),
++                "action must stay pinned: {action:?}"
++            );
++            next_tops.push(next.top());
++        }
++        assert!(
++            next_tops[0] > next_tops[1] + px(20.),
++            "default code should wrap, scrolled code should retain only hard-line height: {next_tops:?}"
++        );
++    }
++
+     #[test]
+     fn plugin_accepts_text_view_plugins_beyond_markdown() {
+         let view = TextView::markdown("plugin-test", "").plugin(DummyTextViewPlugin);

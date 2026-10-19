@@ -1,0 +1,56 @@
+diff --git a/src/gpui_macos.rs b/src/gpui_macos.rs
+index 1e393e4..3620f1c 100644
+--- a/src/gpui_macos.rs
++++ b/src/gpui_macos.rs
+@@ -30,6 +30,11 @@ mod open_type;
+ #[cfg(feature = "font-kit")]
+ mod text_system;
+ 
++/// Opt into unsmoothed grayscale glyphs for this process. Call before creating windows.
++/// By default, GPUI retains its existing macOS font-smoothing preference behavior.
++#[cfg(feature = "font-kit")]
++pub use text_system::use_antialiased_text;
++
+ mod platform;
+ mod window;
+ mod window_appearance;
+diff --git a/src/text_system.rs b/src/text_system.rs
+index fbc4886..e282f6c 100644
+--- a/src/text_system.rs
++++ b/src/text_system.rs
+@@ -46,7 +46,15 @@ use pathfinder_geometry::{
+     vector::Vector2F,
+ };
+ use smallvec::SmallVec;
+-use std::{borrow::Cow, char, convert::TryFrom, sync::Arc, sync::OnceLock};
++use std::{
++    borrow::Cow,
++    char,
++    convert::TryFrom,
++    sync::{
++        Arc, OnceLock,
++        atomic::{AtomicBool, Ordering},
++    },
++};
+ 
+ use crate::open_type::apply_features_and_fallbacks;
+ 
+@@ -229,7 +237,18 @@ impl PlatformTextSystem for MacTextSystem {
+     }
+ }
+ 
++static ANTIALIASED_TEXT: AtomicBool = AtomicBool::new(false);
++
++/// Disable CoreGraphics glyph dilation for this process, without changing macOS preferences.
++/// Invoke before any text is rasterized; the upstream behavior remains the default.
++pub fn use_antialiased_text() {
++    ANTIALIASED_TEXT.store(true, Ordering::Relaxed);
++}
++
+ fn font_smoothing_allowed_by_user() -> bool {
++    if ANTIALIASED_TEXT.load(Ordering::Relaxed) {
++        return false;
++    }
+     static ALLOWED: OnceLock<bool> = OnceLock::new();
+     *ALLOWED.get_or_init(|| {
+         use core_foundation_sys::preferences::{

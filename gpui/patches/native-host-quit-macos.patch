@@ -1,0 +1,59 @@
+--- a/src/platform.rs
++++ b/src/platform.rs
+@@ -97,11 +97,11 @@
+             );
+             decl.add_method(
+                 sel!(applicationShouldHandleReopen:hasVisibleWindows:),
+-                should_handle_reopen as extern "C" fn(&mut Object, Sel, id, bool),
+-            );
+-            decl.add_method(
+-                sel!(applicationWillTerminate:),
+-                will_terminate as extern "C" fn(&mut Object, Sel, id),
++                should_handle_reopen as extern "C" fn(&mut Object, Sel, id, bool) -> bool,
++            );
++            decl.add_method(
++                sel!(applicationShouldTerminate:),
++                should_terminate as extern "C" fn(&mut Object, Sel, id) -> NSUInteger,
+             );
+             decl.add_method(
+                 sel!(handleGPUIMenuItem:),
+@@ -1377,7 +1377,12 @@
+     }
+ }
+ 
+-extern "C" fn should_handle_reopen(this: &mut Object, _: Sel, _: id, has_open_windows: bool) {
++extern "C" fn should_handle_reopen(
++    this: &mut Object,
++    _: Sel,
++    _: id,
++    has_open_windows: bool,
++) -> bool {
+     if !has_open_windows {
+         let platform = unsafe { get_mac_platform(this) };
+         let mut lock = platform.0.lock();
+@@ -1387,15 +1392,21 @@
+             platform.0.lock().reopen.get_or_insert(callback);
+         }
+     }
+-}
+-
+-extern "C" fn will_terminate(this: &mut Object, _: Sel, _: id) {
++    true
++}
++
++extern "C" fn should_terminate(this: &mut Object, _: Sel, _: id) -> NSUInteger {
+     let platform = unsafe { get_mac_platform(this) };
+     let mut lock = platform.0.lock();
+     if let Some(mut callback) = lock.quit.take() {
+         drop(lock);
+-        callback();
++        let allowed = callback();
+         platform.0.lock().quit.get_or_insert(callback);
++        // NSTerminateNow / NSTerminateCancel. The host retries after async approval.
++        NSUInteger::from(allowed)
++    } else {
++        // A recursive terminate request while the callback is running fails closed.
++        0
+     }
+ }
+ 

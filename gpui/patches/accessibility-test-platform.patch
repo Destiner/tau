@@ -1,0 +1,194 @@
+diff --git a/src/app/test_app.rs b/src/app/test_app.rs
+index bf265fd..a8e1e1b 100644
+--- a/src/app/test_app.rs
++++ b/src/app/test_app.rs
+@@ -499,6 +499,36 @@ impl<V: 'static + Render> TestAppWindow<V> {
+         self.background_executor.run_until_parked();
+     }
+ 
++    fn accessibility_platform_window(&self) -> crate::TestWindow {
++        let mut app = self.app.borrow_mut();
++        app.windows
++            .get_mut(self.handle.window_id())
++            .and_then(|window| window.as_mut())
++            .and_then(|window| window.platform_window.as_test())
++            .cloned()
++            .expect("test window not found")
++    }
++
++    /// Connects a simulated screen reader through the ordinary platform callback.
++    /// Draw afterwards to ensure the delivered tree reflects the latest rendered frame.
++    pub fn activate_accessibility(&mut self) {
++        self.accessibility_platform_window()
++            .activate_accessibility();
++        self.background_executor.run_until_parked();
++    }
++
++    /// Returns only the most recent AccessKit update delivered to the platform.
++    pub fn accessibility_tree(&self) -> Option<accesskit::TreeUpdate> {
++        self.accessibility_platform_window().accessibility_tree()
++    }
++
++    /// Delivers an AccessKit action through the platform callback and drains tasks.
++    pub fn dispatch_accessibility_action(&mut self, request: accesskit::ActionRequest) {
++        self.accessibility_platform_window()
++            .dispatch_accessibility_action(request);
++        self.background_executor.run_until_parked();
++    }
++
+     /// Force a redraw of the window.
+     pub fn draw(&mut self) {
+         let mut app = self.app.borrow_mut();
+@@ -557,6 +587,77 @@ mod tests {
+         }
+     }
+ 
++    struct AccessibleCounter(Counter);
++
++    impl Render for AccessibleCounter {
++        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
++            div()
++                .id("accessible-counter")
++                .size(crate::px(80.))
++                .role(crate::Role::Button)
++                .aria_label(format!("Count: {}", self.0.count))
++                .track_focus(&self.0.focus_handle)
++                .on_click(cx.listener(|counter, _, _, cx| {
++                    counter.0.count += 1;
++                    cx.notify();
++                }))
++        }
++    }
++
++    #[test]
++    fn test_accessibility_platform_callbacks() {
++        let mut app = TestApp::new();
++        let mut window = app.open_window(|_, cx| {
++            AccessibleCounter(Counter {
++                count: 0,
++                focus_handle: cx.focus_handle(),
++            })
++        });
++        window.draw();
++        assert!(window.accessibility_tree().is_none());
++        window.activate_accessibility();
++        window.draw();
++        let tree = window.accessibility_tree().expect("delivered tree");
++        let (id, node) = tree
++            .nodes
++            .iter()
++            .find(|(_, node)| node.label() == Some("Count: 0"))
++            .expect("rendered counter");
++        assert_eq!(node.role(), crate::Role::Button);
++        assert!(node.supports_action(accesskit::Action::Click));
++        let id = *id;
++        for action in [accesskit::Action::Focus, accesskit::Action::Click] {
++            window.dispatch_accessibility_action(accesskit::ActionRequest {
++                action,
++                target_tree: accesskit::TreeId::ROOT,
++                target_node: id,
++                data: None,
++            });
++        }
++        window.update(|counter, w, _| {
++            assert!(counter.0.focus_handle.is_focused(w));
++            assert_eq!(counter.0.count, 1);
++            w.refresh();
++        });
++        window.draw();
++        let latest = window.accessibility_tree().expect("latest delivered tree");
++        assert_eq!(latest.focus, id);
++        assert!(
++            latest
++                .nodes
++                .iter()
++                .any(|(_, node)| node.label() == Some("Count: 1"))
++        );
++        assert!(
++            latest
++                .nodes
++                .iter()
++                .all(|(_, node)| node.label() != Some("Count: 0"))
++        );
++        drop(window);
++        app.update(|cx| cx.shutdown());
++    }
++
+     #[test]
+     fn test_basic_usage() {
+         let mut app = TestApp::new();
+diff --git a/src/platform/test/window.rs b/src/platform/test/window.rs
+index 14fb889..5a91353 100644
+--- a/src/platform/test/window.rs
++++ b/src/platform/test/window.rs
+@@ -56,6 +56,8 @@ pub(crate) struct TestWindowState {
+     appearance: WindowAppearance,
+     external_drag_files: Vec<(PathBuf, bool)>,
+     start_external_drag_result: bool,
++    a11y_callbacks: Option<crate::A11yCallbacks>,
++    accessibility_tree: Option<accesskit::TreeUpdate>,
+ }
+ 
+ #[derive(Clone)]
+@@ -130,6 +132,8 @@ impl TestWindow {
+             appearance: WindowAppearance::Light,
+             external_drag_files: Vec::new(),
+             start_external_drag_result: false,
++            a11y_callbacks: None,
++            accessibility_tree: None,
+         })))
+     }
+     pub fn simulate_scheduled_frame(&self) -> bool {
+@@ -280,6 +284,37 @@ impl TestWindow {
+         !result.propagate
+     }
+ 
++    /// Simulates a screen reader connecting through the platform callback.
++    pub fn activate_accessibility(&self) {
++        let callbacks = self
++            .0
++            .lock()
++            .a11y_callbacks
++            .take()
++            .expect("accessibility initialized");
++        let tree = (callbacks.activation)();
++        let mut state = self.0.lock();
++        state.accessibility_tree = tree;
++        state.a11y_callbacks = Some(callbacks);
++    }
++
++    /// The most recent tree update actually delivered to the platform adapter.
++    pub fn accessibility_tree(&self) -> Option<accesskit::TreeUpdate> {
++        self.0.lock().accessibility_tree.clone()
++    }
++
++    /// Delivers a screen reader action without holding the platform state lock.
++    pub fn dispatch_accessibility_action(&self, request: accesskit::ActionRequest) {
++        let callbacks = self
++            .0
++            .lock()
++            .a11y_callbacks
++            .take()
++            .expect("accessibility initialized");
++        (callbacks.action)(request);
++        self.0.lock().a11y_callbacks = Some(callbacks);
++    }
++
+     pub fn external_drag_files(&self) -> Vec<(PathBuf, bool)> {
+         self.0.lock().external_drag_files.clone()
+     }
+@@ -290,6 +325,14 @@ impl TestWindow {
+ }
+ 
+ impl PlatformWindow for TestWindow {
++    fn a11y_init(&self, callbacks: crate::A11yCallbacks) {
++        self.0.lock().a11y_callbacks = Some(callbacks);
++    }
++
++    fn a11y_tree_update(&self, update: accesskit::TreeUpdate) {
++        self.0.lock().accessibility_tree = Some(update);
++    }
++
+     fn visual_viewport_bounds(&self) -> Bounds<Pixels> {
+         let state = self.0.lock();
+         state

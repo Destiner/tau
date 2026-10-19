@@ -1,0 +1,93 @@
+--- a/src/input/base/state.rs
++++ b/src/input/base/state.rs
+@@ -2,7 +2,6 @@
+ //!
+ //! Based on the `Input` example from the `gpui` crate.
+ //! https://github.com/zed-industries/zed/blob/main/crates/gpui/examples/input.rs
+-use gpui::TextAlign;
+ use gpui::{
+     Action, App, AppContext, Bounds, ClipboardItem, Context, Edges, Entity, EntityInputHandler,
+     EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyBinding,
+@@ -10,6 +9,7 @@
+     Render, ScrollHandle, ScrollWheelEvent, SharedString, Styled as _, Subscription,
+     UTF16Selection, Window, actions, div, point, prelude::FluentBuilder as _, px,
+ };
++use gpui::{StatefulInteractiveElement as _, TextAlign};
+ use ropey::{Rope, RopeSlice};
+ use serde::Deserialize;
+ use std::borrow::Cow;
+@@ -404,6 +404,7 @@
+     pub(crate) readonly: bool,
+     pub(crate) text_align: TextAlign,
+     pub(super) masked: bool,
++    accessibility_label: Option<SharedString>,
+     pub(super) clean_on_escape: bool,
+     protect_ime_keys: bool,
+     pub(super) submit_on_enter: bool,
+@@ -740,6 +741,7 @@
+             readonly: false,
+             text_align: TextAlign::Left,
+             masked: false,
++            accessibility_label: None,
+             clean_on_escape: false,
+             protect_ime_keys: false,
+             submit_on_enter: false,
+@@ -1078,6 +1080,13 @@
+         if self.is_single_line() {
+             self.deferred_scroll_offset = Some(point(px(0.), px(0.)));
+         }
++    }
++
++    /// Opt in to editor-owned role, name, status and existing-handle accessibility focus.
++    /// Does not expose text, values or selections. Suppress any caller wrapper textbox role.
++    pub fn accessibility_label(mut self, label: impl Into<SharedString>) -> Self {
++        self.accessibility_label = Some(label.into());
++        self
+     }
+ 
+     /// Set with disabled mode.
+@@ -4546,6 +4555,35 @@
+ 
+         let element = div()
+             .id("input-state")
++            .when_some(self.accessibility_label.clone(), |this, label| {
++                this.role(if self.masked {
++                    gpui::accesskit::Role::PasswordInput
++                } else if self.is_multi_line() {
++                    gpui::accesskit::Role::MultilineTextInput
++                } else {
++                    gpui::accesskit::Role::TextInput
++                })
++                .aria_label(label)
++                .aria_readonly(self.readonly)
++                .aria_disabled(self.disabled)
++                .when(!self.disabled, |this| {
++                    let entity = entity.clone();
++                    this.on_a11y_action(gpui::accesskit::Action::Focus, move |_, window, cx| {
++                        entity.update(cx, |state, cx| {
++                            // Consult live state: delivered actions can precede the next redraw.
++                            if state.disabled {
++                                return;
++                            }
++                            if let Some(trap) = crate::active_focus_trap(window, cx) {
++                                if !trap.contains(&state.focus_handle, window) {
++                                    return;
++                                }
++                            }
++                            state.focus_handle.focus(window, cx);
++                        });
++                    })
++                })
++            })
+             .key_context(CONTEXT)
+             .action_availability::<Copy>({
+                 let entity = entity.clone();
+--- a/src/focus_trap.rs
++++ b/src/focus_trap.rs
+@@ -244,5 +244,6 @@
+ /// Returns the focus handle for the active focus trap, if any.
+ #[doc(hidden)]
+ pub fn active_focus_trap(window: &Window, cx: &App) -> Option<FocusHandle> {
++    cx.try_global::<FocusTrapManager>()?;
+     FocusTrapManager::find_active_trap(window, cx)
+ }

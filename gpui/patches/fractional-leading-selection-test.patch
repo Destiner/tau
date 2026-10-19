@@ -1,0 +1,91 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 8fbfd5e..6be7f22 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -244,3 +244,6 @@ useless_conversion = "allow"
+ [lints.clippy.style]
+ level = "allow"
+ priority = -1
++
++[patch.crates-io]
++gpui-pre = { path = "../gpui-pre" }
+diff --git a/src/selectable_text.rs b/src/selectable_text.rs
+index f53b611..4f0cfc5 100644
+--- a/src/selectable_text.rs
++++ b/src/selectable_text.rs
+@@ -295,6 +295,75 @@ mod tests {
+         });
+     }
+ 
++    struct LongLeadingView {
++        text: String,
++        fractional: bool,
++        layout: std::rc::Rc<std::cell::RefCell<Option<gpui::TextLayout>>>,
++    }
++
++    impl Render for LongLeadingView {
++        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++            let text = SelectableText::new("long-leading", self.text.clone()).text_style(
++                gpui::TextStyleRefinement {
++                    fractional_line_height: Some(self.fractional),
++                    ..Default::default()
++                },
++            );
++            *self.layout.borrow_mut() = Some(text.styled_text.layout().clone());
++            div().size_full().child(TextSelectionLayer).child(
++                div()
++                    .w(px(480.))
++                    .text_size(px(12.))
++                    .line_height(gpui::relative(1.65))
++                    .child(text),
++            )
++        }
++    }
++
++    #[gpui::test]
++    fn fractional_leading_selection_hit_tests_hundreds_of_rendered_lines(cx: &mut TestAppContext) {
++        let text: String = (0..300).map(|row| format!("row {row:03}\n")).collect();
++        for (fractional, height) in [(false, 20.), (true, 19.8)] {
++            let layout = std::rc::Rc::new(std::cell::RefCell::new(None));
++            let (_, view) = cx.add_window_view(|_, _| LongLeadingView {
++                text: text.clone(),
++                fractional,
++                layout: layout.clone(),
++            });
++            view.update(|window, cx| {
++                let _ = window.draw(cx);
++            });
++            let layout = layout
++                .borrow()
++                .clone()
++                .expect("rendered SelectableText layout");
++            assert!((f32::from(layout.line_height()) - height).abs() < 0.001);
++            let origin = layout.position_for_index(0).unwrap();
++            for row in [1, 25, 100, 200, 299] {
++                let index = row * 8;
++                let caret = layout.position_for_index(index).unwrap();
++                assert!((f32::from(caret.y - origin.y) - row as f32 * height).abs() < 0.02);
++                assert_eq!(
++                    layout.index_for_position(point(caret.x + px(1.), caret.y + px(height / 2.))),
++                    Ok(index)
++                );
++            }
++            let start = 1;
++            let end = 20;
++            let at = |row| point(px(1.), px(row as f32 * height + height / 2.));
++            view.simulate_mouse_down(at(start), MouseButton::Left, Modifiers::default());
++            view.simulate_mouse_move(at(end), Some(MouseButton::Left), Modifiers::default());
++            view.simulate_mouse_up(at(end), MouseButton::Left, Modifiers::default());
++            view.update(|window, cx| {
++                let _ = window.draw(cx);
++                assert_eq!(
++                    TextSelection::selected_text(window, cx),
++                    &text[start * 8..end * 8]
++                );
++            });
++        }
++    }
++
+     #[test]
+     fn wrapped_selection_paints_full_width_middle_lines() {
+         let bounds = Bounds::new(point(px(10.), px(20.)), size(px(100.), px(100.)));

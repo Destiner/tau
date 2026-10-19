@@ -1,0 +1,40 @@
+--- a/src/button.rs
++++ b/src/button.rs
+@@ -229,6 +229,7 @@
+             .when_some(self.role.resolve(|| Role::Button), |this, role| {
+                 this.role(role)
+             })
++            .aria_disabled(disabled)
+             .when_some(self.accessibility_label, |this, label| {
+                 this.aria_label(label)
+             })
+@@ -548,9 +549,6 @@
+         assert_eq!(disabled.role(), Role::Button);
+         assert!(!disabled.supports_action(accesskit::Action::Click));
+ 
+-        // GPUI's current StatefulInteractiveElement interface has no
+-        // aria-disabled setter even though AccessKit can represent it. This
+-        // assertion records that upstream gap instead of claiming support.
+-        assert!(!disabled.is_disabled());
++        assert!(disabled.is_disabled());
+     }
+ }
+--- a/src/input/base/mod.rs
++++ b/src/input/base/mod.rs
+@@ -156,6 +156,8 @@
+         self
+     }
+ 
++    /// Set disabled presentation and accessibility metadata for the wrapper.
++    /// The caller remains responsible for disabling the child editor.
+     pub fn disabled(mut self, disabled: bool) -> Self {
+         self.disabled = disabled;
+         self
+@@ -236,6 +238,7 @@
+             .when_some(self.role.resolve(|| Role::TextInput), |this, role| {
+                 this.role(role)
+             })
++            .aria_disabled(self.disabled)
+             .children(self.children)
+             .refine_style(&style)
+     }

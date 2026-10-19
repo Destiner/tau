@@ -1,0 +1,465 @@
+diff --git a/src/app.rs b/src/app.rs
+index 612d3df..a6408db 100644
+--- a/src/app.rs
++++ b/src/app.rs
+@@ -766,6 +766,7 @@ pub struct App {
+     pub(crate) keyboard_mapper: Rc<dyn PlatformKeyboardMapper>,
+     pub(crate) global_action_listeners:
+         TypeIdHashMap<Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Self)>>>,
++    global_action_availability: TypeIdHashMap<Rc<dyn Fn(&dyn Any, &Self) -> bool>>,
+     pending_effects: VecDeque<Effect>,
+ 
+     pub(crate) observers: SubscriberSet<EntityId, Handler>,
+@@ -897,6 +898,7 @@ impl App {
+                 keyboard_layout,
+                 keyboard_mapper,
+                 global_action_listeners: Default::default(),
++                global_action_availability: Default::default(),
+                 pending_effects: VecDeque::new(),
+                 pending_notifications: FxHashSet::default(),
+                 pending_global_notifications: Default::default(),
+@@ -2380,6 +2382,32 @@ impl App {
+         self
+     }
+ 
++    /// Set the availability validator for global handlers of an action type, replacing any
++    /// previous validator. This does not install a handler: `true` only permits existing global
++    /// handlers. `false` disables global capture and bubble dispatch, but never local responders.
++    /// The callback also serves enabled-state queries, so it should be cheap and side-effect free.
++    pub fn on_action_available<A: Action>(
++        &mut self,
++        validate: impl Fn(&A, &Self) -> bool + 'static,
++    ) -> &mut Self {
++        self.global_action_availability.insert(
++            TypeId::of::<A>(),
++            Rc::new(move |action, cx| validate(action.downcast_ref().unwrap(), cx)),
++        );
++        self
++    }
++
++    pub(crate) fn is_global_action_available(&self, action: &dyn Action) -> bool {
++        let action_type = action.as_any().type_id();
++        self.global_action_listeners
++            .get(&action_type)
++            .is_some_and(|listeners| !listeners.is_empty())
++            && self
++                .global_action_availability
++                .get(&action_type)
++                .is_none_or(|validate| validate(action.as_any(), self))
++    }
++
+     /// Event handlers propagate events by default. Call this method to stop dispatching to
+     /// event handlers with a lower z-index (mouse) or higher in the tree (keyboard). This is
+     /// the opposite of [`Self::propagate`]. It's also possible to cancel a call to [`Self::propagate`] by
+@@ -2509,21 +2537,27 @@ impl App {
+         }
+     }
+ 
+-    /// Checks if the given action is bound in the current context, as defined by the app's current focus,
+-    /// the bindings in the element tree, and any global action listeners.
++    /// Checks enabled handler availability in the current focus context. The nearest local
++    /// responder policy or handler takes priority over global handlers and their validator.
++    /// Validators cannot make an action available without a handler.
+     pub fn is_action_available(&mut self, action: &dyn Action) -> bool {
+-        let mut action_available = false;
+         if let Some(window) = self.active_window()
+-            && let Ok(window_action_available) =
+-                window.update(self, |_, window, cx| window.is_action_available(action, cx))
++            && let Ok((policy, local_available)) = window.update(self, |_, window, cx| {
++                (
++                    window.action_availability_override(action, cx),
++                    window.is_action_available(action, cx),
++                )
++            })
+         {
+-            action_available = window_action_available;
++            if policy == Some(false) {
++                return false;
++            }
++            if local_available {
++                return true;
++            }
+         }
+ 
+-        action_available
+-            || self
+-                .global_action_listeners
+-                .contains_key(&action.as_any().type_id())
++        self.is_global_action_available(action)
+     }
+ 
+     /// Sets the menu bar for this application. This will replace any existing menu bar.
+@@ -2580,6 +2614,9 @@ impl App {
+     }
+ 
+     fn dispatch_global_action(&mut self, action: &dyn Action) {
++        if !self.is_global_action_available(action) {
++            return;
++        }
+         self.propagate_event = true;
+ 
+         if let Some(mut global_listeners) = self
+@@ -2604,6 +2641,7 @@ impl App {
+         }
+ 
+         if self.propagate_event
++            && self.is_global_action_available(action)
+             && let Some(mut global_listeners) = self
+                 .global_action_listeners
+                 .remove(&action.as_any().type_id())
+@@ -3290,6 +3328,121 @@ impl<'a, T> Drop for GpuiBorrow<'a, T> {
+     }
+ }
+ 
++#[cfg(test)]
++mod action_availability_tests {
++    use super::*;
++    use crate::{Context, IntoElement, Render, TestAppContext, div, prelude::*};
++    use std::cell::Cell;
++
++    crate::actions!(availability_tests, [Probe]);
++
++    struct Responder {
++        calls: Rc<Cell<usize>>,
++        explicit_policy: bool,
++        focus: crate::FocusHandle,
++    }
++
++    impl Render for Responder {
++        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++            let calls = self.calls.clone();
++            let mut child = div()
++                .track_focus(&self.focus)
++                .on_action(move |_: &Probe, _, cx| {
++                    calls.set(calls.get() + 1);
++                    cx.propagate();
++                });
++            if self.explicit_policy {
++                child = child.action_availability::<Probe>(|_, _| true);
++            }
++            div()
++                .action_availability::<Probe>(|_, _| false)
++                .child(child)
++        }
++    }
++
++    fn register_global(cx: &mut App, capture: Rc<Cell<usize>>, bubble: Rc<Cell<usize>>) {
++        cx.global_action_listeners
++            .entry(TypeId::of::<Probe>())
++            .or_default()
++            .push(Rc::new(move |_, phase, cx| {
++                let count = match phase {
++                    DispatchPhase::Capture => &capture,
++                    DispatchPhase::Bubble => &bubble,
++                };
++                count.set(count.get() + 1);
++                cx.propagate();
++            }));
++    }
++
++    #[gpui::test]
++    fn global_validator_requires_handlers_and_blocks_both_app_dispatch_phases(
++        cx: &mut TestAppContext,
++    ) {
++        let capture = Rc::new(Cell::new(0));
++        let bubble = Rc::new(Cell::new(0));
++        cx.update(|cx| {
++            cx.on_action_available::<Probe>(|_, _| true);
++            assert!(!cx.is_action_available(&Probe));
++            cx.dispatch_action(&Probe);
++            register_global(cx, capture.clone(), bubble.clone());
++            cx.on_action_available::<Probe>(|_, _| false);
++            assert!(!cx.is_action_available(&Probe));
++            cx.dispatch_action(&Probe);
++            assert_eq!((capture.get(), bubble.get()), (0, 0));
++            cx.on_action_available::<Probe>(|_, _| true);
++            assert!(cx.is_action_available(&Probe));
++            cx.dispatch_action(&Probe);
++            assert_eq!((capture.get(), bubble.get()), (1, 1));
++        });
++    }
++
++    #[gpui::test]
++    fn denied_global_dispatch_preserves_nearest_window_responder(cx: &mut TestAppContext) {
++        let capture = Rc::new(Cell::new(0));
++        let bubble = Rc::new(Cell::new(0));
++        let local = Rc::new(Cell::new(0));
++        cx.update(|cx| {
++            register_global(cx, capture.clone(), bubble.clone());
++            cx.on_action_available::<Probe>(|_, _| false);
++        });
++        let window = cx.add_window({
++            let calls = local.clone();
++            move |w, cx| {
++                let focus = cx.focus_handle();
++                w.focus(&focus, cx);
++                Responder {
++                    calls,
++                    explicit_policy: false,
++                    focus,
++                }
++            }
++        });
++        window.update(cx, |_, w, _| w.activate_window()).unwrap();
++        cx.run_until_parked();
++        for explicit_policy in [false, true] {
++            window
++                .update(cx, |view, _, cx| {
++                    view.explicit_policy = explicit_policy;
++                    cx.notify();
++                })
++                .unwrap();
++            cx.update_window(window.into(), |_, w, cx| w.draw(cx).clear(cx))
++                .unwrap();
++            cx.update(|cx| {
++                assert!(cx.is_action_available(&Probe));
++                cx.dispatch_action(&Probe);
++            });
++            cx.run_until_parked();
++            window
++                .update(cx, |_, w, cx| w.dispatch_action(Box::new(Probe), cx))
++                .unwrap();
++            cx.run_until_parked();
++        }
++        assert_eq!(local.get(), 4);
++        assert_eq!((capture.get(), bubble.get()), (0, 0));
++    }
++}
++
+ #[cfg(test)]
+ mod test {
+     use std::{
+diff --git a/src/elements/div.rs b/src/elements/div.rs
+index c32ac99..9db1edd 100644
+--- a/src/elements/div.rs
++++ b/src/elements/div.rs
+@@ -1091,6 +1091,20 @@ pub trait InteractiveElement: Sized {
+         self
+     }
+ 
++    /// Set a live, read-only availability policy on this responder.
++    /// A false result consumes the action without parent/global fallback;
++    /// the nearest policy or handler shadows ancestors. Keep queries cheap
++    /// and side-effect free: no clipboard reads or content projections.
++    fn action_availability<A: Action>(
++        mut self,
++        validate: impl Fn(&Window, &App) -> bool + 'static,
++    ) -> Self {
++        self.interactivity()
++            .action_availability
++            .push((TypeId::of::<A>(), Rc::new(validate)));
++        self
++    }
++
+     /// Bind the given callback to an action dispatch during the bubble phase.
+     /// The fluent API equivalent to [`Interactivity::on_action`].
+     ///
+@@ -2169,6 +2183,7 @@ pub struct Interactivity {
+     pub(crate) key_up_listeners: Vec<KeyUpListener>,
+     pub(crate) modifiers_changed_listeners: Vec<ModifiersChangedListener>,
+     pub(crate) action_listeners: Vec<(TypeId, ActionListener)>,
++    pub(crate) action_availability: Vec<(TypeId, Rc<dyn Fn(&Window, &App) -> bool>)>,
+     pub(crate) drop_listeners: Vec<(TypeId, DropListener)>,
+     pub(crate) can_drop_predicate: Option<CanDropPredicate>,
+     pub(crate) click_listeners: Vec<ClickListener>,
+@@ -3270,6 +3285,12 @@ impl Interactivity {
+         let key_up_listeners = mem::take(&mut self.key_up_listeners);
+         let modifiers_changed_listeners = mem::take(&mut self.modifiers_changed_listeners);
+         let action_listeners = mem::take(&mut self.action_listeners);
++        for (action_type, validate) in mem::take(&mut self.action_availability) {
++            window
++                .next_frame
++                .dispatch_tree
++                .on_action_availability(action_type, validate);
++        }
+         if let Some(context) = self.key_context.clone() {
+             window.set_key_context(context);
+         }
+diff --git a/src/key_dispatch.rs b/src/key_dispatch.rs
+index 5db400f..e4af225 100644
+--- a/src/key_dispatch.rs
++++ b/src/key_dispatch.rs
+@@ -83,6 +83,7 @@ pub(crate) struct DispatchTree {
+ pub(crate) struct DispatchNode {
+     pub key_listeners: Vec<KeyListener>,
+     pub action_listeners: Vec<DispatchActionListener>,
++    pub action_availability: FxHashMap<TypeId, Rc<dyn Fn(&Window, &App) -> bool>>,
+     pub modifiers_changed_listeners: Vec<ModifiersChangedListener>,
+     pub context: Option<KeyContext>,
+     pub focus_id: Option<FocusId>,
+@@ -258,6 +259,7 @@ impl DispatchTree {
+         let target = self.active_node();
+         target.key_listeners = mem::take(&mut source.key_listeners);
+         target.action_listeners = mem::take(&mut source.action_listeners);
++        target.action_availability = mem::take(&mut source.action_availability);
+         target.modifiers_changed_listeners = mem::take(&mut source.modifiers_changed_listeners);
+     }
+ 
+@@ -343,6 +345,41 @@ impl DispatchTree {
+             });
+     }
+ 
++    pub fn on_action_availability(
++        &mut self,
++        action_type: TypeId,
++        validate: Rc<dyn Fn(&Window, &App) -> bool>,
++    ) {
++        self.active_node()
++            .action_availability
++            .insert(action_type, validate);
++    }
++
++    /// The nearest responder's policy wins, including an explicit denial.
++    pub fn action_availability_override(
++        &self,
++        action: &dyn Action,
++        target: DispatchNodeId,
++        window: &Window,
++        cx: &App,
++    ) -> Option<bool> {
++        for node_id in self.dispatch_path(target).iter().rev() {
++            let node = &self.nodes[node_id.0];
++            if let Some(validate) = node.action_availability.get(&action.as_any().type_id()) {
++                return Some(validate(window, cx));
++            }
++            // A nearer handler without a policy retains stock availability.
++            if node
++                .action_listeners
++                .iter()
++                .any(|listener| listener.action_type == action.as_any().type_id())
++            {
++                return None;
++            }
++        }
++        None
++    }
++
+     pub fn focus_contains(&self, parent: FocusId, child: FocusId) -> bool {
+         if parent == child {
+             return true;
+diff --git a/src/window.rs b/src/window.rs
+index 645f9db..6586731 100644
+--- a/src/window.rs
++++ b/src/window.rs
+@@ -3181,10 +3181,46 @@ impl Window {
+             self.focus_node_id_in_rendered_frame(self.focused(cx).map(|handle| handle.id));
+         self.rendered_frame
+             .dispatch_tree
+-            .is_action_available(action, node_id)
++            .action_availability_override(action, node_id, self, cx)
++            != Some(false)
++            && self
++                .rendered_frame
++                .dispatch_tree
++                .is_action_available(action, node_id)
++    }
++
++    pub(crate) fn action_availability_override(
++        &self,
++        action: &dyn Action,
++        cx: &App,
++    ) -> Option<bool> {
++        let node_id =
++            self.focus_node_id_in_rendered_frame(self.focused(cx).map(|handle| handle.id));
++        self.rendered_frame
++            .dispatch_tree
++            .action_availability_override(action, node_id, self, cx)
++    }
++
++    /// Determine validated availability at a particular focus handle.
++    pub fn is_action_available_in_with_context(
++        &self,
++        action: &dyn Action,
++        focus_handle: &FocusHandle,
++        cx: &App,
++    ) -> bool {
++        let node_id = self.focus_node_id_in_rendered_frame(Some(focus_handle.id));
++        self.rendered_frame
++            .dispatch_tree
++            .action_availability_override(action, node_id, self, cx)
++            != Some(false)
++            && self
++                .rendered_frame
++                .dispatch_tree
++                .is_action_available(action, node_id)
+     }
+ 
+-    /// Determine whether the given action is available along the dispatch path to the given focus_handle.
++    /// Determine listener presence along the dispatch path to the given focus_handle.
++    /// Use `is_action_available_in_with_context` to evaluate responder policies.
+     pub fn is_action_available_in(&self, action: &dyn Action, focus_handle: &FocusHandle) -> bool {
+         let node_id = self.focus_node_id_in_rendered_frame(Some(focus_handle.id));
+         self.rendered_frame
+@@ -6280,13 +6316,23 @@ impl Window {
+         action: &dyn Action,
+         cx: &mut App,
+     ) {
++        if self
++            .rendered_frame
++            .dispatch_tree
++            .action_availability_override(action, node_id, self, cx)
++            == Some(false)
++        {
++            cx.propagate_event = false;
++            return;
++        }
+         let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+ 
+         // Capture phase for global actions.
+         cx.propagate_event = true;
+-        if let Some(mut global_listeners) = cx
+-            .global_action_listeners
+-            .remove(&action.as_any().type_id())
++        if cx.is_global_action_available(action)
++            && let Some(mut global_listeners) = cx
++                .global_action_listeners
++                .remove(&action.as_any().type_id())
+         {
+             for listener in &global_listeners {
+                 #[cfg(feature = "profiler")]
+@@ -6361,9 +6407,10 @@ impl Window {
+         }
+ 
+         // Bubble phase for global actions.
+-        if let Some(mut global_listeners) = cx
+-            .global_action_listeners
+-            .remove(&action.as_any().type_id())
++        if cx.is_global_action_available(action)
++            && let Some(mut global_listeners) = cx
++                .global_action_listeners
++                .remove(&action.as_any().type_id())
+         {
+             for listener in global_listeners.iter().rev() {
+                 cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
+@@ -6537,6 +6584,11 @@ impl Window {
+                 }
+             }
+         }
++        actions.retain(|action| {
++            let action = action.as_ref();
++            self.action_availability_override(action, cx) != Some(false)
++                && (self.is_action_available(action, cx) || cx.is_global_action_available(action))
++        });
+         actions
+     }
+ 
+@@ -6686,6 +6738,19 @@ impl Window {
+             .on_action(action_type, Rc::new(listener));
+     }
+ 
++    /// Register a live, read-only responder policy for this frame's dispatch node.
++    /// A denial consumes dispatch before capture or parent/global fallback. The
++    /// nearest handler or policy shadows ancestors. Call only during paint.
++    pub fn on_action_availability<A: Action>(
++        &mut self,
++        validate: impl Fn(&Window, &App) -> bool + 'static,
++    ) {
++        self.invalidator.debug_assert_paint();
++        self.next_frame
++            .dispatch_tree
++            .on_action_availability(TypeId::of::<A>(), Rc::new(validate));
++    }
++
+     /// Register a capturing action listener on this node for the next frame if the condition is true.
+     /// The type of action is determined by the first parameter of the given listener. When the next
+     /// frame is rendered the listener will be cleared.

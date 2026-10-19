@@ -1,0 +1,3106 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 1978efc..7afc78b 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -183,7 +183,8 @@ pub use text::{
+     html, markdown, markdown_ast,
+ };
+ pub use text_selection::{
+-    TextSelection, TextSelectionContentKey, TextSelectionCoverage, TextSelectionEndpoint,
++    TextSelection, TextSelectionContentKey, TextSelectionCoverage, TextSelectionDomain,
++    TextSelectionDomainEndpoint, TextSelectionDomainRange, TextSelectionEndpoint,
+     TextSelectionEvent, TextSelectionHandle, TextSelectionLayer, TextSelectionProjection,
+     TextSelectionRegistration, TextSelectionRun, TextSelectionScopeId, TextSelectionSnapshot,
+     TextSelectionWindowPoints, TouchHandleLayout,
+diff --git a/src/root.rs b/src/root.rs
+index 16ea056..75b623b 100644
+--- a/src/root.rs
++++ b/src/root.rs
+@@ -1,6 +1,6 @@
+ //! Window roots and presentation-layer plugins.
+ use crate::input::Copy;
+-use crate::{StyledExt, TextSelectionLayer};
++use crate::{ElementExt, StyledExt, TextSelectionLayer};
+ use gpui::{
+     AnyElement, AnyView, App, AppContext, ClipboardItem, Context, Div, Entity, Global,
+     InteractiveElement, IntoElement, KeyBinding, ParentElement, Render, Stateful, StyleRefinement,
+@@ -91,6 +91,7 @@ struct Plugin {
+ /// The window's content and overlay host, independent of any styled component library.
+ pub struct Root {
+     view: AnyView,
++    selection_focus: gpui::FocusHandle,
+     style: StyleRefinement,
+     plugins: Vec<Plugin>,
+ }
+@@ -153,6 +154,7 @@ impl Root {
+             .unwrap_or_default();
+         Self {
+             view: view.into(),
++            selection_focus: cx.focus_handle(),
+             style: StyleRefinement::default(),
+             plugins: factories
+                 .into_iter()
+@@ -282,8 +284,25 @@ impl Render for Root {
+         for plugin in &self.plugins {
+             (plugin.prepare)(window, cx);
+         }
++        let selection_focus = self.selection_focus.clone();
+         let mut content = div()
+             .id("root")
++            .track_focus(&self.selection_focus)
++            .on_prepaint(move |_, window, cx| {
++                if !crate::TextSelection::has_domain_selection(window, cx) {
++                    return;
++                }
++                let focus = selection_focus.clone();
++                window.defer(cx, move |window, cx| {
++                    // A virtualized endpoint's focus node left the dispatch tree.
++                    // Keep Copy routed through Root without stealing mounted input focus.
++                    if crate::TextSelection::has_domain_selection(window, cx)
++                        && !focus.contains_focused(window, cx)
++                    {
++                        focus.focus(window, cx);
++                    }
++                });
++            })
+             .key_context(CONTEXT)
+             .on_action(cx.listener(Self::on_action_tab))
+             .on_action(cx.listener(Self::on_action_tab_prev))
+diff --git a/src/text/document.rs b/src/text/document.rs
+index 4c1e6b0..3547e52 100644
+--- a/src/text/document.rs
++++ b/src/text/document.rs
+@@ -145,7 +145,7 @@ impl ParsedDocument {
+     /// stays `_italic_`, a reference link keeps its `[ref]` form, a table keeps
+     /// its column padding — and it needs no rule of its own per block type.
+     /// Blocks the parser could not locate fall back to reconstruction.
+-    fn whole_source(&self, block: &BlockNode) -> String {
++    pub(super) fn whole_source(&self, block: &BlockNode) -> String {
+         if let Some(span) = block.span()
+             && let Some(source) = self.source.get(span.start..span.end)
+         {
+@@ -155,6 +155,73 @@ impl ParsedDocument {
+         block.selected_text(SelectionFormat::Source)
+     }
+ 
++    pub(super) fn copy_rendered_range(
++        &self,
++        index: &super::range_highlight::RenderedIndex,
++        range: Range<usize>,
++        format: SelectionFormat,
++    ) -> Result<String, super::RangeHighlightError> {
++        index
++            .resolve(&range)
++            .ok_or(super::RangeHighlightError::InvalidRange(0))?;
++        if range.is_empty() {
++            return Ok(String::new());
++        }
++        if format == SelectionFormat::Plain {
++            return Ok(self.text()[range].to_string());
++        }
++        let mut pieces = Vec::new();
++        for (block, rendered) in self.blocks.iter().zip(index.block_ranges()) {
++            let covered_empty =
++                rendered.is_empty() && range.start <= rendered.start && rendered.start <= range.end;
++            if !covered_empty && (rendered.end <= range.start || rendered.start >= range.end) {
++                continue;
++            }
++            let source = if range.start <= rendered.start && range.end >= rendered.end {
++                self.whole_source(block)
++            } else {
++                block.projected_source(index, &range)
++            };
++            let source = source.trim_end_matches('\n');
++            if !source.is_empty() {
++                pieces.push(source.to_string());
++            }
++        }
++        Ok(pieces.join("\n\n"))
++    }
++
++    pub(super) fn source_range_for_rendered_range(
++        &self,
++        index: &super::range_highlight::RenderedIndex,
++        range: Range<usize>,
++    ) -> Option<Range<usize>> {
++        index.resolve(&range)?;
++        if range.is_empty() {
++            return None;
++        }
++        let mut selected = SourceRangeSelection::Unselected;
++        for (block, rendered) in self.blocks.iter().zip(index.block_ranges()) {
++            let covered_empty =
++                rendered.is_empty() && range.start <= rendered.start && rendered.start <= range.end;
++            if !covered_empty && (rendered.end <= range.start || rendered.start >= range.end) {
++                continue;
++            }
++            if covered_empty {
++                selected.merge(
++                    block
++                        .span()
++                        .map(|span| SourceRangeSelection::Mapped(span.start..span.end))
++                        .unwrap_or(SourceRangeSelection::Unmapped),
++                );
++            } else if matches!(block, BlockNode::Custom(_)) {
++                selected.merge(SourceRangeSelection::Unmapped);
++            } else {
++                selected.merge(block.projected_source_range(index, &range));
++            }
++        }
++        selected.into_range()
++    }
++
+     pub(super) fn selected_source_range(&self) -> Option<Range<usize>> {
+         let mut selected = SourceRangeSelection::Unselected;
+         for block in self.blocks.iter() {
+diff --git a/src/text/inline.rs b/src/text/inline.rs
+index 8767ff0..da30001 100644
+--- a/src/text/inline.rs
++++ b/src/text/inline.rs
+@@ -525,6 +525,15 @@ impl Inline {
+             return (false, false, None);
+         }
+ 
++        if text_view_state.projects_domain() || text_view_state.logical_selection().is_some() {
++            let start =
++                text_view_state.inline_rendered_offset(&self.state, self.selection_source.as_ref());
++            let selection = text_view_state
++                .logical_range_for_inline(start, self.text.len())
++                .map(Into::into);
++            return (is_selectable, true, selection);
++        }
++
+         if text_view_state.is_all_selected() {
+             return (is_selectable, true, Some((0..self.text.len()).into()));
+         }
+@@ -1002,6 +1011,8 @@ impl Element for Inline {
+             }
+         }
+ 
++        // Building the rendered index also reads inline state.
++        drop(state);
+         if is_selectable {
+             if let Some(text_view_state) = GlobalState::global(cx).text_view_state().cloned() {
+                 let text_bounds = Self::text_line_bounds(
+@@ -1011,13 +1022,16 @@ impl Element for Inline {
+                 );
+                 text_view_state.update(cx, |state, _| {
+                     state.selection_adapter.register_inline(text_bounds);
+-                    state
+-                        .selection_adapter
+-                        .register_text_run(crate::TextSelectionRun::new(
++                    let offset =
++                        state.inline_rendered_offset(&self.state, self.selection_source.as_ref());
++                    state.selection_adapter.register_text_run(
++                        crate::TextSelectionRun::new(
+                             self.text.clone(),
+                             text_layout.clone(),
+-                            hitbox.bounds,
+-                        ));
++                            bounds,
++                        ),
++                        offset,
++                    );
+                 });
+             }
+ 
+@@ -1163,7 +1177,6 @@ impl Element for Inline {
+             });
+         }
+ 
+-        drop(state);
+         self.retain_styled_text();
+     }
+ }
+diff --git a/src/text/inline_object.rs b/src/text/inline_object.rs
+index e1e1c92..266d8cb 100644
+--- a/src/text/inline_object.rs
++++ b/src/text/inline_object.rs
+@@ -302,6 +302,15 @@ impl Element for InlineObject {
+             .is_some_and(|view| view.read(cx).is_selectable());
+         let selected = view.as_ref().is_some_and(|view| {
+             let state = view.read(cx);
++            if state.projects_domain() || state.logical_selection().is_some() {
++                return selectable
++                    && state
++                        .logical_range_for_inline(
++                            state.object_rendered_offset(&self.selected),
++                            self.text.len(),
++                        )
++                        .is_some();
++            }
+             if selectable && state.preserve_inline_selection && !state.is_all_selected() {
+                 return self.selected.lock().is_ok_and(|selected| *selected);
+             }
+@@ -367,6 +376,11 @@ impl Element for InlineObject {
+             if visible.size.width > Pixels::ZERO && visible.size.height > Pixels::ZERO {
+                 view.as_ref().unwrap().update(cx, |state, _| {
+                     state.selection_adapter.register_inline(vec![visible]);
++                    if let Some(start) = state.object_rendered_offset(&self.selected) {
++                        state
++                            .selection_adapter
++                            .register_rendered_object(visible, start..start + self.text.len());
++                    }
+                 });
+             }
+             let hitbox = hitbox.clone();
+diff --git a/src/text/logical_selection_tests.rs b/src/text/logical_selection_tests.rs
+new file mode 100644
+index 0000000..9395deb
+--- /dev/null
++++ b/src/text/logical_selection_tests.rs
+@@ -0,0 +1,305 @@
++use super::{
++    SelectionFormat, document::ParsedDocument, format::markdown, node::NodeContext,
++    range_highlight::RenderedIndex,
++};
++use gpui::AppContext as _;
++use std::ops::Range;
++
++#[path = "selection_gap_tests.rs"]
++mod selection_gap_tests;
++
++fn document(source: &str) -> (ParsedDocument, RenderedIndex) {
++    let document = markdown::parse(source, &mut NodeContext::default()).unwrap();
++    let index = RenderedIndex::new(&document);
++    (document, index)
++}
++
++fn occurrence(text: &str, needle: &str) -> Range<usize> {
++    let start = text.find(needle).unwrap();
++    start..start + needle.len()
++}
++
++#[test]
++fn cold_copy_parses_large_markdown_without_view_or_executor() {
++    let source = "**naïve** &amp; `code`\n\n".repeat(600);
++    let plain = "naïve & code\n".repeat(600);
++    assert_eq!(
++        super::TextViewState::copy_markdown_slice(&source, None, None, SelectionFormat::Plain)
++            .unwrap(),
++        plain
++    );
++    assert_eq!(
++        super::TextViewState::copy_markdown_slice(
++            &source,
++            Some(0),
++            Some(6),
++            SelectionFormat::Source
++        )
++        .unwrap(),
++        "**naïve**"
++    );
++    assert!(
++        super::TextViewState::copy_markdown_slice(
++            &source,
++            Some(3),
++            Some(4),
++            SelectionFormat::Plain
++        )
++        .is_err()
++    );
++}
++
++#[test]
++fn logical_projection_is_utf8_exact_without_layout() {
++    let source = "**甲乙** same\n\n*same* &amp; café";
++    let (doc, index) = document(source);
++    let rendered = doc.text();
++    let range = occurrence(&rendered, "乙");
++    assert_eq!(
++        doc.copy_rendered_range(&index, range.clone(), SelectionFormat::Plain)
++            .unwrap(),
++        "乙"
++    );
++    assert_eq!(
++        doc.copy_rendered_range(&index, range.clone(), SelectionFormat::Source)
++            .unwrap(),
++        "**乙**"
++    );
++    assert_eq!(
++        doc.source_range_for_rendered_range(&index, range),
++        Some(5..8)
++    );
++    let second = rendered.rfind("same").unwrap();
++    let source_second = source.rfind("same").unwrap();
++    assert_eq!(
++        doc.source_range_for_rendered_range(&index, second..second + 4),
++        Some(source_second..source_second + 4)
++    );
++    let entity = occurrence(&rendered, "&");
++    assert_eq!(
++        doc.source_range_for_rendered_range(&index, entity),
++        Some(occurrence(source, "&amp;"))
++    );
++    assert!(
++        doc.copy_rendered_range(&index, 1..2, SelectionFormat::Plain)
++            .is_err()
++    );
++    assert_eq!(doc.source_range_for_rendered_range(&index, 1..2), None);
++    assert!(!doc.blocks.iter().any(|block| block.has_selection()));
++}
++
++#[test]
++fn logical_projection_preserves_separators_and_full_middle_source() {
++    let source =
++        "start\n\n_untouched_ [ref][r]\n\n![alt](image.png)\n\nend\n\n[r]: https://example.com";
++    let (doc, index) = document(source);
++    let rendered = doc.text();
++    let range = 2..rendered.find("end").unwrap() + 2;
++    assert_eq!(
++        doc.copy_rendered_range(&index, range.clone(), SelectionFormat::Plain)
++            .unwrap(),
++        &rendered[range.clone()]
++    );
++    let copied = doc
++        .copy_rendered_range(&index, range, SelectionFormat::Source)
++        .unwrap();
++    assert!(copied.contains("_untouched_ [ref][r]"), "{copied}");
++    assert!(copied.contains("![alt](image.png)"), "{copied}");
++    assert_eq!(
++        doc.copy_rendered_range(&index, 5..6, SelectionFormat::Plain)
++            .unwrap(),
++        "\n"
++    );
++    assert_eq!(doc.source_range_for_rendered_range(&index, 5..6), None);
++    assert_eq!(
++        doc.copy_rendered_range(&index, 3..3, SelectionFormat::Source)
++            .unwrap(),
++        ""
++    );
++}
++
++#[test]
++fn logical_projection_reconstructs_code_tables_lists_and_images() {
++    for (source, needle, expected) in [
++        ("```rust\nalpha beta\n```", "beta", "```rust\nbeta\n```"),
++        ("## **Title**", "itl", "## **itl**"),
++        ("- [x] alpha\n- beta", "lph", "- [x] lph"),
++        (
++            "before ![alt](image.png) after",
++            "before  after",
++            "before ![alt](image.png) after",
++        ),
++    ] {
++        let (doc, index) = document(source);
++        let range = occurrence(&doc.text(), needle);
++        assert_eq!(
++            doc.copy_rendered_range(&index, range, SelectionFormat::Source)
++                .unwrap(),
++            expected
++        );
++        assert!(!doc.blocks.iter().any(|block| block.has_selection()));
++    }
++    let (doc, index) = document("| alpha | beta |\n| :-- | --: |\n| gamma | delta |");
++    let range = occurrence(&doc.text(), "amm");
++    let source = doc
++        .copy_rendered_range(&index, range.clone(), SelectionFormat::Source)
++        .unwrap();
++    assert!(source.contains("| amm |  |"), "{source}");
++    assert_eq!(
++        doc.source_range_for_rendered_range(&index, range),
++        Some(occurrence(&doc.source, "amm"))
++    );
++}
++
++#[test]
++fn logical_projection_includes_covered_zero_width_image_blocks_at_edges() {
++    let source = "![leading](one.png)\n\nbody\n\n![trailing](two.png)";
++    let (doc, index) = document(source);
++    let range = 0..doc.text().len();
++    let copied = doc
++        .copy_rendered_range(&index, range.clone(), SelectionFormat::Source)
++        .unwrap();
++    assert_eq!(copied, source);
++    assert_eq!(
++        doc.source_range_for_rendered_range(&index, range),
++        Some(0..source.len())
++    );
++}
++
++#[test]
++fn logical_projection_rejects_unmapped_content_even_between_mapped_endpoints() {
++    let (mut doc, _) = document("first\n\nsecond\n\nlast");
++    let blocks = std::sync::Arc::make_mut(&mut doc.blocks);
++    let super::node::BlockNode::Paragraph(paragraph) = &mut blocks[1] else {
++        panic!("paragraph");
++    };
++    paragraph.children[0].source_segments.clear();
++    let index = RenderedIndex::new(&doc);
++    let rendered = doc.text();
++    assert_eq!(
++        doc.source_range_for_rendered_range(&index, 0..rendered.len()),
++        None
++    );
++    assert_eq!(
++        doc.copy_rendered_range(&index, 0..rendered.len(), SelectionFormat::Plain)
++            .unwrap(),
++        rendered
++    );
++}
++
++#[test]
++fn logical_projection_maps_inline_objects_and_repeated_images() {
++    let source = "文 $x$ ![one](one.png) ![two](two.png) end";
++    let (doc, index) = document(source);
++    let rendered = doc.text();
++    let range = 0..rendered.trim_end_matches('\n').len();
++    let copied = doc
++        .copy_rendered_range(&index, range.clone(), SelectionFormat::Source)
++        .unwrap();
++    assert!(copied.contains("$x$"), "{copied}");
++    assert!(copied.contains("![one](one.png)"), "{copied}");
++    assert!(copied.contains("![two](two.png)"), "{copied}");
++    assert_eq!(
++        doc.source_range_for_rendered_range(&index, range),
++        Some(0..source.len())
++    );
++}
++
++#[gpui::test]
++fn logical_projection_state_queries_do_not_need_a_window(cx: &mut gpui::TestAppContext) {
++    let view = cx.update(|cx| cx.new(|cx| super::TextViewState::markdown("**甲乙**", cx)));
++    view.update(cx, |state, cx| {
++        state.set_logical_selection(Some(3..6), cx).unwrap();
++        assert_eq!(state.selected_text(), "乙");
++        assert_eq!(state.selected_source_range(), Some(5..8));
++        assert_eq!(
++            state
++                .copy_rendered_range(0..3, SelectionFormat::Source)
++                .unwrap(),
++            "**甲**"
++        );
++        assert_eq!(state.logical_selection(), Some(3..6));
++        state.invalidate_inline_layout(cx);
++        assert_eq!(state.logical_selection(), Some(3..6));
++        assert_eq!(state.selected_text(), "乙");
++        assert!(state.set_logical_selection(Some(1..2), cx).is_err());
++        assert_eq!(state.logical_selection(), Some(3..6));
++        state.clear_selection(cx);
++        assert_eq!(state.logical_selection(), None);
++        assert_eq!(state.selected_text(), "");
++        state.set_logical_selection(Some(0..3), cx).unwrap();
++        state.set_text("replacement", cx);
++        assert_eq!(state.logical_selection(), None);
++        assert_eq!(
++            state.rendered_offset_at(gpui::point(gpui::px(0.), gpui::px(0.))),
++            None
++        );
++    });
++}
++
++#[gpui::test]
++fn logical_projection_mounted_object_hit_test_is_atomic_and_clears_per_frame(
++    cx: &mut gpui::TestAppContext,
++) {
++    let view =
++        cx.update(|cx| cx.new(|cx| super::TextViewState::markdown("before object after", cx)));
++    view.update(cx, |state, _| {
++        let bounds = gpui::Bounds::new(
++            gpui::point(gpui::px(10.), gpui::px(20.)),
++            gpui::size(gpui::px(40.), gpui::px(20.)),
++        );
++        state.selection_adapter.register_inline(vec![bounds]);
++        state
++            .selection_adapter
++            .register_rendered_object(bounds, 7..13);
++        assert_eq!(
++            state.rendered_offset_at(gpui::point(gpui::px(15.), gpui::px(25.))),
++            Some(7)
++        );
++        assert_eq!(
++            state.rendered_offset_at(gpui::point(gpui::px(45.), gpui::px(25.))),
++            Some(13)
++        );
++        assert_eq!(
++            state.rendered_offset_at(gpui::point(gpui::px(45.), gpui::px(50.))),
++            None
++        );
++        state.selection_adapter.begin_frame();
++        assert_eq!(
++            state.rendered_offset_at(gpui::point(gpui::px(15.), gpui::px(25.))),
++            None
++        );
++    });
++}
++
++#[gpui::test]
++fn logical_projection_survives_append_reparse(cx: &mut gpui::TestAppContext) {
++    let view = cx.update(|cx| cx.new(|cx| super::TextViewState::markdown("first", cx)));
++    view.update(cx, |state, cx| {
++        state.set_logical_selection(Some(1..4), cx).unwrap();
++        state.push_str(" **tail**", cx);
++    });
++    cx.run_until_parked();
++    view.read_with(cx, |state, _| {
++        assert_eq!(state.logical_selection(), Some(1..4));
++        assert_eq!(state.selected_text(), "irs");
++        assert_eq!(state.source_range_for_rendered_range(7..9), Some(9..11));
++    });
++}
++
++#[test]
++fn logical_projection_maps_escapes_and_indented_code() {
++    for (source, needle, expected) in [
++        ("a \\* b", "*", 2..4),
++        ("    alpha\n    beta\n", "pha\nbet", 6..17),
++        ("**repeat** **repeat**", "peat", 4..8),
++    ] {
++        let (doc, index) = document(source);
++        let range = occurrence(&doc.text(), needle);
++        assert_eq!(
++            doc.source_range_for_rendered_range(&index, range),
++            Some(expected),
++            "{source}"
++        );
++    }
++}
+diff --git a/src/text/mod.rs b/src/text/mod.rs
+index 0332dde..c73a401 100644
+--- a/src/text/mod.rs
++++ b/src/text/mod.rs
+@@ -6,6 +6,8 @@ mod inline_flow;
+ mod inline_object;
+ #[cfg(test)]
+ mod inline_virtual_tests;
++#[cfg(test)]
++mod logical_selection_tests;
+ mod markdown_ext;
+ mod node;
+ mod range_highlight;
+diff --git a/src/text/node.rs b/src/text/node.rs
+index de4c331..e4f236c 100644
+--- a/src/text/node.rs
++++ b/src/text/node.rs
+@@ -97,12 +97,13 @@ pub(crate) enum BlockNode {
+ }
+ 
+ #[derive(Clone, Copy)]
+-enum BlockTextKind {
++enum BlockTextKind<'a> {
+     All,
+     Selected,
+     /// Like `Selected`, but reconstructs Markdown source for the selection
+     /// instead of the rendered plain text.
+     SelectedSource,
++    ProjectedSource(&'a super::range_highlight::RenderedIndex, &'a Range<usize>),
+ }
+ 
+ impl BlockNode {
+@@ -182,7 +183,66 @@ impl BlockNode {
+         selected
+     }
+ 
+-    fn text_by_kind(&self, kind: BlockTextKind) -> String {
++    pub(super) fn projected_source_range(
++        &self,
++        index: &super::range_highlight::RenderedIndex,
++        range: &Range<usize>,
++    ) -> SourceRangeSelection {
++        let mut selected = SourceRangeSelection::Unselected;
++        match self {
++            Self::Root { children, .. }
++            | Self::List { children, .. }
++            | Self::ListItem { children, .. }
++            | Self::Blockquote { children, .. } => {
++                for child in children {
++                    selected.merge(child.projected_source_range(index, range));
++                }
++            }
++            Self::Paragraph(p) | Self::Heading { children: p, .. } => {
++                if let Some(r) = self
++                    .span()
++                    .and_then(|s| index.leaf_range(TextLeafKey::block(s.start), range))
++                {
++                    selected = p.source_range_for_range(r);
++                }
++            }
++            Self::CodeBlock(code) => {
++                if let Some(r) = code
++                    .span
++                    .and_then(|s| index.leaf_range(TextLeafKey::block(s.start), range))
++                {
++                    selected = source_range_for_segments(&code.source_segments, r)
++                        .map(SourceRangeSelection::Mapped)
++                        .unwrap_or(SourceRangeSelection::Unmapped);
++                }
++            }
++            Self::Table(table) => {
++                let mut ordinal = 0;
++                for row in &table.children {
++                    for cell in &row.children {
++                        if let Some(r) = table.span.and_then(|s| {
++                            index.leaf_range(TextLeafKey::table_cell(s.start, ordinal), range)
++                        }) {
++                            selected.merge(cell.children.source_range_for_range(r));
++                        }
++                        ordinal += 1;
++                    }
++                }
++            }
++            _ => {}
++        }
++        selected
++    }
++
++    pub(super) fn projected_source(
++        &self,
++        index: &super::range_highlight::RenderedIndex,
++        range: &Range<usize>,
++    ) -> String {
++        self.text_by_kind(BlockTextKind::ProjectedSource(index, range))
++    }
++
++    fn text_by_kind(&self, kind: BlockTextKind<'_>) -> String {
+         let mut text = String::new();
+         match self {
+             BlockNode::Root { children, .. } => {
+@@ -197,6 +257,11 @@ impl BlockNode {
+                     BlockTextKind::All => paragraph.text(),
+                     BlockTextKind::Selected => paragraph.selected_text(),
+                     BlockTextKind::SelectedSource => paragraph.selected_source(),
++                    BlockTextKind::ProjectedSource(index, range) => paragraph.source_for_range(
++                        paragraph
++                            .span
++                            .and_then(|s| index.leaf_range(TextLeafKey::block(s.start), range)),
++                    ),
+                 };
+                 if !block_text.is_empty() {
+                     text.push_str(&block_text);
+@@ -210,11 +275,18 @@ impl BlockNode {
+                     BlockTextKind::All => children.text(),
+                     BlockTextKind::Selected => children.selected_text(),
+                     BlockTextKind::SelectedSource => children.selected_source(),
++                    BlockTextKind::ProjectedSource(index, range) => children.source_for_range(
++                        self.span()
++                            .and_then(|s| index.leaf_range(TextLeafKey::block(s.start), range)),
++                    ),
+                 };
+                 if !block_text.is_empty() {
+                     // In source mode, prefix the heading marker so a selected
+                     // heading round-trips as Markdown (e.g. `## Title`).
+-                    if matches!(kind, BlockTextKind::SelectedSource) {
++                    if matches!(
++                        kind,
++                        BlockTextKind::SelectedSource | BlockTextKind::ProjectedSource(..)
++                    ) {
+                         text.push_str(&"#".repeat(*level as usize));
+                         text.push(' ');
+                     }
+@@ -228,10 +300,13 @@ impl BlockNode {
+                 start,
+                 ..
+             } => {
+-                if matches!(kind, BlockTextKind::SelectedSource) {
++                if matches!(
++                    kind,
++                    BlockTextKind::SelectedSource | BlockTextKind::ProjectedSource(..)
++                ) {
+                     // Reconstruct the list source, indenting nested lists and
+                     // restoring list markers and task-list checkboxes.
+-                    text.push_str(&list_selected_source(children, *ordered, *start, ""));
++                    text.push_str(&list_selected_source(children, *ordered, *start, "", kind));
+                 } else {
+                     text.push_str(&Self::children_text(children, kind));
+                 }
+@@ -243,7 +318,10 @@ impl BlockNode {
+                 let block_text = Self::children_text(children, kind);
+ 
+                 if !block_text.is_empty() {
+-                    if matches!(kind, BlockTextKind::SelectedSource) {
++                    if matches!(
++                        kind,
++                        BlockTextKind::SelectedSource | BlockTextKind::ProjectedSource(..)
++                    ) {
+                         // Prefix every line with `> ` so a selected blockquote
+                         // round-trips as Markdown.
+                         let quoted = block_text
+@@ -266,8 +344,11 @@ impl BlockNode {
+                 }
+             }
+             BlockNode::Table(table) => {
+-                if matches!(kind, BlockTextKind::SelectedSource) {
+-                    let block_text = table_selected_source(table);
++                if matches!(
++                    kind,
++                    BlockTextKind::SelectedSource | BlockTextKind::ProjectedSource(..)
++                ) {
++                    let block_text = table_selected_source(table, kind);
+                     if !block_text.is_empty() {
+                         text.push_str(&block_text);
+                         text.push('\n');
+@@ -300,6 +381,11 @@ impl BlockNode {
+                     BlockTextKind::All => code_block.text(),
+                     BlockTextKind::Selected => code_block.selected_text(),
+                     BlockTextKind::SelectedSource => code_block.selected_source(),
++                    BlockTextKind::ProjectedSource(index, range) => code_block.source_for_range(
++                        code_block
++                            .span
++                            .and_then(|s| index.leaf_range(TextLeafKey::block(s.start), range)),
++                    ),
+                 };
+                 if !block_text.is_empty() {
+                     text.push_str(&block_text);
+@@ -910,24 +996,43 @@ pub(crate) fn reconstruct_markdown(
+ /// delimiter/alignment row is inserted after the first row, so a selected
+ /// table round-trips as a Markdown table. Returns an empty string when no cell
+ /// is selected.
+-fn table_selected_source(table: &Table) -> String {
+-    let cell_source = |cell: &TableCell| cell.children.selected_source().replace('\n', " ");
+-
+-    let any_selected = table.children.iter().any(|row| {
+-        row.children
+-            .iter()
+-            .any(|cell| !cell_source(cell).trim().is_empty())
+-    });
++fn table_selected_source(table: &Table, kind: BlockTextKind<'_>) -> String {
++    let mut ordinal = 0;
++    let sources = table
++        .children
++        .iter()
++        .map(|row| {
++            row.children
++                .iter()
++                .map(|cell| {
++                    let source = match kind {
++                        BlockTextKind::ProjectedSource(index, range) => {
++                            cell.children.source_for_range(table.span.and_then(|s| {
++                                index.leaf_range(TextLeafKey::table_cell(s.start, ordinal), range)
++                            }))
++                        }
++                        _ => cell.children.selected_source(),
++                    }
++                    .replace('\n', " ");
++                    ordinal += 1;
++                    source
++                })
++                .collect::<Vec<_>>()
++        })
++        .collect::<Vec<_>>();
++    let any_selected = sources
++        .iter()
++        .flatten()
++        .any(|source| !source.trim().is_empty());
+     if !any_selected {
+         return String::new();
+     }
+ 
+     let mut lines: Vec<String> = Vec::new();
+     for (row_ix, row) in table.children.iter().enumerate() {
+-        let cells: Vec<String> = row
+-            .children
++        let cells: Vec<String> = sources[row_ix]
+             .iter()
+-            .map(|cell| cell_source(cell).trim().to_string())
++            .map(|source| source.trim().to_string())
+             .collect();
+         lines.push(format!("| {} |", cells.join(" | ")));
+ 
+@@ -965,6 +1070,7 @@ fn list_selected_source(
+     ordered: bool,
+     start: Option<u32>,
+     indent: &str,
++    kind: BlockTextKind<'_>,
+ ) -> String {
+     let mut out = String::new();
+     let mut item_ix = 0usize;
+@@ -1008,9 +1114,10 @@ fn list_selected_source(
+                     *sub_ordered,
+                     *sub_start,
+                     &child_indent,
++                    kind,
+                 ));
+             } else {
+-                content.push_str(&sub.text_by_kind(BlockTextKind::SelectedSource));
++                content.push_str(&sub.text_by_kind(kind));
+             }
+         }
+         let content = content.trim_end_matches('\n');
+@@ -1230,6 +1337,83 @@ impl Paragraph {
+         (text, highlights, links)
+     }
+ 
++    pub(super) fn source_for_range(&self, range: Option<Range<usize>>) -> String {
++        let Some(range) = range else {
++            return String::new();
++        };
++        let mut source = MarkdownSource::default();
++        self.visit_range(range, |child, selected| {
++            if let Some(image) = &child.image {
++                source.push_str(&image_markdown(image));
++            } else if child.custom.is_some() {
++                source.push_object(child);
++            } else {
++                source.push_text(&child.text, &child.marks, selected);
++            }
++        });
++        source.finish()
++    }
++
++    fn visit_range(&self, range: Range<usize>, mut visit: impl FnMut(&InlineNode, Range<usize>)) {
++        let mut offset = 0;
++        for child in &self.children {
++            let end = offset + child.text.len();
++            if child.image.is_some()
++                && range.start <= offset
++                && offset <= range.end
++                && range.start < range.end
++            {
++                visit(child, 0..0);
++            } else {
++                let start = range.start.max(offset);
++                let stop = range.end.min(end);
++                if start < stop {
++                    visit(child, start - offset..stop - offset);
++                }
++            }
++            offset = end;
++        }
++    }
++
++    fn source_range_for_range(&self, range: Range<usize>) -> SourceRangeSelection {
++        let mut mapped = SourceRangeSelection::Unselected;
++        self.visit_range(range, |child, selected| {
++            let source = if let Some(image) = &child.image {
++                image.span.map(|s| s.start..s.end)
++            } else if let Some(custom) = &child.custom {
++                custom.source_range()
++            } else {
++                child.selected_source_range(selected)
++            };
++            mapped.merge(
++                source
++                    .map(SourceRangeSelection::Mapped)
++                    .unwrap_or(SourceRangeSelection::Unmapped),
++            );
++        });
++        mapped
++    }
++
++    pub(super) fn inline_locations(&self) -> Vec<(usize, usize)> {
++        let mut result = Vec::new();
++        let mut run_start = 0;
++        let mut offset = 0;
++        for child in &self.children {
++            if child.image.is_some() || child.custom.is_some() {
++                result.push((Arc::as_ptr(&child.state) as usize, run_start));
++                if child.custom.is_some() {
++                    result.push((Arc::as_ptr(&child.custom_selection) as usize, offset));
++                }
++                offset += child.text.len();
++                run_start = offset;
++            } else {
++                offset += child.text.len();
++            }
++        }
++        result.push((Arc::as_ptr(&self.state) as usize, run_start));
++        result
++    }
++
+     pub(super) fn selected_text(&self) -> String {
+         let mut text = String::new();
+ 
+@@ -1838,6 +2022,26 @@ impl CodeBlock {
+             .unwrap_or(SourceRangeSelection::Unmapped)
+     }
+ 
++    fn source_for_range(&self, range: Option<Range<usize>>) -> String {
++        let Some(range) = range else {
++            return String::new();
++        };
++        let code = self.code();
++        let selected = &code[range];
++        if selected.is_empty() {
++            return String::new();
++        }
++        format!(
++            "```{}\n{}\n```",
++            self.lang.clone().unwrap_or_default(),
++            selected.trim_end_matches('\n')
++        )
++    }
++
++    pub(super) fn inline_identity(&self) -> usize {
++        Arc::as_ptr(&self.state) as usize
++    }
++
+     fn highlighted_styles(
+         &self,
+         highlighter: &Arc<CodeBlockHighlighterFn>,
+diff --git a/src/text/range_highlight.rs b/src/text/range_highlight.rs
+index d03335b..8828c2f 100644
+--- a/src/text/range_highlight.rs
++++ b/src/text/range_highlight.rs
+@@ -171,6 +171,7 @@ pub(super) struct RenderedIndex {
+     leaves: Vec<LeafSpan>,
+     /// Where the text of each top-level block sits, in document order.
+     blocks: Vec<Range<usize>>,
++    inline_offsets: std::collections::HashMap<usize, usize>,
+ }
+ 
+ #[derive(Debug)]
+@@ -217,6 +218,7 @@ impl RenderedIndex {
+             text: builder.text.into(),
+             leaves: builder.leaves,
+             blocks,
++            inline_offsets: builder.inline_offsets,
+         };
+         debug_assert_eq!(index.text.as_ref(), document.text());
+         index
+@@ -224,7 +226,7 @@ impl RenderedIndex {
+ 
+     /// The leaf ranges `range` paints over, which are none when it covers no
+     /// leaf text, or `None` when it is not a range of the text.
+-    fn resolve(&self, range: &Range<usize>) -> Option<Vec<(TextLeafKey, Range<usize>)>> {
++    pub(super) fn resolve(&self, range: &Range<usize>) -> Option<Vec<(TextLeafKey, Range<usize>)>> {
+         if range.start > range.end
+             || range.end > self.text.len()
+             || !self.text.is_char_boundary(range.start)
+@@ -262,6 +264,25 @@ impl RenderedIndex {
+         Some(pieces)
+     }
+ 
++    pub(super) fn leaf_range(
++        &self,
++        key: TextLeafKey,
++        range: &Range<usize>,
++    ) -> Option<Range<usize>> {
++        let leaf = self.leaves.iter().find(|leaf| leaf.key == key)?;
++        let start = range.start.max(leaf.range.start);
++        let end = range.end.min(leaf.range.end);
++        (start < end).then(|| start - leaf.range.start..end - leaf.range.start)
++    }
++
++    pub(super) fn block_ranges(&self) -> &[Range<usize>] {
++        &self.blocks
++    }
++
++    pub(super) fn inline_offset(&self, identity: usize) -> Option<usize> {
++        self.inline_offsets.get(&identity).copied()
++    }
++
+     /// Where `range` starts: the line of the first leaf text it covers, or,
+     /// when it covers none, as an empty range does, of the leaf text at its
+     /// start or last before it in its top-level block, or else that whole
+@@ -315,6 +336,7 @@ impl RenderedIndex {
+ struct IndexBuilder {
+     text: String,
+     leaves: Vec<LeafSpan>,
++    inline_offsets: std::collections::HashMap<usize, usize>,
+ }
+ 
+ impl IndexBuilder {
+@@ -360,6 +382,8 @@ impl IndexBuilder {
+                 }
+             }
+             BlockNode::CodeBlock(code_block) => {
++                self.inline_offsets
++                    .insert(code_block.inline_identity(), self.text.len());
+                 self.push_leaf(
+                     &code_block.code(),
+                     code_block.span.map(|span| TextLeafKey::block(span.start)),
+@@ -378,6 +402,10 @@ impl IndexBuilder {
+     }
+ 
+     fn push_paragraph(&mut self, paragraph: &Paragraph, key: Option<TextLeafKey>) {
++        for (identity, offset) in paragraph.inline_locations() {
++            self.inline_offsets
++                .insert(identity, self.text.len() + offset);
++        }
+         let mut text = String::new();
+         let mut objects = Vec::new();
+         for child in &paragraph.children {
+diff --git a/src/text/selection_adapter.rs b/src/text/selection_adapter.rs
+index b3bf12c..e8ab658 100644
+--- a/src/text/selection_adapter.rs
++++ b/src/text/selection_adapter.rs
+@@ -74,6 +74,8 @@ pub(super) struct TextViewSelectionAdapter {
+     selection: TextSelectionHandle,
+     text_bounds: Vec<Bounds<Pixels>>,
+     text_runs: Vec<TextSelectionRun>,
++    rendered_offsets: Vec<Option<usize>>,
++    rendered_objects: Vec<(Bounds<Pixels>, std::ops::Range<usize>)>,
+     /// The caret boxes at the first and last selected character painted this
+     /// frame, where the touch handles go.
+     selection_edges: Option<(Bounds<Pixels>, Bounds<Pixels>)>,
+@@ -95,6 +97,9 @@ impl TextViewSelectionAdapter {
+                         let snapshot = *snapshot;
+                         let _ = view_for_events.update(cx, |state, cx| {
+                             state.preserve_inline_selection = false;
++                            if snapshot.is_some() {
++                                state.clear_logical_selection_for_gesture();
++                            }
+                             blocks_for_events
+                                 .borrow_mut()
+                                 .update(snapshot, selection_id);
+@@ -154,9 +159,16 @@ impl TextViewSelectionAdapter {
+         selection.resolve_content_key_with(
+             move |point, cx| {
+                 let view = view_for_content_key.upgrade()?;
+-                view.read(cx)
+-                    .block_ix_at(point.y)
+-                    .map(|block| TextSelectionContentKey::new(block as u64))
++                let state = view.read(cx);
++                if state.selection_domain.is_some() {
++                    let p = point + state.bounds().origin + state.scroll_offset();
++                    let offset = state.rendered_offset_at(p);
++                    offset.map(|offset| TextSelectionContentKey::new(offset as u64))
++                } else {
++                    state
++                        .block_ix_at(point.y)
++                        .map(|block| TextSelectionContentKey::new(block as u64))
++                }
+             },
+             cx,
+         );
+@@ -177,6 +189,8 @@ impl TextViewSelectionAdapter {
+             selection,
+             text_bounds: Vec::new(),
+             text_runs: Vec::new(),
++            rendered_offsets: Vec::new(),
++            rendered_objects: Vec::new(),
+             selection_edges: None,
+             layout_revision: None,
+         }
+@@ -195,6 +209,8 @@ impl TextViewSelectionAdapter {
+     pub(super) fn begin_frame(&mut self) {
+         self.text_bounds.clear();
+         self.text_runs.clear();
++        self.rendered_offsets.clear();
++        self.rendered_objects.clear();
+         self.selection_edges = None;
+     }
+ 
+@@ -205,8 +221,66 @@ impl TextViewSelectionAdapter {
+         self.selection_edges = Some((first, end));
+     }
+ 
+-    pub(super) fn register_text_run(&mut self, run: TextSelectionRun) {
++    pub(super) fn register_text_run(
++        &mut self,
++        run: TextSelectionRun,
++        rendered_offset: Option<usize>,
++    ) {
+         self.text_runs.push(run);
++        self.rendered_offsets.push(rendered_offset);
++    }
++
++    pub(super) fn register_rendered_object(
++        &mut self,
++        bounds: Bounds<Pixels>,
++        range: std::ops::Range<usize>,
++    ) {
++        self.rendered_objects.push((bounds, range));
++    }
++
++    pub(super) fn rendered_offset_at(&self, point: Point<Pixels>) -> Option<usize> {
++        for (bounds, range) in &self.rendered_objects {
++            if bounds.contains(&point) {
++                return Some(if point.x < bounds.center().x {
++                    range.start
++                } else {
++                    range.end
++                });
++            }
++        }
++        // Padding is not a missing logical endpoint. Resolve the actual drag head
++        // against the nearest painted run, not the last successful pointer event.
++        // Horizontal distance disambiguates fragments sharing a visual row.
++        let (run, offset) = self
++            .text_runs
++            .iter()
++            .zip(&self.rendered_offsets)
++            .filter_map(|(run, offset)| offset.map(|offset| (run, offset)))
++            .min_by(|(a, _), (b, _)| {
++                let distance = |run: &TextSelectionRun| {
++                    let bounds = run.bounds();
++                    let y = (bounds.top() - point.y)
++                        .max(point.y - bounds.bottom())
++                        .max(Pixels::ZERO);
++                    let x = (bounds.left() - point.x)
++                        .max(point.x - bounds.right())
++                        .max(Pixels::ZERO);
++                    (f32::from(y), f32::from(x))
++                };
++                let a = distance(a);
++                let b = distance(b);
++                a.0.total_cmp(&b.0).then_with(|| a.1.total_cmp(&b.1))
++            })?;
++        let index = if point.y < run.bounds().top() {
++            0
++        } else if point.y >= run.bounds().bottom() {
++            run.text().len()
++        } else {
++            run.layout()
++                .index_for_position(point)
++                .unwrap_or_else(|index| index)
++        };
++        (index <= run.text().len() && run.text().is_char_boundary(index)).then_some(offset + index)
+     }
+ 
+     pub(super) fn register_inline(&mut self, bounds: Vec<Bounds<Pixels>>) {
+@@ -266,6 +340,14 @@ impl TextViewSelectionAdapter {
+         Some((points.anchor(), points.cursor()))
+     }
+ 
++    pub(super) fn set_domain(
++        &self,
++        domain: Option<(crate::TextSelectionDomain, u64)>,
++        cx: &mut App,
++    ) {
++        self.selection.set_domain(domain, cx);
++    }
++
+     pub(super) fn set_local_selection(&self, active: bool, cx: &mut App) {
+         self.selection.set_local_selection(active, cx);
+     }
+diff --git a/src/text/state.rs b/src/text/state.rs
+index 85744b4..d1917ad 100644
+--- a/src/text/state.rs
++++ b/src/text/state.rs
+@@ -124,6 +124,8 @@ pub struct TextViewState {
+     pub(super) preserve_inline_selection: bool,
+     multi_click_selection: Option<TextViewMultiClickSelection>,
+     selected_text_override: Option<String>,
++    logical_selection: Option<Range<usize>>,
++    pub(super) selection_domain: Option<(crate::TextSelectionDomain, u64)>,
+     select_all: bool,
+     pub(super) auto_scroll: AutoScroll,
+     pub(super) selection_adapter: TextViewSelectionAdapter,
+@@ -221,7 +223,12 @@ impl TextViewState {
+                         // positions remain valid for append-only updates and will
+                         // self-correct on the next mouse-move event.
+                         if !parsed_update.selection_compatible && !state.is_selecting {
++                            let logical = state.logical_selection.take();
+                             state.reset_selection_and_adapter(cx);
++                            state.logical_selection = logical;
++                            state
++                                .selection_adapter
++                                .set_local_selection(state.logical_selection.is_some(), cx);
+                         }
+                         cx.notify();
+                     });
+@@ -237,6 +244,8 @@ impl TextViewState {
+             bounds: Bounds::default(),
+             multi_click_selection: None,
+             selected_text_override: None,
++            logical_selection: None,
++            selection_domain: None,
+             select_all: false,
+             selectable: false,
+             selection_format: SelectionFormat::default(),
+@@ -417,6 +426,8 @@ impl TextViewState {
+     }
+ 
+     /// Return the selected text, in the view's [`SelectionFormat`].
++    /// For a domain-backed pointer selection use [`Self::selected_text_with`].
++    /// Without context only explicit local selections can be queried accurately.
+     pub fn selected_text(&self) -> String {
+         self.selected_text_in(None)
+     }
+@@ -431,7 +442,17 @@ impl TextViewState {
+     /// Markdown delimiters between the selected rendered endpoints. HTML views
+     /// and selections without an exact source mapping return `None`. Select-all
+     /// in a Markdown view returns the full source range.
++    /// Domain-backed selections require [`Self::selected_source_range_with`].
+     pub fn selected_source_range(&self) -> Option<Range<usize>> {
++        if self.selection_domain.is_some()
++            && !self.select_all
++            && self.multi_click_selection.is_none()
++        {
++            return None;
++        }
++        if let Some(range) = &self.logical_selection {
++            return self.source_range_for_rendered_range(range.clone());
++        }
+         if self.format != TextViewFormat::Markdown {
+             return None;
+         }
+@@ -465,6 +486,17 @@ impl TextViewState {
+     /// [`ParsedDocument::selected_text`](crate::text::document::ParsedDocument).
+     pub(super) fn selected_text_in(&self, blocks: Option<RangeInclusive<usize>>) -> String {
+         let format = self.effective_format();
++        if self.selection_domain.is_some()
++            && !self.select_all
++            && self.multi_click_selection.is_none()
++        {
++            return String::new();
++        }
++        if let Some(range) = &self.logical_selection {
++            return self
++                .copy_rendered_range(range.clone(), format)
++                .unwrap_or_default();
++        }
+ 
+         if self.select_all {
+             if format == SelectionFormat::Source {
+@@ -524,6 +556,10 @@ impl TextViewState {
+     fn increment_update(&mut self, text: &str, append: bool, cx: &mut Context<Self>) {
+         self.revision += 1;
+         if !append {
++            if let Some((domain, _)) = &self.selection_domain {
++                domain.invalidate();
++            }
++            self.logical_selection = None;
+             self.full_update_revision = self.revision;
+             self.selection_revision = self.selection_revision.wrapping_add(1);
+         }
+@@ -558,7 +594,11 @@ impl TextViewState {
+                     self.parsed_error = None;
+                     self.invalidate_measured_heights();
+                     if !self.is_selecting {
++                        let logical = self.logical_selection.take();
+                         self.reset_selection_and_adapter(cx);
++                        self.logical_selection = logical;
++                        self.selection_adapter
++                            .set_local_selection(self.logical_selection.is_some(), cx);
+                     }
+                 }
+                 Err(err) => {
+@@ -577,6 +617,183 @@ impl TextViewState {
+         _ = self.tx.try_send(update_options);
+     }
+ 
++    /// Parse and copy cold Markdown without constructing an editor or scheduling layout.
++    /// Missing bounds cover the current beginning/end of the rendered document.
++    /// This synchronous operation is intended for explicit copy, not frame updates.
++    pub fn copy_markdown_slice(
++        source: &str,
++        start: Option<usize>,
++        end: Option<usize>,
++        format: SelectionFormat,
++    ) -> anyhow::Result<String> {
++        let document = format::markdown::parse(source, &mut NodeContext::default())
++            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
++        let index = RenderedIndex::new(&document);
++        let range = start.unwrap_or(0)..end.unwrap_or_else(|| document.text().len());
++        Ok(document.copy_rendered_range(&index, range, format)?)
++    }
++
++    /// Copy a rendered UTF-8 range without layout or a mounted window.
++    pub fn copy_rendered_range(
++        &self,
++        range: Range<usize>,
++        format: SelectionFormat,
++    ) -> Result<String, RangeHighlightError> {
++        if self.format != TextViewFormat::Markdown {
++            return Err(RangeHighlightError::Unsupported);
++        }
++        let text = self.rendered_text();
++        self.parsed_content
++            .document
++            .copy_rendered_range(text.index(), range, format)
++    }
++
++    /// Exact parser source mapping; unsupported or invalid ranges return `None`.
++    pub fn source_range_for_rendered_range(&self, range: Range<usize>) -> Option<Range<usize>> {
++        if self.format != TextViewFormat::Markdown {
++            return None;
++        }
++        let text = self.rendered_text();
++        self.parsed_content
++            .document
++            .source_range_for_rendered_range(text.index(), range)
++    }
++
++    /// Bind this view to a stable source-owned logical selection item.
++    /// Ordinary layout changes and virtual unmounts do not cancel the domain.
++    pub fn set_selection_domain(
++        &mut self,
++        domain: Option<(crate::TextSelectionDomain, u64)>,
++        cx: &mut Context<Self>,
++    ) {
++        self.reset_selection_and_adapter(cx);
++        self.selection_adapter.set_domain(domain.clone(), cx);
++        self.selection_domain = domain;
++        cx.notify();
++    }
++
++    /// Current logical coverage, including while this view is unmounted.
++    pub fn selected_rendered_range_with(&self, cx: &App) -> Option<Range<usize>> {
++        if let Some((domain, item)) = &self.selection_domain {
++            // Tasks stay alive after a parse completes; only revisions identify
++            // whether this document is ready for contextual copy/projection.
++            if self.committed_revision != self.revision {
++                return None;
++            }
++            domain.projected_range(*item, self.rendered_text().len(), cx)
++        } else {
++            self.logical_selection.clone()
++        }
++    }
++
++    /// Contextual copy queries current source order rather than a last-painted cache.
++    pub fn selected_text_with(&self, cx: &App) -> String {
++        if self.selection_domain.is_some()
++            && !self.select_all
++            && self.multi_click_selection.is_none()
++        {
++            self.selected_rendered_range_with(cx)
++                .and_then(|range| {
++                    self.copy_rendered_range(range, self.effective_format())
++                        .ok()
++                })
++                .unwrap_or_default()
++        } else {
++            self.selected_text()
++        }
++    }
++
++    /// Contextual source mapping for domain-backed selection.
++    pub fn selected_source_range_with(&self, cx: &App) -> Option<Range<usize>> {
++        if self.selection_domain.is_some()
++            && !self.select_all
++            && self.multi_click_selection.is_none()
++        {
++            self.selected_rendered_range_with(cx)
++                .and_then(|range| self.source_range_for_rendered_range(range))
++        } else {
++            self.selected_source_range()
++        }
++    }
++
++    /// Opt into a layout-independent local selection. `None` clears it.
++    /// Appends retain its offsets; replacing the content clears it.
++    pub fn set_logical_selection(
++        &mut self,
++        range: Option<Range<usize>>,
++        cx: &mut Context<Self>,
++    ) -> Result<(), RangeHighlightError> {
++        if let Some(range) = &range {
++            if self.format != TextViewFormat::Markdown {
++                return Err(RangeHighlightError::Unsupported);
++            }
++            self.rendered_text()
++                .index()
++                .resolve(range)
++                .ok_or(RangeHighlightError::InvalidRange(0))?;
++        }
++        self.reset_selection_and_adapter(cx);
++        self.logical_selection = range;
++        self.selection_adapter
++            .set_local_selection(self.logical_selection.is_some(), cx);
++        cx.notify();
++        Ok(())
++    }
++
++    pub(super) fn projects_domain(&self) -> bool {
++        self.selection_domain.is_some() && !self.select_all && self.multi_click_selection.is_none()
++    }
++
++    pub fn logical_selection(&self) -> Option<Range<usize>> {
++        self.logical_selection.clone()
++    }
++
++    pub(super) fn clear_logical_selection_for_gesture(&mut self) {
++        self.logical_selection = None;
++    }
++
++    /// Hit-test currently mounted content in window coordinates.
++    /// Offscreen content has no geometry and returns `None`.
++    pub fn rendered_offset_at(&self, point: Point<Pixels>) -> Option<usize> {
++        self.selection_adapter.rendered_offset_at(point)
++    }
++
++    pub(super) fn inline_rendered_offset(
++        &self,
++        state: &Arc<std::sync::Mutex<super::inline::InlineState>>,
++        source: Option<&(
++            Arc<std::sync::Mutex<super::inline::InlineState>>,
++            Range<usize>,
++        )>,
++    ) -> Option<usize> {
++        let (state, offset) = source.map_or((state, 0), |(state, range)| (state, range.start));
++        self.rendered_text()
++            .index()
++            .inline_offset(Arc::as_ptr(state) as usize)
++            .map(|start| start + offset)
++    }
++
++    pub(super) fn object_rendered_offset(
++        &self,
++        selected: &Arc<std::sync::Mutex<bool>>,
++    ) -> Option<usize> {
++        self.rendered_text()
++            .index()
++            .inline_offset(Arc::as_ptr(selected) as usize)
++    }
++
++    pub(super) fn logical_range_for_inline(
++        &self,
++        start: Option<usize>,
++        length: usize,
++    ) -> Option<Range<usize>> {
++        let start = start?;
++        let range = self.logical_selection.as_ref()?;
++        let lo = start.max(range.start);
++        let hi = (start + length).min(range.end);
++        (lo < hi).then(|| lo - start..hi - start)
++    }
++
+     /// The text this view renders, which [`RangeHighlight`] ranges index.
+     ///
+     /// This is the string plain copy produces, as of the last parse that
+@@ -676,6 +893,26 @@ impl TextViewState {
+     /// the current document was committed was that document the current one,
+     /// so only then do the blocks before its last stay unchanged.
+     fn reconcile_range_highlights(&mut self, new: &ParsedDocument, revision: usize, append: bool) {
++        if self.full_update_revision <= self.committed_revision
++            && let Some((domain, item)) = &self.selection_domain
++            && let Some(bound) = domain.stored_range().and_then(|range| {
++                [range.anchor, range.cursor]
++                    .into_iter()
++                    .filter(|endpoint| endpoint.item == *item)
++                    .map(|endpoint| endpoint.offset)
++                    .max()
++            })
++            && bound > 0
++        {
++            // Only endpoint prefixes constrain append compatibility. The first
++            // async commit on remount has no previous source baseline to check.
++            let old = self.rendered_text();
++            let next = new.text();
++            let before = old.as_str().get(..bound);
++            if before.is_none() || next.get(..bound) != before {
++                domain.invalidate();
++            }
++        }
+         let tail_only = append && self.full_update_revision <= self.committed_revision;
+         self.committed_revision = revision;
+         self.rendered_index = Arc::default();
+@@ -783,7 +1020,8 @@ impl TextViewState {
+     /// Whether this view has a view-local selection (select-all, multi-click, or override),
+     /// independent of the window-level selection.
+     pub(super) fn has_view_selection(&self) -> bool {
+-        self.select_all
++        self.logical_selection.is_some()
++            || self.select_all
+             || self.multi_click_selection.is_some()
+             || self.selected_text_override.is_some()
+     }
+@@ -793,6 +1031,7 @@ impl TextViewState {
+     }
+ 
+     pub(super) fn reset_selection(&mut self) {
++        self.logical_selection = None;
+         self.preserve_inline_selection = false;
+         self.multi_click_selection = None;
+         self.selected_text_override = None;
+@@ -812,6 +1051,9 @@ impl TextViewState {
+ 
+     /// Clear the current text selection.
+     pub fn clear_selection(&mut self, cx: &mut Context<Self>) {
++        if let Some((domain, _)) = &self.selection_domain {
++            domain.clear();
++        }
+         self.reset_selection_and_adapter(cx);
+         cx.notify();
+     }
+@@ -826,6 +1068,7 @@ impl TextViewState {
+ 
+     /// Select all rendered text in this view.
+     pub fn select_all(&mut self, cx: &mut Context<Self>) {
++        self.logical_selection = None;
+         self.multi_click_selection = None;
+         self.selected_text_override = None;
+         self.select_all = true;
+@@ -842,6 +1085,7 @@ impl TextViewState {
+         selected_text: String,
+         cx: &mut App,
+     ) {
++        self.logical_selection = None;
+         self.preserve_inline_selection = false;
+         let scroll_offset = self.scroll_offset();
+         let pos = pos - self.bounds.origin - scroll_offset;
+@@ -996,6 +1240,18 @@ impl TextViewState {
+ 
+ impl Render for TextViewState {
+     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
++        if self.selection_domain.is_some()
++            && !self.select_all
++            && self.multi_click_selection.is_none()
++        {
++            let range = self.selected_rendered_range_with(cx);
++            self.parsed_content.document.clear_selection();
++            self.logical_selection = range;
++            self.preserve_inline_selection = false;
++            self.select_all = false;
++            self.multi_click_selection = None;
++            self.selected_text_override = None;
++        }
+         let typography = (window.text_style(), window.rem_size());
+         if self
+             .layout_text_style
+@@ -1075,7 +1331,9 @@ impl Render for TextViewState {
+                         state.selection_adapter.is_part_of_window_selection(cx),
+                         state.selection_adapter.has_selection_snapshot(cx),
+                         state.is_selecting,
+-                        state.compatible_layout_update,
++                        state.compatible_layout_update
++                            || state.logical_selection.is_some()
++                            || state.selection_domain.is_some(),
+                     )
+                 };
+                 let mut revision_changed = false;
+@@ -1088,7 +1346,9 @@ impl Render for TextViewState {
+                 });
+                 if !is_selecting
+                     && ((size_changed && selection_involves_view && !compatible_layout_update)
+-                        || (revision_changed && has_selection_snapshot))
++                        || (revision_changed
++                            && has_selection_snapshot
++                            && !compatible_layout_update))
+                 {
+                     TextSelection::clear(window, cx);
+                 }
+diff --git a/src/text_selection.rs b/src/text_selection.rs
+index a7719dd..78afa44 100644
+--- a/src/text_selection.rs
++++ b/src/text_selection.rs
+@@ -1,4 +1,5 @@
+ use std::{
++    cell::{Cell, RefCell},
+     collections::HashMap,
+     ops::Range,
+     rc::Rc,
+@@ -60,6 +61,148 @@ impl TextSelectionContentKey {
+     }
+ }
+ 
++/// A stable source item and precise rendered UTF-8 byte offset.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct TextSelectionDomainEndpoint {
++    pub item: u64,
++    pub offset: usize,
++}
++
++/// A directed logical selection interval.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct TextSelectionDomainRange {
++    pub anchor: TextSelectionDomainEndpoint,
++    pub cursor: TextSelectionDomainEndpoint,
++}
++
++#[derive(Default)]
++struct DomainState {
++    range: Option<TextSelectionDomainRange>,
++    is_selecting: bool,
++}
++
++type DomainOrderCallback = Rc<dyn Fn(u64, &App) -> Option<u64>>;
++type DomainCopyCallback = Rc<dyn Fn(TextSelectionDomainRange, &mut App) -> String>;
++
++struct DomainInner {
++    state: RefCell<DomainState>,
++    epoch: Cell<u64>,
++    order: DomainOrderCallback,
++    copy: DomainCopyCallback,
++}
++
++/// Opt-in logical selection independent of mounted participants and layout.
++/// Create one per window/session. The source owns order and must invalidate on
++/// replacement/deletion. Providers should not retain participant views.
++#[derive(Clone)]
++pub struct TextSelectionDomain(Rc<DomainInner>);
++
++impl TextSelectionDomain {
++    /// Installs source providers: unique current order ranks (or `None` for
++    /// removed items), and copy of the directed interval including unmounted items.
++    pub fn new(
++        order: impl Fn(u64, &App) -> Option<u64> + 'static,
++        copy: impl Fn(TextSelectionDomainRange, &mut App) -> String + 'static,
++    ) -> Self {
++        Self(Rc::new(DomainInner {
++            state: RefCell::new(DomainState::default()),
++            epoch: Cell::new(0),
++            order: Rc::new(order),
++            copy: Rc::new(copy),
++        }))
++    }
++
++    fn same_domain(&self, other: &Self) -> bool {
++        Rc::ptr_eq(&self.0, &other.0)
++    }
++
++    /// Returns stored endpoints without calling source providers. Source owners
++    /// can inspect these while mutating their model, then invalidate as needed.
++    /// Copy and rendering must use the validated `range`/`projected_range` APIs.
++    pub fn stored_range(&self) -> Option<TextSelectionDomainRange> {
++        self.0.state.borrow().range
++    }
++
++    /// Queries the interval, validating endpoint existence against the source.
++    pub fn range(&self, cx: &App) -> Option<TextSelectionDomainRange> {
++        let range = self.0.state.borrow().range?;
++        if (self.0.order)(range.anchor.item, cx).is_none()
++            || (self.0.order)(range.cursor.item, cx).is_none()
++        {
++            self.clear();
++            return None;
++        }
++        Some(range)
++    }
++
++    /// Projects using current source order, never stale pixel coordinates.
++    /// An insufficient participant-local length suppresses projection, not the
++    /// source-owned interval: a remounted participant may still be parsing.
++    pub fn projected_range(&self, item: u64, content_len: usize, cx: &App) -> Option<Range<usize>> {
++        let range = self.range(cx)?;
++        let a = (self.0.order)(range.anchor.item, cx)?;
++        let b = (self.0.order)(range.cursor.item, cx)?;
++        let order = (self.0.order)(item, cx)?;
++        let (start, end) = if (a, range.anchor.offset) <= (b, range.cursor.offset) {
++            (range.anchor, range.cursor)
++        } else {
++            (range.cursor, range.anchor)
++        };
++        if !(a.min(b)..=a.max(b)).contains(&order) {
++            return None;
++        }
++        if (item == start.item && start.offset > content_len)
++            || (item == end.item && end.offset > content_len)
++        {
++            return None;
++        }
++        Some(
++            (if item == start.item { start.offset } else { 0 })..(if item == end.item {
++                end.offset
++            } else {
++                content_len
++            }),
++        )
++    }
++
++    /// Returns whether the logical interval belongs to an ongoing pointer gesture.
++    pub fn is_selecting(&self) -> bool {
++        self.0.state.borrow().is_selecting
++    }
++
++    /// Cancels this interval and any gesture holding its old endpoint offsets.
++    /// The source is responsible for scheduling repaint after explicit mutation.
++    pub fn clear(&self) {
++        self.0.epoch.set(self.0.epoch.get().wrapping_add(1));
++        *self.0.state.borrow_mut() = DomainState::default();
++    }
++
++    /// Cancels the interval on source replacement/deletion/incompatible mutation.
++    pub fn invalidate(&self) {
++        self.clear();
++    }
++
++    fn set_range(&self, range: TextSelectionDomainRange, is_selecting: bool, cx: &App) {
++        if (self.0.order)(range.anchor.item, cx).is_none()
++            || (self.0.order)(range.cursor.item, cx).is_none()
++        {
++            self.clear();
++            return;
++        }
++        *self.0.state.borrow_mut() = DomainState {
++            range: Some(range),
++            is_selecting,
++        };
++    }
++
++    fn selected_text(&self, cx: &mut App) -> String {
++        self.range(cx)
++            .filter(|range| range.anchor != range.cursor)
++            .map(|range| (self.0.copy)(range, cx))
++            .unwrap_or_default()
++    }
++}
++
+ /// A selection endpoint anchored to a participant's content coordinates.
+ #[derive(Clone, Copy, Debug, PartialEq)]
+ pub struct TextSelectionEndpoint {
+@@ -650,6 +793,7 @@ struct SelectableTextState {
+     clear: Option<ClearHandler>,
+     copy: Option<CopyCallback>,
+     content_key_resolver: Option<ContentKeyResolver>,
++    domain: Option<(TextSelectionDomain, u64)>,
+ }
+ 
+ impl EventEmitter<TextSelectionEvent> for SelectableTextState {}
+@@ -666,9 +810,17 @@ impl SelectableTextState {
+             clear: None,
+             copy: None,
+             content_key_resolver: None,
++            domain: None,
+         }
+     }
+ 
++    fn endpoint_domain(&self) -> Option<(TextSelectionDomain, u64, u64)> {
++        self.domain.clone().map(|(domain, item)| {
++            let epoch = domain.0.epoch.get();
++            (domain, item, epoch)
++        })
++    }
++
+     /// The current geometry selection snapshot for this participant.
+     fn snapshot(&self) -> Option<TextSelectionSnapshot> {
+         self.snapshot
+@@ -682,6 +834,11 @@ impl SelectableTextState {
+ 
+     /// Marks participant-local selection (for example select-all) as active.
+     fn set_local_selection(&mut self, active: bool) {
++        if active {
++            if let Some((domain, _)) = &self.domain {
++                domain.clear();
++            }
++        }
+         self.local_selection = active;
+     }
+ 
+@@ -804,6 +961,18 @@ impl TextSelectionHandle {
+         self.0.read(cx).snapshot()
+     }
+ 
++    /// Binds a stable item. The endpoint content-key resolver must return a
++    /// precise rendered UTF-8 byte offset for logical selection.
++    pub fn set_domain(&self, domain: Option<(TextSelectionDomain, u64)>, cx: &mut App) {
++        self.0.update(cx, |state, _| state.domain = domain);
++    }
++
++    /// Queries logical coverage without requiring mounted endpoint geometry.
++    pub fn logical_range(&self, content_len: usize, cx: &App) -> Option<Range<usize>> {
++        let (domain, item) = self.0.read(cx).domain.as_ref()?;
++        domain.projected_range(*item, content_len, cx)
++    }
++
+     /// Sets the fallback text copied while this participant participates.
+     pub fn set_fallback_copy_text(&self, text: impl Into<String>, cx: &mut App) {
+         self.0
+@@ -1012,6 +1181,7 @@ struct SelectionEndpoint {
+     inside_text: bool,
+     content_key: Option<TextSelectionContentKey>,
+     content_key_resolver: Option<(ContentKeyResolver, Point<Pixels>)>,
++    domain: Option<(TextSelectionDomain, u64, u64)>,
+ }
+ 
+ impl SelectionEndpoint {
+@@ -1038,6 +1208,19 @@ impl SelectionEndpoint {
+         )
+     }
+ 
++    fn valid_anchor(
++        &self,
++        participants: &HashMap<EntityId, ParticipantRegistration>,
++        cx: &App,
++    ) -> bool {
++        if let Some((domain, item, epoch)) = &self.domain {
++            return *epoch == domain.0.epoch.get()
++                && self.content_key.is_some()
++                && (domain.0.order)(*item, cx).is_some();
++        }
++        self.resolve(participants).is_some()
++    }
++
+     fn entity_id(&self) -> Option<EntityId> {
+         self.participant
+             .as_ref()
+@@ -1099,6 +1282,8 @@ impl TouchSelection {
+ struct WindowSelectionState {
+     participants: HashMap<EntityId, ParticipantRegistration>,
+     active_scope: TextSelectionScopeId,
++    active_domain: Option<TextSelectionDomain>,
++    domain_dirty: bool,
+     anchor: Option<SelectionEndpoint>,
+     cursor: Option<SelectionEndpoint>,
+     pending_extension_anchor: Option<SelectionEndpoint>,
+@@ -1122,17 +1307,21 @@ struct WindowSelectionState {
+ 
+ impl WindowSelectionState {
+     fn resolve_content_keys(state: &Entity<Self>, cx: &mut App) {
+-        let pending = state.update(cx, |state, _| {
+-            [
+-                state
+-                    .anchor
+-                    .as_ref()
+-                    .and_then(|endpoint| endpoint.content_key_resolver.clone()),
+-                state
+-                    .cursor
+-                    .as_ref()
+-                    .and_then(|endpoint| endpoint.content_key_resolver.clone()),
+-            ]
++        let (pending, domain_dirty) = state.update(cx, |state, _| {
++            let dirty = std::mem::take(&mut state.domain_dirty);
++            (
++                [
++                    state
++                        .anchor
++                        .as_ref()
++                        .and_then(|endpoint| endpoint.content_key_resolver.clone()),
++                    state
++                        .cursor
++                        .as_ref()
++                        .and_then(|endpoint| endpoint.content_key_resolver.clone()),
++                ],
++                dirty,
++            )
+         });
+         let resolved =
+             pending.map(|pending| pending.and_then(|(callback, point)| callback(point, cx)));
+@@ -1145,9 +1334,79 @@ impl WindowSelectionState {
+                 endpoint.content_key = Some(key);
+                 endpoint.content_key_resolver = None;
+             }
++            // A failed logical lookup must not keep a resolver (and whatever
++            // it captured) alive after the participant disappears.
++            for endpoint in [&mut state.anchor, &mut state.cursor].into_iter().flatten() {
++                if endpoint.domain.is_some() {
++                    endpoint.content_key_resolver = None;
++                }
++            }
++            if domain_dirty {
++                state.sync_domain(cx);
++            }
+             state.publish_snapshots(cx);
+         });
+     }
++
++    fn sync_domain(&mut self, cx: &App) {
++        let binding = self
++            .anchor
++            .as_ref()
++            .and_then(|endpoint| endpoint.domain.clone())
++            .or_else(|| {
++                self.cursor
++                    .as_ref()
++                    .and_then(|endpoint| endpoint.domain.clone())
++            });
++        let Some((domain, anchor_item, epoch)) = binding else {
++            if let Some(domain) = self.active_domain.take() {
++                domain.clear();
++            }
++            return;
++        };
++        if self
++            .active_domain
++            .as_ref()
++            .is_some_and(|active| !active.same_domain(&domain))
++        {
++            self.active_domain.take().unwrap().clear();
++        }
++        self.active_domain = Some(domain.clone());
++        let endpoints = self
++            .anchor
++            .as_ref()
++            .zip(self.cursor.as_ref())
++            .and_then(|(a, b)| {
++                let (anchor_domain, _, anchor_epoch) = a.domain.as_ref()?;
++                let (cursor_domain, cursor_item, cursor_epoch) = b.domain.as_ref()?;
++                if !domain.same_domain(anchor_domain)
++                    || !domain.same_domain(cursor_domain)
++                    || epoch != domain.0.epoch.get()
++                    || *anchor_epoch != epoch
++                    || *cursor_epoch != epoch
++                {
++                    return None;
++                }
++                Some(TextSelectionDomainRange {
++                    anchor: TextSelectionDomainEndpoint {
++                        item: anchor_item,
++                        offset: usize::try_from(a.content_key?.value()).ok()?,
++                    },
++                    cursor: TextSelectionDomainEndpoint {
++                        item: *cursor_item,
++                        offset: usize::try_from(b.content_key?.value()).ok()?,
++                    },
++                })
++            });
++        if let Some(range) = endpoints {
++            domain.set_range(range, self.is_selecting, cx);
++        } else {
++            // Crossing padding must not cancel the anchor's gesture epoch.
++            // A different domain (or opt-out participant) cannot reuse its range.
++            *domain.0.state.borrow_mut() = DomainState::default();
++        }
++    }
++
+     fn acquire(window_id: gpui::WindowId, cx: &mut App) -> Entity<Self> {
+         if !cx.has_global::<SelectionStateRegistry>() {
+             cx.set_global(SelectionStateRegistry::default());
+@@ -1344,6 +1603,9 @@ impl WindowSelectionState {
+             return;
+         }
+         self.is_selecting = false;
++        if let Some(domain) = &self.active_domain {
++            domain.0.state.borrow_mut().is_selecting = false;
++        }
+         if !self.did_hit_text {
+             self.anchor = None;
+             self.cursor = None;
+@@ -1359,7 +1621,11 @@ impl WindowSelectionState {
+     }
+ 
+     fn clear_state(&mut self, cx: &mut App) -> Vec<ClearHandler> {
++        self.domain_dirty = false;
+         self.stop_anchor_auto_scroll(cx);
++        if let Some(domain) = self.active_domain.take() {
++            domain.clear();
++        }
+         self.anchor = None;
+         self.cursor = None;
+         self.pending_extension_anchor = None;
+@@ -1420,8 +1686,31 @@ impl WindowSelectionState {
+             .collect()
+     }
+ 
++    fn local_copy_items(&self, cx: &App) -> Vec<CopyItem> {
++        self.participants
++            .values()
++            .filter_map(|registration| {
++                let participant = registration.participant.upgrade()?;
++                let state = participant.read(cx);
++                state
++                    .local_selection
++                    .then(|| state.copy_item(registration.registration.document_order))
++                    .flatten()
++            })
++            .collect()
++    }
++
+     #[cfg(test)]
+     fn selected_text(&self, cx: &mut App) -> String {
++        if let Some(domain) = &self.active_domain {
++            if domain
++                .range(cx)
++                .is_some_and(|range| range.anchor != range.cursor)
++            {
++                return domain.selected_text(cx);
++            }
++            return resolve_copy_items(self.local_copy_items(cx), cx);
++        }
+         resolve_copy_items(self.copy_items(cx), cx)
+     }
+ 
+@@ -1429,6 +1718,11 @@ impl WindowSelectionState {
+     /// participant's painted text, as opposed to two points with nothing
+     /// between them.
+     fn selects_text(&self, cx: &App) -> bool {
++        if let Some(domain) = &self.active_domain {
++            return domain
++                .range(cx)
++                .is_some_and(|range| range.anchor != range.cursor);
++        }
+         self.snapshot().is_some()
+             && self.participants.values().any(|registration| {
+                 registration
+@@ -1446,6 +1740,17 @@ impl WindowSelectionState {
+ 
+     /// Returns whether a drag or a participant-local selection is active.
+     pub fn has_selection(&self, cx: &App) -> bool {
++        if let Some(domain) = &self.active_domain {
++            return domain
++                .range(cx)
++                .is_some_and(|range| range.anchor != range.cursor)
++                || self.participants.values().any(|registration| {
++                    registration
++                        .participant
++                        .upgrade()
++                        .is_some_and(|participant| participant.read(cx).local_selection)
++                });
++        }
+         self.snapshot().is_some()
+             || self.participants.values().any(|registration| {
+                 registration
+@@ -1478,8 +1783,14 @@ impl WindowSelectionState {
+     }
+ 
+     fn prepare_for_mouse_down(&mut self, extend: bool, cx: &mut App) -> Vec<ClearHandler> {
+-        let pending_extension_anchor = extend.then(|| self.anchor.clone()).flatten();
++        let mut pending_extension_anchor = extend
++            .then(|| self.anchor.clone())
++            .flatten()
++            .filter(|anchor| anchor.valid_anchor(&self.participants, cx));
+         self.stop_anchor_auto_scroll(cx);
++        if let Some(domain) = self.active_domain.take() {
++            domain.clear();
++        }
+         self.anchor = None;
+         self.cursor = None;
+         self.pending_extension_anchor = None;
+@@ -1495,7 +1806,13 @@ impl WindowSelectionState {
+             .filter_map(|registration| registration.participant.upgrade())
+             .filter_map(|participant| participant.update(cx, |state, cx| state.clear_state(cx)))
+             .collect();
++        if let Some(anchor) = &mut pending_extension_anchor {
++            if let Some((domain, _, epoch)) = &mut anchor.domain {
++                *epoch = domain.0.epoch.get();
++            }
++        }
+         self.pending_extension_anchor = pending_extension_anchor;
++        self.domain_dirty = false;
+         handlers
+     }
+ 
+@@ -1672,6 +1989,7 @@ impl WindowSelectionState {
+             let content_point =
+                 window_point - registration.bounds.origin - registration.scroll_offset;
+             SelectionEndpoint {
++                domain: participant.read(cx).endpoint_domain(),
+                 participant: Some(participant.downgrade()),
+                 point: content_point,
+                 inside: true,
+@@ -1684,6 +2002,7 @@ impl WindowSelectionState {
+         };
+         self.anchor = Some(to_endpoint(anchor));
+         self.cursor = Some(to_endpoint(cursor));
++        self.domain_dirty = true;
+         self.did_hit_text = true;
+         self.is_selecting = false;
+         self.touch.menu_open = true;
+@@ -1827,6 +2146,7 @@ impl WindowSelectionState {
+                 - registration.registration.bounds.origin
+                 - registration.registration.scroll_offset;
+             SelectionEndpoint {
++                domain: participant.read(cx).endpoint_domain(),
+                 participant: Some(participant.downgrade()),
+                 point: content_point,
+                 inside: true,
+@@ -1839,6 +2159,7 @@ impl WindowSelectionState {
+         };
+         self.anchor = Some(to_endpoint(anchor));
+         self.cursor = Some(to_endpoint(cursor));
++        self.domain_dirty = true;
+         self.did_hit_text = true;
+         self.is_selecting = false;
+         participant.update(cx, |state, cx| state.focus(window, cx));
+@@ -1878,7 +2199,7 @@ impl WindowSelectionState {
+                     .or_else(|| self.anchor.clone())
+             })
+             .flatten()
+-            .filter(|anchor| anchor.resolve(&self.participants).is_some());
++            .filter(|anchor| anchor.valid_anchor(&self.participants, cx));
+         if !extend && !already_prepared {
+             self.clear(cx);
+         }
+@@ -1888,6 +2209,7 @@ impl WindowSelectionState {
+             .then(|| endpoint.participant.clone())
+             .flatten();
+         let anchor = previous_anchor.unwrap_or_else(|| endpoint.clone());
++        self.domain_dirty = true;
+         self.anchor = Some(anchor.clone());
+         self.cursor = Some(endpoint.clone());
+         self.did_hit_text = anchor.inside_text || endpoint.inside_text;
+@@ -1906,6 +2228,7 @@ impl WindowSelectionState {
+         }
+         let endpoint = self.endpoint(position, window, cx);
+         self.did_hit_text |= endpoint.inside_text;
++        self.domain_dirty = true;
+         self.cursor = Some(endpoint);
+         if window.is_none() {
+             self.update_participant_auto_scroll(position, cx);
+@@ -1925,6 +2248,11 @@ impl WindowSelectionState {
+             Rc<TextSelectionRegistration>,
+             f32,
+         )> = None;
++        let mut nearest_domain: Option<(
++            WeakEntity<SelectableTextState>,
++            Rc<TextSelectionRegistration>,
++            Pixels,
++        )> = None;
+         let mut predecessor: Option<(
+             WeakEntity<SelectableTextState>,
+             Rc<TextSelectionRegistration>,
+@@ -1941,6 +2269,31 @@ impl WindowSelectionState {
+                 continue;
+             }
+             let participant_geometry = &registration.registration;
++            if self.is_selecting
++                && let Some((anchor_domain, _, epoch)) =
++                    self.anchor.as_ref().and_then(|a| a.domain.as_ref())
++                && let Some((domain, _, participant_epoch)) = registration
++                    .participant
++                    .upgrade()
++                    .and_then(|p| p.read(cx).endpoint_domain())
++                && anchor_domain.same_domain(&domain)
++                && *epoch == participant_epoch
++            {
++                let distance = (participant_geometry.bounds.top() - position.y)
++                    .max(position.y - participant_geometry.bounds.bottom())
++                    .max(Pixels::ZERO);
++                if nearest_domain.as_ref().is_none_or(|(_, best, previous)| {
++                    distance < *previous
++                        || (distance == *previous
++                            && participant_geometry.document_order < best.document_order)
++                }) {
++                    nearest_domain = Some((
++                        registration.participant.clone(),
++                        participant_geometry.clone(),
++                        distance,
++                    ));
++                }
++            }
+             let hovered = window.map_or_else(
+                 || participant_geometry.bounds.contains(&position),
+                 |window| participant_geometry.hitbox.is_hovered(window),
+@@ -1987,7 +2340,9 @@ impl WindowSelectionState {
+         let selection = hit
+             .map(|(participant, registration, _)| (participant, registration, true))
+             .or_else(|| {
+-                predecessor
++                nearest_domain
++                    .map(|(participant, registration, _)| (participant, registration))
++                    .or(predecessor)
+                     .or(first)
+                     .map(|(participant, registration)| (participant, registration, false))
+             });
+@@ -2001,7 +2356,11 @@ impl WindowSelectionState {
+                         .clone()
+                         .map(|callback| (callback, point))
+                 });
++                let domain = participant
++                    .upgrade()
++                    .and_then(|participant| participant.read(cx).endpoint_domain());
+                 SelectionEndpoint {
++                    domain,
+                     point,
+                     participant: Some(participant),
+                     inside,
+@@ -2015,6 +2374,7 @@ impl WindowSelectionState {
+                 }
+             }
+             None => SelectionEndpoint {
++                domain: None,
+                 participant: None,
+                 point: position,
+                 inside: false,
+@@ -2027,13 +2387,71 @@ impl WindowSelectionState {
+ 
+     fn publish_snapshots(&mut self, cx: &mut App) {
+         self.prune_dead_participants();
++        if self.active_domain.is_none() {
++            self.active_domain = self
++                .anchor
++                .as_ref()
++                .and_then(|endpoint| endpoint.domain.as_ref())
++                .or_else(|| {
++                    self.cursor
++                        .as_ref()
++                        .and_then(|endpoint| endpoint.domain.as_ref())
++                })
++                .map(|(domain, _, _)| domain.clone());
++        }
++        if let Some(domain) = &self.active_domain {
++            let range = (!self.domain_dirty)
++                .then(|| domain.range(cx))
++                .flatten()
++                .filter(|range| range.anchor != range.cursor);
++            let endpoints = self.anchor.as_ref().zip(self.cursor.as_ref());
++            for registration in self.participants.values() {
++                let Some(participant) = registration.participant.upgrade() else {
++                    continue;
++                };
++                let binding = participant.read(cx).domain.clone();
++                let snapshot = binding.and_then(|(bound, item)| {
++                    if !bound.same_domain(domain)
++                        || registration.registration.scope != self.active_scope
++                    {
++                        return None;
++                    }
++                    let range = range?;
++                    domain.projected_range(item, usize::MAX, cx)?;
++                    let (anchor, cursor) = endpoints?;
++                    let a = (domain.0.order)(range.anchor.item, cx)?;
++                    let b = (domain.0.order)(range.cursor.item, cx)?;
++                    let coverage = if range.anchor.item == range.cursor.item {
++                        TextSelectionCoverage::Bounded
++                    } else if item != range.anchor.item && item != range.cursor.item {
++                        TextSelectionCoverage::Full
++                    } else if (item == range.anchor.item) == (a < b) {
++                        TextSelectionCoverage::ToEnd
++                    } else {
++                        TextSelectionCoverage::FromStart
++                    };
++                    let mut snapshot =
++                        TextSelectionSnapshot::new(anchor.snapshot(), cursor.snapshot())
++                            .with_selecting(domain.is_selecting());
++                    snapshot.coverage = coverage;
++                    snapshot.window_points = anchor
++                        .resolve(&self.participants)
++                        .zip(cursor.resolve(&self.participants))
++                        .map(|(anchor, cursor)| TextSelectionWindowPoints { anchor, cursor });
++                    Some(snapshot)
++                });
++                participant.update(cx, |state, cx| state.set_snapshot(snapshot, cx));
++            }
++            return;
++        }
+         let snapshot = self.snapshot();
+         let single_participant = self.single_participant();
+         for (id, registration) in &self.participants {
+             let Some(participant) = registration.participant.upgrade() else {
+                 continue;
+             };
+-            let participant_snapshot = (registration.registration.scope == self.active_scope
++            let participant_snapshot = (participant.read(cx).domain.is_none()
++                && registration.registration.scope == self.active_scope
+                 && self.participates(*id, registration)
+                 && single_participant.is_none_or(|single| single == *id))
+             .then_some(snapshot)
+@@ -2308,11 +2726,32 @@ fn with_text_selection_scope<T>(
+ pub struct TextSelection;
+ 
+ impl TextSelection {
++    pub(crate) fn has_domain_selection(window: &Window, cx: &App) -> bool {
++        WindowSelectionState::existing(window, cx).is_some_and(|state| {
++            state.read(cx).active_domain.as_ref().is_some_and(|domain| {
++                domain
++                    .range(cx)
++                    .is_some_and(|range| range.anchor != range.cursor)
++            })
++        })
++    }
++
+     /// Returns the currently selected text in logical document order.
+     pub fn selected_text(window: &mut Window, cx: &mut App) -> String {
+         let Some(state) = live_text_selection_state(window, cx) else {
+             return String::new();
+         };
++        let domain = state.read(cx).active_domain.clone();
++        if let Some(domain) = domain {
++            if domain
++                .range(cx)
++                .is_some_and(|range| range.anchor != range.cursor)
++            {
++                return domain.selected_text(cx);
++            }
++            let items = state.read(cx).local_copy_items(cx);
++            return resolve_copy_items(items, cx);
++        }
+         let items = state.read(cx).copy_items(cx);
+         resolve_copy_items(items, cx)
+     }
+@@ -2894,6 +3333,13 @@ pub(crate) fn clear_window_text_selection(window_id: gpui::WindowId, cx: &mut Ap
+     dispatch_clear_handlers(handlers, cx);
+ }
+ 
++#[cfg(test)]
++#[path = "text_selection/domain_tests.rs"]
++mod domain_tests;
++#[cfg(test)]
++#[path = "text_selection/text_view_domain_tests.rs"]
++mod text_view_domain_tests;
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/src/text_selection/domain_tests.rs b/src/text_selection/domain_tests.rs
+new file mode 100644
+index 0000000..aa96d81
+--- /dev/null
++++ b/src/text_selection/domain_tests.rs
+@@ -0,0 +1,419 @@
++use super::*;
++use gpui::{ContentMask, HitboxId, Render, TestAppContext, div, size};
++use std::cell::Cell;
++
++fn domain() -> TextSelectionDomain {
++    TextSelectionDomain::new(|item, _| Some(item), |_, _| "provider".into())
++}
++
++fn participant(item: u64, domain: &TextSelectionDomain, cx: &mut App) -> TextSelectionHandle {
++    let handle = TextSelectionHandle::new("legacy must not be copied", cx);
++    handle.set_domain(Some((domain.clone(), item)), cx);
++    handle.resolve_content_key_with(
++        |point, _| Some(TextSelectionContentKey::new(f32::from(point.x) as u64)),
++        cx,
++    );
++    handle
++}
++
++fn register(
++    state: &Entity<WindowSelectionState>,
++    handle: &TextSelectionHandle,
++    y: f32,
++    cx: &mut App,
++) {
++    let bounds = Bounds::new(point(px(0.), px(y)), size(px(100.), px(10.)));
++    state.update(cx, |state, cx| {
++        state.register_participant(
++            handle.clone(),
++            TextSelectionRegistration::new(
++                Hitbox {
++                    id: HitboxId::placeholder(),
++                    bounds,
++                    content_mask: ContentMask { bounds },
++                    behavior: HitboxBehavior::Normal,
++                },
++                bounds,
++            )
++            // Deliberately unrelated to source order.
++            .with_document_order(100 - y as u64)
++            .with_text_bounds(vec![bounds]),
++            cx,
++        );
++    });
++}
++
++fn begin(state: &Entity<WindowSelectionState>, x: f32, y: f32, cx: &mut App) {
++    state.update(cx, |state, cx| state.begin(point(px(x), px(y)), false, cx));
++    WindowSelectionState::resolve_content_keys(state, cx);
++}
++
++fn update(state: &Entity<WindowSelectionState>, x: f32, y: f32, cx: &mut App) {
++    state.update(cx, |state, cx| state.update(point(px(x), px(y)), cx));
++    WindowSelectionState::resolve_content_keys(state, cx);
++}
++
++fn interval(a: (u64, usize), b: (u64, usize)) -> TextSelectionDomainRange {
++    TextSelectionDomainRange {
++        anchor: TextSelectionDomainEndpoint {
++            item: a.0,
++            offset: a.1,
++        },
++        cursor: TextSelectionDomainEndpoint {
++            item: b.0,
++            offset: b.1,
++        },
++    }
++}
++
++#[gpui::test]
++fn begin_forward_reverse_partial_and_end(cx: &mut TestAppContext) {
++    cx.update(|cx| {
++        let domain = domain();
++        let state = cx.new(|_| WindowSelectionState::default());
++        let a = participant(10, &domain, cx);
++        let b = participant(30, &domain, cx);
++        register(&state, &a, 0., cx);
++        register(&state, &b, 20., cx);
++        begin(&state, 3., 1., cx);
++        assert_eq!(domain.range(cx), Some(interval((10, 3), (10, 3))));
++        assert!(domain.is_selecting());
++        update(&state, 7., 21., cx);
++        assert_eq!(a.logical_range(12, cx), Some(3..12));
++        assert_eq!(b.logical_range(12, cx), Some(0..7));
++        assert_eq!(domain.projected_range(20, 9, cx), Some(0..9));
++        assert_eq!(domain.projected_range(40, 9, cx), None);
++        assert_eq!(
++            a.snapshot(cx).unwrap().coverage(),
++            TextSelectionCoverage::ToEnd
++        );
++        state.update(cx, |state, cx| state.end(cx));
++        assert!(!domain.is_selecting());
++        begin(&state, 7., 21., cx);
++        update(&state, 3., 1., cx);
++        assert_eq!(domain.range(cx), Some(interval((30, 7), (10, 3))));
++        assert_eq!(a.logical_range(12, cx), Some(3..12));
++        assert_eq!(b.logical_range(12, cx), Some(0..7));
++        begin(&state, 8., 1., cx);
++        update(&state, 2., 1., cx);
++        assert_eq!(a.logical_range(12, cx), Some(2..8));
++        assert_eq!(b.logical_range(12, cx), None);
++    });
++}
++
++#[gpui::test]
++fn sweep_one_then_both_endpoints_and_drop_preserves_interval(cx: &mut TestAppContext) {
++    let (domain, state, weak_a, weak_b) = cx.update(|cx| {
++        let domain = domain();
++        let state = cx.new(|_| WindowSelectionState::default());
++        let a = participant(10, &domain, cx);
++        let b = participant(30, &domain, cx);
++        register(&state, &a, 0., cx);
++        register(&state, &b, 20., cx);
++        begin(&state, 3., 1., cx);
++        update(&state, 7., 21., cx);
++        state.update(cx, |state, cx| {
++            state.end(cx);
++            state.finish_frame(cx);
++        });
++        register(&state, &b, 20., cx);
++        state.update(cx, |state, cx| {
++            state.finish_frame(cx);
++        });
++        assert_eq!(state.read(cx).participants.len(), 1);
++        assert_eq!(domain.range(cx), Some(interval((10, 3), (30, 7))));
++        assert!(b.snapshot(cx).unwrap().window_points().is_none());
++        let weak_a = a.downgrade();
++        drop(a);
++        state.update(cx, |state, cx| {
++            state.finish_frame(cx);
++        });
++        let weak_b = b.downgrade();
++        drop(b);
++        (domain, state, weak_a, weak_b)
++    });
++    cx.update(|cx| {
++        assert!(weak_a.upgrade().is_none());
++        assert!(weak_b.upgrade().is_none());
++        assert!(state.read(cx).participants.is_empty());
++        assert!(state.read(cx).has_selection(cx));
++        assert_eq!(
++            state.update(cx, |state, cx| state.selected_text(cx)),
++            "provider"
++        );
++        let middle = participant(20, &domain, cx);
++        register(&state, &middle, 10., cx);
++        let snapshot = middle.snapshot(cx).unwrap();
++        assert_eq!(snapshot.coverage(), TextSelectionCoverage::Full);
++        assert!(snapshot.window_points().is_none());
++        assert_eq!(middle.logical_range(100, cx), Some(0..100));
++        let remounted_a = participant(10, &domain, cx);
++        register(&state, &remounted_a, 0., cx);
++        assert_eq!(remounted_a.logical_range(12, cx), Some(3..12));
++        assert_eq!(
++            remounted_a.snapshot(cx).unwrap().coverage(),
++            TextSelectionCoverage::ToEnd
++        );
++    });
++}
++
++#[gpui::test]
++fn source_mutation_invalidation_and_hover_cannot_resurrect(cx: &mut TestAppContext) {
++    cx.update(|cx| {
++        let present = Rc::new(Cell::new(true));
++        let p = present.clone();
++        let domain =
++            TextSelectionDomain::new(move |item, _| p.get().then_some(item), |_, _| "copy".into());
++        let state = cx.new(|_| WindowSelectionState::default());
++        let a = participant(10, &domain, cx);
++        register(&state, &a, 0., cx);
++        begin(&state, 2., 1., cx);
++        update(&state, 8., 1., cx);
++        state.update(cx, |state, cx| state.end(cx));
++        domain.invalidate();
++        WindowSelectionState::resolve_content_keys(&state, cx);
++        register(&state, &a, 0., cx);
++        assert_eq!(domain.range(cx), None);
++        assert_eq!(a.snapshot(cx), None);
++        assert_eq!(state.update(cx, |state, cx| state.selected_text(cx)), "");
++        begin(&state, 2., 1., cx);
++        update(&state, 8., 1., cx);
++        present.set(false);
++        assert_eq!(domain.range(cx), None);
++        assert!(!domain.is_selecting());
++        present.set(true);
++        assert_eq!(domain.range(cx), None);
++    });
++}
++
++#[gpui::test]
++fn current_order_changes_projection_not_stale_geometry(cx: &mut TestAppContext) {
++    cx.update(|cx| {
++        let reversed = Rc::new(Cell::new(false));
++        let r = reversed.clone();
++        let domain = TextSelectionDomain::new(
++            move |item, _| Some(if r.get() { 100 - item } else { item }),
++            |_, _| String::new(),
++        );
++        let state = cx.new(|_| WindowSelectionState::default());
++        let a = participant(10, &domain, cx);
++        let b = participant(30, &domain, cx);
++        register(&state, &a, 0., cx);
++        register(&state, &b, 20., cx);
++        begin(&state, 3., 1., cx);
++        update(&state, 7., 21., cx);
++        reversed.set(true);
++        assert_eq!(a.logical_range(12, cx), Some(0..3));
++        assert_eq!(b.logical_range(12, cx), Some(7..12));
++        state.update(cx, |state, cx| state.publish_snapshots(cx));
++        assert_eq!(
++            a.snapshot(cx).unwrap().coverage(),
++            TextSelectionCoverage::FromStart
++        );
++    });
++}
++
++#[gpui::test]
++fn cross_domain_and_opt_out_gestures_never_leak(cx: &mut TestAppContext) {
++    cx.update(|cx| {
++        let d1 = domain();
++        let d2 = domain();
++        let state = cx.new(|_| WindowSelectionState::default());
++        let a = participant(10, &d1, cx);
++        let b = participant(20, &d2, cx);
++        let ordinary = TextSelectionHandle::new("ordinary", cx);
++        register(&state, &a, 0., cx);
++        register(&state, &b, 20., cx);
++        register(&state, &ordinary, 40., cx);
++        begin(&state, 2., 1., cx);
++        update(&state, 8., 21., cx);
++        assert_eq!(d1.range(cx), None);
++        assert_eq!(d2.range(cx), None);
++        assert_eq!(state.update(cx, |state, cx| state.selected_text(cx)), "");
++        assert_eq!(a.snapshot(cx), None);
++        assert_eq!(b.snapshot(cx), None);
++        begin(&state, 2., 41., cx);
++        update(&state, 8., 1., cx);
++        assert_eq!(d1.range(cx), None);
++        assert_eq!(ordinary.snapshot(cx), None);
++        assert_eq!(state.update(cx, |state, cx| state.selected_text(cx)), "");
++        begin(&state, 2., 1., cx);
++        update(&state, 8., 41., cx);
++        assert_eq!(state.update(cx, |state, cx| state.selected_text(cx)), "");
++    });
++}
++
++#[gpui::test]
++fn independent_domains_clear_scope_and_new_gesture(cx: &mut TestAppContext) {
++    cx.update(|cx| {
++        let d1 = domain();
++        let d2 = domain();
++        let s1 = cx.new(|_| WindowSelectionState::default());
++        let s2 = cx.new(|_| WindowSelectionState::default());
++        let a = participant(10, &d1, cx);
++        let b = participant(10, &d2, cx);
++        register(&s1, &a, 0., cx);
++        register(&s2, &b, 0., cx);
++        begin(&s1, 2., 1., cx);
++        update(&s1, 8., 1., cx);
++        begin(&s2, 3., 1., cx);
++        update(&s2, 9., 1., cx);
++        s1.update(cx, |state, cx| state.clear(cx));
++        assert_eq!(d1.range(cx), None);
++        assert_eq!(d2.range(cx), Some(interval((10, 3), (10, 9))));
++        begin(&s1, 2., 1., cx);
++        update(&s1, 8., 1., cx);
++        begin(&s1, 5., 1., cx);
++        assert_eq!(d1.range(cx), Some(interval((10, 5), (10, 5))));
++        s1.update(cx, |state, cx| {
++            state.set_active_scope(TextSelectionScopeId::new(), cx)
++        });
++        assert_eq!(d1.range(cx), None);
++        assert!(d2.range(cx).is_some());
++    });
++}
++
++#[gpui::test]
++fn invalidation_cancels_ongoing_gesture_until_a_new_begin(cx: &mut TestAppContext) {
++    cx.update(|cx| {
++        let domain = domain();
++        let state = cx.new(|_| WindowSelectionState::default());
++        let a = participant(10, &domain, cx);
++        register(&state, &a, 0., cx);
++        begin(&state, 2., 1., cx);
++        update(&state, 8., 1., cx);
++        domain.invalidate();
++        update(&state, 9., 1., cx);
++        assert_eq!(domain.range(cx), None);
++        assert!(!domain.is_selecting());
++        begin(&state, 3., 1., cx);
++        update(&state, 7., 1., cx);
++        assert_eq!(a.logical_range(12, cx), Some(3..7));
++    });
++}
++
++#[gpui::test]
++fn unresolved_offsets_do_not_fall_back_to_pixel_or_legacy_copy(cx: &mut TestAppContext) {
++    cx.update(|cx| {
++        let domain = domain();
++        let state = cx.new(|_| WindowSelectionState::default());
++        let a = participant(10, &domain, cx);
++        a.resolve_content_key_with(|_, _| None, cx);
++        register(&state, &a, 0., cx);
++        begin(&state, 2., 1., cx);
++        update(&state, 8., 1., cx);
++        assert_eq!(domain.range(cx), None);
++        assert_eq!(a.snapshot(cx), None);
++        assert_eq!(state.update(cx, |state, cx| state.selected_text(cx)), "");
++        assert!(
++            state
++                .read(cx)
++                .anchor
++                .as_ref()
++                .unwrap()
++                .content_key_resolver
++                .is_none()
++        );
++    });
++}
++
++#[gpui::test]
++fn explicit_extension_uses_logical_anchor_after_geometry_is_swept(cx: &mut TestAppContext) {
++    cx.update(|cx| {
++        let domain = domain();
++        let state = cx.new(|_| WindowSelectionState::default());
++        let a = participant(10, &domain, cx);
++        register(&state, &a, 0., cx);
++        begin(&state, 2., 1., cx);
++        update(&state, 8., 1., cx);
++        state.update(cx, |state, cx| {
++            state.end(cx);
++            state.finish_frame(cx);
++            state.finish_frame(cx);
++        });
++        drop(a);
++        let b = participant(30, &domain, cx);
++        register(&state, &b, 20., cx);
++        state.update(cx, |state, cx| {
++            state.prepare_for_mouse_down(true, cx);
++            state.begin(point(px(7.), px(21.)), true, cx);
++        });
++        WindowSelectionState::resolve_content_keys(&state, cx);
++        assert_eq!(domain.range(cx), Some(interval((10, 2), (30, 7))));
++        assert!(b.snapshot(cx).unwrap().window_points().is_none());
++    });
++}
++
++struct EmptyView;
++impl Render for EmptyView {
++    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++        div()
++    }
++}
++
++#[gpui::test]
++fn root_copy_once_includes_never_mounted_items_and_window_clear(cx: &mut TestAppContext) {
++    let window = cx.add_window(|_, _| EmptyView);
++    let calls = Rc::new(Cell::new(0));
++    let count = calls.clone();
++    let domain = TextSelectionDomain::new(
++        |item, _| Some(item),
++        move |range, _| {
++            count.set(count.get() + 1);
++            assert_eq!(range, interval((10, 3), (30, 7)));
++            "partial first\nnever mounted intermediate\npartial last".into()
++        },
++    );
++    let state = window
++        .update(cx, |_, window, cx| {
++            let state = WindowSelectionState::ensure(window, cx);
++            let a = participant(10, &domain, cx);
++            let b = participant(30, &domain, cx);
++            register(&state, &a, 0., cx);
++            register(&state, &b, 20., cx);
++            begin(&state, 3., 1., cx);
++            update(&state, 7., 21., cx);
++            state.update(cx, |state, cx| state.end(cx));
++            drop(a);
++            drop(b);
++            assert_eq!(
++                TextSelection::selected_text(window, cx),
++                "partial first\nnever mounted intermediate\npartial last"
++            );
++            assert_eq!(calls.get(), 1);
++            TextSelection::clear(window, cx);
++            assert_eq!(domain.range(cx), None);
++            assert_eq!(TextSelection::selected_text(window, cx), "");
++            assert_eq!(calls.get(), 1);
++            state
++        })
++        .unwrap();
++    cx.update(|cx| {
++        let a = participant(10, &domain, cx);
++        register(&state, &a, 0., cx);
++        begin(&state, 2., 1., cx);
++        update(&state, 8., 1., cx);
++    });
++    drop(state);
++    cx.update(|_| {});
++    cx.update(|cx| assert_eq!(domain.range(cx), None));
++}
++
++#[gpui::test]
++fn invalid_domain_retains_local_select_all_copy_fallback(cx: &mut TestAppContext) {
++    cx.update(|cx| {
++        let domain = domain();
++        let state = cx.new(|_| WindowSelectionState::default());
++        let a = participant(10, &domain, cx);
++        register(&state, &a, 0., cx);
++        begin(&state, 2., 1., cx);
++        update(&state, 8., 1., cx);
++        a.set_local_selection(true, cx);
++        assert_eq!(domain.range(cx), None);
++        a.copy_with(|_| "local select all".into(), cx);
++        assert_eq!(
++            state.update(cx, |state, cx| state.selected_text(cx)),
++            "local select all"
++        );
++    });
++}
+diff --git a/src/text_selection/text_view_domain_tests.rs b/src/text_selection/text_view_domain_tests.rs
+new file mode 100644
+index 0000000..cc15107
+--- /dev/null
++++ b/src/text_selection/text_view_domain_tests.rs
+@@ -0,0 +1,221 @@
++use super::*;
++use crate::{SelectionFormat, TextViewState};
++use gpui::TestAppContext;
++
++fn interval(a: (u64, usize), b: (u64, usize)) -> TextSelectionDomainRange {
++    TextSelectionDomainRange {
++        anchor: TextSelectionDomainEndpoint {
++            item: a.0,
++            offset: a.1,
++        },
++        cursor: TextSelectionDomainEndpoint {
++            item: b.0,
++            offset: b.1,
++        },
++    }
++}
++
++#[gpui::test]
++fn unmounted_views_query_current_order_clear_and_exact_unicode_source(cx: &mut TestAppContext) {
++    cx.update(crate::init);
++    let order = Rc::new(RefCell::new(vec![10, 20, 30]));
++    let provider = order.clone();
++    let domain = TextSelectionDomain::new(
++        move |item, _| {
++            provider
++                .borrow()
++                .iter()
++                .position(|id| *id == item)
++                .map(|i| i as u64)
++        },
++        |_, _| String::new(),
++    );
++    let view = cx.new(|cx| TextViewState::markdown("pré **naïve** tail", cx));
++    view.update(cx, |view, cx| {
++        view.set_selection_domain(Some((domain.clone(), 20)), cx)
++    });
++    cx.update(|cx| domain.set_range(interval((10, 1), (30, 2)), false, cx));
++    view.read_with(cx, |view, cx| {
++        assert_eq!(view.selected_text_with(cx), "pré naïve tail\n");
++        assert_eq!(view.selected_source_range_with(cx), Some(0..20));
++        assert!(view.selected_text().is_empty());
++        assert_eq!(view.selected_source_range(), None);
++    });
++    order.replace(vec![20, 10, 30]);
++    view.read_with(cx, |view, cx| {
++        assert!(view.selected_text_with(cx).is_empty());
++        assert_eq!(view.selected_source_range_with(cx), None);
++    });
++    cx.update(|cx| domain.set_range(interval((20, 5), (20, 11)), false, cx));
++    view.read_with(cx, |view, cx| {
++        assert_eq!(view.selected_text_with(cx), "naïve");
++        assert_eq!(view.selected_source_range_with(cx), Some(7..13));
++        assert_eq!(
++            view.copy_rendered_range(5..11, SelectionFormat::Source)
++                .unwrap(),
++            "**naïve**"
++        );
++    });
++    domain.clear();
++    view.read_with(cx, |view, cx| {
++        assert!(view.selected_text_with(cx).is_empty());
++        assert_eq!(view.selected_source_range_with(cx), None);
++    });
++}
++
++#[gpui::test]
++fn append_bounds_survive_closing_markup_beyond_cursor(cx: &mut TestAppContext) {
++    cx.update(crate::init);
++    let domain = TextSelectionDomain::new(|item, _| Some(item), |_, _| String::new());
++    let view = cx.new(|cx| TextViewState::markdown("alpha *beta", cx));
++    view.update(cx, |view, cx| {
++        view.set_selection_domain(Some((domain.clone(), 10)), cx)
++    });
++    cx.update(|cx| domain.set_range(interval((10, 0), (10, 5)), false, cx));
++    view.update(cx, |view, cx| view.push_str(" gamma", cx));
++    cx.run_until_parked();
++    view.read_with(cx, |view, cx| {
++        assert_eq!(view.selected_text_with(cx), "alpha")
++    });
++    view.update(cx, |view, cx| view.push_str("*", cx));
++    cx.run_until_parked();
++    cx.update(|cx| assert_eq!(domain.range(cx), Some(interval((10, 0), (10, 5)))));
++    view.read_with(cx, |view, cx| {
++        assert_eq!(view.selected_rendered_range_with(cx), Some(0..5));
++        assert_eq!(view.selected_text_with(cx), "alpha");
++    });
++    view.update(cx, |view, cx| view.set_text("different source", cx));
++    cx.update(|cx| assert_eq!(domain.range(cx), None));
++}
++
++#[gpui::test]
++fn short_participant_length_suppresses_projection_without_cancel_or_clamp(cx: &mut TestAppContext) {
++    cx.update(|cx| {
++        let domain = TextSelectionDomain::new(|item, _| Some(item), |_, _| String::new());
++        domain.set_range(interval((10, 1), (10, 12)), false, cx);
++        assert_eq!(domain.projected_range(10, 9, cx), None);
++        assert_eq!(domain.range(cx), Some(interval((10, 1), (10, 12))));
++        assert_eq!(domain.projected_range(10, 20, cx), Some(1..12));
++    });
++}
++
++#[gpui::test]
++fn ordinary_async_reply_pending_and_remount_preserve_nonzero_offsets(cx: &mut TestAppContext) {
++    cx.update(crate::init);
++    for bytes in [5 * 1024, 8 * 1024] {
++        let source = format!(
++            "prefix **word** {}",
++            "ordinary reply text. ".repeat((bytes - 16) / 21)
++        );
++        assert!(source.len() > 4096 && source.len() <= 8192);
++        let domain = TextSelectionDomain::new(|item, _| Some(item), |_, _| String::new());
++        let selected = interval((10, 7), (10, 11));
++        cx.update(|cx| domain.set_range(selected, false, cx));
++        for _ in 0..2 {
++            let view = cx.new(|cx| TextViewState::markdown(&source, cx));
++            view.update(cx, |view, cx| {
++                view.set_selection_domain(Some((domain.clone(), 10)), cx)
++            });
++            view.read_with(cx, |view, cx| {
++                assert!(view.rendered_text().is_empty());
++                assert_eq!(view.selected_rendered_range_with(cx), None);
++                assert!(view.selected_text_with(cx).is_empty());
++                assert_eq!(view.selected_source_range_with(cx), None);
++                assert_eq!(domain.range(cx), Some(selected));
++            });
++            cx.run_until_parked();
++            view.read_with(cx, |view, cx| {
++                assert_eq!(view.selected_rendered_range_with(cx), Some(7..11));
++                assert_eq!(view.selected_text_with(cx), "word");
++                assert_eq!(view.selected_source_range_with(cx), Some(9..13));
++                assert_eq!(domain.range(cx), Some(selected));
++            });
++            view.update(cx, |view, cx| view.push_str(" appended", cx));
++            view.read_with(cx, |view, cx| {
++                assert_eq!(view.selected_rendered_range_with(cx), None);
++                assert_eq!(domain.range(cx), Some(selected));
++            });
++            cx.run_until_parked();
++            view.read_with(cx, |view, cx| {
++                assert_eq!(view.selected_text_with(cx), "word");
++                assert_eq!(domain.range(cx), Some(selected));
++            });
++            let weak = view.downgrade();
++            drop(view);
++            assert!(weak.upgrade().is_none());
++            assert_eq!(domain.stored_range(), Some(selected));
++        }
++    }
++}
++
++#[gpui::test]
++fn unselected_row_markup_append_does_not_cancel_other_endpoints(cx: &mut TestAppContext) {
++    cx.update(crate::init);
++    let domain = TextSelectionDomain::new(|item, _| Some(item), |_, _| String::new());
++    let selected = interval((10, 1), (10, 4));
++    cx.update(|cx| domain.set_range(selected, false, cx));
++    for item in [20, 30] {
++        let view = cx.new(|cx| TextViewState::markdown("*beta", cx));
++        view.update(cx, |view, cx| {
++            view.set_selection_domain(Some((domain.clone(), item)), cx);
++            view.push_str("*", cx);
++        });
++        cx.run_until_parked();
++        view.read_with(cx, |view, cx| {
++            assert_eq!(view.rendered_text().as_str(), "beta\n");
++            assert_eq!(view.selected_rendered_range_with(cx), None);
++            assert_eq!(domain.range(cx), Some(selected));
++        });
++    }
++}
++
++#[gpui::test]
++fn closing_markup_inside_endpoint_prefix_invalidates_both_directions(cx: &mut TestAppContext) {
++    cx.update(crate::init);
++    for selected in [interval((10, 0), (10, 8)), interval((10, 8), (10, 0))] {
++        let domain = TextSelectionDomain::new(|item, _| Some(item), |_, _| String::new());
++        let view = cx.new(|cx| TextViewState::markdown("alpha *beta", cx));
++        view.update(cx, |view, cx| {
++            view.set_selection_domain(Some((domain.clone(), 10)), cx)
++        });
++        cx.update(|cx| domain.set_range(selected, true, cx));
++        view.update(cx, |view, cx| view.push_str("*", cx));
++        assert_eq!(domain.stored_range(), Some(selected));
++        cx.run_until_parked();
++        view.read_with(cx, |view, cx| {
++            assert_eq!(domain.range(cx), None);
++            assert!(!domain.is_selecting());
++            assert!(view.selected_text_with(cx).is_empty());
++        });
++    }
++}
++
++#[gpui::test]
++fn explicit_replacement_and_endpoint_deletion_invalidate(cx: &mut TestAppContext) {
++    cx.update(crate::init);
++    let exists = Rc::new(Cell::new(true));
++    let provider = exists.clone();
++    let domain = TextSelectionDomain::new(
++        move |item, _| provider.get().then_some(item),
++        |_, _| String::new(),
++    );
++    let view = cx.new(|cx| TextViewState::markdown("alpha beta", cx));
++    view.update(cx, |view, cx| {
++        view.set_selection_domain(Some((domain.clone(), 10)), cx)
++    });
++    for replacement in ["replacement".repeat(512), String::new()] {
++        cx.update(|cx| domain.set_range(interval((10, 1), (10, 4)), true, cx));
++        view.update(cx, |view, cx| view.set_text(&replacement, cx));
++        assert_eq!(domain.stored_range(), None);
++        assert!(!domain.is_selecting());
++        cx.run_until_parked();
++        cx.update(|cx| assert_eq!(domain.range(cx), None));
++    }
++    cx.update(|cx| domain.set_range(interval((10, 1), (10, 4)), true, cx));
++    exists.set(false);
++    cx.update(|cx| {
++        assert_eq!(domain.range(cx), None);
++        assert_eq!(domain.stored_range(), None);
++        assert!(!domain.is_selecting());
++    });
++}
+diff --git a/src/text/selection_gap_tests.rs b/src/text/selection_gap_tests.rs
+new file mode 100644
+index 0000000..0cd7e90
+--- /dev/null
++++ b/src/text/selection_gap_tests.rs
+@@ -0,0 +1,161 @@
++use crate::text::*;
++use gpui::{
++    AppContext as _, Context, Entity, IntoElement, Modifiers, MouseButton, Render, TestAppContext,
++    Window, div, point, px,
++};
++
++struct GapHost {
++    text: Entity<TextViewState>,
++}
++impl Render for GapHost {
++    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++        div().w(px(320.)).child(
++            TextView::new(&self.text)
++                .selectable(true)
++                .style(TextViewStyle::default().with_body_text_size(px(13.))),
++        )
++    }
++}
++
++#[gpui::test]
++fn root_drag_head_in_paragraph_list_and_code_gaps_keeps_logical_projection(
++    cx: &mut TestAppContext,
++) {
++    cx.update(crate::init);
++    let source = "甲乙\n\ncafé\n\n- tail\n\n```\ncode\n```";
++    let domain = crate::TextSelectionDomain::new(
++        |item, _| Some(item),
++        move |range, _| {
++            TextViewState::copy_markdown_slice(
++                source,
++                Some(range.anchor.offset.min(range.cursor.offset)),
++                Some(range.anchor.offset.max(range.cursor.offset)),
++                SelectionFormat::Plain,
++            )
++            .unwrap()
++        },
++    );
++    let mut retained = None;
++    let (_, window) = cx.add_window_view(|window, cx| {
++        let host = cx.new(|cx| GapHost {
++            text: cx.new(|cx| {
++                let mut text = TextViewState::markdown(source, cx);
++                text.set_selection_domain(Some((domain.clone(), 10)), cx);
++                text
++            }),
++        });
++        retained = Some(host.clone());
++        crate::Root::new(host, window, cx)
++    });
++    let host = retained.unwrap();
++    window.run_until_parked();
++    window.update(|window, cx| {
++        let _ = window.draw(cx);
++    });
++    let lines = host.read_with(window, |host, cx| {
++        host.text.read(cx).selection_adapter.text_bounds()
++    });
++    assert!(lines.len() >= 4);
++    let first = point(lines[0].left() + px(0.1), lines[0].center().y);
++    let last = point(
++        lines.last().unwrap().right(),
++        lines.last().unwrap().center().y,
++    );
++    for (anchor, forward) in [(first, true), (last, false)] {
++        window.simulate_mouse_down(anchor, MouseButton::Left, Modifiers::default());
++        window.update(|window, cx| {
++            let _ = window.draw(cx);
++        });
++        let pairs: Vec<_> = lines
++            .windows(2)
++            .filter(|pair| pair[1].top() > pair[0].bottom())
++            .collect();
++        assert!(
++            !pairs.is_empty(),
++            "fixture must contain actual measured gaps"
++        );
++        let pairs: Vec<_> = if forward {
++            pairs
++        } else {
++            pairs.into_iter().rev().collect()
++        };
++        for pair in pairs {
++            let boundaries = host.read_with(window, |host, cx| {
++                let text = host.text.read(cx);
++                (
++                    text.rendered_offset_at(point(pair[0].right() + px(2.), pair[0].center().y))
++                        .unwrap(),
++                    text.rendered_offset_at(point(pair[1].left() - px(2.), pair[1].center().y))
++                        .unwrap(),
++                )
++            });
++            let fractions = if forward {
++                [0.125, 0.375, 0.625, 0.875]
++            } else {
++                [0.875, 0.625, 0.375, 0.125]
++            };
++            for fraction in fractions {
++                let head = point(
++                    pair[0].center().x,
++                    pair[0].bottom() + (pair[1].top() - pair[0].bottom()) * fraction,
++                );
++                window.simulate_mouse_move(head, Some(MouseButton::Left), Modifiers::default());
++                for _ in 0..3 {
++                    window.update(|window, cx| {
++                        let _ = window.draw(cx);
++                    });
++                    host.read_with(window, |host, cx| {
++                        let text = host.text.read(cx);
++                        let range = domain.range(cx).expect("gap must not erase domain range");
++                        let resolved = text
++                            .rendered_offset_at(head)
++                            .expect("gap must resolve actual head");
++                        assert_eq!(
++                            resolved,
++                            if fraction < 0.5 {
++                                boundaries.0
++                            } else {
++                                boundaries.1
++                            },
++                            "resolve nearest logical boundary, not the previous drag head"
++                        );
++                        assert_eq!(range.cursor.offset, resolved);
++                        assert_eq!(
++                            text.selected_rendered_range_with(cx),
++                            Some(
++                                range.anchor.offset.min(resolved)
++                                    ..range.anchor.offset.max(resolved)
++                            )
++                        );
++                        assert!(!text.selected_text_with(cx).is_empty());
++                    });
++                    window.update(|window, cx| {
++                        let scale = window.scale_factor();
++                        let color = host.read(cx).text.read(cx).text_view_style.selection();
++                        assert!(
++                            window
++                                .painted_quads()
++                                .iter()
++                                .any(|q| q.background == color.into()
++                                    && f32::from(q.bounds.size.height) > scale),
++                            "held gap selection must paint, not merely keep Copy state"
++                        );
++                    });
++                }
++                window.dispatch_action(crate::input::Copy);
++                window.update(|_, cx| {
++                    let expected = host.read(cx).text.read(cx).selected_text_with(cx);
++                    assert_eq!(
++                        cx.read_from_clipboard().and_then(|item| item.text()),
++                        Some(expected)
++                    );
++                });
++            }
++        }
++        window.simulate_mouse_up(
++            if forward { last } else { first },
++            MouseButton::Left,
++            Modifiers::default(),
++        );
++    }
++}

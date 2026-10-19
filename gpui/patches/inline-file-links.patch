@@ -1,0 +1,2312 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index e43d57d..0f440f9 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -177,9 +177,10 @@ pub use switch::{
+ pub use table::{Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow};
+ pub use tabs::{Tab, TabStyles, Tabs};
+ pub use text::{
+-    InlineElement, InlineRenderContext, MarkdownBlockSpacing, MarkdownCodeBlockBodyFn,
+-    MarkdownExtensions, MarkdownNode, MarkdownParseContext, MarkdownPlugin, MarkdownTaskCheckbox,
+-    RangeHighlight, RangeHighlightError, RenderedText, SelectionFormat, TableData, Text, TextView,
++    InlineElement, InlineLinkDecoration, InlineLinkTarget, InlineRenderContext,
++    MarkdownBlockSpacing, MarkdownCodeBlockBodyFn, MarkdownExtensions, MarkdownInlineLeaf,
++    MarkdownNode, MarkdownParseContext, MarkdownPlugin, MarkdownTaskCheckbox, RangeHighlight,
++    RangeHighlightError, RenderedText, SelectionFormat, SourceSegment, TableData, Text, TextView,
+     TextViewDefaults, TextViewMotion, TextViewPlugin, TextViewState, TextViewStyle, html, markdown,
+     markdown_ast,
+ };
+diff --git a/src/text/format/markdown.rs b/src/text/format/markdown.rs
+index e8eddeb..6b5fe7f 100644
+--- a/src/text/format/markdown.rs
++++ b/src/text/format/markdown.rs
+@@ -25,9 +25,65 @@ pub(crate) fn parse(source: &str, cx: &mut NodeContext) -> Result<ParsedDocument
+     prose.constructs.math_text = false;
+     prose.constructs.math_flow = false;
+     flatten_unclaimed_math(&mut root, source, &prose, cx);
++    if cx.markdown_extensions.inline_only {
++        join_inline_paragraphs(&mut root, source);
++    }
+     Ok(ast_to_document(source, root, cx))
+ }
+ 
++// The block parser still splits at blank lines. Keep their original positions
++// and bytes as text, rather than escaping or synthesizing a different source.
++fn join_inline_paragraphs(root: &mut Node, source: &str) {
++    let Node::Root(root) = root else {
++        return;
++    };
++    let mut children = Vec::new();
++    let mut previous = Point {
++        line: 1,
++        column: 1,
++        offset: 0,
++    };
++    for node in std::mem::take(&mut root.children) {
++        let Node::Paragraph(paragraph) = node else {
++            continue;
++        };
++        if let Some(position) = &paragraph.position {
++            if position.start.offset > previous.offset {
++                children.push(Node::Text(mdast::Text {
++                    value: source[previous.offset..position.start.offset].into(),
++                    position: Some(markdown::unist::Position {
++                        start: previous.clone(),
++                        end: position.start.clone(),
++                    }),
++                }));
++            }
++            previous = position.end.clone();
++        }
++        children.extend(paragraph.children);
++    }
++    if previous.offset < source.len() {
++        let end = root
++            .position
++            .as_ref()
++            .map(|p| p.end.clone())
++            .unwrap_or_else(|| Point {
++                offset: source.len(),
++                ..previous.clone()
++            });
++        children.push(Node::Text(mdast::Text {
++            value: source[previous.offset..].into(),
++            position: Some(markdown::unist::Position {
++                start: previous,
++                end,
++            }),
++        }));
++    }
++    root.children.push(Node::Paragraph(mdast::Paragraph {
++        children,
++        position: root.position.clone(),
++    }));
++}
++
+ /// Math parsing is on by default, so prose that merely contains two dollar
+ /// signs ("$5 and $10") parses as an inline math node. When no plugin claims
+ /// such a node, the text between the dollars must stay ordinary Markdown:
+@@ -140,6 +196,22 @@ fn inline_groups(children: &[Node]) -> Vec<InlineGroup<'_>> {
+     let mut groups = Vec::with_capacity(children.len());
+     let mut ix = 0;
+     while ix < children.len() {
++        if let Some((false, name)) = inline_html_tag(&children[ix])
++            && matches!(name.as_str(), "a" | "pre" | "svg")
++        {
++            let close = matching_close_tag(children, ix, &name).unwrap_or(children.len());
++            // Preserve the existing text conversion, but never decorate opaque
++            // HTML descendants as file links (including an unclosed anchor).
++            groups.push(InlineGroup::Marked(
++                TextMark {
++                    decoration_opaque: true,
++                    ..Default::default()
++                },
++                &children[ix + 1..close],
++            ));
++            ix = close + 1;
++            continue;
++        }
+         if let Some((false, name)) = inline_html_tag(&children[ix])
+             && let Some(mark) = inline_html_mark(&name)
+             && let Some(close) = matching_close_tag(children, ix, &name)
+@@ -840,6 +912,7 @@ fn parse_paragraph(
+         }
+         Node::LinkReference(link) => {
+             let link_mark = LinkMark {
++                generated: None,
+                 url: "".into(),
+                 title: link.label.clone().map(Into::into),
+                 identifier: Some(link.identifier.clone().into()),
+@@ -961,9 +1034,12 @@ fn ast_to_node(source: &str, value: mdast::Node, cx: &mut NodeContext) -> BlockN
+         },
+         Node::Code(raw) => {
+             let span = new_span(raw.position, cx);
+-            let segments = code_source_segments(source, &raw.value, span, cx.offset);
++            // mdast retains source line endings; CR must not reach glyph shaping.
++            // Map the normalized display bytes back to the untouched source.
++            let code = raw.value.replace("\r\n", "\n");
++            let segments = code_source_segments(source, &code, span, cx.offset);
+             BlockNode::CodeBlock(
+-                CodeBlock::new(raw.value.into(), raw.lang.map(Into::into), span)
++                CodeBlock::new(code.into(), raw.lang.map(Into::into), span)
+                     .with_source(parse_cx.source(), cx.offset)
+                     .source_segments(segments),
+             )
+@@ -980,9 +1056,10 @@ fn ast_to_node(source: &str, value: mdast::Node, cx: &mut NodeContext) -> BlockN
+         }
+         Node::Math(val) => {
+             let span = new_span(val.position, cx);
+-            let segments = code_source_segments(source, &val.value, span, cx.offset);
++            let code = val.value.replace("\r\n", "\n");
++            let segments = code_source_segments(source, &code, span, cx.offset);
+             BlockNode::CodeBlock(
+-                CodeBlock::new(val.value.into(), None, span)
++                CodeBlock::new(code.into(), None, span)
+                     .with_source(parse_cx.source(), cx.offset)
+                     .source_segments(segments),
+             )
+@@ -1002,9 +1079,10 @@ fn ast_to_node(source: &str, value: mdast::Node, cx: &mut NodeContext) -> BlockN
+         },
+         Node::MdxFlowExpression(val) => {
+             let span = new_span(val.position, cx);
+-            let segments = code_source_segments(source, &val.value, span, cx.offset);
++            let code = val.value.replace("\r\n", "\n");
++            let segments = code_source_segments(source, &code, span, cx.offset);
+             BlockNode::CodeBlock(
+-                CodeBlock::new(val.value.into(), Some("mdx".into()), span)
++                CodeBlock::new(code.into(), Some("mdx".into()), span)
+                     .with_source(parse_cx.source(), cx.offset)
+                     .source_segments(segments),
+             )
+@@ -1107,6 +1185,7 @@ fn ast_to_node(source: &str, value: mdast::Node, cx: &mut NodeContext) -> BlockN
+             cx.add_ref(
+                 def.identifier.clone().into(),
+                 LinkMark {
++                    generated: None,
+                     url: def.url.clone().into(),
+                     identifier: Some(def.identifier.clone().into()),
+                     title: def.title.clone().map(Into::into),
+diff --git a/src/text/inline.rs b/src/text/inline.rs
+index da30001..58fec1e 100644
+--- a/src/text/inline.rs
++++ b/src/text/inline.rs
+@@ -1,4 +1,5 @@
+-use gpui::Corners;
++use crate::ElementExt as _;
++use gpui::{AnyElement, AvailableSpace, Corners, FocusHandle, accesskit::Role, div, prelude::*};
+ use std::{
+     cell::RefCell,
+     collections::HashMap,
+@@ -24,7 +25,7 @@ use crate::{
+     text::range_highlight::RevealAt,
+     text::selection::word_range_at,
+     text::state::LineSpan,
+-    text::text_view::{LinkClickHandlerFn, handle_link_click},
++    text::text_view::{LinkClickHandlerFn, handle_inline_link_click},
+     text_selection::text_rows_extent,
+ };
+ 
+@@ -219,6 +220,8 @@ pub(super) struct Inline {
+     handed_over: bool,
+ 
+     state: Arc<Mutex<InlineState>>,
++    source_links: Option<super::link_source::LinkSource>,
++    link_controls: Vec<(Range<usize>, FocusHandle, Option<AnyElement>)>,
+ }
+ 
+ /// The inline text state, used RefCell to keep the selection state.
+@@ -227,6 +230,7 @@ pub(crate) struct InlineState {
+     /// The text that actually rendering, matched with selection.
+     pub(super) text: SharedString,
+     pub(super) selection: Option<Selection>,
++    link_press: Option<(Point<Pixels>, bool, bool)>,
+ }
+ 
+ /// One frame's [`StyledText`], kept for the next frame's [`Inline`] of the
+@@ -375,9 +379,16 @@ impl Inline {
+             retained_key: None,
+             handed_over: false,
+             state,
++            link_controls: Vec::new(),
++            source_links: None,
+         }
+     }
+ 
++    pub(super) fn link_source(mut self, links: super::link_source::LinkSource) -> Self {
++        self.source_links = Some(links);
++        self
++    }
++
+     /// Use the resolved style captured by a deferred parent layout.
+     pub(super) fn text_style(mut self, text_style: TextStyle) -> Self {
+         self.text_style = Some(text_style);
+@@ -934,6 +945,115 @@ impl Element for Inline {
+         self.request_reveal(window);
+ 
+         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
++        let layout = self.styled_text.layout().clone();
++        let glyphs = glyph_boxes(&layout, window.text_style().text_align, bounds.size.width);
++        for (range, link) in self.links.iter() {
++            let boxes = range_boxes(&glyphs, range.clone());
++            let Some((_, left, _)) = boxes.first() else {
++                continue;
++            };
++            let origin = layout.bounds().origin;
++            let height = layout.line_height();
++            let mut control_bounds = Bounds::new(
++                point(origin.x + *left, origin.y + height * boxes[0].0 as f32),
++                size(px(0.), height),
++            );
++            for (row, left, right) in boxes {
++                control_bounds = control_bounds.union(&Bounds::from_corners(
++                    point(origin.x + left, origin.y + height * row as f32),
++                    point(origin.x + right, origin.y + height * (row + 1) as f32),
++                ));
++            }
++            let mut owner = &self.state;
++            let mut identity = range.clone();
++            let mut label = self.text[range.clone()].to_owned();
++            let mut first_fragment = true;
++            if let (Some((source, fragment)), Some(source_links)) =
++                (&self.selection_source, &self.source_links)
++            {
++                let translated = fragment.start + range.start..fragment.start + range.end;
++                if let Some(original) = source_links.original(translated, link) {
++                    owner = source;
++                    identity = original.clone();
++                    first_fragment = original.start >= fragment.start;
++                    if let Ok(source) = source.lock() {
++                        label = source.text[original.clone()].to_owned();
++                    }
++                }
++            }
++            if self.source_links.is_some() {
++                super::link_source::observe(|stats| {
++                    stats.controls.push((
++                        Arc::as_ptr(owner) as usize,
++                        identity.clone(),
++                        first_fragment,
++                    ));
++                });
++            }
++            let key = format!(
++                "inline-link-{:p}-{}-{}-{}",
++                Arc::as_ptr(owner),
++                identity.start,
++                identity.end,
++                link.url
++            );
++            let focus = window
++                .use_keyed_state(key.clone(), cx, |_, cx| cx.focus_handle().tab_stop(true))
++                .read(cx)
++                .clone();
++            if !first_fragment {
++                self.link_controls.push((range.clone(), focus, None));
++                continue;
++            }
++            let target = link.clone();
++            let handler = self.link_click_handler.clone();
++            let mut control = div()
++                .id(key)
++                .track_focus(&focus)
++                .capture_any_mouse_down(|event, window, _| {
++                    // Context gestures preserve the origin; Div otherwise focuses on any button.
++                    if super::text_view::is_link_context_gesture(event) {
++                        window.prevent_default();
++                    }
++                })
++                .role(if link.generated == Some(true) {
++                    Role::Button
++                } else {
++                    Role::Link
++                })
++                .aria_label(label)
++                .w(control_bounds.size.width)
++                .h(control_bounds.size.height)
++                .on_click(move |event, window, cx| {
++                    if let ClickEvent::Keyboard(key) = event {
++                        if key.button == gpui::KeyboardButton::Space
++                            && target.generated != Some(true)
++                        {
++                            return;
++                        }
++                        cx.stop_propagation();
++                        handle_inline_link_click(
++                            &handler,
++                            target.clone(),
++                            event.clone(),
++                            window,
++                            cx,
++                        );
++                    }
++                })
++                .into_any_element();
++            control.prepaint_as_root(
++                control_bounds.origin,
++                size(
++                    AvailableSpace::Definite(control_bounds.size.width),
++                    AvailableSpace::Definite(control_bounds.size.height),
++                ),
++                window,
++                cx,
++            );
++            self.link_controls
++                .push((range.clone(), focus, Some(control)));
++        }
+         self.retain_styled_text();
+         hitbox
+     }
+@@ -990,11 +1110,56 @@ impl Element for Inline {
+         }
+ 
+         // link cursor pointer
+-        let hovered_link =
+-            Self::link_range_for_position(&text_layout, &self.links, window.mouse_position());
++        let hovered_link = hitbox
++            .is_hovered(window)
++            .then(|| {
++                Self::link_range_for_position(&text_layout, &self.links, window.mouse_position())
++            })
++            .flatten();
+         if hovered_link.is_some() {
+             window.set_cursor_style(CursorStyle::PointingHand, &hitbox);
+         }
++        for (range, focus, control) in &mut self.link_controls {
++            if let Some(control) = control {
++                control.paint(window, cx);
++            }
++            if self
++                .links
++                .iter()
++                .any(|(r, link)| r == range && link.generated.is_some())
++                && (hovered_link.as_ref() == Some(range)
++                    || (focus.is_focused(window) && window.last_input_was_keyboard()))
++            {
++                let glyphs = glyph_boxes(
++                    &text_layout,
++                    window.text_style().text_align,
++                    bounds.size.width,
++                );
++                let origin = text_layout.bounds().origin;
++                let height = text_layout.line_height();
++                let color = self
++                    .highlights
++                    .iter()
++                    .find_map(|(r, h)| {
++                        (r.start <= range.start && r.end >= range.end)
++                            .then_some(h.style.color)
++                            .flatten()
++                    })
++                    .unwrap_or(window.text_style().color);
++                for (row, left, right) in range_boxes(&glyphs, range.clone()) {
++                    window.paint_quad(gpui::fill(
++                        Bounds::new(
++                            point(
++                                origin.x + left,
++                                origin.y + height * (row + 1) as f32 - px(1.),
++                            ),
++                            size(right - left, px(1.)),
++                        ),
++                        color,
++                    ));
++                }
++            }
++        }
+ 
+         if let Some(selection) = &state.selection {
+             let color = GlobalState::global(cx)
+@@ -1046,6 +1211,7 @@ impl Element for Inline {
+                     if !phase.bubble()
+                         || !hitbox.is_hovered(window)
+                         || event.button != MouseButton::Left
++                        || (cfg!(target_os = "macos") && event.modifiers.control)
+                     {
+                         return;
+                     }
+@@ -1122,12 +1288,17 @@ impl Element for Inline {
+                 let links = self.links.clone();
+                 let mut hovered_link = hovered_link;
+                 move |event: &MouseMoveEvent, phase, window, cx| {
+-                    if !phase.bubble() || !hitbox.is_hovered(window) {
++                    if !phase.bubble() {
+                         return;
+                     }
+ 
+-                    let updated =
+-                        Self::link_range_for_position(&text_layout, &links, event.position);
++                    // Exit must invalidate the painted hover even outside this hitbox.
++                    let updated = hitbox
++                        .is_hovered(window)
++                        .then(|| {
++                            Self::link_range_for_position(&text_layout, &links, event.position)
++                        })
++                        .flatten();
+                     if hovered_link != updated {
+                         hovered_link = updated;
+                         cx.notify(current_view);
+@@ -1136,7 +1307,78 @@ impl Element for Inline {
+             });
+         }
+ 
+-        if !is_selection {
++        if !self.links.is_empty() {
++            let press = self.state.clone();
++            let press_hitbox = hitbox.clone();
++            let controls = self
++                .link_controls
++                .iter()
++                .map(|(range, focus, _)| (range.clone(), focus.clone()))
++                .collect::<Vec<_>>();
++            let links = self.links.clone();
++            let layout = text_layout.clone();
++            let handlers = self.link_click_handler.clone();
++            window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
++                if !press_hitbox.is_hovered(window) {
++                    return;
++                }
++                if phase.capture() {
++                    if super::text_view::is_link_context_gesture(event)
++                        && Self::link_for_position(&layout, &links, event.position).is_some()
++                    {
++                        window.prevent_default();
++                    }
++                    return;
++                }
++                if event.button == MouseButton::Right
++                    || (cfg!(target_os = "macos")
++                        && event.button == MouseButton::Left
++                        && event.modifiers.control)
++                {
++                    if let Ok(mut state) = press.lock() {
++                        state.link_press = None;
++                    }
++                    if let Some(link) = Self::link_for_position(&layout, &links, event.position) {
++                        super::text_view::handle_link_context_menu(
++                            &handlers, &link, event, window, cx,
++                        );
++                    }
++                    return;
++                }
++                let selected = GlobalState::global(cx)
++                    .text_view_state()
++                    .is_some_and(|view| view.read(cx).has_selection(cx));
++                if let Ok(mut state) = press.lock() {
++                    let selected = selected
++                        || state
++                            .selection
++                            .is_some_and(|range| range.start != range.end);
++                    state.link_press =
++                        (event.click_count == 1).then_some((event.position, false, selected));
++                }
++                if let Some(range) = Self::link_range_for_position(&layout, &links, event.position)
++                {
++                    if let Some((_, focus)) = controls.iter().find(|(r, _)| r == &range) {
++                        focus.focus(window, cx);
++                    }
++                }
++            });
++            let press = self.state.clone();
++            window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, _| {
++                if !phase.bubble() {
++                    return;
++                }
++                if let Ok(mut state) = press.lock() {
++                    if let Some((start, moved, _)) = &mut state.link_press {
++                        *moved |= (event.position.x - start.x).abs() > px(4.)
++                            || (event.position.y - start.y).abs() > px(4.);
++                    }
++                }
++            });
++        }
++        {
++            // Selection-domain membership alone is not a selection; the gesture and
++            // current non-empty source selection are checked at release.
+             // click to open link
+             window.on_mouse_event({
+                 let links = self.links.clone();
+@@ -1144,21 +1386,48 @@ impl Element for Inline {
+                 let hitbox = hitbox.clone();
+                 let text_view_state = GlobalState::global(cx).text_view_state().cloned();
+                 let link_click_handler = self.link_click_handler.clone();
++                let press = self.state.clone();
+ 
+                 move |event: &MouseUpEvent, phase, window, cx| {
+                     if !phase.bubble() || !hitbox.is_hovered(window) {
+                         return;
+                     }
+-                    if text_view_state
+-                        .as_ref()
+-                        .is_some_and(|state| state.read(cx).has_selection(cx))
++                    let gesture = press
++                        .lock()
++                        .ok()
++                        .and_then(|mut state| state.link_press.take());
++                    let Some((start, moved, selected)) = gesture else {
++                        return;
++                    };
++                    if moved
++                        || selected
++                        || (event.position.x - start.x).abs() > px(4.)
++                        || (event.position.y - start.y).abs() > px(4.)
+                     {
+                         return;
+                     }
++                    if text_view_state.as_ref().is_some_and(|state| {
++                        let state = state.read(cx);
++                        (state.has_view_selection()
++                            && !state
++                                .logical_selection()
++                                .is_some_and(|range| range.is_empty()))
++                            || state
++                                .selection_points(cx)
++                                .is_some_and(|(start, end)| start != end)
++                    }) {
++                        return;
++                    }
+ 
+                     if let Some(link) =
+                         Self::link_for_position(&text_layout, &links, event.position)
+                     {
++                        if event.button == MouseButton::Right
++                            || (cfg!(target_os = "macos") && event.modifiers.control)
++                            || (link.generated.is_some() && event.button != MouseButton::Left)
++                        {
++                            return;
++                        }
+                         TextSelection::end(window, cx);
+                         cx.stop_propagation();
+                         let click = ClickEvent::Mouse(MouseClickEvent {
+@@ -1171,7 +1440,7 @@ impl Element for Inline {
+                             },
+                             up: event.clone(),
+                         });
+-                        handle_link_click(&link_click_handler, link.url, click, window, cx);
++                        handle_inline_link_click(&link_click_handler, link, click, window, cx);
+                     }
+                 }
+             });
+diff --git a/src/text/inline_file_links_tests.rs b/src/text/inline_file_links_tests.rs
+new file mode 100644
+index 0000000..fbbafce
+--- /dev/null
++++ b/src/text/inline_file_links_tests.rs
+@@ -0,0 +1,482 @@
++use super::*;
++use crate::text::{InlineLinkDecoration, InlineLinkTarget};
++use gpui::{AppContext as _, InputEvent as _};
++use gpui::{Context, Entity, Modifiers, MouseButton, Render, TestAppContext, point, px};
++
++include!("inline_link_hover_tests.rs");
++
++#[test]
++fn inline_only_keeps_block_markers_blank_lines_and_source_offsets() {
++    let source = "# **src/a.rs**\n\n> quote\n- item\n```rs\ncode\n```\n&amp;";
++    let mut cx = NodeContext {
++        markdown_extensions: MarkdownExtensions::default().inline_only(true).into(),
++        ..Default::default()
++    };
++    let document = super::super::format::markdown::parse(source, &mut cx).unwrap();
++    assert_eq!(document.blocks.len(), 1);
++    let BlockNode::Paragraph(paragraph) = &document.blocks[0] else {
++        panic!()
++    };
++    assert!(
++        paragraph
++            .text()
++            .starts_with("# src/a.rs\n\n> quote\n- item")
++    );
++    let path = paragraph
++        .children
++        .iter()
++        .find(|node| node.text.contains("src/a.rs"))
++        .unwrap();
++    let start = path.text.find("src/a.rs").unwrap();
++    assert_eq!(
++        &source[path.selected_source_range(start..start + 8).unwrap()],
++        "src/a.rs"
++    );
++    let span = paragraph.span.as_ref().unwrap();
++    assert_eq!(span.start..span.end, 0..source.len());
++}
++
++struct ContextHost {
++    text: Entity<crate::TextViewState>,
++    events: Arc<Mutex<Vec<InlineLinkTarget>>>,
++    activations: Arc<Mutex<usize>>,
++}
++impl Render for ContextHost {
++    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++        let events = self.events.clone();
++        let activations = self.activations.clone();
++        div().w(px(100.)).child(
++            crate::TextView::new(&self.text)
++                .markdown_extensions(extensions())
++                .on_link_context_menu(move |target, _, _, _| {
++                    events.lock().unwrap().push(target.clone())
++                })
++                .on_link_activate(move |_, _, _, _| *activations.lock().unwrap() += 1),
++        )
++    }
++}
++
++#[gpui::test]
++fn context_is_hit_tested_without_activation_focus_or_selection_mutation(cx: &mut TestAppContext) {
++    cx.update(crate::init);
++    let events = Arc::new(Mutex::new(Vec::new()));
++    let received = events.clone();
++    let activations = Arc::new(Mutex::new(0));
++    let activated = activations.clone();
++    let mut retained = None;
++    let (_, window) = cx.add_window_view(|window, cx| {
++        let host = cx.new(|cx| ContextHost {
++            text: cx.new(|cx| crate::TextViewState::markdown("src/a.rs trailing", cx)),
++            events,
++            activations,
++        });
++        retained = Some(host.clone());
++        crate::Root::new(host, window, cx)
++    });
++    let host = retained.unwrap();
++    window.update(|_, cx| {
++        let text = host.read(cx).text.clone();
++        text.update(cx, |text, cx| text.select_all(cx));
++    });
++    let origin = window.update(|window, cx| window.focused(cx));
++    window.simulate_mouse_down(
++        point(px(10.), px(10.)),
++        MouseButton::Right,
++        Modifiers::default(),
++    );
++    window.simulate_mouse_up(
++        point(px(10.), px(10.)),
++        MouseButton::Right,
++        Modifiers::default(),
++    );
++    assert_eq!(*activated.lock().unwrap(), 0);
++    assert_eq!(
++        received.lock().unwrap().as_slice(),
++        &[InlineLinkTarget::WrittenPath {
++            path: "src/a.rs".into(),
++            button: false
++        }]
++    );
++    window.update(|window, cx| {
++        assert_eq!(window.focused(cx), origin);
++        assert_eq!(
++            host.read(cx)
++                .text
++                .read(cx)
++                .selected_text()
++                .trim_end_matches('\n'),
++            "src/a.rs trailing"
++        );
++    });
++    if cfg!(target_os = "macos") {
++        let modifiers = Modifiers {
++            control: true,
++            ..Default::default()
++        };
++        window.simulate_mouse_down(point(px(10.), px(10.)), MouseButton::Left, modifiers);
++        window.simulate_mouse_up(point(px(10.), px(10.)), MouseButton::Left, modifiers);
++        assert_eq!(received.lock().unwrap().len(), 2);
++        assert_eq!(*activated.lock().unwrap(), 0);
++        window.update(|window, cx| {
++            assert_eq!(window.focused(cx), origin);
++            assert_eq!(
++                host.read(cx)
++                    .text
++                    .read(cx)
++                    .selected_text()
++                    .trim_end_matches('\n'),
++                "src/a.rs trailing"
++            );
++        });
++    }
++}
++
++#[gpui::test]
++fn root_tab_reaches_generated_and_explicit_inline_controls(cx: &mut TestAppContext) {
++    cx.update(crate::init);
++    for source in ["src/a.rs", "`src/a.rs`", "[file](docs/a%2520b.md)"] {
++        let events = Arc::new(Mutex::new(Vec::new()));
++        let captured = events.clone();
++        let (_, window) = cx.add_window_view(|window, cx| {
++            let host = cx.new(|cx| Host {
++                text: cx.new(|cx| {
++                    crate::TextViewState::markdown_with_extensions(source, extensions(), cx)
++                }),
++                events,
++            });
++            crate::Root::new(host, window, cx)
++        });
++        window.update(|window, cx| {
++            let _ = window.draw(cx);
++            assert!(window.focused(cx).is_none());
++            for key in ["tab", "enter"] {
++                let keystroke = gpui::Keystroke::parse(key).unwrap();
++                window.dispatch_event(
++                    gpui::KeyDownEvent {
++                        keystroke: keystroke.clone(),
++                        is_held: false,
++                        prefer_character_input: false,
++                    }
++                    .to_platform_input(),
++                    cx,
++                );
++                window.dispatch_event(gpui::KeyUpEvent { keystroke }.to_platform_input(), cx);
++                let _ = window.draw(cx);
++                assert!(window.focused(cx).is_some(), "{source}: {key}");
++            }
++        });
++        assert_eq!(
++            captured.lock().unwrap().as_slice(),
++            &[if source.starts_with('[') {
++                InlineLinkTarget::Explicit("docs/a%2520b.md".into())
++            } else {
++                InlineLinkTarget::WrittenPath {
++                    path: "src/a.rs".into(),
++                    button: false,
++                }
++            }]
++        );
++    }
++}
++
++#[test]
++fn large_single_paragraph_render_admission_is_indexed_and_preserves_copy() {
++    let source = "src/a.rs ".repeat(50_000);
++    assert_eq!(source.len(), 450_000);
++    let mut cx = NodeContext {
++        decoration_source: source.clone().into(),
++        markdown_extensions: MarkdownExtensions::default()
++            .inline_links(|leaf| {
++                leaf.text
++                    .match_indices("src/a.rs")
++                    .map(|(at, path)| InlineLinkDecoration {
++                        range: at..at + path.len(),
++                        path: path.to_owned().into(),
++                        button: false,
++                    })
++                    .collect()
++            })
++            .into(),
++        ..Default::default()
++    };
++    let document = super::super::format::markdown::parse(&source, &mut cx).unwrap();
++    assert_eq!(document.blocks.len(), 1);
++    let BlockNode::Paragraph(paragraph) = &document.blocks[0] else {
++        panic!()
++    };
++    let before = paragraph.source_for_range(None);
++    DECORATION_OVERLAP_STEPS.with(|steps| steps.set(0));
++    let mut count = 0;
++    for node in &paragraph.children {
++        let original_marks = node.marks.clone();
++        let original_segments = node.source_segments.clone();
++        for (range, mark) in node.render_marks(&cx) {
++            if let Some(link) = mark.link.filter(|link| link.generated.is_some()) {
++                assert_eq!(link.url.as_ref(), "src/a.rs");
++                assert_eq!(&node.text[range.clone()], "src/a.rs");
++                assert_eq!(
++                    &source[node.selected_source_range(range).unwrap()],
++                    "src/a.rs"
++                );
++                count += 1;
++            }
++        }
++        assert_eq!(node.marks, original_marks);
++        assert_eq!(node.source_segments, original_segments);
++    }
++    assert_eq!(count, 50_000);
++    // BTreeMap lookup/insert is logarithmic; admission examines at most one
++    // indexed neighbor, rather than all previously admitted decorations.
++    DECORATION_OVERLAP_STEPS.with(|steps| assert!(steps.get() <= 50_000));
++    assert_eq!(paragraph.source_for_range(None), before);
++    assert_eq!(before.trim_end(), source.trim_end());
++}
++
++#[test]
++fn unsorted_callbacks_keep_first_winner_and_emission_order() {
++    let node = InlineNode::new("0123456789abcdef").source_segments(vec![SourceSegment {
++        rendered: 0..16,
++        source: 0..16,
++    }]);
++    let cx = NodeContext {
++        markdown_extensions: MarkdownExtensions::default()
++            .inline_links(|_| {
++                [
++                    (8..12, "first"),
++                    (0..4, "second"),
++                    (3..9, "bridge"),
++                    (8..12, "duplicate"),
++                    (4..8, "adjacent"),
++                    (12..16, "last"),
++                ]
++                .into_iter()
++                .map(|(range, path)| InlineLinkDecoration {
++                    range,
++                    path: path.into(),
++                    button: false,
++                })
++                .collect()
++            })
++            .into(),
++        ..Default::default()
++    };
++    let marks = node.render_marks(&cx);
++    assert_eq!(
++        marks
++            .iter()
++            .map(|(range, mark)| (range.clone(), mark.link.as_ref().unwrap().url.as_ref()))
++            .collect::<Vec<_>>(),
++        vec![
++            (8..12, "first"),
++            (0..4, "second"),
++            (4..8, "adjacent"),
++            (12..16, "last")
++        ]
++    );
++}
++
++fn extensions() -> MarkdownExtensions {
++    MarkdownExtensions::default().inline_links(|leaf| {
++        leaf.text
++            .find("src/a.rs")
++            .map(|at| InlineLinkDecoration {
++                range: at..at + 8,
++                path: "src/a.rs".into(),
++                button: false,
++            })
++            .into_iter()
++            .collect()
++    })
++}
++
++#[test]
++fn supplemental_links_never_enter_source_marks_or_mapping() {
++    let source = "**src/a.rs &amp; end**";
++    let mut cx = NodeContext {
++        decoration_source: source.into(),
++        markdown_extensions: extensions().into(),
++        ..Default::default()
++    };
++    let document = super::super::format::markdown::parse(source, &mut cx).unwrap();
++    let BlockNode::Paragraph(paragraph) = &document.blocks[0] else {
++        panic!()
++    };
++    let node = &paragraph.children[0];
++    let marks = node.marks.clone();
++    let segments = node.source_segments.clone();
++    let before = paragraph.source_for_range(Some(0..node.text.len()));
++    let decorated = node.render_marks(&cx);
++    assert!(decorated.iter().any(|(_, mark)| {
++        mark.link
++            .as_ref()
++            .is_some_and(|link| link.generated == Some(false))
++    }));
++    assert_eq!(node.marks, marks);
++    assert_eq!(node.source_segments, segments);
++    assert_eq!(paragraph.source_for_range(Some(0..node.text.len())), before);
++    let amp = node.text.find('&').unwrap();
++    assert_eq!(
++        &source[node.selected_source_range(amp..amp + 1).unwrap()],
++        "&amp;"
++    );
++    assert_eq!(paragraph.source_for_range(Some(0..3)), "**src**");
++}
++
++#[test]
++fn explicit_links_win_and_invalid_utf8_or_overlapping_decorations_are_ignored() {
++    let source = "[src/a.rs](https://example.org) src/a.rs";
++    let mut cx = NodeContext {
++        decoration_source: source.into(),
++        markdown_extensions: extensions().into(),
++        ..Default::default()
++    };
++    let document = super::super::format::markdown::parse(source, &mut cx).unwrap();
++    let BlockNode::Paragraph(paragraph) = &document.blocks[0] else {
++        panic!()
++    };
++    let generated = paragraph
++        .children
++        .iter()
++        .flat_map(|node| node.render_marks(&cx))
++        .filter(|(_, mark)| {
++            mark.link
++                .as_ref()
++                .is_some_and(|link| link.generated.is_some())
++        })
++        .count();
++    assert_eq!(generated, 1);
++    let node = InlineNode::new("é src/a.rs").source_segments(vec![SourceSegment {
++        rendered: 0..11,
++        source: 0..11,
++    }]);
++    cx.markdown_extensions = MarkdownExtensions::default()
++        .inline_links(|_| {
++            vec![
++                InlineLinkDecoration {
++                    range: 1..2,
++                    path: "invalid".into(),
++                    button: false,
++                },
++                InlineLinkDecoration {
++                    range: 3..11,
++                    path: "src/a.rs".into(),
++                    button: false,
++                },
++                InlineLinkDecoration {
++                    range: 4..8,
++                    path: "overlap".into(),
++                    button: false,
++                },
++            ]
++        })
++        .into();
++    assert_eq!(node.render_marks(&cx).len(), 1);
++}
++
++#[test]
++fn opaque_html_descendants_images_and_code_blocks_are_not_decorated() {
++    for source in [
++        "See <a href='src/a.rs'>src/a.rs</a> then src/a.rs",
++        "See <svg>src/a.rs</svg> then src/a.rs",
++        "See ![src/a.rs](src/a.rs) then src/a.rs",
++        "```txt\nsrc/a.rs\n```\n\nsrc/a.rs",
++    ] {
++        let mut cx = NodeContext {
++            decoration_source: source.into(),
++            markdown_extensions: extensions().into(),
++            ..Default::default()
++        };
++        let document = super::super::format::markdown::parse(source, &mut cx).unwrap();
++        let count = document
++            .blocks
++            .iter()
++            .filter_map(|block| {
++                if let BlockNode::Paragraph(paragraph) = block {
++                    Some(paragraph)
++                } else {
++                    None
++                }
++            })
++            .flat_map(|paragraph| &paragraph.children)
++            .flat_map(|node| node.render_marks(&cx))
++            .filter(|(_, mark)| {
++                mark.link
++                    .as_ref()
++                    .is_some_and(|link| link.generated.is_some())
++            })
++            .count();
++        assert_eq!(count, 1, "{source}");
++    }
++}
++
++struct Host {
++    text: Entity<crate::TextViewState>,
++    events: Arc<Mutex<Vec<InlineLinkTarget>>>,
++}
++impl Render for Host {
++    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++        let events = self.events.clone();
++        div().w(px(100.)).child(
++            crate::TextView::new(&self.text)
++                .markdown_extensions(extensions())
++                .on_link_activate(move |target, _, _, _| {
++                    events.lock().unwrap().push(target.clone())
++                }),
++        )
++    }
++}
++
++#[gpui::test]
++fn actual_generated_activation_selection_and_wrapping(cx: &mut TestAppContext) {
++    cx.update(crate::init);
++    let events = Arc::new(Mutex::new(Vec::new()));
++    let captured = events.clone();
++    let (host, window) = cx.add_window_view(|_, cx| Host {
++        text: cx.new(|cx| {
++            crate::TextViewState::markdown_with_extensions(
++                "src/a.rs trailing words wrap &amp; remain",
++                extensions(),
++                cx,
++            )
++        }),
++        events,
++    });
++    window.simulate_click(point(px(10.), px(10.)), Modifiers::default());
++    assert_eq!(
++        captured.lock().unwrap().as_slice(),
++        &[InlineLinkTarget::WrittenPath {
++            path: "src/a.rs".into(),
++            button: false
++        }]
++    );
++    for button in [MouseButton::Right, MouseButton::Middle] {
++        window.simulate_mouse_down(point(px(10.), px(10.)), button, Modifiers::default());
++        window.simulate_mouse_up(point(px(10.), px(10.)), button, Modifiers::default());
++    }
++    window.simulate_mouse_down(
++        point(px(10.), px(10.)),
++        MouseButton::Left,
++        Modifiers::default(),
++    );
++    window.simulate_mouse_move(
++        point(px(20.), px(10.)),
++        Some(MouseButton::Left),
++        Modifiers::default(),
++    );
++    window.simulate_mouse_up(
++        point(px(20.), px(10.)),
++        MouseButton::Left,
++        Modifiers::default(),
++    );
++    assert_eq!(captured.lock().unwrap().len(), 1);
++    window.update(|_, cx| {
++        host.update(cx, |host, cx| {
++            host.text.update(cx, |text, cx| text.select_all(cx))
++        });
++        let text = host.read(cx).text.read(cx);
++        assert_eq!(
++            text.selected_text().trim_end_matches('\n'),
++            "src/a.rs trailing words wrap & remain"
++        );
++    });
++}
+diff --git a/src/text/inline_flow.rs b/src/text/inline_flow.rs
+index 722fa7e..2f5823a 100644
+--- a/src/text/inline_flow.rs
++++ b/src/text/inline_flow.rs
+@@ -52,7 +52,7 @@ pub(super) enum InlineFlowItem {
+     Text {
+         state: Arc<Mutex<InlineState>>,
+         text: SharedString,
+-        links: Vec<(Range<usize>, LinkMark)>,
++        links: super::link_source::LinkSource,
+         highlights: Vec<(Range<usize>, InlineHighlight)>,
+         /// Range highlight backgrounds, in this item's byte space. They are
+         /// only painted, so unlike `highlights` they take no part in layout.
+@@ -216,7 +216,7 @@ enum MeasureItem {
+     },
+     Text {
+         text: SharedString,
+-        links: Vec<(Range<usize>, LinkMark)>,
++        links: super::link_source::LinkSource,
+         highlights: Vec<(Range<usize>, InlineHighlight)>,
+     },
+     Image {
+@@ -295,7 +295,31 @@ impl InlineFlow {
+             .when_some(link.clone(), |this, link| {
+                 let aux_link = link.clone();
+                 let aux_link_click_handler = link_click_handler.clone();
++                let context_link = link.clone();
++                let control_link = link.clone();
++                let context_handler = link_click_handler.clone();
++                let control_handler = link_click_handler.clone();
+                 this.cursor_pointer()
++                    .on_mouse_down(gpui::MouseButton::Right, move |event, window, cx| {
++                        super::text_view::handle_link_context_menu(
++                            &context_handler,
++                            &context_link,
++                            event,
++                            window,
++                            cx,
++                        );
++                    })
++                    .on_mouse_down(gpui::MouseButton::Left, move |event, window, cx| {
++                        if super::text_view::is_link_context_gesture(event) {
++                            super::text_view::handle_link_context_menu(
++                                &control_handler,
++                                &control_link,
++                                event,
++                                window,
++                                cx,
++                            );
++                        }
++                    })
+                     .on_click(move |event, window, cx| {
+                         crate::TextSelection::end(window, cx);
+                         cx.stop_propagation();
+@@ -556,6 +580,7 @@ impl Element for InlineFlow {
+                 } => {
+                     let InlineFlowItem::Text {
+                         state: source_state,
++                        links: source_links,
+                         backgrounds,
+                         reveal,
+                         ..
+@@ -596,6 +621,10 @@ impl Element for InlineFlow {
+                         self.link_click_handler.clone(),
+                     )
+                     .selection_source(source_state.clone(), source_range.clone())
++                    .link_source({
++                        super::link_source::observe(|stats| stats.fragments += 1);
++                        source_links.clone()
++                    })
+                     .range_backgrounds(slice_ranges(
+                         backgrounds,
+                         source_range.start,
+@@ -1030,19 +1059,26 @@ fn layout_measured_flow_with_wrap(
+                 } => {
+                     let local_start = line_range.start.max(item_start) - item_start;
+                     let local_end = line_range.end.min(item_end) - item_start;
+-                    for (segment, scale) in text_size_ranges(text.len(), highlights) {
+-                        let start = local_start.max(segment.start);
+-                        let end = local_end.min(segment.end);
++                    let local_highlights = slice_sorted_highlights(
++                        highlights,
++                        local_start,
++                        local_end,
++                        |range, style| (range, style.clone()),
++                    );
++                    for (segment, scale) in
++                        text_size_ranges(local_end - local_start, &local_highlights)
++                    {
++                        let start = local_start + segment.start;
++                        let end = local_start + segment.end;
+                         if start >= end {
+                             continue;
+                         }
+                         let subtext = SharedString::from(text[start..end].to_string());
+                         let mut highlights =
+-                            slice_ranges(highlights, start, end, |range, style| {
++                            slice_sorted_highlights(highlights, start, end, |range, style| {
+                                 (range, style.clone())
+                             });
+-                        let links =
+-                            slice_ranges(links, start, end, |range, link| (range, link.clone()));
++                        let links = links.slice(start, end);
+                         let runs = text_runs(subtext.len(), text_style, &highlights);
+                         let segment_font_size = font_size * scale;
+                         let shaped_line =
+@@ -1316,10 +1352,12 @@ fn line_ranges(
+                                     continue;
+                                 }
+                                 let word_end = offset + word.len();
+-                                let word_highlights =
+-                                    slice_ranges(highlights, offset, word_end, |range, h| {
+-                                        (range, h.clone())
+-                                    });
++                                let word_highlights = slice_sorted_highlights(
++                                    highlights,
++                                    offset,
++                                    word_end,
++                                    |range, h| (range, h.clone()),
++                                );
+                                 let mut width = Pixels::ZERO;
+                                 for (range, scale) in text_size_ranges(word.len(), &word_highlights)
+                                 {
+@@ -1598,6 +1636,26 @@ fn centered_baseline(shaped_line: &ShapedLine, line_height: Pixels) -> Pixels {
+     (line_height - shaped_line.ascent - shaped_line.descent) / 2. + shaped_line.ascent
+ }
+ 
++// Combined highlights are sorted and disjoint; do not rescan a whole item
++// for every wrapped line or word. Backgrounds retain the general overlap path.
++fn slice_sorted_highlights<T, U>(
++    ranges: &[(Range<usize>, T)],
++    start: usize,
++    end: usize,
++    map: impl Fn(Range<usize>, &T) -> U,
++) -> Vec<U> {
++    let first = ranges.partition_point(|(range, _)| {
++        super::link_source::observe(|stats| stats.highlight_steps += 1);
++        range.end <= start
++    });
++    let last = ranges.partition_point(|(range, _)| {
++        super::link_source::observe(|stats| stats.highlight_steps += 1);
++        range.start < end
++    });
++    super::link_source::observe(|stats| stats.highlight_steps += last.saturating_sub(first));
++    slice_ranges(&ranges[first..last.max(first)], start, end, map)
++}
++
+ pub(super) fn slice_ranges<T, U>(
+     ranges: &[(Range<usize>, T)],
+     start: usize,
+@@ -1724,7 +1782,7 @@ mod tests {
+                 let items = vec![
+                     MeasureItem::Text {
+                         text: "中文 ".into(),
+-                        links: vec![],
++                        links: vec![].into(),
+                         highlights: vec![],
+                     },
+                     MeasureItem::Object {
+@@ -1741,7 +1799,7 @@ mod tests {
+                     },
+                     MeasureItem::Text {
+                         text: " English".into(),
+-                        links: vec![],
++                        links: vec![].into(),
+                         highlights: vec![],
+                     },
+                 ];
+@@ -1828,7 +1886,7 @@ mod tests {
+         let items = vec![
+             MeasureItem::Text {
+                 text: lead.clone(),
+-                links: vec![],
++                links: vec![].into(),
+                 highlights: vec![],
+             },
+             MeasureItem::Image {
+@@ -1838,7 +1896,7 @@ mod tests {
+             },
+             MeasureItem::Text {
+                 text: SharedString::from(tail_text),
+-                links: vec![],
++                links: vec![].into(),
+                 highlights: vec![(code_range.clone(), code_highlight)],
+             },
+         ];
+@@ -1930,7 +1988,7 @@ mod tests {
+                 },
+                 MeasureItem::Text {
+                     text: text.into(),
+-                    links: vec![],
++                    links: vec![].into(),
+                     highlights: vec![(
+                         0..text.len(),
+                         InlineHighlight {
+@@ -1970,7 +2028,7 @@ mod tests {
+         };
+         let items = [MeasureItem::Text {
+             text: "甲 code 尾".into(),
+-            links: vec![],
++            links: vec![].into(),
+             highlights: vec![(
+                 4..8,
+                 InlineHighlight {
+@@ -2069,7 +2127,7 @@ mod tests {
+         };
+         let items = [MeasureItem::Text {
+             text: "a code z".into(),
+-            links: vec![],
++            links: vec![].into(),
+             highlights: vec![(
+                 2..6,
+                 InlineHighlight {
+@@ -2123,7 +2181,7 @@ mod tests {
+         };
+         let items = vec![MeasureItem::Text {
+             text: "a code z".into(),
+-            links: vec![],
++            links: vec![].into(),
+             highlights: vec![(
+                 2..6,
+                 InlineHighlight {
+@@ -2159,7 +2217,7 @@ mod tests {
+             };
+             let items = vec![MeasureItem::Text {
+                 text: "a code z".into(),
+-                links: vec![],
++                links: vec![].into(),
+                 highlights: vec![(
+                     2..6,
+                     InlineHighlight {
+diff --git a/src/text/inline_object.rs b/src/text/inline_object.rs
+index 266d8cb..7fba763 100644
+--- a/src/text/inline_object.rs
++++ b/src/text/inline_object.rs
+@@ -344,9 +344,28 @@ impl Element for InlineObject {
+             let link_hitbox = hitbox.clone();
+             let link_view = view.clone();
+             let handler = self.link_click_handler.clone();
++            let context_handler = handler.clone();
++            let context_hitbox = link_hitbox.clone();
++            let context_link = link.clone();
++            window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
++                if phase.bubble()
++                    && context_hitbox.is_hovered(window)
++                    && super::text_view::is_link_context_gesture(event)
++                {
++                    super::text_view::handle_link_context_menu(
++                        &context_handler,
++                        &context_link,
++                        event,
++                        window,
++                        cx,
++                    );
++                }
++            });
+             window.on_mouse_event(move |event: &gpui::MouseUpEvent, phase, window, cx| {
+                 if !phase.bubble()
+                     || !link_hitbox.is_hovered(window)
++                    || event.button == MouseButton::Right
++                    || (cfg!(target_os = "macos") && event.modifiers.control)
+                     || link_view
+                         .as_ref()
+                         .is_some_and(|view| view.read(cx).has_selection(cx))
+@@ -392,6 +411,7 @@ impl Element for InlineObject {
+                 if !phase.bubble()
+                     || !hitbox.is_hovered(window)
+                     || event.button != MouseButton::Left
++                    || (cfg!(target_os = "macos") && event.modifiers.control)
+                     || !(2..=3).contains(&event.click_count)
+                 {
+                     return;
+diff --git a/src/text/link_source.rs b/src/text/link_source.rs
+new file mode 100644
+index 0000000..3d619ef
+--- /dev/null
++++ b/src/text/link_source.rs
+@@ -0,0 +1,133 @@
++use std::{ops::Range, sync::Arc};
++
++use super::node::LinkMark;
++
++#[derive(Clone, PartialEq)]
++pub(super) struct LinkSource(Arc<[SourceLink]>);
++
++#[derive(PartialEq)]
++struct SourceLink {
++    range: Range<usize>,
++    mark: LinkMark,
++    order: usize,
++    prefix_end: usize,
++}
++
++impl From<Vec<(Range<usize>, LinkMark)>> for LinkSource {
++    fn from(links: Vec<(Range<usize>, LinkMark)>) -> Self {
++        observe(|stats| stats.indexed_links += links.len());
++        let mut links = links
++            .into_iter()
++            .enumerate()
++            .map(|(order, (range, mark))| SourceLink {
++                range,
++                mark,
++                order,
++                prefix_end: 0,
++            })
++            .collect::<Vec<_>>();
++        links.sort_by_key(|link| (link.range.start, link.order));
++        let mut end = 0;
++        for link in &mut links {
++            end = end.max(link.range.end);
++            link.prefix_end = end;
++        }
++        Self(links.into())
++    }
++}
++
++impl LinkSource {
++    fn intersecting(&self, range: &Range<usize>) -> &[SourceLink] {
++        let start = self.0.partition_point(|link| {
++            observe(|stats| stats.lookup_steps += 1);
++            link.prefix_end <= range.start
++        });
++        let end = self.0.partition_point(|link| {
++            observe(|stats| stats.lookup_steps += 1);
++            link.range.start < range.end
++        });
++        &self.0[start..end.max(start)]
++    }
++
++    pub(super) fn slice(&self, start: usize, end: usize) -> Vec<(Range<usize>, LinkMark)> {
++        let mut links = self
++            .intersecting(&(start..end))
++            .iter()
++            .filter_map(|link| {
++                observe(|stats| stats.lookup_steps += 1);
++                let clipped_start = link.range.start.max(start);
++                let clipped_end = link.range.end.min(end);
++                (clipped_start < clipped_end).then(|| {
++                    (
++                        link.order,
++                        (
++                            clipped_start - start..clipped_end - start,
++                            link.mark.clone(),
++                        ),
++                    )
++                })
++            })
++            .collect::<Vec<_>>();
++        // Lookup order must not replace the original first-winning mark order.
++        links.sort_by_key(|(order, _)| *order);
++        links.into_iter().map(|(_, link)| link).collect()
++    }
++
++    pub(super) fn original(&self, range: Range<usize>, mark: &LinkMark) -> Option<Range<usize>> {
++        self.intersecting(&range)
++            .iter()
++            .filter(|link| {
++                observe(|stats| stats.lookup_steps += 1);
++                link.range.start <= range.start && link.range.end >= range.end && &link.mark == mark
++            })
++            .min_by_key(|link| link.order)
++            .map(|link| link.range.clone())
++    }
++}
++
++#[cfg(feature = "test-support")]
++#[derive(Default, Clone, Debug)]
++pub struct InlineFlowLinkWork {
++    pub indexed_links: usize,
++    pub lookup_steps: usize,
++    pub highlight_steps: usize,
++    pub fragments: usize,
++    pub controls: Vec<(usize, Range<usize>, bool)>,
++}
++
++#[cfg(feature = "test-support")]
++thread_local! {
++    static WORK: std::cell::RefCell<Option<InlineFlowLinkWork>> = const { std::cell::RefCell::new(None) };
++}
++
++/// Opt in to counters from actual flow slicing and Inline prepaint on this thread.
++#[cfg(feature = "test-support")]
++pub fn start_inline_flow_link_work() {
++    WORK.with(|work| *work.borrow_mut() = Some(InlineFlowLinkWork::default()));
++}
++
++/// Drain counters and disable observation; ordinary app frames retain nothing.
++#[cfg(feature = "test-support")]
++pub fn take_inline_flow_link_work() -> InlineFlowLinkWork {
++    WORK.with(|work| work.borrow_mut().take().unwrap_or_default())
++}
++
++#[inline]
++pub(super) fn observe(_update: impl FnOnce(&mut InlineFlowLinkWork)) {
++    #[cfg(feature = "test-support")]
++    WORK.with(|work| {
++        if let Some(work) = work.borrow_mut().as_mut() {
++            _update(work);
++        }
++    });
++}
++
++#[cfg(not(feature = "test-support"))]
++#[derive(Default)]
++pub(super) struct InlineFlowLinkWork {
++    pub indexed_links: usize,
++    pub lookup_steps: usize,
++    pub highlight_steps: usize,
++    pub fragments: usize,
++    pub controls: Vec<(usize, Range<usize>, bool)>,
++}
+diff --git a/src/text/markdown_ext.rs b/src/text/markdown_ext.rs
+index 2488250..24a9e5a 100644
+--- a/src/text/markdown_ext.rs
++++ b/src/text/markdown_ext.rs
+@@ -246,10 +246,13 @@ impl PartialEq for MarkdownNode {
+ pub struct MarkdownExtensions {
+     enable_mdx: bool,
+     enable_frontmatter: bool,
++    pub(crate) inline_only: bool,
+     soft_breaks: bool,
+     disable_math: bool,
+     skip_empty_table_header: bool,
+     code_block_body: Option<Arc<MarkdownCodeBlockBodyFn>>,
++    pub(crate) inline_links: Option<Arc<MarkdownInlineLinksFn>>,
++    pub(crate) inline_links_revision: u64,
+     block_parsers: Vec<Arc<MarkdownBlockParserFn>>,
+     block_renderers: HashMap<SharedString, Arc<MarkdownBlockRenderFn>>,
+     inline_parsers: Vec<Arc<MarkdownInlineParserFn>>,
+@@ -263,7 +266,70 @@ pub struct MarkdownExtensions {
+ pub type MarkdownCodeBlockBodyFn =
+     dyn Fn(&super::CodeBlock, &mut Window, &mut App) -> Option<AnyElement> + Send + Sync;
+ 
++/// A renderer-owned target. Written paths are never URI-decoded.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub enum InlineLinkTarget {
++    Explicit(SharedString),
++    WrittenPath { path: SharedString, button: bool },
++}
++impl InlineLinkTarget {
++    pub fn value(&self) -> &SharedString {
++        match self {
++            Self::Explicit(value) => value,
++            Self::WrittenPath { path, .. } => path,
++        }
++    }
++}
++
++/// Supplemental link in decoded leaf UTF-8 byte space. Invalid or overlapping
++/// ranges are ignored; existing Markdown links always take precedence.
++#[derive(Clone, Debug)]
++pub struct InlineLinkDecoration {
++    pub range: Range<usize>,
++    pub path: SharedString,
++    pub button: bool,
++}
++
++/// Original mapping is read-only. Decorations never enter Copy's source marks.
++pub struct MarkdownInlineLeaf<'a> {
++    pub text: &'a str,
++    pub source: &'a str,
++    pub segments: &'a [super::node::SourceSegment],
++    pub inline_code: bool,
++}
++pub type MarkdownInlineLinksFn =
++    dyn for<'a> Fn(&MarkdownInlineLeaf<'a>) -> Vec<InlineLinkDecoration> + Send + Sync;
++
+ impl MarkdownExtensions {
++    /// Parse inline syntax against the original source, with block constructs disabled.
++    /// Blank lines stay text in one paragraph; source offsets are not rewritten.
++    pub fn inline_only(mut self, enabled: bool) -> Self {
++        self.inline_only = enabled;
++        self.bump_revision();
++        self
++    }
++
++    /// Decorate existing text, without parsing or replacing any text nodes.
++    /// Called for prose/inline code only, never images, custom objects or blocks.
++    /// Explicit links/opaque marks take precedence. Within each eligible run,
++    /// callback insertion order is retained; the first valid range wins overlaps,
++    /// including for unsorted callbacks. Adjacent ranges do not overlap.
++    pub fn inline_links<F>(mut self, decorate: F) -> Self
++    where
++        F: for<'a> Fn(&MarkdownInlineLeaf<'a>) -> Vec<InlineLinkDecoration> + Send + Sync + 'static,
++    {
++        self.inline_links = Some(Arc::new(decorate));
++        self.bump_revision();
++        self.inline_links_revision = self.revision;
++        self
++    }
++    /// Reuse decoration paint across equivalent registrations. Change the key
++    /// whenever callback captures or recognition semantics change.
++    pub fn inline_links_revision(mut self, revision: u64) -> Self {
++        self.inline_links_revision = revision;
++        self
++    }
++
+     /// Render source soft line endings as hard line breaks. Off by default.
+     pub fn soft_breaks(mut self, enabled: bool) -> Self {
+         self.soft_breaks = enabled;
+@@ -415,7 +481,8 @@ impl MarkdownExtensions {
+     /// Their globally unique revisions differ, but the parser shape remains
+     /// stable; render handles may be refreshed without reparsing the document.
+     pub(crate) fn has_same_parser_configuration(&self, other: &Self) -> bool {
+-        self.parser_revision == other.parser_revision
++        self.inline_only == other.inline_only
++            && self.parser_revision == other.parser_revision
+             && self.enable_mdx == other.enable_mdx
+             && self.enable_frontmatter == other.enable_frontmatter
+             && self.soft_breaks == other.soft_breaks
+@@ -474,6 +541,26 @@ impl MarkdownExtensions {
+             options.constructs.mdx_jsx_flow = true;
+             options.constructs.mdx_jsx_text = true;
+         }
++        if self.inline_only {
++            let c = &mut options.constructs;
++            c.block_quote = false;
++            c.code_indented = false;
++            c.code_fenced = false;
++            c.definition = false;
++            c.frontmatter = false;
++            c.gfm_footnote_definition = false;
++            c.gfm_table = false;
++            c.gfm_task_list_item = false;
++            c.heading_atx = false;
++            c.heading_setext = false;
++            c.html_flow = false;
++            c.list_item = false;
++            c.math_flow = false;
++            c.mdx_esm = false;
++            c.mdx_expression_flow = false;
++            c.mdx_jsx_flow = false;
++            c.thematic_break = false;
++        }
+         options
+     }
+ 
+diff --git a/src/text/mod.rs b/src/text/mod.rs
+index b3411ca..b87b466 100644
+--- a/src/text/mod.rs
++++ b/src/text/mod.rs
+@@ -3,6 +3,11 @@ mod format;
+ mod inline;
+ mod inline_element;
+ mod inline_flow;
++mod link_source;
++#[cfg(feature = "test-support")]
++pub use link_source::{
++    InlineFlowLinkWork, start_inline_flow_link_work, take_inline_flow_link_work,
++};
+ mod inline_object;
+ #[cfg(test)]
+ mod inline_virtual_tests;
+@@ -26,7 +31,7 @@ mod visual_parity_tests;
+ use gpui::{App, ElementId, IntoElement, RenderOnce, SharedString, Window};
+ pub use inline_element::*;
+ pub use markdown_ext::*;
+-pub use node::{CodeBlock, TableData};
++pub use node::{CodeBlock, SourceSegment, TableData};
+ pub use range_highlight::{RangeHighlight, RangeHighlightError, RenderedText};
+ pub use state::*;
+ pub use stream_fade::TextViewMotion;
+diff --git a/src/text/node.rs b/src/text/node.rs
+index 99d2d9d..4ca8fc6 100644
+--- a/src/text/node.rs
++++ b/src/text/node.rs
+@@ -489,6 +489,7 @@ pub struct LinkMark {
+     /// Optional identifier for footnotes.
+     pub identifier: Option<SharedString>,
+     pub title: Option<SharedString>,
++    pub generated: Option<bool>,
+ }
+ 
+ #[derive(Debug, Default, Clone, PartialEq)]
+@@ -498,6 +499,7 @@ pub struct TextMark {
+     pub strikethrough: bool,
+     pub underline: bool,
+     pub code: bool,
++    pub(crate) decoration_opaque: bool,
+     /// Highlight (`<mark>`) the text with this background color.
+     ///
+     /// `None` means the text is not highlighted.
+@@ -548,6 +550,7 @@ impl TextMark {
+         self.strikethrough |= other.strikethrough;
+         self.underline |= other.underline;
+         self.code |= other.code;
++        self.decoration_opaque |= other.decoration_opaque;
+         if other.highlight.is_some() {
+             self.highlight = other.highlight;
+         }
+@@ -629,9 +632,9 @@ impl PartialEq for ImageNode {
+ }
+ 
+ #[derive(Debug, Clone, PartialEq)]
+-pub(crate) struct SourceSegment {
+-    pub(crate) rendered: Range<usize>,
+-    pub(crate) source: Range<usize>,
++pub struct SourceSegment {
++    pub rendered: Range<usize>,
++    pub source: Range<usize>,
+ }
+ 
+ pub(crate) enum SourceRangeSelection {
+@@ -1164,7 +1167,106 @@ fn list_selected_source(
+     out
+ }
+ 
++#[inline]
++fn decoration_overlap_step() {
++    #[cfg(test)]
++    DECORATION_OVERLAP_STEPS.with(|steps| steps.set(steps.get() + 1));
++}
++
++#[cfg(test)]
++thread_local! {
++    static DECORATION_OVERLAP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
++}
++
+ impl InlineNode {
++    fn render_marks(&self, node_cx: &NodeContext) -> Vec<(Range<usize>, TextMark)> {
++        let mut marks = self.marks.clone();
++        let Some(decorate) = &node_cx.markdown_extensions.inline_links else {
++            return marks;
++        };
++        if self.image.is_some() || self.custom.is_some() || self.source_segments.is_empty() {
++            return marks;
++        }
++        // HTML-equivalent runs end at style boundaries, not entity mapping segments.
++        let mut boundaries = vec![0, self.text.len()];
++        for (range, _) in &self.marks {
++            boundaries.extend([range.start, range.end]);
++        }
++        boundaries.sort_unstable();
++        boundaries.dedup();
++        for edges in boundaries.windows(2) {
++            let run = edges[0]..edges[1];
++            if run.is_empty()
++                || self.marks.iter().any(|(range, mark)| {
++                    (mark.link.is_some() || mark.decoration_opaque)
++                        && range.start < run.end
++                        && run.start < range.end
++                })
++            {
++                continue;
++            }
++            let segments = self
++                .source_segments
++                .iter()
++                .filter_map(|segment| {
++                    let start = segment.rendered.start.max(run.start);
++                    let end = segment.rendered.end.min(run.end);
++                    if start >= end {
++                        return None;
++                    }
++                    let source = if segment.rendered.len() == segment.source.len() {
++                        segment.source.start + start - segment.rendered.start
++                            ..segment.source.start + end - segment.rendered.start
++                    } else {
++                        segment.source.clone()
++                    };
++                    Some(SourceSegment {
++                        rendered: start - run.start..end - run.start,
++                        source,
++                    })
++                })
++                .collect::<Vec<_>>();
++            let leaf = super::MarkdownInlineLeaf {
++                text: &self.text[run.clone()],
++                source: &node_cx.decoration_source,
++                segments: &segments,
++                inline_code: self.marks.iter().any(|(range, mark)| {
++                    mark.code && range.start <= run.start && range.end >= run.end
++                }),
++            };
++            // Admit in callback insertion order: the first valid overlapping
++            // decoration wins. Index accepted, disjoint ranges by start, but
++            // keep emitted marks in that original order (do not sort callbacks).
++            let mut occupied = std::collections::BTreeMap::<usize, usize>::new();
++            for link in decorate(&leaf) {
++                let range = link.range;
++                if range.is_empty()
++                    || range.end > leaf.text.len()
++                    || !leaf.text.is_char_boundary(range.start)
++                    || !leaf.text.is_char_boundary(range.end)
++                    || occupied
++                        .range(..range.end)
++                        .next_back()
++                        .is_some_and(|(_, end)| {
++                            decoration_overlap_step();
++                            range.start < *end
++                        })
++                {
++                    continue;
++                }
++                occupied.insert(range.start, range.end);
++                marks.push((
++                    run.start + range.start..run.start + range.end,
++                    TextMark::default().link(LinkMark {
++                        url: link.path,
++                        generated: Some(link.button),
++                        ..Default::default()
++                    }),
++                ));
++            }
++        }
++        marks
++    }
+     pub(crate) fn new(text: impl Into<SharedString>) -> Self {
+         Self {
+             text: text.into(),
+@@ -1257,6 +1359,7 @@ impl std::fmt::Debug for ParagraphRenderCache {
+ /// afterwards too, since a definition can arrive later in the document.
+ struct ParagraphRender {
+     style: Arc<TextViewStyle>,
++    inline_links_revision: u64,
+     mono_font: SharedString,
+     text: SharedString,
+     highlights: Vec<(Range<usize>, InlineHighlight)>,
+@@ -1299,6 +1402,7 @@ impl Paragraph {
+             && let Some(cached) = cache.as_ref()
+             && (Arc::ptr_eq(&cached.style, &node_cx.style) || *cached.style == *node_cx.style)
+             && cached.mono_font == mono_font
++            && cached.inline_links_revision == node_cx.markdown_extensions.inline_links_revision
+         {
+             return (
+                 cached.text.clone(),
+@@ -1315,15 +1419,19 @@ impl Paragraph {
+             let text_len = inline_node.text.len();
+             text.push_str(&inline_node.text);
+             let mut node_highlights = vec![];
+-            for (range, style) in &inline_node.marks {
++            for (range, style) in &inline_node.render_marks(node_cx) {
+                 let inner_range = (offset + range.start)..(offset + range.end);
+                 let mut highlight = mark_highlight(style, node_cx, cx);
+                 if let Some(link_mark) = style.link.clone() {
+                     highlight.style.color = Some(node_cx.style.link());
+-                    highlight.style.underline = Some(gpui::UnderlineStyle {
+-                        thickness: gpui::px(1.),
+-                        ..Default::default()
+-                    });
++                    highlight.style.underline =
++                        link_mark
++                            .generated
++                            .is_none()
++                            .then_some(gpui::UnderlineStyle {
++                                thickness: gpui::px(1.),
++                                ..Default::default()
++                            });
+                     links.push((inner_range.clone(), link_mark));
+                 }
+                 node_highlights.push((inner_range, highlight));
+@@ -1335,6 +1443,7 @@ impl Paragraph {
+         if let Ok(mut cache) = self.render_cache.0.lock() {
+             *cache = Some(Arc::new(ParagraphRender {
+                 style: node_cx.style.clone(),
++                inline_links_revision: node_cx.markdown_extensions.inline_links_revision,
+                 mono_font,
+                 text: text.clone(),
+                 highlights: highlights.clone(),
+@@ -2398,6 +2507,7 @@ pub(crate) struct NodeContext {
+     pub(crate) image_source: Option<Arc<super::text_view::ImageSourceFn>>,
+     pub(crate) link_click_handler: Option<Arc<LinkClickHandlerFn>>,
+     pub(crate) markdown_extensions: Arc<MarkdownExtensions>,
++    pub(crate) decoration_source: SharedString,
+     /// This frame's streamed fade-in, when any text is still fading.
+     pub(crate) stream_fade: Option<Arc<StreamFadeFrame>>,
+     /// The application's range highlights, when there are any.
+@@ -2625,7 +2735,34 @@ impl Paragraph {
+                             let link_click_handler = link_click_handler.clone();
+                             let aux_link = link.clone();
+                             let aux_link_click_handler = link_click_handler.clone();
++                            let context_link = link.clone();
++                            let control_link = link.clone();
++                            let context_handler = link_click_handler.clone();
++                            let control_handler = link_click_handler.clone();
+                             this.cursor_pointer()
++                                .on_mouse_down(
++                                    gpui::MouseButton::Right,
++                                    move |event, window, cx| {
++                                        super::text_view::handle_link_context_menu(
++                                            &context_handler,
++                                            &context_link,
++                                            event,
++                                            window,
++                                            cx,
++                                        );
++                                    },
++                                )
++                                .on_mouse_down(gpui::MouseButton::Left, move |event, window, cx| {
++                                    if super::text_view::is_link_context_gesture(event) {
++                                        super::text_view::handle_link_context_menu(
++                                            &control_handler,
++                                            &control_link,
++                                            event,
++                                            window,
++                                            cx,
++                                        );
++                                    }
++                                })
+                                 .on_click(move |event, window, cx| {
+                                     crate::TextSelection::end(window, cx);
+                                     cx.stop_propagation();
+@@ -2659,16 +2796,20 @@ impl Paragraph {
+                 offset = 0;
+             } else {
+                 let mut node_highlights = vec![];
+-                for (range, style) in &inline_node.marks {
++                for (range, style) in &inline_node.render_marks(node_cx) {
+                     let inner_range = (offset + range.start)..(offset + range.end);
+                     let mut highlight = mark_highlight(style, node_cx, cx);
+ 
+                     if let Some(mut link_mark) = style.link.clone() {
+                         highlight.style.color = Some(node_cx.style.link());
+-                        highlight.style.underline = Some(gpui::UnderlineStyle {
+-                            thickness: gpui::px(1.),
+-                            ..Default::default()
+-                        });
++                        highlight.style.underline =
++                            link_mark
++                                .generated
++                                .is_none()
++                                .then_some(gpui::UnderlineStyle {
++                                    thickness: gpui::px(1.),
++                                    ..Default::default()
++                                });
+ 
+                         // convert link references, replace link
+                         if let Some(identifier) = link_mark.identifier.as_ref() {
+@@ -2765,7 +2906,7 @@ impl Paragraph {
+                     items.push(InlineFlowItem::Text {
+                         state: inline_node.state.clone(),
+                         text: std::mem::take(&mut text).into(),
+-                        links: std::mem::take(&mut links),
++                        links: std::mem::take(&mut links).into(),
+                         highlights: fade_highlights(std::mem::take(&mut highlights), &item_fades),
+                         backgrounds: item_backgrounds,
+                         reveal: item_reveal,
+@@ -2818,7 +2959,7 @@ impl Paragraph {
+                     items.push(InlineFlowItem::Text {
+                         state: inline_node.state.clone(),
+                         text: text.clone().into(),
+-                        links: links.clone(),
++                        links: links.clone().into(),
+                         highlights: fade_highlights(
+                             highlights.clone(),
+                             &slice_fades(fades, consumed, consumed + text.len()),
+@@ -2847,16 +2988,20 @@ impl Paragraph {
+                 offset = 0;
+             } else {
+                 let mut node_highlights = vec![];
+-                for (range, style) in &inline_node.marks {
++                for (range, style) in &inline_node.render_marks(node_cx) {
+                     let inner_range = (offset + range.start)..(offset + range.end);
+                     let mut highlight = mark_highlight(style, node_cx, cx);
+ 
+                     if let Some(mut link_mark) = style.link.clone() {
+                         highlight.style.color = Some(node_cx.style.link());
+-                        highlight.style.underline = Some(gpui::UnderlineStyle {
+-                            thickness: gpui::px(1.),
+-                            ..Default::default()
+-                        });
++                        highlight.style.underline =
++                            link_mark
++                                .generated
++                                .is_none()
++                                .then_some(gpui::UnderlineStyle {
++                                    thickness: gpui::px(1.),
++                                    ..Default::default()
++                                });
+ 
+                         if let Some(identifier) = link_mark.identifier.as_ref()
+                             && let Some(mark) = node_cx.link_refs.get(identifier)
+@@ -2888,7 +3033,7 @@ impl Paragraph {
+             items.push(InlineFlowItem::Text {
+                 state: self.state.clone(),
+                 text: text.into(),
+-                links,
++                links: links.into(),
+                 highlights,
+                 backgrounds,
+                 reveal,
+@@ -5551,3 +5696,7 @@ mod tests {
+         assert_ne!(first, second);
+     }
+ }
++
++#[cfg(test)]
++#[path = "inline_file_links_tests.rs"]
++mod inline_file_links_tests;
+diff --git a/src/text/state.rs b/src/text/state.rs
+index 934c0fe..77e3626 100644
+--- a/src/text/state.rs
++++ b/src/text/state.rs
+@@ -165,6 +165,11 @@ impl TextViewState {
+         Self::new(TextViewFormat::Markdown, text, cx)
+     }
+ 
++    /// Inline-only Markdown, preserving the original source and byte offsets.
++    pub fn markdown_inline(text: &str, cx: &mut Context<Self>) -> Self {
++        Self::markdown_with_extensions(text, MarkdownExtensions::default().inline_only(true), cx)
++    }
++
+     /// Create a Markdown state with extensions configured before the initial parse.
+     /// Use the same extensions for cold copy and mounted views so rendered offsets agree.
+     /// Sources above the synchronous parse limit remain pending until the async parse commits.
+@@ -1322,6 +1327,7 @@ impl Render for TextViewState {
+         let (reveal, reveal_block) = self.reveal_frame(cx.background_executor().now(), window);
+         // Built every frame, so everything in it is shared, not copied.
+         let node_cx = NodeContext {
++            decoration_source: self.parsed_content.document.source.clone(),
+             normal_word_wrap: false,
+             offset: self.parsed_content.node_cx.offset,
+             link_refs: self.parsed_content.node_cx.link_refs.clone(),
+diff --git a/src/text/text_view.rs b/src/text/text_view.rs
+index c92cd26..f126cc2 100644
+--- a/src/text/text_view.rs
++++ b/src/text/text_view.rs
+@@ -77,8 +77,42 @@ pub(crate) type TableActionsFn =
+ 
+ pub(crate) type ImageSourceFn = dyn Fn(&gpui::SharedUri) -> gpui::ImageSource + Send + Sync;
+ 
+-pub(crate) type LinkClickHandlerFn =
+-    dyn Fn(&SharedString, &ClickEvent, &mut Window, &mut App) + Send + Sync;
++type LinkActivateFn =
++    dyn Fn(&super::InlineLinkTarget, &ClickEvent, &mut Window, &mut App) + Send + Sync;
++type LinkContextMenuFn =
++    dyn Fn(&super::InlineLinkTarget, &gpui::MouseDownEvent, &mut Window, &mut App) + Send + Sync;
++
++#[derive(Default, Clone)]
++pub(crate) struct LinkClickHandlerFn {
++    activate: Option<Arc<LinkActivateFn>>,
++    context_menu: Option<Arc<LinkContextMenuFn>>,
++}
++
++pub(crate) fn is_link_context_gesture(event: &gpui::MouseDownEvent) -> bool {
++    event.button == MouseButton::Right
++        || (cfg!(target_os = "macos")
++            && event.button == MouseButton::Left
++            && event.modifiers.control)
++}
++
++pub(crate) fn handle_link_context_menu(
++    handlers: &Option<Arc<LinkClickHandlerFn>>,
++    link: &super::node::LinkMark,
++    event: &gpui::MouseDownEvent,
++    window: &mut Window,
++    cx: &mut App,
++) {
++    if let Some(handler) = handlers.as_ref().and_then(|h| h.context_menu.as_ref()) {
++        let target = match link.generated {
++            Some(button) => super::InlineLinkTarget::WrittenPath {
++                path: link.url.clone(),
++                button,
++            },
++            None => super::InlineLinkTarget::Explicit(link.url.clone()),
++        };
++        handler(&target, event, window, cx);
++    }
++}
+ 
+ /// Kept by the element only, so unlike the handlers the state carries, it
+ /// may hold a `ScrollHandle`.
+@@ -91,8 +125,12 @@ pub(crate) fn handle_link_click(
+     window: &mut Window,
+     cx: &mut App,
+ ) {
+-    if let Some(handler) = handler {
+-        handler(&url, &event, window, cx);
++    if matches!(&event, ClickEvent::Mouse(click) if click.up.button == MouseButton::Right || (cfg!(target_os = "macos") && click.up.modifiers.control))
++    {
++        return;
++    }
++    if let Some(handler) = handler.as_ref().and_then(|h| h.activate.as_ref()) {
++        handler(&super::InlineLinkTarget::Explicit(url), &event, window, cx);
+     } else if match &event {
+         ClickEvent::Mouse(click) => {
+             matches!(click.up.button, MouseButton::Left | MouseButton::Middle)
+@@ -104,6 +142,30 @@ pub(crate) fn handle_link_click(
+     }
+ }
+ 
++pub(crate) fn handle_inline_link_click(
++    handler: &Option<Arc<LinkClickHandlerFn>>,
++    link: super::node::LinkMark,
++    event: ClickEvent,
++    window: &mut Window,
++    cx: &mut App,
++) {
++    if let Some(button) = link.generated {
++        if let Some(handler) = handler.as_ref().and_then(|h| h.activate.as_ref()) {
++            handler(
++                &super::InlineLinkTarget::WrittenPath {
++                    path: link.url,
++                    button,
++                },
++                &event,
++                window,
++                cx,
++            );
++        }
++    } else {
++        handle_link_click(handler, link.url, event, window, cx);
++    }
++}
++
+ /// A text view that can render Markdown or HTML.
+ ///
+ /// ## Goals
+@@ -375,11 +437,50 @@ impl TextView {
+     ///
+     /// The handler receives the resolved URL and the original GPUI click event.
+     /// Without a handler, links open through App::open_url.
+-    pub fn on_link_click<F>(mut self, handler: F) -> Self
++    pub fn on_link_click<F>(self, handler: F) -> Self
+     where
+         F: Fn(&SharedString, &ClickEvent, &mut Window, &mut App) + Send + Sync + 'static,
+     {
+-        self.link_click_handler = Some(Arc::new(handler));
++        self.on_link_activate(move |target, event, window, cx| {
++            if let super::InlineLinkTarget::Explicit(value) = target {
++                handler(value, event, window, cx);
++            }
++        })
++    }
++
++    /// Typed activation. Generated paths retain written spelling; explicit
++    /// destinations remain encoded for the application to decode exactly once.
++    pub fn on_link_activate<F>(mut self, handler: F) -> Self
++    where
++        F: Fn(&super::InlineLinkTarget, &ClickEvent, &mut Window, &mut App) + Send + Sync + 'static,
++    {
++        let mut handlers = self
++            .link_click_handler
++            .as_deref()
++            .cloned()
++            .unwrap_or_default();
++        handlers.activate = Some(Arc::new(handler));
++        self.link_click_handler = Some(Arc::new(handlers));
++        self
++    }
++
++    /// Exact hit-tested target on secondary down (or macOS Control-primary).
++    /// Independent of selection and activation. The event position is in window
++    /// coordinates; `window.focused(cx)` is the unchanged return-focus origin.
++    pub fn on_link_context_menu<F>(mut self, handler: F) -> Self
++    where
++        F: Fn(&super::InlineLinkTarget, &gpui::MouseDownEvent, &mut Window, &mut App)
++            + Send
++            + Sync
++            + 'static,
++    {
++        let mut handlers = self
++            .link_click_handler
++            .as_deref()
++            .cloned()
++            .unwrap_or_default();
++        handlers.context_menu = Some(Arc::new(handler));
++        self.link_click_handler = Some(Arc::new(handlers));
+         self
+     }
+ 
+@@ -683,10 +784,16 @@ impl Element for TextView {
+             .relative()
+             .text_color(foreground)
+             .on_action(move |_: &crate::input::Copy, window, cx| {
+-                let text = TextSelection::selected_text(window, cx).trim().to_string();
+-                if text.is_empty() {
++                let text = TextSelection::selected_text(window, cx);
++                if text.trim().is_empty() {
+                     return;
+                 }
++                // Domain providers own exact bytes; legacy geometry includes synthetic separators.
++                let text = if TextSelection::has_domain_selection(window, cx) {
++                    text
++                } else {
++                    text.trim().to_string()
++                };
+                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+             })
+             .action_availability::<crate::input::Copy>(TextSelection::can_copy)
+@@ -3153,12 +3260,13 @@ mod tests {
+         );
+ 
+         let clicks = captured.lock().unwrap();
+-        assert_eq!(clicks.len(), 3);
++        assert_eq!(clicks.len(), if cfg!(target_os = "macos") { 1 } else { 2 });
+         assert_eq!(clicks[0].0, "https://example.com");
+-        assert!(!clicks[0].1.is_right_click() && !clicks[0].1.is_middle_click());
+-        assert!(clicks[0].1.modifiers().control);
+-        assert!(clicks[1].1.is_middle_click());
+-        assert!(clicks[2].1.is_right_click());
++        if !cfg!(target_os = "macos") {
++            assert!(clicks[0].1.modifiers().control);
++        }
++        assert!(clicks.last().unwrap().1.is_middle_click());
++        assert!(clicks.iter().all(|(_, event)| !event.is_right_click()));
+         assert_eq!(cx.opened_url(), None);
+     }
+ 
+@@ -3214,7 +3322,7 @@ mod tests {
+             cx.simulate_mouse_down(bounds.center(), button, Modifiers::default());
+             cx.simulate_mouse_up(bounds.center(), button, Modifiers::default());
+         }
+-        assert_eq!(captured.lock().unwrap().len(), 3);
++        assert_eq!(captured.lock().unwrap().len(), 2);
+         let start = point(bounds.left() + px(1.), bounds.center().y);
+         let end = point(bounds.right() - px(1.), bounds.center().y);
+         cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+@@ -3226,11 +3334,11 @@ mod tests {
+             let _ = window.draw(cx);
+         });
+         cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+-        assert_eq!(captured.lock().unwrap().len(), 3);
++        assert_eq!(captured.lock().unwrap().len(), 2);
+     }
+ 
+     #[gpui::test]
+-    fn linked_image_handler_receives_left_middle_and_right_clicks(cx: &mut TestAppContext) {
++    fn linked_image_handler_receives_activation_but_not_context_clicks(cx: &mut TestAppContext) {
+         use std::sync::{Arc, Mutex};
+ 
+         struct LinkedImageRoot {
+@@ -3295,7 +3403,7 @@ mod tests {
+         }
+ 
+         let clicks = captured.lock().unwrap();
+-        assert_eq!(clicks.len(), 3);
++        assert_eq!(clicks.len(), 2);
+         assert!(
+             clicks
+                 .iter()
+@@ -3303,7 +3411,7 @@ mod tests {
+         );
+         assert!(!clicks[0].1.is_right_click() && !clicks[0].1.is_middle_click());
+         assert!(clicks[1].1.is_middle_click());
+-        assert!(clicks[2].1.is_right_click());
++        assert!(clicks.iter().all(|(_, event)| !event.is_right_click()));
+         assert_eq!(cx.opened_url(), None);
+     }
+ 
+diff --git a/src/text_selection.rs b/src/text_selection.rs
+index 9795372..ac27419 100644
+--- a/src/text_selection.rs
++++ b/src/text_selection.rs
+@@ -3087,7 +3087,10 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
+ 
+     let mouse_down_state = state.downgrade();
+     window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+-        if event.button != MouseButton::Left {
++        // macOS Control-click belongs to the context target, including in capture.
++        if event.button != MouseButton::Left
++            || (cfg!(target_os = "macos") && event.modifiers.control)
++        {
+             return;
+         }
+         let Some(state) = mouse_down_state.upgrade() else {
+diff --git a/src/root.rs b/src/root.rs
+index ae6487e..f531672 100644
+--- a/src/root.rs
++++ b/src/root.rs
+@@ -276,13 +276,17 @@ impl Root {
+     }
+ 
+     fn on_action_copy(&mut self, _: &Copy, window: &mut Window, cx: &mut Context<Self>) {
+-        let text = crate::TextSelection::selected_text(window, cx)
+-            .trim()
+-            .to_string();
+-        if text.is_empty() {
++        let text = crate::TextSelection::selected_text(window, cx);
++        if text.trim().is_empty() {
+             // A logical selection can project to nothing; fail closed, not to another responder.
+             return;
+         }
++        // Domain providers own exact bytes; legacy geometry includes synthetic separators.
++        let text = if crate::TextSelection::has_domain_selection(window, cx) {
++            text
++        } else {
++            text.trim().to_string()
++        };
+         cx.write_to_clipboard(ClipboardItem::new_string(text));
+     }
+ }
+diff --git a/src/text/inline_link_hover_tests.rs b/src/text/inline_link_hover_tests.rs
+new file mode 100644
+index 0000000..0166307
+--- /dev/null
++++ b/src/text/inline_link_hover_tests.rs
+@@ -0,0 +1,69 @@
++#[gpui::test]
++fn root_pointer_exit_repaints_without_outside_click_and_tab_retains_underline(
++    cx: &mut TestAppContext,
++) {
++    cx.update(crate::init);
++    let events = Arc::new(Mutex::new(Vec::new()));
++    let captured = events.clone();
++    let mut retained = None;
++    let (_, window) = cx.add_window_view(|window, cx| {
++        let host = cx.new(|cx| Host {
++            text: cx.new(|cx| {
++                crate::TextViewState::markdown_with_extensions("src/a.rs", extensions(), cx)
++            }),
++            events,
++        });
++        retained = Some(host.clone());
++        crate::Root::new(host, window, cx)
++    });
++    let host = retained.unwrap();
++    window.run_until_parked();
++    window.update(|window, cx| {
++        let _ = window.draw(cx);
++    });
++    let bounds = host.read_with(window, |host, cx| host.text.read(cx).bounds());
++    let inside = point(bounds.left() + px(10.), bounds.top() + px(10.));
++    let outside = point(bounds.right() + px(20.), bounds.bottom() + px(20.));
++    let underlines = |window: &mut gpui::VisualTestContext| {
++        window.update(|window, _| {
++            let scale = window.scale_factor();
++            window
++                .painted_quads()
++                .iter()
++                .filter(|q| {
++                    (f32::from(q.bounds.size.height) - scale).abs() < 0.01
++                        && f32::from(q.bounds.size.width) > scale * 2.
++                })
++                .count()
++        })
++    };
++    window.simulate_mouse_move(inside, None, Modifiers::default());
++    assert!(underlines(window) > 0, "hover must paint an underline");
++    window.simulate_mouse_down(inside, MouseButton::Left, Modifiers::default());
++    window.simulate_mouse_up(inside, MouseButton::Left, Modifiers::default());
++    let focus = window.update(|window, cx| window.focused(cx));
++    assert!(focus.is_some());
++    window.simulate_mouse_move(outside, None, Modifiers::default());
++    // Do not force draw here: the exit listener must request the frame itself.
++    assert_eq!(
++        underlines(window),
++        0,
++        "pointer exit must clear the painted hover"
++    );
++    assert_eq!(window.update(|window, cx| window.focused(cx)), focus);
++    window.simulate_keystrokes("tab");
++    assert!(
++        underlines(window) > 0,
++        "keyboard focus remains visible off-pointer"
++    );
++    assert_eq!(captured.lock().unwrap().len(), 1);
++    window.simulate_mouse_down(inside, MouseButton::Left, Modifiers::default());
++    window.simulate_mouse_move(outside, Some(MouseButton::Left), Modifiers::default());
++    window.simulate_mouse_move(inside, Some(MouseButton::Left), Modifiers::default());
++    window.simulate_mouse_up(inside, MouseButton::Left, Modifiers::default());
++    assert_eq!(
++        captured.lock().unwrap().len(),
++        1,
++        "dragging back over a link must not open it"
++    );
++}

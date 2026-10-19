@@ -1,0 +1,8 @@
+diff --git a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -226,3 +226,3 @@
+ [dependencies.granit-parser]
+-version = "=1.0.0"
++version = "=1.3.0"
+ features = ["error_messages"]

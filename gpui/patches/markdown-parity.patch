@@ -1,0 +1,3714 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 6be7f22..6eded5e 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -52,6 +52,12 @@ doctest = false
+ name = "element_ext"
+ path = "tests/element_ext.rs"
+ 
++[[test]]
++name = "markdown_layout_native"
++path = "tests/markdown_layout_native.rs"
++harness = false
++required-features = ["test-support"]
++
+ [[bench]]
+ name = "motion"
+ path = "benches/motion.rs"
+diff --git a/src/lib.rs b/src/lib.rs
+index 7afc78b..e43d57d 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -177,10 +177,11 @@ pub use switch::{
+ pub use table::{Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow};
+ pub use tabs::{Tab, TabStyles, Tabs};
+ pub use text::{
+-    InlineElement, InlineRenderContext, MarkdownExtensions, MarkdownNode, MarkdownParseContext,
+-    MarkdownPlugin, RangeHighlight, RangeHighlightError, RenderedText, SelectionFormat, TableData,
+-    Text, TextView, TextViewDefaults, TextViewMotion, TextViewPlugin, TextViewState, TextViewStyle,
+-    html, markdown, markdown_ast,
++    InlineElement, InlineRenderContext, MarkdownBlockSpacing, MarkdownCodeBlockBodyFn,
++    MarkdownExtensions, MarkdownNode, MarkdownParseContext, MarkdownPlugin, MarkdownTaskCheckbox,
++    RangeHighlight, RangeHighlightError, RenderedText, SelectionFormat, TableData, Text, TextView,
++    TextViewDefaults, TextViewMotion, TextViewPlugin, TextViewState, TextViewStyle, html, markdown,
++    markdown_ast,
+ };
+ pub use text_selection::{
+     TextSelection, TextSelectionContentKey, TextSelectionCoverage, TextSelectionDomain,
+diff --git a/src/text/document.rs b/src/text/document.rs
+index 3547e52..2c2fa35 100644
+--- a/src/text/document.rs
++++ b/src/text/document.rs
+@@ -29,9 +29,48 @@ pub(crate) struct NodeRenderOptions {
+     pub(crate) depth: usize,
+     pub(crate) is_last: bool,
+     pub(crate) following_paragraph: bool,
++    pub(crate) leading_gap: gpui::Pixels,
++    /// The quote ancestor already owns the collapsed first-descendant margin.
++    pub(crate) boundary_margin_collapsed: bool,
+ }
+ 
+ impl NodeRenderOptions {
++    pub(crate) fn sibling(
++        nodes: &[BlockNode],
++        ix: usize,
++        base: Self,
++        style: &super::TextViewStyle,
++        body_size: gpui::Pixels,
++        rem_size: gpui::Pixels,
++    ) -> Self {
++        let leading_gap = if style.block_spacing().is_none()
++            || matches!(
++                nodes[ix],
++                BlockNode::Definition { .. } | BlockNode::Unknown | BlockNode::Break { .. }
++            ) {
++            gpui::Pixels::ZERO
++        } else if ix == 0 {
++            gpui::Pixels::ZERO
++        } else {
++            let (_, bottom) = nodes[ix - 1].block_margins(style, body_size, rem_size, false);
++            let (top, _) = nodes[ix].block_margins(
++                style,
++                body_size,
++                rem_size,
++                matches!(nodes[ix - 1], BlockNode::Heading { .. }),
++            );
++            bottom.max(top)
++        };
++        Self {
++            ix,
++            is_last: ix + 1 == nodes.len(),
++            leading_gap,
++            following_paragraph: nodes
++                .get(ix + 1)
++                .is_some_and(|n| matches!(n, BlockNode::Paragraph(_))),
++            ..base
++        }
++    }
+     pub(crate) fn is_last(mut self, is_last: bool) -> Self {
+         self.is_last = is_last;
+         self
+@@ -290,21 +329,19 @@ impl ParsedDocument {
+         cx: &mut App,
+     ) -> impl IntoElement {
+         let Some(list_state) = list_state else {
+-            let blocks_len = self.blocks.len();
+             return div().children(self.blocks.iter().enumerate().map(move |(ix, node)| {
+-                let is_last = ix + 1 == blocks_len;
+-                let following_paragraph = self
+-                    .blocks
+-                    .get(ix + 1)
+-                    .is_some_and(|next| matches!(next, BlockNode::Paragraph(_)));
+                 Self::render_top_level(
+                     node,
+-                    NodeRenderOptions {
++                    NodeRenderOptions::sibling(
++                        &self.blocks,
+                         ix,
+-                        is_last,
+-                        following_paragraph,
+-                        ..Default::default()
+-                    },
++                        NodeRenderOptions::default(),
++                        &node_cx.style,
++                        node_cx.style.body_text_size().unwrap_or_else(|| {
++                            window.text_style().font_size.to_pixels(window.rem_size())
++                        }),
++                        window.rem_size(),
++                    ),
+                     node_cx,
+                     window,
+                     cx,
+@@ -312,11 +349,6 @@ impl ParsedDocument {
+             }));
+         };
+ 
+-        let options = NodeRenderOptions {
+-            is_last: true,
+-            ..Default::default()
+-        };
+-
+         let blocks = &self.blocks;
+         if list_state.item_count() != blocks.len() {
+             list_state.reset(blocks.len());
+@@ -327,18 +359,18 @@ impl ParsedDocument {
+                 let node_cx = node_cx.clone();
+                 let blocks = blocks.clone();
+                 move |ix, window, cx| {
+-                    let is_last = ix + 1 == blocks.len();
+-                    let following_paragraph = blocks
+-                        .get(ix + 1)
+-                        .is_some_and(|next| matches!(next, BlockNode::Paragraph(_)));
+                     Self::render_top_level(
+                         &blocks[ix],
+-                        NodeRenderOptions {
++                        NodeRenderOptions::sibling(
++                            &blocks,
+                             ix,
+-                            is_last,
+-                            following_paragraph,
+-                            ..options
+-                        },
++                            NodeRenderOptions::default(),
++                            &node_cx.style,
++                            node_cx.style.body_text_size().unwrap_or_else(|| {
++                                window.text_style().font_size.to_pixels(window.rem_size())
++                            }),
++                            window.rem_size(),
++                        ),
+                         &node_cx,
+                         window,
+                         cx,
+diff --git a/src/text/format/markdown.rs b/src/text/format/markdown.rs
+index 8e7aaa6..e8eddeb 100644
+--- a/src/text/format/markdown.rs
++++ b/src/text/format/markdown.rs
+@@ -467,6 +467,8 @@ fn aligned_source_segments(
+                 1
+             };
+             (whitespace_end - raw_cursor, newline_len)
++        } else if rendered_char == '\n' && remainder.starts_with("\r\n") {
++            (0, 2)
+         } else if rendered_char == '\n'
+             && remainder.ends_with('\n')
+             && raw_cursor >= final_line_start
+@@ -696,18 +698,13 @@ fn parse_paragraph(
+             text.push_str(&parse_inline_children(source, paragraph, &val.children, cx));
+         }
+         Node::Text(val) => {
+-            // A CommonMark *soft* break lives inside this value as a plain
+-            // line ending. The renderer treats a newline in a text run as a
+-            // line break, so a paragraph hard-wrapped in the source would
+-            // render one visual line per source line instead of reflowing to
+-            // the available width. Collapse soft breaks to spaces; *hard*
+-            // breaks never reach here, they arrive as their own Node::Break.
+-            //
+-            // mdast hands the line ending over exactly as the source wrote it,
+-            // so a CRLF document still carries its carriage return here. Take
+-            // the CR with the newline: dropping only the newline would strand
+-            // the CR in the middle of the reflowed line.
+-            text = val.value.replace("\r\n", " ").replace(['\n', '\r'], " ");
++            // Soft breaks live in text values; hard breaks are separate AST
++            // nodes. Normalize CRLF atomically for both projection policies.
++            text = if cx.markdown_extensions.hard_soft_breaks() {
++                val.value.replace("\r\n", "\n").replace('\r', "\n")
++            } else {
++                val.value.replace("\r\n", " ").replace(['\n', '\r'], " ")
++            };
+             paragraph.push(mapped_inline(source, text.clone(), node, cx))
+         }
+         Node::Emphasis(val) => {
+@@ -923,10 +920,20 @@ fn ast_to_node(source: &str, value: mdast::Node, cx: &mut NodeContext) -> BlockN
+             }
+         }
+         Node::List(list) => {
++            // A loose list wraps every item's paragraphs, even an item whose
++            // own children have no blank lines (e.g. the final task).
+             let children = list
+                 .children
+                 .into_iter()
+-                .map(|c| ast_to_node(source, c, cx))
++                .map(|c| {
++                    let mut item = ast_to_node(source, c, cx);
++                    if list.spread
++                        && let BlockNode::ListItem { spread, .. } = &mut item
++                    {
++                        *spread = true;
++                    }
++                    item
++                })
+                 .collect();
+             BlockNode::List {
+                 ordered: list.ordered,
+@@ -957,6 +964,7 @@ fn ast_to_node(source: &str, value: mdast::Node, cx: &mut NodeContext) -> BlockN
+             let segments = code_source_segments(source, &raw.value, span, cx.offset);
+             BlockNode::CodeBlock(
+                 CodeBlock::new(raw.value.into(), raw.lang.map(Into::into), span)
++                    .with_source(parse_cx.source(), cx.offset)
+                     .source_segments(segments),
+             )
+         }
+@@ -974,7 +982,9 @@ fn ast_to_node(source: &str, value: mdast::Node, cx: &mut NodeContext) -> BlockN
+             let span = new_span(val.position, cx);
+             let segments = code_source_segments(source, &val.value, span, cx.offset);
+             BlockNode::CodeBlock(
+-                CodeBlock::new(val.value.into(), None, span).source_segments(segments),
++                CodeBlock::new(val.value.into(), None, span)
++                    .with_source(parse_cx.source(), cx.offset)
++                    .source_segments(segments),
+             )
+         }
+         Node::Html(val) => match super::html::parse(&val.value, cx) {
+@@ -995,19 +1005,26 @@ fn ast_to_node(source: &str, value: mdast::Node, cx: &mut NodeContext) -> BlockN
+             let segments = code_source_segments(source, &val.value, span, cx.offset);
+             BlockNode::CodeBlock(
+                 CodeBlock::new(val.value.into(), Some("mdx".into()), span)
++                    .with_source(parse_cx.source(), cx.offset)
+                     .source_segments(segments),
+             )
+         }
+-        Node::Yaml(val) => BlockNode::CodeBlock(CodeBlock::new(
+-            val.value.into(),
+-            Some("yml".into()),
+-            new_span(val.position, cx),
+-        )),
+-        Node::Toml(val) => BlockNode::CodeBlock(CodeBlock::new(
+-            val.value.into(),
+-            Some("toml".into()),
+-            new_span(val.position, cx),
+-        )),
++        Node::Yaml(val) => BlockNode::CodeBlock(
++            CodeBlock::new(
++                val.value.into(),
++                Some("yml".into()),
++                new_span(val.position, cx),
++            )
++            .with_source(parse_cx.source(), cx.offset),
++        ),
++        Node::Toml(val) => BlockNode::CodeBlock(
++            CodeBlock::new(
++                val.value.into(),
++                Some("toml".into()),
++                new_span(val.position, cx),
++            )
++            .with_source(parse_cx.source(), cx.offset),
++        ),
+         Node::MdxJsxTextElement(val) => {
+             let mut paragraph = Paragraph::default();
+             parse_inline_children(source, &mut paragraph, &val.children, cx);
+@@ -1036,6 +1053,37 @@ fn ast_to_node(source: &str, value: mdast::Node, cx: &mut NodeContext) -> BlockN
+                     parse_table_row(source, &mut table, row, cx);
+                 }
+             });
++            let literal_empty_header = val.children.first().is_some_and(|node| {
++                let Node::TableRow(row) = node else {
++                    return false;
++                };
++                row.children.iter().all(|node| {
++                    let Node::TableCell(cell) = node else {
++                        return false;
++                    };
++                    cell.children.iter().all(|node| {
++                        matches!(node, Node::Text(_))
++                            && parse_cx
++                                .node_source(node)
++                                .is_some_and(|text| text.trim().is_empty())
++                    })
++                })
++            });
++            if cx.markdown_extensions.omit_empty_header()
++                && literal_empty_header
++                && table.children.first().is_some_and(|row| {
++                    row.children.iter().all(|cell| {
++                        cell.children.text().trim().is_empty()
++                            && !cell
++                                .children
++                                .children
++                                .iter()
++                                .any(|node| node.image.is_some() || node.custom.is_some())
++                    })
++                })
++            {
++                table.omitted_header = Some(table.children.remove(0));
++            }
+             table.span = new_span(val.position, cx);
+ 
+             BlockNode::Table(table)
+diff --git a/src/text/inline_flow.rs b/src/text/inline_flow.rs
+index b10c62c..722fa7e 100644
+--- a/src/text/inline_flow.rs
++++ b/src/text/inline_flow.rs
+@@ -31,6 +31,8 @@ pub(super) struct InlineFlow {
+     items: Vec<InlineFlowItem>,
+     link_click_handler: Option<Arc<LinkClickHandlerFn>>,
+     inline_code_padding: Pixels,
++    inline_code_box: Option<(f32, Pixels)>,
++    normal_word_wrap: bool,
+ }
+ 
+ pub(super) type InlineRenderer = dyn Fn(&super::InlineRenderContext, &mut Window, &mut App) -> Option<super::InlineElement>
+@@ -167,6 +169,8 @@ struct InlineFlowTypography {
+     rem_size: Pixels,
+     line_height: Pixels,
+     inline_code_padding: Pixels,
++    inline_code_vertical_padding: Option<f32>,
++    normal_word_wrap: bool,
+ }
+ 
+ #[derive(Default)]
+@@ -254,9 +258,21 @@ impl InlineFlow {
+             items,
+             link_click_handler,
+             inline_code_padding: px(INLINE_CODE_PADDING),
++            inline_code_box: None,
++            normal_word_wrap: false,
+         }
+     }
+ 
++    pub(super) fn normal_word_wrap(mut self, enabled: bool) -> Self {
++        self.normal_word_wrap = enabled;
++        self
++    }
++
++    pub(super) fn inline_code_box(mut self, style: Option<(f32, Pixels)>) -> Self {
++        self.inline_code_box = style;
++        self
++    }
++
+     pub(super) fn inline_code_padding(mut self, padding: Pixels) -> Self {
+         self.inline_code_padding = padding;
+         self
+@@ -347,6 +363,8 @@ impl Element for InlineFlow {
+             rem_size: window.rem_size(),
+             line_height: window.line_height(),
+             inline_code_padding: self.inline_code_padding,
++            inline_code_vertical_padding: self.inline_code_box.map(|(padding, _)| padding),
++            normal_word_wrap: self.normal_word_wrap,
+         };
+         let image_sizes = measure_items
+             .iter()
+@@ -404,13 +422,15 @@ impl Element for InlineFlow {
+                     window.with_text_style(
+                         Some(typography.text_style.subtract(&Default::default())),
+                         |window| {
+-                            layout_measured_flow(
++                            layout_measured_flow_with_wrap(
+                                 &key.items,
+                                 &key.image_sizes,
+                                 &objects,
+                                 &typography.text_style,
+                                 wrap_width,
+                                 typography.inline_code_padding,
++                                typography.inline_code_vertical_padding,
++                                typography.normal_word_wrap,
+                                 window,
+                                 cx,
+                             )
+@@ -684,7 +704,11 @@ impl Element for InlineFlow {
+                 state.selection = None;
+             }
+         }
+-        let radius = crate::Theme::global(cx).tokens.radius.sm;
++        let radius = self
++            .inline_code_box
++            .map_or(crate::Theme::global(cx).tokens.radius.sm, |(_, radius)| {
++                radius
++            });
+         for (element, background) in prepaint {
+             if let Some((bounds, color)) = background {
+                 window.paint_quad(gpui::fill(*bounds, *color).corner_radii(radius));
+@@ -890,6 +914,7 @@ fn layout_flow_with_padding(
+         text_style,
+         wrap_width,
+         padding,
++        None,
+         window,
+         cx,
+     )
+@@ -908,6 +933,33 @@ fn layout_measured_flow(
+     text_style: &TextStyle,
+     wrap_width: Option<Pixels>,
+     padding: Pixels,
++    code_vertical_padding: Option<f32>,
++    window: &mut Window,
++    cx: &mut App,
++) -> InlineFlowLayout {
++    layout_measured_flow_with_wrap(
++        items,
++        image_sizes,
++        prepared_objects,
++        text_style,
++        wrap_width,
++        padding,
++        code_vertical_padding,
++        false,
++        window,
++        cx,
++    )
++}
++
++fn layout_measured_flow_with_wrap(
++    items: &[MeasureItem],
++    image_sizes: &[Option<Size<Pixels>>],
++    prepared_objects: &[Option<MeasuredInlineObject>],
++    text_style: &TextStyle,
++    wrap_width: Option<Pixels>,
++    padding: Pixels,
++    code_vertical_padding: Option<f32>,
++    normal_word_wrap: bool,
+     window: &mut Window,
+     _cx: &mut App,
+ ) -> InlineFlowLayout {
+@@ -931,6 +983,7 @@ fn layout_measured_flow(
+         text_style,
+         wrap_width,
+         padding,
++        normal_word_wrap,
+         window,
+     );
+     let font_size = text_style.font_size.to_pixels(rem_size);
+@@ -1015,6 +1068,7 @@ fn layout_measured_flow(
+                                     &mut highlights,
+                                     glyph_size,
+                                     baseline,
++                                    code_vertical_padding,
+                                     window,
+                                 )
+                             })
+@@ -1162,6 +1216,7 @@ fn code_background(
+     highlights: &mut [(Range<usize>, InlineHighlight)],
+     fragment_size: Size<Pixels>,
+     baseline: Pixels,
++    css_padding: Option<f32>,
+     window: &Window,
+ ) -> Option<(Bounds<Pixels>, Hsla)> {
+     let cap_height = runs
+@@ -1181,8 +1236,19 @@ fn code_background(
+     color.map(|color| {
+         (
+             Bounds::new(
+-                point(Pixels::ZERO, baseline - cap_height - vertical_padding),
+-                size(fragment_size.width, cap_height + vertical_padding * 2.),
++                point(
++                    Pixels::ZERO,
++                    baseline
++                        - css_padding.map_or(cap_height + vertical_padding, |padding| {
++                            shaped_line.ascent + font_size * padding
++                        }),
++                ),
++                size(
++                    fragment_size.width,
++                    css_padding.map_or(cap_height + vertical_padding * 2., |padding| {
++                        shaped_line.ascent + shaped_line.descent + font_size * padding * 2.
++                    }),
++                ),
+             ),
+             color,
+         )
+@@ -1196,6 +1262,7 @@ fn line_ranges(
+     text_style: &TextStyle,
+     wrap_width: Option<Pixels>,
+     padding: Pixels,
++    normal_word_wrap: bool,
+     window: &mut Window,
+ ) -> Vec<Range<usize>> {
+     let total_len = items.iter().map(MeasureItem::len).sum::<usize>();
+@@ -1237,7 +1304,47 @@ fn line_ranges(
+                     } => {
+                         let start = hard_line.start.max(item_start) - item_start;
+                         let end = hard_line.end.min(item_end) - item_start;
+-                        if start < end {
++                        if start < end && normal_word_wrap {
++                            // CSS normal wrapping uses shaped unbreakable words.
++                            // GPUI's generic wrapper sums isolated glyph advances,
++                            // which can exceed a shaped min-content floor.
++                            let mut offset = start;
++                            for word in text[start..end].split_word_bounds() {
++                                if word.chars().all(char::is_whitespace) {
++                                    wrap_fragments.push(WrapLineFragment::text(word));
++                                    offset += word.len();
++                                    continue;
++                                }
++                                let word_end = offset + word.len();
++                                let word_highlights =
++                                    slice_ranges(highlights, offset, word_end, |range, h| {
++                                        (range, h.clone())
++                                    });
++                                let mut width = Pixels::ZERO;
++                                for (range, scale) in text_size_ranges(word.len(), &word_highlights)
++                                {
++                                    let run_highlights = slice_ranges(
++                                        &word_highlights,
++                                        range.start,
++                                        range.end,
++                                        |range, h| (range, h.clone()),
++                                    );
++                                    if run_highlights
++                                        .iter()
++                                        .any(|(_, h)| h.font_size_scale.is_some())
++                                    {
++                                        width += padding * 2.;
++                                    }
++                                    let runs = text_runs(range.len(), text_style, &run_highlights);
++                                    width += window
++                                        .text_system()
++                                        .layout_line(&word[range], font_size * scale, &runs, None)
++                                        .width;
++                                }
++                                wrap_fragments.push(WrapLineFragment::element(width, word.len()));
++                                offset = word_end;
++                            }
++                        } else if start < end {
+                             push_text_wrap_fragments(
+                                 &mut wrap_fragments,
+                                 text,
+@@ -1850,6 +1957,104 @@ mod tests {
+         }
+     }
+ 
++    #[test]
++    fn parity_inline_code_box_paints_css_padding_without_changing_geometry() {
++        use super::super::inline::test_fonts::{BODY, MONO, WideMonoTextSystem};
++        use gpui::{Empty, TestApp};
++        let mut app = TestApp::with_text_system(Arc::new(WideMonoTextSystem));
++        let mut window = app.open_window(|_, _| Empty);
++        let style = TextStyle {
++            font_family: BODY.into(),
++            font_size: px(13.).into(),
++            ..Default::default()
++        };
++        let items = [MeasureItem::Text {
++            text: "甲 code 尾".into(),
++            links: vec![],
++            highlights: vec![(
++                4..8,
++                InlineHighlight {
++                    font_family: Some(MONO.into()),
++                    font_size_scale: Some(0.88),
++                    style: gpui::HighlightStyle {
++                        background_color: Some(gpui::black()),
++                        ..Default::default()
++                    },
++                },
++            )],
++        }];
++        window.update(|_, window, cx| {
++            for width in [None, Some(px(60.))] {
++                let legacy = layout_measured_flow(
++                    &items,
++                    &[None],
++                    &[None],
++                    &style,
++                    width,
++                    px(4.),
++                    None,
++                    window,
++                    cx,
++                );
++                let css = layout_measured_flow(
++                    &items,
++                    &[None],
++                    &[None],
++                    &style,
++                    width,
++                    px(4.),
++                    Some(0.12),
++                    window,
++                    cx,
++                );
++                assert_eq!(legacy.size, css.size);
++                assert_eq!(legacy.fragments.len(), css.fragments.len());
++                let mut boxes = 0;
++                for (a, b) in legacy.fragments.iter().zip(&css.fragments) {
++                    if let (
++                        PositionedFragment::Text {
++                            origin: ao,
++                            size: az,
++                            source_range: ar,
++                            selection_bounds: ab,
++                            code_background: ac,
++                            ..
++                        },
++                        PositionedFragment::Text {
++                            origin: bo,
++                            size: bz,
++                            source_range: br,
++                            selection_bounds: bb,
++                            code_background: bc,
++                            font_size,
++                            ..
++                        },
++                    ) = (a, b)
++                    {
++                        assert_eq!((ao, az, ar, ab), (bo, bz, br, bb));
++                        if let (Some((a, _)), Some((b, _))) = (ac, bc) {
++                            boxes += 1;
++                            assert_eq!(a.size.width, b.size.width);
++                            let font = window.text_system().resolve_font(&gpui::Font {
++                                family: MONO.into(),
++                                ..Default::default()
++                            });
++                            let glyph_height = window.text_system().ascent(font, *font_size)
++                                - window.text_system().descent(font, *font_size);
++                            assert!(
++                                (f32::from(b.size.height - glyph_height - *font_size * 0.24)).abs()
++                                    < 0.001,
++                                "{b:?}, {glyph_height:?}"
++                            );
++                            assert!(b.size.height > a.size.height);
++                        }
++                    }
++                }
++                assert!(boxes > 0);
++            }
++        });
++    }
++
+     #[test]
+     fn opt_in_inline_code_padding_reserves_wrap_and_paint_width() {
+         use super::super::inline::test_fonts::{BODY, MONO, WideMonoTextSystem};
+diff --git a/src/text/markdown_ext.rs b/src/text/markdown_ext.rs
+index 791a4bf..2488250 100644
+--- a/src/text/markdown_ext.rs
++++ b/src/text/markdown_ext.rs
+@@ -246,6 +246,10 @@ impl PartialEq for MarkdownNode {
+ pub struct MarkdownExtensions {
+     enable_mdx: bool,
+     enable_frontmatter: bool,
++    soft_breaks: bool,
++    disable_math: bool,
++    skip_empty_table_header: bool,
++    code_block_body: Option<Arc<MarkdownCodeBlockBodyFn>>,
+     block_parsers: Vec<Arc<MarkdownBlockParserFn>>,
+     block_renderers: HashMap<SharedString, Arc<MarkdownBlockRenderFn>>,
+     inline_parsers: Vec<Arc<MarkdownInlineParserFn>>,
+@@ -254,7 +258,69 @@ pub struct MarkdownExtensions {
+     parser_revision: u64,
+ }
+ 
++/// Replaces a code block's body, or returns `None` for Base code and actions.
++/// Called during rendering; prepare asynchronous resources outside this hook.
++pub type MarkdownCodeBlockBodyFn =
++    dyn Fn(&super::CodeBlock, &mut Window, &mut App) -> Option<AnyElement> + Send + Sync;
++
+ impl MarkdownExtensions {
++    /// Render source soft line endings as hard line breaks. Off by default.
++    pub fn soft_breaks(mut self, enabled: bool) -> Self {
++        self.soft_breaks = enabled;
++        self.bump_revision();
++        self
++    }
++
++    /// Enable both inline and fenced math parsing. On by default.
++    pub fn math(mut self, enabled: bool) -> Self {
++        self.disable_math = !enabled;
++        self.bump_revision();
++        self
++    }
++
++    /// Omit entirely empty table headers from the rendered/copy projection.
++    /// Original header syntax remains available when copying Markdown.
++    pub fn skip_empty_table_header(mut self, enabled: bool) -> Self {
++        self.skip_empty_table_header = enabled;
++        self.bump_revision();
++        self
++    }
++
++    /// Replace selected code block bodies without a second Markdown parser.
++    /// A replacement suppresses Base's code surface and actions, not block spacing.
++    /// When prepared resources change its geometry, call
++    /// [`super::TextViewState::invalidate_inline_layout`] from their owner.
++    /// The code remains the logical copy leaf; an arbitrary replacement does not
++    /// automatically acquire Base's text hit-testing or selection painting.
++    pub fn code_block_body_renderer<F>(mut self, render: F) -> Self
++    where
++        F: Fn(&super::CodeBlock, &mut Window, &mut App) -> Option<AnyElement>
++            + Send
++            + Sync
++            + 'static,
++    {
++        self.code_block_body = Some(Arc::new(render));
++        self.bump_revision();
++        self
++    }
++
++    pub(crate) fn hard_soft_breaks(&self) -> bool {
++        self.soft_breaks
++    }
++    pub(crate) fn omit_empty_header(&self) -> bool {
++        self.skip_empty_table_header
++    }
++
++    pub(crate) fn render_code_block_body(
++        &self,
++        code: &super::CodeBlock,
++        window: &mut Window,
++        cx: &mut App,
++    ) -> Option<AnyElement> {
++        self.code_block_body
++            .as_ref()
++            .and_then(|render| render(code, window, cx))
++    }
+     /// Change this revision when parser captures or plugin configuration change.
+     /// Reusing it allows equivalent registrations rebuilt during rendering to
+     /// retain the parsed document. Renderer-only changes do not need a new value.
+@@ -352,6 +418,9 @@ impl MarkdownExtensions {
+         self.parser_revision == other.parser_revision
+             && self.enable_mdx == other.enable_mdx
+             && self.enable_frontmatter == other.enable_frontmatter
++            && self.soft_breaks == other.soft_breaks
++            && self.disable_math == other.disable_math
++            && self.skip_empty_table_header == other.skip_empty_table_header
+             && self.block_parsers.len() == other.block_parsers.len()
+             && self.block_renderers.len() == other.block_renderers.len()
+             && self.inline_parsers.len() == other.inline_parsers.len()
+@@ -392,11 +461,11 @@ impl MarkdownExtensions {
+     pub(crate) fn parse_options(&self) -> ParseOptions {
+         let mut options = ParseOptions::gfm();
+         options.constructs.frontmatter = self.enable_frontmatter;
+-        options.constructs.math_text = true;
++        options.constructs.math_text = !self.disable_math;
+         // Both fences or neither: with only `math_text` on, the inline
+         // construct swallows a `$$` block, so a block plugin matching
+         // `Node::Math` never fires and the formula renders inline.
+-        options.constructs.math_flow = true;
++        options.constructs.math_flow = !self.disable_math;
+         if self.enable_mdx {
+             options.constructs.html_flow = false;
+             options.constructs.html_text = false;
+diff --git a/src/text/mod.rs b/src/text/mod.rs
+index c73a401..b3411ca 100644
+--- a/src/text/mod.rs
++++ b/src/text/mod.rs
+@@ -10,6 +10,8 @@ mod inline_virtual_tests;
+ mod logical_selection_tests;
+ mod markdown_ext;
+ mod node;
++#[cfg(test)]
++mod parity_tests;
+ mod range_highlight;
+ pub(crate) mod selection;
+ mod selection_adapter;
+@@ -18,6 +20,8 @@ mod stream_fade;
+ mod style;
+ mod text_view;
+ mod utils;
++#[cfg(test)]
++mod visual_parity_tests;
+ 
+ use gpui::{App, ElementId, IntoElement, RenderOnce, SharedString, Window};
+ pub use inline_element::*;
+diff --git a/src/text/node.rs b/src/text/node.rs
+index e4f236c..99d2d9d 100644
+--- a/src/text/node.rs
++++ b/src/text/node.rs
+@@ -1029,6 +1029,13 @@ fn table_selected_source(table: &Table, kind: BlockTextKind<'_>) -> String {
+     }
+ 
+     let mut lines: Vec<String> = Vec::new();
++    if let Some(header) = &table.omitted_header {
++        lines.push(format!(
++            "| {} |",
++            vec![""; header.children.len()].join(" | ")
++        ));
++        lines.push(table.delimiter(header.children.len()));
++    }
+     for (row_ix, row) in table.children.iter().enumerate() {
+         let cells: Vec<String> = sources[row_ix]
+             .iter()
+@@ -1038,7 +1045,7 @@ fn table_selected_source(table: &Table, kind: BlockTextKind<'_>) -> String {
+ 
+         // The Markdown delimiter row carries the column alignments and must
+         // follow the header row.
+-        if row_ix == 0 {
++        if row_ix == 0 && table.omitted_header.is_none() {
+             let aligns: Vec<String> = (0..row.children.len())
+                 .map(|ix| {
+                     match table.column_align(ix) {
+@@ -1688,6 +1695,7 @@ impl Paragraph {
+ #[derive(Debug, Clone, Default, PartialEq)]
+ pub(crate) struct Table {
+     pub(crate) children: Vec<TableRow>,
++    pub(crate) omitted_header: Option<TableRow>,
+     pub(crate) column_aligns: Vec<ColumnumnAlign>,
+     pub(crate) span: Option<Span>,
+     /// The [`TableData`] handed to the `table_actions` hook, kept between
+@@ -1745,6 +1753,16 @@ pub struct TableData {
+ }
+ 
+ impl Table {
++    fn delimiter(&self, columns: usize) -> String {
++        let cells = (0..columns)
++            .map(|ix| match self.column_align(ix) {
++                ColumnumnAlign::Left => ":--",
++                ColumnumnAlign::Center => ":-:",
++                ColumnumnAlign::Right => "--:",
++            })
++            .collect::<Vec<_>>();
++        format!("| {} |", cells.join(" | "))
++    }
+     pub(crate) fn column_align(&self, index: usize) -> ColumnumnAlign {
+         self.column_aligns.get(index).copied().unwrap_or_default()
+     }
+@@ -1758,7 +1776,12 @@ impl Table {
+     pub(crate) fn to_markdown(&self) -> String {
+         let mut lines: Vec<String> = Vec::with_capacity(self.children.len() + 1);
+ 
+-        for (row_ix, row) in self.children.iter().enumerate() {
++        for (row_ix, row) in self
++            .omitted_header
++            .iter()
++            .chain(self.children.iter())
++            .enumerate()
++        {
+             let cells: Vec<String> = row
+                 .children
+                 .iter()
+@@ -1803,8 +1826,18 @@ impl Table {
+         };
+ 
+         TableData {
+-            headers: self.children.first().map(row_text).unwrap_or_default(),
+-            rows: self.children.iter().skip(1).map(row_text).collect(),
++            headers: self
++                .omitted_header
++                .as_ref()
++                .or(self.children.first())
++                .map(row_text)
++                .unwrap_or_default(),
++            rows: self
++                .children
++                .iter()
++                .skip(usize::from(self.omitted_header.is_none()))
++                .map(row_text)
++                .collect(),
+             markdown: self.to_markdown(),
+             span: self.span.map(|span| span.start..span.end),
+         }
+@@ -1931,6 +1964,8 @@ pub struct CodeBlock {
+     state: Arc<Mutex<InlineState>>,
+     highlight_cache: Arc<Mutex<Option<CachedCodeBlockHighlights>>>,
+     source_segments: Vec<SourceSegment>,
++    source: Option<SharedString>,
++    closed_fence: bool,
+     pub span: Option<Span>,
+ }
+ 
+@@ -1954,6 +1989,47 @@ impl PartialEq for CodeBlock {
+ }
+ 
+ impl CodeBlock {
++    /// Original source including info string and fences; absent for synthetic blocks.
++    pub fn source(&self) -> Option<&str> {
++        self.source.as_deref()
++    }
++    /// Whether the parsed source has a closing backtick/tilde fence.
++    pub fn closed_fence(&self) -> bool {
++        self.closed_fence
++    }
++    /// Full-document UTF-8 byte range, including fences.
++    pub fn source_range(&self) -> Option<Range<usize>> {
++        self.span.map(|span| span.start..span.end)
++    }
++    pub(crate) fn with_source(mut self, source: &str, offset: usize) -> Self {
++        if let Some(raw) = self
++            .span
++            .and_then(|s| source.get(s.start.saturating_sub(offset)..s.end.saturating_sub(offset)))
++        {
++            let first_line = raw.split(['\r', '\n']).next().unwrap_or_default();
++            let first = first_line.trim_start();
++            let fence = first.chars().next().filter(|c| matches!(c, '`' | '~'));
++            if let Some(fence) = fence {
++                let count = first.chars().take_while(|c| *c == fence).count();
++                // Nested containers retain their quote/indent prefixes after the
++                // first line of the AST slice. They are not part of the fence.
++                let last = raw
++                    .trim_end_matches(['\r', '\n'])
++                    .rsplit(['\r', '\n'])
++                    .next()
++                    .unwrap_or_default()
++                    .trim_start_matches([' ', '\t', '>'])
++                    .trim_end();
++                self.closed_fence = first_line.len() - first.len() <= 3
++                    && count >= 3
++                    && raw.contains(['\r', '\n'])
++                    && last.chars().count() >= count
++                    && last.chars().all(|c| c == fence);
++            }
++            self.source = Some(raw.to_string().into());
++        }
++        self
++    }
+     /// Get the language of the code block.
+     pub fn lang(&self) -> Option<SharedString> {
+         self.lang.clone()
+@@ -1991,6 +2067,8 @@ impl CodeBlock {
+             state,
+             highlight_cache: Arc::new(Mutex::new(None)),
+             source_segments: vec![],
++            source: None,
++            closed_fence: false,
+             span: span.map(|s| s.into()),
+         }
+     }
+@@ -2125,6 +2203,19 @@ impl CodeBlock {
+         cx: &mut App,
+     ) -> AnyElement {
+         let style = &node_cx.style;
++        if let Some(body) = node_cx
++            .markdown_extensions
++            .render_code_block_body(self, window, cx)
++        {
++            return gapped(
++                body,
++                if options.is_last || style.block_spacing().is_some() {
++                    rems(0.)
++                } else {
++                    style.paragraph_gap()
++                },
++            );
++        }
+         let leaf_key = self.span.map(|span| TextLeafKey::block(span.start));
+ 
+         let highlights = fade_highlights(
+@@ -2244,7 +2335,7 @@ impl CodeBlock {
+ 
+         gapped(
+             block,
+-            if options.is_last {
++            if options.is_last || style.block_spacing().is_some() {
+                 rems(0.)
+             } else if options.following_paragraph {
+                 style
+@@ -2295,6 +2386,7 @@ fn measure_code_width(
+ /// A context for rendering nodes, contains link references.
+ #[derive(Default, Clone)]
+ pub(crate) struct NodeContext {
++    pub(crate) normal_word_wrap: bool,
+     /// The byte offset of the node in the original markdown text.
+     /// Used for incremental updates.
+     pub(crate) offset: usize,
+@@ -2369,6 +2461,9 @@ fn mark_highlight(mark: &TextMark, node_cx: &NodeContext, cx: &App) -> InlineHig
+         highlight.font_style = Some(FontStyle::Italic);
+     }
+     if mark.strikethrough {
++        if node_cx.style.deleted_muted() {
++            highlight.color = Some(node_cx.style.muted_foreground());
++        }
+         highlight.strikethrough = Some(gpui::StrikethroughStyle {
+             thickness: gpui::px(1.),
+             ..Default::default()
+@@ -2391,7 +2486,7 @@ fn mark_highlight(mark: &TextMark, node_cx: &NodeContext, cx: &App) -> InlineHig
+     InlineHighlight {
+         style: highlight,
+         font_family,
+-        font_size_scale: mark.code.then_some(0.875),
++        font_size_scale: mark.code.then_some(node_cx.style.inline_code_scale()),
+     }
+ }
+ 
+@@ -2437,13 +2532,15 @@ impl Paragraph {
+         let fades = node_cx.stream_fades(fade_key);
+         let backgrounds = node_cx.range_backgrounds(fade_key);
+ 
+-        if self.should_render_inline_flow() {
++        if node_cx.normal_word_wrap || self.should_render_inline_flow() {
+             return InlineFlow::new(
+                 leaf_element_id(fade_key),
+                 self.inline_flow_items(fade_key, fades, backgrounds, node_cx, cx),
+                 node_cx.link_click_handler.clone(),
+             )
+             .inline_code_padding(node_cx.style.inline_code_padding())
++            .normal_word_wrap(node_cx.normal_word_wrap)
++            .inline_code_box(node_cx.style.inline_code_box())
+             .into_any_element();
+         }
+ 
+@@ -2858,20 +2955,21 @@ const CELL_BORDER_PX: f32 = 1.0; // border_r_1 drawn by every column but the las
+ fn measure_table_columns(
+     table: &Table,
+     col_count: usize,
++    min_content: bool,
+     node_cx: &NodeContext,
+     window: &mut Window,
+     cx: &mut App,
+ ) -> Vec<f32> {
+     let css_cells = node_cx.style.table_css_cells();
+-    let mut col_w = vec![CELL_MIN_PX; col_count];
++    let mut col_w = vec![if css_cells { 0. } else { CELL_MIN_PX }; col_count];
+     for (row_ix, row) in table.children.iter().enumerate() {
+         let mut text_style = window.text_style();
+         if css_cells {
+             text_style.refine(&node_cx.style.table().text);
+-            text_style.refine(&node_cx.style.table_cell().text);
+-            if row_ix == 0 {
++            if row_ix == 0 && table.omitted_header.is_none() {
+                 text_style.refine(&node_cx.style.table_head().text);
+             }
++            text_style.refine(&node_cx.style.table_cell().text);
+         }
+         let font_size = text_style.font_size.to_pixels(window.rem_size());
+         for (ix, cell) in row.children.iter().enumerate() {
+@@ -2902,16 +3000,22 @@ fn measure_table_columns(
+             let text = cell.children.text();
+             let highlights = cell.children.inline_highlights(node_cx, cx);
+             let mut w = 0.0_f32;
+-            let mut line_start = 0;
+-            for line in text.split('\n') {
+-                let start = line_start + (line.len() - line.trim_start().len());
+-                let line_end = line_start + line.len();
+-                line_start = line_end + 1;
+-                let line = line.trim();
+-                if line.is_empty() {
+-                    continue;
+-                }
++            let mut consumed = 0;
++            let fragments: Vec<&str> = if min_content {
++                text.split_whitespace().collect()
++            } else {
++                text.split('\n')
++                    .map(str::trim)
++                    .filter(|s| !s.is_empty())
++                    .collect()
++            };
++            for line in fragments {
++                let start = consumed
++                    + text[consumed..]
++                        .find(line)
++                        .expect("fragment belongs to cell");
+                 let end = start + line.len();
++                consumed = end;
+                 let line_highlights = highlights
+                     .iter()
+                     .filter_map(|(range, highlight)| {
+@@ -3124,13 +3228,28 @@ impl BlockNode {
+ }
+ 
+ impl BlockNode {
++    pub(crate) fn list_item_has_marker(
++        options: NodeRenderOptions,
++        checked: Option<bool>,
++        loose: bool,
++        style: &TextViewStyle,
++    ) -> bool {
++        if style.block_spacing().is_some() {
++            checked.is_none() || loose
++        } else {
++            !options.todo && checked.is_none()
++        }
++    }
++
+     fn render_list_item_row(
+         content: AnyElement,
+         ix: usize,
+         options: NodeRenderOptions,
+         checked: Option<bool>,
++        loose: bool,
+         style: &TextViewStyle,
+         line_height: Pixels,
++        body_size: Pixels,
+     ) -> Div {
+         h_flex()
+             .w_full()
+@@ -3138,38 +3257,98 @@ impl BlockNode {
+             .relative()
+             .items_start()
+             .content_start()
+-            .when(!options.todo && checked.is_none(), |this| {
+-                let prefix = if style.list_style().is_some() && options.ordered {
+-                    format!("{}. ", ordered_list_ordinal(options.list_start, ix))
++            .when(
++                Self::list_item_has_marker(options, checked, loose, style),
++                |this| {
++                    let prefix = if style.list_style().is_some() && options.ordered {
++                        format!("{}. ", ordered_list_ordinal(options.list_start, ix))
++                    } else {
++                        list_item_prefix(ix, options.list_start, options.ordered, options.depth)
++                    };
++                    if let Some((indent, _, marker)) = style.list_style() {
++                        this.child(
++                            div()
++                                .w(indent)
++                                .flex_none()
++                                .relative()
++                                .text_color(marker)
++                                .child(
++                                    div()
++                                        .absolute()
++                                        .left(px(3.))
++                                        .whitespace_nowrap()
++                                        .child(prefix),
++                                ),
++                        )
++                    } else {
++                        this.child(prefix)
++                    }
++                },
++            )
++            .when_some(checked, |this, checked| {
++                // Todo list checkbox
++                let check_svg = if style.is_dark() {
++                    CHECK_SVG_DARK
+                 } else {
+-                    list_item_prefix(ix, options.list_start, options.ordered, options.depth)
++                    CHECK_SVG_LIGHT
+                 };
+-                if let Some((indent, _, marker)) = style.list_style() {
+-                    this.child(
++                if let Some(task) = style.task_checkbox() {
++                    let (size, inset, gap) = task.geometry(body_size, loose);
++                    return this.child(
+                         div()
+-                            .w(indent)
+                             .flex_none()
+                             .relative()
+-                            .text_color(marker)
++                            .w(inset + size + gap)
++                            .h(line_height)
+                             .child(
+                                 div()
+                                     .absolute()
+-                                    .left(px(3.))
+-                                    .whitespace_nowrap()
+-                                    .child(prefix),
++                                    .left(inset)
++                                    .top((line_height - size) / 2. + body_size * task.offset_em)
++                                    .size(size)
++                                    .opacity(task.opacity(loose))
++                                    .when(cfg!(any(test, feature = "test-support")), |this| {
++                                        this.debug_selector(move || {
++                                            format!("task-box-{}-{ix}", options.depth).into()
++                                        })
++                                    })
++                                    .rounded(task.radius)
++                                    .border_1()
++                                    .border_color(if checked {
++                                        task.checked_background
++                                    } else {
++                                        task.border
++                                    })
++                                    .bg(if checked {
++                                        task.checked_background
++                                    } else {
++                                        task.background
++                                    })
++                                    .when(checked, |this| {
++                                        this.child(
++                                            img(Arc::new(Image::from_bytes(
++                                                ImageFormat::Svg,
++                                                check_svg.to_vec(),
++                                            )))
++                                            // The full-size SVG belongs to the border box, not the inset content box.
++                                            .absolute()
++                                            .left(px(-1.))
++                                            .top(px(-1.))
++                                            .size(size)
++                                            .when(
++                                                cfg!(any(test, feature = "test-support")),
++                                                |this| {
++                                                    this.debug_selector(move || {
++                                                        format!("task-check-{}-{ix}", options.depth)
++                                                            .into()
++                                                    })
++                                                },
++                                            ),
++                                        )
++                                    }),
+                             ),
+-                    )
+-                } else {
+-                    this.child(prefix)
++                    );
+                 }
+-            })
+-            .when_some(checked, |this, checked| {
+-                // Todo list checkbox
+-                let check_svg = if style.is_dark() {
+-                    CHECK_SVG_DARK
+-                } else {
+-                    CHECK_SVG_LIGHT
+-                };
+                 this.child(
+                     div()
+                         .flex()
+@@ -3198,7 +3377,21 @@ impl BlockNode {
+                         ),
+                 )
+             })
+-            .child(div().flex_1().min_w_0().overflow_hidden().child(content))
++            .child(
++                div()
++                    .flex_1()
++                    .min_w_0()
++                    .overflow_hidden()
++                    .when(
++                        cfg!(any(test, feature = "test-support")) && checked.is_some(),
++                        |this| {
++                            this.debug_selector(move || {
++                                format!("task-label-{}-{ix}", options.depth).into()
++                            })
++                        },
++                    )
++                    .child(content),
++            )
+     }
+ 
+     fn render_list_item(
+@@ -3226,12 +3419,19 @@ impl BlockNode {
+                         match child {
+                             BlockNode::Paragraph { .. } => {
+                                 let last_not_list = child_ix > 0
+-                                    && !matches!(children[child_ix - 1], BlockNode::List { .. });
++                                    && (node_cx.style.block_spacing().is_some()
++                                        || !matches!(
++                                            children[child_ix - 1],
++                                            BlockNode::List { .. }
++                                        ));
+ 
+                                 let text = child.render_block(
+                                     NodeRenderOptions {
+                                         depth: options.depth + 1,
+                                         todo: checked.is_some(),
++                                        in_list: node_cx.style.block_spacing().is_some()
++                                            || options.in_list,
++                                        leading_gap: Pixels::ZERO,
+                                         is_last: true,
+                                         ..options
+                                     },
+@@ -3250,6 +3450,35 @@ impl BlockNode {
+                                                 div()
+                                                     .w_full()
+                                                     .pl(rems(1.))
++                                                    .when(
++                                                        node_cx.style.block_spacing().is_some(),
++                                                        |this| {
++                                                            this.pl(node_cx
++                                                                .style
++                                                                .list_style()
++                                                                .map_or(
++                                                                    px(16.),
++                                                                    |(indent, _, _)| indent,
++                                                                ))
++                                                        },
++                                                    )
++                                                    .when_some(
++                                                        node_cx.style.block_spacing(),
++                                                        |this, policy| {
++                                                            this.pt(node_cx
++                                                                .style
++                                                                .body_text_size()
++                                                                .unwrap_or_else(|| {
++                                                                    window
++                                                                        .text_style()
++                                                                        .font_size
++                                                                        .to_pixels(
++                                                                            window.rem_size(),
++                                                                        )
++                                                                })
++                                                                * policy.loose_list_continuation)
++                                                        },
++                                                    )
+                                                     .overflow_hidden()
+                                                     .child(text),
+                                             ),
+@@ -3263,8 +3492,12 @@ impl BlockNode {
+                                     ix,
+                                     options,
+                                     *checked,
++                                    *spread,
+                                     &node_cx.style,
+                                     window.line_height(),
++                                    node_cx.style.body_text_size().unwrap_or_else(|| {
++                                        window.text_style().font_size.to_pixels(window.rem_size())
++                                    }),
+                                 ));
+                             }
+                             BlockNode::List { .. } => {
+@@ -3274,14 +3507,47 @@ impl BlockNode {
+                                             .style
+                                             .list_style()
+                                             .map_or(px(16.), |(indent, _, _)| indent))
+-                                        .when(node_cx.style.list_style().is_some(), |this| {
+-                                            this.mt(px(1.95))
++                                        .when(
++                                            node_cx.style.list_style().is_some()
++                                                && node_cx.style.block_spacing().is_none(),
++                                            |this| this.mt(px(1.95)),
++                                        )
++                                        .when_some(node_cx.style.block_spacing(), |this, policy| {
++                                            let body = node_cx
++                                                .style
++                                                .body_text_size()
++                                                .unwrap_or_else(|| {
++                                                    window
++                                                        .text_style()
++                                                        .font_size
++                                                        .to_pixels(window.rem_size())
++                                                });
++                                            let previous = if *spread
++                                                && child_ix > 0
++                                                && matches!(
++                                                    children[child_ix - 1],
++                                                    BlockNode::Paragraph(_)
++                                                ) {
++                                                body * policy.loose_list_continuation
++                                            } else {
++                                                Pixels::ZERO
++                                            };
++                                            this.pt((body * policy.nested_list_top)
++                                                .max(previous)
++                                                .max(child.collapsed_boundary_top(
++                                                    &node_cx.style,
++                                                    body,
++                                                    window.rem_size(),
++                                                )))
+                                         })
+                                         .child(child.render_block(
+                                             NodeRenderOptions {
+                                                 depth: options.depth + 1,
+                                                 todo: checked.is_some(),
+                                                 is_last: true,
++                                                in_list: node_cx.style.block_spacing().is_some()
++                                                    || options.in_list,
++                                                leading_gap: Pixels::ZERO,
+                                                 ..options
+                                             },
+                                             node_cx,
+@@ -3301,6 +3567,9 @@ impl BlockNode {
+                                     NodeRenderOptions {
+                                         depth: options.depth + 1,
+                                         todo: checked.is_some(),
++                                        in_list: node_cx.style.block_spacing().is_some()
++                                            || options.in_list,
++                                        leading_gap: Pixels::ZERO,
+                                         is_last: true,
+                                         ..options
+                                     },
+@@ -3315,8 +3584,15 @@ impl BlockNode {
+                                         ix,
+                                         options,
+                                         *checked,
++                                        *spread,
+                                         &node_cx.style,
+                                         window.line_height(),
++                                        node_cx.style.body_text_size().unwrap_or_else(|| {
++                                            window
++                                                .text_style()
++                                                .font_size
++                                                .to_pixels(window.rem_size())
++                                        }),
+                                     ));
+                                 } else {
+                                     // Indent continuation blocks to align with a
+@@ -3418,13 +3694,19 @@ impl BlockNode {
+         const CELL_WRAP_MAX_PX: f32 = 480.0;
+         const TABLE_BORDER_PX: f32 = 2.0; // the track's border_1, left + right
+ 
++        let mut cell_cx = node_cx.clone();
++        cell_cx.normal_word_wrap = node_cx.style.table_css_cells();
+         let style = &node_cx.style;
+-        let mut col_w = measure_table_columns(table, col_count, node_cx, window, cx);
++        let mut col_w = measure_table_columns(table, col_count, false, node_cx, window, cx);
+         if style.table_css_cells() {
+             // Base's width already includes 8px per side and an internal rule.
+             // CSS cells use 12px per side and no vertical rules.
+             for (ix, width) in col_w.iter_mut().enumerate() {
+                 *width += if ix + 1 < col_count { 7. } else { 8. };
++                // Taffy rounds the cell to device pixels. Round the measured
++                // border box outward so its content floor never rounds short.
++                let scale = f32::from(window.scale_factor());
++                *width = (*width * scale).ceil() / scale;
+             }
+         }
+         // Nowrap cells (via the `table_cell` refinement, which cascades to
+@@ -3433,6 +3715,16 @@ impl BlockNode {
+         let nowrap = style.table_cell().text.white_space == Some(WhiteSpace::Nowrap);
+         let col_min_w: Vec<f32> = if nowrap {
+             col_w.clone()
++        } else if style.table_css_cells() {
++            measure_table_columns(table, col_count, true, node_cx, window, cx)
++                .into_iter()
++                .enumerate()
++                .map(|(ix, width)| {
++                    let scale = f32::from(window.scale_factor());
++                    let border_box = width + if ix + 1 < col_count { 7. } else { 8. };
++                    ((border_box * scale).ceil() / scale).min(col_w[ix])
++                })
++                .collect()
+         } else {
+             col_w
+                 .iter()
+@@ -3484,15 +3776,35 @@ impl BlockNode {
+                         .when(align == ColumnumnAlign::Right, |this| this.text_right())
+                         .px_2()
+                         .py_1()
+-                        .when(style.table_css_cells(), |this| this.px(px(12.)))
++                        .when(style.table_css_cells(), |this| {
++                            this.px(px(12.)).flex().flex_col().justify_center()
++                        })
+                         .when(!is_last_col && !style.table_css_cells(), |this| {
+                             this.border_r_1().border_color(style.border())
+                         })
+                         .refine_style(&style.table_cell())
+-                        .when(cfg!(test) && style.table_css_cells(), |this| {
+-                            this.debug_selector(move || format!("css-cell-{row_ix}-{ix}").into())
+-                        })
+-                        .child(cell.children.render(fade_key, node_cx, window, cx)),
++                        .when(
++                            cfg!(any(test, feature = "test-support")) && style.table_css_cells(),
++                            |this| {
++                                this.debug_selector(move || {
++                                    format!("css-cell-{row_ix}-{ix}").into()
++                                })
++                            },
++                        )
++                        .child(if style.table_css_cells() {
++                            div()
++                                .w_full()
++                                .min_w_0()
++                                .when(cfg!(any(test, feature = "test-support")), |this| {
++                                    this.debug_selector(move || {
++                                        format!("css-cell-text-{row_ix}-{ix}").into()
++                                    })
++                                })
++                                .child(cell.children.render(fade_key, &cell_cx, window, cx))
++                                .into_any_element()
++                        } else {
++                            cell.children.render(fade_key, node_cx, window, cx)
++                        }),
+                 );
+             }
+             rows.push(
+@@ -3505,7 +3817,7 @@ impl BlockNode {
+                     // The first row is the header, as everywhere else that
+                     // reads a table (`table_data`, `to_markdown`). The
+                     // refinement comes last so it can override the defaults.
+-                    .when(row_ix == 0, |this| {
++                    .when(row_ix == 0 && table.omitted_header.is_none(), |this| {
+                         this.bg(style.code_background())
+                             .text_color(style.foreground())
+                             .refine_style(&style.table_head())
+@@ -3515,7 +3827,11 @@ impl BlockNode {
+         }
+ 
+         div()
+-            .pb(rems(1.))
++            .pb(if style.block_spacing().is_some() {
++                rems(0.)
++            } else {
++                rems(1.)
++            })
+             .w_full()
+             // `col_w` already includes each cell's px_2 padding and its
+             // right border; only the viewport's two border_1 edges remain.
+@@ -3622,7 +3938,7 @@ impl BlockNode {
+                     // The first row is the header, as everywhere else that
+                     // reads a table (`table_data`, `to_markdown`). The
+                     // refinement comes last so it can override the defaults.
+-                    .when(row_ix == 0, |this| {
++                    .when(row_ix == 0 && table.omitted_header.is_none(), |this| {
+                         this.bg(style.code_background())
+                             .text_color(style.foreground())
+                             .refine_style(&style.table_head())
+@@ -3632,7 +3948,11 @@ impl BlockNode {
+         }
+ 
+         div()
+-            .pb(rems(1.))
++            .pb(if style.block_spacing().is_some() {
++                rems(0.)
++            } else {
++                rems(1.)
++            })
+             .w_full()
+             .child(
+                 div()
+@@ -3659,6 +3979,92 @@ impl BlockNode {
+             .into_any_element()
+     }
+ 
++    pub(crate) fn block_margins(
++        &self,
++        style: &TextViewStyle,
++        body: Pixels,
++        rem_size: Pixels,
++        after_heading: bool,
++    ) -> (Pixels, Pixels) {
++        let Some(policy) = style.block_spacing() else {
++            return (Pixels::ZERO, Pixels::ZERO);
++        };
++        match self {
++            Self::Heading { level, .. } => {
++                let size = style
++                    .heading(*level)
++                    .text
++                    .font_size
++                    .map(|size| size.to_pixels(rem_size))
++                    .unwrap_or_else(|| {
++                        Self::heading_defaults(*level)
++                            .0
++                            .to_pixels(style.body_text_size().unwrap_or(px(14.)))
++                    });
++                (
++                    size * if after_heading {
++                        policy.consecutive_heading_top
++                    } else {
++                        policy.heading_top
++                    },
++                    size * policy.heading_bottom,
++                )
++            }
++            Self::HorizontalRule { .. } => (body * policy.rule, body * policy.rule),
++            Self::Definition { .. } | Self::Unknown | Self::Break { .. } => {
++                (Pixels::ZERO, Pixels::ZERO)
++            }
++            _ => (body * policy.paragraph, body * policy.paragraph),
++        }
++    }
++
++    /// A left border does not contain vertical margins. The first descendant's
++    /// margin collapses through a quote even when the document resets the quote.
++    pub(crate) fn collapsed_boundary_top(
++        &self,
++        style: &TextViewStyle,
++        body: Pixels,
++        rem: Pixels,
++    ) -> Pixels {
++        match self {
++            Self::CodeBlock(_) => body * style.block_spacing().map_or(0., |p| p.first_code_top),
++            Self::List { children, .. } => children.first().map_or(Pixels::ZERO, |first| {
++                if let Self::ListItem {
++                    children,
++                    spread: true,
++                    ..
++                } = first
++                    && matches!(children.first(), Some(Self::Paragraph(_)))
++                {
++                    body * style
++                        .block_spacing()
++                        .map_or(0., |p| p.loose_list_continuation)
++                } else {
++                    Pixels::ZERO
++                }
++            }),
++            Self::Blockquote { children, .. } => children.first().map_or(Pixels::ZERO, |first| {
++                first
++                    .block_margins(style, body, rem, false)
++                    .0
++                    .max(first.collapsed_boundary_top(style, body, rem))
++            }),
++            _ => Pixels::ZERO,
++        }
++    }
++
++    fn heading_defaults(level: u8) -> (Rems, FontWeight) {
++        match level {
++            1 => (rems(2.), FontWeight::BOLD),
++            2 => (rems(1.5), FontWeight::SEMIBOLD),
++            3 => (rems(1.25), FontWeight::SEMIBOLD),
++            4 => (rems(1.125), FontWeight::SEMIBOLD),
++            5 => (rems(1.), FontWeight::SEMIBOLD),
++            6 => (rems(1.), FontWeight::MEDIUM),
++            _ => (rems(1.), FontWeight::NORMAL),
++        }
++    }
++
+     pub(crate) fn render_block(
+         &self,
+         options: NodeRenderOptions,
+@@ -3666,7 +4072,44 @@ impl BlockNode {
+         window: &mut Window,
+         cx: &mut App,
+     ) -> AnyElement {
+-        let mb = if options.in_list || options.is_last {
++        let inner = self.render_block_content(options, node_cx, window, cx);
++        #[cfg(any(test, feature = "test-support"))]
++        let inner = if node_cx.style.block_spacing().is_some() {
++            div()
++                .debug_selector(move || format!("parity-content-{}", options.ix).into())
++                .child(inner)
++                .into_any_element()
++        } else {
++            inner
++        };
++        if node_cx.style.block_spacing().is_some() && !options.in_list {
++            div()
++                .pt(if options.boundary_margin_collapsed {
++                    options.leading_gap
++                } else {
++                    options.leading_gap.max(self.collapsed_boundary_top(
++                        &node_cx.style,
++                        node_cx.style.body_text_size().unwrap_or_else(|| {
++                            window.text_style().font_size.to_pixels(window.rem_size())
++                        }),
++                        window.rem_size(),
++                    ))
++                })
++                .child(inner)
++                .into_any_element()
++        } else {
++            inner
++        }
++    }
++
++    fn render_block_content(
++        &self,
++        options: NodeRenderOptions,
++        node_cx: &NodeContext,
++        window: &mut Window,
++        cx: &mut App,
++    ) -> AnyElement {
++        let mb = if options.in_list || options.is_last || node_cx.style.block_spacing().is_some() {
+             rems(0.)
+         } else {
+             node_cx.style.paragraph_gap()
+@@ -3675,7 +4118,28 @@ impl BlockNode {
+         match self {
+             BlockNode::Root { children, .. } => div()
+                 .children(children.into_iter().enumerate().map(move |(ix, node)| {
+-                    node.render_block(NodeRenderOptions { ix, ..options }, node_cx, window, cx)
++                    node.render_block(
++                        if node_cx.style.block_spacing().is_none() {
++                            NodeRenderOptions { ix, ..options }
++                        } else {
++                            NodeRenderOptions::sibling(
++                                children,
++                                ix,
++                                NodeRenderOptions {
++                                    in_list: false,
++                                    ..options
++                                },
++                                &node_cx.style,
++                                node_cx.style.body_text_size().unwrap_or_else(|| {
++                                    window.text_style().font_size.to_pixels(window.rem_size())
++                                }),
++                                window.rem_size(),
++                            )
++                        },
++                        node_cx,
++                        window,
++                        cx,
++                    )
+                 }))
+                 .into_any_element(),
+             BlockNode::Paragraph(paragraph) => gapped(
+@@ -3692,17 +4156,21 @@ impl BlockNode {
+                 children,
+                 span,
+             } => {
+-                let (text_size, font_weight) = match level {
+-                    1 => (rems(2.), FontWeight::BOLD),
+-                    2 => (rems(1.5), FontWeight::SEMIBOLD),
+-                    3 => (rems(1.25), FontWeight::SEMIBOLD),
+-                    4 => (rems(1.125), FontWeight::SEMIBOLD),
+-                    5 => (rems(1.), FontWeight::SEMIBOLD),
+-                    6 => (rems(1.), FontWeight::MEDIUM),
+-                    _ => (rems(1.), FontWeight::NORMAL),
+-                };
++                let (text_size, font_weight) = Self::heading_defaults(*level);
++                let mut heading_cx = node_cx.clone();
++                if node_cx.style.heading_strong_inherit() {
++                    let weight = node_cx
++                        .style
++                        .heading(*level)
++                        .text
++                        .font_weight
++                        .unwrap_or(font_weight);
++                    heading_cx.style =
++                        Arc::new((*node_cx.style).clone().with_strong_weight(weight));
++                }
+ 
+-                let text_size = text_size.to_pixels(px(14.));
++                let text_size =
++                    text_size.to_pixels(node_cx.style.body_text_size().unwrap_or(px(14.)));
+ 
+                 div()
+                     .pb(rems(0.3))
+@@ -3710,9 +4178,12 @@ impl BlockNode {
+                     .text_size(text_size)
+                     .font_weight(font_weight)
+                     .refine_style(&node_cx.style.heading(*level))
++                    .when(node_cx.style.block_spacing().is_some(), |this| {
++                        this.pt(px(0.)).pb(px(0.))
++                    })
+                     .child(children.render(
+                         span.map(|span| TextLeafKey::block(span.start)),
+-                        node_cx,
++                        &heading_cx,
+                         window,
+                         cx,
+                     ))
+@@ -3725,11 +4196,39 @@ impl BlockNode {
+                     .border_l_3()
+                     .border_color(node_cx.style.border())
+                     .px_4()
++                    .when_some(node_cx.style.blockquote(), |this, style| {
++                        this.refine_style(style)
++                    })
+                     .children({
+                         let children_len = children.len();
+                         children.into_iter().enumerate().map(move |(index, c)| {
+                             let is_last = index == children_len - 1;
+-                            c.render_block(options.is_last(is_last), node_cx, window, cx)
++                            c.render_block(
++                                if node_cx.style.block_spacing().is_none() {
++                                    options.is_last(is_last)
++                                } else {
++                                    NodeRenderOptions::sibling(
++                                        children,
++                                        index,
++                                        NodeRenderOptions {
++                                            in_list: false,
++                                            boundary_margin_collapsed: index == 0,
++                                            ..options.is_last(is_last)
++                                        },
++                                        &node_cx.style,
++                                        node_cx.style.body_text_size().unwrap_or_else(|| {
++                                            window
++                                                .text_style()
++                                                .font_size
++                                                .to_pixels(window.rem_size())
++                                        }),
++                                        window.rem_size(),
++                                    )
++                                },
++                                node_cx,
++                                window,
++                                cx,
++                            )
+                         })
+                     })
+                     .into_any_element(),
+@@ -3744,15 +4243,31 @@ impl BlockNode {
+                 .w_full()
+                 .min_w_0()
+                 .when(
+-                    node_cx.style.list_style().is_some() && options.depth == 0 && options.ix > 0,
++                    cfg!(any(test, feature = "test-support"))
++                        && node_cx.style.block_spacing().is_some(),
++                    |this| {
++                        this.debug_selector(move || {
++                            format!("css-list-{}-{}", options.depth, options.ix).into()
++                        })
++                    },
++                )
++                .when(
++                    node_cx.style.block_spacing().is_none()
++                        && node_cx.style.list_style().is_some()
++                        && options.depth == 0
++                        && options.ix > 0,
+                     |this| this.mt(px(-2.1)),
+                 )
+                 .when(
+-                    node_cx.style.list_style().is_some() && options.depth == 0 && !options.is_last,
++                    node_cx.style.block_spacing().is_none()
++                        && node_cx.style.list_style().is_some()
++                        && options.depth == 0
++                        && !options.is_last,
+                     |this| this.pb(px(9.1)),
+                 )
+                 .when(
+-                    !(node_cx.style.list_style().is_some()
++                    !(node_cx.style.block_spacing().is_none()
++                        && node_cx.style.list_style().is_some()
+                         && options.depth == 0
+                         && !options.is_last),
+                     |this| this.pb(mb),
+@@ -3777,7 +4292,15 @@ impl BlockNode {
+                             cx,
+                         );
+                         items.push(if is_item && item_index > 0 {
+-                            if let Some((_, gap, _)) = node_cx.style.list_style() {
++                            if let Some(policy) = node_cx.style.block_spacing() {
++                                let size = node_cx.style.body_text_size().unwrap_or_else(|| {
++                                    window.text_style().font_size.to_pixels(window.rem_size())
++                                });
++                                div()
++                                    .pt(size * policy.loose_list_continuation)
++                                    .child(row)
++                                    .into_any_element()
++                            } else if let Some((_, gap, _)) = node_cx.style.list_style() {
+                                 div().mt(gap).child(row).into_any_element()
+                             } else {
+                                 row
+@@ -3808,7 +4331,7 @@ impl BlockNode {
+             BlockNode::HorizontalRule { .. } => gapped(
+                 div()
+                     .bg(node_cx.style.border())
+-                    .h(px(2.))
++                    .h(node_cx.style.horizontal_rule_thickness())
+                     .into_any_element(),
+                 mb,
+             ),
+@@ -3829,6 +4352,68 @@ impl BlockNode {
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    fn parity_inline_styles_and_heading_weight_inherit_without_changing_defaults() {
++        let mut app = gpui::TestApp::new();
++        let mut window = app.open_window(|_, _| gpui::Empty);
++        window.update(|_, window, cx| {
++            cx.set_global(crate::Theme::default());
++            let base = NodeContext::default();
++            let opted = NodeContext {
++                style: Arc::new(
++                    TextViewStyle::default()
++                        .with_strong_weight(FontWeight::SEMIBOLD)
++                        .with_heading_strong_inherit(true)
++                        .with_deleted_muted(true)
++                        .with_inline_code_scale(0.88)
++                        .with_heading(|_| StyleRefinement::default().font_weight(FontWeight(650.))),
++                ),
++                ..Default::default()
++            };
++            let mark = TextMark::default().code().strikethrough();
++            let original = mark_highlight(&mark, &base, cx);
++            let styled = mark_highlight(&mark, &opted, cx);
++            assert_eq!(original.style.color, None);
++            assert_eq!(original.font_size_scale, Some(0.875));
++            assert_eq!(styled.style.color, Some(opted.style.muted_foreground()));
++            assert_eq!(styled.font_size_scale, Some(0.88));
++            for node_cx in [&base, &opted] {
++                let document = super::super::format::markdown::parse(
++                    "**body**\n\n## **heading**",
++                    &mut NodeContext::default(),
++                )
++                .unwrap();
++                for (ix, block) in document.blocks.iter().enumerate() {
++                    let _ = block.render_block(
++                        NodeRenderOptions {
++                            ix,
++                            ..Default::default()
++                        },
++                        node_cx,
++                        window,
++                        cx,
++                    );
++                    let paragraph = match block {
++                        BlockNode::Paragraph(p) | BlockNode::Heading { children: p, .. } => p,
++                        _ => unreachable!(),
++                    };
++                    let cache = paragraph.render_cache.0.lock().unwrap();
++                    let weight = cache.as_ref().unwrap().highlights[0].1.style.font_weight;
++                    let expected = if node_cx.style.heading_strong_inherit() {
++                        if ix == 0 {
++                            FontWeight::SEMIBOLD
++                        } else {
++                            FontWeight(650.)
++                        }
++                    } else {
++                        FontWeight::BOLD
++                    };
++                    assert_eq!(weight, Some(expected));
++                }
++            }
++        });
++    }
++
+     #[test]
+     fn selected_inline_objects_coalesce_surrounding_emphasis() {
+         for (object_mark, expected) in [
+@@ -3988,7 +4573,7 @@ mod tests {
+             for expected in [400, 600] {
+                 width.store(expected, std::sync::atomic::Ordering::Relaxed);
+                 assert_eq!(
+-                    measure_table_columns(&table, 1, &node_cx, window, cx)[0],
++                    measure_table_columns(&table, 1, false, &node_cx, window, cx)[0],
+                     expected as f32 + CELL_PAD_PX
+                 );
+             }
+@@ -4047,6 +4632,7 @@ mod tests {
+                 }],
+             }],
+             column_aligns: vec![],
++            omitted_header: None,
+             span: None,
+             table_data_cache: TableDataCache::default(),
+         };
+@@ -4060,7 +4646,7 @@ mod tests {
+             cx.set_global(theme);
+             let font_size = window.text_style().font_size.to_pixels(window.rem_size());
+             (
+-                measure_table_columns(&table, 1, &node_cx, window, cx),
++                measure_table_columns(&table, 1, false, &node_cx, window, cx),
+                 font_size,
+             )
+         });
+@@ -4495,6 +5081,7 @@ mod tests {
+                 },
+             ],
+             column_aligns: vec![ColumnumnAlign::Left, ColumnumnAlign::Right],
++            omitted_header: None,
+             span: None,
+             table_data_cache: TableDataCache::default(),
+         };
+@@ -4521,6 +5108,7 @@ mod tests {
+                 .map(|children| TableRow { children })
+                 .collect(),
+             column_aligns,
++            omitted_header: None,
+             span: None,
+             table_data_cache: TableDataCache::default(),
+         }
+@@ -4908,6 +5496,53 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn parity_task_check_svg_opaque_ink_is_centered_in_border_box() {
++        let renderer = gpui::SvgRenderer::new(Arc::new(()));
++        for svg in [CHECK_SVG_LIGHT, CHECK_SVG_DARK] {
++            // ImageSource decodes SVGs through this same path, including its 2x smoothing raster.
++            let image = renderer.render_single_frame(svg, 1.).unwrap();
++            let raster = image.size(0);
++            let bytes = image.as_bytes(0).unwrap();
++            let mut ink = (raster.width.0, raster.height.0, 0, 0);
++            for y in 0..raster.height.0 {
++                for x in 0..raster.width.0 {
++                    let alpha = bytes[((y * raster.width.0 + x) * 4 + 3) as usize];
++                    if alpha >= 250 {
++                        ink.0 = ink.0.min(x);
++                        ink.1 = ink.1.min(y);
++                        ink.2 = ink.2.max(x + 1);
++                        ink.3 = ink.3.max(y + 1);
++                    }
++                }
++            }
++            assert!(ink.0 > 0 && ink.1 > 0 && ink.2 < raster.width.0 && ink.3 < raster.height.0);
++            for body in [13., 11.] {
++                for loose in [false, true] {
++                    for scale in [2., 1.] {
++                        let (size, _, _) =
++                            super::super::MarkdownTaskCheckbox::default().geometry(px(body), loose);
++                        let size = (f32::from(size) * scale).round() / scale;
++                        // Map real opaque raster bounds through GPUI's square contain-fit image bounds.
++                        let left = ink.0 as f32 / raster.width.0 as f32 * size;
++                        let right = ink.2 as f32 / raster.width.0 as f32 * size;
++                        let top = ink.1 as f32 / raster.height.0 as f32 * size;
++                        let bottom = ink.3 as f32 / raster.height.0 as f32 * size;
++                        let error_x = (left + right - size) / 2.;
++                        let error_y = (top + bottom - size) / 2.;
++                        println!(
++                            "task opaque SVG {body}/{loose}/{scale}: ink={ink:?}, center-error=({error_x}, {error_y})"
++                        );
++                        assert!(
++                            error_x.abs() <= 0.3 && error_y.abs() <= 0.3,
++                            "opaque check ink is already centered; border-inset placement must not add a pixel"
++                        );
++                    }
++                }
++            }
++        }
++    }
++
+     #[test]
+     fn code_block_equality_includes_code_content() {
+         let first = CodeBlock::new("let value = 1;".into(), Some("rust".into()), None::<Span>);
+diff --git a/src/text/parity_tests.rs b/src/text/parity_tests.rs
+new file mode 100644
+index 0000000..485cb23
+--- /dev/null
++++ b/src/text/parity_tests.rs
+@@ -0,0 +1,514 @@
++use super::{
++    MarkdownBlockSpacing, MarkdownExtensions, SelectionFormat, TextView, TextViewState,
++    TextViewStyle,
++    document::NodeRenderOptions,
++    format::markdown,
++    node::{BlockNode, NodeContext},
++    range_highlight::RenderedIndex,
++};
++use gpui::{InteractiveElement as _, IntoElement, ParentElement, Styled, px};
++use std::sync::Arc;
++
++fn configured(source: &str, extensions: &MarkdownExtensions) -> super::document::ParsedDocument {
++    markdown::parse(
++        source,
++        &mut NodeContext {
++            markdown_extensions: Arc::new(extensions.clone()),
++            ..Default::default()
++        },
++    )
++    .unwrap()
++}
++
++#[test]
++fn parity_soft_breaks_math_and_utf8_source_projection() {
++    let source = "**甲\r\n乙** and $5 *cost* $10";
++    let extensions = MarkdownExtensions::default().soft_breaks(true).math(false);
++    let doc = configured(source, &extensions);
++    assert_eq!(doc.text(), "甲\n乙 and $5 cost $10\n");
++    assert_eq!(
++        configured("甲\n乙", &MarkdownExtensions::default()).text(),
++        "甲 乙\n"
++    );
++    let index = RenderedIndex::new(&doc);
++    for range in [0..7, 3..4, 4..7] {
++        assert_eq!(
++            TextViewState::copy_markdown_slice_with_extensions(
++                source,
++                Some(range.start),
++                Some(range.end),
++                SelectionFormat::Plain,
++                &extensions
++            )
++            .unwrap(),
++            &doc.text()[range.clone()]
++        );
++        assert_eq!(
++            TextViewState::copy_markdown_slice_with_extensions(
++                source,
++                Some(range.start),
++                Some(range.end),
++                SelectionFormat::Source,
++                &extensions
++            )
++            .unwrap(),
++            doc.copy_rendered_range(&index, range, SelectionFormat::Source)
++                .unwrap()
++        );
++    }
++    assert_eq!(
++        doc.source_range_for_rendered_range(&index, 3..4),
++        Some(5..7)
++    );
++    assert_eq!(
++        doc.source_range_for_rendered_range(&index, 4..7),
++        Some(7..10)
++    );
++    assert!(
++        TextViewState::copy_markdown_slice_with_extensions(
++            source,
++            Some(1),
++            Some(2),
++            SelectionFormat::Plain,
++            &extensions
++        )
++        .is_err()
++    );
++    let mut math_nodes = 0;
++    let disabled = extensions
++        .block_parser(|node, _| {
++            assert!(!matches!(node, super::markdown_ast::Node::Math(_)));
++            None
++        })
++        .plugin(
++            super::markdown_ext::TestInlinePlugin::new("not-math").parse_with(|node, _| {
++                assert!(!matches!(node, super::markdown_ast::Node::InlineMath(_)));
++                None
++            }),
++        );
++    let no_math = configured("$$\n甲 *乙*\n$$", &disabled);
++    for block in no_math.blocks.iter() {
++        if matches!(block, BlockNode::CodeBlock(_)) {
++            math_nodes += 1;
++        }
++    }
++    assert_eq!(math_nodes, 0);
++}
++
++#[gpui::test]
++fn parity_initial_extensions_parse_crlf_without_default_reparse(cx: &mut gpui::TestAppContext) {
++    use gpui::AppContext as _;
++    use std::sync::atomic::{AtomicUsize, Ordering};
++
++    cx.update(crate::init);
++    let source = "**甲\r\n乙**";
++    let calls = Arc::new(AtomicUsize::new(0));
++    let count = calls.clone();
++    let extensions = MarkdownExtensions::default()
++        .soft_breaks(true)
++        .block_parser(move |_, _| {
++            count.fetch_add(1, Ordering::Relaxed);
++            None
++        });
++    let view = cx.new(|cx| TextViewState::markdown_with_extensions(source, extensions.clone(), cx));
++    assert!(
++        calls.load(Ordering::Relaxed) > 0,
++        "initial parse uses configured parser"
++    );
++    view.read_with(cx, |state, _| {
++        assert_eq!(state.rendered_text().as_str(), "甲\n乙\n");
++        for format in [SelectionFormat::Plain, SelectionFormat::Source] {
++            assert_eq!(
++                state.copy_rendered_range(0..7, format).unwrap(),
++                TextViewState::copy_markdown_slice_with_extensions(
++                    source,
++                    Some(0),
++                    Some(7),
++                    format,
++                    &extensions
++                )
++                .unwrap()
++            );
++        }
++    });
++    let default = cx.new(|cx| TextViewState::markdown(source, cx));
++    default.read_with(cx, |state, _| {
++        assert_eq!(state.rendered_text().as_str(), "甲 乙\n")
++    });
++    cx.run_until_parked();
++    view.read_with(cx, |state, _| {
++        assert_eq!(state.rendered_text().as_str(), "甲\n乙\n")
++    });
++    default.read_with(cx, |state, _| {
++        assert_eq!(state.rendered_text().as_str(), "甲 乙\n")
++    });
++}
++
++#[test]
++fn parity_empty_header_has_no_rendered_leaf_but_keeps_gfm_source() {
++    let source = "| | |\n|:--|--:|\n|甲|乙|";
++    let extensions = MarkdownExtensions::default().skip_empty_table_header(true);
++    let doc = configured(source, &extensions);
++    let BlockNode::Table(table) = &doc.blocks[0] else {
++        panic!("table");
++    };
++    assert_eq!(table.children.len(), 1);
++    assert_eq!(table.table_data().headers, ["", ""]);
++    assert_eq!(table.table_data().rows, [vec!["甲", "乙"]]);
++    assert_eq!(doc.text(), "甲 乙\n\n");
++    let copy = TextViewState::copy_markdown_slice_with_extensions(
++        source,
++        Some(0),
++        Some(3),
++        SelectionFormat::Source,
++        &extensions,
++    )
++    .unwrap();
++    assert_eq!(copy, "|  |  |\n| :-- | --: |\n| 甲 |  |");
++    let index = RenderedIndex::new(&doc);
++    let start = source.find('甲').unwrap();
++    assert_eq!(
++        doc.source_range_for_rendered_range(&index, 0..3),
++        Some(start..start + 3)
++    );
++    assert_eq!(
++        configured(source, &MarkdownExtensions::default()).text(),
++        " \n甲 乙\n\n"
++    );
++    for nonempty in [
++        "|甲| |\n|--|--|\n|a|b|",
++        "|![alt](x)| |\n|--|--|\n|a|b|",
++        "|&nbsp;| |\n|--|--|\n|a|b|",
++        "|` `| |\n|--|--|\n|a|b|",
++        "|<br>| |\n|--|--|\n|a|b|",
++    ] {
++        let doc = configured(nonempty, &extensions);
++        let BlockNode::Table(table) = &doc.blocks[0] else {
++            panic!("table");
++        };
++        assert!(table.omitted_header.is_none());
++    }
++}
++
++#[test]
++fn parity_extensions_revisions_and_real_fence_source() {
++    let base = MarkdownExtensions::default();
++    for changed in [
++        base.clone().math(false),
++        base.clone().soft_breaks(true),
++        base.clone().skip_empty_table_header(true),
++    ] {
++        assert!(!base.has_same_parser_configuration(&changed));
++    }
++    let renderer = base.clone().code_block_body_renderer(|_, _, _| None);
++    assert!(base.has_same_parser_configuration(&renderer));
++    assert_ne!(base.revision(), renderer.revision());
++    for (source, closed) in [
++        ("~~~mermaid\n甲-->乙\n~~~", true),
++        ("```mermaid\r甲-->乙\r```", true),
++        ("```mermaid\n甲-->乙", false),
++        ("```mermaid\n甲-->乙\n``", false),
++    ] {
++        let mut cx = NodeContext {
++            offset: 19,
++            ..Default::default()
++        };
++        let doc = markdown::parse(source, &mut cx).unwrap();
++        let BlockNode::CodeBlock(code) = &doc.blocks[0] else {
++            panic!("code");
++        };
++        assert_eq!(code.source(), Some(source));
++        assert_eq!(code.source_range(), Some(19..19 + source.len()));
++        assert_eq!(code.closed_fence(), closed);
++        assert_eq!(code.lang().as_deref(), Some("mermaid"));
++    }
++    let quoted = configured("> ```mermaid\n> 甲-->乙\n> ```", &base);
++    let BlockNode::Blockquote { children, .. } = &quoted.blocks[0] else {
++        panic!("quote");
++    };
++    let BlockNode::CodeBlock(code) = &children[0] else {
++        panic!("code");
++    };
++    assert!(code.closed_fence());
++    let indented = configured("    ```\n    x\n    ```", &base);
++    let BlockNode::CodeBlock(code) = &indented.blocks[0] else {
++        panic!("code");
++    };
++    assert!(!code.closed_fence());
++}
++
++#[test]
++fn parity_spacing_model_is_adjacent_scaled_and_opt_in() {
++    for body in [11., 13.] {
++        let style = TextViewStyle::default()
++            .with_body_text_size(px(body))
++            .with_block_spacing(MarkdownBlockSpacing::default())
++            .with_heading(move |_| gpui::StyleRefinement::default().text_size(px(body * 1.2)));
++        let doc = configured(
++            "paragraph\n\n## heading\n\n### next\n\nbody\n\n|x|\n|--|\n|y|",
++            &MarkdownExtensions::default(),
++        );
++        let options = |ix| {
++            NodeRenderOptions::sibling(
++                &doc.blocks,
++                ix,
++                Default::default(),
++                &style,
++                px(body),
++                px(16.),
++            )
++        };
++        assert_eq!(options(0).leading_gap, px(0.));
++        assert_eq!(options(1).leading_gap, px(body * 1.2 * 1.2));
++        assert_eq!(options(2).leading_gap, px(body * 1.2 * 0.6));
++        let zero_style = style.clone().with_block_spacing(MarkdownBlockSpacing {
++            consecutive_heading_top: 0.,
++            ..Default::default()
++        });
++        assert_eq!(
++            NodeRenderOptions::sibling(
++                &doc.blocks,
++                2,
++                Default::default(),
++                &zero_style,
++                px(body),
++                px(16.)
++            )
++            .leading_gap,
++            px(body * 1.2 * 0.55),
++            "explicit zero still collapses with the preceding heading bottom"
++        );
++        assert_eq!(options(3).leading_gap, px(body * 0.7));
++        assert_eq!(options(4).leading_gap, px(body * 0.7));
++        assert!(options(4).is_last);
++    }
++    let base = TextViewStyle::default();
++    assert!(base.block_spacing().is_none());
++    assert_eq!(base.body_text_size(), None);
++    assert_eq!(base.inline_code_scale(), 0.875);
++    assert!(!base.heading_strong_inherit());
++    assert!(!base.deleted_muted());
++    assert_eq!(base.horizontal_rule_thickness(), px(2.));
++    for style in [
++        base.clone().with_body_text_size(px(11.)),
++        base.clone().with_block_spacing(Default::default()),
++        base.clone().with_heading_strong_inherit(true),
++        base.clone().with_deleted_muted(true),
++        base.clone().with_inline_code_scale(0.88),
++        base.clone().with_horizontal_rule_thickness(px(1.)),
++        base.clone()
++            .with_blockquote(gpui::StyleRefinement::default().pl(px(14.))),
++    ] {
++        assert!(base != style);
++        assert!(style == style.clone());
++    }
++}
++
++#[gpui::test]
++fn parity_rendered_block_geometry_and_renderer_fallback(cx: &mut gpui::TestAppContext) {
++    use gpui::{Context, Render, Window, div};
++    struct Root {
++        body: f32,
++    }
++    impl Render for Root {
++        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++            let body = self.body;
++            div().w(px(400.)).child(gpui::div().debug_selector(|| "parity-document".into()).child(TextView::markdown("parity", "paragraph\n\n## **heading**\n\n### next\n\n```mermaid\n甲-->乙\n```\n\n```rust\nlet x = 1;\n```\n\n|x|\n|--|\n|y|")
++                .style(TextViewStyle::default().with_body_text_size(px(body)).with_block_spacing(Default::default())
++                    .with_heading(move |_| gpui::StyleRefinement::default().text_size(px(body * 1.2)))
++                    .with_heading_strong_inherit(true))
++                .markdown_extensions(MarkdownExtensions::default().code_block_body_renderer(|code, _, _| {
++                    if code.lang().as_deref() != Some("mermaid") { return None; }
++                    assert!(code.closed_fence());
++                    assert_eq!(code.source(), Some("```mermaid\n甲-->乙\n```"));
++                    Some(div().h(px(40.)).debug_selector(|| "diagram-body".into()).into_any_element())
++                }))
++                .code_block_actions(|code, _, _| {
++                    assert_eq!(code.lang().as_deref(), Some("rust"));
++                    div().debug_selector(|| "fallback-actions".into()).child("Copy")
++                })))
++        }
++    }
++    cx.update(crate::init);
++    for body in [11., 13.] {
++        let (_, window) = cx.add_window_view(move |_, _| Root { body });
++        let window: &mut gpui::VisualTestContext = window;
++        window.run_until_parked();
++        window.update(|window, cx| {
++            let _ = window.draw(cx);
++        });
++        let blocks = (0..6)
++            .map(|ix| {
++                window
++                    .debug_bounds(
++                        [
++                            "parity-content-0",
++                            "parity-content-1",
++                            "parity-content-2",
++                            "parity-content-3",
++                            "parity-content-4",
++                            "parity-content-5",
++                        ][ix],
++                    )
++                    .unwrap()
++            })
++            .collect::<Vec<_>>();
++        assert_eq!(blocks[0].top(), px(0.));
++        assert_eq!(
++            window.debug_bounds("parity-document").unwrap().bottom(),
++            blocks[5].bottom(),
++            "last table has no trailing padding"
++        );
++        let close = |actual: gpui::Pixels, expected: f32| {
++            assert!(
++                (f32::from(actual) - expected).abs() <= 1.01,
++                "{actual:?} != {expected}"
++            )
++        };
++        close(blocks[1].top() - blocks[0].bottom(), body * 1.2 * 1.2);
++        close(blocks[2].top() - blocks[1].bottom(), body * 1.2 * 0.6);
++        close(blocks[3].top() - blocks[2].bottom(), body * 0.7);
++        close(blocks[4].top() - blocks[3].bottom(), body * 0.7);
++        close(blocks[5].top() - blocks[4].bottom(), body * 0.7);
++        assert_eq!(
++            window.debug_bounds("diagram-body").unwrap().size.height,
++            px(40.)
++        );
++        assert!(window.debug_bounds("fallback-actions").is_some());
++    }
++}
++
++#[gpui::test]
++fn parity_virtualized_spacing_only_renders_visible_blocks(cx: &mut gpui::TestAppContext) {
++    use gpui::{Context, Render, Window, div};
++    use std::sync::atomic::{AtomicUsize, Ordering};
++    struct Root {
++        source: gpui::SharedString,
++        calls: Arc<AtomicUsize>,
++    }
++    impl Render for Root {
++        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++            let calls = self.calls.clone();
++            div().w(px(300.)).h(px(180.)).child(
++                TextView::markdown("bounded-parity", self.source.clone())
++                    .scrollable(true)
++                    .style(
++                        TextViewStyle::default()
++                            .with_body_text_size(px(11.))
++                            .with_block_spacing(Default::default()),
++                    )
++                    .markdown_extensions(MarkdownExtensions::default().code_block_body_renderer(
++                        move |_, _, _| {
++                            calls.fetch_add(1, Ordering::Relaxed);
++                            Some(div().h(px(20.)).into_any_element())
++                        },
++                    )),
++            )
++        }
++    }
++    cx.update(crate::init);
++    let calls = Arc::new(AtomicUsize::new(0));
++    let count = calls.clone();
++    let (_, window) = cx.add_window_view(move |_, _| Root {
++        source: "```test\n甲\n```\n\n".repeat(2000).into(),
++        calls: count,
++    });
++    let window: &mut gpui::VisualTestContext = window;
++    window.run_until_parked();
++    calls.store(0, Ordering::Relaxed);
++    window.update(|window, cx| {
++        let _ = window.draw(cx);
++    });
++    let rendered = calls.load(Ordering::Relaxed);
++    assert!(
++        rendered > 0 && rendered < 100,
++        "visible rendering must not walk 2000 blocks: {rendered}"
++    );
++}
++
++#[gpui::test]
++fn parity_rendered_utf8_drag_and_loose_list_spacing(cx: &mut gpui::TestAppContext) {
++    use gpui::{
++        AppContext as _, Context, Entity, Modifiers, MouseButton, Render, Window, div, point,
++    };
++    struct Root {
++        text: Entity<TextViewState>,
++        loose: Entity<TextViewState>,
++        baseline: Entity<TextViewState>,
++    }
++    impl Render for Root {
++        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++            let style = TextViewStyle::default()
++                .with_body_text_size(px(13.))
++                .with_inline_code_scale(0.88)
++                .with_inline_code_padding(px(4.))
++                .with_inline_code_box(0.12, px(4.))
++                .with_block_spacing(Default::default());
++            div()
++                .w(px(400.))
++                .text_size(px(13.))
++                .child(crate::TextSelectionLayer)
++                .child(
++                    TextView::new(&self.text)
++                        .selectable(true)
++                        .selection_format(SelectionFormat::Source)
++                        .markdown_extensions(
++                            MarkdownExtensions::default().soft_breaks(true).math(false),
++                        )
++                        .style(style.clone()),
++                )
++                .child(TextView::new(&self.loose).style(style))
++                .child(TextView::new(&self.baseline))
++        }
++    }
++    cx.update(crate::init);
++    let (root, window) = cx.add_window_view(|_, cx| Root {
++        text: cx.new(|cx| TextViewState::markdown("甲乙\n`café` ~~尾~~", cx)),
++        loose: cx.new(|cx| TextViewState::markdown("- one\n\n  two\n\n- three", cx)),
++        baseline: cx.new(|cx| TextViewState::markdown("- one\n\n  two\n\n- three", cx)),
++    });
++    let window: &mut gpui::VisualTestContext = window;
++    window.run_until_parked();
++    window.update(|window, cx| {
++        let _ = window.draw(cx);
++    });
++    let (first, last) = root.read_with(window, |root, cx| {
++        let lines = root.text.read(cx).selection_adapter.text_bounds();
++        let styled = root.loose.read(cx).selection_adapter.text_bounds();
++        let original = root.baseline.read(cx).selection_adapter.text_bounds();
++        assert_eq!(styled.len(), 3);
++        assert_eq!(original.len(), 3);
++        for ix in 1..3 {
++            let added = (styled[ix].top() - styled[ix - 1].top())
++                - (original[ix].top() - original[ix - 1].top());
++            // Paragraph and item boundary margins collapse, not accumulate.
++            let expected = 13. * 0.28;
++            assert!((f32::from(added) - expected).abs() <= 1.01, "{added:?}");
++        }
++        assert!(lines.len() >= 2);
++        let last = lines.last().unwrap();
++        (
++            point(lines[0].left() + px(0.1), lines[0].center().y),
++            point(last.right(), last.center().y),
++        )
++    });
++    for (a, b) in [(first, last), (last, first)] {
++        window.simulate_mouse_down(a, MouseButton::Left, Modifiers::default());
++        window.update(|window, cx| {
++            let _ = window.draw(cx);
++        });
++        window.simulate_mouse_move(b, Some(MouseButton::Left), Modifiers::default());
++        window.update(|window, cx| {
++            let _ = window.draw(cx);
++        });
++        window.simulate_mouse_up(b, MouseButton::Left, Modifiers::default());
++        window.update(|window, cx| {
++            let _ = window.draw(cx);
++        });
++        root.read_with(window, |root, cx| {
++            let state = root.text.read(cx);
++            assert_eq!(state.selected_text().trim_end(), "甲乙\n`café` ~~尾~~");
++            assert_eq!(state.selected_source_range(), Some(0..20));
++        });
++    }
++}
+diff --git a/src/text/state.rs b/src/text/state.rs
+index d1917ad..934c0fe 100644
+--- a/src/text/state.rs
++++ b/src/text/state.rs
+@@ -165,6 +165,17 @@ impl TextViewState {
+         Self::new(TextViewFormat::Markdown, text, cx)
+     }
+ 
++    /// Create a Markdown state with extensions configured before the initial parse.
++    /// Use the same extensions for cold copy and mounted views so rendered offsets agree.
++    /// Sources above the synchronous parse limit remain pending until the async parse commits.
++    pub fn markdown_with_extensions(
++        text: &str,
++        extensions: MarkdownExtensions,
++        cx: &mut Context<Self>,
++    ) -> Self {
++        Self::new_with_extensions(TextViewFormat::Markdown, text, extensions, cx)
++    }
++
+     /// Create a HTML TextViewState.
+     pub fn html(text: &str, cx: &mut Context<Self>) -> Self {
+         Self::new(TextViewFormat::Html, text, cx)
+@@ -172,6 +183,15 @@ impl TextViewState {
+ 
+     /// Create a new TextViewState.
+     fn new(format: TextViewFormat, text: &str, cx: &mut Context<Self>) -> Self {
++        Self::new_with_extensions(format, text, MarkdownExtensions::default(), cx)
++    }
++
++    fn new_with_extensions(
++        format: TextViewFormat,
++        text: &str,
++        extensions: MarkdownExtensions,
++        cx: &mut Context<Self>,
++    ) -> Self {
+         let focus_handle = cx.focus_handle();
+         let selection_adapter = TextViewSelectionAdapter::new(cx.entity().downgrade(), cx);
+ 
+@@ -264,7 +284,7 @@ impl TextViewState {
+             table_actions: None,
+             link_click_handler: None,
+             image_source: None,
+-            markdown_extensions: Arc::default(),
++            markdown_extensions: Arc::new(extensions),
+             is_selecting: false,
+             preserve_inline_selection: false,
+             auto_scroll: AutoScroll::default(),
+@@ -626,7 +646,29 @@ impl TextViewState {
+         end: Option<usize>,
+         format: SelectionFormat,
+     ) -> anyhow::Result<String> {
+-        let document = format::markdown::parse(source, &mut NodeContext::default())
++        Self::copy_markdown_slice_with_extensions(
++            source,
++            start,
++            end,
++            format,
++            &MarkdownExtensions::default(),
++        )
++    }
++
++    /// Cold copy using exactly the parser/plugin configuration of a mounted view.
++    /// Bounds are rendered UTF-8 bytes; only this source item is parsed.
++    pub fn copy_markdown_slice_with_extensions(
++        source: &str,
++        start: Option<usize>,
++        end: Option<usize>,
++        format: SelectionFormat,
++        extensions: &MarkdownExtensions,
++    ) -> anyhow::Result<String> {
++        let mut node_cx = NodeContext {
++            markdown_extensions: Arc::new(extensions.clone()),
++            ..Default::default()
++        };
++        let document = format::markdown::parse(source, &mut node_cx)
+             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+         let index = RenderedIndex::new(&document);
+         let range = start.unwrap_or(0)..end.unwrap_or_else(|| document.text().len());
+@@ -1280,6 +1322,7 @@ impl Render for TextViewState {
+         let (reveal, reveal_block) = self.reveal_frame(cx.background_executor().now(), window);
+         // Built every frame, so everything in it is shared, not copied.
+         let node_cx = NodeContext {
++            normal_word_wrap: false,
+             offset: self.parsed_content.node_cx.offset,
+             link_refs: self.parsed_content.node_cx.link_refs.clone(),
+             style: self.text_view_style.clone(),
+diff --git a/src/text/style.rs b/src/text/style.rs
+index c2a18b3..0b80eb5 100644
+--- a/src/text/style.rs
++++ b/src/text/style.rs
+@@ -22,7 +22,16 @@ pub struct TextViewStyle {
+     strong_weight: Option<FontWeight>,
+     list_style: Option<(gpui::Pixels, gpui::Pixels, Hsla)>,
+     inline_code_padding: Option<gpui::Pixels>,
++    inline_code_box: Option<(f32, gpui::Pixels)>,
++    task_checkbox: Option<MarkdownTaskCheckbox>,
+     prose_max_width: Option<gpui::Pixels>,
++    block_spacing: Option<MarkdownBlockSpacing>,
++    body_text_size: Option<gpui::Pixels>,
++    quote: Option<StyleRefinement>,
++    horizontal_rule_thickness: Option<gpui::Pixels>,
++    heading_strong_inherit: bool,
++    deleted_muted: bool,
++    inline_code_scale: f32,
+     heading: Arc<dyn Fn(u8) -> StyleRefinement + Send + Sync + 'static>,
+     code_block: StyleRefinement,
+     code_block_horizontal_scroll: bool,
+@@ -41,7 +50,16 @@ impl PartialEq for TextViewStyle {
+         self.strong_weight == other.strong_weight
+             && self.list_style == other.list_style
+             && self.inline_code_padding == other.inline_code_padding
++            && self.inline_code_box == other.inline_code_box
++            && self.task_checkbox == other.task_checkbox
+             && self.prose_max_width == other.prose_max_width
++            && self.block_spacing == other.block_spacing
++            && self.body_text_size == other.body_text_size
++            && self.quote == other.quote
++            && self.horizontal_rule_thickness == other.horizontal_rule_thickness
++            && self.heading_strong_inherit == other.heading_strong_inherit
++            && self.deleted_muted == other.deleted_muted
++            && self.inline_code_scale == other.inline_code_scale
+             && self.paragraph_gap == other.paragraph_gap
+             && self.foreground == other.foreground
+             && self.muted_foreground == other.muted_foreground
+@@ -69,7 +87,186 @@ impl Default for TextViewStyle {
+     }
+ }
+ 
++/// Positive CSS-like sibling margins in local em units. Adjacent margins
++/// collapse to their maximum; root first/last margins are suppressed except
++/// for an explicitly retained first code margin. No root rem
++/// assumptions, coordinate calibration, or scanning outside adjacent siblings.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub struct MarkdownBlockSpacing {
++    pub paragraph: f32,
++    pub heading_top: f32,
++    pub heading_bottom: f32,
++    /// Defaults to 0.6 heading em. Callers must resolve their CSS cascade (a
++    /// weak adjacent selector may lose to the individual heading rule).
++    /// Set to 0. explicitly
++    /// to suppress the next heading's top margin (the previous bottom still collapses).
++    pub consecutive_heading_top: f32,
++    pub rule: f32,
++    pub loose_list_continuation: f32,
++    pub nested_list_top: f32,
++    /// Top margin retained by a first fenced code block (including a custom
++    /// diagram body). Opt in when a later CSS rule beats the root reset.
++    pub first_code_top: f32,
++}
++
++impl Default for MarkdownBlockSpacing {
++    fn default() -> Self {
++        Self {
++            paragraph: 0.7,
++            heading_top: 1.2,
++            heading_bottom: 0.55,
++            consecutive_heading_top: 0.6,
++            rule: 1.2,
++            loose_list_continuation: 0.28,
++            nested_list_top: 0.15,
++            first_code_top: 0.,
++        }
++    }
++}
++
++/// An inert task indicator, resolved in body em rather than root rem.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub struct MarkdownTaskCheckbox {
++    pub size_em: f32,
++    /// Direct input's CSS right margin, excluding the following HTML space.
++    pub gap_em: f32,
++    /// Width of the ordinary HTML space after either kind of input, in body em.
++    pub space_em: f32,
++    /// Paragraph-wrapped inputs retain the UA's intrinsic size and margins.
++    pub loose_size: gpui::Pixels,
++    pub loose_inset: gpui::Pixels,
++    pub loose_gap: gpui::Pixels,
++    /// Disabled opacity applies only to paragraph-wrapped inputs, not their labels.
++    pub loose_opacity: f32,
++    /// Offset from the centered position in the first text line.
++    pub offset_em: f32,
++    pub radius: gpui::Pixels,
++    pub border: Hsla,
++    pub background: Hsla,
++    pub checked_background: Hsla,
++}
++
++impl Default for MarkdownTaskCheckbox {
++    fn default() -> Self {
++        Self {
++            size_em: 0.95,
++            gap_em: 0.45,
++            space_em: 0.25,
++            loose_size: gpui::px(12.),
++            loose_inset: gpui::px(2.),
++            loose_gap: gpui::px(3.),
++            loose_opacity: 0.45,
++            offset_em: 0.1,
++            radius: gpui::px(3.),
++            border: gpui::rgb(0xbebebe).into(),
++            background: gpui::white(),
++            checked_background: gpui::black(),
++        }
++    }
++}
++
++impl MarkdownTaskCheckbox {
++    pub(crate) fn geometry(
++        self,
++        body_size: gpui::Pixels,
++        loose: bool,
++    ) -> (gpui::Pixels, gpui::Pixels, gpui::Pixels) {
++        let (size, inset, gap) = if loose {
++            (self.loose_size, self.loose_inset, self.loose_gap)
++        } else {
++            (
++                body_size * self.size_em,
++                gpui::Pixels::ZERO,
++                body_size * self.gap_em,
++            )
++        };
++        (size, inset, gap + body_size * self.space_em)
++    }
++
++    pub(crate) fn opacity(self, loose: bool) -> f32 {
++        if loose {
++            self.loose_opacity.clamp(0., 1.)
++        } else {
++            1.
++        }
++    }
++}
++
+ impl TextViewStyle {
++    /// Paint-only inline code padding in code em and corner radius. Neither
++    /// changes line height, byte ranges, nor selection/hit-test geometry.
++    pub fn with_inline_code_box(mut self, vertical_padding_em: f32, radius: gpui::Pixels) -> Self {
++        self.inline_code_box = Some((vertical_padding_em.max(0.), radius.max(gpui::Pixels::ZERO)));
++        self
++    }
++    pub fn inline_code_box(&self) -> Option<(f32, gpui::Pixels)> {
++        self.inline_code_box
++    }
++    pub fn with_task_checkbox(mut self, style: MarkdownTaskCheckbox) -> Self {
++        self.task_checkbox = Some(style);
++        self
++    }
++    pub fn task_checkbox(&self) -> Option<MarkdownTaskCheckbox> {
++        self.task_checkbox
++    }
++
++    /// Opt into structural sibling spacing, replacing legacy gaps and list offsets.
++    pub fn with_block_spacing(mut self, policy: MarkdownBlockSpacing) -> Self {
++        self.block_spacing = Some(policy);
++        self
++    }
++    pub fn block_spacing(&self) -> Option<MarkdownBlockSpacing> {
++        self.block_spacing
++    }
++
++    /// Explicit body size, inherited by prose. Useful for compact/queued views.
++    pub fn with_body_text_size(mut self, size: gpui::Pixels) -> Self {
++        self.body_text_size = Some(size.max(gpui::px(1.)));
++        self
++    }
++    pub fn body_text_size(&self) -> Option<gpui::Pixels> {
++        self.body_text_size
++    }
++
++    /// Quote refinement after Base defaults (e.g. border_l(2px), pl(14px), pr(0px)).
++    pub fn with_blockquote(mut self, quote: StyleRefinement) -> Self {
++        self.quote = Some(quote);
++        self
++    }
++    pub fn blockquote(&self) -> Option<&StyleRefinement> {
++        self.quote.as_ref()
++    }
++
++    pub fn with_horizontal_rule_thickness(mut self, thickness: gpui::Pixels) -> Self {
++        self.horizontal_rule_thickness = Some(thickness.max(gpui::Pixels::ZERO));
++        self
++    }
++    pub fn horizontal_rule_thickness(&self) -> gpui::Pixels {
++        self.horizontal_rule_thickness.unwrap_or(gpui::px(2.))
++    }
++    pub fn with_heading_strong_inherit(mut self, enabled: bool) -> Self {
++        self.heading_strong_inherit = enabled;
++        self
++    }
++    pub fn heading_strong_inherit(&self) -> bool {
++        self.heading_strong_inherit
++    }
++    pub fn with_deleted_muted(mut self, enabled: bool) -> Self {
++        self.deleted_muted = enabled;
++        self
++    }
++    pub fn deleted_muted(&self) -> bool {
++        self.deleted_muted
++    }
++    pub fn with_inline_code_scale(mut self, scale: f32) -> Self {
++        if scale.is_finite() && scale > 0. {
++            self.inline_code_scale = scale;
++        }
++        self
++    }
++    pub fn inline_code_scale(&self) -> f32 {
++        self.inline_code_scale
++    }
+     /// Derives rich-text colors from Base semantic theme tokens.
+     pub fn from_theme(theme: &crate::Theme) -> Self {
+         Self::from_colors(
+@@ -95,7 +292,16 @@ impl TextViewStyle {
+             strong_weight: None,
+             list_style: None,
+             inline_code_padding: None,
++            inline_code_box: None,
++            task_checkbox: None,
+             prose_max_width: None,
++            block_spacing: None,
++            body_text_size: None,
++            quote: None,
++            horizontal_rule_thickness: None,
++            heading_strong_inherit: false,
++            deleted_muted: false,
++            inline_code_scale: 0.875,
+             heading: Arc::new(|_| StyleRefinement::default()),
+             code_block: StyleRefinement::default(),
+             code_block_horizontal_scroll: false,
+diff --git a/src/text/text_view.rs b/src/text/text_view.rs
+index 93a9390..adac7c4 100644
+--- a/src/text/text_view.rs
++++ b/src/text/text_view.rs
+@@ -628,6 +628,7 @@ impl Element for TextView {
+             }
+         };
+         let foreground = text_view_style.foreground();
++        let body_text_size = text_view_style.body_text_size();
+         let text_view_style = (*state.read(cx).text_view_style != *text_view_style)
+             .then(|| Arc::new(text_view_style.clone()));
+         let code_block_highlighter = self
+@@ -667,6 +668,9 @@ impl Element for TextView {
+         let max_lines_cap = max_lines.map(|max_lines| {
+             let mut text_style = window.text_style();
+             text_style.refine(&self.style.text);
++            if let Some(size) = body_text_size {
++                text_style.font_size = size.into();
++            }
+             text_style.line_height_in_pixels(window.rem_size()) * max_lines as f32
+         });
+ 
+@@ -700,6 +704,7 @@ impl Element for TextView {
+                 )
+             })
+             .refine_style(&self.style)
++            .when_some(body_text_size, |this, size| this.text_size(size))
+             .into_any_element();
+         let layout_id = el.request_layout(window, cx);
+         (layout_id, TextViewLayoutState { state, element: el })
+diff --git a/src/text/visual_parity_tests.rs b/src/text/visual_parity_tests.rs
+new file mode 100644
+index 0000000..1ab7dbe
+--- /dev/null
++++ b/src/text/visual_parity_tests.rs
+@@ -0,0 +1,298 @@
++use super::{
++    MarkdownBlockSpacing, MarkdownExtensions, MarkdownTaskCheckbox, TextView, TextViewState,
++    TextViewStyle,
++    document::NodeRenderOptions,
++    format::markdown,
++    node::{BlockNode, NodeContext},
++};
++use gpui::{
++    AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _, Window,
++    div, px,
++};
++
++fn profile(body: f32) -> TextViewStyle {
++    TextViewStyle::default()
++        .with_body_text_size(px(body))
++        .with_block_spacing(MarkdownBlockSpacing::default())
++        .with_list_style(px(body * 1.4), px(0.), gpui::black())
++        .with_task_checkbox(MarkdownTaskCheckbox {
++            size_em: 0.95,
++            gap_em: 0.45,
++            offset_em: 0.1,
++            radius: px(3.),
++            border: gpui::rgb(0xcccccc).into(),
++            background: gpui::white(),
++            checked_background: gpui::rgb(0xeeeeee).into(),
++            ..Default::default()
++        })
++}
++
++#[test]
++fn parity_first_code_top_is_opt_in_and_does_not_shift_prose() {
++    for body in [11., 13.] {
++        let default = profile(body);
++        let enabled = default.clone().with_block_spacing(MarkdownBlockSpacing {
++            first_code_top: 0.7,
++            ..Default::default()
++        });
++        for source in [
++            "```text\ncode\n```",
++            "```mermaid\ngraph TD; A-->B\n```",
++            "    code",
++        ] {
++            let doc = markdown::parse(source, &mut NodeContext::default()).unwrap();
++            let code = &doc.blocks[0];
++            assert_eq!(
++                code.collapsed_boundary_top(&default, px(body), px(16.)),
++                px(0.)
++            );
++            assert_eq!(
++                code.collapsed_boundary_top(&enabled, px(body), px(16.)),
++                px(body * 0.7)
++            );
++        }
++        let prose = markdown::parse("first paragraph", &mut NodeContext::default()).unwrap();
++        assert_eq!(
++            prose.blocks[0].collapsed_boundary_top(&enabled, px(body), px(16.)),
++            px(0.)
++        );
++        assert!(default != enabled);
++    }
++}
++
++#[test]
++fn parity_task_profile_keeps_disabled_opacity_and_ua_geometry_per_item() {
++    let task = MarkdownTaskCheckbox::default();
++    assert_eq!(task.loose_opacity, 0.45);
++    assert_eq!(task.opacity(false), 1.);
++    assert_eq!(task.opacity(true), 0.45);
++    for body in [11., 13., 17.] {
++        let (size, inset, gap) = task.geometry(px(body), false);
++        assert_eq!(size, px(body * 0.95));
++        assert_eq!(inset, px(0.));
++        assert_eq!(gap, px(body * 0.45) + px(body * 0.25));
++        let (size, inset, gap) = task.geometry(px(body), true);
++        assert_eq!(size, px(12.));
++        assert_eq!(inset, px(2.));
++        assert_eq!(gap, px(3.) + px(body * 0.25));
++    }
++    let custom = MarkdownTaskCheckbox {
++        size_em: 0.8,
++        gap_em: 0.6,
++        space_em: 0.3,
++        loose_size: px(12.),
++        loose_inset: px(4.),
++        loose_gap: px(5.),
++        loose_opacity: 0.7,
++        ..task
++    };
++    assert_eq!(custom.geometry(px(10.), false), (px(8.), px(0.), px(9.)));
++    assert_eq!(custom.geometry(px(10.), true), (px(12.), px(4.), px(8.)));
++    assert_eq!(custom.opacity(true), 0.7);
++    assert_eq!(custom.opacity(false), 1.);
++    assert!(TextViewStyle::default().task_checkbox().is_none());
++    assert!(profile(13.) != profile(13.).with_task_checkbox(custom));
++}
++
++#[test]
++fn parity_task_markers_follow_direct_checkbox_not_task_ancestors() {
++    let source = "- [x] Done\n\n  Details for done.\n\n  - Nested item\n  - [ ] Nested task\n\n- [ ] Pending";
++    let doc = markdown::parse(source, &mut NodeContext::default()).unwrap();
++    let BlockNode::List { children, .. } = &doc.blocks[0] else {
++        panic!("list")
++    };
++    let style = profile(13.);
++    let task = style.task_checkbox().unwrap();
++    let inherited = NodeRenderOptions {
++        todo: true,
++        ..Default::default()
++    };
++    for item in children {
++        let BlockNode::ListItem {
++            spread, checked, ..
++        } = item
++        else {
++            panic!("item")
++        };
++        assert!(*spread);
++        assert!(checked.is_some());
++        assert_eq!(task.opacity(*spread), 0.45);
++        assert!(BlockNode::list_item_has_marker(
++            inherited, *checked, *spread, &style
++        ));
++    }
++    let BlockNode::ListItem { children, .. } = &children[0] else {
++        panic!("item")
++    };
++    let BlockNode::List { children, .. } = &children[2] else {
++        panic!("nested list")
++    };
++    for (ix, item) in children.iter().enumerate() {
++        let BlockNode::ListItem {
++            spread, checked, ..
++        } = item
++        else {
++            panic!("nested item")
++        };
++        assert!(!spread);
++        assert_eq!(task.opacity(*spread), 1.);
++        assert_eq!(
++            BlockNode::list_item_has_marker(inherited, *checked, *spread, &style),
++            ix == 0
++        );
++    }
++    assert!(
++        !BlockNode::list_item_has_marker(inherited, None, false, &TextViewStyle::default()),
++        "legacy behavior stays opt-out"
++    );
++    let base = TextViewStyle::default();
++    assert!(base.task_checkbox().is_none());
++    assert!(base.inline_code_box().is_none());
++    assert!(base != profile(13.));
++    assert!(base != base.clone().with_inline_code_box(0.12, px(4.)));
++}
++
++#[gpui::test]
++fn parity_wrapped_css_table_cells_are_measured_and_vertically_centered(
++    cx: &mut gpui::TestAppContext,
++) {
++    struct Root {
++        state: Entity<TextViewState>,
++        body: f32,
++        width: f32,
++    }
++    impl Render for Root {
++        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++            div()
++                .w(px(self.width))
++                .text_size(px(self.body))
++                .line_height(gpui::relative(1.62))
++                .child(
++                    TextView::new(&self.state).style(
++                        profile(self.body)
++                            .with_table_css_cells(true)
++                            .with_table_fit_content(true)
++                            .with_table({
++                                let mut table = gpui::StyleRefinement::default()
++                                    .text_size(px(self.body * 0.94));
++                                table.overflow.x = Some(gpui::Overflow::Scroll);
++                                table
++                            })
++                            .with_table_cell(
++                                gpui::StyleRefinement::default()
++                                    .py(px(6.))
++                                    .line_height(gpui::relative(1.62)),
++                            ),
++                    ),
++                )
++        }
++    }
++    cx.update(crate::init);
++    for body in [11., 13.] {
++        for width in [180., 280.] {
++            let (root, window) = cx.add_window_view(move |_, cx| Root { body, width, state: cx.new(|cx| TextViewState::markdown("| Name | Description |\n| --- | --- |\n| Alpha | A long unwrapped cell with several words |\n| Beta | Another cell |", cx)) });
++            let window: &mut gpui::VisualTestContext = window;
++            window.run_until_parked();
++            window.update(|window, cx| {
++                let _ = window.draw(cx);
++            });
++            let cell = window.debug_bounds("css-cell-1-1").unwrap();
++            let text = window.debug_bounds("css-cell-text-1-1").unwrap();
++            let short = window.debug_bounds("css-cell-text-1-0").unwrap();
++            assert!(
++                text.size.height > px(body * 0.94 * 1.62 + 1.),
++                "must wrap at {body}/{width}: {text:?}"
++            );
++            assert!(
++                text.bottom() <= cell.bottom() - px(5.9),
++                "no clipped wrapped line"
++            );
++            assert!(
++                (f32::from(text.center().y - short.center().y)).abs() <= 0.51,
++                "CSS middle alignment"
++            );
++            assert!(
++                cell.right() <= px(width + 0.1),
++                "min-content floor must fit words, not a fixed 160px"
++            );
++            root.read_with(window, |root, cx| {
++                let state = root.state.read(cx);
++                let bounds = state.selection_adapter.text_bounds();
++                assert!(
++                    bounds
++                        .iter()
++                        .any(|b| b.top() >= text.top() && b.bottom() <= text.bottom() + px(0.1))
++                );
++            });
++        }
++    }
++}
++
++#[gpui::test]
++fn parity_quote_boundary_collapses_outside_border_and_loose_tasks_keep_indent(
++    cx: &mut gpui::TestAppContext,
++) {
++    struct Root {
++        body: f32,
++        source: &'static str,
++    }
++    impl Render for Root {
++        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++            div()
++                .w(px(400.))
++                .text_size(px(self.body))
++                .line_height(gpui::relative(1.62))
++                .child(
++                    TextView::markdown("boundary", self.source)
++                        .style(profile(self.body))
++                        .markdown_extensions(MarkdownExtensions::default()),
++                )
++        }
++    }
++    cx.update(crate::init);
++    for body in [11., 13.] {
++        for (source, expected) in [("> quoted", body * 0.7), ("plain", 0.)] {
++            let (_, window) = cx.add_window_view(move |_, _| Root { body, source });
++            let window: &mut gpui::VisualTestContext = window;
++            window.run_until_parked();
++            window.update(|window, cx| {
++                let _ = window.draw(cx);
++            });
++            assert!(
++                (f32::from(window.debug_bounds("parity-content-0").unwrap().top()) - expected)
++                    .abs()
++                    <= 0.51,
++                "{source} body {body}: {:?}, expected {expected}",
++                window.debug_bounds("parity-content-0")
++            );
++        }
++        let mut positions = Vec::new();
++        for (loose, source) in [(false, "- [x] Done"), (true, "- [x] Done\n\n  details")] {
++            let (_, window) = cx.add_window_view(move |_, _| Root { body, source });
++            let window: &mut gpui::VisualTestContext = window;
++            window.run_until_parked();
++            window.update(|window, cx| {
++                let _ = window.draw(cx);
++            });
++            let b = window.debug_bounds("task-box-0-0").unwrap();
++            let task = profile(body).task_checkbox().unwrap();
++            let (size, _, gap) = task.geometry(px(body), loose);
++            assert!((f32::from(b.size.width - size)).abs() <= 0.51);
++            assert_eq!(b.size.width, b.size.height);
++            let label = window.debug_bounds("task-label-0-0").unwrap();
++            assert!((f32::from(label.left() - b.right() - gap)).abs() <= 0.51);
++            positions.push(b);
++        }
++        let task = profile(body).task_checkbox().unwrap();
++        assert!(
++            (f32::from(positions[1].left() - positions[0].left() - task.loose_inset) - body * 1.4)
++                .abs()
++                <= 0.51
++        );
++        let size_shift = (body * task.size_em - f32::from(task.loose_size)) / 2.;
++        assert!(
++            (f32::from(positions[1].top() - positions[0].top()) - body * 0.28 - size_shift).abs()
++                <= 0.51
++        );
++    }
++}
+diff --git a/src/text_selection.rs b/src/text_selection.rs
+index 1d4663c..e99f934 100644
+--- a/src/text_selection.rs
++++ b/src/text_selection.rs
+@@ -3305,6 +3305,8 @@ pub(crate) fn clear_window_text_selection(window_id: gpui::WindowId, cx: &mut Ap
+ #[path = "text_selection/domain_tests.rs"]
+ mod domain_tests;
+ #[cfg(test)]
++mod parity_tests;
++#[cfg(test)]
+ #[path = "text_selection/text_view_domain_tests.rs"]
+ mod text_view_domain_tests;
+ 
+diff --git a/src/text_selection/parity_tests.rs b/src/text_selection/parity_tests.rs
+new file mode 100644
+index 0000000..7b45455
+--- /dev/null
++++ b/src/text_selection/parity_tests.rs
+@@ -0,0 +1,161 @@
++use super::*;
++use crate::{MarkdownExtensions, SelectionFormat, TextViewState};
++use std::sync::Arc;
++
++#[gpui::test]
++fn parity_initial_async_configured_domain_selection_and_remount(cx: &mut gpui::TestAppContext) {
++    cx.update(crate::init);
++    let extensions = MarkdownExtensions::default().soft_breaks(true).math(false);
++    for bytes in [5 * 1024, 8 * 1024] {
++        let source = format!(
++            "**甲\r\n乙** $5 and $10\n\n{}",
++            "ordinary reply text. ".repeat((bytes - 32) / 21)
++        );
++        assert!(source.len() > 4096 && source.len() <= 8192);
++        for reversed in [false, true] {
++            let domain = TextSelectionDomain::new(|item, _| Some(item), |_, _| String::new());
++            let a = TextSelectionDomainEndpoint {
++                item: 10,
++                offset: 3,
++            };
++            let b = TextSelectionDomainEndpoint {
++                item: 10,
++                offset: 7,
++            };
++            let selected = TextSelectionDomainRange {
++                anchor: if reversed { b } else { a },
++                cursor: if reversed { a } else { b },
++            };
++            cx.update(|cx| domain.set_range(selected, false, cx));
++            let cold_plain = TextViewState::copy_markdown_slice_with_extensions(
++                &source,
++                Some(3),
++                Some(7),
++                SelectionFormat::Plain,
++                &extensions,
++            )
++            .unwrap();
++            let cold_source = TextViewState::copy_markdown_slice_with_extensions(
++                &source,
++                Some(3),
++                Some(7),
++                SelectionFormat::Source,
++                &extensions,
++            )
++            .unwrap();
++            assert_eq!(cold_plain, "\n乙");
++            for _ in 0..2 {
++                let view = cx.new(|cx| {
++                    TextViewState::markdown_with_extensions(&source, extensions.clone(), cx)
++                });
++                view.update(cx, |state, cx| {
++                    state.set_selection_domain(Some((domain.clone(), 10)), cx)
++                });
++                view.read_with(cx, |state, cx| {
++                    // A lazy async row must not expose a default-parser projection or clamp offsets.
++                    assert!(state.rendered_text().is_empty());
++                    assert_eq!(state.selected_rendered_range_with(cx), None);
++                    assert!(state.selected_text_with(cx).is_empty());
++                    assert_eq!(state.selected_source_range_with(cx), None);
++                    assert_eq!(domain.range(cx), Some(selected));
++                });
++                cx.run_until_parked();
++                view.read_with(cx, |state, cx| {
++                    assert_eq!(state.selected_rendered_range_with(cx), Some(3..7));
++                    assert_eq!(state.selected_text_with(cx), cold_plain);
++                    assert_eq!(
++                        state
++                            .copy_rendered_range(3..7, SelectionFormat::Source)
++                            .unwrap(),
++                        cold_source
++                    );
++                    assert_eq!(state.selected_source_range_with(cx), Some(5..10));
++                    assert_eq!(domain.range(cx), Some(selected));
++                });
++                let weak = view.downgrade();
++                drop(view);
++                assert!(weak.upgrade().is_none());
++                assert_eq!(domain.stored_range(), Some(selected));
++            }
++        }
++    }
++}
++
++#[gpui::test]
++fn parity_source_owned_selection_uses_configured_projection_both_directions(
++    cx: &mut gpui::TestAppContext,
++) {
++    cx.update(crate::init);
++    let source = "**甲\r\n乙** $5 and $10";
++    let extensions = Arc::new(MarkdownExtensions::default().soft_breaks(true).math(false));
++    for reversed in [false, true] {
++        let calls = Rc::new(Cell::new(0));
++        let provider = calls.clone();
++        let domain = TextSelectionDomain::new(
++            move |item, _| {
++                provider.set(provider.get() + 1);
++                Some(item)
++            },
++            |_, _| String::new(),
++        );
++        let a = TextSelectionDomainEndpoint {
++            item: 10,
++            offset: 0,
++        };
++        let b = TextSelectionDomainEndpoint {
++            item: 10,
++            offset: 7,
++        };
++        let selected = TextSelectionDomainRange {
++            anchor: if reversed { b } else { a },
++            cursor: if reversed { a } else { b },
++        };
++        for _ in 0..2 {
++            let view = cx.new(|cx| {
++                TextViewState::markdown_with_extensions(source, (*extensions).clone(), cx)
++            });
++            view.update(cx, |state, cx| {
++                state.set_selection_domain(Some((domain.clone(), 10)), cx);
++            });
++            cx.update(|cx| domain.set_range(selected, false, cx));
++            calls.set(0);
++            view.read_with(cx, |state, cx| {
++                assert_eq!(state.selected_text_with(cx), "甲\n乙");
++                assert_eq!(state.selected_source_range_with(cx), Some(2..10));
++                assert_eq!(domain.range(cx), Some(selected));
++                assert_eq!(
++                    state.selected_text_with(cx),
++                    TextViewState::copy_markdown_slice_with_extensions(
++                        source,
++                        Some(0),
++                        Some(7),
++                        SelectionFormat::Plain,
++                        &extensions
++                    )
++                    .unwrap()
++                );
++            });
++            assert_eq!(
++                calls.get(),
++                17,
++                "projection queries only endpoints and this item"
++            );
++            view.update(cx, |state, cx| {
++                state.set_markdown_extensions(
++                    Arc::new(
++                        (*extensions)
++                            .clone()
++                            .code_block_body_renderer(|_, _, _| None),
++                    ),
++                    cx,
++                )
++            });
++            view.read_with(cx, |state, cx| {
++                assert_eq!(state.selected_text_with(cx), "甲\n乙");
++                assert_eq!(domain.range(cx), Some(selected));
++            });
++            drop(view);
++            assert_eq!(domain.stored_range(), Some(selected));
++        }
++    }
++}
+diff --git a/tests/markdown_layout_native.rs b/tests/markdown_layout_native.rs
+new file mode 100644
+index 0000000..83a74f2
+--- /dev/null
++++ b/tests/markdown_layout_native.rs
+@@ -0,0 +1,359 @@
++#[cfg(target_os = "macos")]
++fn main() {
++    use gpui::{
++        AppContext as _, Context, Entity, FontWeight, IntoElement, ParentElement as _, Render,
++        Styled as _, Window, div, px,
++    };
++    use gpui_base::{
++        MarkdownBlockSpacing, MarkdownExtensions, SelectionFormat, TextView, TextViewState,
++        TextViewStyle,
++    };
++
++    struct Root {
++        state: Entity<TextViewState>,
++        body: f32,
++        width: f32,
++        custom: bool,
++    }
++    impl Render for Root {
++        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++            let style = TextViewStyle::default()
++                .with_body_text_size(px(self.body))
++                .with_block_spacing(MarkdownBlockSpacing {
++                    first_code_top: 0.7,
++                    ..Default::default()
++                })
++                .with_task_checkbox(Default::default())
++                .with_table_css_cells(true)
++                .with_table_fit_content(true)
++                .with_table({
++                    let mut s = gpui::StyleRefinement::default().text_size(px(self.body * 0.94));
++                    s.overflow.x = Some(gpui::Overflow::Scroll);
++                    s
++                })
++                .with_table_head(gpui::StyleRefinement::default().font_weight(FontWeight::SEMIBOLD))
++                .with_table_cell(
++                    gpui::StyleRefinement::default()
++                        .py(px(6.))
++                        .line_height(gpui::relative(1.62)),
++                );
++            let extensions = if self.custom {
++                MarkdownExtensions::default()
++                    .code_block_body_renderer(|_, _, _| Some(div().h(px(40.)).into_any_element()))
++            } else {
++                MarkdownExtensions::default()
++            };
++            div()
++                .w(px(self.width))
++                .font_family(".AppleSystemUIFont")
++                .text_size(px(self.body))
++                .line_height(gpui::relative(1.62))
++                .child(
++                    TextView::new(&self.state)
++                        .selectable(true)
++                        .selection_format(SelectionFormat::Source)
++                        .markdown_extensions(extensions)
++                        .style(style),
++                )
++        }
++    }
++    let platform = gpui_platform::current_platform(true);
++    let mut cx = gpui::TestAppContext::build_with_text_system(
++        gpui::TestDispatcher::new(0),
++        Some("markdown_layout_native"),
++        platform.text_system(),
++    );
++    cx.update(gpui_base::init);
++    check_task_marker_geometry(&mut cx);
++    for body in [13., 11.] {
++        for width in [180., 280.] {
++            let source = "| Name | Description |\n| --- | --- |\n| Alpha | A long unwrapped cell with several words |\n| Beta | Another cell |";
++            let (root, window) = cx.add_window_view(|_, cx| Root {
++                body,
++                width,
++                custom: false,
++                state: cx.new(|cx| TextViewState::markdown(source, cx)),
++            });
++            let window: &mut gpui::VisualTestContext = window;
++            window.run_until_parked();
++            window.update(|w, cx| {
++                let _ = w.draw(cx);
++            });
++            let name = window.debug_bounds("css-cell-text-0-0").unwrap();
++            let cell = window.debug_bounds("css-cell-0-0").unwrap();
++            window.update(|w, _| {
++                let typography = gpui::TextStyle { font_family: ".AppleSystemUIFont".into(), font_weight: FontWeight::SEMIBOLD, ..Default::default() };
++                let text_system = w.text_system();
++                let shaped = text_system.layout_line("Name", px(body * 0.94), &[typography.to_run(4)], None).width;
++                let mut wrapper = text_system.line_wrapper(typography.font(), px(body * 0.94));
++                let fragments = [gpui::LineFragment::text("Name")];
++                let breaks = wrapper.wrap_line(&fragments, name.size.width).count();
++                let isolated: gpui::Pixels = "Name".chars().map(|c| text_system.layout_line(&c.to_string(), px(body * 0.94), &[typography.to_run(c.len_utf8())], None).width).sum();
++                println!("Name {body}/{width}: shaped={shaped:?}, isolated={isolated:?}, available={:?}, generic-wrapper-breaks={breaks}", name.size.width);
++                assert!(shaped <= name.size.width, "outward-rounded floor fits the shaped semibold word");
++            });
++            assert!(
++                (f32::from(name.size.height) - body * 0.94 * 1.62).abs() < 1.,
++                "Name must be one line at {body}/{width}: {name:?}"
++            );
++            assert!(name.left() >= cell.left() + px(11.9));
++            assert!(name.right() <= cell.right() - px(11.9));
++            root.update(window, |r, cx| r.state.update(cx, |s, cx| s.select_all(cx)));
++            root.read_with(window, |r, cx| {
++                assert_eq!(r.state.read(cx).selected_text().trim_end(), source)
++            });
++        }
++        {
++            let word = "UnbreakableColumnNameThatMustScrollNormally";
++            let source = format!("| {word} | Other |\n| --- | --- |\n| x | y |");
++            let (_, window) = cx.add_window_view(|_, cx| Root {
++                body,
++                width: 180.,
++                custom: false,
++                state: cx.new(|cx| TextViewState::markdown(&source, cx)),
++            });
++            let window: &mut gpui::VisualTestContext = window;
++            window.run_until_parked();
++            window.update(|w, cx| {
++                let _ = w.draw(cx);
++            });
++            let text = window.debug_bounds("css-cell-text-0-0").unwrap();
++            assert!(
++                (f32::from(text.size.height) - body * 0.94 * 1.62).abs() < 1.,
++                "unbreakable word must not emergency-wrap"
++            );
++            assert!(
++                text.right() > px(180.),
++                "min-content columns may scroll rather than clipping words"
++            );
++        }
++        {
++            let source =
++                "Before\n\n- first\n\n  continuation\n\n- last\n\n1. next\n\n   details\n\n2. end";
++            let (_, window) = cx.add_window_view(|_, cx| Root {
++                body,
++                width: 280.,
++                custom: false,
++                state: cx.new(|cx| TextViewState::markdown(source, cx)),
++            });
++            let window: &mut gpui::VisualTestContext = window;
++            window.run_until_parked();
++            window.update(|w, cx| {
++                let _ = w.draw(cx);
++            });
++            let first = window.debug_bounds("css-list-0-1").unwrap();
++            let next = window.debug_bounds("css-list-0-2").unwrap();
++            assert!(
++                (f32::from(first.top()) - body * (1.62 + 0.7)).abs() < 1.5,
++                "first paragraph margin collapses into block gap"
++            );
++            assert!(
++                (f32::from(next.top() - first.bottom()) - body * 0.7).abs() < 1.,
++                "last/first paragraphs collapse through neighboring list boundaries"
++            );
++        }
++        for (source, custom) in [
++            ("```text\ncode\n```", false),
++            ("```mermaid\ngraph TD; A-->B\n```", true),
++        ] {
++            let (_, window) = cx.add_window_view(|_, cx| Root {
++                body,
++                width: 280.,
++                custom,
++                state: cx.new(|cx| TextViewState::markdown(source, cx)),
++            });
++            let window: &mut gpui::VisualTestContext = window;
++            window.run_until_parked();
++            window.update(|w, cx| {
++                let _ = w.draw(cx);
++            });
++            let content = window.debug_bounds("parity-content-0").unwrap();
++            assert!(
++                (f32::from(content.top()) - body * 0.7).abs() < 1.,
++                "first code/custom body margin: {body} {content:?}"
++            );
++        }
++        for (source, lines) in [
++            ("- first\n\n  continuation\n\n- last", 3.),
++            ("1. first\n\n   continuation\n\n2. last", 3.),
++            (
++                "- [x] Done\n\n  Details for done.\n\n  - Nested item\n  - [ ] Nested task\n\n- [ ] Pending",
++                5.,
++            ),
++        ] {
++            let (_, window) = cx.add_window_view(|_, cx| Root {
++                body,
++                width: 280.,
++                custom: false,
++                state: cx.new(|cx| TextViewState::markdown(source, cx)),
++            });
++            let window: &mut gpui::VisualTestContext = window;
++            window.run_until_parked();
++            window.update(|w, cx| {
++                let _ = w.draw(cx);
++            });
++            let content = window.debug_bounds("css-list-0-0").unwrap();
++            assert!(
++                (f32::from(content.top()) - body * 0.28).abs() < 1.,
++                "loose first boundary: {content:?}"
++            );
++            let expected = body * (lines * 1.62 + (lines - 1.) * 0.28);
++            assert!(
++                (f32::from(content.size.height) - expected).abs() < 1.5,
++                "loose margins collapse: {body} {content:?} expected {expected}"
++            );
++        }
++    }
++    println!(
++        "native Markdown profile: 13px/11px real-font table, list, code/custom-body geometry and source selection passed"
++    );
++}
++
++#[cfg(target_os = "macos")]
++fn check_task_marker_geometry(cx: &mut gpui::TestAppContext) {
++    use gpui::{
++        AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _,
++        Window, div, px,
++    };
++    use gpui_base::{
++        MarkdownTaskCheckbox, SelectionFormat, TextView, TextViewState, TextViewStyle,
++    };
++
++    struct TaskRoot {
++        state: Entity<TextViewState>,
++        body: f32,
++        dark: bool,
++        offset: f32,
++    }
++    impl Render for TaskRoot {
++        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++            let task = MarkdownTaskCheckbox {
++                offset_em: self.offset,
++                border: gpui::rgb(if self.dark { 0x5c5c5c } else { 0xbebebe }).into(),
++                background: gpui::rgb(if self.dark { 0x1e1e1e } else { 0xffffff }).into(),
++                checked_background: gpui::rgb(if self.dark { 0x846837 } else { 0xf8c98b }).into(),
++                ..Default::default()
++            };
++            div()
++                .w(px(280.))
++                .font_family(".AppleSystemUIFont")
++                .text_size(px(self.body))
++                .line_height(gpui::relative(1.62))
++                .child(
++                    TextView::new(&self.state)
++                        .selectable(true)
++                        .selection_format(SelectionFormat::Source)
++                        .style(
++                            TextViewStyle::default()
++                                .with_body_text_size(px(self.body))
++                                .with_dark(self.dark)
++                                .with_list_style(
++                                    px(self.body * 1.4),
++                                    px(self.body * 0.28),
++                                    gpui::black(),
++                                )
++                                .with_task_checkbox(task),
++                        ),
++                )
++        }
++    }
++    for body in [13., 11.] {
++        for scale in [2., 1.] {
++            for dark in [false, true] {
++                for source in [
++                    "- [x] Checked\n- [ ] Unchecked\n  - [x] Nested checked\n  - [ ] Nested unchecked",
++                    "- [x] Checked\n\n  Details\n\n- [ ] Unchecked\n\n  Details\n\n  - [x] Nested checked\n\n    Details\n\n  - [ ] Nested unchecked",
++                ] {
++                    let (root, window) = cx.add_window_view(|_, cx| TaskRoot {
++                        state: cx.new(|cx| TextViewState::markdown(source, cx)),
++                        body,
++                        dark,
++                        offset: 0.1,
++                    });
++                    let window: &mut gpui::VisualTestContext = window;
++                    window.update(|w, _| w.set_scale_factor(scale));
++                    window.run_until_parked();
++                    window.update(|w, cx| {
++                        let _ = w.draw(cx);
++                    });
++                    let ids = [
++                        ("task-box-0-0", "task-label-0-0", "task-check-0-0"),
++                        ("task-box-0-1", "task-label-0-1", "task-check-0-1"),
++                        ("task-box-1-0", "task-label-1-0", "task-check-1-0"),
++                        ("task-box-1-1", "task-label-1-1", "task-check-1-1"),
++                    ];
++                    let before: Vec<_> = ids
++                        .iter()
++                        .map(|id| {
++                            (
++                                window.debug_bounds(id.0).unwrap(),
++                                window.debug_bounds(id.1).unwrap(),
++                            )
++                        })
++                        .collect();
++                    root.update(window, |r, _| r.offset = 0.);
++                    window.update(|w, cx| {
++                        let _ = w.draw(cx);
++                    });
++                    for (ix, id) in ids.iter().enumerate() {
++                        let box_bounds = window.debug_bounds(id.0).unwrap();
++                        let label = window.debug_bounds(id.1).unwrap();
++                        assert_eq!(
++                            label, before[ix].1,
++                            "marker correction must not move/resize labels"
++                        );
++                        window.update(|w, _| {
++                            let text_system = w.text_system();
++                            let font = gpui::Font {
++                                family: ".AppleSystemUIFont".into(),
++                                ..Default::default()
++                            };
++                            let font_id = text_system.resolve_font(&font);
++                            let ascent = text_system.ascent(font_id, px(body));
++                            let descent = text_system.descent(font_id, px(body));
++                            let leading = (px(body * 1.62) - ascent - descent) / 2.;
++                            let baseline = label.top() + leading + ascent;
++                            let previous_baseline = before[ix].1.top() + leading + ascent;
++                            assert_eq!(
++                                baseline, previous_baseline,
++                                "native-font first-line baseline remains unchanged"
++                            );
++                        });
++                        assert_eq!(box_bounds.size, before[ix].0.size);
++                        assert_eq!(box_bounds.left(), before[ix].0.left());
++                        let delta = f32::from(before[ix].0.top() - box_bounds.top());
++                        assert!((delta - body * 0.1).abs() <= 1. / scale + 0.01);
++                        let expected_top =
++                            label.top() + (px(body * 1.62) - box_bounds.size.height) / 2.;
++                        assert!(
++                            (f32::from(box_bounds.top() - expected_top)).abs() <= 1. / scale + 0.01,
++                            "first-line centering {body}/{scale}/{id:?}: {box_bounds:?} {label:?}"
++                        );
++                        if ix % 2 == 0 {
++                            let check = window.debug_bounds(id.2).unwrap();
++                            println!(
++                                "task {body}/{scale}/{dark}/{id:?}: before={:?}, box={box_bounds:?}, check={check:?}, label={label:?}",
++                                before[ix].0
++                            );
++                            assert!(
++                                (f32::from(check.left() - box_bounds.left())).abs() < 0.01,
++                                "SVG must align with border box, not start after its border: {check:?} {box_bounds:?}"
++                            );
++                            assert!((f32::from(check.top() - box_bounds.top())).abs() < 0.01);
++                            assert_eq!(check.size, box_bounds.size);
++                        } else {
++                            assert!(window.debug_bounds(id.2).is_none());
++                        }
++                    }
++                    root.update(window, |r, cx| r.state.update(cx, |s, cx| s.select_all(cx)));
++                    root.read_with(window, |r, cx| {
++                        assert_eq!(r.state.read(cx).selected_text().trim_end(), source)
++                    });
++                }
++            }
++        }
++    }
++}
++
++#[cfg(not(target_os = "macos"))]
++fn main() {}

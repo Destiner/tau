@@ -1,8 +1,16 @@
+**/node_modules
+**/target
+**/.cache
+.worktrees
 dist
-node_modules
 playwright-report
 test-results
-src-tauri/gen
-src-tauri/target
-src-tauri/Cargo.lock
+src-tauri
+**/Cargo.lock
 bun.lock
+gpui/results
+gpui/review
+gpui/patches
+gpui/assets
+# Preserve third-party licence texts verbatim.
+gpui/src/components/diagram/licenses

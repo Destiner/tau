@@ -1,0 +1,150 @@
+diff --git a/src/styled.rs b/src/styled.rs
+--- a/src/styled.rs
++++ b/src/styled.rs
+@@ -134,10 +134,11 @@
+         self.text_align(TextAlign::Right)
+     }
+ 
+-    /// Sets the truncate to prevent text from wrapping and truncate overflowing text with an ellipsis (…) if needed.
+-    /// [Docs](https://tailwindcss.com/docs/text-overflow#truncate)
++    /// Prevents wrapping and ellipsizes horizontal overflow without clipping vertical ink.
++    /// A line box controls spacing, not glyph bounds; tight leading can put ink outside it.
++    /// Use `overflow_hidden` explicitly when a two-axis viewport is required.
+     fn truncate(mut self) -> Self {
+-        self.overflow_hidden().whitespace_nowrap().text_ellipsis()
++        self.overflow_x_hidden().whitespace_nowrap().text_ellipsis()
+     }
+ 
+     /// Sets number of lines to show before truncating the text.
+diff --git a/src/style.rs b/src/style.rs
+--- a/src/style.rs
++++ b/src/style.rs
+@@ -642,12 +642,13 @@
+         }
+     }
+ 
+-    /// Get the content mask for this element style, based on the given bounds.
++    /// Get the content mask, preserving the enclosing mask on each visible axis.
+     /// If the element does not hide its overflow, this will return `None`.
+     pub fn overflow_mask(
+         &self,
+         bounds: Bounds<Pixels>,
+         rem_size: Pixels,
++        enclosing_bounds: Bounds<Pixels>,
+     ) -> Option<ContentMask<Pixels>> {
+         match self.overflow {
+             Point {
+@@ -676,13 +677,13 @@
+                     (true, true) => return None,
+                     // x visible, y hidden
+                     (true, false) => Bounds::from_corners(
+-                        point(min.x, bounds.origin.y),
+-                        point(max.x, bounds.bottom_right().y),
++                        point(enclosing_bounds.left(), min.y),
++                        point(enclosing_bounds.right(), max.y),
+                     ),
+                     // x hidden, y visible
+                     (false, true) => Bounds::from_corners(
+-                        point(bounds.origin.x, min.y),
+-                        point(bounds.bottom_right().x, max.y),
++                        point(min.x, enclosing_bounds.top()),
++                        point(max.x, enclosing_bounds.bottom()),
+                     ),
+                     // both hidden
+                     (false, false) => Bounds::from_corners(min, max),
+@@ -1344,6 +1345,66 @@
+     use super::*;
+ 
+     use util_macros::perf;
++
++    #[test]
++    fn overflow_mask_clips_only_requested_axes_inside_enclosing_viewport() {
++        let bounds = Bounds::from_corners(point(px(20.), px(30.)), point(px(60.), px(42.)));
++        let parent = Bounds::from_corners(point(px(5.), px(7.)), point(px(100.), px(90.)));
++        for (x, y, expected) in [
++            (
++                Overflow::Hidden,
++                Overflow::Visible,
++                Some(Bounds::from_corners(
++                    point(px(21.), parent.top()),
++                    point(px(59.), parent.bottom()),
++                )),
++            ),
++            (
++                Overflow::Visible,
++                Overflow::Hidden,
++                Some(Bounds::from_corners(
++                    point(parent.left(), px(31.)),
++                    point(parent.right(), px(41.)),
++                )),
++            ),
++            (
++                Overflow::Hidden,
++                Overflow::Hidden,
++                Some(Bounds::from_corners(
++                    point(px(21.), px(31.)),
++                    point(px(59.), px(41.)),
++                )),
++            ),
++            (Overflow::Visible, Overflow::Visible, None),
++        ] {
++            let style = Style {
++                overflow: point(x, y),
++                border_color: Some(red()),
++                border_widths: Edges::all(px(1.).into()),
++                ..Default::default()
++            };
++            assert_eq!(
++                style
++                    .overflow_mask(bounds, px(16.), parent)
++                    .map(|m| m.bounds),
++                expected
++            );
++        }
++    }
++
++    #[test]
++    fn truncate_preserves_line_grid_and_explicit_vertical_clip() {
++        use crate::{Styled, div};
++        let mut label = div().line_height(crate::relative(1.)).truncate();
++        assert_eq!(label.style().overflow.x, Some(Overflow::Hidden));
++        assert_eq!(label.style().overflow.y, None);
++        assert_eq!(
++            label.text_style().line_height,
++            Some(crate::relative(1.).into())
++        );
++        let mut viewport = div().overflow_hidden().truncate();
++        assert_eq!(viewport.style().overflow.y, Some(Overflow::Hidden));
++    }
+ 
+     #[perf]
+     fn test_basic_highlight_style_combination() {
+diff --git a/src/elements/div.rs b/src/elements/div.rs
+--- a/src/elements/div.rs
++++ b/src/elements/div.rs
+@@ -2409,7 +2409,11 @@
+ 
+                 window.with_text_style(style.text_style().cloned(), |window| {
+                     window.with_content_mask(
+-                        style.overflow_mask(bounds, window.rem_size()),
++                        style.overflow_mask(
++                            bounds,
++                            window.rem_size(),
++                            window.content_mask().bounds,
++                        ),
+                         |window| {
+                             let hitbox = if self.should_insert_hitbox(&style, window, cx) {
+                                 Some(window.insert_hitbox(bounds, self.hitbox_behavior))
+@@ -2569,7 +2573,11 @@
+                     style.paint(bounds, window, cx, |window: &mut Window, cx: &mut App| {
+                         window.with_text_style(style.text_style().cloned(), |window| {
+                             window.with_content_mask(
+-                                style.overflow_mask(bounds, window.rem_size()),
++                                style.overflow_mask(
++                                    bounds,
++                                    window.rem_size(),
++                                    window.content_mask().bounds,
++                                ),
+                                 |window| {
+                                     window.with_tab_group(tab_group, |window| {
+                                         // Register the container's own focus handle *inside* its

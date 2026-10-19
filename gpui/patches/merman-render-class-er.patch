@@ -1,0 +1,1163 @@
+diff --git a/src/class.rs b/src/class.rs
+index 5bd71c3..2b47606 100644
+--- a/src/class.rs
++++ b/src/class.rs
+@@ -25,6 +25,7 @@ pub(crate) mod config;
+ #[cfg(feature = "layout-elk")]
+ mod elk_terminals;
+ mod measured;
++pub(crate) mod presentation;
+ use self::config::{ClassConfigView, ClassLayoutSettings};
+ use self::measured::{MeasuredEdge, MeasuredGraph, MeasuredNode};
+ #[cfg(feature = "layout-elk")]
+@@ -2041,6 +2042,7 @@ fn measure_class_diagram(
+     uses_elk_adapter: bool,
+ ) -> Result<MeasuredClassDiagram> {
+     validate_class_namespace_hierarchy(model)?;
++    let effective_config = mermaid_config.as_value();
+     let wrap_mode_node = settings.wrap_mode_node;
+     let wrap_mode_label = settings.wrap_mode_label;
+     let wrap_mode_note = settings.wrap_mode_note;
+@@ -2092,7 +2094,13 @@ fn measure_class_diagram(
+         |g: &mut MeasuredGraph,
+          c: &ClassNode,
+          class_label_plans_by_id: &mut FxHashMap<String, Arc<ClassNodeLabelPlan>>| {
+-            let (w, h, label_plan) = class_box_dimensions(c, &class_box_measure_ctx);
++            let (w, h, label_plan) =
++                if presentation::enabled(effective_config) && !class_node_requires_math(c) {
++                    let (w, h) = presentation::dimensions(c, effective_config, measurer);
++                    (w, h, None)
++                } else {
++                    class_box_dimensions(c, &class_box_measure_ctx)
++                };
+             if let Some(label_plan) = label_plan {
+                 class_label_plans_by_id.insert(c.id.clone(), Arc::new(label_plan));
+             }
+diff --git a/src/class/BEAUTIFUL-MERMAID-LICENSE.md b/src/class/BEAUTIFUL-MERMAID-LICENSE.md
+new file mode 100644
+index 0000000..f76dafd
+--- /dev/null
++++ b/src/class/BEAUTIFUL-MERMAID-LICENSE.md
+@@ -0,0 +1,31 @@
++# Compact class and ER presentation attribution
++
++The opt-in compartment geometry and drawing algorithms in
++`src/class/presentation.rs`, `src/er/presentation.rs`, and their corresponding
++SVG painters are adapted from beautiful-mermaid 1.1.3's `src/class/{layout,renderer}.ts`
++and `src/er/{layout,renderer}.ts`. The existing Merman graph engines continue to
++position nodes and route relationships; no ELK.js implementation is copied.
++The public profile is selected through MermaidConfig's serde JSON values with
++`class.presentationProfile: "compact"` and `er.presentationProfile: "compact"`.
++
++MIT License
++
++Copyright (c) 2026 Craft Docs
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+diff --git a/src/class/config.rs b/src/class/config.rs
+index 211a722..50597de 100644
+--- a/src/class/config.rs
++++ b/src/class/config.rs
+@@ -73,8 +73,17 @@ impl<'a> ClassConfigView<'a> {
+     }
+ 
+     pub(super) fn layout_settings(&self) -> ClassLayoutSettings {
+-        let nodesep = self.layout_spacing("nodeSpacing");
+-        let ranksep = self.layout_spacing("rankSpacing");
++        let compact = super::presentation::enabled(self.effective_config);
++        let nodesep = if compact {
++            self.class_compat_f64("nodeSpacing").unwrap_or(40.0)
++        } else {
++            self.layout_spacing("nodeSpacing")
++        };
++        let ranksep = if compact {
++            self.class_compat_f64("rankSpacing").unwrap_or(60.0)
++        } else {
++            self.layout_spacing("rankSpacing")
++        };
+ 
+         let node_html_labels = self.root_bool("htmlLabels").unwrap_or(true);
+         let edge_html_labels = self.render_edge_html_labels();
+@@ -182,6 +191,9 @@ impl<'a> ClassConfigView<'a> {
+     }
+ 
+     pub(crate) fn render_viewport_padding(&self) -> f64 {
++        if super::presentation::enabled(self.effective_config) {
++            return 40.0;
++        }
+         config_f64(self.diagram_config(), &["diagramPadding"])
+             .unwrap_or(8.0)
+             .max(0.0)
+diff --git a/src/class/presentation.rs b/src/class/presentation.rs
+new file mode 100644
+index 0000000..2b8fd06
+--- /dev/null
++++ b/src/class/presentation.rs
+@@ -0,0 +1,200 @@
++//! Opt-in compartment presentation. Geometry is derived from semantic rows, never labels.
++use crate::text::{TextMeasurer, TextStyle, WrapMode};
++use serde_json::Value;
++
++type Node = merman_core::models::class_diagram::ClassNode;
++
++pub(crate) const HEADER: f64 = 32.0;
++pub(crate) const ROW: f64 = 20.0;
++pub(crate) const PAD: f64 = 8.0;
++
++pub(crate) fn enabled(config: &Value) -> bool {
++    config
++        .pointer("/class/presentationProfile")
++        .and_then(Value::as_str)
++        == Some("compact")
++}
++
++pub(crate) fn member_style(config: &Value) -> TextStyle {
++    TextStyle {
++        font_family: Some(
++            config
++                .pointer("/class/memberFontFamily")
++                .and_then(Value::as_str)
++                .unwrap_or("Menlo, monospace")
++                .to_owned(),
++        ),
++        font_size: 11.0,
++        font_weight: Some("400".into()),
++        font_style: None,
++    }
++}
++
++pub(crate) fn title_style(config: &Value) -> TextStyle {
++    let mut style = super::config::ClassConfigView::new(config).render_text_style(13.0);
++    style.font_weight = Some("500".into());
++    style
++}
++
++pub(crate) fn annotation_style(config: &Value) -> TextStyle {
++    let mut style = title_style(config);
++    style.font_size = 11.0;
++    style.font_weight = Some("400".into());
++    style.font_style = Some("italic".into());
++    style
++}
++
++pub(crate) fn section_height(count: usize) -> f64 {
++    if count == 0 {
++        PAD
++    } else {
++        count as f64 * ROW + PAD
++    }
++}
++
++pub(crate) fn header_height(node: &Node) -> f64 {
++    HEADER.max(title(node).lines().count().max(1) as f64 * 14.0 + 8.0)
++        + node.annotations.len() as f64 * 16.0
++}
++
++pub(crate) fn member_text(member: &merman_core::models::class_diagram::ClassMember) -> String {
++    let visibility = if member.visibility.is_empty() {
++        String::new()
++    } else {
++        format!("{} ", member.visibility)
++    };
++    let id = merman_core::common::parse_generic_types(member.id.trim());
++    let (name, ty) = if member.member_type == "method" {
++        (
++            format!(
++                "{}({})",
++                id,
++                merman_core::common::parse_generic_types(member.parameters.trim())
++            ),
++            merman_core::common::parse_generic_types(member.return_type.trim()),
++        )
++    } else if let Some((ty, name)) = id.split_once(char::is_whitespace) {
++        (name.trim().to_owned(), ty.to_owned())
++    } else {
++        (id, String::new())
++    };
++    format!(
++        "{visibility}{name}{}",
++        if ty.is_empty() {
++            String::new()
++        } else {
++            format!(": {ty}")
++        }
++    )
++}
++
++pub(crate) fn row_style(
++    member: &merman_core::models::class_diagram::ClassMember,
++    config: &Value,
++) -> TextStyle {
++    let mut style = member_style(config);
++    if member.classifier == "*" {
++        style.font_style = Some("italic".into());
++    }
++    style
++}
++
++pub(crate) fn title(node: &Node) -> String {
++    let label = if node.label.is_empty() {
++        &node.id
++    } else {
++        &node.label
++    };
++    let title = if node.type_param.is_empty() {
++        label.clone()
++    } else {
++        format!("{label}<{}>", node.type_param)
++    };
++    crate::text::mermaid_html_breaks_to_newlines(&title).into_owned()
++}
++
++pub(crate) fn dimensions(node: &Node, config: &Value, measurer: &dyn TextMeasurer) -> (f64, f64) {
++    let title_style = title_style(config);
++    let mut width = 120.0_f64.max(
++        measurer
++            .measure_wrapped(&title(node), &title_style, None, WrapMode::SvgLike)
++            .width
++            + PAD * 2.0,
++    );
++    for row in node.members.iter().chain(&node.methods) {
++        width = width.max(
++            measurer
++                .measure_wrapped(
++                    &member_text(row),
++                    &row_style(row, config),
++                    None,
++                    WrapMode::SvgLike,
++                )
++                .width
++                + PAD * 2.0,
++        );
++    }
++    for annotation in &node.annotations {
++        width = width.max(
++            measurer
++                .measure_wrapped(
++                    &format!("<<{annotation}>>"),
++                    &annotation_style(config),
++                    None,
++                    WrapMode::SvgLike,
++                )
++                .width
++                + PAD * 2.0,
++        );
++    }
++    (
++        width,
++        header_height(node)
++            + section_height(node.members.len())
++            + section_height(node.methods.len()),
++    )
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::text::DeterministicTextMeasurer;
++    use serde_json::json;
++
++    #[test]
++    fn compact_compartments_and_role_fonts_are_semantic() {
++        let config = json!({"fontFamily":"Requested Sans", "class":{
++            "presentationProfile":"compact", "memberFontFamily":"Requested Mono"
++        }});
++        assert_eq!(title_style(&config).font_size, 13.0);
++        assert_eq!(title_style(&config).font_weight.as_deref(), Some("500"));
++        assert_eq!(
++            member_style(&config).font_family.as_deref(),
++            Some("Requested Mono")
++        );
++        assert_eq!(member_style(&config).font_size, 11.0);
++        let mut node: Node = serde_json::from_value(json!({
++            "id":"Renamed", "label":"Renamed", "text":"", "domId":"renamed"
++        }))
++        .unwrap();
++        let measurer = DeterministicTextMeasurer::default();
++        assert_eq!(dimensions(&node, &config, &measurer), (120.0, 48.0));
++        let member = serde_json::from_value(json!({
++            "memberType":"method", "visibility":"+", "id":"load", "classifier":"*",
++            "parameters":"List~T~", "returnType":"Result~T~", "displayText":"", "cssStyle":"font-style:italic;"
++        })).unwrap();
++        assert_eq!(member_text(&member), "+ load(List<T>): Result<T>");
++        assert_eq!(
++            row_style(&member, &config).font_style.as_deref(),
++            Some("italic")
++        );
++        node.methods.push(member);
++        assert_eq!(dimensions(&node, &config, &measurer).1, 68.0);
++        node.annotations.push("interface".into());
++        assert_eq!(dimensions(&node, &config, &measurer).1, 84.0);
++        node.label = "Much Longer Generic Label".into();
++        node.type_param = "T".into();
++        assert_eq!(title(&node), "Much Longer Generic Label<T>");
++        assert!(dimensions(&node, &config, &measurer).0 > 120.0);
++    }
++}
+diff --git a/src/er.rs b/src/er.rs
+index 0e73b46..30a10ff 100644
+--- a/src/er.rs
++++ b/src/er.rs
+@@ -15,6 +15,7 @@ use std::collections::{HashMap, HashSet};
+ use std::sync::Arc;
+ 
+ mod config;
++pub(crate) mod presentation;
+ 
+ #[cfg(feature = "layout-elk")]
+ use crate::layout_backend::GraphLayoutBackend;
+@@ -178,6 +179,9 @@ pub(crate) fn measure_entity_box(
+     attr_style: &TextStyle,
+     settings: ErEntityMeasurementSettings,
+ ) -> ErEntityMeasure {
++    if settings.compact {
++        return presentation::measure(entity, measurer, label_style, attr_style);
++    }
+     // Measure through the same HTML/SVG branch used by Mermaid erBox.ts and the painter.
+     // The operation-owned measurer supplies browser metrics or the deterministic fallback.
+ 
+@@ -388,6 +392,7 @@ fn edge_label_metrics(
+     measurer: &dyn TextMeasurer,
+     style: &TextStyle,
+     html_labels: bool,
++    compact: bool,
+ ) -> (f64, f64) {
+     let text = text.trim();
+     if text.is_empty() {
+@@ -413,7 +418,10 @@ fn edge_label_metrics(
+     } else {
+         crate::text::measure_markdown_with_inline_styles(measurer, text, style, None, wrap_mode)
+     };
+-    (m.width.max(0.0), m.height.max(0.0))
++    (
++        m.width.max(0.0) + if compact { 8.0 } else { 0.0 },
++        m.height.max(0.0) + if compact { 6.0 } else { 0.0 },
++    )
+ }
+ 
+ fn parse_er_rel_idx_from_edge_name(name: &str) -> Option<usize> {
+@@ -1133,6 +1141,7 @@ fn layout_er_diagram_dagre_typed(
+                     measurer,
+                     &relationship_label_style,
+                     relationship_html_labels,
++                    entity_measurement.compact,
+                 )
+             };
+ 
+@@ -1196,6 +1205,7 @@ fn layout_er_diagram_dagre_typed(
+                 measurer,
+                 &relationship_label_style,
+                 relationship_html_labels,
++                entity_measurement.compact,
+             )
+         };
+         g.set_edge_named(
+@@ -1207,7 +1217,11 @@ fn layout_er_diagram_dagre_typed(
+                 height: label_h.max(0.0),
+                 labelpos: LabelPos::C,
+                 labeloffset: 10.0,
+-                minlen: 1,
++                minlen: if entity_measurement.compact {
++                    presentation::relationship_minlen(&r.role_a)
++                } else {
++                    1
++                },
+                 weight: 1.0,
+                 ..Default::default()
+             }),
+@@ -1358,6 +1372,7 @@ fn layout_er_diagram_dagre_typed(
+                     measurer,
+                     &relationship_label_style,
+                     relationship_html_labels,
++                    entity_measurement.compact,
+                 );
+                 // Mermaid uses Dagre's computed edge label center (`edge.x/edge.y`) rather than a
+                 // polyline midpoint. Prefer those coordinates when present.
+@@ -1871,6 +1886,7 @@ fn er_elk_graph(
+             measurer,
+             relationship_label_style,
+             *relationship_html_labels,
++            entity_measurement.compact,
+         );
+         edges.push(elk::Edge {
+             id: format!("er-rel-{index}"),
+@@ -2223,6 +2239,7 @@ mod tests {
+                 &ErPrecisionMeasurer,
+                 &default_style(),
+                 true,
++                false,
+             ),
+             (73.123_456_789, 17.25)
+         );
+diff --git a/src/er/config.rs b/src/er/config.rs
+index 9224fd2..14a6a9e 100644
+--- a/src/er/config.rs
++++ b/src/er/config.rs
+@@ -31,25 +31,45 @@ impl<'a> ErConfigView<'a> {
+ 
+     pub(super) fn layout_settings(&self, direction: &str) -> ErLayoutSettings {
+         let label_style = self.text_style();
+-        let attr_style = TextStyle {
+-            font_family: label_style.font_family.clone(),
+-            font_size: label_style.font_size.max(1.0),
+-            font_weight: None,
+-            font_style: None,
++        let attr_style = if super::presentation::enabled(self.effective_config) {
++            super::presentation::attr_style(self.effective_config)
++        } else {
++            TextStyle {
++                font_family: label_style.font_family.clone(),
++                font_size: label_style.font_size.max(1.0),
++                font_weight: None,
++                font_style: None,
++            }
+         };
+         let relationship_label_style = TextStyle {
+             font_family: label_style.font_family.clone(),
+             // Mermaid ER relationship labels stay at a fixed 14px in the emitted stylesheet.
+-            font_size: DEFAULT_RELATIONSHIP_FONT_SIZE,
+-            font_weight: None,
++            font_size: if super::presentation::enabled(self.effective_config) {
++                11.0
++            } else {
++                DEFAULT_RELATIONSHIP_FONT_SIZE
++            },
++            font_weight: if super::presentation::enabled(self.effective_config) {
++                Some("400".into())
++            } else {
++                None
++            },
+             font_style: None,
+         };
+ 
+         ErLayoutSettings {
+             graph: GraphLabel {
+                 rankdir: rank_dir_from(direction),
+-                nodesep: self.er_f64("nodeSpacing").unwrap_or(DEFAULT_NODE_SPACING),
+-                ranksep: self.er_f64("rankSpacing").unwrap_or(DEFAULT_RANK_SPACING),
++                nodesep: if super::presentation::enabled(self.effective_config) {
++                    70.0
++                } else {
++                    self.er_f64("nodeSpacing").unwrap_or(DEFAULT_NODE_SPACING)
++                },
++                ranksep: if super::presentation::enabled(self.effective_config) {
++                    90.0
++                } else {
++                    self.er_f64("rankSpacing").unwrap_or(DEFAULT_RANK_SPACING)
++                },
+                 // Mermaid's unified Dagre adapter lays out inside an 8px graph margin, then its
+                 // root viewport adds the same 8px around the emitted bbox.
+                 marginx: 8.0,
+@@ -77,17 +97,16 @@ impl<'a> ErConfigView<'a> {
+             title_top_margin: self.title_top_margin_with_root_fallback().max(0.0),
+             insert_title_top_margin: self.title_top_margin_without_root_fallback(),
+             use_max_width: self.er_bool("useMaxWidth").unwrap_or(true),
+-            label_style: TextStyle {
+-                font_family: Some(font_family.clone()),
+-                font_size,
+-                font_weight: None,
+-                font_style: None,
+-            },
+-            attr_style: TextStyle {
+-                font_family: Some(font_family),
+-                font_size,
+-                font_weight: None,
+-                font_style: None,
++            label_style: self.text_style(),
++            attr_style: if super::presentation::enabled(self.effective_config) {
++                super::presentation::attr_style(self.effective_config)
++            } else {
++                TextStyle {
++                    font_family: Some(font_family),
++                    font_size,
++                    font_weight: None,
++                    font_style: None,
++                }
+             },
+             relationship_html_labels: self.relationship_html_labels(),
+             entity_html_label_wrap_mode: self.entity_html_label_wrap_mode(),
+@@ -102,6 +121,7 @@ impl<'a> ErConfigView<'a> {
+ 
+     pub(crate) fn entity_measurement_settings(&self) -> ErEntityMeasurementSettings {
+         ErEntityMeasurementSettings {
++            compact: super::presentation::enabled(self.effective_config),
+             html_labels_raw: self.root_bool("htmlLabels").unwrap_or(false),
+             wrap_mode: self.entity_html_label_wrap_mode(),
+             diagram_padding: self
+@@ -122,6 +142,14 @@ impl<'a> ErConfigView<'a> {
+     }
+ 
+     pub(crate) fn text_style(&self) -> TextStyle {
++        if super::presentation::enabled(self.effective_config) {
++            return TextStyle {
++                font_family: Some(self.font_family_css()),
++                font_size: 13.0,
++                font_weight: Some("500".into()),
++                font_style: None,
++            };
++        }
+         TextStyle {
+             font_family: Some(self.font_family_css()),
+             font_size: self.font_size(),
+@@ -219,6 +247,7 @@ pub(super) struct ErLayoutSettings {
+ 
+ #[derive(Clone, Copy)]
+ pub(crate) struct ErEntityMeasurementSettings {
++    pub(crate) compact: bool,
+     pub(crate) html_labels_raw: bool,
+     pub(crate) wrap_mode: WrapMode,
+     pub(crate) diagram_padding: f64,
+diff --git a/src/er/presentation.rs b/src/er/presentation.rs
+new file mode 100644
+index 0000000..8d9d93d
+--- /dev/null
++++ b/src/er/presentation.rs
+@@ -0,0 +1,191 @@
++//! Compact ER compartments, measured with the same role fonts used by the painter.
++use super::{ErBoxLabel, ErEntity, ErEntityMeasure, ErEntityMeasureRow};
++use crate::text::{TextMeasurer, TextStyle, WrapMode};
++use serde_json::Value;
++
++pub(crate) const HEADER: f64 = 34.0;
++pub(crate) const ROW: f64 = 22.0;
++pub(crate) const PAD: f64 = 14.0;
++
++pub(crate) fn enabled(config: &Value) -> bool {
++    config
++        .pointer("/er/presentationProfile")
++        .and_then(Value::as_str)
++        == Some("compact")
++}
++pub(crate) fn relationship_minlen(label: &str) -> usize {
++    // ELK inserts a label layer, with the configured layer gap on both sides.
++    if label.trim().is_empty() { 1 } else { 2 }
++}
++
++pub(crate) fn attr_style(config: &Value) -> TextStyle {
++    TextStyle {
++        font_family: Some(
++            config
++                .pointer("/er/attributeFontFamily")
++                .and_then(Value::as_str)
++                .unwrap_or("Menlo, monospace")
++                .into(),
++        ),
++        font_size: 11.0,
++        font_weight: Some("400".into()),
++        font_style: None,
++    }
++}
++pub(crate) fn key_style(title_style: &TextStyle) -> TextStyle {
++    TextStyle {
++        font_size: 9.0,
++        font_weight: Some("600".into()),
++        ..title_style.clone()
++    }
++}
++pub(crate) fn key_width(text: &str, measurer: &dyn TextMeasurer, title_style: &TextStyle) -> f64 {
++    if text.is_empty() {
++        0.0
++    } else {
++        measurer
++            .measure_wrapped(text, &key_style(title_style), None, WrapMode::SvgLike)
++            .width
++            + 8.0
++    }
++}
++pub(super) fn measure(
++    entity: &ErEntity,
++    measurer: &dyn TextMeasurer,
++    title_style: &TextStyle,
++    attr_style: &TextStyle,
++) -> ErEntityMeasure {
++    let label = ErBoxLabel::from_source(if entity.alias.trim().is_empty() {
++        &entity.label
++    } else {
++        &entity.alias
++    });
++    let label_metrics =
++        measurer.measure_wrapped(label.rendered_text(), title_style, None, WrapMode::SvgLike);
++    let mut width = 140.0_f64.max(label_metrics.width + PAD * 2.0);
++    let mut rows = Vec::with_capacity(entity.attributes.len());
++    for attr in &entity.attributes {
++        let type_label = ErBoxLabel::from_source(&attr.ty);
++        let name_label = ErBoxLabel::from_source(&attr.name);
++        let key_label = ErBoxLabel::from_source(&attr.keys.join(","));
++        let type_width = measurer
++            .measure_wrapped(
++                type_label.rendered_text(),
++                attr_style,
++                None,
++                WrapMode::SvgLike,
++            )
++            .width;
++        let name_width = measurer
++            .measure_wrapped(
++                name_label.rendered_text(),
++                attr_style,
++                None,
++                WrapMode::SvgLike,
++            )
++            .width;
++        let badge_width = key_width(key_label.rendered_text(), measurer, title_style);
++        width = width.max(
++            type_width
++                + name_width
++                + PAD * 2.0
++                + if badge_width > 0.0 {
++                    badge_width + 6.0
++                } else {
++                    0.0
++                },
++        );
++        rows.push(ErEntityMeasureRow {
++            type_label,
++            name_label,
++            key_label,
++            comment_label: ErBoxLabel::from_source(&attr.comment),
++            height: ROW,
++        });
++    }
++    ErEntityMeasure {
++        width,
++        height: HEADER + entity.attributes.len().max(1) as f64 * ROW,
++        text_padding: PAD,
++        label,
++        label_html_width: label_metrics.width,
++        label_height: HEADER,
++        label_max_width_px: width.ceil() as i64,
++        has_key: false,
++        has_comment: false,
++        type_col_w: 0.0,
++        name_col_w: 0.0,
++        key_col_w: 0.0,
++        comment_col_w: 0.0,
++        rows,
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::er::ErConfigView;
++    use crate::text::DeterministicTextMeasurer;
++    use serde_json::json;
++
++    #[test]
++    fn compact_roles_and_compartments_follow_semantics() {
++        let config = json!({"fontFamily":"Requested Sans", "er":{
++            "presentationProfile":"compact", "attributeFontFamily":"Requested Mono"
++        }});
++        let settings = ErConfigView::new(&config).render_settings();
++        assert_eq!(settings.label_style.font_size, 13.0);
++        assert_eq!(settings.label_style.font_weight.as_deref(), Some("500"));
++        assert_eq!(
++            settings.attr_style.font_family.as_deref(),
++            Some("Requested Mono")
++        );
++        assert_eq!(settings.attr_style.font_size, 11.0);
++        assert_eq!(key_style(&settings.label_style).font_size, 9.0);
++        let measurer = DeterministicTextMeasurer::default();
++        let mut entity = ErEntity {
++            label: "Renamed".into(),
++            ..Default::default()
++        };
++        assert_eq!(
++            measure(
++                &entity,
++                &measurer,
++                &settings.label_style,
++                &settings.attr_style
++            )
++            .height,
++            56.0
++        );
++        for count in 1..=5 {
++            entity
++                .attributes
++                .push(merman_core::diagrams::er::ErAttributeRenderModel {
++                    ty: "string".into(),
++                    name: "attribute".into(),
++                    keys: vec!["PK".into(), "FK".into()],
++                    comment: "retained".into(),
++                });
++            let measured = measure(
++                &entity,
++                &measurer,
++                &settings.label_style,
++                &settings.attr_style,
++            );
++            assert_eq!(measured.height, HEADER + count as f64 * ROW);
++            assert!(measured.width >= 140.0);
++            assert_eq!(measured.rows[0].key_label.rendered_text(), "PK,FK");
++            assert_eq!(measured.rows[0].comment_label.rendered_text(), "retained");
++        }
++    }
++
++    #[test]
++    fn labelled_relationships_reserve_two_gaps_without_matching_fixture_text() {
++        for label in ["contains", "renamed", "longer relationship label", "多言語"] {
++            assert_eq!(relationship_minlen(label), 2);
++        }
++        for label in ["", "  ", "\n"] {
++            assert_eq!(relationship_minlen(label), 1);
++        }
++    }
++}
+diff --git a/src/svg/parity/class/css.rs b/src/svg/parity/class/css.rs
+index 1739523..5bd7eba 100644
+--- a/src/svg/parity/class/css.rs
++++ b/src/svg/parity/class/css.rs
+@@ -194,15 +194,21 @@ pub(super) fn class_css(
+         diagram_id
+     );
+ 
++    let canvas = theme_token(effective_config, "background", "#ffffff");
++    let hollow = if crate::class::presentation::enabled(effective_config) {
++        canvas.as_str()
++    } else {
++        "transparent"
++    };
+     for (marker_id_suffix, marker_class, fill) in [
+         ("compositionStart", "composition", line_color),
+         ("compositionEnd", "composition", line_color),
+         ("dependencyStart", "dependency", line_color),
+         ("dependencyEnd", "dependency", line_color),
+-        ("extensionStart", "extension", "transparent"),
+-        ("extensionEnd", "extension", "transparent"),
+-        ("aggregationStart", "aggregation", "transparent"),
+-        ("aggregationEnd", "aggregation", "transparent"),
++        ("extensionStart", "extension", hollow),
++        ("extensionEnd", "extension", hollow),
++        ("aggregationStart", "aggregation", hollow),
++        ("aggregationEnd", "aggregation", hollow),
+         ("lollipopStart", "lollipop", main_bkg),
+         ("lollipopEnd", "lollipop", main_bkg),
+     ] {
+diff --git a/src/svg/parity/class/mod.rs b/src/svg/parity/class/mod.rs
+index c28bebb..ea6b97c 100644
+--- a/src/svg/parity/class/mod.rs
++++ b/src/svg/parity/class/mod.rs
+@@ -27,6 +27,7 @@ mod label;
+ mod namespace;
+ 
+ mod node;
++mod presentation;
+ 
+ mod nodes;
+ 
+diff --git a/src/svg/parity/class/node.rs b/src/svg/parity/class/node.rs
+index 3709982..1f56665 100644
+--- a/src/svg/parity/class/node.rs
++++ b/src/svg/parity/class/node.rs
+@@ -54,6 +54,7 @@ pub(super) struct ClassNodeShellContext<'a> {
+ }
+ 
+ pub(super) struct ClassNodeBasicContainerContext<'a> {
++    pub compact: bool,
+     pub diagram_id: SvgDiagramId<'a>,
+     pub node_style_attr: &'a str,
+     pub node_fill: &'a str,
+@@ -293,7 +294,22 @@ pub(super) fn render_class_node_basic_container(
+         );
+     }
+ 
+-    let (fill_d, stroke_d) = if hand_drawn {
++    let (fill_d, stroke_d) = if ctx.compact && !hand_drawn {
++        (
++            String::new(),
++            format!(
++                "M{} {} L{} {} L{} {} L{} {} Z",
++                fmt(left),
++                fmt(top),
++                fmt(left + w),
++                fmt(top),
++                fmt(left + w),
++                fmt(top + h),
++                fmt(left),
++                fmt(top + h)
++            ),
++        )
++    } else if hand_drawn {
+         class_rough_hachure_rect_paths(
+             left,
+             top,
+diff --git a/src/svg/parity/class/nodes.rs b/src/svg/parity/class/nodes.rs
+index bef2db1..27cf2e1 100644
+--- a/src/svg/parity/class/nodes.rs
++++ b/src/svg/parity/class/nodes.rs
+@@ -771,6 +771,8 @@ fn render_class_node_id(
+         n,
+         position,
+         &ClassNodeBasicContainerContext {
++            compact: crate::class::presentation::enabled(ctx.effective_config)
++                && !crate::class::class_node_requires_math(node),
+             diagram_id: ctx.diagram_id,
+             node_style_attr,
+             node_fill,
+@@ -785,7 +787,11 @@ fn render_class_node_id(
+     detail.path_bounds += basic_container.stats.path_bounds;
+     detail.path_bounds_calls += basic_container.stats.path_bounds_calls;
+ 
+-    if settings.diagram_use_html_labels || crate::class::class_node_requires_math(node) {
++    if crate::class::presentation::enabled(ctx.effective_config)
++        && !crate::class::class_node_requires_math(node)
++    {
++        super::presentation::body(out, node, n.width, n.height, ctx.effective_config);
++    } else if settings.diagram_use_html_labels || crate::class::class_node_requires_math(node) {
+         let html_stats = render_class_html_node_body(
+             ClassNodeRenderState {
+                 out,
+diff --git a/src/svg/parity/class/presentation.rs b/src/svg/parity/class/presentation.rs
+new file mode 100644
+index 0000000..e1727b1
+--- /dev/null
++++ b/src/svg/parity/class/presentation.rs
+@@ -0,0 +1,124 @@
++use super::super::*;
++use crate::class::presentation as profile;
++
++pub(super) fn body(
++    out: &mut String,
++    node: &super::ClassSvgNode,
++    width: f64,
++    height: f64,
++    config: &serde_json::Value,
++) {
++    let x = -width / 2.0;
++    let y = -height / 2.0;
++    let header = profile::header_height(node);
++    let title_style = profile::title_style(config);
++    let member_style = profile::member_style(config);
++    let fg = theme_token(config, "textColor", "#333333");
++    let title_family = title_style.font_family.as_deref().unwrap_or("sans-serif");
++    let mono = member_style.font_family.as_deref().unwrap_or("monospace");
++    let _ = write!(
++        out,
++        r#"<g class="compact-class" fill="{}"><rect x="{}" y="{}" width="{}" height="{}" style="fill:{};fill-opacity:0.05;stroke:none"/>"#,
++        escape_xml(&fg),
++        fmt(x),
++        fmt(y),
++        fmt(width),
++        fmt(header),
++        escape_xml(&fg)
++    );
++    for divider in [
++        y + header,
++        y + header + profile::section_height(node.members.len()),
++    ] {
++        let _ = write!(
++            out,
++            r#"<line x1="{}" x2="{}" y1="{}" y2="{}" style="stroke:{};stroke-opacity:0.12;stroke-width:1"/>"#,
++            fmt(x),
++            fmt(-x),
++            fmt(divider),
++            fmt(divider),
++            escape_xml(&fg)
++        );
++    }
++    let title = profile::title(node);
++    let lines: Vec<_> = title.lines().collect();
++    let title_y = y + header / 2.0 + node.annotations.len() as f64 * 6.0;
++    let _ = write!(
++        out,
++        r#"<text x="0" y="{}" text-anchor="middle" dominant-baseline="central" style="font-family:{};font-size:13px;font-weight:500;fill:{}">"#,
++        fmt(title_y),
++        escape_xml(title_family),
++        escape_xml(&fg)
++    );
++    if lines.len() <= 1 {
++        out.push_str(&escape_xml(&title));
++    } else {
++        for (i, line) in lines.iter().enumerate() {
++            let _ = write!(
++                out,
++                r#"<tspan x="0" y="{}">{}</tspan>"#,
++                fmt(title_y + (i as f64 - (lines.len() - 1) as f64 / 2.0) * 14.0),
++                escape_xml(line)
++            );
++        }
++    }
++    out.push_str("</text>");
++    for (i, annotation) in node.annotations.iter().enumerate() {
++        let _ = write!(
++            out,
++            r#"<text x="0" y="{}" text-anchor="middle" dominant-baseline="central" style="font-family:{};font-size:11px;font-weight:400;font-style:italic;fill:{};fill-opacity:0.6">{}</text>"#,
++            fmt(y + 12.0 + i as f64 * 16.0),
++            escape_xml(title_family),
++            escape_xml(&fg),
++            escape_xml(&format!("<<{annotation}>>"))
++        );
++    }
++    for (rows, top) in [
++        (&node.members, y + header),
++        (
++            &node.methods,
++            y + header + profile::section_height(node.members.len()),
++        ),
++    ] {
++        for (i, row) in rows.iter().enumerate() {
++            let _ = write!(
++                out,
++                r#"<text x="{}" y="{}" dominant-baseline="central" style="font-family:{};font-size:11px;font-weight:400;fill:{};fill-opacity:0.6;{}">{}</text>"#,
++                fmt(x + profile::PAD),
++                fmt(top + profile::PAD / 2.0 + profile::ROW * (i as f64 + 0.5)),
++                escape_xml(mono),
++                escape_xml(&fg),
++                escape_xml(&row.css_style),
++                escape_xml(&profile::member_text(row))
++            );
++        }
++    }
++    out.push_str("</g>");
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use serde_json::json;
++
++    #[test]
++    fn multiline_titles_are_drawn_as_independently_positioned_lines() {
++        let node = serde_json::from_value(json!({
++            "id":"Alias", "label":"First<br>Second", "text":"", "domId":"alias"
++        }))
++        .unwrap();
++        let mut svg = String::new();
++        body(
++            &mut svg,
++            &node,
++            120.0,
++            52.0,
++            &json!({"fontFamily":"Requested Sans"}),
++        );
++        assert_eq!(svg.matches("<tspan").count(), 2);
++        assert!(svg.contains(">First</tspan>"));
++        assert!(svg.contains(">Second</tspan>"));
++        assert!(!svg.contains("&lt;br"));
++        assert!(svg.contains("font-family:Requested Sans;font-size:13px;font-weight:500"));
++    }
++}
+diff --git a/src/svg/parity/er.rs b/src/svg/parity/er.rs
+index fc71eb2..3a5a073 100644
+--- a/src/svg/parity/er.rs
++++ b/src/svg/parity/er.rs
+@@ -1,3 +1,4 @@
++mod presentation;
+ mod render;
+ 
+ pub(super) use render::render_er_diagram_svg_model;
+diff --git a/src/svg/parity/er/presentation.rs b/src/svg/parity/er/presentation.rs
+new file mode 100644
+index 0000000..d2c1237
+--- /dev/null
++++ b/src/svg/parity/er/presentation.rs
+@@ -0,0 +1,126 @@
++use super::super::*;
++use crate::er::presentation as profile;
++
++pub(super) struct EntityContext<'a> {
++    pub config: &'a serde_json::Value,
++    pub measurer: &'a dyn crate::text::TextMeasurer,
++    pub translate: (f64, f64),
++    pub diagram_id: SvgDiagramId<'a>,
++    pub rect_styles: &'a str,
++    pub text_styles: &'a str,
++}
++
++pub(super) fn entity(
++    out: &mut String,
++    node: &crate::model::LayoutNode,
++    model: &crate::er::ErEntity,
++    ctx: &EntityContext<'_>,
++) {
++    let config = ctx.config;
++    let measurer = ctx.measurer;
++    let (tx, ty) = ctx.translate;
++    let settings = crate::er::ErConfigView::new(config).render_settings();
++    let measure = crate::er::measure_entity_box(
++        model,
++        measurer,
++        &settings.label_style,
++        &settings.attr_style,
++        settings.entity_measurement,
++    );
++    let fg = theme_token(config, "textColor", "#333333");
++    let fill = theme_token(config, "mainBkg", "#ECECFF");
++    let stroke = theme_token(config, "nodeBorder", "#9370DB");
++    let x = -node.width / 2.0;
++    let y = -node.height / 2.0;
++    let mono = settings
++        .attr_style
++        .font_family
++        .as_deref()
++        .unwrap_or("monospace");
++    let rect_styles = escape_xml(ctx.rect_styles);
++    let text_styles = escape_xml(ctx.text_styles);
++    let id = format!("{}-{}", ctx.diagram_id, model.id);
++    let _ = write!(
++        out,
++        r#"<g class="node compact-er {}" id="{}" transform="translate({},{})"><rect x="{}" y="{}" width="{}" height="{}" style="fill:{};stroke:{};stroke-width:1;{rect_styles}"/><rect x="{}" y="{}" width="{}" height="{}" style="fill:{};fill-opacity:0.05;stroke:none"/><line x1="{}" x2="{}" y1="{}" y2="{}" style="stroke:{};stroke-opacity:0.12;stroke-width:1"/><text x="0" y="{}" text-anchor="middle" dominant-baseline="central" style="font-family:{};font-size:13px;font-weight:500;fill:{};{text_styles}">{}</text>"#,
++        escape_xml(&model.css_classes),
++        escape_xml(&id),
++        fmt(node.x + tx),
++        fmt(node.y + ty),
++        fmt(x),
++        fmt(y),
++        fmt(node.width),
++        fmt(node.height),
++        escape_xml(&fill),
++        escape_xml(&stroke),
++        fmt(x),
++        fmt(y),
++        fmt(node.width),
++        fmt(profile::HEADER),
++        escape_xml(&fg),
++        fmt(x),
++        fmt(-x),
++        fmt(y + profile::HEADER),
++        fmt(y + profile::HEADER),
++        escape_xml(&fg),
++        fmt(y + profile::HEADER / 2.0),
++        escape_xml(&settings.font_family),
++        escape_xml(&fg),
++        escape_xml(measure.label.rendered_text())
++    );
++    for (i, row) in measure.rows.iter().enumerate() {
++        let cy = y + profile::HEADER + (i as f64 + 0.5) * profile::ROW;
++        let badge = profile::key_width(
++            row.key_label.rendered_text(),
++            measurer,
++            &settings.label_style,
++        );
++        out.push_str("<g>");
++        if !row.comment_label.rendered_text().is_empty() {
++            let _ = write!(
++                out,
++                "<title>{}</title>",
++                escape_xml(row.comment_label.rendered_text())
++            );
++        }
++        if badge > 0.0 {
++            let _ = write!(
++                out,
++                r#"<rect x="{}" y="{}" width="{}" height="14" rx="2" style="fill:{};fill-opacity:0.1;stroke:none"/><text x="{}" y="{}" text-anchor="middle" dominant-baseline="central" style="font-family:{};font-size:9px;font-weight:600;fill:{};fill-opacity:0.6;{text_styles}">{}</text>"#,
++                fmt(x + 6.0),
++                fmt(cy - 7.0),
++                fmt(badge),
++                escape_xml(&fg),
++                fmt(x + 6.0 + badge / 2.0),
++                fmt(cy),
++                escape_xml(&settings.font_family),
++                escape_xml(&fg),
++                escape_xml(row.key_label.rendered_text())
++            );
++        }
++        let _ = write!(
++            out,
++            r#"<text x="{}" y="{}" dominant-baseline="central" style="font-family:{};font-size:11px;font-weight:400;fill:{};fill-opacity:0.45;{text_styles}">{}</text><text x="{}" y="{}" text-anchor="end" dominant-baseline="central" style="font-family:{};font-size:11px;font-weight:400;fill:{};fill-opacity:0.6;{text_styles}">{}</text></g>"#,
++            fmt(x + 8.0 + if badge > 0.0 { badge + 6.0 } else { 0.0 }),
++            fmt(cy),
++            escape_xml(mono),
++            escape_xml(&fg),
++            escape_xml(row.type_label.rendered_text()),
++            fmt(-x - 8.0),
++            fmt(cy),
++            escape_xml(mono),
++            escape_xml(&fg),
++            escape_xml(row.name_label.rendered_text())
++        );
++    }
++    if measure.rows.is_empty() {
++        let _ = write!(
++            out,
++            r#"<text x="0" y="{}" text-anchor="middle" dominant-baseline="central" style="font-family:{};font-size:11px;font-style:italic;fill:{};fill-opacity:0.45">(no attributes)</text>"#,
++            fmt(y + profile::HEADER + profile::ROW / 2.0),
++            escape_xml(mono),
++            escape_xml(&fg)
++        );
++    }
++    out.push_str("</g>");
++}
+diff --git a/src/svg/parity/er/render.rs b/src/svg/parity/er/render.rs
+index 51d7005..569113e 100644
+--- a/src/svg/parity/er/render.rs
++++ b/src/svg/parity/er/render.rs
+@@ -661,7 +661,11 @@ pub(crate) fn render_er_diagram_svg_model(
+         title_x
+     });
+ 
+-    let pad = options.viewbox_padding.max(0.0);
++    let pad = if crate::er::presentation::enabled(effective_config) {
++        40.0
++    } else {
++        options.viewbox_padding.max(0.0)
++    };
+     let mut out = String::new();
+     let (translate_x, translate_y, root_bounds, root_width_for_title) = if is_empty_diagram {
+         let empty_span = (pad * 2.0).max(1.0);
+@@ -726,6 +730,13 @@ pub(crate) fn render_er_diagram_svg_model(
+     }
+ 
+     let mut css = er_css(diagram_id, effective_config)?;
++    if crate::er::presentation::enabled(effective_config) {
++        let _ = write!(
++            css,
++            r#"#{} .edgeLabel text,#{} .edgeLabel span,#{} .edgeLabel div{{font-size:11px;font-weight:400;}}#{} .edgeLabel .labelBkg{{box-sizing:border-box;padding:3px 4px;}}"#,
++            diagram_id, diagram_id, diagram_id, diagram_id
++        );
++    }
+     let redux_color_css = er_redux_color_css(
+         diagram_id,
+         data_look,
+@@ -770,7 +781,9 @@ pub(crate) fn render_er_diagram_svg_model(
+     } else {
+         String::new()
+     };
+-    let marker_background = if neo_markers {
++    let marker_background = if crate::er::presentation::enabled(effective_config) {
++        theme_token(effective_config, "background", "#ffffff")
++    } else if neo_markers {
+         effective_config
+             .pointer("/themeVariables/mainBkg")
+             .filter(|value| !value.is_null())
+@@ -1184,6 +1197,23 @@ pub(crate) fn render_er_diagram_svg_model(
+         };
+ 
+         let (rect_style_decls, text_style_decls) = compile_er_entity_styles(entity, &model.classes);
++        if crate::er::presentation::enabled(effective_config) {
++            super::presentation::entity(
++                &mut out,
++                n,
++                entity,
++                &super::presentation::EntityContext {
++                    config: effective_config,
++                    measurer,
++                    translate: (translate_x, translate_y),
++                    diagram_id,
++                    rect_styles: &style_decls_with_important(&rect_style_decls),
++                    text_styles: &style_decls_with_important(&text_style_decls)
++                        .replace("color:", "fill:"),
++                },
++            );
++            continue;
++        }
+         let rect_style_attr = if rect_style_decls.is_empty() {
+             r#"style="""#.to_string()
+         } else {

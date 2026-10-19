@@ -1,0 +1,256 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 69f8c5a..8f870e2 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -24,6 +24,8 @@ mod container;
+ mod flat;
+ mod model;
+ #[cfg(test)]
++mod profile_tests;
++#[cfg(test)]
+ mod terminal_labels_tests;
+ use container::ContainerMode;
+ use merman_elk_layered as source_port;
+@@ -363,7 +365,16 @@ fn graph_to_source_input(graph: &Graph) -> Result<ElkInputGraph> {
+                 id: edge.id.clone(),
+                 source: edge.source.clone(),
+                 target: edge.target.clone(),
+-                labels: source_edge_labels(edge, true, true, true),
++                labels: source_edge_labels(
++                    edge,
++                    true,
++                    true,
++                    true,
++                    graph
++                        .spacing
++                        .layered_profile
++                        .is_none_or(|p| p.inline_center_labels),
++                ),
+                 minlen: edge.minlen,
+                 inside_self_loops_yo: edge.inside_self_loops_yo,
+                 model_order: None,
+@@ -375,12 +386,22 @@ fn graph_to_source_input(graph: &Graph) -> Result<ElkInputGraph> {
+     })
+ }
+ 
+-fn source_edge_labels(edge: &Edge, center: bool, start: bool, end: bool) -> Vec<ElkInputLabel> {
++fn source_edge_labels(
++    edge: &Edge,
++    center: bool,
++    start: bool,
++    end: bool,
++    inline: bool,
++) -> Vec<ElkInputLabel> {
+     let mut labels: Vec<_> = edge
+         .label
+         .filter(|_| center)
+         .into_iter()
+-        .map(|label| ElkInputLabel::center("", label.width, label.height))
++        .map(|label| {
++            let mut label = ElkInputLabel::center("", label.width, label.height);
++            label.inline = inline;
++            label
++        })
+         .collect();
+     labels.extend(
+         edge.terminal_labels
+@@ -1361,6 +1382,10 @@ impl<'a> HierarchyIndex<'a> {
+                     scoped
+                         .segment_order
+                         .is_none_or(|order| order + 1 == scoped.segment_count),
++                    self.graph
++                        .spacing
++                        .layered_profile
++                        .is_none_or(|p| p.inline_center_labels),
+                 ),
+                 minlen: source.minlen,
+                 inside_self_loops_yo: source.inside_self_loops_yo,
+@@ -2212,9 +2237,45 @@ fn layered_options_to_source_for(
+     options.self_loop_ordering =
+         self_loop_ordering_to_source(graph.options.layered.self_loop_ordering);
+     set_mermaid_port_clearance(&mut options);
++    apply_layered_profile(graph, &mut options);
+     options
+ }
+ 
++fn apply_layered_profile(graph: &Graph, options: &mut SourceLayeredOptions) {
++    let Some(profile) = graph.spacing.layered_profile else {
++        return;
++    };
++    // Reject invalid numeric input by retaining the source default for that field.
++    fn bounded(value: f64, default: f64) -> f64 {
++        if value.is_finite() && (0.0..=10_000.0).contains(&value) {
++            value
++        } else {
++            default
++        }
++    }
++    options.spacing.node_node = bounded(graph.spacing.node_node, options.spacing.node_node);
++    options.spacing.node_node_between_layers = bounded(
++        graph.spacing.layer_layer,
++        options.spacing.node_node_between_layers,
++    );
++    options.spacing.edge_edge = bounded(profile.edge_edge, options.spacing.edge_edge);
++    options.spacing.edge_node = bounded(profile.edge_node, options.spacing.edge_node);
++    options.spacing.edge_edge_between_layers = bounded(
++        profile.edge_edge_between_layers,
++        options.spacing.edge_edge_between_layers,
++    );
++    options.spacing.edge_node_between_layers = bounded(
++        profile.edge_node_between_layers,
++        options.spacing.edge_node_between_layers,
++    );
++    options.spacing.edge_label = bounded(profile.edge_label, options.spacing.edge_label);
++    options.thoroughness = profile.thoroughness.clamp(1, 32);
++    if profile.center_content {
++        options.horizontal_content_alignment = source_port::ContentAlignment::Center;
++        options.vertical_content_alignment = source_port::ContentAlignment::Center;
++    }
++}
++
+ fn set_mermaid_port_clearance(options: &mut SourceLayeredOptions) {
+     options.spacing.ports_surrounding.top = 12.0;
+     options.spacing.ports_surrounding.right = 12.0;
+@@ -2247,6 +2308,7 @@ fn container_options_to_source(
+     options.spacing.edge_node_between_layers = 30.0;
+     options.spacing.edge_edge = 20.0;
+     set_mermaid_port_clearance(&mut options);
++    apply_layered_profile(graph, &mut options);
+     options
+ }
+ 
+diff --git a/src/model.rs b/src/model.rs
+index f720013..1777db7 100644
+--- a/src/model.rs
++++ b/src/model.rs
+@@ -30,6 +30,43 @@ pub struct Graph {
+     pub options: LayoutOptions,
+ }
+ 
++impl Graph {
++    /// Selects a caller-owned layered projection without changing Mermaid defaults globally.
++    pub fn with_layered_profile(mut self, profile: LayeredProfile) -> Self {
++        self.spacing.layered_profile = Some(profile);
++        self
++    }
++}
++
++/// Generic layered projection, applied to root and container scopes. Node and rank spacing
++/// come from `Graph::spacing`; the remaining clearances are independent ELK options.
++#[derive(Debug, Clone, Copy, PartialEq)]
++pub struct LayeredProfile {
++    pub edge_edge: f64,
++    pub edge_node: f64,
++    pub edge_edge_between_layers: f64,
++    pub edge_node_between_layers: f64,
++    pub edge_label: f64,
++    pub thoroughness: usize,
++    pub center_content: bool,
++    pub inline_center_labels: bool,
++}
++
++impl Default for LayeredProfile {
++    fn default() -> Self {
++        Self {
++            edge_edge: 12.0,
++            edge_node: 10.0,
++            edge_edge_between_layers: 12.0,
++            edge_node_between_layers: 12.0,
++            edge_label: 2.0,
++            thoroughness: 3,
++            center_content: true,
++            inline_center_labels: true,
++        }
++    }
++}
++
+ #[derive(Debug, Clone, Copy, PartialEq)]
+ pub struct Spacing {
+     pub node_node: f64,
+@@ -37,6 +74,8 @@ pub struct Spacing {
+     pub group_padding_x: f64,
+     pub group_padding_y: f64,
+     pub group_label_gap: f64,
++    /// Absent preserves pinned Mermaid root and container defaults.
++    pub layered_profile: Option<LayeredProfile>,
+ }
+ 
+ impl Default for Spacing {
+@@ -47,6 +86,7 @@ impl Default for Spacing {
+             group_padding_x: DEFAULT_GROUP_PADDING_X,
+             group_padding_y: DEFAULT_GROUP_PADDING_Y,
+             group_label_gap: DEFAULT_GROUP_LABEL_GAP,
++            layered_profile: None,
+         }
+     }
+ }
+diff --git a/src/profile_tests.rs b/src/profile_tests.rs
+new file mode 100644
+index 0000000..a60c536
+--- /dev/null
++++ b/src/profile_tests.rs
+@@ -0,0 +1,64 @@
++use super::*;
++
++#[test]
++fn projection_is_opt_in_and_preserves_mermaid_defaults() {
++    let mut graph = Graph::default();
++    graph.spacing.node_node = 28.0;
++    graph.spacing.layer_layer = 48.0;
++    let original = layered_options_to_source(&graph);
++    assert_eq!(original.spacing.node_node, 40.0);
++    assert_eq!(original.spacing.node_node_between_layers, 40.0);
++    assert_eq!(
++        container_options_to_source(&graph, Direction::Down, HierarchyHandling::IncludeChildren)
++            .spacing
++            .node_node,
++        50.0
++    );
++    graph.spacing.layered_profile = Some(LayeredProfile::default());
++    for options in [
++        layered_options_to_source(&graph),
++        container_options_to_source(&graph, Direction::Down, HierarchyHandling::IncludeChildren),
++    ] {
++        assert_eq!(options.spacing.node_node, 28.0);
++        assert_eq!(options.spacing.node_node_between_layers, 48.0);
++        assert_eq!(options.spacing.edge_edge, 12.0);
++        assert_eq!(options.spacing.edge_edge_between_layers, 12.0);
++        assert_eq!(options.spacing.edge_node_between_layers, 12.0);
++        assert_eq!(options.thoroughness, 3);
++        assert_eq!(
++            options.horizontal_content_alignment,
++            source_port::ContentAlignment::Center
++        );
++    }
++    graph.spacing.layered_profile = None;
++    assert_eq!(layered_options_to_source(&graph), original);
++}
++
++#[test]
++fn profile_numbers_are_bounded_and_center_labels_are_independent() {
++    let mut graph = Graph::default();
++    graph.spacing.node_node = f64::NAN;
++    graph.spacing.layered_profile = Some(LayeredProfile {
++        edge_edge: f64::INFINITY,
++        thoroughness: usize::MAX,
++        ..Default::default()
++    });
++    let options = layered_options_to_source(&graph);
++    assert_eq!(options.spacing.node_node, 40.0);
++    assert_eq!(options.spacing.edge_edge, 20.0);
++    assert_eq!(options.thoroughness, 32);
++    let edge = Edge {
++        label: Some(Label {
++            width: 40.0,
++            height: 20.0,
++        }),
++        id: "e".into(),
++        source: "a".into(),
++        target: "b".into(),
++        terminal_labels: vec![],
++        minlen: 1,
++        inside_self_loops_yo: false,
++    };
++    assert!(!source_edge_labels(&edge, true, true, true, false)[0].inline);
++    assert!(source_edge_labels(&edge, true, true, true, true)[0].inline);
++}

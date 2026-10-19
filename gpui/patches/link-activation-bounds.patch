@@ -1,0 +1,242 @@
+--- a/src/text/text_view.rs
++++ b/src/text/text_view.rs
+@@ -79,12 +79,16 @@
+ 
+ type LinkActivateFn =
+     dyn Fn(&super::InlineLinkTarget, &ClickEvent, &mut Window, &mut App) + Send + Sync;
++type LinkActivateAnchoredFn = dyn Fn(&super::InlineLinkTarget, &ClickEvent, Bounds<Pixels>, &mut Window, &mut App)
++    + Send
++    + Sync;
+ type LinkContextMenuFn =
+     dyn Fn(&super::InlineLinkTarget, &gpui::MouseDownEvent, &mut Window, &mut App) + Send + Sync;
+ 
+ #[derive(Default, Clone)]
+ pub(crate) struct LinkClickHandlerFn {
+     activate: Option<Arc<LinkActivateFn>>,
++    activate_anchored: Option<Arc<LinkActivateAnchoredFn>>,
+     context_menu: Option<Arc<LinkContextMenuFn>>,
+ }
+ 
+@@ -146,9 +150,21 @@
+     handler: &Option<Arc<LinkClickHandlerFn>>,
+     link: super::node::LinkMark,
+     event: ClickEvent,
++    bounds: Bounds<Pixels>,
+     window: &mut Window,
+     cx: &mut App,
+ ) {
++    if let Some(anchored) = handler.as_ref().and_then(|h| h.activate_anchored.as_ref()) {
++        let target = match link.generated {
++            Some(button) => super::InlineLinkTarget::WrittenPath {
++                path: link.url,
++                button,
++            },
++            None => super::InlineLinkTarget::Explicit(link.url),
++        };
++        anchored(&target, &event, bounds, window, cx);
++        return;
++    }
+     if let Some(button) = link.generated {
+         if let Some(handler) = handler.as_ref().and_then(|h| h.activate.as_ref()) {
+             handler(
+@@ -464,6 +480,25 @@
+         self
+     }
+ 
++    /// Typed Inline/InlineFlow activation with the laid-out occurrence's window bounds.
++    /// Wrapped fragments are unioned; the original click event is not retargeted.
++    pub fn on_link_activate_anchored<F>(mut self, handler: F) -> Self
++    where
++        F: Fn(&super::InlineLinkTarget, &ClickEvent, Bounds<Pixels>, &mut Window, &mut App)
++            + Send
++            + Sync
++            + 'static,
++    {
++        let mut handlers = self
++            .link_click_handler
++            .as_deref()
++            .cloned()
++            .unwrap_or_default();
++        handlers.activate_anchored = Some(Arc::new(handler));
++        self.link_click_handler = Some(Arc::new(handlers));
++        self
++    }
++
+     /// Exact hit-tested target on secondary down (or macOS Control-primary).
+     /// Independent of selection and activation. The event position is in window
+     /// coordinates; `window.focused(cx)` is the unchanged return-focus origin.
+--- a/src/text/inline.rs
++++ b/src/text/inline.rs
+@@ -223,6 +223,7 @@
+     state: Arc<Mutex<InlineState>>,
+     source_links: Option<super::link_source::LinkSource>,
+     link_controls: Vec<(Range<usize>, FocusHandle, Option<AnyElement>)>,
++    link_activation_bounds: Vec<(Range<usize>, Range<usize>, Bounds<Pixels>)>,
+ }
+ 
+ /// The inline text state, used RefCell to keep the selection state.
+@@ -383,6 +384,7 @@
+             state,
+             link_controls: Vec::new(),
+             source_links: None,
++            link_activation_bounds: Vec::new(),
+         }
+     }
+ 
+@@ -991,6 +993,7 @@
+         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+         let layout = self.styled_text.layout().clone();
+         let glyphs = glyph_boxes(&layout, window.text_style().text_align, bounds.size.width);
++        self.link_activation_bounds.clear();
+         for (range, link) in self.links.iter() {
+             let boxes = range_boxes(&glyphs, range.clone());
+             let Some((_, left, _)) = boxes.first() else {
+@@ -1024,6 +1027,11 @@
+                         label = source.text[original.clone()].to_owned();
+                     }
+                 }
++            }
++            self.link_activation_bounds
++                .push((range.clone(), identity.clone(), control_bounds));
++            if let Some(source) = &self.source_links {
++                source.record_bounds(&identity, control_bounds);
+             }
+             if self.source_links.is_some() {
+                 super::link_source::observe(|stats| {
+@@ -1051,6 +1059,8 @@
+             }
+             let target = link.clone();
+             let handler = self.link_click_handler.clone();
++            let activation_source = self.source_links.clone();
++            let activation_identity = identity.clone();
+             let mut control = div()
+                 .id(key)
+                 .track_focus(&focus)
+@@ -1080,6 +1090,10 @@
+                             &handler,
+                             target.clone(),
+                             event.clone(),
++                            activation_source
++                                .as_ref()
++                                .and_then(|source| source.bounds(&activation_identity))
++                                .unwrap_or(control_bounds),
+                             window,
+                             cx,
+                         );
+@@ -1475,6 +1489,8 @@
+                 let text_view_state = GlobalState::global(cx).text_view_state().cloned();
+                 let link_click_handler = self.link_click_handler.clone();
+                 let press = self.state.clone();
++                let activation_bounds = self.link_activation_bounds.clone();
++                let activation_source = self.source_links.clone();
+ 
+                 move |event: &MouseUpEvent, phase, window, cx| {
+                     if !phase.bubble() || !hitbox.is_hovered(window) {
+@@ -1528,7 +1544,29 @@
+                             },
+                             up: event.clone(),
+                         });
+-                        handle_inline_link_click(&link_click_handler, link, click, window, cx);
++                        let Some(range) =
++                            Self::link_range_for_position(&text_layout, &links, event.position)
++                        else {
++                            return;
++                        };
++                        let Some((_, identity, local_bounds)) = activation_bounds
++                            .iter()
++                            .find(|(local, _, _)| local == &range)
++                        else {
++                            return;
++                        };
++                        let bounds = activation_source
++                            .as_ref()
++                            .and_then(|source| source.bounds(identity))
++                            .unwrap_or(*local_bounds);
++                        handle_inline_link_click(
++                            &link_click_handler,
++                            link,
++                            click,
++                            bounds,
++                            window,
++                            cx,
++                        );
+                     }
+                 }
+             });
+--- a/src/text/inline_flow.rs
++++ b/src/text/inline_flow.rs
+@@ -519,6 +519,12 @@
+             .map(|(ix, _)| ix);
+ 
+         let mut text_fragment_count = 0;
++        // Geometry belongs to this prepaint, never to a retained/cold projection.
++        for item in &self.items {
++            if let InlineFlowItem::Text { links, .. } = item {
++                links.clear_bounds();
++            }
++        }
+         for (fragment_ix, fragment) in layout.fragments.iter().enumerate() {
+             match fragment {
+                 PositionedFragment::Object {
+--- a/src/text/link_source.rs
++++ b/src/text/link_source.rs
+@@ -1,10 +1,22 @@
+-use std::{ops::Range, sync::Arc};
++use gpui::{Bounds, Pixels};
++use std::{
++    collections::BTreeMap,
++    ops::Range,
++    sync::{Arc, Mutex},
++};
+ 
+ use super::node::LinkMark;
+ 
+-#[derive(Clone, PartialEq)]
+-pub(super) struct LinkSource(Arc<[SourceLink]>);
++#[derive(Clone)]
++pub(super) struct LinkSource(Arc<[SourceLink]>, Arc<Mutex<LinkBounds>>);
++type LinkBounds = BTreeMap<(usize, usize), Bounds<Pixels>>;
+ 
++impl PartialEq for LinkSource {
++    fn eq(&self, other: &Self) -> bool {
++        self.0 == other.0
++    }
++}
++
+ #[derive(PartialEq)]
+ struct SourceLink {
+     range: Range<usize>,
+@@ -32,11 +44,32 @@
+             end = end.max(link.range.end);
+             link.prefix_end = end;
+         }
+-        Self(links.into())
++        Self(links.into(), Arc::new(Mutex::new(BTreeMap::new())))
+     }
+ }
+ 
+ impl LinkSource {
++    pub(super) fn clear_bounds(&self) {
++        self.1.lock().unwrap().clear();
++    }
++
++    pub(super) fn record_bounds(&self, range: &Range<usize>, bounds: Bounds<Pixels>) {
++        self.1
++            .lock()
++            .unwrap()
++            .entry((range.start, range.end))
++            .and_modify(|current| *current = current.union(&bounds))
++            .or_insert(bounds);
++    }
++
++    pub(super) fn bounds(&self, range: &Range<usize>) -> Option<Bounds<Pixels>> {
++        self.1
++            .lock()
++            .unwrap()
++            .get(&(range.start, range.end))
++            .copied()
++    }
++
+     fn intersecting(&self, range: &Range<usize>) -> &[SourceLink] {
+         let start = self.0.partition_point(|link| {
+             observe(|stats| stats.lookup_steps += 1);
