@@ -37,7 +37,7 @@ These are focused compatibility patches, not a commitment to a long-lived fork. 
 64bb52b29a8dcdc8d3f595b8b0839c076f237572ab601ba4577d3da8ae085728
 ```
 
-`../scripts/prepare.ts` verifies that archive, extracts it outside the enclosing Git checkout, applies all patches with `git apply --check`, and copies the result into ignored `.cache/crates/gpui-base`. Cargo's `[patch.crates-io]` uses that copy. A patch fingerprint and source-tree hash detect stale or locally altered cached source; the Cargo registry is never edited. The archive is reused from Cargo's cache if available, otherwise downloaded from `static.crates.io` over HTTPS. Build with `bun run --cwd gpui build:native`, not an unprepared bare Cargo invocation.
+`../scripts/prepare.ts` verifies that archive, extracts it outside the enclosing Git checkout, applies all patches with `git apply --check`, and copies the result into ignored `.cache/crates/gpui-base`. Cargo's `[patch.crates-io]` uses that copy. A patch fingerprint and source-tree hash detect stale or locally altered cached source; the Cargo registry is never edited. The archive is reused from Cargo's cache if available, otherwise downloaded from `static.crates.io` over HTTPS. From the repository root, run `bun run prepare` before direct Cargo invocations, or use `bun run build` for the optimized native app. Root tooling also provides `bun run check`, `bun run test` and `bun run package`; no `gpui/package.json` commands are required.
 
 Extraction outside the checkout is intentional: `git apply` run in a nested dependency directory can silently skip all unprefixed paths and still return zero. Preparation also places the published README at the workspace-relative path required by an upstream test include.
 
@@ -68,7 +68,7 @@ the same font boxes. The default remains false for other Base users.
 This changes only selection quads and touch paint edges, not line height, wrapping,
 source offsets, hit testing, range highlights, layout, or drag-gap geometry. Tau
 Markdown opts in at both transcript and compact body sizes, and explicitly supplies
-the production Vue selection colors: RGB `035bd6` at 15% in light mode and
+the retained Tau selection colors: RGB `035bd6` at 15% in light mode and
 `3388ff` at 25% in dark mode. Root tests inspect per-row painted quads at both
 backing scales; actual raster parity still requires independent pixel capture.
 
@@ -198,13 +198,21 @@ There is no dependency on browser comparison scenes or migration fixtures.
 
 ## Patches and evidence
 
+Browser comparisons and named shared scenarios below describe historical patch
+evidence, not a current runnable probe suite. Prototype, probe and reference
+binaries have been removed. Retain their observations and unresolved differences
+as rationale; they do not establish current acceptance. Current deterministic
+checks use the app library and registered integration tests. Native OS targets
+require explicit `native-os-tests` opt-in and an appropriate macOS desktop;
+historical failures or unexecuted checks are not passing evidence.
+
 ### `grapheme-navigation.patch`
 
 **Signal:** with `e + combining acute + emoji`, Right moved into the combining sequence instead of past it. Similar scalar movement splits joined emoji and flags.
 
 Left/Right and Shift-Left/Right now use grapheme boundaries, while keeping token atomicity, CRLF handling, and hidden-line clamping. Boundary search materializes the current logical line, not the whole document. Very long single-line performance still needs measurement.
 
-Backspace/Delete retain the original scalar-boundary behavior. This matches the current Chromium probe but differs from WebKit for a combining accent; that discrepancy is an explicit acceptance blocker, not silently fixed by changing the test oracle.
+Backspace/Delete retain the original scalar-boundary behavior. Historical Chromium observations matched this behavior, while WebKit differed for a combining accent; that discrepancy remains an explicit acceptance blocker, not silently fixed by changing the test oracle.
 
 Two added upstream tests cover combining marks, joined emoji, flags, selection/collapse, CRLF, and adjacent tokens. Shared rendered scenarios `input-grapheme-navigation` and `input-joined-emoji-navigation` exercise the public event path and UTF-16 observations.
 
@@ -222,7 +230,7 @@ Six added upstream tests cover available wrapping width, horizontal overflow, pl
 
 Disabled editors no longer register focus tracking, place pointer selections, or honor the public `focus()` helper. Readonly editors remain focusable. Two added upstream tests exercise pointer focus, Tab focus, reenabling, and readonly for both input types.
 
-`set_disabled` has no window argument. The owning Tau prototype therefore moves focus away when disabling a currently focused control. No broad upstream API change is made for that policy.
+`set_disabled` has no window argument. The owning Tau control therefore moves focus away when disabling a currently focused control. No broad upstream API change is made for that policy.
 
 ### `input-presentation.patch`
 
@@ -284,7 +292,7 @@ Three upstream tests cover movement and real dispatch, Unicode, blank/empty line
 
 **Signal:** Base rendered `Inline` directly under the code block container, so `overflow_x: scroll` on the public refinement still wrapped long code and could not provide a scrollable content width.
 
-`TextViewStyle::with_code_block_horizontal_scroll(true)` opts fenced code into a horizontal viewport; default code still wraps. The width is the maximum _shaped_ hard-line width using the rendered mono family, size and highlighted runs, not a character-count estimate. The same selectable/highlighted `Inline` paints inside the track, while the copy action stays in a stationary sibling flex column. The viewport gives actions their actual laid-out width, so the last code glyph remains visible/selectable rather than sliding under an overlay. Base's existing axis-locking horizontal mask passes vertical gestures to the outer list. The scroll handle is keyed by code-block source span, so append-only updates can retain it; replacing the document can reset the position. Two upstream regressions check exact shaped mono width and hard-line handling, plus default wrap height, opt-in hard-line height and pinned action. The native Markdown probe exercises horizontal wheel, endpoint selection, reversing, syntax colors and clipboard in both appearances.
+`TextViewStyle::with_code_block_horizontal_scroll(true)` opts fenced code into a horizontal viewport; default code still wraps. The width is the maximum _shaped_ hard-line width using the rendered mono family, size and highlighted runs, not a character-count estimate. The same selectable/highlighted `Inline` paints inside the track, while the copy action stays in a stationary sibling flex column. The viewport gives actions their actual laid-out width, so the last code glyph remains visible/selectable rather than sliding under an overlay. Base's existing axis-locking horizontal mask passes vertical gestures to the outer list. The scroll handle is keyed by code-block source span, so append-only updates can retain it; replacing the document can reset the position. Two upstream regressions check exact shaped mono width and hard-line handling, plus default wrap height, opt-in hard-line height and pinned action. Historical native Markdown probes exercised horizontal wheel, endpoint selection, reversing, syntax colors and clipboard in both appearances; those probe binaries are no longer retained.
 
 ### `product-markdown-style.patch`
 
@@ -306,13 +314,13 @@ Scrollable fenced code positions hover actions in a zero-height flex sibling: it
 
 ### `markdown-prose-measure.patch`
 
-`TextViewStyle::with_prose_max_width` limits only root paragraphs, lists, quotes, headings and horizontal rules, in both ordinary and virtual-list rendering. Nested children inherit their parent's available width; fenced code and tables retain the full message column. The default `None` leaves Base's root layout unchanged. Tau derives 80ch from eighty measured zero-glyph advances in its 13px bundled Inter face; WebKit's actual production CSS computes 80ch to 656.09375px against the 720px column. A rendered Base test checks narrower prose wrapping, unchanged wide structured content, unchanged selected text and the default setting.
+`TextViewStyle::with_prose_max_width` limits only root paragraphs, lists, quotes, headings and horizontal rules, in both ordinary and virtual-list rendering. Nested children inherit their parent's available width; fenced code and tables retain the full message column. The default `None` leaves Base's root layout unchanged. Tau derives 80ch from eighty measured zero-glyph advances in its 13px bundled Inter face; the historical WebKit production CSS computed 80ch to 656.09375px against the 720px column. A rendered Base test checks narrower prose wrapping, unchanged wide structured content, unchanged selected text and the default setting.
 
 ### `fractional-text-leading.patch` (`gpui-pre` 0.3.7) and `fractional-leading-selection-test.patch` (Base)
 
 The independently verified `gpui-pre` archive has SHA-256 `0e87a42bb37c7cb4e76dd1ac0ce88851e46e976e0373a47ab3e0757abffee54d`. `TextStyleRefinement::fractional_line_height` defaults to false; only the plain-file `SelectableText` opts in via its existing `text_style` API. GPUI's `StyledText` layout and `TextStyle::line_height_in_pixels` retain their original snapping/rounding when unset, but use the exact 12px × 1.65 = 19.8px spacing for this run. The single resulting `TextLayout` drives paint, size, selection quads, point/index mapping, and scroll height. Highlighted `TextView` and all other product scenes keep their defaults.
 
-The Base patch adds only a rendered regression and a standalone-Cargo patch override for this third prepared crate. It verifies 300 hard lines: both default 20px and opted-in 19.8px row geometry at rows 1, 25, 100, 200, 299, bidirectional point/index mapping, and a real pointer selection through `SelectableText`. Base's published standalone test manifest must resolve the prepared GPUI core too; root-workspace builds use the prototype's root `[patch.crates-io]` instead. No registry source is modified.
+The Base patch adds only a rendered regression and a standalone-Cargo patch override for this third prepared crate. It verifies 300 hard lines: both default 20px and opted-in 19.8px row geometry at rows 1, 25, 100, 200, 299, bidirectional point/index mapping, and a real pointer selection through `SelectableText`. Base's published standalone test manifest must resolve the prepared GPUI core too; application builds use `gpui/Cargo.toml`'s `[patch.crates-io]` instead. No registry source is modified.
 
 ### `virtualized-text-selection.patch` (Base)
 
@@ -328,7 +336,7 @@ Base tests cover pure Markdown/Unicode/source mapping, forward/reverse domains, 
 
 `ListState::with_estimated_item_size` opts into persistent insertion hints, exact crossed-row wheel traversal with residual continuation, and bounded viewport filling. Positive-height exact geometry is capped at 1,024 rows; eviction keeps estimates. Width changes invalidate only cached exact geometry, with lazy zero-height epochs. Known zero-height subtrees can be skipped; cold zero runs and wheel traversal have step budgets. Distant scrollbar seeks use estimated positioning, then measure the destination. Existing default lists are unchanged.
 
-Core unit regressions cover 1k/10k varied and zero-height rows, physical fractional/550px/reverse wheels, tail intent, resize, mutation and bounded continuation. End-of-scroll exactness also checks suffix epochs, so stale zero heights cannot falsely report the end after resize. This is an opt-in core capability. Its current consumers are excluded synthetic conversation fixtures, not an adopted shipping application list. Those fixtures remove eager measurement and whole-history render snapshots, create text views only for requested rows and cap the view cache at 128. Raw scrollbar coordinates remain estimated; physical wheel regressions compare the same rendered row bounds instead of normalizing offsets.
+Core unit regressions cover 1k/10k varied and zero-height rows, physical fractional/550px/reverse wheels, tail intent, resize, mutation and bounded continuation. End-of-scroll exactness also checks suffix epochs, so stale zero heights cannot falsely report the end after resize. This is an opt-in core capability. The production `components::transcript::Transcript` consumes it with an 80px insertion estimate. The transcript creates views for requested rows and caps its view cache at 128; source-owned selection survives view eviction. Raw scrollbar coordinates remain estimated; physical wheel regressions compare the same rendered row bounds instead of normalizing offsets.
 
 ### `antialiased-text.patch` (`gpui-pre-macos` 0.3.7)
 
@@ -346,7 +354,7 @@ Adds a process-local opt-in to disable that dilation, called before rendering in
 
 **Signal:** even after the dilation opt-out, 400-weight Inter and matching colour tokens still produced roughly 17% excess glyph coverage. The no-dilation branch never called `CGContextSetShouldSmoothFonts(false)`, leaving context-default smoothing active. A separate mono discrepancy came from substituting Menlo for the browser's system monospace family.
 
-For Tau's existing antialiasing opt-in, explicitly disable smoothing on non-emoji glyphs. Upstream defaults, emoji rendering, and global macOS preferences remain untouched. The application separately requests the same macOS system monospace family as `ui-monospace`. Real text/placeholder rendering probes now compare normalized glyph coverage against WebKit and check opaque pixels retain the authored colour, catching both excessive stroke weight and colour substitutions. The caret's requested 2px width is independently checked in Metal captures.
+For Tau's existing antialiasing opt-in, explicitly disable smoothing on non-emoji glyphs. Upstream defaults, emoji rendering, and global macOS preferences remain untouched. The application separately requests the same macOS system monospace family as `ui-monospace`. Historical text/placeholder rendering probes compared normalized glyph coverage against WebKit and check opaque pixels retain the authored colour, catching both excessive stroke weight and colour substitutions. The caret's requested 2px width is independently checked in Metal captures.
 
 ### `markdown-parity.patch` (Base)
 
@@ -435,7 +443,7 @@ specific running-app session-switch incident. No live-app acceptance is claimed.
 Only unordered markers in views already opting into `with_list_style` receive
 2× body-sized glyph ink, with their original line height and a local position
 correction inside the unchanged marker column. This is Timur's intentional
-roughly 2× native-size preference, not a Vue parity claim: actual production
+roughly 2× native-size preference, not a Vue parity claim: historical production
 Root/MarkdownView Metal captures measured Base35 at 4.5×4.5 logical pixels
 (~12.4px² coverage), and actual Vue WebKit at about 5×5 (~17.2px²). Base36
 measures 8.5×8.5 (~50.8px²) at native 2× backing scale in both themes.
@@ -497,8 +505,8 @@ CARGO_TARGET_DIR="$PWD/gpui/target" cargo test \
   --manifest-path gpui/.cache/crates/gpui-base/Cargo.toml --lib
 ```
 
-This optional upstream test run resolves the published crate's separate development dependencies; the prototype itself is built against the committed `gpui/Cargo.lock` with `--locked`.
+This optional upstream test run resolves the published crate's separate development dependencies; the `tau-gpui` application is built against the committed `gpui/Cargo.lock` with `--locked`.
 
-For an upgrade, inspect the upstream fixes, remove superseded hunks, replace the archive checksum deliberately, regenerate the prototype lockfile, and rerun both upstream and real Metal rendered regressions. Do not let preparation accept a patch that no longer applies, edit the global registry, or keep a stale patched binary with `--skip-build`.
+For an upgrade, inspect the upstream fixes, remove superseded hunks, replace the archive checksum deliberately, regenerate `gpui/Cargo.lock`, and rerun both upstream and real Metal rendered regressions. Do not let preparation accept a patch that no longer applies, edit the global registry, or keep a stale patched binary with `--skip-build`.
 
 Upstream source/license: [GPUI Kit v0.7.0 Base](https://github.com/longbridge/gpui-kit/tree/v0.7.0/crates/base), Apache-2.0. The source archive retains its upstream license; only the focused patches are checked in here.

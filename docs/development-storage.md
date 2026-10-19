@@ -1,87 +1,55 @@
 # Development storage
 
-## Default workspace
+## Explicit isolated development
 
-Native `bun tauri dev` and browser `bun run dev` start with the same seed:
+Run from the repository root after installing tooling and preparing dependencies:
 
-- `atlas`: Workspace overview, Navigation review, Release checklist
-- `notes`: Triage inbox, Markdown export
+```sh
+bun run dev -- --isolated /absolute/path/to/profile --project /absolute/path/to/project
+```
 
-The single fixture is `src/dev/workspace-seed.json`. It contains only invented
-content. There is one default template, no template selector or persistence flag.
-Explicit `bun run repro -- <scenario>` and `?test-scenario=` retain their existing
-scenario-specific behavior.
+The development launcher requires `--isolated`; `--project` is optional. Both paths
+must be absolute. The profile is persistent across launches, not a per-process
+temporary fixture. It starts without synthetic projects or transcripts. Tau metadata,
+feedback, telemetry and native UI preferences/drafts live under `<profile>/tau/`;
+local Pi sessions live under `<profile>/pi-sessions/`. Use a new profile for disposable
+experiments; do not point development at production storage.
 
-## Native development
+Direct invocation after `bun run prepare` is also possible:
 
-Each native process creates a private `tau-dev-*` temporary directory. The app
-prints its Tau data directory at startup. It holds workspace metadata, sample
-project directories, preferences, feedback, and telemetry; a sibling `sessions/`
-holds the Pi transcripts and per-project Tau session registries. Even importing
-the same local project into two dev apps gives each its own session directory.
-The previous persistent `tau-dev` profile and existing Pi transcripts are neither
-loaded, migrated, nor deleted.
+```sh
+cargo run --manifest-path gpui/Cargo.toml --bin tau -- \
+  --isolated /absolute/path/to/profile --project /absolute/path/to/project
+```
 
-The webview uses non-persistent storage, and window geometry is not restored or
-saved. Frontend HMR keeps the native workspace alive. A native process restart,
-including a Rust rebuild, creates a fresh seed. Clean app exit stops Pi writers,
-flushes telemetry, and removes the temporary directory. A crash or forced kill
-can leave temporary files behind, but no subsequent launch reuses them; they can
-be removed using the OS's normal temporary-file cleanup.
+`--session <registered-id-or-path>` can select an existing registered session.
+Isolation is explicit application state routing, not a build-mode switch.
 
-Pi is real: Tau preserves `PI_CODING_AGENT_DIR` and existing auth, models,
-settings, and extensions. `--session-dir` redirects local sessions into the
-current profile, including ordinary new-session/fork workflows. Seed transcripts
-are Pi v3 JSONL and load through the normal workspace and RPC paths. They do not
-pin a model; Pi chooses from the developer's configuration.
+## Isolation limits
 
-This is **state isolation, not a tool or filesystem sandbox**. Pi can modify real
-files in projects you import. Pi configuration/auth, extension-owned storage, and
-remote SSH sessions retain their normal behavior. An extension explicitly opening
-a transcript outside the profile can leave the session directory too; Tau does
-not replace Pi's session runtime or intercept extension execution. Use the sample
-projects or browser mocks for disposable experimentation.
+This is **not a tool or filesystem sandbox**. Pi retains its normal authentication,
+models, settings, extensions and ability to modify the selected project. Provider
+credentials, extension-owned storage and remote SSH sessions are not isolated.
+An extension explicitly opening a transcript outside the profile can leave the
+session directory. Use an invented project and trusted Pi configuration for testing.
 
-## Opt-in native performance fixture
+Tests use independent profiles and deterministic fakes rather than changing process
+`HOME` or global Pi configuration. No browser sandbox or automatic Atlas/Notes seed
+is part of the native development workflow.
 
-Set `TAU_DEV_FIXTURE=performance` when launching **native development** to replace
-Atlas/Notes for that process only. This is an invented, deterministic filesystem
-fixture inside the same disposable profile: seven local projects, one **simulated
-remote metadata** project (`tau-perf.invalid`, not a reachable SSH host), 589
-local v3 JSONL files totaling exactly 306.5 MiB, 434 registered local sessions
-(423 archived, 155 unregistered files), and 2,389 remote metadata sessions
-(2,388 archived). The first 120 local files are 4 KiB; the others contain
-larger non-context padding entries. Every fifth file includes an abandoned
-branch, every eleventh a compaction. These proportions approximate a storage
-workload; padding and invented text are not real transcript history. The
-fixture never reads production Pi transcripts. Plain `bun tauri dev` continues
-to seed Atlas/Notes. Production builds cannot invoke this seed.
+## Production and cutover
 
-Use the real dev window and admin diagnostics to inspect input-to-paint,
-readable content, runtime readiness, and persistence. Record sample counts
-and environment separately; filesystem timings alone do not establish
-user-visible latency.
+A normal product launch without `--isolated`, including double-clicking a preview
+bundle, uses the existing application-data `tau/` profile and ordinary Pi session
+locations. The distinct preview bundle ID does **not** isolate storage.
 
-## Browser development
+The authorized switch is cold-turkey: close the old Vue/Tauri app before launching
+the native app. Never run both as concurrent writers to the same profile;
+cross-process profile locking is not certified. There is no destructive transcript
+conversion: Pi owns its files, while native drafts/preferences use `native-ui.json`.
+Migration of old Vue drafts is not guaranteed; preserve important text separately
+before switching. Do not delete legacy state or sessions as part of repository cleanup.
 
-Plain browser development installs a small mock IPC adapter with in-memory
-workspace, transcripts, and sidebar width. Separate tabs do not share mutations.
-Reloading resets them; existing browser localStorage is untouched. Mock replies
-are generated locally, with no model calls, credentials, real filesystem writes,
-or SSH connections. This is a playground, not a substitute for native integration
-checks or deterministic reproduction scenarios.
-
-## Production and architecture
-
-The native `dev` compile-time configuration selects ephemeral storage; production
-has no environment override that can accidentally enable it. `bun tauri build`
-keeps the existing application-data `tau/` directory, Pi session paths, webview
-persistence, and window-state plugin. The browser adapter and seed are excluded
-from the production frontend, and native seed code is excluded from production.
-
-`src-tauri/src/profile.rs` owns storage locations and lifetime, independently of
-workspace mutations. Both native profiles deliberately use the same file-backed
-storage implementation: Pi owns session files, and exercising the real parser,
-registry writes, and RPC resume path is more useful than a separate in-memory
-native backend. Tests construct independent profiles without changing process
-`HOME` or global Pi configuration.
+An additional existing-profile acceptance campaign is deferred, not a claimed pass
+or a prerequisite to reopen without a concrete regression. See [APP.md](../gpui/APP.md)
+for the accepted manual and deferred automated checks.

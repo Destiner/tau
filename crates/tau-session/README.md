@@ -1,6 +1,6 @@
 # tau-session
 
-Framework-independent Rust session controller for installed Pi's **actual JSONL RPC**. Uses `serde`, `serde_json` and the shared skill-envelope parser in `tau-core`. The controller itself does not launch processes, access credentials/session files, invoke models, or execute extensions, and has no GPUI/Tauri dependency.
+Framework-independent Rust session controller for installed Pi's **actual JSONL RPC**. Uses `serde`, `serde_json` and the shared skill-envelope parser in `tau-core`. The controller itself does not launch processes, access credentials/session files, invoke models, or execute extensions, and has no UI framework dependency.
 
 ## Host integration
 
@@ -55,7 +55,7 @@ All action/effect APIs return `Vec<Effect>`; empty effects mean no request was d
 ### Compacted history
 
 Current messages come from `get_messages`. `compactionSummary` becomes a non-prose
-boundary with no raw summary text; `branchSummary` is omitted, matching Vue. Available
+boundary with no raw summary text; `branchSummary` is omitted. Available
 boundaries expose `history_available` and `history_loading` for control/retry presentation. `load_history`
 walks the actual `get_entries` active ancestry from `leafId`, follows
 `firstKeptEntryId`, and reveals one preceding layer without navigating branches.
@@ -83,7 +83,7 @@ are not promised linear.
 ### Scoped models
 
 `State::models` retains the available catalogue; `State::selectable_models()` narrows
-choices using an optional runtime scope or Vue-compatible `enabledModels` patterns.
+choices using an optional runtime scope or Pi `enabledModels` patterns.
 Configured order and deduplication are preserved. Empty, invalid or unmatched scopes
 fall back to the available catalogue. An unavailable or out-of-scope current model is
 not injected into the choices; the host uses `State::model` for its display label.
@@ -104,18 +104,18 @@ A completed assistant `message_end` dispatches an identity-scoped `get_state` or
 
 Queue messages use real `prompt` with `streamingBehavior: "steer" | "followUp"`, after serialized acknowledgements of `set_steering_mode: all` and `set_follow_up_mode: one-at-a-time`. **Pi persists these account defaults**, affecting other processes; they are not restored. Snapshots come only from `queue_update`. Clear acknowledges actual `clear_queue` without erasing a newer snapshot. Stop does not clear or replay queues.
 
-## Exact first-slice limitations
+## Protocol and presentation limitations
 
-This is a working protocol core, **not TS runtime parity**:
+This is a protocol core, not a complete host runtime:
 
-- History supports current `get_messages` and layered pre-compaction reveal through active-branch `get_entries`. It does not provide branch/fork/navigation, general progressive history loading, or stable durable Pi entry cursors. Compaction success requests a fresh message projection; this remains narrower than the full TS history/replacement lifecycle.
+- History supports current `get_messages` and layered pre-compaction reveal through active-branch `get_entries`. It does not provide branch/fork/navigation, general progressive history loading, or stable durable Pi entry cursors. Compaction success requests a fresh message projection.
 - Timestamp/occurrence reconciliation assumes actual Pi message timestamps and append-order current history. Synthetic/malformed messages without timestamps, context rewrites, abandoned branches and compaction can change row IDs. Empty/image-only user messages have no image UI. Recognized skill envelopes expose a borrowed `Entry::skill()` projection while retaining exact source text; malformed envelopes remain ordinary user text. Host presentation is separate from controller storage.
 - Tool execution events and final assistant tool calls are projected. `toolcall_*` argument streaming is not displayed before the final tool-call/message or tool execution start. Provider-level `done`/`error` updates rely on ordinary Pi `message_end`. Tool/custom renderers and image results are not implemented. Nested tool execution rows may disappear on authoritative hydration because Pi does not store nested calls as independent messages.
 - Replacement detection includes lifecycle reads and finite delayed identity probes (150/450/1,000/2,000/3,200ms), with bounded materialization verification (250/750/1,500ms) and command-incarnation/serial fences. Completed predecessor intent survives failed reads/adoption/restart and exit handoff. Hosts own source recovery, archive mutations, storage receipts, idle eviction and explicit reconnect. Events for an undiscovered successor may transiently project under the predecessor; no event-carried identity or general live-suffix transfer is invented.
 - Loaded history or cosmetic preview does not itself emit registration; registration requires a live assistant completion with an exact successful barrier, or meaningful captured completion proof handed off by bounded reconciliation, adoption or exit preparation. Rename uses correlated `set_session_name` requests, whitespace-normalized names bounded to 240 UTF-16 units, optimistic rollback and authoritative `SessionNameChanged` effects. The host persists those names and owns archive/restore mutations; delayed durability registrations must not overwrite a newer name. `durable` means protocol proof, not successful host registry persistence.
 - Extension select/confirm/input/editor/notify/set_editor_text are handled. TUI statuses/widgets/titles/custom components, extension shortcut/flag/autocomplete controls are intentionally ignored. Dialog requests without Pi timeouts are user waits, not forced 10-second expiries. No host dialog-answer draft persistence API; the shell owns answer controls/drafts. Transport failure drops dialogs; reconnect does not replay responses.
 - No reconnect, process spawning/killing, JSONL byte framing, SSH, ownership fencing, storage, telemetry, retry policies, or UI-selection behavior. Hosts start a new generation after reconnect; never replay a prompt automatically. Late callbacks must be fenced by the host. Active provider/tool hangs are not detectable without host health checks. Stop timeout is feedback, not proof Pi stopped.
-- Errors remain reviewed local copy, not a provider-specific error classifier. Auto-retry events expose bounded, content-free retry state; host Retry Pi/fallback and retry presentation do not imply controller reconnect or automatic prompt replay. Local notices retain source identity/type through hydration, and the native host renders real prose/accessibility rather than surrogate text. This is not TS's fully anchored notice/compaction model. Transcripts/model catalogs are in-memory and not size-limited.
+- Errors remain reviewed local copy, not a provider-specific error classifier. Auto-retry events expose bounded, content-free retry state; host Retry Pi/fallback and retry presentation do not imply controller reconnect or automatic prompt replay. Local notices retain source identity/type through hydration, and the native host renders real prose/accessibility rather than surrogate text. Transcripts/model catalogs are in-memory and not size-limited.
 
 ## Host presentation and service boundary
 
@@ -132,20 +132,10 @@ PDF/audio/video acceptance are not established by controller or fake-based tests
 
 ## Verification
 
-The workflow correction passed **155 controller tests / 1 ignored opt-in canary** and
-**746 GPUI tests / 1 ignored**, strict all-target/all-feature native Clippy, static tooling,
-eight package/version tests and **13 editor integrations**. It covers admitted preflight
-beyond the ordinary deadline, transport loss after an idle state read, exact error
-acknowledgement and preservation of uncertain writes. These are deterministic fixtures,
-not execution of private workflows. Earlier unchanged-source gates remain shared core
-**82 / 1 ignored**, canonical-path Tauri **16** and root frontend **894** plus static checks/build.
-
-Both current installed-Pi native modes fail the unchanged five-second busy-close gate
-with an inactive window, unavailable Close and no lifecycle callback. Cause is unproven;
-no activation repair was added. Fresh ten-case visual comparisons at two scales are
-representative, not whole-UI/packaged/SSH certification. Actual-label descender and
-horizontal-overflow gates pass; remaining selection-paint differences are disclosed in
-[APP.md](../../gpui/APP.md).
+Deterministic controller tests cover admitted preflight beyond the ordinary deadline,
+transport loss after an idle state read, exact error acknowledgement, preservation of
+uncertain writes, generation/identity fences, reconciliation and completed-output durability.
+They do not certify packaged UI behavior, authenticated SSH or private workflows.
 
 Default contract tests follow installed Pi `docs/rpc.md`, `rpc-commands.md`, `json.md`, `rpc-extension-ui.md`, `message-types.md`, `session-format.md`, and Tau's runtime contracts. They use fake JSON and do not launch Pi, read session files, or invoke models. The separately ignored installed-Pi canary is explicit opt-in.
 

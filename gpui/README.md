@@ -1,215 +1,38 @@
-# GPUI component prototype
+# Tau native application
 
-An isolated feasibility experiment, not a replacement for Tau. The Vue/Tauri app, its runtime, and its component APIs are unchanged. No Pi processes, real workspaces, session files, or telemetry are involved.
+This directory contains the canonical GPUI app, not a prototype. Cargo package
+`tau-gpui` builds binary `tau` from `src/bin/tau.rs`. The directory name remains
+`gpui/` to avoid workspace and cache migration.
 
-## Current result
-
-The standalone GPUI application renders a Tau-styled button, single-line input, and **multiline input with a live playground** using unstyled GPUI Base controls. A second executable probes a streaming, variable-height transcript with synthetic content. Base owns editing, selection, history, and event dispatch; the harness does not implement a second text editor.
-
-| Component | Scenarios | Checkpoints per theme |
-| --------- | --------: | --------------------: |
-| Button    |        21 |                    56 |
-| Input     |        45 |                   106 |
-| Textarea  |        27 |                   112 |
-| Total     |        93 |                   274 |
-
-Counts describe meaningful coverage, not minimum quotas. The unrelated development catalogue is not imported.
-
-- **Chromium:** all 274 behavioral checkpoints match GPUI in light and dark (548 comparisons). Each implementation is also checked against authored expectations.
-- **WebKit:** an explicit, failing audit remains. See [review blockers](#review-blockers); Chromium agreement is not macOS acceptance.
-- **Component review:** after the visual follow-up and single-line Up/Down fix (`fcd402c`), Timur accepted both the button and single-line input as good enough for this prototype. The current presentation, including native focus styling, is retained without another general visual approval round. Every raw pixel difference is still recorded; exact-difference flags are not an approval ledger and no numerical tolerance silently approves future changes.
-- **Harness:** real-browser and real-Metal fault tests catch invisible controls, missing click handlers, lost Change events, incorrect selection, incomplete captures, and out-of-control-area rendering faults. A pixel regression also requires selections to be visibly painted in both editors.
-- **Dependency fixes:** ten focused Base patches address navigation, disabled focus, editor presentation, and opt-in horizontal Markdown code scrolling; two opt-in macOS text patches match the browser's antialiased policy. See [patches](patches/README.md).
-- **CI:** an isolated workflow is provided, but has not been executed on a remote runner. Local Metal capture does not prove hosted-runner Metal availability.
-
-Button, single-line input and multiline input component reviews are complete within this bounded prototype. Timur has authorized parallel multiline-input and representative hard-UI work, with independent live/report handoffs; harness decisions are engineering-owned. The transcript's streaming/scrolling mechanics are accepted within the probe's scope. Markdown presentation, especially code blocks, is explicitly a separate spike—not a blocker to that acceptance. Timur accepted the multiline input after the rendering, scrolling and keyboard refinements through `6affe97`. Native-input and application-integration gaps remain explicit, and the existing Vue/catalogue cleanup is deferred.
-
-## Nine additional native UI probes
-
-The next UI-only batch is implemented and **awaits hands-on review**. It does not change the accepted controls or transcript mechanics, migrate Pi/runtime logic, or resume Vue refactors. Each independently launchable probe has real native controls, synthetic fixtures, authored intermediate assertions, and light/dark Metal evidence. These reports are **native-only, not Vue parity or design acceptance**.
-
-| Probe                  | Live command (from repository root) | Scope / notes                                                                                                 |
-| ---------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Markdown / code blocks | `bun run --cwd gpui live:markdown`  | [Syntax colors, horizontal code scrolling, selection/copy, tables, incomplete fences](probes/markdown.md)     |
-| Menus / context menus  | `bun run --cwd gpui live:menus`     | [Keyboard/disabled rows, stacked Escape, edge placement; context menu is row-anchored](probes/menus.md)       |
-| Dialogs                | `bun run --cwd gpui live:dialogs`   | [Exact focus cycles, nested surfaces, drafts, busy/error/retry, nonmodal inline prompt](probes/dialogs.md)    |
-| Composer               | `bun run --cwd gpui live:composer`  | [Bounded auto-growth, completion, send/stop, retained draft, measured reader/end pinning](probes/composer.md) |
-| Model picker           | `bun run --cwd gpui live:models`    | [Grouped/filterable catalogue, disabled/empty states, selection visibility, failed changes](probes/models.md) |
-| Command palette        | `bun run --cwd gpui live:palette`   | [Search, nested pages, shortcuts, keyboard navigation, isolated input bindings](probes/palette.md)            |
-| Queue previews         | `bun run --cwd gpui live:queue`     | [Delayed hover, immediate keyboard reveal, interactive Markdown, stale-timer cancellation](probes/queue.md)   |
-| Activity rows          | `bun run --cwd gpui live:activity`  | [Status, expansion, selectable output, measured virtual-list re-entry](probes/activity.md)                    |
-| File viewer            | `bun run --cwd gpui live:files`     | [Text/code/image, copy, loading/error/retry, stale completion guards](probes/files.md)                        |
-
-Append `--dark` to any live command. Closing its last window exits that probe. No windows are opened by capture or validation, and none are automatically launched for review.
+Use the repository-root commands in [README.md](../README.md): frozen Bun install,
+`bun run prepare`, then `bun run dev -- --isolated /absolute/profile` or
+`bun run build`. After preparation, direct Cargo commands work from root:
 
 ```sh
-bun run --cwd gpui test:probes
-bun run --cwd gpui review:probes
-open gpui/results/ui-probes/index.html
-# Refresh one component independently:
-bun gpui/scripts/probe-report.ts --capture --probe markdown
+cargo build --locked --manifest-path gpui/Cargo.toml --bin tau --release
+cargo test --locked --manifest-path gpui/Cargo.toml --lib
 ```
 
-`src/probes/common.rs` supplies real event dispatch, explicit simulated-clock advancement, Metal capture, and capture-only `hide-content` / `skip-input` faults. Reports require the exact ordered checkpoint set from the current named binary, before/after source and binary fingerprints, bounded PNG dimensions, recomputed whole-frame ink, and matching artifact hashes. Every linked HTML report is regenerated from verified evidence; altered/stale reports are removed. Hashes are verified at generation, not continuously after opening an HTML file. Fault runs must fail without reusing an earlier successful proof.
+- [APP.md](APP.md) - Product behavior, lifecycle and verification boundaries.
+- [PACKAGING.md](PACKAGING.md) - Fresh ad-hoc preview bundles; public distribution is blocked.
+- [CI and tests](../docs/ci-testing.md) - Deterministic suites, Metal and explicit OS acceptance.
+- [Development storage](../docs/development-storage.md) - Isolation and production safety.
+- [Dependency patches](patches/README.md) - Pinned native dependency maintenance.
+- [Native host](src/native/README.md) - Platform adapters and retained editor support.
 
-Whole-frame ink only catches near-blank rendering. Additional bounded pixel regressions check syntax colors, horizontal code movement with a pinned action, and the actual bundled image paint; they are fixture-specific defect detectors, not visual acceptance tolerances. Other checks combine actual focus, Base state, geometry and screenshots for review. Headless clipboard operations use GPUI's in-memory test clipboard; an intentional Copy click in a live window writes to the real clipboard. Links stay local/inert and fixtures never open user files or contact external services.
+`tau-core`, `tau-session` and `tau-observability` own shared services; Pi owns
+extensions and session files. Do not add another runtime or transcript format.
 
-Remaining gaps include real AppKit/IME/accessibility input paths, OS-window resizing, cross-component integration, comprehensive Markdown/media parity, sustained performance, and production runtime/storage/distribution. File preview initially supports plain/code source and a bundled image, not PDF, diagrams or video; model/command/send actions are deliberately synthetic. Each probe's notes distinguish evidence from remaining scope.
+Metal tests need a real Metal device and full Xcode/Metal tools; there is no fake
+renderer fallback. If `xcrun metal --version` reports a missing toolchain, install
+Apple's component with `xcodebuild -downloadComponent MetalToolchain`.
 
-## Review entry points: multiline input and streaming transcript
+## Assets and provenance
 
-```sh
-# Live native controls; each command builds the current named binary first.
-bun run --cwd gpui live:textarea
-bun run --cwd gpui live:transcript
-bun run --cwd gpui live:transcript --dark
-
-# Independent reports; neither component waits for the other's review.
-bun run --cwd gpui review:textarea
-open gpui/results/multiline/light-webkit/report/textarea.html
-bun run --cwd gpui review:transcript
-open gpui/results/transcript/report.html
-```
-
-The multiline report selects **14 checkpoints** from **112 per theme**, with WebKit/Chromium and light/dark links. Real visible carets, wrapped/blank rows, Unicode selection, bounded wheel scrolling, history, and readonly/disabled transitions are covered. The native playground exposes theme, style, font, state, width and height without resetting the editor. Content replacement buttons are explicitly labeled. Its real-click/Space smoke test checks draft/selection preservation, full undo/redo history continuity, and in-window geometry. `height: 0` uses variant/rows sizing; positive values explicitly fix the height, including 120px. This accepted textarea playground has no native drag-resize handle; bounded auto-growth is exercised separately in the new composer probe.
-
-The transcript report is **native-only, not Vue parity**. It uses GPUI's measured variable-height `ListState` with stable IDs and per-message Base Markdown `TextViewState`. **16 Metal checks per theme** cover real control clicks/wheel input, same-burst append/growth, measured end pinning, reader anchoring, changes above the reader, expansion state, synthetic viewport shrink, a 1,000-message fixture, bounded streaming, pause/reset interruption, and a deliberately broken anchor. Selection retention is currently checked through a programmatically established editor selection, not a pointer-selection/paint regression. Six representative frames per theme keep the report focused.
-
-Start/Pause streams every 200ms for at most 60 ticks per start; Step works while paused. The 1,000-message mode is an exploratory fixture, not a sustained-performance certification. Links intentionally do nothing in this isolated probe. Cross-message selection, full rich/media rendering, real-window accessibility, and production performance are not established.
-
-Captures use independent Vite optimizer caches with watching/HMR disabled, so parallel report generation cannot reload a reference mid-edit. Focused reports verify current sources/binaries and artifact hashes; incomplete, altered or stale evidence is rejected. Headless rendering is real Metal but is still not the OS input path.
-
-## Setup and commands
-
-Tested locally on Apple Silicon macOS, Rust 1.98.1, Bun 1.4.2, and Xcode 27.0. A working Metal device and full Xcode/Metal tools are required for native capture; there is no software/fake-renderer fallback. If `xcrun metal --version` reports a missing Metal Toolchain, install Apple's component with `xcodebuild -downloadComponent MetalToolchain`.
-
-From the repository root:
-
-```sh
-bun install --frozen-lockfile
-bun install --cwd gpui --frozen-lockfile
-bun x playwright install chromium webkit
-
-# Bootstrap the pinned, patched dependency and build the standalone executable.
-bun run --cwd gpui build:native
-
-# Interactive native windows; no app data or Pi connection.
-gpui/target/debug/tau-gpui-prototype --component button
-gpui/target/debug/tau-gpui-prototype --component input --dark
-gpui/target/debug/tau-gpui-prototype --component textarea
-
-# Capture and compare all scenarios in both themes.
-bun gpui/scripts/run.ts
-bun gpui/scripts/run.ts --component input --skip-build
-bun gpui/scripts/run.ts --browser webkit --skip-build
-
-# Browser-only expectations/candidates; native dependencies are unnecessary.
-bun gpui/scripts/run.ts --reference-only
-
-# Review the latest local report, with filtering and 1×/2× crop views.
-open gpui/results/review/light-chromium/report/report.html
-
-# Review follow-up: full regression captures, then only the 14 relevant checkpoints.
-bun gpui/scripts/run.ts --out gpui/results/follow-up
-# This audit still exits nonzero on the documented behavioral differences, retaining captures.
-bun gpui/scripts/run.ts --browser webkit --skip-build --out gpui/results/follow-up
-bun gpui/scripts/review.ts
-open gpui/results/follow-up/light-chromium/report/feedback.html
-```
-
-`--out <directory>` changes the output root. Each run writes `<theme>-<browser>/request.json`, `vue/`, `native/`, and `report/`. Report crops are derived from the original captures; full frames remain linked. JSON records observations and both control-area and full-frame pixel metrics. The default magnitude heatmap distinguishes tiny channel rounding from larger changes; an exact-mask toggle retains the original view. A bounded ±2-physical-pixel sampling-offset diagnostic never moves images or changes pass/fail. Both crops have the same origin, shown explicitly; pixel diagnostics are expandable. Completed runs record rendering-input and native-binary fingerprints. The focused report requires WebKit evidence linked to the current Chromium run, so an old WebKit image cannot be reused just because scenario JSON stayed the same.
-
-`--strict-visual` fails on any raster or bounds difference. Default success means **state assertions passed, visuals still require review**, not that a port has been accepted. Failing browser expectations are retained in full native comparisons so the report can show both implementations; reference-only runs fail directly. Console, page-loading, missing-font, and network faults always fail.
-
-`--skip-build` deliberately uses the existing native binary. Omit it after changing Rust or a dependency patch. Normal builds run checksum-verified preparation and `cargo build --locked` first.
-
-## Checks
-
-```sh
-bun run --cwd gpui format
-bun run --cwd gpui lint
-bun run --cwd gpui typecheck
-bun run --cwd gpui test
-bun run --cwd gpui test:e2e
-bun run --cwd gpui test:native
-bun run --cwd gpui test:probes
-
-bun gpui/scripts/prepare.ts
-cargo fmt --check --manifest-path gpui/Cargo.toml
-cargo clippy --locked --manifest-path gpui/Cargo.toml --all-targets -- -D warnings
-cargo test --locked --manifest-path gpui/Cargo.toml
-```
-
-The native self-tests build the current executable and exercise actual Metal rendering. They are separate from fast unit tests and never silently skip an unavailable renderer. Their mutation hooks (`--fault hide-control|drop-clicks|drop-changes`) are accepted only in suite mode, not the interactive application.
-
-The prototype has its own Bun/Cargo lockfiles, lint configuration, build cache, and output directory. Root lint excludes this independent workspace; the commands above check it explicitly. The existing app's normal lint, tests, frontend build, and Tauri build remain separate gates.
-
-## How comparison works
-
-1. `contract.ts` defines scenarios, actions, observations, viewport, and scale. `scenarios.ts` contains independently authored expected behavior, not results learned from either renderer.
-2. `reference/main.ts` imports the production `UiButton`, `UiInput`, `UiTextarea`, and styles. Playwright supplies keyboard and pointer events. Each scenario mounts a fresh control, resetting editing/history state.
-3. `src/ui.rs` styles real Base controls with Tau's palette and dimensions. Inputs retain Base state across prop updates; a fresh headless application/window is created for each scenario.
-4. `src/main.rs` dispatches GPUI keyboard, text-input, and pointer events, then captures real Metal output with the macOS text system. The headless **platform window is a test window**, not a live AppKit window: this proves rendering and control event handling, not the operating-system input path.
-5. `scripts/compare.ts` rejects missing/duplicate captures, invalid observations or bounds, unsafe filenames, and wrong image dimensions. It checks each implementation against expected state and compares their full observations.
-6. Images are compared at **1280×640 physical pixels**, representing a **640×320 logical viewport at scale 2**. No resampling or alignment compensation occurs before comparison. Control metrics use the union of observed bounds plus a 4-logical-pixel margin; full-frame metrics separately detect stray paint outside that region.
-
-Selection offsets are **UTF-16**, converted explicitly to/from Base's byte offsets. Setup selections must be in-range Unicode scalar boundaries; offsets inside surrogate pairs are rejected rather than rounded. Backward selections are exercised through Shift-arrow sequences and subsequent edits. Observations contain the sorted range; direction is currently tested behaviorally, not exposed as a separate field.
-
-The input probe covers pointer selection/replacement, insertion/deletion, Enter, single-line Up/Down boundary movement and Shift-selection reversal, line/word-independent horizontal navigation, combining marks and joined emoji, selection-anchor reversal, undo/redo and history isolation, parent value replacement, same-current-value preservation, unrelated prop rerenders, readonly/disabled transitions, and Tab entry. Multiline cases distinguish visual rows from newline-delimited lines and assert intermediate caret positions.
-
-The preview host supplies fallback focus and Tab routing; these are not a final application-wide focus manager. The native test window is explicitly activated and pending tasks are drained before rendering: an inactive window suppresses Base's selection highlight even when the observed range is correct. Checkpoints normally suppress the caret on both sides; `caret: 'visible'` explicitly captures the real caret and verifies an actual narrow pixel change against a hidden-caret frame without changing editing state. The browser waits for its actual visible blink phase (no synthetic overlay), and native capture uses an explicit visibility flag. Transparent native caret colour was not sufficient: Base resolved it to foreground, a now-regression-tested harness bug. The interactive native window retains normal blinking and the centered, 2-logical-pixel caret requested in the multiline review. Logical focus/selection and visible selection paint are independently tested; live caret behavior still needs real-window review.
-
-The bundled Latin Inter variable font is losslessly decompressed from the project's `@fontsource-variable/inter` WOFF2 asset. Its internal native family name is `Inter`; the browser CSS family is `Inter Variable`. The font license is in `assets/Inter-LICENSE.txt`. Native macOS monospace uses `.AppleSystemUIFontMonospaced`, matching CSS `ui-monospace` instead of substituting its Menlo fallback. System fallback glyphs and rasterization remain platform-dependent.
-
-## Follow-up from visual review
-
-- Disabled button colours are composited once, rather than accumulating opacity where GPUI background/border overlap. Disabled input text no longer receives both Base's dimming and the control opacity.
-- Disabled selection stays visibly painted without focus or editability. Carets are now 2 logical px, as requested in the multiline review, and centered on the insertion boundary, with inward clamping at viewport edges to keep the full stroke visible; repeated focus notifications no longer hide their initial blink phase.
-- Native text opts out of CoreGraphics stroke dilation, like Vue's `-webkit-font-smoothing: antialiased`. No lighter font weight or colour substitution was used. In fixed interior text regions of the saved light/dark placeholder and seeded input, mean RGB error decreased by roughly 29–46%; exact raster equality is not claimed.
-- The emoji probe matches WebKit/macOS's painted glyph size, while Chromium uses a smaller glyph. The follow-up includes the WebKit image to make that distinction explicit. A small raster/baseline difference remains; no guessed scaling or screenshot resampling was applied.
-- The accepted prototype retains GPUI's hover suppression after keyboard input until real pointer movement; Vue retains hover. The harness captures before keys, after keys, and after pointer movement rather than masking the difference with synthetic motion.
-
-The focused report has 14 representative checkpoints per theme, notes tied to the feedback, visible caret labels, and links to the full results. Equivalent disabled/focus cases are not repeated. Accepted focus styling is not presented as a new rejection simply because exact pixels differ.
-
-### Multiline rendering follow-up
-
-The earlier antialiasing opt-in disabled luminance-dependent dilation but left CoreGraphics' smoothing flag at its enabled default. It now explicitly turns smoothing off for non-emoji glyphs. The regular/placeholder Inter and system-monospace probes in both themes measure native/WebKit normalized glyph coverage ratios of **0.992–1.009**, rather than the previous excess weight. Colours and requested font weight remain unchanged. A real-render regression allows 5% coverage variation to accommodate subpixel raster differences; this is a defect detector, not a visual-diff tolerance or automatic acceptance rule.
-
-The backward-row selection already had the correct `[3,5]` range. Its paint now matches macOS WebKit: selected hard newlines fill the content width, and vertical alignment uses the font's half-leading. Soft wraps, partial last rows, single-line input and code-editor defaults retain their separate semantics. Pixel checks exercise forward/backward selection in both fonts/themes, including painted top/bottom edges and padding boundaries.
-
-```sh
-bun gpui/scripts/run.ts --component textarea --out gpui/results/input-option
-bun gpui/scripts/run.ts --component textarea --browser webkit --skip-build --out gpui/results/input-option
-bun gpui/scripts/component-review.ts --feedback gpui/results/input-option
-open gpui/results/input-option/light-webkit/report/textarea-feedback.html
-```
-
-The multiline review also requested slower scrolling and rounded scrollbars. Tau's textarea now uses half-speed wheel/trackpad movement, retaining fractional deltas; this is a deliberate sensitivity preference, not Vue scroll-speed parity. The scrollbar inherits a 4px thumb radius across normal/hover/drag states. Real dispatch/pixel tests measure scrolling distance, fractional accumulation, reversal, clamping, the painted caps, and direct (unscaled) thumb dragging. Keyboard navigation and programmatic reveal are unchanged. Timur accepted the resulting feel in the live prototype; this does not certify every input device or macOS setting.
-
-Up on the first visual row now reaches the document start; Down on the last reaches the end. Reversing direction keeps the preferred column, matching both browsers. This is scoped to editable textareas: code-editor, readonly, page-key and Shift-selection policies are not rewritten. New real-key checkpoints cover mid-row edges, repeated keys, selection collapse, wrapped-row affinity, Unicode, blank rows, one-row and empty values. Before the fix, twelve checkpoints failed in both browser comparisons; the corrected sequences pass without changing their expectations.
-
-Timur chose native macOS Option+Up/Down semantics: go to the current newline-separated line's start/end; repeat at the boundary to reach the previous/next line's boundary. Soft-wrapped rows do not add stops. Nonempty selections collapse toward the relevant endpoint without accidentally skipping an extra line. Both single-line and multiline inputs support this; readonly/disabled fields and code editors are unchanged. The 36 real-key checkpoints agree with both browsers; thirty failed before the missing bindings/handlers were added.
-
-This follow-up contains eleven representative cases for Option/arrow navigation, scrolling, text, the 2px caret, and selection. Live probes are not automatically restarted; use the live commands above when wanted.
-
-## Review blockers
-
-The current WebKit run fails **17 checkpoints per theme** in three groups. These failures are visible in JSON/HTML and in the command's exit status, not normalized away:
-
-1. **Pointer button focus (15 checkpoints).** Chromium and Base focus mouse-pressed buttons; macOS WebKit does not. Keyboard activation is separately tested. Settle the intended behavior for application integration, especially where pressing a button must preserve editor focus.
-2. **Tab after disable/re-enable (one checkpoint).** In the isolated WebKit document, the first Tab after the disabled phase does not re-enter the now-readonly control. Chromium and the native preview host do. This needs a multi-control focus-order probe and actual WKWebView evidence, not just an assertion change.
-3. **Backspace over a combining accent (one checkpoint).** After `e + combining acute`, Chromium/Base delete the accent alone; WebKit deletes the whole grapheme. The horizontal-navigation patch deliberately does not change deletion policy. Resolve which behavior Tau should preserve rather than claiming Unicode parity from simple emoji cases.
-
-WebKit is especially relevant because the shipping macOS app uses WKWebView. The accepted isolated controls do not resolve these application policies or establish complete macOS editing parity; the audit remains explicitly failing.
-
-A separate focused probe found a preferred-column policy difference when mixing shortcuts: for `abc\ndef\nghi`, caret 6 → Option+Down → Up lands at 3 in Chromium/GPUI and 2 in WebKit. The Option action itself agrees at offset 7. This is outside the 17-checkpoint full-suite audit above and is not resolved by the shortcut addition.
-
-Other known boundaries:
-
-- The exported component prop surface is not complete: password/masking, maxlength, arbitrary native HTML attributes, form submission, labels/accessibility, and all validation behaviors are not ported.
-- The textarea has bounded wheel-scrolling, reflow and live dimension controls, but native drag-resize, auto-growth, composer submit/completion semantics, very large editing documents, and real composer/transcript integration remain separate work.
-- OS IME/dead-key composition, native clipboard permissions/formats, complete undo grouping, VoiceOver, real window focus restoration, live caret/selection visibility, and performance are unproven here.
-- GPUI Base/GPUI snapshot APIs and the local patches are a maintenance risk; this is not a production dependency decision.
-- CI Metal availability, signed distribution, updater trust, and all Tau session/runtime lifecycle invariants are outside this prototype.
-
-The multiline input and native transcript mechanics are accepted within their prototype scope. The next UI candidates come from the remaining hard areas: Markdown, an integrated composer, overlays and richer product components. Markdown/code-block rendering needs a separate focused spike, without reopening the accepted anchoring/scrolling behavior unless a regression appears. Engineering owns further harness coverage, WebKit policy accounting and CI validation. Real-window input checks, an integrated composer, nested overlays and rich-content completeness still precede a broad application rewrite. The local working checklist remains in `docs/gpui-rewrite.md` (uncommitted); broader Vue refactors remain deferred.
+The bundled Latin Inter font was losslessly decompressed from the project's
+`@fontsource-variable/inter` WOFF2 asset. Its native family name is `Inter`;
+its license is retained in `assets/Inter-LICENSE.txt`. macOS monospace uses
+`.AppleSystemUIFontMonospaced`; fallback glyphs and rasterization remain
+platform-dependent. Preserve asset source notices, dependency licenses and diagram
+license inventories when changing bundled assets. Removing comparison tooling is
+not permission to remove legal provenance.

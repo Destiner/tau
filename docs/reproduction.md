@@ -1,49 +1,43 @@
-# Reproduction
+# Reproduction and regression authoring
 
-Use deterministic browser fixtures for UI/protocol regressions, fake stdio for native process behavior, and the explicit real-Pi canary for installed-Pi contract drift. See [CI and test execution](ci-testing.md) for test strategy and [development storage](development-storage.md) for native profiles and browser sandbox behavior.
+Use deterministic native/controller fakes for product regressions, fake stdio for
+process behavior and explicit installed-Pi checks only for contract drift. There is
+no browser scenario runner or Playwright suite. See [CI/testing](ci-testing.md) and
+[development storage](development-storage.md).
 
-## Scenarios
+## Choose the owning layer
 
-Checked-in Pi scenarios run the real Tau app against development-only mocked Tauri IPC/events. Playwright and the interactive runner share typed tapes and a browser adapter; production bundles exclude both.
+- `crates/tau-core/`: file-backed profiles/registries, process JSONL, event tagging,
+  SSH command policy and cleanup. Use temporary profiles and fake commands/stdio.
+- `crates/tau-session/`: RPC correlation, generations/identity, replacement,
+  materialization, queues, extension work and recovery. Use deterministic exchanges
+  with controlled ordering and time.
+- `gpui/`: actual retained controls, focus, drafts, selection, transcript geometry,
+  interaction and paint. Use production-root tests and editor/Metal integrations;
+  controller-only assertions do not prove visible behavior.
+- Bun tests cover native command planning/packaging and other retained tooling without
+  launching the product or contacting providers.
+
+Minimize a report into invented data and a causal event sequence. Keep exact owners,
+request/response correlation and explicit gates; reject unexpected work. Demonstrate
+failure before the fix and success afterward without widening deadlines, adding
+arbitrary retries or repairing activation in the harness. Preserve durable regressions,
+not migration-only comparison captures. Never copy private prompts, transcripts,
+credentials or raw errors into fixtures or telemetry.
+
+## Manual reproduction
+
+For a concrete issue, use a fresh explicit isolated profile and disposable project:
 
 ```sh
-bun run repro -- --list
-bun run repro -- saved-session-stale-generation
+bun run dev -- --isolated /absolute/profile --project /absolute/project
 ```
 
-The runner validates the name, opens Vite's `?test-scenario=<name>`, and stops with Ctrl-C. Plain `bun run dev` uses a generic in-memory sandbox, not a scenario; it resets on reload. Playwright navigates directly to the scenario URL.
-
-Use `--list` for the authoritative names and descriptions; `tests/support/pi-scenario/catalogue.ts` registers them. Inspect gates through the console API below. Read the selected tape and matching `tests/e2e/pi-scenario-*.e2e.ts` for exact prompts and gate order rather than maintaining a second walkthrough here. Coverage includes first run, archives, session replacement/registration, queues, prompt admission, interruption, compaction/history, extension prompts, retries, and local/remote process failure.
-
-Control the selected scenario from the browser console:
-
-```js
-const repro = window.__TAU_PI_SCENARIO__;
-repro.scenario();
-repro.gates();
-repro.timeline();
-await repro.waitForGate('before-stale-generation-output');
-await repro.releaseGate('before-stale-generation-output');
-repro.verify();
-```
-
-`timeline()` shows ordered requests, outputs, and transitions; `verify()` stays incomplete until required requests, outputs, and gates finish. `nativeInvocationCount('register_session')` and `hasRegisteredSession('session-id')` inspect native fixture effects.
-
-For `saved-session-stale-generation`, submit exactly `Explain the fixture`, wait for `Deterministic reply.`, then release the gate above. The stale delta must not change the UI. This minimized race deliberately has no prompt response or `agent_settled`; use `saved-session-conversation` for normal settlement.
-
-## Authoring a regression
-
-1. Inspect failure/journal context without copying private content into fixtures or diagnostics. Minimize the causal RPC exchange into a tape under `tests/support/pi-scenario/`.
-2. Give it stable metadata, fixed runtime generations, ordered requests/outputs, and required gates. Match only meaningful fields; the engine captures generated request/runtime IDs and correlates responses. Never silently ignore unexpected requests.
-3. Register it once in `catalogue.ts`. Native command fixtures belong in `src/dev/pi-scenario-adapter.ts`, outside the protocol engine.
-4. Reproduce with `bun run repro`, then add a full-app test importing `tests/e2e/fixtures.ts` for completion and browser-error checks. Assert visible behavior, not controller internals; retain the scenario after proving it fails before the fix and passes afterward.
-
-For gate/event-driven tapes, set `test.use({ pausedClock: true })` before navigation: real-time probes can otherwise overtake assertions and send unexpected `get_state`. Advance `page.clock` for timer behavior and between separate prompts so timestamps differ. Extension expiry and delayed replacement need an explicit clock policy. Use fake stdio—not browser mocks—to test native spawning, JSONL, event tagging, and process cleanup.
-
-## Manual fixtures
-
-- **Archive:** open `/?fixture=archive` in Vite for 2,500 synthetic sessions across three projects. Show Archived Sessions appends batches of 50; reopening resets the window. No real transcripts/metadata are used. Coverage lives in `archive-window.e2e.ts` and the isolated Chromium `archive-performance.e2e.ts`.
-- **File previews:** check token colors in both appearances for short source and files above 20,000 characters, including the last line near 512 KiB. Also check wide code, Markdown links, image/PDF/media, local and remote directories, scrolling, Escape/close focus return, missing-file feedback, and snapshot cleanup. Regular files use private read-only snapshots and revoke access on close/replacement; local directories open in the OS, while remote directories copy their path. SSH needs non-interactive connections with quiet stdout. Format limits live in `src/lib/file-preview.ts` and `src-tauri/src/file_preview.rs`; browser coverage is in `tests/e2e/file-preview-*.e2e.ts`, `transcript-preview.e2e.ts`, and `markdown-preview.e2e.ts`.
+This is not a filesystem/tool sandbox: Pi retains credentials, extensions and real
+project access. Do not run against production or authenticate SSH as an incidental
+check. File-preview scope is text/Markdown/code and admitted images; PDF/audio/video
+acceptance is not claimed. See [APP.md](../gpui/APP.md) for current interaction,
+workflow, cleanup and deferred acceptance boundaries.
 
 ## Real Pi compatibility canary
 
@@ -51,6 +45,19 @@ For gate/event-driven tapes, set `test.use({ pausedClock: true })` before naviga
 bun run test:pi-contract
 ```
 
-Requires Pi on `PATH` or `TAU_PI_PATH`; reports the version and fails if missing/incompatible. It is excluded from default Bun, Playwright, and Cargo suites. It uses isolated temporary working/config/session directories in offline mode, disables tools and extension/resource loading, and passes no provider credentials.
+This is an explicit check of installed Pi, excluded from default tests. It requires
+Pi on `PATH` or `TAU_PI_PATH` and fails if missing/incompatible. The canary uses
+temporary working/config/session directories, offline mode, disabled tools and
+extension/resource loading, and no provider credentials.
 
-Only read-only RPCs are sent: `get_available_models`, `get_commands`, `get_state`, `get_available_thinking_levels`, and `get_messages`. No prompts, command execution, model/provider calls, SSH, or external services. Assertions cover JSONL/process usability, dynamic response IDs, and consumed fields—not catalogue contents, provider names, paths, optional fields, or ordering. See `scripts/pi-contract.ts` for the exact isolation and checks.
+Only read-only RPCs are sent: `get_available_models`, `get_commands`, `get_state`,
+`get_available_thinking_levels`, `get_messages` and `get_entries`. There are no prompts, model calls,
+SSH or external services. Assertions cover JSONL/process usability, correlated IDs
+and consumed fields, not catalogue names/order or environment-specific paths. Read
+`scripts/pi-contract.ts` for exact isolation and checks before running it.
+
+Native OS/installed-Pi/model acceptance is separately opted in via selected
+`native-os-tests` targets; it is not implied by a deterministic test pass. The last
+automated busy-close failure remains negative evidence; user manual workflow and SSH
+acceptance and explicitly deferred campaigns are documented in APP, not an instruction
+to rerun them during cleanup.

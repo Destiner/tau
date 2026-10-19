@@ -40,7 +40,9 @@ native GPUI hitbox and migrates capture across redraws. Release outside, focus
 loss, window deactivation, gesture cancellation, and moves without a pressed
 left button clear pan state. OS capture/window-deactivation behavior still
 requires native-window input review; TestApp input is not AX/OS certification.
-Full application integration remains a separate responsibility.
+`components::markdown::MarkdownPresentation` integrates these blocks through the
+prepared Markdown hook in the production app. The host still owns OS-input
+acceptance; component tests alone do not establish it.
 
 ## Checks
 

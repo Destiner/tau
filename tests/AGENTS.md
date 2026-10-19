@@ -1,33 +1,27 @@
-# Tests
+# Shared native test helpers
 
-Deterministic unit and browser coverage for Tau's visible behavior and Pi protocol integration.
-
-## Structure
-
-- `e2e/` - Playwright tests against Vite fixtures or full-app Pi scenarios.
-- `e2e/fixtures.ts` - Shared `test`/`expect`, page-error capture, console-error capture, and scenario verification.
-- `support/pi-scenario/` - Typed request matchers, scripted outputs, gates, timelines, and scenario catalogue.
+Deterministic Pi wire fixtures for the native Rust process tests; no browser or UI controller adapter.
 
 ## Commands
 
-- `bun run test` - Run the product's Vitest tests.
-- `bun run test:e2e` - Run Chromium and WebKit functional tests with two workers (including independent tests within each file), then the dependent single-worker performance phase.
-- `CI=1 bun run test:e2e:performance --retries=0` - Run only the Chromium performance project without its functional dependencies or trace-recording overhead.
-- `bun x playwright test tests/e2e/<file>.e2e.ts` - Run one e2e file. `--project=chromium` selects functional Chromium coverage only.
-- `bun x playwright test --project=chromium-performance` - Run the performance project after both functional dependencies; add `--no-deps` only for an intentionally isolated performance run.
-- `bun run repro -- <scenario>` - Inspect a scenario interactively.
+- `bun build scripts/pi-stdio-adapter.ts scripts/pi-contract.ts --target=bun --outdir=/tmp/tau-pi-test-build` - Check the standalone helper bundles without launching Pi.
+- `cargo test --manifest-path crates/tau-core/Cargo.toml` - Run shared service tests, including the Bun-backed stdio fake.
+- `cargo test --manifest-path crates/tau-session/Cargo.toml` - Run deterministic session-controller tests.
+- `cargo test --manifest-path crates/tau-observability/Cargo.toml` - Run shared diagnostics tests.
+
+## Structure
+
+- `support/pi-scenario/index.ts` - Test-owned wire schema, strict request matching, captured IDs, runtime bindings, gates and timeline diagnostics; no production data-model imports.
+- `support/pi-scenario/fixtures.ts` - Synthetic bootstrap state and replies.
+- `support/pi-scenario/saved-session-conversation.ts` - Stdio round-trip fixture consumed by `crates/tau-core/src/pi/tests/transport.rs`.
+- `support/pi-scenario/catalogue.ts` - Only scenarios consumed by retained native tests.
+- `tooling/native.bun.ts` - Root command safety and native validation-target coverage; runs without launching the application.
+- `../scripts/pi-stdio-adapter.ts` - Fake Pi executable; requires Bun on PATH even when invoked by Rust.
+- `../scripts/pi-contract.ts` - Opt-in read-only installed-Pi RPC canary in temporary offline storage; never part of default tests.
 
 ## Patterns
 
-- Test product behavior, not telemetry, CI configuration, release/development tooling, or the test harness itself. Keep helpers needed by product tests.
-- Import Playwright `test` and `expect` from `e2e/fixtures.ts`; import only types directly from `@playwright/test`.
-- Full-app scenario tests select `?test-scenario=<name>`. The shared fixture automatically rejects incomplete scenarios and unexpected browser errors.
-- Add browser scenarios once in `support/pi-scenario/catalogue.ts`; the interactive runner and browser adapter share that catalogue.
-- Match only meaningful request fields and capture generated request/runtime IDs for later responses.
-- Use required gates to expose race windows, and assert visible product behavior rather than controller internals.
-- Keep scenarios deterministic and private-data-free. Use the browser fake for product orchestration and the stdio fake for native process/JSONL behavior.
-- `bun run test:pi-contract` is an opt-in read-only compatibility canary, not a replacement for fake-based regressions.
-- A quality-rubric bug fix must fail before the fix and pass afterward at the narrowest appropriate layer.
-- Playwright builds a separate fixture-enabled bundle in `node_modules/.cache/tau-e2e`; normal builds still exclude fixtures. Interactive reproduction continues to use Vite dev.
-- Use `?fixture=long-transcript&showcase=true` for rendering checks and `?fixture=long-transcript&preview=true` for file-preview checks; reserve the default 5,000-message fixture for scrolling and virtualization. Install mocks before the test's single navigation, not after a shared navigation that will be discarded.
-- Keep test state in the page/context so functional cases can run independently. CI records traces on the first retry; local runs retain failure traces. Use `CI=1` with `--retries=0` for untraced timing/performance measurements. See `docs/ci-testing.md` for the gates and measurement procedure.
+- Preserve native late-output, generation, cleanup and ownership regressions under `crates/tau-core/src/pi/tests/`; browser scenario removal does not supersede them.
+- Keep scenarios deterministic and private-data-free. Match meaningful request fields and capture generated request IDs for correlated replies.
+- Keep this schema test-owned; do not create a second production runtime or import host UI models.
+- Prefer fake-based regressions at the narrowest layer. Installed-Pi checks (including ignored Rust canaries) require explicit opt-in; never use credentials or model calls for routine validation.

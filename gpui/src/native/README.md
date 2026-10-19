@@ -30,7 +30,9 @@ and minimize integration; see [window.md](window.md). [NativeHost](host.md)
 explicitly composes application menus, New Session callbacks, guarded close/quit
 and reopen policy. [PathChooser](paths.md) provides owned native file-dialog
 requests. Runtime shutdown, persistence, confirmation presentation and the real
-Pi-backed root remain injected host responsibilities. A quit cleanup callback
+Pi-backed root remain injected host responsibilities, implemented by `src/app.rs`
+and `src/app/lifecycle.rs` in the production `tau` application. Component
+initialization alone does not install them. A quit cleanup callback
 is not a cancellable confirmation hook.
 
 ## Regression coverage

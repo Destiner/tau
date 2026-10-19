@@ -1,9 +1,12 @@
 # Native host assembly
 
-This is an opt-in host API, not a Pi-backed application. Component initialization
-and the prototype executables do not install it. Tauri still owns the operational
-Pi processes, session files, persistence, updates, and project import.
-No session/runtime model, clipboard access or user-data write is introduced here.
+The production `tau` binary (`tau-gpui`) installs this host from `src/app.rs`.
+The library exposes `app`, `components` and `native`; component initialization
+alone does not install the host. The app supplies Pi-backed session behavior,
+persistence and project import through the shared `tau-core`, `tau-session` and
+`tau-observability` crates. Pi retains ownership of its session files. This host
+API itself introduces no session/runtime model, clipboard access or user-data write.
+Public distribution and an updater are not implemented.
 The separate [PathChooser](paths.md) adapter owns native file-dialog requests.
 
 ## Installation
@@ -50,7 +53,7 @@ Cmd-N and the File menu preserve Tau's **New Session** command. The separate
 `NewWindow` action has no default shortcut or menu item: it is a window-factory
 primitive for a host that explicitly supports multiple windows. Both are
 unavailable while Quit is pending or approved, avoiding creation after a shutdown
-snapshot. The eventual Pi-backed shell owns session behavior and window sharing;
+snapshot. The Pi-backed app owns session behavior and window sharing;
 these helpers do not establish either policy.
 
 ## Confirmation and shutdown
@@ -153,8 +156,8 @@ window. Factory failure is reported, leaves no phantom tracked window, and permi
 retry. Approved Quit makes reopen inert.
 
 The pinned macOS adapter forwards its reopen callback when AppKit reports no
-visible windows. `host.reopen(cx)` is also an explicit entrypoint for a future
-shell's activation policy. TestPlatform exercises both reuse and no-window factory
+visible windows. `host.reopen(cx)` is also an explicit entrypoint used by the
+app's New Session callback. TestPlatform exercises both reuse and no-window factory
 behavior. The opt-in native-host test additionally exercises the own-process
 reopen delegate and restoration of an actual minimized window using the standard
 reveal helper. It does not manipulate or certify Dock delivery.
@@ -215,6 +218,8 @@ AX client/permissions, Dock manipulation, user data, session, or runtime is invo
 These callbacks model ownership, not a Pi shell or a confirmation UI. Standard
 reveal is verified in this owned-window setup, not all Space/fullscreen configurations.
 
-Real Pi-backed shell wiring, runtime shutdown, persistence,
-confirmation presentation/focus restoration, hardware Cmd-Q, and actual Dock
-interaction remain separate integration/acceptance work.
+The production app wires confirmation, draft persistence and runtime shutdown
+in `src/app.rs` and `src/app/lifecycle.rs`; deterministic app lifecycle tests cover
+that integration. This synthetic AppKit target does not certify real Pi shutdown
+or persistence. Hardware Cmd-Q and actual Dock interaction remain separate
+acceptance work.

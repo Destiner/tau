@@ -92,8 +92,9 @@ safety rules above. State pairs share one binding.
 | App        | Quit (native-owned)               | `⌘Q`                   |
 
 Palette-only target commands are **Remove Project**, **Clear Queued Messages**,
-**Show Update Status**, and **Check for Updates**. They have no destructive or
-ambiguous global chord. Session/project pickers expose their dynamic results
+**Show Update Status**, **Check for Updates**, and **Retry Pending Operations**.
+Update routes only show unavailable status with a disabled primary action; no native
+updater is implemented. These commands have no destructive or ambiguous global chord. Session/project pickers expose their dynamic results
 only within their sublists; individual rows are not root commands.
 
 ## Local surfaces
@@ -101,21 +102,21 @@ only within their sublists; individual rows are not root commands.
 These remain scoped to their existing surface and are excluded from the global
 palette unless their launcher appears above.
 
-| Surface                       | Target bindings                                                                                                                           |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Rename                        | Enter or `⌘Enter` commits; Escape cancels. Opening the palette does not blur-commit.                                                      |
-| Menus and context menus       | Arrows, Enter, and their existing typeahead; Escape dismisses that menu.                                                                  |
-| Remote project dialog         | Enter/`⌘Enter` submits where applicable; `⌘↑` goes to parent; Escape closes only when dismissible.                                        |
-| Pi prompts                    | Existing arrows/Enter selection; `⌘Enter` primary submit; `⌘⇧Enter` negative confirmation; Escape cancels only that prompt when eligible. |
-| Model and effort lists        | Existing list navigation and Enter selection; Escape closes the current list.                                                             |
-| Queue and unsent review       | Escape dismisses the focused status/review; `⌘Enter` restores a focused draft when eligible.                                              |
-| Feedback, quit, and update UI | `⌘Enter` activates the eligible primary action; `⌘⇧Enter` skips an update; Escape closes only a dismissible surface.                      |
-| Issue reporter                | `⌘⇧S` toggles Include Current Session within the report; `⌘Enter` submits; Escape retains unsent text.                                    |
+| Surface                 | Target bindings                                                                                                                           |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Rename                  | Enter or `⌘Enter` commits; Escape cancels. Opening the palette does not blur-commit.                                                      |
+| Menus and context menus | Arrows, Enter, and their existing typeahead; Escape dismisses that menu.                                                                  |
+| Remote project dialog   | Enter/`⌘Enter` submits where applicable; `⌘↑` goes to parent; Escape closes only when dismissible.                                        |
+| Pi prompts              | Existing arrows/Enter selection; `⌘Enter` primary submit; `⌘⇧Enter` negative confirmation; Escape cancels only that prompt when eligible. |
+| Model and effort lists  | Existing list navigation and Enter selection; Escape closes the current list.                                                             |
+| Queue and unsent review | Escape dismisses the focused status/review; `⌘Enter` restores a focused draft when eligible.                                              |
+| Feedback and quit UI    | `⌘Enter` activates the eligible primary action; Escape closes only a dismissible surface.                                                 |
+| Issue reporter          | `⌘⇧S` toggles Include Current Session within the report; `⌘Enter` submits; Escape retains unsent text.                                    |
 
-An inline Pi prompt blocks global palette and shortcut actions. Explicit sidebar
-row actions to mark a session read/unread or archive an eligible session remain
-available, including for another project; other blocking dialogs and workspace
-lockouts still apply. Escape from a row menu dismisses only the menu, not the
+An inline Pi prompt blocks unsafe edits, not the safe session/project navigation
+listed above. Explicit sidebar row actions to mark a session read/unread or archive
+an eligible session remain available, including for another project; other blocking
+dialogs and workspace lockouts still apply. Escape from a row menu dismisses only the menu, not the
 prompt.
 
 ## Discovery and tooltip policy
@@ -130,7 +131,7 @@ It must not steal menu/popover anchors or create fake tab stops.
 
 ## Explicit exclusions
 
-The following retain ordinary native, browser, Pi, or content-local keyboard
+The following retain ordinary native, Pi, or content-local keyboard
 behavior rather than becoming app commands: standard editing and window
 shortcuts; sidebar resizing; transcript scrolling/selection; media and viewer
 controls; per-message disclosures; code/file/link/context-menu actions; drag

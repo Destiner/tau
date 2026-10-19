@@ -12,10 +12,10 @@ authoritative description of the files.
 
 ## Files
 
-Default to the production profile. Development builds now use a per-process
-temporary profile, printed at startup; see `docs/development-storage.md`. Ask for
-that run's directory when triaging development feedback, and copy reports before
-the app exits. The old persistent `tau-dev/` directory is legacy data only.
+Default to the production profile. Native development requires an explicit persistent
+`--isolated` profile; see `docs/development-storage.md`. Ask for that directory when
+triaging development feedback; its inbox is `<profile>/tau/feedback/issues.jsonl`.
+The old `tau-dev/` directory and per-process development seeds are legacy data only.
 
 - Inbox: `~/Library/Application Support/tau/feedback/issues.jsonl`
 - Resolved: `~/Library/Application Support/tau/feedback/done.jsonl`
@@ -52,9 +52,9 @@ raw errors.
 
 Use it to reproduce an issue or collect more context: filter records by the
 report's `sessionId` and search the minutes around its `timeUnixNano` for
-failed spans, error-level logs, or unusual timings. For deterministic UI
-reproduction afterwards, use the scenario tooling (`bun run repro -- --list`,
-`docs/reproduction.md`).
+failed spans, error-level logs, or unusual timings. For deterministic native UI,
+controller or process reproduction afterwards, follow `docs/reproduction.md`;
+the browser scenario runner is no longer part of the app.
 
 ## Investigating and fixing a report
 

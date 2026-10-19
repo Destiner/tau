@@ -1,57 +1,55 @@
 # Tau
 
-A minimal, focused interface for [Pi](https://pi.dev).
-
-[Download](https://github.com/Destiner/tau/releases/download/v0.2.1/tau-0.2.1-apple-silicon.dmg) · macOS (Apple Silicon)
-
-<img width="1806" height="1169" alt="Screenshot 2026-09-09 at 21 45 44" src="https://github.com/user-attachments/assets/f6dc8915-b74c-40c3-b9e3-9c7600295f2d" />
+A minimal, focused native interface for [Pi](https://pi.dev), built with GPUI.
 
 ## Features
 
-- Project pane with chat persistance
-- Remote projects via SSH
-- Support for [Pi Extensions](https://pi.dev/docs/latest/extensions)
-- Archived sessions
-- Mermaid diagram rendering
-- Steering
-- File previews
+- Projects with persistent sessions, including remote projects over SSH
+- Pi extension commands and inline prompts
+- Archived sessions, steering and follow-up queues
+- Markdown, code and Mermaid rendering
+- File previews and a keyboard-first command palette
 
-## Development
+## Build and develop
+
+Development targets macOS with Bun, Rust and Xcode/Metal tools. Install Pi separately;
+Tau does not bundle Pi, Node, SSH, provider credentials or extensions.
 
 ```sh
-bun install
-bun tauri dev
+bun install --frozen-lockfile
+bun run prepare
+bun run dev -- --isolated /absolute/path/to/profile --project /absolute/path/to/project
 ```
 
-Requires Node.js 22.18+ and Pi on `PATH` or `TAU_PI_PATH`. Each checkout/worktree starts its own
-Vite server on an available port and passes that URL to Tauri; HMR uses the
-same port. Use `bun tauri dev` (not `bunx tauri dev`) so the launcher manages
-the server and URL together. Other commands, including `bun tauri build`,
-pass through to the Tauri CLI unchanged.
+Development requires an explicit isolated profile. It persists across launches and
+starts without synthetic projects. This separates Tau metadata and local Pi sessions,
+**not** tools, credentials, extensions or access to real files. See
+[development storage](docs/development-storage.md).
 
-Every native dev process starts with disposable storage seeded with two sample
-projects (`atlas` and `notes`) and five sessions. Pi still runs normally with your
-existing auth, models, and extensions, but local transcripts and all Tau-owned
-state belong to that process. Closing the app discards them; native restarts
-(including Rust rebuilds) start fresh. Frontend HMR does not reset native storage.
-Production builds always retain the existing persistent store.
+```sh
+bun run check
+bun run test
+bun run build
+bun run package
+```
 
-`bun run dev` opens the same seed in a browser-only, in-memory playground with
-local mock replies; each tab/reload starts fresh and needs no Pi installation.
-`bun run repro -- <scenario>` keeps its explicit deterministic scenarios. Both
-commands also use an available port. Playwright continues to use fixed port 1420.
-See [development storage](docs/development-storage.md) for lifetime and isolation
-boundaries. The staged [keyboard and command palette inventory](docs/keyboard.md)
-documents the approved target keymap.
+`build` produces the optimized native binary; `package` creates a fresh ad-hoc macOS
+preview. **Public native distribution and updates are not implemented.** The old
+v0.2.1 GitHub DMG is a historical Vue/Tauri build, not this native application.
+See [packaging](gpui/PACKAGING.md) before building or launching a preview.
 
-## Roadmap
+The canonical app remains in `gpui/` to preserve workspace/cache paths: Cargo package
+`tau-gpui`, binary `tau`. Shared crates provide storage/process services, Pi RPC
+orchestration and observability. There is no Vue/Tauri app or Playwright suite.
+Direct Cargo commands from root work after prepare with `--manifest-path gpui/Cargo.toml`.
 
-- Search
-- File explorer
-- Keyboard shortcuts
-- Command palette
+A normal product launch without `--isolated` uses existing production storage, not
+a development sandbox. The cutover is cold-turkey: close the old app first and never
+run both against that profile. Pi owns transcripts; migration of old Vue drafts is
+not guaranteed. See [application contracts](gpui/APP.md), [Pi compatibility](docs/pi.md),
+[keyboard commands](docs/keyboard.md) and [testing](docs/ci-testing.md).
 
-## Non goals
+## Non-goals
 
 - Support for other harnesses
 - Integrated terminal and browser
@@ -60,11 +58,10 @@ documents the approved target keymap.
 
 ## Philosophy
 
-Pi is good because it's lean, stable, and extensible. Instead of forcing opinions on you, it provides a solid core for the agent loop and an API surface for everything else. By saying no to a hundred things, it delivers something that everyone finds usable. For everything else, "There's an extension for that". That gives you a sense of ownership and doesn't lock you into bad decisions.
-
-Tau builds on that idea and attempts to do the same at the UI level. Instead of shipping every feature, it focuses on the core things — sessions, models, and transcripts — and does them well. Something that you use 10 hours a day has to be fast, reliable, and provide a feeling of ownership.
-
-Coding is changing every month now. The best coding tools are simple at the core and extensible at the edges. A lot of agent orchestration tools make a mistake of rushing to ship as many features with LLMs as physically possible. Half of those features become redundant within a month. The work is getting increasingly high level every month. Things like sophisticated code review tools, subagent visibility, and built-in VCS and project management integrations make less sense as models become more capable.
+Pi is lean, stable and extensible. Tau follows that approach at the UI level:
+focus on projects, sessions, models and transcripts, and leave extra capability to
+extensions. Something used ten hours a day should be fast, reliable and feel owned
+by its user, without a growing set of soon-redundant orchestration features.
 
 Also, no tabs.
 

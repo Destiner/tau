@@ -10,7 +10,8 @@ from a rule here. If it isn't, the rubric is missing a rule, not an entry.
 
 - Audit passes check the app against one section at a time.
 - Every rule carries a verification tag:
-  - `[e2e]` — enforced or enforceable by an end-to-end test
+  - `[e2e]` — enforced or enforceable by a native app/control integration test;
+    this tag does not imply Playwright or browser infrastructure
   - `[unit]` — enforced or enforceable by a unit test
   - `[audit]` — checkable by an agent reading code against the rule
   - `[manual]` — requires a human using the app
@@ -84,8 +85,8 @@ from a rule here. If it isn't, the rubric is missing a rule, not an entry.
   dead end. `[unit]`
 - One session's failure never corrupts, blocks, or leaks into another.
   `[unit]`
-- The native side never panics on a user-reachable path; errors cross the
-  bridge as values, not crashes. `[audit]`
+- Native services never panic on a user-reachable path; failures return as
+  owned values, not crashes. `[audit]`
 
 ## 4. Transcript
 
@@ -120,8 +121,8 @@ Concurrency bugs are the worst UX bugs.
 ## 6. Keyboard and focus
 
 - When transient UI closes, focus returns to a still-valid originating
-  control or the active composer — never behind another modal or onto the
-  document body. `[e2e]`
+  control or the active composer — never behind another modal or onto an
+  unfocused root surface. `[e2e]`
 - Escape dismisses only the topmost dismissible transient layer. If the
   topmost surface cannot be safely dismissed, Escape does nothing. Focused
   tool and extension prompts are explicitly cancellable under the input

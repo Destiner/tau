@@ -1,73 +1,65 @@
-# Tau macOS native preview packaging
+# Tau macOS preview packaging
 
-This builds the real `src/bin/tau.rs` application (`app::run`, shared `tau-core`
-and `tau-session`), not a showcase or prototype launcher. It produces a standalone
-**Tau.app**, bundle ID `com.destiner.tau.native-preview`, with display name **Tau**, distinct in identity from
-Tauri's **Tau.app** / `com.destiner.tau`. The existing Tauri fallback, release
-signing, updater and installed app are untouched. Public distribution is not ready:
-these are local ad-hoc previews, not Developer ID signed, notarized, stapled or updater
-artifacts. Normal-feature optimized arm64 builds now pass alongside debug validation.
+Packaging builds the canonical `tau` application, not a showcase. It creates
+**Tau.app**, bundle ID **com.destiner.tau.native-preview**, version **0.2.1**.
+The preview identity/version are unchanged by the repository cutover.
 
-## Package
+**Public native distribution is not implemented.** These are local ad-hoc previews,
+not Developer ID signed, notarized, stapled or updater artifacts. The historical
+Tauri DMG/feed is not a native distribution path.
 
-Run from the repository root on macOS with Bun, Cargo and Xcode command-line tools:
+## Package from root
+
+On macOS, install Bun, Cargo and Xcode/Metal tools, then:
 
 ```sh
-bun gpui/scripts/package.ts
+bun install --frozen-lockfile
+bun run prepare
+bun run package
 ```
 
-Default: release `cargo build --locked --bin tau`, output
-`gpui/target/bundle/macos/Tau.app` (generated files stay under the existing
-ignored target directory). Uses normal `CARGO_HOME`, sets `CARGO_BUILD_JOBS=2`,
-and explicitly uses `gpui/target`. Does not run prepare, copy sources, rebuild
-caches, invoke Tauri, install anything, access production data, open Finder or
-launch a GUI. Cargo's ordinary incremental compilation is still allowed.
-Required patched dependencies must already be present in the development setup.
+The default is an optimized normal-feature `cargo build --locked --bin tau`, with
+output `gpui/target/bundle/macos/Tau.app`. The packager uses normal `CARGO_HOME`,
+`gpui/target` and two build jobs. Preparation must precede packaging. It never
+installs, accesses production data, opens Finder or launches the application.
 
-For bounded debug validation using the existing debug target:
+For an explicit fresh debug destination:
 
 ```sh
-preview=$(mktemp -d /tmp/tau-gpui-native-bundle-XXXXXX)
+preview=$(mktemp -d /tmp/tau-native-bundle-XXXXXX)
 bun gpui/scripts/package.ts --debug --output "$preview/Tau.app"
 ```
 
-`--no-build` is an explicit opt-in for a previously built binary:
+`--no-build` is only an explicit opt-in for a previously built binary; it is not
+fresh-build validation. Use a fresh destination each time. `--output` must be
+absolute and end in `Tau.app`. Existing outputs, symlinks, normalized system/user
+Applications paths and their symlink aliases are refused. Nothing is recursively
+replaced. Uniquely owned staging is inspected and ad-hoc signed before an atomic
+same-filesystem rename; failure cleans only that invocation's staging.
 
-```sh
-bun gpui/scripts/package.ts --debug --no-build --output "$preview/Tau.app"
-```
+The bundle contains `Contents/MacOS/tau`, Info.plist, the existing Tau ICNS icon and
+an ownership/version/profile marker at `Contents/Resources/tau-native-preview.json`.
+Runtime Version and bundle metadata use the GPUI Cargo package version, aligned with
+root package metadata and its lock entry. UI icons and Inter font are embedded;
+no source tree or separately prepared runtime asset directory is needed. Preserve
+font, icon, syntax and diagram license/source notices.
 
-Use a fresh output directory for each invocation. `--output` must be absolute
-and end in `Tau.app`. System and user Applications locations are refused,
-including normalized paths and symlink aliases. Existing outputs, including marked previews and
-symlinks, are refused; nothing is recursively replaced. Staging is uniquely
-owned, checked and ad-hoc signed before a same-filesystem rename publishes the
-app. Failures clean only that invocation's staging directory. A marker in
-`Contents/Resources/tau-native-preview.json` records ownership/version/profile.
+Inspection verifies Mach-O executable type, architecture, Info.plist syntax and
+`codesign --verify --deep --strict`. Libraries and `LC_RPATH` must be system-only
+(`/System/Library/` or `/usr/lib/`); non-system dependencies fail closed. The signature
+is ad-hoc (`codesign --sign -`), not Gatekeeper distribution approval. The app declares
+macOS 15+ and builds for the host architecture, not universal.
 
-The bundle contains `Contents/MacOS/tau`, an Info.plist and the existing Tau ICNS
-icon. Version comes from the GPUI Cargo package, aligned with root/Tauri manifests and
-its local lock entry at **0.2.1**. Runtime Version and bundle metadata use Cargo's
-version, not a display override; read-only regression tests protect that alignment.
-Copyright metadata labels the build as a GPUI debug/release preview. Shell icons and Inter font are compiled
-into the binary (`Assets` delegates to `support::asset` / `include_bytes!`);
-GPUI's embedded assets do not require copying source directories. No separately
-prepared runtime asset directory is needed.
+## Launch is a separate action
 
-Packaging verifies Mach-O executable type, arm64/x86_64 architecture, Info.plist
-syntax and `codesign --verify --deep --strict`. `otool -L` must contain only
-`/System/Library/` or `/usr/lib/` dependencies; `LC_RPATH` entries must also be
-system-only. Non-system libraries/rpaths fail closed rather than silently
-shipping a host-dependent app. No dylib vendoring is currently needed. Signature
-is **ad-hoc** (`codesign --sign -`); Gatekeeper distribution approval is not claimed.
-The bundle declares macOS 15+, and builds for the host architecture, not universal.
+Double-clicking uses **production storage**. A distinct bundle ID is not isolation.
+The cold-turkey product switch requires the old app closed; never run both against
+the same profile. Cross-process profile locking is not certified and old Vue drafts
+are not guaranteed to migrate. Do not replace `/Applications/Tau.app` with packaging;
+keep previews outside system/user Applications directories.
 
-## Safe manual launch (separate from packaging)
-
-**Double-clicking uses production storage:** the shell defaults to it without
-`--isolated`; a distinct bundle ID does not isolate data. The user's cold-turkey
-switch intentionally uses that profile, with the old app closed. For isolated validation,
-use a disposable project/profile instead; packaging intentionally never launches:
+For intentionally isolated manual use, launch the packaged executable with an explicit
+profile and disposable project:
 
 ```sh
 sandbox=$(mktemp -d /tmp/tau-native-profile-XXXXXX)
@@ -76,68 +68,35 @@ mkdir "$sandbox/project"
   --isolated "$sandbox/profile" --project "$sandbox/project"
 ```
 
-Pi must be on PATH (or provided through the shell's configured runtime setting).
-The bundle is self-contained for its native UI assets/linkage, not a bundled Pi,
-Node, SSH or model-provider runtime. Isolation separates Tau storage and Pi
-session files; it is not an OS sandbox and does not isolate provider credentials
-or extension execution. Use only trusted runtime configuration. Never replace
-`/Applications/Tau.app`; keep previews in fresh development directories outside system/user Applications
-and continue launching with explicit isolation arguments.
-Do not run GUI smoke tests concurrently with another owner's native tests.
+Pi must be separately discoverable by the runtime. The bundle does not include Pi,
+Node, SSH or provider configuration. Isolation is not an OS sandbox and does not
+isolate credentials, extension execution or remote sessions. Do not run GUI acceptance
+concurrently with another owner's native tests.
 
-## GitHub release and updater requirements
+## Distribution and updater work still required
 
-**Yes, GitHub workflow changes are required before native distribution or updates.**
-The current `.github/workflows/release.yml` builds the Vue frontend and invokes
-`bun run release:macos` for Tauri. It uploads four Tauri assets from
-`src-tauri/target/release-assets/$VERSION`: a DMG, updater tarball, signature and
-`latest.json`. Neither that tarball nor that feed is a compatible GPUI update path.
-The existing `.github/workflows/gpui-prototype.yml` is comparison/static-test CI,
-triggered manually or by selected paths on the `gpui` branch; it does not publish a
-native release. Its current push filters include `gpui/**` but not shared `crates/**`.
+There is no automatic public release workflow. Before public native distribution,
+implement and verify native signing/notarization/stapling, artifact provenance,
+architecture/platform selection and an explicit bundle identity/cutover policy.
+Define Pi discovery/runtime requirements and packaged acceptance separately.
 
-A native release workflow must prepare the pinned patched dependencies, validate the
-shared controller/backend and native application, build and verify an arm64 release
-bundle, and sign/notarize/staple applicable distribution artifacts. Publish separately
-identified native artifacts and a compatible native feed without replacing Tauri's
-fallback artifacts or directing native clients to Tauri payloads. Extend native CI
-coverage/path filters to shared crates and relevant release tooling. Local preview
-packaging and comparison artifact uploads do not satisfy this gate.
+The updater is **not implemented**. Check for Updates… / Show Update Status open the
+unavailable Version popup with its primary action disabled; they do not fetch or
+mutate updates. A future native updater needs a compatible feed, pinned trust,
+authenticated artifact verification, safe install/relaunch, failure recovery and
+rollback. Never point it at Tauri payloads or replace historical updater assets.
+See [release safety](../docs/releases.md) and the [release skill](../.agents/skills/release/SKILL.md).
 
-The runtime updater is **not implemented**: Check for Updates… and palette Show Update
-Status open the Version popup with unavailable copy and a disabled primary action.
-Settings is intentionally absent. These status routes do not fetch or mutate updates. Before enabling it, implement
-feed/version/platform selection, authenticated artifact verification with pinned trust,
-safe installation/relaunch, failure recovery and rollback. Define the native bundle
-identity/cutover policy and Pi discovery/runtime requirements explicitly: the bundle
-does not include Pi, Node, SSH or provider configuration. Release-profile packaged
-local/SSH acceptance remains outstanding. Future signing/update key custody and
-rotation are a separate release decision, not part of this parity batch.
+User manual workflow/resumption and SSH checks are accepted for the cutover;
+additional compaction, existing-profile and automated busy-close campaigns are
+deferred, not passing automated evidence. See [APP.md](APP.md). These scope decisions
+neither certify public distribution nor reopen broad acceptance or media work.
 
-## Current acceptance boundary
-
-The current source passes an optimized normal-feature arm64 build, **746 GPUI tests /
-1 ignored**, **82 Core / 1 ignored**, **155 Session / 1 ignored**, **16 Tauri compatibility
-tests**, strict Clippy/static checks, **13 editor integrations**, the offscreen composer
-paint regression and eight package/version tests. Prior paired captures remain
-checkpoint-specific; see [APP.md](APP.md).
-
-The user reports normal workflows, unfinished-run resumption and SSH working in GPUI.
-Additional compaction, existing-profile and automated busy-close campaigns are explicitly
-deferred for this cold-turkey cutover. The last automated busy-close failures remain
-negative evidence with an unproven cause; no activation repair was added. This is a scope
-decision, not a passing automated result. Cross-process profile locking is not certified;
-do not run both apps against the same profile.
-
-Signing/notarization, native updater trust/install/recovery, release CI and the canonical
-repository cutover remain engineering work. Media expansion is not a rewrite blocker.
-
-## Static regression tests
+## Static packaging regressions
 
 ```sh
 bun test ./gpui/tests/package.bun.ts ./gpui/tests/version.bun.ts
 ```
 
-These test paths, metadata, fresh-only destination handling and mocked inspection
-commands without any OS GUI. See [APP.md](APP.md) for the separately opted-in
-native application acceptance target.
+They cover metadata, fresh-only destinations and mocked inspection commands without
+launching a GUI. They do not prove notarization, installation or OS acceptance.

@@ -1,50 +1,42 @@
 # Tau
 
-Native Tauri desktop UI for the Pi coding agent, with a Vue frontend and Rust backend.
+Native GPUI desktop UI for the Pi coding agent. The application is in `gpui/` (Cargo package `tau-gpui`, binary `tau`); there is no Vue/Tauri app or Playwright suite.
 
 ## Commands
 
-- `bun install` - Install frontend tooling.
-- `bun tauri dev` - Run the desktop app; requires Pi on `PATH` or `TAU_PI_PATH`.
-- `bun run build` - Typecheck and build the frontend.
-- `bun run format` / `bun run lint` - Format or run all frontend linters.
-- `bun run typecheck` - Check Vue and Node TypeScript.
-- `bun run test` - Run Vitest unit tests.
-- `bun run test:e2e` - Run Playwright in Chromium and WebKit.
-- `bun run repro -- --list` - List deterministic Pi scenarios.
-- `bun run repro -- <scenario>` - Open a scenario in the development app.
-- `bun run test:pi-contract` - Explicitly check the installed Pi RPC contract.
-- `cargo fmt --check --manifest-path src-tauri/Cargo.toml` - Check Rust formatting.
-- `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` - Lint Rust.
-- `cargo test --manifest-path src-tauri/Cargo.toml` - Run Rust tests.
-- `bun tauri build` - Validate the full native build; on macOS, produces only an unsigned `.app` without opening Finder. Use this for routine agent validation, not DMG packaging.
-- `bun run release:macos` - Build and verify the Apple Silicon, signed, notarized macOS DMG.
-
-Install Playwright once with `bun x playwright install chromium webkit`.
+- `bun install --frozen-lockfile` - Install repository tooling.
+- `bun run prepare` - Prepare pinned, patched native dependencies.
+- `bun run dev -- --isolated /absolute/profile [--project /absolute/project]` - Run development with mandatory explicit isolation.
+- `bun run build` - Build the optimized native application.
+- `bun run check` - Check tooling lint/typecheck and Rust formatting/Clippy.
+- `bun run test` - Run deterministic Bun, shared Rust, GPUI library/editor and Metal tests; excludes native OS and real Pi acceptance.
+- `bun run package` - Build a fresh ad-hoc macOS preview, not a public release.
+- `bun run test:pi-contract` - Explicit installed-Pi compatibility canary, not a default dependency.
+- After prepare, direct Cargo commands work from root with `--manifest-path gpui/Cargo.toml`.
 
 ## Structure
 
-- `src/` - Vue UI, session state, Pi RPC client, and frontend telemetry.
-- `src-tauri/` - Tauri commands, Pi/SSH process management, storage, and native telemetry.
-- `tests/e2e/` - Browser-visible behavior and full-app scenario tests.
-- `tests/support/pi-scenario/` - Typed deterministic Pi protocol scenarios.
-- `scripts/` - Interactive reproduction and Pi compatibility utilities.
+- `gpui/` - Canonical app, retained directory name to preserve workspace/cache paths; native source, tests and tooling.
+- `crates/tau-core/` - Framework-independent storage, profiles, Pi processes and SSH services.
+- `crates/tau-session/` - Pi RPC orchestration, runtime/session identity and recovery.
+- `crates/tau-observability/` - Shared preferences, feedback and bounded telemetry.
+- `scripts/` - Repository tooling and explicit Pi compatibility checks.
 
 ## Project rules
 
 - Treat `docs/quality.md` as the product-quality contract. Fix rubric violations with regression tests.
-- Pi owns extension execution and session files. Preserve Pi compatibility rather than creating a parallel runtime or data model.
-- Each live session owns an isolated Pi runtime. Session switching, stale responses, failures, and idle eviction must not leak state or lose drafts/workflow context.
-- Telemetry is bounded, content-free, and best-effort. Never record prompts, transcripts, drafts, payloads, paths, credentials, stderr, or raw errors.
-- Telemetry and the issue reporter are admin mode's, off by default, and unlocked together by the `iddqd` code. Keep new diagnostics behind the same switch.
-- Prefer deterministic fake-based tests; the real-Pi contract check is an explicit canary, not a default test dependency.
+- Pi owns extensions and session files. Preserve compatibility instead of creating another runtime or session format.
+- Each live session owns an isolated Pi runtime. Stale responses, switching, failures and eviction must not leak state or lose drafts/workflow ownership. Never replay uncertain work.
+- Development requires explicit isolation. A normal product launch uses shared production storage; never run old and native apps simultaneously against it. Isolation is not a tool/filesystem sandbox; Vue drafts are not guaranteed to migrate.
+- Telemetry is bounded, content-free and best-effort. Never record prompts, transcripts, drafts, payloads, paths, credentials, stderr or raw errors.
+- Telemetry and the reporter are off by default and unlocked together by `iddqd` outside text fields. Keep diagnostics behind that gate.
+- Prefer deterministic fakes. Native OS/installed-Pi/model/SSH acceptance is explicit, not part of default checks.
+- Public native distribution and the updater are not implemented. Use ad-hoc previews only; preserve preview identity `com.destiner.tau.native-preview` and version `0.2.1` unless separately authorized.
 
 ## Documentation
 
-- `docs/ci-testing.md` - CI gates, browser test execution, and reproducible timing.
-- `docs/development-storage.md` - Isolated development profiles, browser sandbox, and performance fixtures.
-- `docs/pi.md` - Pi extension compatibility, runtime lifetime, and session replacement behavior.
-- `docs/observability.md` - Telemetry storage, privacy limits, issue reports, and optional OTLP export.
-- `docs/quality.md` - Product principles and the verification rubric for all UI work.
-- `docs/releases.md` - Signing infrastructure, updater trust, local verification, and release recovery; publication uses `.agents/skills/release/SKILL.md`.
-- `docs/reproduction.md` - Scenarios, manual fixtures, regression authoring, and the explicit Pi canary.
+- `gpui/APP.md` - Application behavior, lifecycle and accepted/deferred verification boundaries.
+- `gpui/PACKAGING.md` and `docs/releases.md` - Preview packaging and blocked public distribution; release requests use `.agents/skills/release/SKILL.md`.
+- `docs/development-storage.md` - Persistent isolated profiles and production storage safety.
+- `docs/ci-testing.md` and `docs/reproduction.md` - Native test gates, Metal requirements and regression authoring.
+- `docs/pi.md`, `docs/observability.md`, `docs/keyboard.md` - Runtime, privacy and interaction contracts.
