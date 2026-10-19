@@ -6,8 +6,10 @@ import {
   rmSync,
   symlinkSync,
 } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   assertFresh,
   bundleId,
@@ -127,34 +129,14 @@ test('Mach-O, architecture, linkage and rpaths are inspected without a GUI', () 
 test('Applications destinations reject lexical and symlink aliases even when fresh', () => {
   const dir = mkdtempSync(join(tmpdir(), 'tau-package-location-'));
   try {
-    for (const base of [
-      '/Applications',
-      '/System/Applications',
-      join(homedir(), 'Applications'),
-    ]) {
-      const output = join(base, 'tau-preview-fresh-test', 'Tau.app');
-      expect(() => plan(['--output', output])).toThrow('Applications');
-      expect(() => assertFresh(output)).toThrow('Applications');
-      expect(() =>
-        plan([
-          '--output',
-          `${base}/../Applications/tau-preview-fresh-test/Tau.app`,
-        ]),
-      ).toThrow('Applications');
-    }
-    symlinkSync('/Applications', join(dir, 'alias'));
-    const output = join(dir, 'alias', 'tau-preview-fresh-test', 'Tau.app');
-    expect(() => plan(['--output', output])).toThrow('Applications');
-    expect(() => assertFresh(output)).toThrow('Applications');
-    symlinkSync(join(dir, 'missing'), join(dir, 'dangling'));
-    expect(() => plan(['--output', join(dir, 'dangling', 'Tau.app')])).toThrow(
-      'symlink',
+    // Bun caches homedir at startup; the child owns a real Applications fixture on every host.
+    const result = spawnSync(
+      process.execPath,
+      [fileURLToPath(new URL('./package-location.ts', import.meta.url)), dir],
+      { env: { ...process.env, HOME: dir }, encoding: 'utf8', timeout: 10_000 },
     );
-    mkdirSync(join(dir, 'safe'));
-    symlinkSync(join(dir, 'safe'), join(dir, 'safe-alias'));
-    expect(() =>
-      assertFresh(join(dir, 'safe-alias', 'fresh', 'Tau.app')),
-    ).not.toThrow();
+    if (result.error) throw result.error;
+    expect(result.status, result.stderr).toBe(0);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
