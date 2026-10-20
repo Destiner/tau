@@ -16,11 +16,69 @@ import {
   type Api,
 } from '../../scripts/macos/package-preflight';
 import {
+  boundedInteger,
+  helperDiagnostic,
+} from '../../scripts/macos/keychain-diagnostics';
+import {
   requireDisposable,
   safeSmokeDiagnostic,
   smoke,
   type SmokeRunner,
 } from '../../scripts/macos/keychain-smoke';
+
+test('shared helper classifier is pure and accepts only canonical bounded diagnostics', () => {
+  for (const status of [-2147483648, -50, 0, 2147483647]) {
+    expect(boundedInteger(status)).toBe(true);
+    const line = `Import PKCS12 failed (OSStatus ${status})`;
+    expect(helperDiagnostic(line)).toBe(line);
+    expect(helperDiagnostic(`${line}\n`)).toBe(line);
+  }
+  for (const value of [NaN, Infinity, -Infinity, 1.5, -2147483649, 2147483648])
+    expect(boundedInteger(value)).toBe(false);
+  for (const label of [
+    'Invalid base64 certificate',
+    'Invalid ownership marker',
+    'Writable directory ancestor',
+  ]) {
+    expect(helperDiagnostic(label)).toBe(label);
+    expect(helperDiagnostic(`${label}\n`)).toBe(label);
+    for (const suffix of [
+      ' SECRET',
+      '\nSECRET',
+      '\n\n',
+      '\r',
+      '\r\n',
+      '\0',
+      '\t',
+      '\x1b',
+      '\x7f',
+      ' '.repeat(257),
+    ])
+      expect(helperDiagnostic(label + suffix)).toBeUndefined();
+  }
+  for (const status of [
+    '+1',
+    '-0',
+    '01',
+    '-01',
+    '1.0',
+    '1e2',
+    '2147483648',
+    '-2147483649',
+    '99999999999',
+  ])
+    expect(
+      helperDiagnostic(`Import PKCS12 failed (OSStatus ${status})`),
+    ).toBeUndefined();
+  for (const line of [
+    undefined,
+    '',
+    'SECRET',
+    'Unknown failed (OSStatus -50)',
+    'x'.repeat(257),
+  ])
+    expect(helperDiagnostic(line)).toBeUndefined();
+});
 
 const sha = 'a'.repeat(40);
 const cargo = '[package]\nname = "tau-gpui"\nversion = "0.3.0"\n';

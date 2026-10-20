@@ -711,6 +711,145 @@ test('activation failures block signing, notarization and output; partial member
   }
 });
 
+test('import failures expose only exact safe helper diagnostics and clean owned work', () => {
+  const safe = [
+    'Import PKCS12 failed (OSStatus -25257)',
+    'Invalid base64 certificate',
+    'Invalid ownership marker',
+    'Writable directory ancestor',
+  ];
+  const rejected = [
+    '',
+    secrets.APPLE_CERTIFICATE_PASSWORD,
+    `Invalid base64 certificate ${secrets.APPLE_CERTIFICATE}`,
+    `Import PKCS12 failed (OSStatus -25257) ${secrets.APPLE_API_PRIVATE_KEY}`,
+    `Invalid ownership marker\n${secrets.APPLE_CERTIFICATE_PASSWORD}`,
+    'Invalid ownership marker\n\n',
+    'Invalid ownership marker\r',
+    'Invalid ownership marker\r\n',
+    'Invalid ownership marker\0',
+    'Invalid ownership marker\t',
+    '\x1b[31mInvalid ownership marker',
+    'x'.repeat(257),
+    `Invalid ownership marker${' '.repeat(257)}`,
+    ...['+1', '-0', '01', '-01', '1.0', '1e2', '2147483648', '-2147483649'].map(
+      (status) => `Import PKCS12 failed (OSStatus ${status})`,
+    ),
+    'Unknown operation failed (OSStatus -50)',
+  ];
+  for (const [stderr, detail] of [
+    ...safe.flatMap((line) => [
+      [line, line],
+      [`${line}\n`, line],
+    ]),
+    ...rejected.map((line) => [line, '']),
+  ]) {
+    const f = fixture();
+    const runner: Runner = (request) => {
+      const result = f.runner(request);
+      if (
+        request.args[0] !== f.options.keychainHelper ||
+        request.args[1] !== 'create'
+      )
+        return result;
+      expect(request.timeout).toBe(120_000);
+      expect(request.stdin).toBe(
+        JSON.stringify({
+          certificate: secrets.APPLE_CERTIFICATE,
+          password: secrets.APPLE_CERTIFICATE_PASSWORD,
+        }),
+      );
+      return {
+        status: 1,
+        stdout: secrets.APPLE_API_PRIVATE_KEY,
+        stderr: stderr!,
+      };
+    };
+    let message = '';
+    try {
+      sign(f.options, runner, () => secrets);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toBe(
+      `Signing identity import failed${detail ? `: ${detail}` : ''}`,
+    );
+    for (const secret of Object.values(secrets))
+      expect(message).not.toContain(secret);
+    expect(message).not.toContain(f.options.work);
+    expect(message).not.toContain(f.options.keychainHelper);
+    expect(
+      f.commands.some(
+        ({ args }) =>
+          args[1] === 'activate' ||
+          args[0] === '/usr/bin/codesign' ||
+          args[1] === 'notarytool',
+      ),
+    ).toBe(false);
+    expect(
+      f.commands
+        .filter(({ args }) => args[0] === f.options.keychainHelper)
+        .map(({ args }) => args[1]),
+    ).toEqual(['create', 'remove']);
+    expect(f.state.active).toBe(false);
+    expect(existsSync(f.options.output)).toBe(false);
+    expect(existsSync(f.options.work)).toBe(false);
+  }
+});
+
+test('import executor exceptions and buffer guards retain generic failures', () => {
+  for (const mode of [
+    'throw',
+    'stdout-limit',
+    'stderr-limit',
+    'valid-stdout',
+  ]) {
+    const f = fixture();
+    const runner: Runner = (request) => {
+      const result = f.runner(request);
+      if (
+        request.args[0] !== f.options.keychainHelper ||
+        request.args[1] !== 'create'
+      )
+        return result;
+      if (mode === 'throw')
+        throw new Error(
+          `${request.args} ${request.stdin} ${secrets.APPLE_API_PRIVATE_KEY}`,
+        );
+      return {
+        status: 1,
+        stdout:
+          mode === 'stdout-limit'
+            ? 'x'.repeat(4 * 1024 * 1024 + 1)
+            : result.stdout,
+        stderr:
+          mode === 'stderr-limit'
+            ? 'x'.repeat(4 * 1024 * 1024 + 1)
+            : mode === 'valid-stdout'
+              ? secrets.APPLE_CERTIFICATE_PASSWORD
+              : 'Invalid base64 certificate',
+      };
+    };
+    let message = '';
+    try {
+      sign(f.options, runner, () => secrets);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toBe('Signing identity import failed');
+    expect(
+      f.commands.some(
+        ({ args }) =>
+          args[1] === 'activate' ||
+          args[0] === '/usr/bin/codesign' ||
+          args[1] === 'notarytool',
+      ),
+    ).toBe(false);
+    expect(existsSync(f.options.output)).toBe(false);
+    expect(existsSync(f.options.work)).toBe(false);
+  }
+});
+
 test('invalid Developer ID metadata never activates membership', () => {
   const f = fixture();
   f.state.identity = 'Apple Development: Example (ABCDE12345)';
