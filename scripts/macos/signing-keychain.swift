@@ -352,6 +352,13 @@ func lifecycleOperations(_ path: String, created: @escaping () -> SecKeychain? =
     })
 }
 
+func signingKeychainSettings() -> SecKeychainSettings {
+    // The legacy API ignores useLockInterval: zero locks immediately; INT_MAX disables the timer.
+    // This matches SecurityTool/macOS/keychain_set_settings.c, without changing other keychains.
+    SecKeychainSettings(version: UInt32(SEC_KEYCHAIN_SETTINGS_VERS1), lockOnSleep: false,
+                        useLockInterval: false, lockInterval: UInt32(Int32.max))
+}
+
 func createKeychain(_ path: String, credentials: Credentials) throws -> PublicIdentity {
     let setter = try accessSetter()
     var password = [UInt8](repeating: 0, count: 32)
@@ -366,7 +373,7 @@ func createKeychain(_ path: String, credentials: Credentials) throws -> PublicId
         try password.withUnsafeBytes {
             try securityCheck(SecKeychainUnlock(created, UInt32($0.count), $0.baseAddress!, true), "Unlock keychain")
         }
-        var settings = SecKeychainSettings(version: UInt32(SEC_KEYCHAIN_SETTINGS_VERS1), lockOnSleep: false, useLockInterval: false, lockInterval: 0)
+        var settings = signingKeychainSettings()
         try securityCheck(SecKeychainSetSettings(created, &settings), "Configure keychain")
         var codesign: SecTrustedApplication?
         try securityCheck(SecTrustedApplicationCreateFromPath("/usr/bin/codesign", &codesign), "Trust codesign")

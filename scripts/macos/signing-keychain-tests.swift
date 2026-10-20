@@ -85,6 +85,11 @@ struct SigningKeychainTests {
         try rejects { _ = try certificateTeam(subject([""])) }
         try rejects { _ = try certificateTeam([:]) }
 
+        let settings = signingKeychainSettings()
+        try check(settings.version == SEC_KEYCHAIN_SETTINGS_VERS1)
+        try check(!settings.lockOnSleep.boolValue && !settings.useLockInterval.boolValue)
+        try check(settings.lockInterval == 2_147_483_647)
+
         let hex = try partitionDescription()
         try check(hex.count % 2 == 0 && hex.allSatisfy { $0.isHexDigit })
         let bytes = stride(from: 0, to: hex.count, by: 2).map { offset -> UInt8 in
