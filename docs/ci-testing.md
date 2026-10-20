@@ -46,6 +46,26 @@ See [release safety](releases.md) for exact inputs, provenance and approval boun
 Neither policy tests nor metadata audits substitute for actual Apple validation or
 separately authorized final-artifact launch/install smoke.
 
+For explicitly requested signing-helper investigation, `ci.yml` has a manual-only
+`keychain_smoke` input. It runs the pure helper tests and real generated-P12 smoke
+on disposable hosted macOS, without production credentials or the `release`
+environment. Its fresh, marked `0700` parent is under the runner account's real
+`~/Library/Keychains/tau-ci-<run>-<attempt>`. Signing temporarily appends only that
+owned keychain to the user-domain search list; existing ordered entries/default
+and trust stores are preserved, and removal/restoration is verified. Neither a fake
+home nor a fake Library/Keychains directory is used. It skips the ordinary lanes and aggregate `check`, uses separate
+concurrency, and cannot satisfy the candidate's successful **push/main** CI gate:
+
+```sh
+gh workflow run ci.yml --ref REVIEW_BRANCH -f keychain_smoke=true
+```
+
+Smoke failures report fixed phases, bounded exit statuses and exact allowlisted
+helper errors only. Raw subprocess output, credential input and filesystem errors
+are never printed. Cleanup errors are reported separately from the initial failure;
+unknown or incompletely cleaned Keychain directories remain preserved. This mode
+does not build, notarize, launch, install or publish Tau.
+
 ## Metal and hosted runners
 
 Offscreen render tests use actual Metal, not a fake renderer. They test painted

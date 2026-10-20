@@ -1,4 +1,4 @@
-// CI-only, disposable legacy keychain. No credential subprocesses or password files.
+// CI-only, disposable file-backed keychain. No credential subprocesses or password files.
 import Foundation
 import Security
 import CryptoKit
@@ -52,12 +52,20 @@ struct Credentials: Decodable {
 }
 
 let markerName = ".tau-signing-keychain.json"
+// StorageManager::makeKeychainDbFilename preserves an existing -db suffix in modern format.
 let keychainName = "signing.keychain-db"
+// Security's AtomicFile uses this exact zero-byte companion; never accept arbitrary .fl* files.
+// apple-oss-distributions/Security: OSX/libsecurity_filedb/lib/AtomicFile.cpp
+let keychainLockName = ".fl" + Insecure.SHA1.hash(data: Data(keychainName.utf8)).prefix(4)
+    .map { String(format: "%02X", $0) }.joined()
 
 struct Recovery: Codable {
     enum Phase: String, Codable { case creating, active, deleting, deleted }
     var phase: Phase
     var searchPaths: [String]
+    // Missing means a v1 merged effective snapshot, not a user-domain snapshot.
+    enum Domain: String, Codable { case user }
+    var domain: Domain? = nil
 }
 
 struct Ownership: Codable {
@@ -91,21 +99,49 @@ func fileInfo(_ path: String) -> stat? {
 func isDirectory(_ info: stat) -> Bool { info.st_mode & S_IFMT == S_IFDIR }
 func isRegular(_ info: stat) -> Bool { info.st_mode & S_IFMT == S_IFREG }
 
-// Reject aliases rather than resolving them (including /tmp -> /private/tmp).
-// Same-UID processes and concurrent search-list writers are outside this CI helper's trust boundary.
-func validatePath(_ path: String) throws {
+// Lexical only: tests supply a synthetic home without inspecting any real Keychains directory.
+func validateNamespace(_ path: String, home: String) throws {
     let parts = path.split(separator: "/", omittingEmptySubsequences: false)
     try require(path.hasPrefix("/") && path != "/" && !path.contains("\0"), "Unsafe directory")
     try require(parts.dropFirst().allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }, "Unsafe directory")
     let lowered = path.lowercased()
     let protected = ["/system", "/library", "/usr", "/bin", "/sbin", "/etc", "/dev", "/volumes", "/applications", "/private/etc"]
     try require(!protected.contains { lowered == $0 || lowered.hasPrefix($0 + "/") }, "Protected directory")
-    try require(!parts.contains { $0.lowercased() == "keychains" || $0.lowercased().contains(".keychain") || $0.lowercased() == "applications" }, "Protected directory")
+    let base = home + "/Library/Keychains/"
+    var reserved = false
+    if path.hasPrefix(base) {
+        let suffix = String(path.dropFirst(base.count))
+        let run = String(suffix.split(separator: "/")[0])
+        reserved = run.range(of: #"\Atau-ci-[1-9][0-9]*-[1-9][0-9]*\z"#, options: .regularExpression) != nil
+            && suffix.hasPrefix(run + "/")
+    }
+    let homeParts = home.split(separator: "/").count
+    for (index, part) in parts.dropFirst().enumerated() {
+        let name = part.lowercased()
+        try require(name != "applications" && !name.contains(".keychain"), "Protected directory")
+        if name == "keychains" {
+            try require(reserved && index == homeParts + 1 && part == "Keychains", "Protected directory")
+        }
+    }
+}
+
+// Reject aliases rather than resolving them (including /tmp -> /private/tmp).
+// Same-UID processes and concurrent search-list writers are outside this CI helper's trust boundary.
+func validatePath(_ path: String) throws {
+    guard let account = getpwuid(geteuid()), let directory = account.pointee.pw_dir else {
+        throw SigningFailure("Unsafe directory parent")
+    }
+    let home = String(cString: directory)
+    try validateNamespace(path, home: home)
+    let parts = path.split(separator: "/", omittingEmptySubsequences: false)
     var ancestor = ""
     for part in parts.dropFirst().dropLast() {
         ancestor += "/" + part
         guard let info = fileInfo(ancestor), isDirectory(info) else { throw SigningFailure("Unsafe directory ancestor") }
         try require(info.st_mode & 0o022 == 0 || info.st_mode & S_ISVTX != 0, "Writable directory ancestor")
+        if path.hasPrefix(home + "/Library/Keychains/") && (ancestor == home || ancestor.hasPrefix(home + "/")) {
+            try require(info.st_uid == geteuid() && info.st_mode & 0o022 == 0, "Directory parent is not owned")
+        }
     }
     let parent = (path as NSString).deletingLastPathComponent
     try require(parent != "/", "Unsafe directory parent")
@@ -123,12 +159,13 @@ func verifyOwned(_ path: String) throws {
           let data = try? Data(contentsOf: URL(fileURLWithPath: marker)),
           let owner = try? JSONDecoder().decode(Ownership.self, from: data), owner.matches(path: path, info: info)
     else { throw SigningFailure("Invalid ownership marker") }
-    let allowed = Set([markerName, keychainName, keychainName + "-wal", keychainName + "-shm", keychainName + "-journal"])
+    let allowed = Set([markerName, keychainName, keychainLockName, keychainName + "-wal", keychainName + "-shm", keychainName + "-journal"])
     guard let names = try? FileManager.default.contentsOfDirectory(atPath: path) else { throw SigningFailure("Cannot inspect owned directory") }
     for name in names {
         try require(allowed.contains(name), "Unexpected owned directory contents")
         guard let entry = fileInfo(path + "/" + name) else { throw SigningFailure("Cannot inspect owned file") }
         try require(isRegular(entry) && entry.st_uid == geteuid() && entry.st_nlink == 1, "Unsafe owned file")
+        if name == keychainLockName { try require(entry.st_size == 0, "Invalid keychain lock file") }
     }
 }
 
@@ -178,6 +215,21 @@ struct LifecycleOperations {
     var searchPaths: () throws -> [String]
     var deleteOwned: () throws -> Void
     var restore: ([String]) throws -> Void
+    var restoreLegacy: (([String]) throws -> Void)? = nil
+}
+
+func requireActiveOwner(_ path: String) throws {
+    try require(try readRecovery(path)?.phase == .active, "Activation requires active owned keychain")
+}
+
+func activateOwned(_ path: String, operations: LifecycleOperations) throws {
+    try requireActiveOwner(path)
+    let current = try operations.searchPaths()
+    let own = path + "/" + keychainName
+    let intended = current.contains(own) ? current : current + [own]
+    // The active marker already makes partial search-list mutations recoverable.
+    if intended != current { try operations.restore(intended) }
+    try require(try operations.searchPaths() == intended, "Activation search-list verification failed")
 }
 
 func cleanupOwned(_ path: String, operations: LifecycleOperations) throws {
@@ -190,6 +242,7 @@ func cleanupOwned(_ path: String, operations: LifecycleOperations) throws {
     if recovery.phase == .active {
         // Never replay the creation snapshot over changes made during normal use.
         recovery.searchPaths = try operations.searchPaths().filter { $0 != path + "/" + keychainName }
+        recovery.domain = .user
         recovery.phase = .deleting
         try saveRecovery(path, recovery)
     }
@@ -201,8 +254,15 @@ func cleanupOwned(_ path: String, operations: LifecycleOperations) throws {
             try saveRecovery(path, recovery)
         } catch { deletionFailed = true }
     }
-    // Even a failed/partial creation may have changed the process-global search list.
-    try operations.restore(recovery.searchPaths)
+    // Old snapshots include common/dynamic entries: only the legacy setter filters them.
+    if recovery.domain == .user {
+        try operations.restore(recovery.searchPaths)
+    } else {
+        guard let restoreLegacy = operations.restoreLegacy else {
+            throw SigningFailure("Legacy search-list restoration unavailable")
+        }
+        try restoreLegacy(recovery.searchPaths)
+    }
     try require(!deletionFailed, "Owned keychain deletion incomplete")
     try removeOwnedFiles(path)
 }
@@ -212,11 +272,11 @@ func runOwnedCreation<T>(_ path: String, operations: LifecycleOperations, body: 
     try createOwned(path)
     do {
         // Persist public paths before SecKeychainCreate can mutate global state.
-        try saveRecovery(path, Recovery(phase: .creating, searchPaths: original))
+        try saveRecovery(path, Recovery(phase: .creating, searchPaths: original, domain: .user))
         let result = try body()
         try verifyOwned(path)
         try operations.restore(original)
-        try saveRecovery(path, Recovery(phase: .active, searchPaths: []))
+        try saveRecovery(path, Recovery(phase: .active, searchPaths: [], domain: .user))
         return result
     } catch {
         do { try cleanupOwned(path, operations: operations) }
@@ -314,8 +374,8 @@ func publicIdentity(_ identity: SecIdentity, path: String) throws -> PublicIdent
 
 func copySearchList() throws -> CFArray {
     var list: CFArray?
-    try securityCheck(SecKeychainCopySearchList(&list), "Capture search list")
-    guard let list else { throw SigningFailure("Missing search list") }
+    try securityCheck(SecKeychainCopyDomainSearchList(.user, &list), "Capture user search list")
+    guard let list else { throw SigningFailure("Missing user search list") }
     return list
 }
 
@@ -324,6 +384,16 @@ func keychainPath(_ keychain: SecKeychain) throws -> String {
     var size = UInt32(bytes.count)
     try securityCheck(SecKeychainGetPath(keychain, &size, &bytes), "Read keychain path")
     return String(cString: bytes)
+}
+
+func openSearchPaths(_ paths: [String]) throws -> CFArray {
+    let keychains: [SecKeychain] = try paths.map { path in
+        var keychain: SecKeychain?
+        try securityCheck(SecKeychainOpen(path, &keychain), "Open search-list keychain")
+        guard let keychain else { throw SigningFailure("Missing search-list keychain") }
+        return keychain
+    }
+    return keychains as CFArray
 }
 
 func lifecycleOperations(_ path: String, created: @escaping () -> SecKeychain? = { nil }) -> LifecycleOperations {
@@ -337,14 +407,33 @@ func lifecycleOperations(_ path: String, created: @escaping () -> SecKeychain? =
         }
         if let keychain { try securityCheck(SecKeychainDelete(keychain), "Delete owned keychain") }
     }, restore: { paths in
-        let keychains: [SecKeychain] = try paths.map { path in
-            var keychain: SecKeychain?
-            try securityCheck(SecKeychainOpen(path, &keychain), "Open search-list keychain")
-            guard let keychain else { throw SigningFailure("Missing search-list keychain") }
-            return keychain
-        }
-        try securityCheck(SecKeychainSetSearchList(keychains as CFArray), "Restore search list")
+        try securityCheck(SecKeychainSetDomainSearchList(.user, try openSearchPaths(paths)), "Restore user search list")
+    }, restoreLegacy: { paths in
+        try securityCheck(SecKeychainSetSearchList(try openSearchPaths(paths)), "Restore legacy merged search list")
     })
+}
+
+func requirePartitionFormat(_ version: UInt32) throws {
+    try require(version != 0x100, "Legacy keychain format has no partition ACLs")
+    try require(version == 0x200, "Unsupported keychain format")
+}
+
+func verifyKeychainFormat(_ keychain: SecKeychain) throws {
+    typealias ReadVersion = @convention(c) (SecKeychain, UnsafeMutablePointer<UInt32>) -> OSStatus
+    guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "SecKeychainGetKeychainVersion") else {
+        throw SigningFailure("Required Security format API unavailable")
+    }
+    let readVersion = unsafeBitCast(symbol, to: ReadVersion.self)
+    var version: UInt32 = 0
+    try securityCheck(readVersion(keychain, &version), "Read keychain format")
+    try requirePartitionFormat(version)
+}
+
+func signingKeychainSettings() -> SecKeychainSettings {
+    // The legacy API ignores useLockInterval: zero locks immediately; INT_MAX disables the timer.
+    // This matches SecurityTool/macOS/keychain_set_settings.c, without changing other keychains.
+    SecKeychainSettings(version: UInt32(SEC_KEYCHAIN_SETTINGS_VERS1), lockOnSleep: false,
+                        useLockInterval: false, lockInterval: UInt32(Int32.max))
 }
 
 func createKeychain(_ path: String, credentials: Credentials) throws -> PublicIdentity {
@@ -358,11 +447,12 @@ func createKeychain(_ path: String, credentials: Credentials) throws -> PublicId
             try securityCheck(SecKeychainCreate(path + "/" + keychainName, UInt32($0.count), $0.baseAddress!, false, nil, &keychain), "Create keychain")
         }
         guard let created = keychain else { throw SigningFailure("Missing created keychain") }
-        var settings = SecKeychainSettings(version: UInt32(SEC_KEYCHAIN_SETTINGS_VERS1), lockOnSleep: false, useLockInterval: false, lockInterval: 0)
-        try securityCheck(SecKeychainSetSettings(created, &settings), "Configure keychain")
         try password.withUnsafeBytes {
             try securityCheck(SecKeychainUnlock(created, UInt32($0.count), $0.baseAddress!, true), "Unlock keychain")
         }
+        var settings = signingKeychainSettings()
+        try securityCheck(SecKeychainSetSettings(created, &settings), "Configure keychain")
+        try verifyKeychainFormat(created)
         var codesign: SecTrustedApplication?
         try securityCheck(SecTrustedApplicationCreateFromPath("/usr/bin/codesign", &codesign), "Trust codesign")
         guard let codesign else { throw SigningFailure("Missing codesign application") }
@@ -396,12 +486,13 @@ func removeKeychain(_ path: String) throws {
 struct SigningKeychainCLI {
     static func main() {
         do {
-            try require(CommandLine.arguments.count == 3, "Usage: signing-keychain create|remove <absolute fresh owned-directory>")
+            try require(CommandLine.arguments.count == 3, "Usage: signing-keychain create|activate|remove <absolute owned-directory>")
             try require(geteuid() != 0, "Do not run as root")
             let command = CommandLine.arguments[1]
             let path = CommandLine.arguments[2]
-            try require(command == "create" || command == "remove", "Unknown command")
+            try require(command == "create" || command == "activate" || command == "remove", "Unknown command")
             try validatePath(path)
+            if command == "activate" { try requireActiveOwner(path) }
             // Process-local: no authorization dialogs, including on malformed imports.
             try securityCheck(SecKeychainSetUserInteractionAllowed(false), "Disable keychain interaction")
             if command == "create" {
@@ -410,6 +501,8 @@ struct SigningKeychainCLI {
                 var output = try JSONEncoder().encode(metadata)
                 output.append(0x0a)
                 FileHandle.standardOutput.write(output)
+            } else if command == "activate" {
+                try activateOwned(path, operations: lifecycleOperations(path))
             } else {
                 try removeKeychain(path)
             }

@@ -667,6 +667,10 @@ export function sign(
       identity.keychain !== join(options.work, 'keychain/signing.keychain-db')
     )
       fail('Developer ID Application identity required');
+    exec(
+      [options.keychainHelper, 'activate', join(options.work, 'keychain')],
+      'Signing keychain activation failed',
+    );
     const codeSign = (path: string): Result =>
       exec(
         [
