@@ -63,6 +63,9 @@ struct Recovery: Codable {
     enum Phase: String, Codable { case creating, active, deleting, deleted }
     var phase: Phase
     var searchPaths: [String]
+    // Missing means a v1 merged effective snapshot, not a user-domain snapshot.
+    enum Domain: String, Codable { case user }
+    var domain: Domain? = nil
 }
 
 struct Ownership: Codable {
@@ -212,6 +215,7 @@ struct LifecycleOperations {
     var searchPaths: () throws -> [String]
     var deleteOwned: () throws -> Void
     var restore: ([String]) throws -> Void
+    var restoreLegacy: (([String]) throws -> Void)? = nil
 }
 
 func requireActiveOwner(_ path: String) throws {
@@ -238,6 +242,7 @@ func cleanupOwned(_ path: String, operations: LifecycleOperations) throws {
     if recovery.phase == .active {
         // Never replay the creation snapshot over changes made during normal use.
         recovery.searchPaths = try operations.searchPaths().filter { $0 != path + "/" + keychainName }
+        recovery.domain = .user
         recovery.phase = .deleting
         try saveRecovery(path, recovery)
     }
@@ -249,8 +254,15 @@ func cleanupOwned(_ path: String, operations: LifecycleOperations) throws {
             try saveRecovery(path, recovery)
         } catch { deletionFailed = true }
     }
-    // Even a failed/partial creation may have changed the process-global search list.
-    try operations.restore(recovery.searchPaths)
+    // Old snapshots include common/dynamic entries: only the legacy setter filters them.
+    if recovery.domain == .user {
+        try operations.restore(recovery.searchPaths)
+    } else {
+        guard let restoreLegacy = operations.restoreLegacy else {
+            throw SigningFailure("Legacy search-list restoration unavailable")
+        }
+        try restoreLegacy(recovery.searchPaths)
+    }
     try require(!deletionFailed, "Owned keychain deletion incomplete")
     try removeOwnedFiles(path)
 }
@@ -260,11 +272,11 @@ func runOwnedCreation<T>(_ path: String, operations: LifecycleOperations, body: 
     try createOwned(path)
     do {
         // Persist public paths before SecKeychainCreate can mutate global state.
-        try saveRecovery(path, Recovery(phase: .creating, searchPaths: original))
+        try saveRecovery(path, Recovery(phase: .creating, searchPaths: original, domain: .user))
         let result = try body()
         try verifyOwned(path)
         try operations.restore(original)
-        try saveRecovery(path, Recovery(phase: .active, searchPaths: []))
+        try saveRecovery(path, Recovery(phase: .active, searchPaths: [], domain: .user))
         return result
     } catch {
         do { try cleanupOwned(path, operations: operations) }
@@ -362,8 +374,8 @@ func publicIdentity(_ identity: SecIdentity, path: String) throws -> PublicIdent
 
 func copySearchList() throws -> CFArray {
     var list: CFArray?
-    try securityCheck(SecKeychainCopySearchList(&list), "Capture search list")
-    guard let list else { throw SigningFailure("Missing search list") }
+    try securityCheck(SecKeychainCopyDomainSearchList(.user, &list), "Capture user search list")
+    guard let list else { throw SigningFailure("Missing user search list") }
     return list
 }
 
@@ -372,6 +384,16 @@ func keychainPath(_ keychain: SecKeychain) throws -> String {
     var size = UInt32(bytes.count)
     try securityCheck(SecKeychainGetPath(keychain, &size, &bytes), "Read keychain path")
     return String(cString: bytes)
+}
+
+func openSearchPaths(_ paths: [String]) throws -> CFArray {
+    let keychains: [SecKeychain] = try paths.map { path in
+        var keychain: SecKeychain?
+        try securityCheck(SecKeychainOpen(path, &keychain), "Open search-list keychain")
+        guard let keychain else { throw SigningFailure("Missing search-list keychain") }
+        return keychain
+    }
+    return keychains as CFArray
 }
 
 func lifecycleOperations(_ path: String, created: @escaping () -> SecKeychain? = { nil }) -> LifecycleOperations {
@@ -385,13 +407,9 @@ func lifecycleOperations(_ path: String, created: @escaping () -> SecKeychain? =
         }
         if let keychain { try securityCheck(SecKeychainDelete(keychain), "Delete owned keychain") }
     }, restore: { paths in
-        let keychains: [SecKeychain] = try paths.map { path in
-            var keychain: SecKeychain?
-            try securityCheck(SecKeychainOpen(path, &keychain), "Open search-list keychain")
-            guard let keychain else { throw SigningFailure("Missing search-list keychain") }
-            return keychain
-        }
-        try securityCheck(SecKeychainSetSearchList(keychains as CFArray), "Restore search list")
+        try securityCheck(SecKeychainSetDomainSearchList(.user, try openSearchPaths(paths)), "Restore user search list")
+    }, restoreLegacy: { paths in
+        try securityCheck(SecKeychainSetSearchList(try openSearchPaths(paths)), "Restore legacy merged search list")
     })
 }
 

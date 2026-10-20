@@ -7,6 +7,10 @@ import Darwin
 final class FakeLifecycle {
     let path: String
     var search = ["/synthetic/login.keychain-db", "/synthetic/other.keychain-db"]
+    let common = ["/synthetic/common.keychain-db"]
+    let dynamic = ["/synthetic/dynamic.keychain-db"]
+    var legacyRestores = 0
+    var effective: [String] { dynamic + search + common }
     var failDelete = false
     var failRestore = false
     var deletes = 0
@@ -20,6 +24,7 @@ final class FakeLifecycle {
 
     func create() throws {
         try require(try readRecovery(path)?.phase == .creating, "Missing pre-mutation recovery")
+        try require(try readRecovery(path)?.domain == .user, "Missing pre-mutation user domain")
         try Data("synthetic database".utf8).write(to: URL(fileURLWithPath: path + "/" + keychainName))
         try Data().write(to: URL(fileURLWithPath: path + "/.flD3051040"))
         search.append(path + "/" + keychainName)
@@ -41,6 +46,11 @@ final class FakeLifecycle {
             try require(!self.failRestore, "Injected restoration failure")
             if !self.ignoreRestore { self.search = paths }
             try require(!self.failAfterRestore, "Injected partial restoration failure")
+        }, restoreLegacy: { paths in
+            self.legacyRestores += 1
+            try require(!self.failRestore, "Injected legacy restoration failure")
+            self.search = paths.filter { !self.common.contains($0) && !self.dynamic.contains($0) }
+            try require(!self.failAfterRestore, "Injected partial legacy restoration failure")
         })
     }
 }
@@ -67,6 +77,103 @@ struct SigningKeychainTests {
         [kSecOIDX509V1SubjectName as String: [kSecPropertyKeyValue as String:
             teams.map { [kSecPropertyKeyLabel as String: kSecOIDOrganizationalUnitName as String,
                          kSecPropertyKeyValue as String: $0] }]]
+    }
+
+    static func domainRecoveryTests(_ root: String) throws {
+        // Model Apple's effective-list merge and legacy setter filtering separately.
+        let fresh = FakeLifecycle(root + "/domain-new")
+        let baseline = fresh.search
+        try runOwnedCreation(fresh.path, operations: fresh.operations) { try fresh.create() }
+        try check(try readRecovery(fresh.path)?.domain == .user)
+        try check(fresh.search == baseline && fresh.legacyRestores == 0)
+        try activateOwned(fresh.path, operations: fresh.operations)
+        try check(fresh.search == baseline + [fresh.path + "/" + keychainName])
+        try check(fresh.effective == fresh.dynamic + fresh.search + fresh.common)
+        fresh.failAfterRestore = true
+        fresh.search.append("/synthetic/new-user-entry")
+        try rejects { try cleanupOwned(fresh.path, operations: fresh.operations) }
+        try check(try readRecovery(fresh.path)?.domain == .user)
+        try check(try readRecovery(fresh.path)?.phase == .deleted)
+        try check(fresh.search == baseline + ["/synthetic/new-user-entry"])
+        fresh.failAfterRestore = false
+        try cleanupOwned(fresh.path, operations: fresh.operations)
+        try check(fresh.legacyRestores == 0 && fileInfo(fresh.path) == nil)
+
+        for phase in [Recovery.Phase.creating, .deleting, .deleted] {
+            let old = FakeLifecycle(root + "/legacy-" + phase.rawValue)
+            try createOwned(old.path)
+            let merged = old.effective
+            try saveRecovery(old.path, Recovery(phase: phase, searchPaths: merged))
+            let markerURL = URL(fileURLWithPath: old.path + "/" + markerName)
+            let object = try JSONSerialization.jsonObject(with: Data(contentsOf: markerURL)) as! [String: Any]
+            try check((object["recovery"] as! [String: Any])["domain"] == nil)
+            try check(try readRecovery(old.path)?.domain == nil)
+            old.search = ["/synthetic/transient"]
+            old.failRestore = true
+            try rejects { try cleanupOwned(old.path, operations: old.operations) }
+            try check(fileInfo(markerURL.path) != nil)
+            try check(try readRecovery(old.path)?.domain == nil)
+            try check(try readRecovery(old.path)?.searchPaths == merged)
+            try check(try readRecovery(old.path)?.phase == .deleted)
+            try check(old.restores == 0 && old.legacyRestores == 1)
+            let retry = FakeLifecycle(old.path)
+            retry.failDelete = true
+            try cleanupOwned(retry.path, operations: retry.operations)
+            try check(retry.search == baseline)
+            try check(retry.effective == merged)
+            try check(retry.deletes == 0 && retry.restores == 0 && retry.legacyRestores == 1)
+            try check(fileInfo(retry.path) == nil)
+        }
+
+        let active = FakeLifecycle(root + "/legacy-active")
+        try createOwned(active.path)
+        try saveRecovery(active.path, Recovery(phase: .active, searchPaths: active.effective))
+        active.search = ["/synthetic/later-user", active.path + "/" + keychainName]
+        try activateOwned(active.path, operations: active.operations)
+        try check(try readRecovery(active.path)?.domain == nil)
+        active.failDelete = true
+        active.failRestore = true
+        try rejects { try cleanupOwned(active.path, operations: active.operations) }
+        try check(try readRecovery(active.path)?.domain == .user)
+        try check(try readRecovery(active.path)?.phase == .deleting)
+        try check(try readRecovery(active.path)?.searchPaths == ["/synthetic/later-user"])
+        try check(active.legacyRestores == 0)
+        active.failDelete = false
+        active.failRestore = false
+        try cleanupOwned(active.path, operations: active.operations)
+        try check(active.search == ["/synthetic/later-user"] && active.legacyRestores == 0)
+
+        let unavailable = FakeLifecycle(root + "/legacy-unavailable")
+        try createOwned(unavailable.path)
+        try saveRecovery(unavailable.path, Recovery(phase: .deleted, searchPaths: unavailable.effective))
+        var operations = unavailable.operations
+        operations.restoreLegacy = nil
+        do {
+            try cleanupOwned(unavailable.path, operations: operations)
+            throw SigningFailure("Expected missing legacy callback failure")
+        } catch let error as SigningFailure {
+            try check(error.message == "Legacy search-list restoration unavailable")
+        }
+        try check(try readRecovery(unavailable.path)?.domain == nil)
+        try check(unavailable.restores == 0)
+        try cleanupOwned(unavailable.path, operations: unavailable.operations)
+
+        // Unknown persisted domains fail ownership validation before any injected API.
+        for phase in [Recovery.Phase.creating, .active, .deleting, .deleted] {
+            let unknown = FakeLifecycle(root + "/unknown-" + phase.rawValue)
+            try createOwned(unknown.path)
+            try saveRecovery(unknown.path, Recovery(phase: phase, searchPaths: baseline, domain: .user))
+            let url = URL(fileURLWithPath: unknown.path + "/" + markerName)
+            let valid = try Data(contentsOf: url)
+            let invalid = String(data: valid, encoding: .utf8)!.replacingOccurrences(of: "\"domain\":\"user\"", with: "\"domain\":\"common\"")
+            try Data(invalid.utf8).write(to: url)
+            try rejects { try activateOwned(unknown.path, operations: unknown.operations) }
+            try rejects { try cleanupOwned(unknown.path, operations: unknown.operations) }
+            try check(unknown.reads == 0 && unknown.restores == 0 && unknown.deletes == 0 && unknown.legacyRestores == 0)
+            try check(try Data(contentsOf: url) == Data(invalid.utf8))
+            try valid.write(to: url)
+            try cleanupOwned(unknown.path, operations: unknown.operations)
+        }
     }
 
     static func main() throws {
@@ -383,6 +490,7 @@ struct SigningKeychainTests {
         }
         try check(fileInfo(early.path) == nil)
         try check(early.search == original)
+        try domainRecoveryTests(root)
         print("Passed \(checks) pure checks; no Keychain APIs invoked")
     }
 }
