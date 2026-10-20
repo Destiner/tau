@@ -6,16 +6,22 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      keychain_smoke:
+        description: Run only the disposable synthetic Keychain diagnostic (no production credentials)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ inputs.keychain_smoke && 'keychain-smoke-' || '' }}${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   tooling:
+    if: ${{ !inputs.keychain_smoke }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -35,6 +41,7 @@ jobs:
       - run: bun run test:tooling
 
   native:
+    if: ${{ !inputs.keychain_smoke }}
     runs-on: macos-15
     timeout-minutes: 90
     env:
@@ -88,8 +95,39 @@ jobs:
           echo 'Run bun run test:metal on a Mac with an available Metal device before handoff.' >> "$GITHUB_STEP_SUMMARY"
           echo 'Native OS and real-Pi acceptance remain explicit opt-ins.' >> "$GITHUB_STEP_SUMMARY"
 
+  keychain-smoke:
+    if: github.event_name == 'workflow_dispatch' && inputs.keychain_smoke
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.4.2'
+      - name: Disposable synthetic helper acceptance only
+        run: |
+          set +x
+          umask 077
+          test "$(uname -m)" = arm64
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 15
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          ROOT="$(cd "$RUNNER_TEMP" && pwd -P)/tau-keychain-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -m 700 "$ROOT"
+          xcrun swiftc -O -target arm64-apple-macosx15.0 -D KEYCHAIN_TESTS -parse-as-library scripts/macos/signing-keychain.swift scripts/macos/signing-keychain-tests.swift -o "$ROOT/keychain-tests"
+          "$ROOT/keychain-tests"
+          xcrun swiftc -O -target arm64-apple-macosx15.0 -parse-as-library scripts/macos/signing-keychain.swift -o "$ROOT/keychain-helper"
+          bun scripts/macos/keychain-smoke.ts "$ROOT/keychain-helper" "$ROOT"
+      - name: Record diagnostic boundary
+        if: always()
+        run: |
+          echo 'Synthetic Keychain diagnostic only: no production credentials, app build, notarization or launch.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'This manual run is not the push/main aggregate check required for candidate dispatch.' >> "$GITHUB_STEP_SUMMARY"
+
   check:
-    if: always()
+    if: always() && !inputs.keychain_smoke
     needs: [tooling, native]
     runs-on: ubuntu-latest
     steps:
