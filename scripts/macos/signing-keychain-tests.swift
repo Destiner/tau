@@ -11,6 +11,10 @@ final class FakeLifecycle {
     var failRestore = false
     var deletes = 0
     var restores = 0
+    var reads = 0
+    var failReadAt: Int? = nil
+    var failAfterRestore = false
+    var ignoreRestore = false
 
     init(_ path: String) { self.path = path }
 
@@ -22,7 +26,11 @@ final class FakeLifecycle {
     }
 
     var operations: LifecycleOperations {
-        LifecycleOperations(searchPaths: { self.search }, deleteOwned: {
+        LifecycleOperations(searchPaths: {
+            self.reads += 1
+            try require(self.reads != self.failReadAt, "Injected search-list read failure")
+            return self.search
+        }, deleteOwned: {
             self.deletes += 1
             try require(!self.failDelete, "Injected deletion failure")
             if fileInfo(self.path + "/" + keychainName) != nil {
@@ -31,7 +39,8 @@ final class FakeLifecycle {
         }, restore: { paths in
             self.restores += 1
             try require(!self.failRestore, "Injected restoration failure")
-            self.search = paths
+            if !self.ignoreRestore { self.search = paths }
+            try require(!self.failAfterRestore, "Injected partial restoration failure")
         })
     }
 }
@@ -261,6 +270,82 @@ struct SigningKeychainTests {
         try cleanupOwned(normalRetry.path, operations: normalRetry.operations)
         try check(normalRetry.search == ["/synthetic/new-user-keychain", original[1]])
         try check(fileInfo(normalRetry.path) == nil)
+
+        // Activation rejects invalid ownership/state before even reading the search list.
+        for (index, phase) in ([nil, .creating, .deleting, .deleted] as [Recovery.Phase?]).enumerated() {
+            let inactive = FakeLifecycle(root + "/inactive-\(index)")
+            try createOwned(inactive.path)
+            if let phase {
+                try saveRecovery(inactive.path, Recovery(phase: phase, searchPaths: original))
+            }
+            try rejects { try activateOwned(inactive.path, operations: inactive.operations) }
+            try check(inactive.reads == 0 && inactive.restores == 0 && inactive.deletes == 0)
+            try check(fileInfo(inactive.path + "/" + markerName) != nil)
+        }
+        for path in ["/System/unsafe", root + "/unowned", copy] {
+            let invalid = FakeLifecycle(path)
+            try rejects { try activateOwned(path, operations: invalid.operations) }
+            try check(invalid.reads == 0 && invalid.restores == 0 && invalid.deletes == 0)
+        }
+
+        let activation = FakeLifecycle(root + "/activation")
+        try runOwnedCreation(activation.path, operations: activation.operations) { try activation.create() }
+        // Preserve order and duplicates; do not use the creation baseline.
+        let existing = [original[1], "/synthetic/later", original[0], original[1]]
+        activation.search = existing
+        let own = activation.path + "/" + keychainName
+        let marker = try Data(contentsOf: URL(fileURLWithPath: activation.path + "/" + markerName))
+        let setsBefore = activation.restores
+        try activateOwned(activation.path, operations: activation.operations)
+        try check(activation.search == existing + [own])
+        try check(activation.restores == setsBefore + 1 && activation.deletes == 0)
+        try activateOwned(activation.path, operations: activation.operations)
+        try check(activation.search == existing + [own])
+        try check(activation.restores == setsBefore + 1)
+        // An already-present nonterminal entry must not be moved or duplicated.
+        activation.search = [own] + existing
+        try activateOwned(activation.path, operations: activation.operations)
+        try check(activation.search == [own] + existing)
+        try check(activation.restores == setsBefore + 1)
+        try check(try Data(contentsOf: URL(fileURLWithPath: activation.path + "/" + markerName)) == marker)
+        try cleanupOwned(activation.path, operations: activation.operations)
+        try check(activation.search == existing)
+        try check(fileInfo(activation.path) == nil)
+
+        // Every failure leaves the active marker and database for explicit cleanup.
+        for mode in ["read", "set", "partial-set", "readback", "mismatch"] {
+            let failed = FakeLifecycle(root + "/activation-" + mode)
+            try runOwnedCreation(failed.path, operations: failed.operations) { try failed.create() }
+            failed.search = existing
+            let before = try Data(contentsOf: URL(fileURLWithPath: failed.path + "/" + markerName))
+            let deletesBefore = failed.deletes
+            let restoresBefore = failed.restores
+            if mode == "read" { failed.failReadAt = failed.reads + 1 }
+            if mode == "readback" { failed.failReadAt = failed.reads + 2 }
+            failed.failRestore = mode == "set"
+            failed.failAfterRestore = mode == "partial-set"
+            failed.ignoreRestore = mode == "mismatch"
+            try rejects { try activateOwned(failed.path, operations: failed.operations) }
+            try check(failed.deletes == deletesBefore)
+            try check(failed.restores == restoresBefore + (mode == "read" ? 0 : 1))
+            try check(fileInfo(failed.path + "/" + keychainName) != nil)
+            try check(try readRecovery(failed.path)?.phase == .active)
+            try check(try Data(contentsOf: URL(fileURLWithPath: failed.path + "/" + markerName)) == before)
+            if mode == "partial-set" || mode == "readback" {
+                try check(failed.search == existing + [failed.path + "/" + keychainName])
+            } else {
+                try check(failed.search == existing)
+            }
+            failed.failReadAt = nil
+            failed.failRestore = false
+            failed.failAfterRestore = false
+            failed.ignoreRestore = false
+            // A later invocation must filter the CURRENT list, never replay an old snapshot.
+            failed.search.append("/synthetic/added-after-failure")
+            try cleanupOwned(failed.path, operations: failed.operations)
+            try check(failed.search == existing + ["/synthetic/added-after-failure"])
+            try check(fileInfo(failed.path) == nil)
+        }
 
         // Partial SecKeychainCreate failure can leave files without returning a handle.
         let partial = FakeLifecycle(root + "/partial")

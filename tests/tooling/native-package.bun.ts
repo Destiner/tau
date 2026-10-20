@@ -124,6 +124,45 @@ function diagnostic(body: () => void): string {
 }
 
 describe('bounded synthetic smoke diagnostics (fake processes only)', () => {
+  test('explicit membership probe signs only while active and restores on success or failure', () => {
+    for (const signStatus of [0, 1])
+      diagnosticFixture((helper, root, run) => {
+        let active = false;
+        let activated = false;
+        let removed = false;
+        const probe: SmokeRunner = (args, stdin) => {
+          if (args[0] === helper && args[1] === 'activate') {
+            expect(stdin).toBeUndefined();
+            expect(active).toBe(false);
+            active = activated = true;
+            return { status: 0, stdout: '' };
+          }
+          if (args[0] === helper && args[1] === 'remove') {
+            active = false;
+            removed = true;
+          }
+          if (args.includes('list-keychains'))
+            return {
+              status: 0,
+              stdout: active ? 'stable plus owned' : 'stable',
+            };
+          if (args.includes('--sign')) {
+            expect(active).toBe(true);
+            return { status: signStatus, stdout: '' };
+          }
+          if (args.includes('--verify')) expect(active).toBe(true);
+          if (args[2]?.endsWith('wrong-password')) expect(active).toBe(false);
+          return run(args, stdin);
+        };
+        if (signStatus === 0) smoke(helper, root, context, probe, true);
+        else
+          expect(
+            diagnostic(() => smoke(helper, root, context, probe, true)),
+          ).toBe('phase=sign category=command exitstatus=1');
+        expect(activated && removed).toBe(true);
+        expect(active).toBe(false);
+      });
+  });
   test('phase and numeric status for every command boundary', () => {
     const cases: [string, (args: string[], helper: string) => boolean][] = [
       ['snapshot', (a): boolean => a.includes('default-keychain')],

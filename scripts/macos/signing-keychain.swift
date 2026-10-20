@@ -214,6 +214,20 @@ struct LifecycleOperations {
     var restore: ([String]) throws -> Void
 }
 
+func requireActiveOwner(_ path: String) throws {
+    try require(try readRecovery(path)?.phase == .active, "Activation requires active owned keychain")
+}
+
+func activateOwned(_ path: String, operations: LifecycleOperations) throws {
+    try requireActiveOwner(path)
+    let current = try operations.searchPaths()
+    let own = path + "/" + keychainName
+    let intended = current.contains(own) ? current : current + [own]
+    // The active marker already makes partial search-list mutations recoverable.
+    if intended != current { try operations.restore(intended) }
+    try require(try operations.searchPaths() == intended, "Activation search-list verification failed")
+}
+
 func cleanupOwned(_ path: String, operations: LifecycleOperations) throws {
     guard var recovery = try readRecovery(path) else {
         // A marker without recovery predates any Security mutation.
@@ -454,12 +468,13 @@ func removeKeychain(_ path: String) throws {
 struct SigningKeychainCLI {
     static func main() {
         do {
-            try require(CommandLine.arguments.count == 3, "Usage: signing-keychain create|remove <absolute fresh owned-directory>")
+            try require(CommandLine.arguments.count == 3, "Usage: signing-keychain create|activate|remove <absolute owned-directory>")
             try require(geteuid() != 0, "Do not run as root")
             let command = CommandLine.arguments[1]
             let path = CommandLine.arguments[2]
-            try require(command == "create" || command == "remove", "Unknown command")
+            try require(command == "create" || command == "activate" || command == "remove", "Unknown command")
             try validatePath(path)
+            if command == "activate" { try requireActiveOwner(path) }
             // Process-local: no authorization dialogs, including on malformed imports.
             try securityCheck(SecKeychainSetUserInteractionAllowed(false), "Disable keychain interaction")
             if command == "create" {
@@ -468,6 +483,8 @@ struct SigningKeychainCLI {
                 var output = try JSONEncoder().encode(metadata)
                 output.append(0x0a)
                 FileHandle.standardOutput.write(output)
+            } else if command == "activate" {
+                try activateOwned(path, operations: lifecycleOperations(path))
             } else {
                 try removeKeychain(path)
             }

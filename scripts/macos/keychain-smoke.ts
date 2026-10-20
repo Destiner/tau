@@ -44,6 +44,7 @@ type Phase =
   | 'helpercreate'
   | 'metadata'
   | 'fingerprint'
+  | 'activate'
   | 'sign'
   | 'verify'
   | 'remove'
@@ -109,7 +110,9 @@ const helperMessages = new Set([
   'Missing import results',
   'Missing imported key',
   'Imported key outside owned keychain',
-  'Usage: signing-keychain create|remove <absolute fresh owned-directory>',
+  'Activation requires active owned keychain',
+  'Activation search-list verification failed',
+  'Usage: signing-keychain create|activate|remove <absolute owned-directory>',
   'Do not run as root',
   'Unknown command',
   'Signing keychain operation failed',
@@ -249,6 +252,7 @@ export function smoke(
   parent: string,
   context: SmokeContext,
   run: SmokeRunner,
+  searchListProbe = false,
 ): void {
   at('context', () => requireDisposable(context));
   at('setup', () => {
@@ -401,6 +405,17 @@ export function smoke(
     const binary = join(root, 'harmless-mach-o');
     copyFileSync('/usr/bin/true', binary);
     chmodSync(binary, 0o700);
+    if (searchListProbe) {
+      command('activate', [helper, 'activate', owned]);
+      const defaultKeychain = command('snapshot', [
+        '/usr/bin/security',
+        'default-keychain',
+        '-d',
+        'user',
+      ]);
+      if (defaultKeychain !== (JSON.parse(baseline) as string[])[1])
+        throw failure('snapshot', 'mismatch');
+    }
     command('sign', [
       '/usr/bin/codesign',
       '--force',
@@ -482,8 +497,14 @@ export function smoke(
 
 if (import.meta.main) {
   try {
-    const [helper, parent] = process.argv.slice(2);
-    if (!helper || !parent || process.argv.length !== 4)
+    const [helper, parent, probe] = process.argv.slice(2);
+    const searchListProbe = probe === '--search-list-probe';
+    if (
+      !helper ||
+      !parent ||
+      (process.argv.length !== 4 &&
+        !(process.argv.length === 5 && searchListProbe))
+    )
       throw new Error('Expected helper and private parent');
     smoke(
       helper,
@@ -513,9 +534,12 @@ if (import.meta.main) {
           stderr: result.stderr.toString(),
         };
       },
+      searchListProbe,
     );
     console.log(
-      'Disposable synthetic import/sign/remove and wrong-password smoke passed; app never executed.',
+      searchListProbe
+        ? 'Synthetic additive-membership probe passed; search/default restored; production signing path unchanged; app never executed.'
+        : 'Disposable synthetic import/sign/remove and wrong-password smoke passed; app never executed.',
     );
   } catch (error) {
     console.error(
