@@ -68,8 +68,19 @@ Keychains location, without the required partition ACL. The helper checks the
 actual database format before import, keeps exactly-one partition enforcement and
 uses the legacy API's `INT_MAX` no-timeout sentinel (zero locks immediately). Its
 owned inventory includes only the exact empty AtomicFile lock companion, not a
-wildcard allowance. Synthetic acceptance verifies import, noninteractive signing,
-wrong-password rollback, owned deletion and unchanged search/default keychains.
+wildcard allowance. After validated import, signing explicitly activates only the
+owned keychain: it appends that exact path to the user-domain search list, preserving
+all existing ordered entries and requiring exact readback. The merged effective
+list is not used for new snapshots; it includes common/dynamic entries that the
+legacy setter can reposition. The default keychain and trust stores are never set.
+
+The active ownership marker precedes this temporary registration. Cleanup removes
+only the owned entry from the current user list before publication, retaining
+recovery on failure. Older merged-list recovery snapshots remain readable and use
+the legacy restoration operation rather than being misinterpreted as user-domain
+snapshots. Synthetic acceptance verifies import, noninteractive signing, removal,
+wrong-password rollback and restoration of the original user search list/default.
+The default is also checked while the owned signing entry is active.
 
 ## Artifact verification and local commands
 

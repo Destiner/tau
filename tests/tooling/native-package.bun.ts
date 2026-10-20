@@ -89,7 +89,9 @@ function diagnosticFixture(
       return { status: 0, stdout: `sha1 Fingerprint=${'A'.repeat(40)}` };
     if (args[0] === helper) {
       if (args[1] === 'remove') rmSync(args[2]!, { recursive: true });
-      else {
+      else if (args[1] === 'activate') {
+        expect(existsSync(args[2]!)).toBe(true);
+      } else if (args[1] === 'create') {
         if (args[2]!.endsWith('wrong-password'))
           return { status: 1, stdout: '' };
         mkdirSync(args[2]!);
@@ -124,7 +126,7 @@ function diagnostic(body: () => void): string {
 }
 
 describe('bounded synthetic smoke diagnostics (fake processes only)', () => {
-  test('explicit membership probe signs only while active and restores on success or failure', () => {
+  test('default protocol signs only while active and restores on success or failure', () => {
     for (const signStatus of [0, 1])
       diagnosticFixture((helper, root, run) => {
         let active = false;
@@ -154,11 +156,11 @@ describe('bounded synthetic smoke diagnostics (fake processes only)', () => {
           if (args[2]?.endsWith('wrong-password')) expect(active).toBe(false);
           return run(args, stdin);
         };
-        if (signStatus === 0) smoke(helper, root, context, probe, true);
+        if (signStatus === 0) smoke(helper, root, context, probe);
         else
-          expect(
-            diagnostic(() => smoke(helper, root, context, probe, true)),
-          ).toBe('phase=sign category=command exitstatus=1');
+          expect(diagnostic(() => smoke(helper, root, context, probe))).toBe(
+            'phase=sign category=command exitstatus=1',
+          );
         expect(activated && removed).toBe(true);
         expect(active).toBe(false);
       });
@@ -170,6 +172,7 @@ describe('bounded synthetic smoke diagnostics (fake processes only)', () => {
       ['exportP12', (a): boolean => a.includes('pkcs12')],
       ['helpercreate', (a, h): boolean => a[0] === h && a[1] === 'create'],
       ['fingerprint', (a): boolean => a.includes('x509')],
+      ['activate', (a, h): boolean => a[0] === h && a[1] === 'activate'],
       ['sign', (a): boolean => a.includes('--sign')],
       ['verify', (a): boolean => a.includes('--verify')],
       ['remove', (a, h): boolean => a[0] === h && a[1] === 'remove'],
@@ -571,6 +574,12 @@ describe('native package fail-closed policy (no network/OS APIs)', () => {
             rmSync(directory, { recursive: true });
             return { status: 0, stdout: '' };
           }
+          if (args[1] === 'activate') {
+            expect(stdin).toBeUndefined();
+            expect(existsSync(directory)).toBe(true);
+            return { status: 0, stdout: '' };
+          }
+          expect(args[1]).toBe('create');
           const credential = JSON.parse(stdin!);
           expect(credential.certificate).toBe('cDEy');
           if (credential.password !== password)
@@ -607,7 +616,7 @@ describe('native package fail-closed policy (no network/OS APIs)', () => {
       });
       expect(
         calls.filter((args) => args[0] === helper).map((args) => args[1]),
-      ).toEqual(['create', 'remove', 'create']);
+      ).toEqual(['create', 'activate', 'remove', 'create']);
       expect(JSON.stringify(calls)).not.toContain(password);
       expect(existsSync(helper)).toBe(true);
     } finally {

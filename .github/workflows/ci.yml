@@ -149,7 +149,7 @@ jobs:
           xcrun swiftc -O -target arm64-apple-macosx15.0 -D KEYCHAIN_TESTS -parse-as-library scripts/macos/signing-keychain.swift scripts/macos/signing-keychain-tests.swift -o "$ROOT/keychain-tests"
           "$ROOT/keychain-tests"
           xcrun swiftc -O -target arm64-apple-macosx15.0 -parse-as-library scripts/macos/signing-keychain.swift -o "$ROOT/keychain-helper"
-          if ! bun scripts/macos/keychain-smoke.ts "$ROOT/keychain-helper" "$KEYCHAIN_PARENT" --search-list-probe; then
+          if ! bun scripts/macos/keychain-smoke.ts "$ROOT/keychain-helper" "$KEYCHAIN_PARENT"; then
             python3 - "$KEYCHAIN_PARENT" <<'PY'
           import pathlib, stat, sys
           root = pathlib.Path(sys.argv[1])

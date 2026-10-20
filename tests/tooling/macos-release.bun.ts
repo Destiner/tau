@@ -48,6 +48,7 @@ function sha(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 interface State {
+  active: boolean;
   identity: string;
   signedTeam: string;
   version: string;
@@ -116,6 +117,7 @@ function fixture(): {
   };
   const commands: Request[] = [];
   const state: State = {
+    active: false,
     identity: 'Developer ID Application: Example (ABCDE12345)',
     signedTeam: team,
     version: expected.version,
@@ -166,6 +168,14 @@ function fixture(): {
           }),
         );
       }
+      if (a[1] === 'activate') {
+        expect(request.stdin).toBeUndefined();
+        expect(existsSync(directory)).toBe(true);
+        state.active = true;
+        return ok();
+      }
+      expect(a[1]).toBe('remove');
+      state.active = false;
       rmSync(directory, { recursive: true });
       return ok();
     }
@@ -191,6 +201,7 @@ function fixture(): {
       );
     }
     if (tool === '/usr/bin/codesign') {
+      if (a.includes('--sign')) expect(state.active).toBe(true);
       if (a.includes('--entitlements'))
         return ok(state.entitlements ? '<plist/>' : '');
       if (a.includes('--display'))
@@ -648,4 +659,64 @@ test('child environment is an allowlist, including build invocations', () => {
     expect(env.CARGO_BUILD_JOBS).toBe('2');
     expect(env.MACOSX_DEPLOYMENT_TARGET).toBe('15.0');
   }
+});
+
+test('owned membership lifetime has exact create/activate/sign/remove order', () => {
+  const f = fixture();
+  sign(f.options, f.runner, () => secrets);
+  expect(
+    f.commands.flatMap(({ args }) =>
+      args[0] === f.options.keychainHelper
+        ? [args[1]]
+        : args[0] === '/usr/bin/codesign' && args.includes('--sign')
+          ? ['sign']
+          : [],
+    ),
+  ).toEqual(['create', 'activate', 'sign', 'sign', 'remove']);
+  expect(f.state.active).toBe(false);
+});
+
+test('activation failures block signing, notarization and output; partial membership supports owned cleanup retry', () => {
+  for (const partial of [false, true]) {
+    const f = fixture();
+    f.state.fail = ({ args }): boolean => {
+      if (args[0] !== f.options.keychainHelper) return false;
+      if (args[1] === 'activate') {
+        f.state.active = partial;
+        return true;
+      }
+      return partial && args[1] === 'remove';
+    };
+    try {
+      sign(f.options, f.runner, () => secrets);
+      throw new Error('Expected failure');
+    } catch (error) {
+      expect(String(error)).not.toContain(secrets.APPLE_CERTIFICATE_PASSWORD);
+      expect(String(error)).not.toContain(secrets.APPLE_API_PRIVATE_KEY);
+      expect(String(error)).not.toContain(f.options.work);
+    }
+    expect(
+      f.commands.some(
+        ({ args }) =>
+          args[0] === '/usr/bin/codesign' || args[1] === 'notarytool',
+      ),
+    ).toBe(false);
+    expect(existsSync(f.options.output)).toBe(false);
+    expect(existsSync(f.options.work)).toBe(partial);
+    expect(f.state.active).toBe(partial);
+    f.state.fail = (): boolean => false;
+    if (partial) cleanup(f.options.work, f.options.keychainHelper, f.runner);
+    expect(f.state.active).toBe(false);
+    expect(existsSync(f.options.work)).toBe(false);
+  }
+});
+
+test('invalid Developer ID metadata never activates membership', () => {
+  const f = fixture();
+  f.state.identity = 'Apple Development: Example (ABCDE12345)';
+  expect(() => sign(f.options, f.runner, () => secrets)).toThrow(
+    'Developer ID',
+  );
+  expect(f.commands.some(({ args }) => args[1] === 'activate')).toBe(false);
+  expect(f.state.active).toBe(false);
 });
