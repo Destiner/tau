@@ -181,6 +181,43 @@ describe('bounded synthetic smoke diagnostics (fake processes only)', () => {
         expect(summary).not.toContain('SECRET');
       });
   });
+  test('failed signing probes only the explicit owned keychain and emits bounded identity counts', () => {
+    diagnosticFixture((helper, root, run) => {
+      let ownedKeychain = '';
+      const summary = diagnostic(() =>
+        smoke(helper, root, context, (args, stdin) => {
+          if (args.includes('--sign')) {
+            ownedKeychain = args[args.indexOf('--keychain') + 1]!;
+            return {
+              status: 1,
+              stdout: '',
+              stderr:
+                'SECRET: The specified item could not be found in the keychain.',
+            };
+          }
+          if (args.includes('find-identity')) {
+            expect(args).toEqual([
+              '/usr/bin/security',
+              'find-identity',
+              '-p',
+              expect.stringMatching(/^(basic|codesigning)$/),
+              ownedKeychain,
+            ]);
+            return {
+              status: 0,
+              stdout:
+                'SECRET identity metadata\n 1 identities found\n 0 valid identities found\n',
+            };
+          }
+          return run(args, stdin);
+        }),
+      );
+      expect(summary).toBe(
+        'phase=sign category=command exitstatus=1 detail=codesign:identity-not-found;scoped-basic=1/0,scoped-codesigning=1/0',
+      );
+      expect(summary).not.toContain('SECRET');
+    });
+  });
   test('context/setup, malformed metadata and thrown runner/filesystem errors are sanitized', () => {
     diagnosticFixture((helper, root, run) => {
       expect(

@@ -182,6 +182,37 @@ function codesignDiagnostic(stderr: string | undefined): string | undefined {
     .map(([, label]) => label);
   return labels.length ? `codesign:${labels.join(',')}` : undefined;
 }
+function scopedIdentityDiagnostic(run: SmokeRunner, keychain: string): string {
+  const summaries: string[] = [];
+  for (const policy of ['basic', 'codesigning']) {
+    try {
+      const result = run([
+        '/usr/bin/security',
+        'find-identity',
+        '-p',
+        policy,
+        keychain,
+      ]);
+      if (result.status !== 0 || result.stdout.length > 16_384) continue;
+      const matches = /^\s*([0-9]+) identities found\s*$/m.exec(result.stdout);
+      const valid = /^\s*([0-9]+) valid identities found\s*$/m.exec(
+        result.stdout,
+      );
+      if (
+        matches &&
+        valid &&
+        Number(matches[1]) <= 10 &&
+        Number(valid[1]) <= 10
+      )
+        summaries.push(
+          `scoped-${policy}=${Number(matches[1])}/${Number(valid[1])}`,
+        );
+    } catch {
+      // A diagnostic lookup must not replace the original signing failure.
+    }
+  }
+  return summaries.join(',');
+}
 const diagnostics = new WeakMap<object, string>();
 function failure(
   phase: Phase,
@@ -234,17 +265,25 @@ export function smoke(
   const command = (phase: Phase, args: string[], stdin?: string): string =>
     at(phase, () => {
       const result = run(args, stdin);
-      if (result.status !== 0)
-        throw failure(
-          phase,
-          'command',
-          result.status,
+      if (result.status !== 0) {
+        const detail =
           args[0] === helper
             ? helperDiagnostic(result.stderr)
             : args[0] === '/usr/bin/codesign'
               ? codesignDiagnostic(result.stderr)
-              : undefined,
+              : undefined;
+        const keychainIndex = args.indexOf('--keychain');
+        const identities =
+          phase === 'sign' && keychainIndex >= 0
+            ? scopedIdentityDiagnostic(run, args[keychainIndex + 1]!)
+            : '';
+        throw failure(
+          phase,
+          'command',
+          result.status,
+          [detail, identities].filter(Boolean).join(';'),
         );
+      }
       return result.stdout;
     });
   const snapshot = (phase: Phase = 'snapshot'): string =>
