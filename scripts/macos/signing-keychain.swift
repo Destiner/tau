@@ -53,6 +53,10 @@ struct Credentials: Decodable {
 
 let markerName = ".tau-signing-keychain.json"
 let keychainName = "signing.keychain-db"
+// Security's AtomicFile uses this exact zero-byte companion; never accept arbitrary .fl* files.
+// apple-oss-distributions/Security: OSX/libsecurity_filedb/lib/AtomicFile.cpp
+let keychainLockName = ".fl" + Insecure.SHA1.hash(data: Data(keychainName.utf8)).prefix(4)
+    .map { String(format: "%02X", $0) }.joined()
 
 struct Recovery: Codable {
     enum Phase: String, Codable { case creating, active, deleting, deleted }
@@ -123,12 +127,13 @@ func verifyOwned(_ path: String) throws {
           let data = try? Data(contentsOf: URL(fileURLWithPath: marker)),
           let owner = try? JSONDecoder().decode(Ownership.self, from: data), owner.matches(path: path, info: info)
     else { throw SigningFailure("Invalid ownership marker") }
-    let allowed = Set([markerName, keychainName, keychainName + "-wal", keychainName + "-shm", keychainName + "-journal"])
+    let allowed = Set([markerName, keychainName, keychainLockName, keychainName + "-wal", keychainName + "-shm", keychainName + "-journal"])
     guard let names = try? FileManager.default.contentsOfDirectory(atPath: path) else { throw SigningFailure("Cannot inspect owned directory") }
     for name in names {
         try require(allowed.contains(name), "Unexpected owned directory contents")
         guard let entry = fileInfo(path + "/" + name) else { throw SigningFailure("Cannot inspect owned file") }
         try require(isRegular(entry) && entry.st_uid == geteuid() && entry.st_nlink == 1, "Unsafe owned file")
+        if name == keychainLockName { try require(entry.st_size == 0, "Invalid keychain lock file") }
     }
 }
 

@@ -77,6 +77,7 @@ const helperMessages = new Set([
   'Unexpected owned directory contents',
   'Cannot inspect owned file',
   'Unsafe owned file',
+  'Invalid keychain lock file',
   'Directory must be fresh and creatable',
   'Cannot inspect new directory',
   'Cannot create ownership marker',

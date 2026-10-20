@@ -17,6 +17,7 @@ final class FakeLifecycle {
     func create() throws {
         try require(try readRecovery(path)?.phase == .creating, "Missing pre-mutation recovery")
         try Data("synthetic database".utf8).write(to: URL(fileURLWithPath: path + "/" + keychainName))
+        try Data().write(to: URL(fileURLWithPath: path + "/.flD3051040"))
         search.append(path + "/" + keychainName)
     }
 
@@ -132,7 +133,27 @@ struct SigningKeychainTests {
         try FileManager.default.copyItem(atPath: owned + "/" + markerName, toPath: copy + "/" + markerName)
         try rejects { try verifyOwned(copy) }
         try Data("synthetic database placeholder".utf8).write(to: URL(fileURLWithPath: link))
+        let companion = owned + "/.flD3051040"
+        try Data().write(to: URL(fileURLWithPath: companion))
         try verifyOwned(owned)
+        try check(fileInfo(companion)!.st_size == 0)
+        try Data("not a lock".utf8).write(to: URL(fileURLWithPath: companion))
+        try rejects { try removeOwnedFiles(owned) }
+        try check(fileInfo(owned + "/" + markerName) != nil)
+        try require(unlink(companion) == 0, "Cannot remove test file")
+        try require(symlink("/dev/null", companion) == 0, "Cannot create test symlink")
+        try rejects { try verifyOwned(owned) }
+        try require(unlink(companion) == 0, "Cannot remove test symlink")
+        let empty = root + "/empty"
+        try Data().write(to: URL(fileURLWithPath: empty))
+        try require(Darwin.link(empty, companion) == 0, "Cannot create test hardlink")
+        try rejects { try verifyOwned(owned) }
+        try require(unlink(companion) == 0, "Cannot remove test hardlink")
+        let foreignLock = owned + "/.fl00000000"
+        try Data().write(to: URL(fileURLWithPath: foreignLock))
+        try rejects { try verifyOwned(owned) }
+        try require(unlink(foreignLock) == 0, "Cannot remove test file")
+        try Data().write(to: URL(fileURLWithPath: companion))
         try removeOwnedFiles(owned)
         try check(fileInfo(owned) == nil)
         try rejects { try removeOwnedFiles(owned) }
@@ -148,6 +169,7 @@ struct SigningKeychainTests {
         }
         try check(fileInfo(failedDelete.path + "/" + keychainName) != nil)
         try check(fileInfo(failedDelete.path + "/" + markerName) != nil)
+        try check(fileInfo(failedDelete.path + "/.flD3051040") != nil)
         try check(try readRecovery(failedDelete.path)?.searchPaths == original)
         try check(try readRecovery(failedDelete.path)?.phase == .creating)
         // A fresh adapter simulates a later helper process using only persisted state.

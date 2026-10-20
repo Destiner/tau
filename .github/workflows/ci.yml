@@ -123,12 +123,12 @@ jobs:
             python3 - "$ROOT" <<'PY'
           import pathlib, stat, sys
           root = pathlib.Path(sys.argv[1])
-          known = {'.tau-signing-keychain.json', 'signing.keychain', 'signing.keychain-db', 'signing.keychain-db-db', 'signing.keychain-db-wal', 'signing.keychain-db-shm', 'signing.keychain-db-journal'}
+          known = {'.tau-signing-keychain.json', '.flD3051040', 'signing.keychain-db', 'signing.keychain-db-wal', 'signing.keychain-db-shm', 'signing.keychain-db-journal'}
           for directory in root.glob('tau-synthetic-*/identity'):
               for entry in sorted(directory.iterdir()):
                   info = entry.lstat()
                   label = entry.name if entry.name in known else 'unrecognized filename'
-                  print(f'Owned helper file: {label}; regular={stat.S_ISREG(info.st_mode)}; links={info.st_nlink}')
+                  print(f'Owned helper file: {label}; regular={stat.S_ISREG(info.st_mode)}; links={info.st_nlink}; empty={info.st_size == 0}')
           PY
             exit 1
           fi
