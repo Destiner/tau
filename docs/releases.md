@@ -2,60 +2,131 @@
 
 ## Current boundary
 
-The GPUI app is canonical, but **public native distribution is not implemented**.
-There is no native signed/notarized release pipeline, compatible updater feed or safe
-update installation/relaunch/recovery path. The application update status is an
-unavailable panel, not an updater backend.
+Native packaging infrastructure is implemented and in review on
+`native-release-packaging`. Production identity **com.destiner.tau**, native version
+**0.3.0**, and use of the existing protected main-only GitHub `release` environment
+were explicitly chosen. **No signed candidate or packaged runtime acceptance has
+been completed.** Implementation approval is not approval to merge, dispatch,
+publish or replace an installed app.
 
-Use `bun run package` only for a fresh local ad-hoc macOS preview after
-`bun install --frozen-lockfile` and `bun run prepare`. See
-[PACKAGING.md](../gpui/PACKAGING.md) for destination guards, linkage/signature checks
-and separate launch safety. Preview ID `com.destiner.tau.native-preview` and version
-`0.2.1` remain unchanged. A preview is not permission to install over an existing app.
+`bun run package` remains a local ad-hoc preview: ID
+`com.destiner.tau.native-preview`, version aligned with root/native metadata (0.3.0).
+See [PACKAGING.md](../gpui/PACKAGING.md) for preview details and storage safety.
+The historical v0.2.1 DMG is Vue/Tauri, not native Tau.
 
-Release requests use the [release skill](../.agents/skills/release/SKILL.md), which
-blocks publication until native distribution is implemented and reviewed. Do not
-resurrect the removed automatic Tauri publication procedure or advertise the old
-v0.2.1 DMG as a native build.
+## Candidate flow after reviewed merge
 
-## Required before public distribution
+Read the [release skill](../.agents/skills/release/SKILL.md) and actual
+[workflow](../.github/workflows/native-package.yml) before an authorized run.
+Do not relax the existing main-only environment. Its branch restriction does not
+replace the separate merge and dispatch approvals below.
 
-- Define supported architectures/OS, bundle identity and installation/cutover policy.
-- Prepare pinned dependencies, run canonical tooling/core/native checks and build the
-  optimized application. Hosted static checks alone do not prove Metal or OS behavior.
-- Implement verified native artifacts, Developer ID signing, applicable notarization
-  and stapling, immutable provenance/checksums and recovery from partial publication.
-- Define external Pi/Node/SSH discovery requirements; these runtimes and provider
-  configuration are not included in the preview bundle.
-- Before enabling updates, implement compatible feed/version/platform selection,
-  pinned trust, authenticated verification, safe installation/relaunch and rollback.
-- Obtain explicit approval of the exact version, commit, assets and notes before any
-  future publication. A request to prepare a release is not publication approval.
+1. Obtain separate approval for the reviewed merge and then dispatch. Require the
+   exact current main commit, aligned root/native/lock version and successful
+   push/main CI from `ci.yml`, including its aggregate `check` job. Public `vVERSION`
+   tag must be absent; API errors, pending CI and mismatched provenance fail closed.
+2. Dispatch `native-package.yml` on `main` with required inputs `commit` (actual
+   lowercase 40-character main SHA) and `version` (`0.3.0`). For example, **only
+   after dispatch approval**, with `COMMIT` set to that reviewed SHA:
 
-Manual workflow/resumption and SSH acceptance for the cold-turkey cutover does not
-certify native distribution. Deferred compaction, automated busy-close and profile
-campaigns remain separate scope decisions; this is not a new general acceptance matrix.
+   ```sh
+   gh workflow run native-package.yml --ref main -f commit="$COMMIT" -f version=0.3.0
+   ```
 
-## Historical updater trust and key custody
+3. Check the exact run's inputs, head SHA and both job results, not merely a check
+   name. The credential-free build job runs fake-process packaging tests, pure
+   Swift checks and generated-P12 synthetic Keychain smoke on a disposable hosted
+   macOS 15 arm64 runner before building the normal-feature optimized app.
+4. The separate `release`-environment job rechecks CI/tag provenance, verifies the
+   same-run unsigned artifact ID and tar digest before extraction, and inspects
+   input before the protected signing step binds existing Apple secrets. Updater
+   secrets are untouched. Workflow permissions are only contents/read and
+   actions/read; there are no release writes.
+5. Inspect the exact final artifact and manifest. Final output is only
+   `tau-0.3.0-apple-silicon.dmg`, `manifest.json` and `SHA256SUMS`. The run summary
+   identifies source, artifact URL/ID and notarization boundaries. Workflow
+   artifacts in this **public repository may be downloadable**; they are not
+   private storage or GitHub releases.
 
-Existing public Tauri clients and their updater trust remain a historical obligation,
-not a native update implementation. Preserve historical tags/assets and trust material;
-do not overwrite a published release, retarget its tag or reuse its version. Do not
-redirect an old feed to incompatible GPUI payloads.
+The helper uses deprecated file-Keychain APIs and explicitly resolved
+`SecKeychainItemSetAccessWithPassword` SPI. Compilation and pure Swift checks do not
+validate live ACL/import behavior. Synthetic hosted smoke must succeed before real
+Apple credentials are used; actual signing/notarization behavior remains unvalidated.
+There is no permissive fallback or credential-in-argv workaround.
 
-The historical updater public-key fingerprint is retained in
-`scripts/updater-public-key.sha256`. A public key is not secret, but its pinned trust
-must not be casually replaced. Preserve private-key backups and passwords outside
-the repository and chat. Losing/rotating the old private key can strand installed
-clients; a transition requires a separately authorized compatibility plan, not just
-a new fingerprint. No new key generation or rotation is part of this cleanup.
+## Artifact verification and local commands
 
-Apple Developer ID certificate exports need their private keys; a `.cer` alone is
-not a signing backup. Keep signing identities, password-protected exports and any
-notarization API private keys in secure custody. Never print credentials, put them
-in source or pass them as visible command-line arguments. These custody cautions do
-not imply that native signing/notarization automation exists.
+On macOS arm64 after frozen install and native dependency preparation, unsigned
+preparation requires an exact clean commit, aligned version and fresh absolute
+output. These examples are instructions, not authorization to build or mount:
 
-If historical publication is incomplete, inspect exact tag/commit/asset provenance
-before proposing recovery. API failure is not evidence of absence. Deleting a draft
-or tag needs explicit authorization; published releases must not be rewritten.
+```sh
+# COMMIT must be the actual reviewed 40-character SHA, not a placeholder hash.
+candidate_root=$(mktemp -d /private/tmp/tau-native-candidate-XXXXXX)
+bun run package:macos -- --version 0.3.0 --commit "$COMMIT" \
+  --output "$candidate_root/unsigned"
+# FINAL_DIR is the canonical directory containing the three final workflow files.
+bun run verify:macos -- --version 0.3.0 --commit "$COMMIT" \
+  --input "$FINAL_DIR" --work "$candidate_root/verify-work"
+```
+
+Production paths must be canonical: use `/private/tmp`, not `/tmp` aliases.
+Output/work directories must be fresh, nonoverlapping and outside Applications;
+never overwrite artifacts. `package:macos` is `prepare`, not signing. `verify:macos`
+performs credential-free final inspection, including a readonly mount, never an app
+launch or installation. It still requires native Apple tooling/assessment.
+
+Unsigned verification checks regular files, complete file hashes, plist/provenance,
+arm64, a Mach-O deployment target no newer than macOS 15.0, and system-only dylibs/rpaths.
+Production builds use two Cargo jobs and explicitly target macOS 15.0. Signing requires Developer ID, hardened runtime,
+secure timestamp and no entitlements. The app is notarized and stapled **before** DMG
+creation; the DMG is separately signed, notarized and stapled. Final inspection
+checks signatures, tickets, Gatekeeper and the readonly mounted app/layout.
+Pending, rejected or failed notarization is failure, not success.
+
+Cleanup touches only marker-owned paths. Pending/ambiguous mounts are preserved
+until exact owned detach succeeds; never use `rm -rf` or global/forced unmount as a
+fallback. Runner death can prevent cleanup. Hash manifests are integrity inventories,
+not independent authentication: trust also depends on reviewed source and same-run
+artifact transfer provenance. Metadata/signature inspection is not runtime acceptance.
+
+`Contents/Resources/Legal` preserves Tau/asset/diagram notices and license inventory,
+patches, native Cargo/preparation inputs and copied prepared `merman-render` and
+`merman-layout-elk` sources, including modified EPL source. `SOURCE-OFFER.txt` points
+to bundled sources/patches and upstream versioned references/checksums. Preserve EPL,
+MPL and other source/notice obligations. `Legal/RustDependencies` also inventories the
+locked Apple Silicon normal/build dependency graph, with deduplicated notice texts,
+source/checksum references and factual author metadata. Where archives omit notices,
+[provenance-pinned supplements](../gpui/assets/dependency-licenses/README.md) retain
+upstream summaries and declared standard terms without inventing copyright holders.
+These recorded evidence gaps are not legal certification or a guarantee that upstream
+provided every notice; review obligations before public distribution.
+
+## Public release blockers
+
+Before publication, require reviewed merge, a successful candidate with actual Apple
+validation, and a narrowly scoped, explicitly authorized final-artifact launch/install
+smoke. Resolve external Pi/Node/SSH discovery requirements (none are bundled), install
+cutover/recovery policy and the update strategy. **A manual-update public first release
+has not been approved.** The native updater/feed/install/relaunch/rollback path remains
+out of scope and unimplemented; the UI shows unavailable status.
+
+Obtain explicit approval of the exact version, commit, assets and notes before any
+publication. Candidate generation grants no permission for a tag, draft, GitHub
+release, latest feed, README download link or installed-app replacement. Hosted CI
+still does not prove Metal paint; local Metal verification remains separate. Existing
+manual workflow/resumption and SSH acceptance does not certify distribution. Do not
+reopen broad parity, media, compaction, busy-close or profile campaigns for this work.
+
+## Historical trust and custody
+
+Preserve historical Tauri tags/assets and updater trust; never retarget tags,
+overwrite published assets, reuse a published version or redirect the old feed to
+GPUI payloads. The pinned historical public-key fingerprint remains in
+`scripts/updater-public-key.sha256`; updater keys are not part of native packaging.
+API failure is not evidence of absence. Draft/tag deletion requires explicit approval.
+
+Keep Apple certificate exports **with private keys**, passwords and API private keys
+in secure custody outside source/chat. Reuse the existing Apple secrets only in the
+protected signing step; never print secrets, put them in argv or expose credential
+tracing. Key rotation or historical updater recovery requires separate authorization.

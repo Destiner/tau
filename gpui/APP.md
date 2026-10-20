@@ -135,8 +135,12 @@ is bounded, content-free and best-effort; see [observability](../docs/observabil
 Settings is intentionally absent (including Cmd-comma); persisted theme choices remain
 readable, otherwise appearance follows the system. Check for Updates… opens Version
 with unavailable copy and a disabled primary action. There is no native updater/feed,
-installation or rollback implementation. [Packaging](PACKAGING.md) produces ad-hoc
-previews, not signed/notarized public distribution.
+installation or rollback implementation. [Preview packaging](PACKAGING.md) remains
+ad-hoc. Separate production packaging infrastructure for `com.destiner.tau` version
+0.3.0 is implemented/in review, without a completed signed candidate or packaged
+runtime acceptance. [Release safety](../docs/releases.md) owns the protected flow
+and public-release blockers; a manual-update public first release is still undecided.
+Candidate inspection never launches or installs the app and cannot prove runtime behavior.
 
 ## Accepted and deferred verification
 

@@ -13,7 +13,7 @@ const packageVersion = (toml: string): string | undefined =>
 // Root product metadata owns the version; Cargo supplies runtime and bundle metadata.
 test('native Cargo and its local lock entry match the production version', () => {
   const version = JSON.parse(read('../../package.json')).version;
-  expect(version).toBe('0.2.1');
+  expect(version).toBe('0.3.0');
   expect(packageVersion(read('../Cargo.toml'))).toBe(version);
   const native = read('../Cargo.lock')
     .split('[[package]]')

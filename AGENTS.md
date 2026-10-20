@@ -9,8 +9,9 @@ Native GPUI desktop UI for the Pi coding agent. The application is in `gpui/` (C
 - `bun run dev -- --isolated /absolute/profile [--project /absolute/project]` - Run development with mandatory explicit isolation.
 - `bun run build` - Build the optimized native application.
 - `bun run check` - Check tooling lint/typecheck and Rust formatting/Clippy.
-- `bun run test` - Run deterministic Bun, shared Rust, GPUI library/editor and Metal tests; excludes native OS and real Pi acceptance.
+- `bun run test` - Run tooling, macOS fake-process packaging, pure Swift helper, shared Rust, GPUI library/editor and Metal tests; excludes live Keychain, native OS and real Pi acceptance.
 - `bun run package` - Build a fresh ad-hoc macOS preview, not a public release.
+- `bun run package:macos` / `bun run verify:macos` - Prepare unsigned production input / inspect a final signed candidate; exact arguments and approval gates: `docs/releases.md`.
 - `bun run test:pi-contract` - Explicit installed-Pi compatibility canary, not a default dependency.
 - After prepare, direct Cargo commands work from root with `--manifest-path gpui/Cargo.toml`.
 
@@ -31,12 +32,12 @@ Native GPUI desktop UI for the Pi coding agent. The application is in `gpui/` (C
 - Telemetry is bounded, content-free and best-effort. Never record prompts, transcripts, drafts, payloads, paths, credentials, stderr or raw errors.
 - Telemetry and the reporter are off by default and unlocked together by `iddqd` outside text fields. Keep diagnostics behind that gate.
 - Prefer deterministic fakes. Native OS/installed-Pi/model/SSH acceptance is explicit, not part of default checks.
-- Public native distribution and the updater are not implemented. Use ad-hoc previews only; preserve preview identity `com.destiner.tau.native-preview` and version `0.2.1` unless separately authorized.
+- Native packaging infrastructure is implemented/in review, not validated by a signed candidate. Production identity is `com.destiner.tau`, version `0.3.0`; preview identity stays `com.destiner.tau.native-preview`, with aligned root/native version. Publication and native updater remain blocked; preserve the existing main-only `release` environment. Merge, dispatch, launch/install and publication require separate approval.
 
 ## Documentation
 
 - `gpui/APP.md` - Application behavior, lifecycle and accepted/deferred verification boundaries.
-- `gpui/PACKAGING.md` and `docs/releases.md` - Preview packaging and blocked public distribution; release requests use `.agents/skills/release/SKILL.md`.
+- `gpui/PACKAGING.md` and `docs/releases.md` - Preview packaging, protected candidate flow and public-release blockers; release requests use `.agents/skills/release/SKILL.md`.
 - `docs/development-storage.md` - Persistent isolated profiles and production storage safety.
 - `docs/ci-testing.md` and `docs/reproduction.md` - Native test gates, Metal requirements and regression authoring.
 - `docs/pi.md`, `docs/observability.md`, `docs/keyboard.md` - Runtime, privacy and interaction contracts.
