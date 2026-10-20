@@ -158,6 +158,30 @@ function helperDiagnostic(stderr: string | undefined): string | undefined {
   )
     return `${match[1]} failed (OSStatus ${Number(match[2])})`;
 }
+function codesignDiagnostic(stderr: string | undefined): string | undefined {
+  if (stderr === undefined || stderr.length > 16_384) return;
+  const markers = [
+    ['errSecInternalComponent', 'internal-component'],
+    [
+      'The specified item could not be found in the keychain',
+      'identity-not-found',
+    ],
+    ['User interaction is not allowed', 'interaction-denied'],
+    ['unable to build chain to self-signed root', 'chain-warning'],
+    ['CSSMERR_TP_NOT_TRUSTED', 'untrusted-chain'],
+    ['CSSMERR_TP_CERT_EXPIRED', 'expired-certificate'],
+    [
+      'resource fork, Finder information, or similar detritus not allowed',
+      'resource-metadata',
+    ],
+    ['bundle format unrecognized, invalid, or unsuitable', 'invalid-format'],
+    ['code object is not signed at all', 'unsigned-input'],
+  ] as const;
+  const labels = markers
+    .filter(([marker]) => stderr.includes(marker))
+    .map(([, label]) => label);
+  return labels.length ? `codesign:${labels.join(',')}` : undefined;
+}
 const diagnostics = new WeakMap<object, string>();
 function failure(
   phase: Phase,
@@ -165,7 +189,7 @@ function failure(
   status?: number,
   detail?: string,
 ): Error {
-  const summary = `phase=${phase} category=${category} exitstatus=${status !== undefined && boundedInteger(status) ? status : 'unavailable'}${detail ? ` helper=${detail}` : ''}`;
+  const summary = `phase=${phase} category=${category} exitstatus=${status !== undefined && boundedInteger(status) ? status : 'unavailable'}${detail ? ` detail=${detail}` : ''}`;
   const error = new Error(summary);
   diagnostics.set(error, summary);
   return error;
@@ -215,7 +239,11 @@ export function smoke(
           phase,
           'command',
           result.status,
-          args[0] === helper ? helperDiagnostic(result.stderr) : undefined,
+          args[0] === helper
+            ? helperDiagnostic(result.stderr)
+            : args[0] === '/usr/bin/codesign'
+              ? codesignDiagnostic(result.stderr)
+              : undefined,
         );
       return result.stdout;
     });

@@ -154,6 +154,33 @@ describe('bounded synthetic smoke diagnostics (fake processes only)', () => {
         expect(summary).not.toContain('SECRET');
       });
   });
+  test('codesign diagnostics emit only fixed categories, never output or paths', () => {
+    for (const [stderr, detail] of [
+      [
+        'SECRET/path: errSecInternalComponent\nWarning: unable to build chain to self-signed root for signer SECRET',
+        ' detail=codesign:internal-component,chain-warning',
+      ],
+      [
+        'SECRET/path: The specified item could not be found in the keychain.',
+        ' detail=codesign:identity-not-found',
+      ],
+      ['SECRET arbitrary diagnostic', ''],
+      ['SECRET'.repeat(3000) + 'errSecInternalComponent', ''],
+    ])
+      diagnosticFixture((helper, root, run) => {
+        const summary = diagnostic(() =>
+          smoke(helper, root, context, (args, stdin) =>
+            args.includes('--sign')
+              ? { status: 1, stdout: 'SECRET', stderr }
+              : run(args, stdin),
+          ),
+        );
+        expect(summary).toBe(
+          `phase=sign category=command exitstatus=1${detail}`,
+        );
+        expect(summary).not.toContain('SECRET');
+      });
+  });
   test('context/setup, malformed metadata and thrown runner/filesystem errors are sanitized', () => {
     diagnosticFixture((helper, root, run) => {
       expect(
@@ -213,7 +240,7 @@ describe('bounded synthetic smoke diagnostics (fake processes only)', () => {
               : run(args, stdin),
           ),
         );
-        expect(summary).toContain(`helper=${message}`);
+        expect(summary).toContain(`detail=${message}`);
         expect(summary).not.toContain('SECRET');
       });
     for (const stderr of [
@@ -285,7 +312,7 @@ describe('bounded synthetic smoke diagnostics (fake processes only)', () => {
         }),
       );
       expect(summary).toBe(
-        'phase=helpercreate category=command exitstatus=4 helper=Invalid ownership marker; phase=cleanup category=command exitstatus=5 helper=Delete owned keychain failed (OSStatus -50)',
+        'phase=helpercreate category=command exitstatus=4 detail=Invalid ownership marker; phase=cleanup category=command exitstatus=5 detail=Delete owned keychain failed (OSStatus -50)',
       );
       expect(existsSync(owned)).toBe(true);
       for (const name of [
