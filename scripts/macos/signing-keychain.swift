@@ -352,6 +352,22 @@ func lifecycleOperations(_ path: String, created: @escaping () -> SecKeychain? =
     })
 }
 
+func requirePartitionFormat(_ version: UInt32) throws {
+    try require(version != 0x100, "Legacy keychain format has no partition ACLs")
+    try require(version == 0x200, "Unsupported keychain format")
+}
+
+func verifyKeychainFormat(_ keychain: SecKeychain) throws {
+    typealias ReadVersion = @convention(c) (SecKeychain, UnsafeMutablePointer<UInt32>) -> OSStatus
+    guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "SecKeychainGetKeychainVersion") else {
+        throw SigningFailure("Required Security format API unavailable")
+    }
+    let readVersion = unsafeBitCast(symbol, to: ReadVersion.self)
+    var version: UInt32 = 0
+    try securityCheck(readVersion(keychain, &version), "Read keychain format")
+    try requirePartitionFormat(version)
+}
+
 func signingKeychainSettings() -> SecKeychainSettings {
     // The legacy API ignores useLockInterval: zero locks immediately; INT_MAX disables the timer.
     // This matches SecurityTool/macOS/keychain_set_settings.c, without changing other keychains.
@@ -375,6 +391,7 @@ func createKeychain(_ path: String, credentials: Credentials) throws -> PublicId
         }
         var settings = signingKeychainSettings()
         try securityCheck(SecKeychainSetSettings(created, &settings), "Configure keychain")
+        try verifyKeychainFormat(created)
         var codesign: SecTrustedApplication?
         try securityCheck(SecTrustedApplicationCreateFromPath("/usr/bin/codesign", &codesign), "Trust codesign")
         guard let codesign else { throw SigningFailure("Missing codesign application") }

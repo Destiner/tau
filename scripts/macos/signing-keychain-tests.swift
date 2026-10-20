@@ -85,6 +85,10 @@ struct SigningKeychainTests {
         try rejects { _ = try certificateTeam(subject([""])) }
         try rejects { _ = try certificateTeam([:]) }
 
+        try requirePartitionFormat(0x200)
+        try rejects { try requirePartitionFormat(0x100) }
+        try rejects { try requirePartitionFormat(0) }
+        try rejects { try requirePartitionFormat(0x201) }
         let settings = signingKeychainSettings()
         try check(settings.version == SEC_KEYCHAIN_SETTINGS_VERS1)
         try check(!settings.lockOnSleep.boolValue && !settings.useLockInterval.boolValue)
