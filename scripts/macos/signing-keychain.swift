@@ -44,7 +44,10 @@ struct Credentials: Decodable {
     }
 
     func pkcs12() throws -> Data {
-        guard let data = Data(base64Encoded: certificate), !data.isEmpty else {
+        let encoded = Data(certificate.utf8.filter { byte in
+            byte != 0x20 && !(0x09...0x0D).contains(byte)
+        })
+        guard let data = Data(base64Encoded: encoded), !data.isEmpty else {
             throw SigningFailure("Invalid base64 certificate")
         }
         return data

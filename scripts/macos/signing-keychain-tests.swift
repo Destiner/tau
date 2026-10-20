@@ -176,7 +176,79 @@ struct SigningKeychainTests {
         }
     }
 
+    static func credentialBase64Tests() throws {
+        func read(_ certificate: String, password: String) throws -> Credentials {
+            let json = try JSONSerialization.data(withJSONObject: ["certificate": certificate, "password": password])
+            return try Credentials.read(InputStream(data: json))
+        }
+        func invalid(_ certificate: String) throws {
+            do {
+                _ = try read(certificate, password: "synthetic")
+                throw SigningFailure("Expected base64 rejection")
+            } catch let error as SigningFailure {
+                try check(error.message == "Invalid base64 certificate")
+            }
+        }
+        let bytes = Data((0..<256).map { UInt8($0) })
+        let canonical = bytes.base64EncodedString()
+        let whitespace = "\t\n\u{0B}\u{0C}\r "
+        let passwords = ["", "synthetic", " \t\r\nsynthetic\u{0B}\u{0C} \n", "\u{00A0}\u{FEFF}synthetic\u{00A0}"]
+        var variants = [("canonical", canonical)]
+        for width in [64, 76] {
+            for separator in ["\n", "\r\n"] {
+                let characters = Array(canonical)
+                let wrapped = stride(from: 0, to: characters.count, by: width).map {
+                    String(characters[$0..<min($0 + width, characters.count)])
+                }.joined(separator: separator)
+                variants.append(("wrapped width=\(width) CRLF=\(separator == "\r\n")", wrapped))
+            }
+        }
+        variants.append(("surrounding ASCII whitespace", whitespace + canonical + whitespace))
+        variants.append(("embedded ASCII whitespace", canonical.map(String.init).joined(separator: whitespace)))
+        for (name, certificate) in variants {
+            print("Credentials.read base64 regression: \(name)")
+            fflush(stdout)
+            for password in passwords {
+                let parsed = try read(certificate, password: password)
+                try check(try parsed.pkcs12() == bytes)
+                try check(Array(parsed.password.utf8) == Array(password.utf8))
+            }
+        }
+        for byte in Array(UInt8(0)...UInt8(8)) + Array(UInt8(14)...UInt8(31)) + [UInt8(127)] {
+            try invalid("AA" + String(UnicodeScalar(byte)) + "==")
+        }
+        for character in ["\u{0085}", "\u{00A0}", "\u{1680}", "\u{2000}", "\u{2003}", "\u{2028}", "\u{2029}", "\u{202F}", "\u{205F}", "\u{3000}", "\u{FEFF}", "!", "-", "_"] {
+            try invalid("AA" + character + "==")
+        }
+        for certificate in ["", whitespace, "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----", "\"AA==\"", "data:application/x-pkcs12;base64,AA==", "AA==garbage", "AA==!"] {
+            try invalid(certificate)
+        }
+        // Keep Foundation's existing padding behavior, including any accepted edge cases.
+        for certificate in ["A", "AA", "AAA", "A===", "AA=", "AA===", "=AAA", "AA=A", "AA==AA==", "AAAA=", "AB==", "AAB=", "AA==", "AAA=", "AAAA"] {
+            let expected = Data(base64Encoded: certificate)
+            if let expected, !expected.isEmpty {
+                try check(try read(certificate, password: "").pkcs12() == expected)
+                try check(try read(" \r\n" + certificate + "\t", password: "").pkcs12() == expected)
+            } else {
+                try invalid(certificate)
+                try invalid(" \r\n" + certificate + "\t")
+            }
+        }
+        // A valid small payload cannot bypass the raw stdin cap with whitespace.
+        let oversized = try JSONSerialization.data(withJSONObject: [
+            "certificate": "AA==" + String(repeating: " ", count: Credentials.inputLimit),
+            "password": "synthetic",
+        ])
+        do {
+            _ = try Credentials.read(InputStream(data: oversized))
+            throw SigningFailure("Expected raw input limit rejection")
+        } catch let error as SigningFailure {
+            try check(error.message == "Credential input exceeds limit")
+        }
+    }
+
     static func main() throws {
+        try credentialBase64Tests()
         let parsed = try input(#"{"certificate":"AAEC","password":"synthetic-not-a-secret"}"#)
         try check(parsed.password == "synthetic-not-a-secret")
         try check(try parsed.pkcs12() == Data([0, 1, 2]))

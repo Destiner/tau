@@ -623,6 +623,8 @@ describe('native package fail-closed policy (no network/OS APIs)', () => {
     writeFileSync(helper, 'fake');
     const calls: string[][] = [];
     let password = '';
+    const fixture = Buffer.from(Array.from({ length: 256 }, (_, i) => i));
+    let importedCertificate = '';
     try {
       smoke(helper, root, context, (args, stdin) => {
         calls.push(args);
@@ -639,7 +641,19 @@ describe('native package fail-closed policy (no network/OS APIs)', () => {
           }
           expect(args[1]).toBe('create');
           const credential = JSON.parse(stdin!);
-          expect(credential.certificate).toBe('cDEy');
+          const certificate = credential.certificate as string;
+          expect(Buffer.from(certificate, 'base64')).toEqual(fixture);
+          expect(certificate.startsWith(' \n')).toBe(true);
+          expect(certificate.endsWith('\n ')).toBe(true);
+          const lines = certificate.slice(2, -2).split('\r\n');
+          expect(lines.length).toBeGreaterThan(1);
+          for (const line of lines.slice(0, -1)) expect(line.length).toBe(64);
+          expect(lines.at(-1)!.length).toBeGreaterThan(0);
+          expect(lines.at(-1)!.length).toBeLessThanOrEqual(64);
+          expect(lines.join('')).toBe(fixture.toString('base64'));
+          if (importedCertificate)
+            expect(certificate).toBe(importedCertificate);
+          else importedCertificate = certificate;
           if (credential.password !== password)
             return { status: 1, stdout: '' };
           mkdirSync(directory);
@@ -663,7 +677,7 @@ describe('native package fail-closed policy (no network/OS APIs)', () => {
         }
         if (args.includes('pkcs12')) {
           expect(stdin).toBe(`${password}\n${password}\n`);
-          writeFileSync(args[args.indexOf('-out') + 1]!, 'p12');
+          writeFileSync(args[args.indexOf('-out') + 1]!, fixture);
         }
         if (args.includes('x509'))
           return {
