@@ -17,6 +17,7 @@ import {
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { verifyBinary } from '../../gpui/scripts/package';
 import { prepareCandidate, publishExclusive, verifyCandidate } from './bundle';
+import { helperDiagnostic } from './keychain-diagnostics';
 
 export type Expected = { version: string; commit: string };
 export type Request = {
@@ -649,13 +650,18 @@ export function sign(
       fail('Missing or invalid signing credentials');
     const key = join(options.work, 'AuthKey.p8');
     writeFileSync(key, privateKey, { mode: 0o600, flag: 'wx' });
-    const identity = parse(
-      exec(
-        [options.keychainHelper, 'create', join(options.work, 'keychain')],
-        'Signing identity import failed',
-        JSON.stringify({ certificate, password }),
-      ).stdout,
+    const imported = exec(
+      [options.keychainHelper, 'create', join(options.work, 'keychain')],
+      'Signing identity import failed',
+      JSON.stringify({ certificate, password }),
+      120_000,
+      true,
     );
+    if (imported.status !== 0) {
+      const detail = helperDiagnostic(imported.stderr);
+      fail(`Signing identity import failed${detail ? `: ${detail}` : ''}`);
+    }
+    const identity = parse(imported.stdout);
     if (
       typeof identity.identity !== 'string' ||
       !/^[A-F0-9]{40}$/.test(identity.identity) ||

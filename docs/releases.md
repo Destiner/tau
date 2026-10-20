@@ -2,11 +2,13 @@
 
 ## Current boundary
 
-Native packaging infrastructure is merged. Its first hosted candidate stopped in
-synthetic Keychain acceptance before production credentials were used; signing-helper
-corrections require review and a new candidate run. Production identity **com.destiner.tau**, native version
-**0.3.0**, and use of the existing protected main-only GitHub `release` environment
-were explicitly chosen. **No signed candidate or packaged runtime acceptance has
+Native packaging infrastructure and signing-helper corrections are merged. Hosted
+synthetic acceptance now passes. The next candidate built and verified its unsigned
+input, but protected certificate import failed; owned cleanup succeeded. The specific
+helper failure remains unknown, and redacted import diagnostics require review before
+another attempt. Production identity **com.destiner.tau**, native version **0.3.0**,
+and use of the existing protected main-only GitHub `release` environment were
+explicitly chosen. **No signed candidate or packaged runtime acceptance has
 been completed.** Implementation approval is not approval to merge, dispatch,
 publish or replace an installed app.
 
