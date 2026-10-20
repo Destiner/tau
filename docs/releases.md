@@ -2,8 +2,9 @@
 
 ## Current boundary
 
-Native packaging infrastructure is implemented and in review on
-`native-release-packaging`. Production identity **com.destiner.tau**, native version
+Native packaging infrastructure is merged. Its first hosted candidate stopped in
+synthetic Keychain acceptance before production credentials were used; signing-helper
+corrections require review and a new candidate run. Production identity **com.destiner.tau**, native version
 **0.3.0**, and use of the existing protected main-only GitHub `release` environment
 were explicitly chosen. **No signed candidate or packaged runtime acceptance has
 been completed.** Implementation approval is not approval to merge, dispatch,
@@ -53,6 +54,22 @@ The helper uses deprecated file-Keychain APIs and explicitly resolved
 validate live ACL/import behavior. Synthetic hosted smoke must succeed before real
 Apple credentials are used; actual signing/notarization behavior remains unvalidated.
 There is no permissive fallback or credential-in-argv workaround.
+
+The disposable runner creates a fresh `0700`, marked parent beneath its account's
+real `~/Library/Keychains/tau-ci-<run>-<attempt>`. Only synthetic smoke and temporary
+signing work use this reserved namespace; compilation, downloads and final artifacts
+remain in `RUNNER_TEMP`. The existing Keychains directory must already be canonical,
+safely permissioned and account-owned. Never override `HOME`, create a lookalike
+`Library/Keychains`, move the login keychain or modify existing/default keychains.
+The signing command and always-cleanup use the same exact owned work path.
+
+Location matters: Security.framework creates legacy-format databases outside its
+Keychains location, without the required partition ACL. The helper checks the
+actual database format before import, keeps exactly-one partition enforcement and
+uses the legacy API's `INT_MAX` no-timeout sentinel (zero locks immediately). Its
+owned inventory includes only the exact empty AtomicFile lock companion, not a
+wildcard allowance. Synthetic acceptance verifies import, noninteractive signing,
+wrong-password rollback, owned deletion and unchanged search/default keychains.
 
 ## Artifact verification and local commands
 

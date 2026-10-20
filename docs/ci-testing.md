@@ -49,7 +49,9 @@ separately authorized final-artifact launch/install smoke.
 For explicitly requested signing-helper investigation, `ci.yml` has a manual-only
 `keychain_smoke` input. It runs the pure helper tests and real generated-P12 smoke
 on disposable hosted macOS, without production credentials or the `release`
-environment. It skips the ordinary lanes and aggregate `check`, uses separate
+environment. Its fresh, marked `0700` parent is under the runner account's real
+`~/Library/Keychains/tau-ci-<run>-<attempt>`; existing/default keychains are untouched,
+and neither a fake home nor a fake Library/Keychains directory is used. It skips the ordinary lanes and aggregate `check`, uses separate
 concurrency, and cannot satisfy the candidate's successful **push/main** CI gate:
 
 ```sh

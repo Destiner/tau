@@ -1,4 +1,4 @@
-// CI-only, disposable legacy keychain. No credential subprocesses or password files.
+// CI-only, disposable file-backed keychain. No credential subprocesses or password files.
 import Foundation
 import Security
 import CryptoKit
@@ -52,6 +52,7 @@ struct Credentials: Decodable {
 }
 
 let markerName = ".tau-signing-keychain.json"
+// StorageManager::makeKeychainDbFilename preserves an existing -db suffix in modern format.
 let keychainName = "signing.keychain-db"
 // Security's AtomicFile uses this exact zero-byte companion; never accept arbitrary .fl* files.
 // apple-oss-distributions/Security: OSX/libsecurity_filedb/lib/AtomicFile.cpp
@@ -95,21 +96,49 @@ func fileInfo(_ path: String) -> stat? {
 func isDirectory(_ info: stat) -> Bool { info.st_mode & S_IFMT == S_IFDIR }
 func isRegular(_ info: stat) -> Bool { info.st_mode & S_IFMT == S_IFREG }
 
-// Reject aliases rather than resolving them (including /tmp -> /private/tmp).
-// Same-UID processes and concurrent search-list writers are outside this CI helper's trust boundary.
-func validatePath(_ path: String) throws {
+// Lexical only: tests supply a synthetic home without inspecting any real Keychains directory.
+func validateNamespace(_ path: String, home: String) throws {
     let parts = path.split(separator: "/", omittingEmptySubsequences: false)
     try require(path.hasPrefix("/") && path != "/" && !path.contains("\0"), "Unsafe directory")
     try require(parts.dropFirst().allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }, "Unsafe directory")
     let lowered = path.lowercased()
     let protected = ["/system", "/library", "/usr", "/bin", "/sbin", "/etc", "/dev", "/volumes", "/applications", "/private/etc"]
     try require(!protected.contains { lowered == $0 || lowered.hasPrefix($0 + "/") }, "Protected directory")
-    try require(!parts.contains { $0.lowercased() == "keychains" || $0.lowercased().contains(".keychain") || $0.lowercased() == "applications" }, "Protected directory")
+    let base = home + "/Library/Keychains/"
+    var reserved = false
+    if path.hasPrefix(base) {
+        let suffix = String(path.dropFirst(base.count))
+        let run = String(suffix.split(separator: "/")[0])
+        reserved = run.range(of: #"\Atau-ci-[1-9][0-9]*-[1-9][0-9]*\z"#, options: .regularExpression) != nil
+            && suffix.hasPrefix(run + "/")
+    }
+    let homeParts = home.split(separator: "/").count
+    for (index, part) in parts.dropFirst().enumerated() {
+        let name = part.lowercased()
+        try require(name != "applications" && !name.contains(".keychain"), "Protected directory")
+        if name == "keychains" {
+            try require(reserved && index == homeParts + 1 && part == "Keychains", "Protected directory")
+        }
+    }
+}
+
+// Reject aliases rather than resolving them (including /tmp -> /private/tmp).
+// Same-UID processes and concurrent search-list writers are outside this CI helper's trust boundary.
+func validatePath(_ path: String) throws {
+    guard let account = getpwuid(geteuid()), let directory = account.pointee.pw_dir else {
+        throw SigningFailure("Unsafe directory parent")
+    }
+    let home = String(cString: directory)
+    try validateNamespace(path, home: home)
+    let parts = path.split(separator: "/", omittingEmptySubsequences: false)
     var ancestor = ""
     for part in parts.dropFirst().dropLast() {
         ancestor += "/" + part
         guard let info = fileInfo(ancestor), isDirectory(info) else { throw SigningFailure("Unsafe directory ancestor") }
         try require(info.st_mode & 0o022 == 0 || info.st_mode & S_ISVTX != 0, "Writable directory ancestor")
+        if path.hasPrefix(home + "/Library/Keychains/") && (ancestor == home || ancestor.hasPrefix(home + "/")) {
+            try require(info.st_uid == geteuid() && info.st_mode & 0o022 == 0, "Directory parent is not owned")
+        }
     }
     let parent = (path as NSString).deletingLastPathComponent
     try require(parent != "/", "Unsafe directory parent")

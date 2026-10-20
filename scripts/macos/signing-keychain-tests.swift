@@ -113,6 +113,33 @@ struct SigningKeychainTests {
             try rejects { try validatePath(unsafe) }
         }
 
+        // Only lexical policy is exercised here; never inspect/create a user's Library/Keychains.
+        let home = "/Users/synthetic-runner"
+        let base = home + "/Library/Keychains"
+        for allowed in [base + "/tau-ci-39421869359-1/work/keychain",
+                        base + "/tau-ci-123-2/tau-synthetic-ABC/identity",
+                        base + "/tau-ci-123-2/tau-synthetic-ABC/wrong-password",
+                        "/private/tmp/pure/owned"] {
+            try validateNamespace(allowed, home: home)
+            checks += 1
+        }
+        for unsafe in [base, base + "/login.keychain-db", base + "/tau-ci-123-2",
+                       base + "/tau-ci-123-2extra/owned", base + "/tau-ci-0-2/owned",
+                       base + "/tau-ci-123-02/owned", base + "/tau-ci-123/owned",
+                       base + "/tau-ci-123-2\n/owned", base + "/tau-ci-123-2\r\n/owned",
+                       base + "/tau-ci-123-2/../owned", base + "/tau-ci-123-2//owned",
+                       base + "/tau-ci-123-2/owned/", base + "/tau-ci-123-2/Applications/owned",
+                       base + "/tau-ci-123-2/Keychains/owned", base + "/tau-ci-123-2/a.keychain/owned",
+                       home + "/Library/Keychains-adjacent/tau-ci-123-2/Keychains/owned",
+                       home + "-adjacent/Library/Keychains/tau-ci-123-2/owned",
+                       "/Users/other/Library/Keychains/tau-ci-123-2/owned",
+                       "/private/tmp/Library/Keychains/tau-ci-123-2/owned",
+                       home + "/library/Keychains/tau-ci-123-2/owned",
+                       home + "/Library/keychains/tau-ci-123-2/owned",
+                       "/System/Library/Keychains/tau-ci-123-2/owned"] {
+            try rejects { try validateNamespace(unsafe, home: home) }
+        }
+
         let root = "/private/tmp/tau-keychain-pure-" + UUID().uuidString
         try require(mkdir(root, 0o700) == 0, "Cannot create pure test root")
         defer { try? FileManager.default.removeItem(atPath: root) }
@@ -162,6 +189,13 @@ struct SigningKeychainTests {
         try Data().write(to: URL(fileURLWithPath: foreignLock))
         try rejects { try verifyOwned(owned) }
         try require(unlink(foreignLock) == 0, "Cannot remove test file")
+        for aliasName in ["signing.keychain", "signing.keychain-db-db"] {
+            let unexpectedAlias = owned + "/" + aliasName
+            try Data().write(to: URL(fileURLWithPath: unexpectedAlias))
+            try rejects { try removeOwnedFiles(owned) }
+            try check(fileInfo(owned + "/" + markerName) != nil)
+            try require(unlink(unexpectedAlias) == 0, "Cannot remove test file")
+        }
         try Data().write(to: URL(fileURLWithPath: companion))
         try removeOwnedFiles(owned)
         try check(fileInfo(owned) == nil)

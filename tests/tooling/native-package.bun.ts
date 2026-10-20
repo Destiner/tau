@@ -588,6 +588,113 @@ describe('native package fail-closed policy (no network/OS APIs)', () => {
     for (const use of job!.matchAll(/uses: ([^\s]+)/g))
       expect(use[1]).toMatch(/@[a-f0-9]{40}$/);
   });
+  test('real runner Keychains parent is fresh, owned and shared by sign/always-cleanup', () => {
+    const workflow = readFileSync(
+      new URL('../../.github/workflows/native-package.yml', import.meta.url),
+      'utf8',
+    );
+    const ci = readFileSync(
+      new URL('../../.github/workflows/ci.yml', import.meta.url),
+      'utf8',
+    );
+    const setup = (text: string): string =>
+      text
+        .split("          python3 - <<'PY'\n")[1]!
+        .split('\n          PY')[0]!;
+    expect(setup(workflow)).toBe(setup(ci));
+    for (const text of [workflow, ci]) {
+      const parent = setup(text);
+      for (const guard of [
+        'pwd.getpwuid(uid).pw_dir',
+        "str(home) == os.environ['HOME']",
+        "base = home / 'Library' / 'Keychains'",
+        'path.lstat()',
+        'stat.S_ISDIR(info.st_mode)',
+        'not info.st_mode & 0o022',
+        'path.resolve(strict=True) == path',
+        'info.st_uid == (uid if path == home or home in path.parents else 0)',
+        "re.fullmatch(r'[1-9][0-9]*', run)",
+        "re.fullmatch(r'[1-9][0-9]*', attempt)",
+        "parent = base / f'tau-ci-{run}-{attempt}'",
+        'parent.mkdir(mode=0o700)',
+        "(parent / '.tau-ci-parent.json').open('x')",
+        'device=info.st_dev, inode=info.st_ino',
+        "env.write(f'KEYCHAIN_PARENT={parent}\\n')",
+      ])
+        expect(parent).toContain(guard);
+      expect(parent).not.toMatch(/exist_ok|parents=True|chmod|unlink|rmdir/);
+      expect(text).not.toMatch(
+        /(?:export |env:.*)HOME=|security (?:default-keychain|list-keychains) -s/,
+      );
+    }
+    expect(workflow).toContain('- &keychain-parent');
+    expect(workflow).toContain('- *keychain-parent');
+    const parsed = Bun.YAML.parse(workflow) as {
+      jobs: Record<string, { steps: { name?: string; run?: string }[] }>;
+    };
+    const parentStep = (job: string): { name?: string; run?: string }[] =>
+      parsed.jobs[job]!.steps.filter((step) =>
+        step.name?.startsWith('Fresh owned parent'),
+      );
+    expect(parentStep('build')).toHaveLength(1);
+    expect(parentStep('sign')).toEqual(parentStep('build'));
+    expect(workflow.indexOf('- *keychain-parent')).toBeLessThan(
+      workflow.indexOf('secrets.APPLE_CERTIFICATE'),
+    );
+    expect(workflow).toContain(
+      'keychain-smoke.ts "$CANDIDATE_ROOT/keychain-helper" "$KEYCHAIN_PARENT"',
+    );
+    expect(ci).toContain(
+      'keychain-smoke.ts "$ROOT/keychain-helper" "$KEYCHAIN_PARENT"',
+    );
+    expect(ci).toContain('python3 - "$KEYCHAIN_PARENT"');
+    expect(workflow.match(/--work "\$KEYCHAIN_PARENT\/work"/g)).toHaveLength(2);
+    expect(workflow).not.toContain('$CANDIDATE_ROOT/work');
+    const cleanup = workflow
+      .split('      - name: Always clean')[1]!
+      .split('      - name: Upload')[0]!;
+    expect(cleanup).toContain(
+      "if: always() && env.CANDIDATE_ROOT != '' && env.KEYCHAIN_PARENT != ''",
+    );
+    expect(cleanup).toContain(
+      'test -f "$KEYCHAIN_PARENT/work/.tau-release-owner.json"',
+    );
+    expect(cleanup).toContain(
+      'cleanup --work "$KEYCHAIN_PARENT/work" --keychain-helper "$CANDIDATE_ROOT/keychain-helper"',
+    );
+    expect(cleanup).toContain('test -e "$KEYCHAIN_PARENT/work"');
+    expect(cleanup).toContain('Unowned work preserved; refusing cleanup.');
+    expect(
+      workflow.match(
+        /if: github.ref == 'refs\/heads\/main' && inputs.commit == github.sha/g,
+      ),
+    ).toHaveLength(2);
+    expect(
+      workflow.match(/run: bun scripts\/macos\/package-preflight.ts/g),
+    ).toHaveLength(2);
+    const bindings = [
+      ...workflow.matchAll(
+        /(APPLE_[A-Z_]+): \$\{\{ secrets\.(APPLE_[A-Z_]+) \}\}/g,
+      ),
+    ].map((match) => [match[1], match[2]]);
+    expect(bindings).toEqual([
+      ['APPLE_CERTIFICATE', 'APPLE_CERTIFICATE'],
+      ['APPLE_CERTIFICATE_PASSWORD', 'APPLE_CERTIFICATE_PASSWORD'],
+      ['APPLE_API_PRIVATE_KEY', 'APPLE_API_PRIVATE_KEY'],
+      ['APPLE_API_KEY', 'APPLE_API_KEY'],
+      ['APPLE_API_ISSUER', 'APPLE_API_ISSUER'],
+    ]);
+    const helper = readFileSync(
+      new URL('../../scripts/macos/signing-keychain.swift', import.meta.url),
+      'utf8',
+    );
+    expect(helper.indexOf('try verifyKeychainFormat(created)')).toBeLessThan(
+      helper.indexOf('SecPKCS12Import('),
+    );
+    expect(helper).not.toMatch(
+      /SecKeychainSetDefault|SecKeychainAddToSearchList/,
+    );
+  });
   test('workflow privilege, transfer and credential boundaries', () => {
     const workflow = readFileSync(
       new URL('../../.github/workflows/native-package.yml', import.meta.url),

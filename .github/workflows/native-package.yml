@@ -77,11 +77,42 @@ jobs:
           xcrun swiftc -O -target arm64-apple-macosx15.0 -D KEYCHAIN_TESTS -parse-as-library scripts/macos/signing-keychain.swift scripts/macos/signing-keychain-tests.swift -o "$ROOT/keychain-tests"
           "$ROOT/keychain-tests"
           xcrun swiftc -O -target arm64-apple-macosx15.0 -parse-as-library scripts/macos/signing-keychain.swift -o "$ROOT/keychain-helper"
+      - &keychain-parent
+        name: Fresh owned parent in the runner account's real Keychains directory
+        run: |
+          set +x
+          umask 077
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          python3 - <<'PY'
+          import json, os, pathlib, pwd, re, stat
+          try:
+              uid = os.geteuid()
+              home = pathlib.Path(pwd.getpwuid(uid).pw_dir)
+              assert uid != 0 and str(home) == os.environ['HOME'] and home.is_absolute()
+              base = home / 'Library' / 'Keychains'
+              for path in [*reversed(base.parents), base]:
+                  info = path.lstat()
+                  assert stat.S_ISDIR(info.st_mode) and not info.st_mode & 0o022
+                  assert path.resolve(strict=True) == path
+                  assert info.st_uid == (uid if path == home or home in path.parents else 0)
+              run, attempt = os.environ['GITHUB_RUN_ID'], os.environ['GITHUB_RUN_ATTEMPT']
+              assert re.fullmatch(r'[1-9][0-9]*', run) and re.fullmatch(r'[1-9][0-9]*', attempt)
+              parent = base / f'tau-ci-{run}-{attempt}'
+              parent.mkdir(mode=0o700)
+              info = parent.lstat()
+              assert info.st_uid == uid and stat.S_IMODE(info.st_mode) == 0o700
+              with (parent / '.tau-ci-parent.json').open('x') as marker:
+                  json.dump(dict(path=str(parent), uid=uid, device=info.st_dev, inode=info.st_ino), marker)
+              with open(os.environ['GITHUB_ENV'], 'a') as env:
+                  env.write(f'KEYCHAIN_PARENT={parent}\n')
+          except Exception:
+              raise SystemExit('Cannot create fresh runner-owned Keychain parent') from None
+          PY
       - name: Disposable runner synthetic Keychain acceptance (no production credentials)
         run: |
           set +x
           umask 077
-          bun scripts/macos/keychain-smoke.ts "$CANDIDATE_ROOT/keychain-helper" "$CANDIDATE_ROOT"
+          bun scripts/macos/keychain-smoke.ts "$CANDIDATE_ROOT/keychain-helper" "$KEYCHAIN_PARENT"
       - name: Build normal-feature optimized unsigned app LAST
         run: bun scripts/macos-release.ts prepare --version "$VERSION" --commit "$COMMIT" --output "$CANDIDATE_ROOT/unsigned"
       - name: Preserve unsigned files and modes in one archive
@@ -127,6 +158,7 @@ jobs:
           mkdir -m 700 "$ROOT/download"
           echo "CANDIDATE_ROOT=$ROOT" >> "$GITHUB_ENV"
           xcrun swiftc -O -target arm64-apple-macosx15.0 -parse-as-library scripts/macos/signing-keychain.swift -o "$ROOT/keychain-helper"
+      - *keychain-parent
       - name: Download only this run's immutable unsigned artifact ID
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -152,13 +184,13 @@ jobs:
         run: |
           set +x
           umask 077
-          bun scripts/macos-release.ts sign --version "$VERSION" --commit "$COMMIT" --input "$CANDIDATE_ROOT/unsigned" --output "$CANDIDATE_ROOT/final" --work "$CANDIDATE_ROOT/work" --keychain-helper "$CANDIDATE_ROOT/keychain-helper"
+          bun scripts/macos-release.ts sign --version "$VERSION" --commit "$COMMIT" --input "$CANDIDATE_ROOT/unsigned" --output "$CANDIDATE_ROOT/final" --work "$KEYCHAIN_PARENT/work" --keychain-helper "$CANDIDATE_ROOT/keychain-helper"
       - name: Always clean only marker-owned work; preserve unknown or pending failures
-        if: always() && env.CANDIDATE_ROOT != ''
+        if: always() && env.CANDIDATE_ROOT != '' && env.KEYCHAIN_PARENT != ''
         run: |
-          if test -f "$CANDIDATE_ROOT/work/.tau-release-owner.json"; then
-            bun scripts/macos-release.ts cleanup --work "$CANDIDATE_ROOT/work" --keychain-helper "$CANDIDATE_ROOT/keychain-helper"
-          elif test -e "$CANDIDATE_ROOT/work"; then
+          if test -f "$KEYCHAIN_PARENT/work/.tau-release-owner.json"; then
+            bun scripts/macos-release.ts cleanup --work "$KEYCHAIN_PARENT/work" --keychain-helper "$CANDIDATE_ROOT/keychain-helper"
+          elif test -e "$KEYCHAIN_PARENT/work"; then
             echo 'Unowned work preserved; refusing cleanup.' >&2
             exit 1
           fi
