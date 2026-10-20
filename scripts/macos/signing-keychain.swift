@@ -363,11 +363,11 @@ func createKeychain(_ path: String, credentials: Credentials) throws -> PublicId
             try securityCheck(SecKeychainCreate(path + "/" + keychainName, UInt32($0.count), $0.baseAddress!, false, nil, &keychain), "Create keychain")
         }
         guard let created = keychain else { throw SigningFailure("Missing created keychain") }
-        var settings = SecKeychainSettings(version: UInt32(SEC_KEYCHAIN_SETTINGS_VERS1), lockOnSleep: false, useLockInterval: false, lockInterval: 0)
-        try securityCheck(SecKeychainSetSettings(created, &settings), "Configure keychain")
         try password.withUnsafeBytes {
             try securityCheck(SecKeychainUnlock(created, UInt32($0.count), $0.baseAddress!, true), "Unlock keychain")
         }
+        var settings = SecKeychainSettings(version: UInt32(SEC_KEYCHAIN_SETTINGS_VERS1), lockOnSleep: false, useLockInterval: false, lockInterval: 0)
+        try securityCheck(SecKeychainSetSettings(created, &settings), "Configure keychain")
         var codesign: SecTrustedApplication?
         try securityCheck(SecTrustedApplicationCreateFromPath("/usr/bin/codesign", &codesign), "Trust codesign")
         guard let codesign else { throw SigningFailure("Missing codesign application") }
