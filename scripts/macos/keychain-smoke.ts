@@ -262,7 +262,8 @@ export function smoke(
       `${password}\n${password}\n`,
     );
     chmodSync(p12, 0o600);
-    const certificate = readFileSync(p12).toString('base64');
+    const encoded = readFileSync(p12).toString('base64');
+    const certificate = ` \n${encoded.match(/.{1,64}/g)!.join('\r\n')}\n `;
     const metadata = command(
       'helpercreate',
       [helper, 'create', owned],

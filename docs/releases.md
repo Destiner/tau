@@ -2,13 +2,14 @@
 
 ## Current boundary
 
-Native packaging infrastructure and signing-helper corrections are merged. Hosted
-synthetic acceptance now passes. The next candidate built and verified its unsigned
-input, but protected certificate import failed; owned cleanup succeeded. The specific
-helper failure remains unknown, and redacted import diagnostics require review before
-another attempt. Production identity **com.destiner.tau**, native version **0.3.0**,
-and use of the existing protected main-only GitHub `release` environment were
-explicitly chosen. **No signed candidate or packaged runtime acceptance has
+Native packaging infrastructure, signing-helper corrections and safe import
+diagnostics are merged. The latest candidate built and verified its unsigned input,
+but stopped with `Invalid base64 certificate` before PKCS12 import; owned cleanup
+succeeded. Line-wrapped encoding is a possible explanation, not a confirmed cause.
+ASCII-whitespace compatibility requires review and another protected attempt;
+credentials have not been inspected or changed. Production identity **com.destiner.tau**,
+native version **0.3.0**, and use of the existing protected main-only GitHub `release`
+environment were explicitly chosen. **No signed candidate or packaged runtime acceptance has
 been completed.** Implementation approval is not approval to merge, dispatch,
 publish or replace an installed app.
 
@@ -55,7 +56,11 @@ The helper uses deprecated file-Keychain APIs and explicitly resolved
 `SecKeychainItemSetAccessWithPassword` SPI. Compilation and pure Swift checks do not
 validate live ACL/import behavior. Synthetic hosted smoke must succeed before real
 Apple credentials are used; actual signing/notarization behavior remains unvalidated.
-There is no permissive fallback or credential-in-argv workaround.
+There is no permissive fallback or credential-in-argv workaround. Certificate input
+is standard base64 of the PKCS12 export. Only ASCII whitespace (HT/LF/VT/FF/CR/space)
+is removed to support line-wrapped exports; other non-base64 bytes remain errors.
+The password is not normalized, and the raw stdin JSON retains its 2 MiB limit
+before whitespace removal. Hosted synthetic acceptance exercises wrapped input.
 
 The disposable runner creates a fresh `0700`, marked parent beneath its account's
 real `~/Library/Keychains/tau-ci-<run>-<attempt>`. Only synthetic smoke and temporary
