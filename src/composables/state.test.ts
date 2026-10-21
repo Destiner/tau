@@ -57,6 +57,125 @@ describe('session tooltip source', () => {
   });
 });
 
+describe('canonical session owner', () => {
+  it('prefers a live owner over stopped, disconnected, disposed and stale ephemeral owners', async () => {
+    const {
+      state,
+      controllerForSession,
+      claimSessionOwnership,
+      createPhantomSession,
+    } = await import('./state');
+    const stale = testController({
+      key: 'stale',
+      draft: 'old draft',
+      sessionOwnerSequence: 100,
+    });
+    const owner = testController({
+      key: 'owner',
+      ready: true,
+      draft: 'new draft',
+    });
+    const disconnected = testController({
+      key: 'remote',
+      remoteDisconnected: true,
+      sessionOwnerSequence: 200,
+    });
+    const disposed = testController({
+      key: 'disposed',
+      ready: true,
+      disposed: true,
+      sessionOwnerSequence: 300,
+    });
+    state.controllers = [stale, disconnected, disposed, owner];
+    const row = createPhantomSession(stale.projectPath, stale.key);
+    row.id = stale.sessionId;
+    state.ephemeralSessions = [row];
+    expect(controllerForSession(owner.projectPath, owner.sessionId)?.key).toBe(
+      owner.key,
+    );
+    claimSessionOwnership(owner);
+    expect(owner.draft).toBe('new draft\n\nold draft');
+    expect(stale.draft).toBe('');
+    expect(disposed.disposed).toBe(true);
+  });
+
+  it('reconciles a selected stale view without rebinding a pending dialog', async () => {
+    const {
+      state,
+      claimSessionOwnership,
+      activeController,
+      activeExtensionDialog,
+    } = await import('./state');
+    const stale = testController({ key: 'stale', remoteDisconnected: true });
+    const owner = testController({ key: 'owner', ready: true, generation: 2 });
+    state.controllers = [stale, owner];
+    state.activeProjectPath = stale.projectPath;
+    state.activeSessionId = stale.sessionId;
+    state.activeControllerKey = stale.key;
+    state.extensionDialogs = [
+      {
+        key: 'approval',
+        requestId: 'approval',
+        method: 'confirm',
+        title: 'Approve?',
+        draft: 'unfinished answer',
+        submitting: false,
+        error: '',
+        controllerKey: owner.key,
+        runtimeId: owner.runtimeId,
+        generation: owner.generation,
+        projectName: 'Project',
+        sessionName: 'Session',
+      },
+    ];
+    claimSessionOwnership(owner);
+    expect(state.activeControllerKey).toBe(owner.key);
+    expect(activeController.value?.key).toBe(owner.key);
+    expect(activeExtensionDialog.value).toMatchObject({
+      controllerKey: owner.key,
+      generation: 2,
+      draft: 'unfinished answer',
+    });
+    expect(state.extensionDialogs).toHaveLength(1);
+    expect(stale.remoteDisconnected).toBe(true);
+  });
+
+  it('uses identity adoption rather than navigation when both runtimes are live or starting', async () => {
+    const {
+      state,
+      controllerForSession,
+      claimSessionOwnership,
+      touchController,
+      reconcileSessionOwner,
+    } = await import('./state');
+    const first = testController({
+      key: 'first',
+      ready: true,
+      draft: 'first draft',
+    });
+    const second = testController({
+      key: 'second',
+      starting: true,
+      draft: 'second draft',
+    });
+    state.controllers = [first, second];
+    claimSessionOwnership(first);
+    claimSessionOwnership(second);
+    touchController(first);
+    expect(controllerForSession(first.projectPath, first.sessionId)?.key).toBe(
+      second.key,
+    );
+    expect(first.draft).toBe('first draft');
+    expect(second.draft).toBe('second draft');
+    first.ready = false;
+    reconcileSessionOwner(second);
+    expect(second.draft).toBe('second draft\n\nfirst draft');
+    reconcileSessionOwner(second);
+    expect(second.draft).toBe('second draft\n\nfirst draft');
+    expect(second.starting).toBe(true);
+  });
+});
+
 describe('classifyControllerLifecycle', () => {
   it('classifies idle, ready, streaming and precedence of active states', async () => {
     const { classifyControllerLifecycle } = await import('./state');

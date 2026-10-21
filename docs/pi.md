@@ -54,6 +54,17 @@ Remote Pi runtimes use dedicated SSH connections with 15-second server-alive pro
 
 When an established remote connection exits, Tau keeps the session, draft, and interrupted transcript, clears live activity, and offers a session-local **Reconnect** action. Selecting the session does not reconnect it, and reconnecting never resends a prompt or extension response. A responsive SSH server cannot reveal a Pi process that is itself hung, and reopening restores Pi's persisted history rather than lost in-memory extension continuations.
 
+### Live ownership of saved sessions
+
+When a workflow command resumes an existing saved identity in a different
+runtime, that live controller owns the saved row ahead of stopped or disconnected
+copies. If two runtimes are live or starting, the most recent identity adoption
+wins; navigation and late activity do not change ownership. Tau does not stop the
+other runtime or move its extension dialogs: responses remain bound to the
+originating controller and generation. Disposed controllers cannot own rows.
+Drafts from inactive duplicates are appended to the owner's composer without
+replacing its existing draft; drafts in other live runtimes remain untouched.
+
 ### Sessions Tau had archived
 
 A workflow resumed by its own command re-attaches to the phase session that is already on disk, which may be a session the user archived in the meantime. Registering that identity is Tau adopting a session Pi handed it, so the row comes back out of the archive: a session Tau is showing has to be one the user can select and return to.
