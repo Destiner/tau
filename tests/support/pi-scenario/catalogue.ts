@@ -3,6 +3,7 @@ import commandListScrolling from './command-list-scrolling';
 import crossProjectSidebarMetadataActions from './cross-project-sidebar-metadata-actions';
 import delayedSuccessorVerification from './delayed-successor-verification';
 import emptyWorkspace from './empty-workspace';
+import paletteSettingsScenarios from './palette-settings';
 import phantomCommandOnly from './phantom-command-only';
 import phantomCommandRegistration from './phantom-command-registration';
 import phantomCommandReplacement from './phantom-command-replacement';
@@ -49,6 +50,7 @@ import type { PiScenario, PiScenarioMetadata } from './index';
 
 const scenarios = [
   emptyWorkspace,
+  ...paletteSettingsScenarios,
   commandListScrolling,
   crossProjectSidebarMetadataActions,
   delayedSuccessorVerification,

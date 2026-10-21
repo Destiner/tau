@@ -31,6 +31,286 @@ async function openPalette(page: Page): Promise<void> {
   ).toBeVisible();
 }
 
+type SettingsPage = 'Choose Model' | 'Choose Thinking Effort';
+
+async function openSettings(
+  page: Page,
+  title: SettingsPage,
+  direct = true,
+): Promise<Locator> {
+  if (direct) {
+    await page.keyboard.press(
+      await modShortcut(page, title === 'Choose Model' ? 'Shift+m' : 'Shift+e'),
+    );
+  } else {
+    await openPalette(page);
+    await openNestedPage(page, title);
+  }
+  const search = page.getByRole('combobox', { name: title, exact: true });
+  await expect(search).toBeFocused();
+  await expect(search).toHaveValue('');
+  return search;
+}
+
+async function expectCandidate(
+  page: Page,
+  search: Locator,
+  name: string,
+): Promise<void> {
+  const row = page.getByRole('option', { name, exact: true });
+  await expect(row).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('option', { selected: true })).toHaveCount(1);
+  await expect(search).toHaveAttribute(
+    'aria-activedescendant',
+    (await row.getAttribute('id'))!,
+  );
+  await expect(row).toBeInViewport();
+  await expect(search).toBeFocused();
+}
+
+async function loadSettingsScenario(
+  page: Page,
+  name = 'palette-settings',
+): Promise<Locator> {
+  await page.goto(`/?test-scenario=${name}`);
+  const composer = page.getByRole('textbox', { name: 'Message Pi' });
+  await expect(composer).toBeEnabled();
+  return composer;
+}
+
+for (const [title, current, other, applied] of [
+  ['Choose Model', 'Beta Shared', 'Alpha Shared', 'Model'],
+  ['Choose Thinking Effort', 'High', 'Low', 'Thinking Effort'],
+] as const) {
+  test(`settings initial selection: ${title} uses the session value on every entry`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 900, height: 360 });
+    const composer = await loadSettingsScenario(page);
+    await composer.fill('Preserve my settings draft');
+    for (const direct of [true, false]) {
+      const search = await openSettings(page, title, direct);
+      await expectCandidate(page, search, current);
+      await expect(
+        page.getByRole('option', { name: other, exact: true }),
+      ).toHaveAttribute('aria-selected', 'false');
+      await search.press('ArrowUp');
+      await expectCandidate(page, search, other);
+      await search.press('ArrowUp');
+      await expectCandidate(
+        page,
+        search,
+        title === 'Choose Model' ? 'Gamma' : 'Off',
+      );
+      await page.getByRole('option', { name: other, exact: true }).hover();
+      await expectCandidate(page, search, other);
+      await page.mouse.move(0, 0);
+      await search.press('Escape');
+      await expect(
+        page.getByRole('combobox', { name: applied, exact: true }),
+      ).toHaveText(current);
+      await expect(composer).toBeFocused();
+      await expect(composer).toHaveValue('Preserve my settings draft');
+    }
+    const search = await openSettings(page, title, false);
+    await expectCandidate(page, search, current);
+    await page.getByRole('button', { name: 'Back', exact: true }).click();
+    const root = page.getByRole('combobox', {
+      name: 'Command Palette',
+      exact: true,
+    });
+    await expect(root).toHaveValue(title);
+    await expect(page.getByRole('option', { selected: true })).toContainText(
+      title,
+    );
+    await root.press('Enter');
+    await expectCandidate(page, search, current);
+    await search.press('Backspace');
+    await expect(root).toHaveValue(title);
+    await root.press('Enter');
+    await expectCandidate(page, search, current);
+    await search.press('Escape');
+  });
+
+  test(`settings navigation: ${title} filters and moves candidates without applying`, async ({
+    page,
+  }) => {
+    const composer = await loadSettingsScenario(page);
+    await composer.fill('Preserve my navigation draft');
+    const search = await openSettings(page, title);
+    await page.getByRole('option', { name: current, exact: true }).hover();
+    await expectCandidate(page, search, current);
+    await page.mouse.move(0, 0);
+    await search.press('ArrowUp');
+    await expectCandidate(page, search, other);
+    await search.press('ArrowUp');
+    await expectCandidate(
+      page,
+      search,
+      title === 'Choose Model' ? 'Gamma' : 'Off',
+    );
+    await search.fill(other);
+    await expectCandidate(page, search, other);
+    await search.fill('zzzz-no-setting');
+    await expect(page.getByRole('option')).toHaveCount(0);
+    await expect(search).not.toHaveAttribute('aria-activedescendant');
+    await search.press('Enter');
+    await expect(search).toBeVisible();
+    await search.fill('');
+    await expectCandidate(page, search, other);
+    await search.press('Escape');
+    await expect(composer).toBeFocused();
+    await expect(composer).toHaveValue('Preserve my navigation draft');
+    await expect(
+      page.getByRole('combobox', { name: applied, exact: true }),
+    ).toHaveText(current);
+  });
+}
+
+test('settings initial selection: supported off is a nonfirst candidate', async ({
+  page,
+}) => {
+  await loadSettingsScenario(page, 'palette-settings-off');
+  const search = await openSettings(page, 'Choose Thinking Effort');
+  await expect(page.getByRole('option').allTextContents()).resolves.toEqual([
+    'Low',
+    'High',
+    'Off',
+  ]);
+  await expectCandidate(page, search, 'Off');
+});
+
+test('settings confirmations use exact model provider and reopen with newly applied values', async ({
+  page,
+}) => {
+  const composer = await loadSettingsScenario(page, 'palette-settings-confirm');
+  await composer.fill('Keep draft through confirmations');
+  let search = await openSettings(page, 'Choose Model');
+  await search.fill('Alpha');
+  await search.press('Enter');
+  await expect(page.getByRole('dialog', { name: 'Choose Model' })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole('combobox', { name: 'Model', exact: true }),
+  ).toHaveText('Alpha Shared');
+  await expect(composer).toBeFocused();
+  search = await openSettings(page, 'Choose Model');
+  await expectCandidate(page, search, 'Alpha Shared');
+  await search.press('Escape');
+  await openSettings(page, 'Choose Thinking Effort', false);
+  await page.getByRole('option', { name: 'Off', exact: true }).click();
+  await expect(
+    page.getByRole('dialog', { name: 'Choose Thinking Effort' }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('combobox', { name: 'Thinking Effort', exact: true }),
+  ).toHaveText('Off');
+  await expect(composer).toBeFocused();
+  search = await openSettings(page, 'Choose Thinking Effort');
+  await expectCandidate(page, search, 'Off');
+  await search.press('Escape');
+  await expect(composer).toHaveValue('Keep draft through confirmations');
+});
+
+test('settings unavailable values fall back without applying or injecting options', async ({
+  page,
+}) => {
+  await loadSettingsScenario(page, 'palette-settings-unavailable');
+  for (const [title, fallback, missing, applied] of [
+    ['Choose Model', 'Alpha Shared', 'Unavailable', 'Model'],
+    ['Choose Thinking Effort', 'Low', 'Medium', 'Thinking Effort'],
+  ] as const) {
+    const search = await openSettings(page, title);
+    await expectCandidate(page, search, fallback);
+    await expect(
+      page.getByRole('option', { name: missing, exact: true }),
+    ).toHaveCount(0);
+    await search.press('Escape');
+    await expect(
+      page.getByRole('combobox', { name: applied, exact: true }),
+    ).toHaveText(missing);
+  }
+});
+
+test('settings empty catalogue has no confirmable row and no effort command', async ({
+  page,
+}) => {
+  const composer = await loadSettingsScenario(page, 'palette-settings-empty');
+  const search = await openSettings(page, 'Choose Model');
+  await expect(page.getByRole('option')).toHaveCount(0);
+  await expect(search).not.toHaveAttribute('aria-activedescendant');
+  await expect(
+    page.getByText('No models available', { exact: true }),
+  ).toBeVisible();
+  await search.press('Enter');
+  await expect(search).toBeVisible();
+  await search.press('Escape');
+  await openPalette(page);
+  await expect(
+    page.getByRole('option', { name: /Choose Thinking Effort/ }),
+  ).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(composer).toBeFocused();
+});
+
+test('settings initial selection: session switches isolate model, effort, and drafts', async ({
+  page,
+}) => {
+  const composer = await loadSettingsScenario(
+    page,
+    'palette-settings-sessions',
+  );
+  await composer.fill('Main draft survives');
+  const candidates: string[] = [];
+  for (const [index, [session, model, effort]] of (
+    [
+      ['Main', 'Beta Shared', 'High'],
+      ['Backup', 'Gamma', 'Off'],
+      ['Main', 'Beta Shared', 'High'],
+    ] as const
+  ).entries()) {
+    if (index > 0) {
+      await page
+        .locator('.session-row', { hasText: session })
+        .locator('.session-select')
+        .click();
+      await expect(
+        page.getByRole('heading', { name: session, exact: true }),
+      ).toBeVisible();
+      await expect(composer).toBeEnabled();
+    }
+    for (const [title, candidate] of [
+      ['Choose Model', model],
+      ['Choose Thinking Effort', effort],
+    ] as const) {
+      const search = await openSettings(page, title);
+      await expect(page.getByRole('option', { selected: true })).toHaveCount(1);
+      candidates.push(
+        await page.getByRole('option', { selected: true }).innerText(),
+      );
+      await expect(
+        page.getByRole('combobox', { name: title, exact: true }),
+      ).toBeFocused();
+      await expect(
+        page.getByRole('option', { name: candidate, exact: true }),
+      ).toBeVisible();
+      await search.press('ArrowDown');
+      await search.press('Escape');
+    }
+    if (session === 'Backup') await expect(composer).toHaveValue('');
+    else await expect(composer).toHaveValue('Main draft survives');
+  }
+  expect(candidates).toEqual([
+    'Beta Shared',
+    'High',
+    'Gamma',
+    'Off',
+    'Beta Shared',
+    'High',
+  ]);
+});
+
 test('places the palette 15% down and keeps it inside short windows', async ({
   page,
 }) => {
