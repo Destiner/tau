@@ -55,6 +55,7 @@ import {
   watch,
 } from 'vue';
 
+import { scopeDiagramSvg } from '../../lib/diagram-svg';
 import {
   filePreviewDirectoryForPath,
   type FilePreviewDescriptor,
@@ -230,12 +231,13 @@ function diagramBounds(svg: SVGSVGElement): {
 }
 
 function openDiagram(button: HTMLElement): void {
-  const svg = button.parentElement?.querySelector('svg');
+  const svg =
+    button.parentElement?.querySelector<SVGSVGElement>(':scope > svg');
   if (!svg) return;
   const bounds = diagramBounds(svg);
   if (!(bounds.width > 0 && bounds.height > 0)) return;
   viewerTrigger = button;
-  viewer.value = { svg: svg.outerHTML, ...bounds };
+  viewer.value = { svg: scopeDiagramSvg(svg.outerHTML), ...bounds };
 }
 
 /** The viewer hands focus back to the button that opened it, if it is still here. */
@@ -855,7 +857,7 @@ onBeforeUnmount(() => {
  * diagram wider than the column scales down whole, which is how a picture is
  * read, instead of scrolling sideways the way its source would.
  */
-.markdown :deep(.diagram svg) {
+.markdown :deep(.diagram > svg) {
   display: block;
   max-width: 100%;
   height: auto;
