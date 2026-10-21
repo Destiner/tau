@@ -143,6 +143,7 @@ pub const TAURI_INVOKE_COMMANDS: &[&str] = &[
     "import_project",
     "import_remote_project",
     "remove_project",
+    "rename_project",
     "set_active_project",
     "set_project_collapsed",
     "reorder_projects",
