@@ -884,6 +884,13 @@ function setActiveSessionView(
   session: SessionSummary,
   controller: SessionController,
 ): void {
+  if (state.workspace) {
+    state.workspace.activeProjectPath = project.path;
+    for (const candidate of state.workspace.projects)
+      candidate.selected = candidate.path === project.path;
+  }
+  for (const candidate of projectSessions(project))
+    candidate.selected = candidate.id === session.id;
   state.activeProjectPath = project.path;
   state.activeSessionId = session.id;
   state.activeSessionPath = session.path;

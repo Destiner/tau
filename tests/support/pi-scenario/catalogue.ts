@@ -8,6 +8,7 @@ import phantomCommandRegistration from './phantom-command-registration';
 import phantomCommandReplacement from './phantom-command-replacement';
 import phantomFirstPromptRegistration from './phantom-first-prompt-registration';
 import planImplementReplacement from './plan-implement-replacement';
+import projectOpening from './project-opening';
 import savedSessionAutoRetry from './saved-session-auto-retry';
 import savedSessionCommandReplacement from './saved-session-command-replacement';
 import savedSessionCompaction from './saved-session-compaction';
@@ -65,6 +66,7 @@ const scenarios = [
   savedSessionStaleGeneration,
   savedSessionCommandReplacement,
   planImplementReplacement,
+  projectOpening,
   phantomCommandRegistration,
   phantomCommandReplacement,
   phantomFirstPromptRegistration,
