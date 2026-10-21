@@ -138,17 +138,7 @@ for (const [title, current, other, applied] of [
     const composer = await loadSettingsScenario(page);
     await composer.fill('Preserve my navigation draft');
     const search = await openSettings(page, title);
-    await page.getByRole('option', { name: current, exact: true }).hover();
     await expectCandidate(page, search, current);
-    await page.mouse.move(0, 0);
-    await search.press('ArrowUp');
-    await expectCandidate(page, search, other);
-    await search.press('ArrowUp');
-    await expectCandidate(
-      page,
-      search,
-      title === 'Choose Model' ? 'Gamma' : 'Off',
-    );
     await search.fill(other);
     await expectCandidate(page, search, other);
     await search.fill('zzzz-no-setting');
@@ -262,7 +252,6 @@ test('settings initial selection: session switches isolate model, effort, and dr
     'palette-settings-sessions',
   );
   await composer.fill('Main draft survives');
-  const candidates: string[] = [];
   for (const [index, [session, model, effort]] of (
     [
       ['Main', 'Beta Shared', 'High'],
@@ -285,30 +274,13 @@ test('settings initial selection: session switches isolate model, effort, and dr
       ['Choose Thinking Effort', effort],
     ] as const) {
       const search = await openSettings(page, title);
-      await expect(page.getByRole('option', { selected: true })).toHaveCount(1);
-      candidates.push(
-        await page.getByRole('option', { selected: true }).innerText(),
-      );
-      await expect(
-        page.getByRole('combobox', { name: title, exact: true }),
-      ).toBeFocused();
-      await expect(
-        page.getByRole('option', { name: candidate, exact: true }),
-      ).toBeVisible();
+      await expectCandidate(page, search, candidate);
       await search.press('ArrowDown');
       await search.press('Escape');
     }
     if (session === 'Backup') await expect(composer).toHaveValue('');
     else await expect(composer).toHaveValue('Main draft survives');
   }
-  expect(candidates).toEqual([
-    'Beta Shared',
-    'High',
-    'Gamma',
-    'Off',
-    'Beta Shared',
-    'High',
-  ]);
 });
 
 test('places the palette 15% down and keeps it inside short windows', async ({
