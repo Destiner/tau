@@ -468,7 +468,7 @@ onBeforeUnmount(() => {
   position: fixed;
   z-index: 30;
   overflow: hidden;
-  background: var(--preview-canvas);
+  background: var(--panel);
   color: var(--text);
   inset: 0;
 }
@@ -483,8 +483,8 @@ onBeforeUnmount(() => {
   height: 46px;
   background: linear-gradient(
     to bottom,
-    color-mix(in srgb, var(--preview-canvas) 96%, transparent),
-    color-mix(in srgb, var(--preview-canvas) 70%, transparent),
+    color-mix(in srgb, var(--panel) 96%, transparent),
+    color-mix(in srgb, var(--panel) 70%, transparent),
     transparent
   );
   pointer-events: none;
@@ -662,7 +662,7 @@ onBeforeUnmount(() => {
   bottom: 10px;
   padding: 3px 7px;
   border-radius: var(--radius-sm);
-  background: var(--preview-canvas);
+  background: var(--panel);
   box-shadow: 0 0 0 1px var(--border);
   color: var(--muted);
   font-size: var(--text-xs);
