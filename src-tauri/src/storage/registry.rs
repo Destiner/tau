@@ -50,12 +50,19 @@ pub(super) fn mark_archive_intent(project: &str, session: &str) -> Result<(), St
 pub(super) fn mutate_projects(
     mutation: impl FnOnce(&mut ProjectRegistry) -> Result<(), String>,
 ) -> Result<ProjectRegistry, String> {
+    mutate_projects_at(&project_registry_path()?, mutation)
+}
+
+pub(super) fn mutate_projects_at(
+    path: &Path,
+    mutation: impl FnOnce(&mut ProjectRegistry) -> Result<(), String>,
+) -> Result<ProjectRegistry, String> {
     let _write_guard = lock_storage_writes()?;
-    let mut registry = load_project_registry()?;
+    let mut registry: ProjectRegistry = read_json_or_default(path)?;
     let before = serde_json::to_vec(&registry).map_err(|error| error.to_string())?;
     mutation(&mut registry)?;
     if serde_json::to_vec(&registry).map_err(|error| error.to_string())? != before {
-        write_json_atomic(&project_registry_path()?, &registry)?;
+        write_json_atomic(path, &registry)?;
     }
     Ok(registry)
 }

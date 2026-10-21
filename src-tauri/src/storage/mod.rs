@@ -4,7 +4,7 @@ mod registry;
 mod sessions;
 
 use projects::{
-    import_project_inner, import_remote_project_inner, remove_project_inner,
+    import_project_inner, import_remote_project_inner, remove_project_inner, rename_project_inner,
     reorder_projects_inner, set_active_project_inner, set_project_collapsed_inner, snapshot,
 };
 use registry::{archive_revision, load_project_registry, mark_archive_intent};
@@ -60,6 +60,19 @@ pub async fn import_remote_project(
         import_remote_project_inner(connection_string, working_directory, host)
     })
     .await
+}
+
+#[tauri::command]
+pub async fn rename_project(
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
+    path: String,
+    name: String,
+) -> Result<String, String> {
+    let _span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "rename_project"));
+    run_storage_worker(move || rename_project_inner(path, name)).await
 }
 
 #[tauri::command]

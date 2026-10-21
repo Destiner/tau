@@ -864,6 +864,19 @@ function installPiScenarioAdapter(scenarioName: string): void {
             null,
         );
       }
+      if (command === 'rename_project') {
+        const project = workspace.projects.find(
+          (candidate) =>
+            candidate.path === requiredString(args, 'path', command),
+        );
+        if (!project) {
+          throw new Error('rename_project used an unknown fixture project.');
+        }
+        const name = normalizedProjectName(args, command);
+        count(command);
+        project.name = name;
+        return name;
+      }
       if (
         command === 'set_project_collapsed' &&
         scenarioName === 'project-opening'
@@ -1516,6 +1529,20 @@ function requiredString(
     throw new Error(`${command}.${field} must be a non-empty string.`);
   }
   return value;
+}
+
+function normalizedProjectName(
+  args: Record<string, unknown>,
+  command: string,
+): string {
+  const name = requiredString(args, 'name', command).trim();
+  if (!name) {
+    throw new Error(`${command}.name must not be blank.`);
+  }
+  if (name.length > 240) {
+    throw new Error(`${command}.name must not exceed 240 UTF-16 units.`);
+  }
+  return name;
 }
 
 function requireOwner(

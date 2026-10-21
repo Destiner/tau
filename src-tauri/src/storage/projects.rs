@@ -1,5 +1,5 @@
 use super::{
-    registry::mutate_projects,
+    registry::{mutate_projects, mutate_projects_at, project_registry_path},
     sessions::{list_project_sessions, list_remote_sessions},
 };
 use crate::{
@@ -66,24 +66,22 @@ fn project_summary(
     project: &ProjectRecord,
     active_project_path: &str,
 ) -> Result<ProjectSummary, String> {
-    let (name, working_directory, connection_string, sessions) =
+    let (working_directory, connection_string, sessions) =
         if let Some(remote) = project.remote.as_ref() {
             (
-                remote_project_name(remote),
                 remote.working_directory.clone(),
                 Some(remote.connection_string.clone()),
                 list_remote_sessions(remote),
             )
         } else {
             (
-                project_name(&project.path),
                 project.path.clone(),
                 None,
                 list_project_sessions(&project.path)?,
             )
         };
     Ok(ProjectSummary {
-        name,
+        name: effective_project_name(project),
         path: project.path.clone(),
         working_directory,
         connection_string,
@@ -116,7 +114,7 @@ fn register_remote_project(
     connection_string: String,
     working_directory: String,
     host: String,
-) {
+) -> String {
     if let Some(project) = registry.projects.iter_mut().find(|project| {
         project.remote.as_ref().is_some_and(|remote| {
             remote.connection_string == connection_string
@@ -126,10 +124,11 @@ fn register_remote_project(
         if let Some(remote) = project.remote.as_mut() {
             remote.host = host;
         }
-        return;
+        return project.path.clone();
     }
 
     registry.projects.push(ProjectRecord {
+        name: Some(remote_default_name(&working_directory, &host)),
         path: path.to_string(),
         collapsed: false,
         remote: Some(RemoteProjectRecord {
@@ -140,14 +139,28 @@ fn register_remote_project(
             sessions: Vec::new(),
         }),
     });
+    path.to_string()
+}
+
+fn effective_project_name(project: &ProjectRecord) -> String {
+    project.name.clone().unwrap_or_else(|| {
+        project
+            .remote
+            .as_ref()
+            .map_or_else(|| project_name(&project.path), remote_project_name)
+    })
 }
 
 fn remote_project_name(remote: &RemoteProjectRecord) -> String {
-    Path::new(&remote.working_directory)
+    remote_default_name(&remote.working_directory, &remote.host)
+}
+
+fn remote_default_name(working_directory: &str, host: &str) -> String {
+    Path::new(working_directory)
         .file_name()
         .and_then(|name| name.to_str())
         .filter(|name| !name.is_empty())
-        .unwrap_or(&remote.host)
+        .unwrap_or(host)
         .to_string()
 }
 
@@ -163,6 +176,7 @@ fn project_name(path: &str) -> String {
 fn register_local_project(registry: &mut ProjectRegistry, path: &str) {
     if !registry.projects.iter().any(|project| project.path == path) {
         registry.projects.push(ProjectRecord {
+            name: Some(project_name(path)),
             path: path.to_string(),
             collapsed: false,
             remote: None,
@@ -204,8 +218,9 @@ pub(super) fn import_remote_project_inner(
     }
     let new_path = remote_project_path(&connection_string, &working_directory)?;
 
+    let mut imported_path = new_path.clone();
     let registry = mutate_projects(|registry| {
-        register_remote_project(
+        imported_path = register_remote_project(
             registry,
             &new_path,
             connection_string,
@@ -217,9 +232,43 @@ pub(super) fn import_remote_project_inner(
     let project = registry
         .projects
         .iter()
-        .find(|project| project.path == new_path)
+        .find(|project| project.path == imported_path)
         .ok_or_else(|| "The remote project is no longer available.".to_string())?;
     project_summary(project, &registry.active_project_path)
+}
+
+fn normalized_project_name(name: &str) -> Result<String, String> {
+    // Match JavaScript String.trim so browser validation and native persistence agree.
+    let name = name.trim_matches(|character: char| {
+        matches!(character, '\u{0009}'..='\u{000d}' | '\u{0020}' | '\u{00a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}')
+    });
+    if name.is_empty() {
+        return Err("The project name must not be blank.".into());
+    }
+    if name.encode_utf16().count() > 240 {
+        return Err("The project name must not exceed 240 UTF-16 units.".into());
+    }
+    Ok(name.to_string())
+}
+
+pub(super) fn rename_project_inner(path: String, name: String) -> Result<String, String> {
+    rename_project_at(&project_registry_path()?, &path, &name)
+}
+
+fn rename_project_at(registry_path: &Path, path: &str, name: &str) -> Result<String, String> {
+    let name = normalized_project_name(name)?;
+    mutate_projects_at(registry_path, |registry| {
+        let project = registry
+            .projects
+            .iter_mut()
+            .find(|project| project.path == path)
+            .ok_or_else(|| "The project is not imported in Tau.".to_string())?;
+        if effective_project_name(project) != name {
+            project.name = Some(name.clone());
+        }
+        Ok(())
+    })?;
+    Ok(name)
 }
 
 pub(super) fn remove_project_inner(path: String) -> Result<(), String> {
@@ -269,6 +318,193 @@ mod tests {
     use crate::models::RemoteSessionRecord;
     use std::ffi::{OsStr, OsString};
 
+    fn legacy_registry() -> ProjectRegistry {
+        serde_json::from_str(r#"{
+            "version":1,"activeProjectPath":"/unavailable/project",
+            "projects":[
+                {"path":"/unavailable/project","collapsed":true},
+                {"path":"ssh:legacy-identity","collapsed":false,"remote":{
+                    "connectionString":"ssh offline.invalid","workingDirectory":"/remote/work",
+                    "host":"offline.invalid","activeSessionId":"active",
+                    "sessions":[
+                        {"id":"active","path":"/remote/active.jsonl","name":"Active","archived":false,"lastActive":42,"sortAt":43},
+                        {"id":"archived","path":"/remote/archived.jsonl","archived":true,"lastActive":12,"sortAt":13}
+                    ]
+                }}
+            ]
+        }"#).unwrap()
+    }
+
+    #[test]
+    fn legacy_project_names_resolve_without_migration() {
+        let registry = legacy_registry();
+        assert_eq!(effective_project_name(&registry.projects[0]), "project");
+        assert_eq!(effective_project_name(&registry.projects[1]), "work");
+        for project in &registry.projects {
+            assert!(project.name.is_none());
+            assert!(serde_json::to_value(project).unwrap().get("name").is_none());
+        }
+        let mut local = registry.projects[0].clone();
+        local.path = "/".into();
+        assert_eq!(effective_project_name(&local), "Project");
+        let mut remote = registry.projects[1].clone();
+        remote.remote.as_mut().unwrap().working_directory = "/".into();
+        assert_eq!(effective_project_name(&remote), "offline.invalid");
+        let summary = project_summary(&registry.projects[1], "ssh:legacy-identity").unwrap();
+        assert_eq!(summary.name, "work");
+        assert!(summary.selected);
+        assert_eq!(summary.sessions.len(), 2);
+    }
+
+    #[test]
+    fn rename_persists_only_names_and_preserves_session_files() {
+        use super::super::registry::{read_json_or_default, write_json_atomic};
+        use std::fs;
+        let profile = crate::profile::StorageProfile::ephemeral().unwrap();
+        let path = profile.data_dir().join("projects.json");
+        let registry = legacy_registry();
+        write_json_atomic(&path, &registry).unwrap();
+        let session_dir = profile.session_dir(&registry.projects[0].path, Path::new(""));
+        fs::create_dir_all(&session_dir).unwrap();
+        let session_registry = session_dir.join(crate::profile::SESSION_REGISTRY_FILENAME);
+        let transcript = session_dir.join("pi.jsonl");
+        let session_bytes = b"{\"activeSessionId\":\"active\",\"sessions\":[]}\n";
+        let transcript_bytes = b"{\"type\":\"session\",\"id\":\"active\"}\n";
+        fs::write(&session_registry, session_bytes).unwrap();
+        fs::write(&transcript, transcript_bytes).unwrap();
+        let session_identity = session_dir.clone();
+        for project in &registry.projects {
+            assert_eq!(
+                rename_project_at(&path, &project.path, "  Shared 🦀 / name  ").unwrap(),
+                "Shared 🦀 / name"
+            );
+        }
+        let reloaded: ProjectRegistry = read_json_or_default(&path).unwrap();
+        let mut expected = serde_json::to_value(&registry).unwrap();
+        for project in expected["projects"].as_array_mut().unwrap() {
+            project["name"] = serde_json::json!("Shared 🦀 / name");
+        }
+        assert_eq!(serde_json::to_value(&reloaded).unwrap(), expected);
+        assert_eq!(fs::read(session_registry).unwrap(), session_bytes);
+        assert_eq!(fs::read(transcript).unwrap(), transcript_bytes);
+        assert_eq!(
+            profile.session_dir(&reloaded.projects[0].path, Path::new("")),
+            session_identity
+        );
+        assert_eq!(
+            project_summary(&reloaded.projects[1], "").unwrap().name,
+            "Shared 🦀 / name"
+        );
+        let reimported = mutate_projects_at(&path, |registry| {
+            register_local_project(registry, "/unavailable/project");
+            let identity = register_remote_project(
+                registry,
+                "ssh:newly-encoded-identity",
+                "ssh offline.invalid".into(),
+                "/remote/work".into(),
+                "refreshed-host".into(),
+            );
+            assert_eq!(identity, "ssh:legacy-identity");
+            Ok(())
+        })
+        .unwrap();
+        expected["projects"][1]["remote"]["host"] = serde_json::json!("refreshed-host");
+        assert_eq!(serde_json::to_value(&reimported).unwrap(), expected);
+        let fresh: ProjectRegistry = read_json_or_default(&path).unwrap();
+        assert_eq!(serde_json::to_value(&fresh).unwrap(), expected);
+    }
+
+    #[test]
+    fn rename_validation_and_exact_identity_never_write_on_error_or_noop() {
+        use std::fs;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("projects.json");
+        // Deliberately preserve legacy formatting: even a no-op must not rewrite it.
+        let bytes = b"{ \"projects\": [{\"path\":\"/missing/project\"}] }\n";
+        fs::write(&path, bytes).unwrap();
+        fs::create_dir(path.with_extension("tmp")).unwrap();
+        assert_eq!(
+            rename_project_at(&path, "/missing/project", " project ").unwrap(),
+            "project"
+        );
+        for name in ["", " \t\n\u{2003}", &"a".repeat(241), &"🦀".repeat(121)] {
+            assert!(rename_project_at(&path, "/missing/project", name).is_err());
+        }
+        for identity in ["/missing/project/", "/missing/./project", "unknown"] {
+            assert!(rename_project_at(&path, identity, "Valid").is_err());
+        }
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert!(!dir.path().join("unknown").exists());
+        // A directory at the atomic writer's temporary path deterministically fails.
+        assert!(rename_project_at(&path, "/missing/project", "Changed").is_err());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        fs::remove_dir(path.with_extension("tmp")).unwrap();
+        let limit = "🦀".repeat(120);
+        assert_eq!(
+            rename_project_at(&path, "/missing/project", &limit).unwrap(),
+            limit
+        );
+        assert_eq!(
+            normalized_project_name(&format!(" {} ", "a".repeat(240)))
+                .unwrap()
+                .len(),
+            240
+        );
+        assert_eq!(
+            normalized_project_name("  東京 / : .  ").unwrap(),
+            "東京 / : ."
+        );
+        assert_eq!(
+            normalized_project_name("\u{feff}Name\u{feff}").unwrap(),
+            "Name"
+        );
+        assert!(normalized_project_name("\u{feff}").is_err());
+        assert_eq!(normalized_project_name("\u{0085}").unwrap(), "\u{0085}");
+    }
+
+    #[test]
+    fn concurrent_renames_preserve_other_registry_mutations() {
+        use super::super::registry::{read_json_or_default, write_json_atomic};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("projects.json");
+        write_json_atomic(&path, &legacy_registry()).unwrap();
+        let barrier = std::sync::Barrier::new(3);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                barrier.wait();
+                rename_project_at(&path, "/unavailable/project", "Local").unwrap();
+            });
+            scope.spawn(|| {
+                barrier.wait();
+                rename_project_at(&path, "ssh:legacy-identity", "Remote").unwrap();
+            });
+            barrier.wait();
+            mutate_projects_at(&path, |registry| {
+                registry.active_project_path = "ssh:legacy-identity".into();
+                registry.projects[1].collapsed = true;
+                Ok(())
+            })
+            .unwrap();
+        });
+        let registry: ProjectRegistry = read_json_or_default(&path).unwrap();
+        assert_eq!(registry.projects[0].name.as_deref(), Some("Local"));
+        assert_eq!(registry.projects[1].name.as_deref(), Some("Remote"));
+        assert_eq!(registry.active_project_path, "ssh:legacy-identity");
+        assert!(registry.projects[1].collapsed);
+    }
+
+    #[test]
+    fn rename_missing_registry_does_not_import_and_corruption_is_preserved() {
+        use std::fs;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("projects.json");
+        assert!(rename_project_at(&path, "/absent", "Name").is_err());
+        assert!(!path.exists());
+        fs::write(&path, b"invalid json").unwrap();
+        assert!(rename_project_at(&path, "/absent", "Name").is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"invalid json");
+    }
+
     #[test]
     fn registering_a_new_local_project_does_not_select_it() {
         let mut registry = ProjectRegistry::default();
@@ -279,6 +515,7 @@ mod tests {
         assert_eq!(registry.projects.len(), 1);
         assert_eq!(registry.projects[0].path, "/projects/new");
         assert!(registry.projects[0].remote.is_none());
+        assert_eq!(registry.projects[0].name.as_deref(), Some("new"));
     }
 
     #[test]
@@ -286,6 +523,7 @@ mod tests {
         let mut registry = ProjectRegistry {
             active_project_path: "/projects/active".into(),
             projects: vec![ProjectRecord {
+                name: Some("Custom local".into()),
                 path: "/projects/existing".into(),
                 collapsed: true,
                 remote: None,
@@ -298,6 +536,7 @@ mod tests {
         assert_eq!(registry.active_project_path, "/projects/active");
         assert_eq!(registry.projects.len(), 1);
         assert!(registry.projects[0].collapsed);
+        assert_eq!(registry.projects[0].name.as_deref(), Some("Custom local"));
     }
 
     #[test]
@@ -319,6 +558,7 @@ mod tests {
             "ssh:[\"ssh build-box\",\"/workspace\"]"
         );
         assert!(registry.projects[0].remote.is_some());
+        assert_eq!(registry.projects[0].name.as_deref(), Some("workspace"));
     }
 
     #[test]
@@ -326,6 +566,7 @@ mod tests {
         let mut registry = ProjectRegistry {
             active_project_path: "/projects/active".into(),
             projects: vec![ProjectRecord {
+                name: Some("Custom remote".into()),
                 path: "ssh:[\"ssh build-box\",\"/workspace\"]".into(),
                 collapsed: true,
                 remote: Some(RemoteProjectRecord {
@@ -361,6 +602,7 @@ mod tests {
         assert_eq!(registry.active_project_path, "/projects/active");
         assert_eq!(registry.projects.len(), 1);
         assert!(registry.projects[0].collapsed);
+        assert_eq!(registry.projects[0].name.as_deref(), Some("Custom remote"));
         assert_eq!(remote.host, "new-host");
         assert_eq!(remote.active_session_id, "session-1");
         assert_eq!(remote.sessions.len(), 1);

@@ -162,6 +162,19 @@ function requiredString(args: Record<string, unknown>, key: string): string {
   return value;
 }
 
+function normalizedProjectName(args: Record<string, unknown>): string {
+  const name = requiredString(args, 'name').trim();
+  if (!name) {
+    throw new Error('Browser sandbox expected a non-blank project name.');
+  }
+  if (name.length > 240) {
+    throw new Error(
+      'Browser sandbox expected a project name of 240 UTF-16 units or fewer.',
+    );
+  }
+  return name;
+}
+
 function requiredPositiveInteger(
   args: Record<string, unknown>,
   key: string,
@@ -775,6 +788,17 @@ function createBrowserSandboxHandler(
         workspace.projects.push(project);
       }
       return structuredClone(project) satisfies ProjectSummary;
+    }
+    if (command === 'rename_project') {
+      const project = workspace.projects.find(
+        (candidate) => candidate.path === requiredString(args, 'path'),
+      );
+      if (!project) {
+        throw new Error('Browser sandbox cannot rename an unknown project.');
+      }
+      const name = normalizedProjectName(args);
+      project.name = name;
+      return name;
     }
     if (command === 'remove_project') {
       const path = requiredString(args, 'path');

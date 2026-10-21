@@ -222,6 +222,7 @@
       @close="restorePaletteFocus"
     />
 
+    <ProjectRenameDialog :return-focus="projectRenameReturnFocus" />
     <UiConfirmation
       :open="state.projectRemoval !== null"
       title="Remove project?"
@@ -293,6 +294,7 @@ import CommandPalette, {
 import ComposerBar from './components/ComposerBar.vue';
 import FeedbackDialog from './components/FeedbackDialog.vue';
 import MessageQueue from './components/MessageQueue.vue';
+import ProjectRenameDialog from './components/ProjectRenameDialog.vue';
 import ProjectSidebar from './components/ProjectSidebar.vue';
 import QuitConfirmation from './components/QuitConfirmation.vue';
 import ReconnectStatus from './components/ReconnectStatus.vue';
@@ -420,6 +422,7 @@ const {
   activateProject,
   toggleProject,
   requestProjectRemoval,
+  requestProjectRename,
   cancelProjectRemoval,
   confirmProjectRemoval,
   isSessionUnread,
@@ -491,6 +494,7 @@ const palettePlaceholder = computed(
 );
 function navigationBlockingSurface(): boolean {
   return Boolean(
+    state.projectRename ||
     state.projectRemoval ||
     quitRequest.value ||
     state.remoteDialogOpen ||
@@ -797,6 +801,29 @@ register(
   'Project',
 );
 register(
+  'project.rename',
+  'Rename Project…',
+  undefined,
+  active,
+  (ctx) => {
+    if (
+      document.activeElement instanceof HTMLElement &&
+      document.activeElement !== document.body &&
+      !document.activeElement.closest('.command-palette') &&
+      !document.activeElement.closest('[role="menu"]')
+    ) {
+      renameOrigin = document.activeElement;
+    }
+    if (!renameOrigin?.isConnected || renameOrigin.closest('[role="menu"]'))
+      renameOrigin =
+        document.querySelector<HTMLElement>(
+          `[data-project-path="${CSS.escape(ctx.projectPath)}"] .project-toggle`,
+        ) ?? undefined;
+    requestProjectRename(commandProject(ctx)!);
+  },
+  'Project',
+);
+register(
   'project.remove',
   'Remove Project',
   undefined,
@@ -1020,19 +1047,18 @@ const paletteRows = computed<CommandPaletteRow[]>(() => {
       shortcut: definition.shortcuts?.[0]
         ? formatShortcut(definition.shortcuts[0].shortcut, platform)
         : undefined,
-      detail:
-        definition.id === 'project.remove'
-          ? [commandProject(ctx)?.name, commandProject(ctx)?.workingDirectory]
-              .filter(Boolean)
-              .join(' · ')
-          : [
-                'session.archive',
-                'session.unarchive',
-                'session.markRead',
-                'session.markUnread',
-              ].includes(definition.id)
-            ? commandSession(ctx)?.title
-            : undefined,
+      detail: ['project.remove', 'project.rename'].includes(definition.id)
+        ? [commandProject(ctx)?.name, commandProject(ctx)?.workingDirectory]
+            .filter(Boolean)
+            .join(' · ')
+        : [
+              'session.archive',
+              'session.unarchive',
+              'session.markRead',
+              'session.markUnread',
+            ].includes(definition.id)
+          ? commandSession(ctx)?.title
+          : undefined,
     }));
   }
   if (palettePage.value === 'sessions')
@@ -1067,7 +1093,7 @@ const paletteRows = computed<CommandPaletteRow[]>(() => {
   }));
 });
 function openPalette(): void {
-  if (state.projectRemoval || quitRequest.value) return;
+  if (state.projectRename || state.projectRemoval || quitRequest.value) return;
   sessionHeader.value?.preparePaletteOpen();
   paletteOrigin.value =
     document.activeElement instanceof HTMLElement
@@ -1104,7 +1130,8 @@ function focusAfterPaletteNavigation(): void {
 }
 function restorePaletteFocus(): void {
   void nextTick(() => {
-    if (state.projectRemoval || quitRequest.value) return;
+    if (state.projectRename || state.projectRemoval || quitRequest.value)
+      return;
     if (
       paletteOrigin.value?.isConnected &&
       paletteOrigin.value !== document.body
@@ -1140,6 +1167,7 @@ async function selectPaletteRow(id: string): Promise<void> {
     ].includes(id);
     if (!nested) {
       if (id === 'project.remove') removalOrigin = paletteOrigin.value;
+      if (id === 'project.rename') renameOrigin = paletteOrigin.value;
       paletteOpen.value = false;
       await nextTick();
       composerBar.value?.closeSelectors();
@@ -1215,6 +1243,7 @@ const feedbackDialogOpen = computed(
     !remoteReconnectFeedback.value &&
     quitRequest.value === null &&
     !state.remoteDialogOpen &&
+    !state.projectRename &&
     !state.projectRemoval &&
     !activeExtensionDialog.value &&
     !fullscreenViewerOpen.value,
@@ -1568,6 +1597,31 @@ function handleQueueRecover(index: number): void {
   void nextTick(focusComposer);
 }
 
+let renameOrigin: HTMLElement | undefined;
+function projectRenameReturnFocus(): HTMLElement | undefined {
+  const newerModal = [
+    ...document.querySelectorAll<HTMLElement>(
+      '[role="dialog"], [role="alertdialog"]',
+    ),
+  ]
+    .reverse()
+    .find((element) => !element.querySelector('[aria-label="Project Name"]'));
+  if (newerModal) {
+    const focused = document.activeElement;
+    return focused instanceof HTMLElement && newerModal.contains(focused)
+      ? focused
+      : (newerModal.querySelector<HTMLElement>(
+          'button:not(:disabled), input:not(:disabled)',
+        ) ?? newerModal);
+  }
+  if (
+    renameOrigin?.isConnected &&
+    renameOrigin.matches(':not(:disabled)') &&
+    renameOrigin !== document.body
+  )
+    return renameOrigin;
+  return composerBar.value?.input ?? projectSidebar.value?.openProjectButton;
+}
 let removalOrigin: HTMLElement | undefined;
 const projectRemovalDescription = computed(() => {
   const project = state.projectRemoval?.project;
