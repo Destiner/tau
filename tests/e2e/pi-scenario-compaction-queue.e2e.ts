@@ -33,9 +33,12 @@ async function openCompaction(
   const profile = compactionQueueNativeProfile(
     `saved-session-compaction-queue-${name}`,
   );
+  // Exercise startup without relying on page load or composer actions for readiness.
   await page.goto(
     `/?test-scenario=${profile}&test-scenario-variant=saved-session-compaction-queue-${name}`,
+    { waitUntil: 'commit' },
   );
+  await page.waitForFunction(() => Boolean(window.__TAU_PI_SCENARIO__));
   if (active) {
     const composer = page.getByRole('textbox', { name: 'Message Pi' });
     await composer.fill(initialPrompt);
