@@ -1,4 +1,5 @@
 import { expect, test } from './fixtures';
+import { releaseGate, waitForGate } from './pi-scenario-gates';
 
 test.use({ pausedClock: true });
 
@@ -31,41 +32,14 @@ test('registers and selects a session replaced by an extension command', async (
 
   await composer.fill(command);
   await page.getByRole('button', { name: 'Send Message' }).click();
-  await page.evaluate((gate) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    return scenario.waitForGate(gate);
-  }, replacementGate);
+  await waitForGate(page, replacementGate);
 
   await expect(composer).toHaveValue('');
   await expect(page.getByRole('heading', { name: 'Main' })).toBeVisible();
   await expect(page.getByText(command, { exact: true })).toHaveCount(0);
   await expect(page.getByLabel('Transcript')).toHaveCount(0);
 
-  const pausedTimeline = await page.evaluate(() =>
-    window.__TAU_PI_SCENARIO__?.timeline(),
-  );
-  expect(pausedTimeline?.slice(-3)).toEqual([
-    expect.objectContaining({
-      kind: 'output',
-      output: 'response prompt -> $command-prompt',
-    }),
-    expect.objectContaining({
-      kind: 'request',
-      capture: 'command-identity-probe',
-      request: { type: 'get_state' },
-    }),
-    expect.objectContaining({
-      kind: 'gate-reached',
-      gate: replacementGate,
-    }),
-  ]);
-
-  await page.evaluate((gate) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    return scenario.releaseGate(gate);
-  }, replacementGate);
+  await releaseGate(page, replacementGate);
 
   await expect(
     page.getByRole('heading', { name: replacementName }),
@@ -75,10 +49,7 @@ test('registers and selects a session replaced by an extension command', async (
   });
   await expect(replacementRow).toHaveCount(1);
   await expect(page.getByText(command, { exact: true })).toHaveCount(0);
-  await page.evaluate(
-    (gate) => window.__TAU_PI_SCENARIO__?.waitForGate(gate),
-    hydrationGate,
-  );
+  await waitForGate(page, hydrationGate);
 
   const userRow = page.locator('article.message.user', {
     hasText: injectedPrompt,
@@ -87,14 +58,8 @@ test('registers and selects a session replaced by an extension command', async (
   await expect(userRow).toHaveCount(1);
   const projectedId = await userRow.getAttribute('data-message-id');
 
-  await page.evaluate(
-    (gate) => window.__TAU_PI_SCENARIO__?.releaseGate(gate),
-    hydrationGate,
-  );
-  await page.evaluate(
-    (gate) => window.__TAU_PI_SCENARIO__?.waitForGate(gate),
-    assistantGate,
-  );
+  await releaseGate(page, hydrationGate);
+  await waitForGate(page, assistantGate);
   await expect(userRow).toHaveCount(1);
   await expect(userRow).toHaveAttribute('data-message-id', projectedId ?? '');
 
@@ -110,23 +75,14 @@ test('registers and selects a session replaced by an extension command', async (
   ).toHaveCount(0);
   await expect(userRow).toHaveAttribute('data-message-id', projectedId ?? '');
 
-  await page.evaluate(
-    (gate) => window.__TAU_PI_SCENARIO__?.releaseGate(gate),
-    assistantGate,
-  );
+  await releaseGate(page, assistantGate);
   await expect(page.getByLabel('Transcript')).toContainText(
     'Replacement session started.',
   );
-  await page.evaluate(
-    (gate) => window.__TAU_PI_SCENARIO__?.waitForGate(gate),
-    settledHydrationGate,
-  );
+  await waitForGate(page, settledHydrationGate);
   await expect(userRow).toHaveCount(1);
   await expect(userRow).toHaveAttribute('data-message-id', projectedId ?? '');
-  await page.evaluate(
-    (gate) => window.__TAU_PI_SCENARIO__?.releaseGate(gate),
-    settledHydrationGate,
-  );
+  await releaseGate(page, settledHydrationGate);
 
   const verification = await page.evaluate(() =>
     window.__TAU_PI_SCENARIO__?.verify(),

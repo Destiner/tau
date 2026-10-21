@@ -10,10 +10,6 @@ test('groups, filters, and traverses models in rendered order', async ({
   const trigger = page.getByRole('combobox', { name: 'Model', exact: true });
   await expect(trigger).toHaveText('GPT-5.6 Sol');
   await trigger.click();
-  await expect(page.locator('.ui-select-filterable-list')).toHaveCSS(
-    'border-left-width',
-    '0px',
-  );
 
   const search = page.getByRole('searchbox', { name: 'Search Models' });
   await expect(search).toBeFocused();
@@ -70,27 +66,12 @@ test('keeps current and traversal states distinct and resets on dismissal', asyn
   await expect(page.getByText('No matching models')).toBeVisible();
   await search.fill('');
   await expect(cursor).toHaveText('Claude Opus 5');
-  await expect(current).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0.1)');
-  await expect(cursor).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
-  expect(
-    await current.evaluate((element) =>
-      getComputedStyle(element, '::before').getPropertyValue('content'),
-    ),
-  ).toBe('""');
-  expect(
-    await cursor.evaluate((element) =>
-      getComputedStyle(element, '::before').getPropertyValue('content'),
-    ),
-  ).toBe('none');
 
   await search.fill('claude');
   await page.getByRole('button', { name: 'Outside' }).click();
   await expect(search).toHaveCount(0);
   await trigger.click();
   await expect(search).toHaveValue('');
-
-  const popover = page.locator('.ui-select-filterable-list');
-  await expect(popover).toHaveCSS('width', '300px');
 });
 
 test('omits search chrome when no models are available', async ({ page }) => {

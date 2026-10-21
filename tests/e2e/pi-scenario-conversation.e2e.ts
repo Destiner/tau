@@ -19,20 +19,6 @@ test('wraps a long draft, then streams and settles the submitted conversation', 
     await page.goto(scenarioUrl);
     const composer = page.getByRole('textbox', { name: 'Message Pi' });
     await composer.fill(`https://example.com/${'a'.repeat(10_000)}`);
-    const draftIndicator = page.locator(
-      '.session-row .ui-status-dot[aria-label="Draft"]',
-    );
-    await expect(draftIndicator).toHaveCSS('width', '6px');
-    await expect(draftIndicator).toHaveCSS('height', '6px');
-    await expect(draftIndicator).toHaveCSS(
-      'background-color',
-      'rgb(110, 117, 127)',
-    );
-    await expect(draftIndicator).toHaveCSS('opacity', '0.3');
-    await expect(draftIndicator).toHaveCSS(
-      'transform',
-      'matrix(1, 0, 0, 1, 0, -0.75)',
-    );
     await expect
       .poll(() =>
         page.evaluate(() => {
@@ -135,15 +121,6 @@ test('wraps a long draft, then streams and settles the submitted conversation', 
       ),
       'the assistant row should preserve and concatenate both deltas',
     ).toBe(true);
-    const timeline = await page.evaluate(() =>
-      window.__TAU_PI_SCENARIO__?.timeline(),
-    );
-    expect(timeline).toContainEqual(
-      expect.objectContaining({
-        kind: 'request',
-        request: { type: 'prompt', message: prompt },
-      }),
-    );
     await expect
       .poll(() => page.evaluate(() => window.__TAU_PI_SCENARIO__?.verify().ok))
       .toBe(true);

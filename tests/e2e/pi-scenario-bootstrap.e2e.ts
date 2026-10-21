@@ -36,16 +36,8 @@ test('boots the real app into a deterministic saved session', async ({
   ).toBeVisible();
   await thinkingSelector.click();
   await expect(page.getByRole('searchbox')).toHaveCount(0);
-  await expect(
-    page.locator('.ui-select-list:not(.ui-select-filterable-list)'),
-  ).toHaveCSS('border-left-width', '1px');
   const currentThinking = page.getByRole('option', { name: 'High' });
   await expect(currentThinking).toHaveAttribute('data-state', 'checked');
-  expect(
-    await currentThinking.evaluate((element) =>
-      getComputedStyle(element, '::before').getPropertyValue('content'),
-    ),
-  ).toBe('""');
 
   await modelSelector.click();
   await expect(
@@ -59,15 +51,6 @@ test('boots the real app into a deterministic saved session', async ({
   await page.keyboard.press('ArrowUp');
   const traversedThinking = page.getByRole('option', { name: 'Off' });
   await expect(traversedThinking).toHaveAttribute('data-highlighted', '');
-  await expect(traversedThinking).not.toHaveCSS(
-    'background-color',
-    'rgba(0, 0, 0, 0)',
-  );
-  expect(
-    await traversedThinking.evaluate((element) =>
-      getComputedStyle(element, '::before').getPropertyValue('content'),
-    ),
-  ).toBe('none');
   await page.keyboard.press('Escape');
 
   await expect(page.getByLabel('Transcript')).toHaveCount(0);

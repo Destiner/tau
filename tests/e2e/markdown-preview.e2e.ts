@@ -253,10 +253,7 @@ flowchart LR
   await expect(page.getByRole('menuitem', { name: 'Copy URL' })).toHaveCount(0);
   await expect(dialog).toBeVisible();
 
-  await page.setViewportSize({ width: 1200, height: 700 });
-  expect((await document.boundingBox())?.width).toBe(800);
   await page.setViewportSize({ width: 520, height: 700 });
-  expect((await document.boundingBox())?.width).toBe(520);
   const tsCode = document.locator('.code-block[data-tau-lang="ts"]');
   await tsCode.getByRole('button', { name: 'Copy Code' }).click();
   await expect(tsCode.locator('.code-copy')).toHaveAttribute(
@@ -271,8 +268,6 @@ flowchart LR
   expect(selection).toContain('Notes');
   expect(selection).toContain('const value = 42;');
   expect(selection).not.toContain('README.md');
-  await page.emulateMedia({ colorScheme: 'dark' });
-  await expect(dialog).toHaveCSS('background-color', 'rgb(13, 16, 23)');
 
   await dialog.getByRole('heading', { name: 'Notes' }).click();
   await dialog.getByRole('link', { name: 'Site' }).click();

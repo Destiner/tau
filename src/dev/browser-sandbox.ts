@@ -54,7 +54,7 @@ interface BrowserSandboxOptions {
   updateCheckDelayMs?: number;
   updateProgressDelayMs?: number;
   controlledUpdateCheck?: boolean;
-  updateFailure?: 'download' | 'verification' | 'restart';
+  failUpdateRestart?: boolean;
   emitAppEvent?: (event: string, payload: unknown) => Promise<void>;
   simulateUpdateRestart?: () => Promise<never>;
 }
@@ -220,7 +220,7 @@ function createBrowserSandboxHandler(
   let ownershipRevision = 0;
   let activeOwner = '';
   let updateStatus: SandboxUpdateStatus = 'available';
-  let updateFailureDelivered = false;
+  let restartFailureDelivered = false;
   let pendingQuitRequest: SandboxQuitRequest | null = null;
   let authorizedQuitRequest: SandboxQuitRequest | null = null;
   const updateOperationId = 1;
@@ -495,7 +495,7 @@ function createBrowserSandboxHandler(
       if (!supported) return { supported: false, status: 'idle' };
       if (!options.updateAvailable || options.controlledUpdateCheck)
         return { supported: true, status: 'upToDate' };
-      if (options.updateFailure === 'restart') updateStatus = 'restartNeeded';
+      if (options.failUpdateRestart) updateStatus = 'restartNeeded';
       return {
         supported: true,
         status:
@@ -550,9 +550,6 @@ function createBrowserSandboxHandler(
       ) {
         throw new Error('Browser sandbox rejected update download arguments.');
       }
-      if (options.updateFailure === 'download') {
-        throw { category: 'downloadFailed' };
-      }
       const emitProgress = async (
         downloadedBytes: number,
         phase: 'downloading' | 'verifying',
@@ -574,9 +571,6 @@ function createBrowserSandboxHandler(
       await emitProgress(72, 'downloading');
       await emitProgress(100, 'downloading');
       await emitProgress(100, 'verifying');
-      if (options.updateFailure === 'verification') {
-        throw { category: 'verificationFailed' };
-      }
       updateStatus = 'prepared';
       return null;
     }
@@ -636,8 +630,8 @@ function createBrowserSandboxHandler(
       ) {
         throw new Error('Browser sandbox rejected update restart arguments.');
       }
-      if (options.updateFailure === 'restart' && !updateFailureDelivered) {
-        updateFailureDelivered = true;
+      if (options.failUpdateRestart && !restartFailureDelivered) {
+        restartFailureDelivered = true;
         throw { category: 'installFailed' };
       }
       return null;
@@ -861,8 +855,6 @@ function installBrowserSandbox(): void {
     testUpdate === 'available' ||
     testUpdate === 'checking' ||
     testUpdate === 'controlled' ||
-    testUpdate === 'download-failure' ||
-    testUpdate === 'verification-failure' ||
     testUpdate === 'restart-failure';
   const updateAvailable =
     updateFixtureRequested &&
@@ -875,14 +867,7 @@ function installBrowserSandbox(): void {
       updateAvailable,
       updateCheckDelayMs: testUpdate === 'checking' ? 1_000 : undefined,
       controlledUpdateCheck: testUpdate === 'controlled',
-      updateFailure:
-        testUpdate === 'download-failure'
-          ? 'download'
-          : testUpdate === 'verification-failure'
-            ? 'verification'
-            : testUpdate === 'restart-failure'
-              ? 'restart'
-              : undefined,
+      failUpdateRestart: testUpdate === 'restart-failure',
       updateProgressDelayMs: 180,
       emitAppEvent: (event, payload) => emit(event, payload),
       async simulateUpdateRestart(): Promise<never> {

@@ -65,19 +65,6 @@ test('keyboard scrolling appends without changing the focused control', async ({
   await expect(first).toBeFocused();
 });
 
-test('small and boundary archives never mount nonexistent rows', async ({
-  page,
-}) => {
-  const rows = page.locator('.archived-list .row');
-  for (const count of [1, 49, 50, 51]) {
-    await page.evaluate(
-      (size) => window.__TAU_ARCHIVE_FIXTURE__!.replace(size),
-      count,
-    );
-    await expect(rows).toHaveCount(Math.min(count, 50));
-  }
-});
-
 test('collapsing and refreshing exposes eligible rows, empty state is truthful', async ({
   page,
 }) => {

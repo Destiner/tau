@@ -1,38 +1,22 @@
-import type { Page } from '@playwright/test';
-
 import { expect, test } from './fixtures';
+import { releaseGate, waitForGate } from './pi-scenario-gates';
 
 const scenarioUrl = '/?test-scenario=remote-saved-session-process-exit';
 const beforeFailure = 'before-remote-saved-session-process-failure';
 const afterError = 'after-remote-saved-session-bridge-error';
 const afterExit = 'after-remote-saved-session-process-exit';
 
-async function waitForGate(page: Page, gate: string): Promise<void> {
-  await page.waitForFunction(() => Boolean(window.__TAU_PI_SCENARIO__));
-  await page.evaluate(async (name) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    await scenario.waitForGate(name);
-  }, gate);
-}
-
-async function releaseGate(page: Page, gate: string): Promise<void> {
-  await page.evaluate(async (name) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    await scenario.releaseGate(name);
-  }, gate);
-}
-
 test('reconnects an established remote session only when requested', async ({
   page,
 }) => {
   await page.goto(scenarioUrl);
+  await page.waitForFunction(() => Boolean(window.__TAU_PI_SCENARIO__));
   await waitForGate(page, beforeFailure);
 
   const composer = page.locator('textarea[aria-label="Message Pi"]');
   await composer.fill('Keep this draft');
   await releaseGate(page, beforeFailure);
+  await page.waitForFunction(() => Boolean(window.__TAU_PI_SCENARIO__));
   await waitForGate(page, afterError);
 
   const reconnectStatus = page.locator('.reconnect-status');
@@ -49,6 +33,7 @@ test('reconnects an established remote session only when requested', async ({
   await expect(page.getByRole('button', { name: 'Reconnect' })).toHaveCount(1);
 
   await releaseGate(page, afterError);
+  await page.waitForFunction(() => Boolean(window.__TAU_PI_SCENARIO__));
   await waitForGate(page, afterExit);
   await expect(reconnect).toBeEnabled();
   await releaseGate(page, afterExit);

@@ -1,6 +1,5 @@
-import type { Page } from '@playwright/test';
-
 import { expect, test } from './fixtures';
+import { releaseGate, waitForGate } from './pi-scenario-gates';
 
 test.use({ pausedClock: true });
 
@@ -9,22 +8,6 @@ const planName = 'docs · RHI-6267 · Plan';
 const implementName = 'docs · RHI-6267 · Implement';
 const backupDraft = 'Keep this Backup draft while Pi starts Implement';
 const planDraft = 'Keep this Plan draft while Pi starts Implement';
-
-async function waitForGate(page: Page, gate: string): Promise<void> {
-  await page.evaluate(async (name) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    await scenario.waitForGate(name);
-  }, gate);
-}
-
-async function releaseGate(page: Page, gate: string): Promise<void> {
-  await page.evaluate(async (name) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    await scenario.releaseGate(name);
-  }, gate);
-}
 
 test('preserves an empty successor across a second command, settlement, and a late Plan read', async ({
   page,

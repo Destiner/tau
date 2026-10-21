@@ -843,7 +843,7 @@ function installPiScenarioAdapter(scenarioName: string): void {
                         !registeredSessionIds.has(session.id),
                 };
               })()
-            : expectedNativeSession(scenarioName, command, invocation);
+            : expectedRegisteredSession(scenarioName, invocation);
         const value = registerSessionArgs(args, expected);
         registeredSessionIds.add(value.sessionId);
         if (expected.id === REPLACEMENT_SESSION.id) {
@@ -1265,9 +1265,8 @@ function setActiveSessionArgs(
   return value;
 }
 
-function expectedNativeSession(
+function expectedRegisteredSession(
   scenarioName: string,
-  command: 'register_session' | 'set_active_session',
   invocation: number,
 ): NativeSessionIdentity {
   if (scenarioName === 'project-opening') {
@@ -1275,84 +1274,45 @@ function expectedNativeSession(
       invocation === 1
         ? MAIN_SESSION
         : { ...TARGET_PROJECT_SESSION, adopted: false };
-    if (invocation > 2) throw new Error(`${command} ran too many times.`);
+    if (invocation > 2) throw new Error('register_session ran too many times.');
     return expected;
   }
   if (scenarioName === 'phantom-command-replacement') {
-    const expected =
-      command === 'register_session'
-        ? [
-            MAIN_SESSION,
-            REPLACEMENT_SESSION,
-            { ...REPLACEMENT_SESSION, adopted: false },
-          ][invocation - 1]
-        : [
-            MAIN_SESSION,
-            MAIN_SESSION,
-            REPLACEMENT_SESSION,
-            REPLACEMENT_SESSION,
-            REPLACEMENT_SESSION,
-          ][invocation - 1];
-    if (!expected) throw new Error(`${command} ran too many times.`);
+    const expected = [
+      MAIN_SESSION,
+      REPLACEMENT_SESSION,
+      { ...REPLACEMENT_SESSION, adopted: false },
+    ][invocation - 1];
+    if (!expected) throw new Error('register_session ran too many times.');
     return expected;
   }
   if (scenarioName === 'saved-session-command-replacement') {
-    const sequence =
-      command === 'register_session'
-        ? [
-            MAIN_SESSION,
-            BACKUP_SESSION,
-            REPLACEMENT_SESSION,
-            { ...REPLACEMENT_SESSION, adopted: false },
-          ]
-        : [
-            MAIN_SESSION,
-            BACKUP_SESSION,
-            MAIN_SESSION,
-            BACKUP_SESSION,
-            REPLACEMENT_SESSION,
-          ];
+    const sequence = [
+      MAIN_SESSION,
+      BACKUP_SESSION,
+      REPLACEMENT_SESSION,
+      { ...REPLACEMENT_SESSION, adopted: false },
+    ];
     const expected = sequence[invocation - 1];
-    if (!expected) throw new Error(`${command} ran too many times.`);
+    if (!expected) throw new Error('register_session ran too many times.');
     return expected;
   }
   if (scenarioName === 'plan-implement-replacement') {
-    const sequence =
-      command === 'register_session'
-        ? [
-            MAIN_SESSION,
-            BACKUP_SESSION,
-            PLAN_SESSION,
-            { ...PLAN_SESSION, adopted: false },
-            { ...PLAN_SESSION, adopted: false },
-          ]
-        : [
-            MAIN_SESSION,
-            BACKUP_SESSION,
-            BACKUP_SESSION,
-            MAIN_SESSION,
-            BACKUP_SESSION,
-            PLAN_SESSION,
-            PLAN_SESSION,
-          ];
+    const sequence = [
+      MAIN_SESSION,
+      BACKUP_SESSION,
+      PLAN_SESSION,
+      { ...PLAN_SESSION, adopted: false },
+      { ...PLAN_SESSION, adopted: false },
+    ];
     const expected = sequence[invocation - 1];
-    if (!expected) throw new Error(`${command} ran too many times.`);
+    if (!expected) throw new Error('register_session ran too many times.');
     return expected;
   }
   if (scenarioName === 'saved-session-prompt-process-exit') {
-    const sequence =
-      command === 'register_session'
-        ? [MAIN_SESSION, BACKUP_SESSION, MAIN_SESSION]
-        : [
-            MAIN_SESSION,
-            BACKUP_SESSION,
-            BACKUP_SESSION,
-            MAIN_SESSION,
-            MAIN_SESSION,
-            BACKUP_SESSION,
-          ];
+    const sequence = [MAIN_SESSION, BACKUP_SESSION, MAIN_SESSION];
     const expected = sequence[invocation - 1];
-    if (!expected) throw new Error(`${command} ran too many times.`);
+    if (!expected) throw new Error('register_session ran too many times.');
     return expected;
   }
   if (scenarioName === 'saved-session-extension-prompt-project-switching') {
@@ -1362,16 +1322,12 @@ function expectedNativeSession(
   }
   if (scenarioName === 'palette-settings-sessions') {
     const expected = [MAIN_SESSION, BACKUP_SESSION][invocation - 1];
-    if (!expected) throw new Error(`${command} ran too many times.`);
+    if (!expected) throw new Error('register_session ran too many times.');
     return expected;
   }
   if (scenarioName === 'saved-session-extension-prompt-cycling') {
-    const expected = (
-      command === 'register_session'
-        ? [MAIN_SESSION, BACKUP_SESSION]
-        : [BACKUP_SESSION, MAIN_SESSION]
-    )[invocation - 1];
-    if (!expected) throw new Error(`${command} ran too many times.`);
+    const expected = [MAIN_SESSION, BACKUP_SESSION][invocation - 1];
+    if (!expected) throw new Error('register_session ran too many times.');
     return expected;
   }
   if (scenarioName === 'archived-sessions-review') {

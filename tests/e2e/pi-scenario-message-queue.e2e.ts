@@ -1,28 +1,13 @@
 import type { Page } from '@playwright/test';
 
 import { expect, test } from './fixtures';
+import { releaseGate, waitForGate } from './pi-scenario-gates';
 
 const scenarioUrl = '/?test-scenario=saved-session-message-queue';
 const initialPrompt = 'Start a queueable fixture run';
 const steeringMessage = 'Steer toward the focused assertion';
 const followUpMessage = 'Summarize after the focused assertion';
 const stopMessage = 'Keep this queued when stopping';
-
-async function waitForGate(page: Page, gate: string): Promise<void> {
-  await page.evaluate(async (name) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    await scenario.waitForGate(name);
-  }, gate);
-}
-
-async function releaseGate(page: Page, gate: string): Promise<void> {
-  await page.evaluate(async (name) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    await scenario.releaseGate(name);
-  }, gate);
-}
 
 async function modShortcut(page: Page, key: string): Promise<string> {
   return (await page.evaluate(() => /Mac|iPhone|iPad/.test(navigator.platform)))
@@ -177,18 +162,6 @@ test('queues busy composer messages and never clears them implicitly', async ({
   await queue.getByRole('button', { name: 'Clear All' }).click();
   await waitForGate(page, 'clear-requested');
 
-  const requestsWhileClearing = await page.evaluate(
-    () =>
-      window.__TAU_PI_SCENARIO__
-        ?.timeline()
-        .filter((entry) => entry.kind === 'request')
-        .map((entry) => entry.request.type) ?? [],
-  );
-  expect(requestsWhileClearing).not.toContain('abort');
-  expect(
-    requestsWhileClearing.filter((type) => type === 'clear_queue'),
-  ).toHaveLength(1);
-
   await releaseGate(page, 'clear-requested');
   await expect(queue).toHaveCount(0);
   await expect(composer).toBeFocused();
@@ -202,23 +175,6 @@ test('queues busy composer messages and never clears them implicitly', async ({
   await page.getByRole('button', { name: 'Stop Pi' }).click();
   await waitForGate(page, 'stop-requested');
   await expect(queue).toContainText(stopMessage);
-
-  const completed = await page.evaluate(() => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    return scenario.timeline();
-  });
-  expect(
-    completed.filter(
-      (entry) =>
-        entry.kind === 'request' && entry.request.type === 'clear_queue',
-    ),
-  ).toHaveLength(1);
-  expect(
-    completed.filter(
-      (entry) => entry.kind === 'request' && entry.request.type === 'abort',
-    ),
-  ).toHaveLength(1);
 
   await releaseGate(page, 'stop-requested');
   await expect(

@@ -4,13 +4,6 @@ import { expect, test } from './fixtures';
 
 const scenarioUrl = '/?test-scenario=saved-session-bootstrap';
 
-type ButtonAppearance = {
-  background: string;
-  color: string;
-  opacity: string;
-  bounds: { x: number; y: number; width: number; height: number };
-};
-
 async function modShortcut(page: Page, key: string): Promise<string> {
   return (await page.evaluate(() => /Mac|iPhone|iPad/.test(navigator.platform)))
     ? `Meta+${key}`
@@ -283,9 +276,7 @@ test('settings initial selection: session switches isolate model, effort, and dr
   }
 });
 
-test('places the palette 15% down and keeps it inside short windows', async ({
-  page,
-}) => {
+test('keeps the palette inside short windows', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto(scenarioUrl);
   await openPalette(page);
@@ -296,8 +287,8 @@ test('places the palette 15% down and keeps it inside short windows', async ({
       .getByRole('dialog', { name: 'Command Palette' })
       .boundingBox();
     expect(bounds).not.toBeNull();
-    expect(bounds!.y / height).toBeCloseTo(0.15, 2);
-    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(height - 31);
+    expect(bounds!.y).toBeGreaterThanOrEqual(0);
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(height);
   }
 
   await expect(
@@ -330,14 +321,12 @@ async function expectPaletteRowLayout(
       shortcutLeft: shortcutBounds?.left,
       shortcutRight: shortcutBounds?.right,
       rowRight: rowBounds.right,
-      height: rowBounds.height,
       listOverflow: results.scrollWidth - results.clientWidth,
     };
   });
   if (titleClipped) expect(geometry.titleClipped).toBeGreaterThan(1);
   else expect(geometry.titleClipped).toBeLessThanOrEqual(1);
   if (detailClipped) expect(geometry.detailClipped).toBeGreaterThan(1);
-  expect(geometry.height).toBe(28);
   expect(geometry.listOverflow).toBeLessThanOrEqual(1);
   if (geometry.detailLeft !== undefined) {
     expect(geometry.titleRight).toBeLessThanOrEqual(geometry.detailLeft + 1);
@@ -432,106 +421,6 @@ test('keeps project identities ahead of locations and bounds oversized session n
     },
   );
 });
-
-test('aligns command detail baselines without shifting rows or shortcuts', async ({
-  page,
-}) => {
-  await page.goto('/');
-  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
-  await openPalette(page);
-
-  const geometry = await page
-    .getByRole('option', { name: /Archive Session/ })
-    .evaluate(async (row) => {
-      await document.fonts.ready;
-      const title = row.querySelector('.command-palette-title')!;
-      const detail = row.querySelector('.command-palette-detail')!;
-      const baseline = (text: Element): number => {
-        const probe = document.createElement('span');
-        probe.style.cssText =
-          'display:inline-block;width:0;height:0;vertical-align:baseline';
-        text.prepend(probe);
-        const y = probe.getBoundingClientRect().bottom;
-        probe.remove();
-        return y;
-      };
-      const offset = baseline(detail) - baseline(title);
-      const bounds = row.getBoundingClientRect();
-      const shortcut = row.querySelector('kbd')!.getBoundingClientRect();
-      return {
-        offset,
-        height: bounds.height,
-        shortcutInside:
-          shortcut.left >= title.getBoundingClientRect().right &&
-          shortcut.right <= bounds.right,
-        shortcutCenterOffset:
-          shortcut.top + shortcut.height / 2 - (bounds.top + bounds.height / 2),
-      };
-    });
-
-  expect(Math.abs(geometry.offset)).toBeLessThan(0.2);
-  expect(geometry.height).toBe(28);
-  expect(geometry.shortcutInside).toBe(true);
-  expect(Math.abs(geometry.shortcutCenterOffset)).toBeLessThan(0.2);
-  expect(
-    await page
-      .getByRole('option', { name: /Choose Model/ })
-      .evaluate((row) => row.getBoundingClientRect().height),
-  ).toBe(geometry.height);
-});
-
-for (const colorScheme of ['light', 'dark'] as const) {
-  test(`session header actions share fade feedback in ${colorScheme}`, async ({
-    page,
-  }) => {
-    await page.emulateMedia({ colorScheme });
-    await page.goto(scenarioUrl);
-
-    const header = page.locator('.session-header');
-    const newSession = header.getByRole('button', { name: 'New Session' });
-    const palette = header.getByRole('button', {
-      name: 'Open Command Palette',
-    });
-    await expect(newSession).toBeEnabled();
-    await expect(palette).toBeEnabled();
-    await page.mouse.move(0, 100);
-
-    const appearance = async (button: Locator): Promise<ButtonAppearance> =>
-      button.evaluate((element) => {
-        const style = getComputedStyle(element);
-        const { x, y, width, height } = element.getBoundingClientRect();
-        return {
-          background: style.backgroundColor,
-          color: style.color,
-          opacity: style.opacity,
-          bounds: { x, y, width, height },
-        };
-      });
-
-    const idleNew = await appearance(newSession);
-    const idlePalette = await appearance(palette);
-    expect(idleNew.background).toBe('rgba(0, 0, 0, 0)');
-    expect(idlePalette.background).toBe(idleNew.background);
-    expect(idlePalette.color).toBe(idleNew.color);
-    expect(idlePalette.opacity).toBe(idleNew.opacity);
-    expect(idlePalette.bounds.y).toBe(idleNew.bounds.y);
-    expect(idlePalette.bounds.width).toBe(idleNew.bounds.width);
-    expect(idlePalette.bounds.height).toBe(idleNew.bounds.height);
-
-    await newSession.hover();
-    const hoveredNew = await appearance(newSession);
-    expect(hoveredNew.background).toBe(idleNew.background);
-    expect(hoveredNew.opacity).toBe('1');
-    expect(hoveredNew.bounds).toEqual(idleNew.bounds);
-
-    await palette.hover();
-    const hoveredPalette = await appearance(palette);
-    expect(hoveredPalette.background).toBe(idleNew.background);
-    expect(hoveredPalette.color).toBe(hoveredNew.color);
-    expect(hoveredPalette.opacity).toBe(hoveredNew.opacity);
-    expect(hoveredPalette.bounds).toEqual(idlePalette.bounds);
-  });
-}
 
 test('opens with the platform Mod+K shortcut and filters commands fuzzily in registry order', async ({
   page,

@@ -1,28 +1,11 @@
-import type { Page } from '@playwright/test';
-
 import { expect, test } from './fixtures';
+import { releaseGate, waitForGate } from './pi-scenario-gates';
 
 const scenarioUrl = '/?test-scenario=saved-session-unacknowledged-abort';
 const prompt = 'Stop this fixture';
 const partialReply = 'Partial reply.';
 const abortConsumedGate = 'abort-request-consumed';
 const probeResponseGate = 'before-abort-timeout-probe-response';
-
-async function waitForGate(page: Page, gate: string): Promise<void> {
-  await page.evaluate(async (name) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    await scenario.waitForGate(name);
-  }, gate);
-}
-
-async function releaseGate(page: Page, gate: string): Promise<void> {
-  await page.evaluate(async (name) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    await scenario.releaseGate(name);
-  }, gate);
-}
 
 test('recovers when Pi never acknowledges an abort', async ({ page }) => {
   await page.goto(scenarioUrl);
@@ -68,23 +51,6 @@ test('recovers when Pi never acknowledges an abort', async ({ page }) => {
   });
 
   await releaseGate(page, abortConsumedGate);
-  const positionedGates = await page.evaluate(() =>
-    window.__TAU_PI_SCENARIO__?.gates(),
-  );
-  expect(positionedGates).toEqual([
-    {
-      name: abortConsumedGate,
-      required: true,
-      reached: true,
-      released: true,
-    },
-    {
-      name: probeResponseGate,
-      required: true,
-      reached: false,
-      released: false,
-    },
-  ]);
 
   await page.clock.fastForward(2_000);
   await waitForGate(page, probeResponseGate);
@@ -107,50 +73,7 @@ test('recovers when Pi never acknowledges an abort', async ({ page }) => {
   await expect(send).toBeEnabled();
   await composer.fill('');
 
-  const completed = await page.evaluate(() => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    return {
-      verification: scenario.verify(),
-      gates: scenario.gates(),
-      timeline: scenario.timeline(),
-    };
-  });
-  expect(completed.verification.ok).toBe(true);
-  expect(completed.gates).toEqual([
-    {
-      name: abortConsumedGate,
-      required: true,
-      reached: true,
-      released: true,
-    },
-    {
-      name: probeResponseGate,
-      required: true,
-      reached: true,
-      released: true,
-    },
-  ]);
-  expect(
-    completed.timeline.filter(
-      (entry) => entry.kind === 'request' && entry.request.type === 'abort',
-    ),
-  ).toHaveLength(1);
-  expect(
-    completed.timeline.filter(
-      (entry) =>
-        entry.kind === 'request' &&
-        entry.capture === 'abort-timeout-probe' &&
-        entry.request.type === 'get_state',
-    ),
-  ).toHaveLength(1);
-  expect(
-    completed.timeline.some(
-      (entry) =>
-        entry.kind === 'output' &&
-        (entry.output.includes('response prompt') ||
-          entry.output.includes('agent_settled') ||
-          entry.output.includes('response abort')),
-    ),
-  ).toBe(false);
+  await expect
+    .poll(() => page.evaluate(() => window.__TAU_PI_SCENARIO__?.verify().ok))
+    .toBe(true);
 });

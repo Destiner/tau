@@ -35,7 +35,6 @@ import {
 } from '../lib/session-picker';
 
 interface SessionPickerFixtureApi {
-  armStaleRemoval(projectPath: string, sessionId: string): void;
   collapseProject(projectPath: string): void;
   collapseAll(): void;
 }
@@ -118,7 +117,6 @@ const selectedId = ref(
 const selectedDestination = ref(
   `${activeProjectPath.value}/${activeSessionId.value}`,
 );
-let staleRemoval: { projectPath: string; sessionId: string } | undefined;
 
 const rows = computed<CommandPaletteRow[]>(() =>
   sessionPickerEntries(projects.value, (item) => item.sessions).map(
@@ -143,17 +141,7 @@ function closePicker(): void {
   open.value = false;
 }
 
-function applyStaleRemoval(): void {
-  if (!staleRemoval) return;
-  const { projectPath, sessionId } = staleRemoval;
-  staleRemoval = undefined;
-  const project = projects.value.find((item) => item.path === projectPath);
-  if (project)
-    project.sessions = project.sessions.filter((item) => item.id !== sessionId);
-}
-
 function select(id: string): void {
-  applyStaleRemoval();
   const target = resolveSessionPickerTarget(
     id,
     projects.value,
@@ -167,9 +155,6 @@ function select(id: string): void {
 }
 
 window.__TAU_SESSION_PICKER_FIXTURE__ = {
-  armStaleRemoval(projectPath, sessionId): void {
-    staleRemoval = { projectPath, sessionId };
-  },
   collapseProject(projectPath): void {
     const project = projects.value.find((item) => item.path === projectPath);
     if (project) project.collapsed = true;

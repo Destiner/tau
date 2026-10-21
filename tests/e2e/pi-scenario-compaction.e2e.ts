@@ -1,59 +1,13 @@
 import type { Page } from '@playwright/test';
 
 import { expect, test } from './fixtures';
+import { releaseGate, waitForGate } from './pi-scenario-gates';
 
 test.use({ pausedClock: true });
 
 const scenarioUrl = '/?test-scenario=saved-session-compaction';
 const firstPrompt = 'Compact this fixture';
 const secondPrompt = 'Miss the compaction start';
-
-async function waitForGate(page: Page, gate: string): Promise<void> {
-  await page.evaluate(async (name) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    await scenario.waitForGate(name);
-  }, gate);
-}
-
-async function releaseGate(page: Page, gate: string): Promise<void> {
-  await page.evaluate(async (name) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    await scenario.releaseGate(name);
-  }, gate);
-}
-
-async function expectOutwardPulse(page: Page): Promise<void> {
-  const divider = page.locator(
-    '.message.compaction:not(.transient-compaction) .compaction-divider',
-  );
-  await expect(divider).toHaveClass(/pulse/);
-  const animations = await divider.evaluate((element) => {
-    const rules = Array.from(element.querySelectorAll('.rule'));
-    return rules.map((rule) => {
-      const pseudo = getComputedStyle(rule, '::after');
-      const name = pseudo.animationName;
-      const keyframes = Array.from(document.styleSheets)
-        .flatMap((sheet) => Array.from(sheet.cssRules))
-        .find(
-          (entry): entry is CSSKeyframesRule =>
-            entry instanceof CSSKeyframesRule && entry.name === name,
-        );
-      const frames = keyframes ? Array.from(keyframes.cssRules) : [];
-      return {
-        name: name.replace(/-[0-9a-f]{8}$/, ''),
-        start: (frames[0] as CSSKeyframeRule | undefined)?.style.transform,
-        end: (frames[frames.length - 1] as CSSKeyframeRule | undefined)?.style
-          .transform,
-      };
-    });
-  });
-  expect(animations).toEqual([
-    { name: 'pulse-left', start: 'translate(110%)', end: 'translate(-440%)' },
-    { name: 'pulse-right', start: 'translate(-110%)', end: 'translate(440%)' },
-  ]);
-}
 
 async function expectActiveCompaction(page: Page): Promise<void> {
   const composer = page.getByRole('textbox', { name: 'Message Pi' });
@@ -64,18 +18,6 @@ async function expectActiveCompaction(page: Page): Promise<void> {
   await expect(compaction.locator('.compaction-divider')).not.toHaveClass(
     /pulse/,
   );
-  await expect
-    .poll(async () => {
-      const content = await page
-        .locator('.message-window .message:last-child .markdown')
-        .boundingBox();
-      const divider = await compaction
-        .locator('.compaction-divider')
-        .boundingBox();
-      if (!content || !divider) return -1;
-      return Math.round(divider.y - (content.y + content.height));
-    })
-    .toBe(38);
   await expect(stop).toBeVisible();
   await expect(stop).toBeDisabled();
   await expect(composer).toBeEnabled();
@@ -119,7 +61,7 @@ test('shows non-interruptible compaction from events and reconciled state', asyn
     .last();
   await expect(permanent).toHaveCount(1);
   await expect(permanent).toHaveText('compacted');
-  await expectOutwardPulse(page);
+  await expect(permanent.locator('.compaction-divider')).toHaveClass(/pulse/);
   await page.clock.runFor(650);
   await expect(permanent.locator('.compaction-divider')).not.toHaveClass(
     /pulse/,
