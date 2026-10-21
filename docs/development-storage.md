@@ -12,6 +12,11 @@ content. There is one default template, no template selector or persistence flag
 Explicit `bun run repro -- <scenario>` and `?test-scenario=` retain their existing
 scenario-specific behavior.
 
+Tau's `projects.json` stores each project's stable path identity and may store an
+optional display name. Renaming changes only that display name: it does not move
+the project, alter its local or remote connection identity, rename session files,
+or send a change to Pi.
+
 ## Native development
 
 Each native process creates a private `tau-dev-*` temporary directory. The app

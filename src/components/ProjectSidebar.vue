@@ -37,80 +37,81 @@
           :data-id="project.path"
           :data-project-path="project.path"
         >
-          <div
-            class="project-row"
-            :class="{ selected: project.path === state.activeProjectPath }"
-          >
-            <UiTooltip text="Drag to Reorder">
-              <span
-                class="project-drag-handle"
-                aria-hidden="true"
-              >
-                <UiIcon name="grip" />
-              </span>
-            </UiTooltip>
-            <!--
+          <UiContextMenu :items="() => projectRowMenuItems(project)">
+            <div
+              class="project-row"
+              :class="{ selected: project.path === state.activeProjectPath }"
+            >
+              <UiTooltip text="Drag to Reorder">
+                <span
+                  class="project-drag-handle"
+                  aria-hidden="true"
+                >
+                  <UiIcon name="grip" />
+                </span>
+              </UiTooltip>
+              <!--
               Sided below, clear of the row's own actions, which sit to the
               right of this button and carry tooltips of their own. Slower than
               a control's name, too: this one answers a question the reader
               stopped to ask, rather than naming what is under the pointer on
               the way to a session.
             -->
-            <UiTooltip
-              :text="projectLocation(project)"
-              side="bottom"
-              :delay="700"
-            >
-              <button
-                class="project-toggle"
-                type="button"
-                :disabled="projectActionsDisabled"
-                @click="() => handleProjectToggle(project)"
+              <UiTooltip
+                :text="projectLocation(project)"
+                side="bottom"
+                :delay="700"
               >
-                <UiStatusDot
-                  v-if="projectIndicator(project)"
-                  class="project-status"
-                  :tone="projectIndicator(project) || undefined"
-                  :label="indicatorLabel(projectIndicator(project))"
-                />
-                <span>{{ project.name }}</span>
-                <UiIcon
-                  :name="project.collapsed ? 'chevron-right' : 'chevron-down'"
-                />
-              </button>
-            </UiTooltip>
-            <UiTooltip
-              text="New Session"
-              shortcut="Mod+N"
-            >
-              <UiIconButton
-                class="row-action"
-                size="md"
-                variant="reveal"
-                :label="`New Session in ${project.name}`"
-                :disabled="projectActionsDisabled"
-                @click="() => handleNewSession(project)"
+                <button
+                  class="project-toggle"
+                  type="button"
+                  :disabled="projectActionsDisabled"
+                  @click="() => handleProjectToggle(project)"
+                >
+                  <UiStatusDot
+                    v-if="projectIndicator(project)"
+                    class="project-status"
+                    :tone="projectIndicator(project) || undefined"
+                    :label="indicatorLabel(projectIndicator(project))"
+                  />
+                  <span>{{ project.name }}</span>
+                  <UiIcon
+                    :name="project.collapsed ? 'chevron-right' : 'chevron-down'"
+                  />
+                </button>
+              </UiTooltip>
+              <UiTooltip
+                text="New Session"
+                shortcut="Mod+N"
               >
-                <UiIcon name="plus" />
-              </UiIconButton>
-            </UiTooltip>
-            <UiTooltip text="Remove Project">
-              <UiIconButton
-                class="row-action"
-                size="md"
-                variant="reveal"
-                tone="danger"
-                :label="`Remove ${project.name}`"
-                :disabled="projectActionsDisabled"
-                @click="
-                  (event: MouseEvent) => handleRemoveProject(project, event)
-                "
-              >
-                <UiIcon name="trash" />
-              </UiIconButton>
-            </UiTooltip>
-          </div>
-
+                <UiIconButton
+                  class="row-action"
+                  size="md"
+                  variant="reveal"
+                  :label="`New Session in ${project.name}`"
+                  :disabled="projectActionsDisabled"
+                  @click="() => handleNewSession(project)"
+                >
+                  <UiIcon name="plus" />
+                </UiIconButton>
+              </UiTooltip>
+              <UiTooltip text="Remove Project">
+                <UiIconButton
+                  class="row-action"
+                  size="md"
+                  variant="reveal"
+                  tone="danger"
+                  :label="`Remove ${project.name}`"
+                  :disabled="projectActionsDisabled"
+                  @click="
+                    (event: MouseEvent) => handleRemoveProject(project, event)
+                  "
+                >
+                  <UiIcon name="trash" />
+                </UiIconButton>
+              </UiTooltip>
+            </div>
+          </UiContextMenu>
           <div
             v-if="!project.collapsed"
             class="session-list"
@@ -374,6 +375,7 @@ const {
   projectIndicator,
   projectSessions,
   requestProjectRemoval,
+  requestProjectRename,
   reorderProjects,
   selectSession,
   sessionIndicator,
@@ -631,6 +633,24 @@ function projectMenuItems(): UiMenuItem[] {
       label: 'Open Remote Project',
       disabled: projectActionsDisabled.value,
       run: handleOpenRemoteProject,
+    },
+  ];
+}
+
+function projectRowMenuItems(project: ProjectSummary): UiMenuItem[] {
+  return [
+    {
+      label: 'Rename Project…',
+      disabled: projectActionsDisabled.value,
+      run: (): void => {
+        const control = projectList.value?.querySelector<HTMLElement>(
+          `[data-project-path="${CSS.escape(project.path)}"] .project-toggle`,
+        );
+        control?.focus({ preventScroll: true });
+        if (appCommandDispatch)
+          appCommandDispatch('project.rename', projectTarget(project));
+        else requestProjectRename(project);
+      },
     },
   ];
 }

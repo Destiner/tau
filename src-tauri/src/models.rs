@@ -29,6 +29,8 @@ fn registry_version() -> u8 {
 #[serde(rename_all = "camelCase")]
 pub struct ProjectRecord {
     pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde(default)]
     pub collapsed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]

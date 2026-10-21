@@ -22,6 +22,7 @@ function writeWorkspace<T = void>(
     | 'set_project_collapsed'
     | 'reorder_projects'
     | 'remove_project'
+    | 'rename_project'
     | 'archive_session'
     | 'unarchive_session',
   args: Record<string, unknown>,

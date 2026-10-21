@@ -54,7 +54,7 @@ const props = withDefaults(
 
     description?: string;
 
-    width?: 'sm' | 'md';
+    width?: 'sm' | 'md' | 'compact';
     busy?: boolean;
 
     dismissible?: boolean;
@@ -105,6 +105,10 @@ function handleCloseAutoFocus(event: Event): void {
   border-radius: var(--radius-lg);
   background: var(--panel-raised);
   box-shadow: 0 14px 40px var(--shadow-strong);
+}
+
+:global(.ui-dialog-content.width-compact) {
+  width: min(348px, calc(100% - 36px));
 }
 
 :global(.ui-dialog-content.width-md) {
