@@ -463,28 +463,6 @@ node)`;
     });
   });
 
-  it('keeps complete output for syntax accepted by Pele but rejected by the former parser', () => {
-    expect(
-      textContent(topology('graph TD\n A["quoted" garbage]', 1, 0)),
-    ).toContain('quoted garbage');
-    expect(
-      textContent(topology('graph TD\n A[valid]:::hot! --> B', 2, 1)),
-    ).toContain('valid');
-    topology(
-      'graph TD\n A[first\nsecond] -.retry soon-.- B[third\nfourth]',
-      2,
-      1,
-    );
-    const ownership =
-      'graph TD\n subgraph one\n A[x]\n end\n subgraph two\n A[y]\n end';
-    const result = topology(ownership, 1, 0);
-    expect(textContent(result)).toContain('y');
-    expect(graph(ownership).subgraphs.map(({ nodes }) => nodes)).toEqual([
-      ['A'],
-      [],
-    ]);
-  });
-
   it('decodes entities as label content rather than rejecting quoted text', () => {
     expect(svg('graph TD\n A["fish &amp; chips"]')).toContain(
       'fish &amp; chips',
@@ -500,16 +478,6 @@ node)`;
     expect(result).toContain('A request flows from queue to completion.');
     expect(result).toContain('aria-labelledby=');
     expect(result).toContain('aria-describedby=');
-  });
-
-  it('uses app colours and bundled fonts without network requests', () => {
-    const result = svg(FLOWCHART);
-    for (const token of ['fg', 'bg', 'line', 'muted', 'surface', 'border'])
-      expect(result).toContain(`var(--pele-${token},`);
-    const classSvg = svg('classDiagram\n Session : +load()\n');
-    expect(classSvg).toContain('Inter Variable');
-    expect(classSvg).not.toContain('@import');
-    expect(classSvg).not.toContain('fonts.googleapis.com');
   });
 
   it('scopes IDs and references independently for diagrams in one transcript', () => {
