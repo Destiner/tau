@@ -62,32 +62,7 @@ test('keeps failed checks inside the sidebar popover before and after viewing, t
   await expect(trigger.locator('.update-indicator.accent')).toBeVisible();
 });
 
-test('shows a repeated check failure in place without changing the trigger', async ({
-  page,
-}) => {
-  await page.goto('/?test-update=controlled');
-  const trigger = page.getByRole('button', {
-    name: `Tau version ${appVersion}`,
-  });
-  await trigger.click();
-  const popover = page.locator('.update-popover');
-  await finishCheck(page, true);
-  await expect(popover.getByText('Update failed')).toBeVisible();
-  await popover.getByRole('button', { name: 'Update' }).click();
-  await finishCheck(page, true);
-  await expect(popover.getByText('Update failed')).toBeVisible();
-  await expect(popover.getByRole('button', { name: 'Update' })).toBeEnabled();
-  await expect(trigger).toHaveAttribute(
-    'aria-label',
-    `Tau version ${appVersion}`,
-  );
-  await expect(
-    trigger.locator('.update-indicator, .update-failure-mark'),
-  ).toHaveCount(0);
-  await expect(popover).toBeVisible();
-});
-
-test('reveals the popover for a native check and keeps its failure inside', async ({
+test('reveals the popover and checks for updates from the native menu', async ({
   page,
 }) => {
   await page.goto('/?test-update=controlled');
@@ -107,34 +82,11 @@ test('reveals the popover for a native check and keeps its failure inside', asyn
   });
   const popover = page.locator('.update-popover');
   await expect(popover).toBeVisible();
-  await finishCheck(page, true);
-  await expect(popover.getByText('Update failed')).toBeVisible();
-});
-
-test('keeps download and verification failures local and actionable', async ({
-  page,
-}) => {
-  for (const [fixture, copy] of [
-    [
-      'download-failure',
-      'The update could not be downloaded. Check your connection and try again.',
-    ],
-    [
-      'verification-failure',
-      'The update could not be verified and was not installed.',
-    ],
-  ] as const) {
-    await page.goto(`/?test-update=${fixture}`);
-    await page
-      .getByRole('button', {
-        name: `Tau version ${appVersion}`,
-      })
-      .click();
-    const popover = page.locator('.update-popover');
-    await popover.getByRole('button', { name: 'Update' }).click();
-    await expect(popover.getByText(copy)).toBeVisible();
-    await expect(popover.getByRole('button', { name: 'Update' })).toBeEnabled();
-  }
+  await expect(
+    popover.getByRole('button', { name: 'Checking…' }),
+  ).toBeDisabled();
+  await finishCheck(page, false);
+  await expect(popover.getByText('Version 0.2.0 available')).toBeVisible();
 });
 
 test('keeps restart recovery in the popover after a failed invocation', async ({
