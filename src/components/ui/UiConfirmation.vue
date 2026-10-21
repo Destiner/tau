@@ -54,7 +54,7 @@
             :disabled="busy"
             @click="cancel"
           >
-            {{ cancelLabel }}
+            Cancel
           </UiButton>
           <UiButton
             ref="confirmButton"
@@ -94,10 +94,8 @@ const props = withDefaults(
     busy?: boolean;
     busyAction?: string;
     error?: string;
-    cancelLabel?: string;
     initialFocus?: 'cancel' | 'confirm';
     returnFocus?: () => HTMLElement | undefined;
-    /** Adds stable product-level class hooks alongside the shared UI classes. */
     classPrefix?: string;
   }>(),
   {
@@ -105,7 +103,6 @@ const props = withDefaults(
     busy: false,
     busyAction: '',
     error: '',
-    cancelLabel: 'Cancel',
     initialFocus: 'cancel',
     returnFocus: undefined,
     classPrefix: 'ui-confirmation',
@@ -138,13 +135,13 @@ watch(
   () => [props.open, content.value] as const,
   ([open, element], _, onCleanup) => {
     if (!open || !element) return;
-    onCleanup(registerConfirmation(element.$el as HTMLElement, handleEscape));
+    onCleanup(registerConfirmation(element.$el as HTMLElement, cancel));
   },
   { flush: 'post' },
 );
 
 function handleOpenChange(next: boolean): void {
-  if (!next && !props.busy) cancel();
+  if (!next) cancel();
 }
 
 function handleOpenAutoFocus(event: Event): void {
@@ -191,10 +188,6 @@ function anotherModal(): HTMLElement | undefined {
       return style.display !== 'none' && style.visibility !== 'hidden';
     })
     .at(-1);
-}
-
-function handleEscape(): void {
-  cancel();
 }
 
 function handleKeydown(event: KeyboardEvent): void {
