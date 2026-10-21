@@ -97,13 +97,6 @@ const previews: Preview[] = [
   },
 ];
 
-async function openNext(page: Page, trigger: Locator): Promise<Locator> {
-  await trigger.click();
-  const preview = page.getByRole('dialog');
-  await expect(preview).toBeVisible();
-  return preview;
-}
-
 async function panelColor(page: Page): Promise<string> {
   return page.evaluate(() => {
     const probe = document.createElement('div');
@@ -115,11 +108,11 @@ async function panelColor(page: Page): Promise<string> {
   });
 }
 
-async function expectedHeaderGradient(header: Locator): Promise<string> {
-  return header.evaluate((element) => {
-    const { height, width } = element.getBoundingClientRect();
+async function expectedHeaderGradient(page: Page): Promise<string> {
+  return page.evaluate(() => {
     const probe = document.createElement('div');
-    probe.style.cssText = `position: fixed; width: ${width}px; height: ${height}px; background-image: linear-gradient(to bottom, color-mix(in srgb, var(--panel) 96%, transparent), color-mix(in srgb, var(--panel) 70%, transparent), transparent);`;
+    probe.style.backgroundImage =
+      'linear-gradient(to bottom, color-mix(in srgb, var(--panel) 96%, transparent), color-mix(in srgb, var(--panel) 70%, transparent), transparent)';
     document.body.append(probe);
     const gradient = getComputedStyle(probe).backgroundImage;
     probe.remove();
@@ -136,7 +129,7 @@ async function expectPanelChrome(
   await expect(preview).toHaveCSS('background-color', panel);
   await expect(preview.locator('.file-viewer-header')).toHaveCSS(
     'background-image',
-    await expectedHeaderGradient(preview.locator('.file-viewer-header')),
+    await expectedHeaderGradient(page),
   );
 
   const badge = preview.locator('.file-viewer-limit');
@@ -163,7 +156,7 @@ async function expectMediaMetadata(media: Locator): Promise<void> {
 for (const initialTheme of ['light', 'dark'] as const) {
   test(`keeps every preview surface on the panel from ${initialTheme}`, async ({
     page,
-  }, testInfo) => {
+  }) => {
     let releaseLoading: (() => void) | undefined;
     if (initialTheme === 'dark')
       await page.setViewportSize({ width: 600, height: 720 });
@@ -224,7 +217,9 @@ for (const initialTheme of ['light', 'dark'] as const) {
 
     for (const expected of previews) {
       await page.emulateMedia({ colorScheme: initialTheme });
-      const preview = await openNext(page, trigger);
+      await trigger.click();
+      const preview = page.getByRole('dialog');
+      await expect(preview).toBeVisible();
       await expect(
         preview.getByText(expected.filename, { exact: true }),
       ).toBeVisible();
@@ -302,10 +297,6 @@ for (const initialTheme of ['light', 'dark'] as const) {
           'background-color',
           inlineBackgrounds.get(theme)!,
         );
-        if (theme === initialTheme)
-          await preview.screenshot({
-            path: `/tmp/tau-preview-${testInfo.project.name}-${expected.mode}-${theme}.png`,
-          });
       }
       await page.keyboard.press('Escape');
       await expect(preview).toHaveCount(0);
