@@ -417,6 +417,7 @@ const {
   settingsDisabled,
   projectSessions,
   selectSession,
+  activateProject,
   toggleProject,
   requestProjectRemoval,
   cancelProjectRemoval,
@@ -1173,12 +1174,7 @@ async function selectPaletteRow(id: string): Promise<void> {
     paletteOpen.value = false;
     composerBar.value?.closeSelectors();
     projectSidebar.value?.showActiveSessions();
-    const chosen =
-      projectSessions(target).find((s) => s.selected && !s.archived) ??
-      projectSessions(target).find((s) => !s.archived);
-    if (target.collapsed) void toggleProject(target);
-    if (chosen) void selectSession(target, chosen);
-    else void newSession(target);
+    activateProject(target);
     focusAfterPaletteNavigation();
   } else if (palettePage.value === 'models') {
     if (

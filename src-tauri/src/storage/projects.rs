@@ -110,6 +110,38 @@ fn remote_project_path(connection_string: &str, working_directory: &str) -> Resu
     Ok(format!("ssh:{identity}"))
 }
 
+fn register_remote_project(
+    registry: &mut ProjectRegistry,
+    path: &str,
+    connection_string: String,
+    working_directory: String,
+    host: String,
+) {
+    if let Some(project) = registry.projects.iter_mut().find(|project| {
+        project.remote.as_ref().is_some_and(|remote| {
+            remote.connection_string == connection_string
+                && remote.working_directory == working_directory
+        })
+    }) {
+        if let Some(remote) = project.remote.as_mut() {
+            remote.host = host;
+        }
+        return;
+    }
+
+    registry.projects.push(ProjectRecord {
+        path: path.to_string(),
+        collapsed: false,
+        remote: Some(RemoteProjectRecord {
+            connection_string,
+            working_directory,
+            host,
+            active_session_id: String::new(),
+            sessions: Vec::new(),
+        }),
+    });
+}
+
 fn remote_project_name(remote: &RemoteProjectRecord) -> String {
     Path::new(&remote.working_directory)
         .file_name()
@@ -128,19 +160,20 @@ fn project_name(path: &str) -> String {
         .to_string()
 }
 
+fn register_local_project(registry: &mut ProjectRegistry, path: &str) {
+    if !registry.projects.iter().any(|project| project.path == path) {
+        registry.projects.push(ProjectRecord {
+            path: path.to_string(),
+            collapsed: false,
+            remote: None,
+        });
+    }
+}
+
 pub(super) fn import_project_inner(path: String) -> Result<ProjectSummary, String> {
     let path = normalized_project_path(&path)?;
     let registry = mutate_projects(|registry| {
-        if !registry.projects.iter().any(|project| project.path == path) {
-            registry.projects.push(ProjectRecord {
-                path: path.clone(),
-                collapsed: false,
-                remote: None,
-            });
-        }
-        if registry.active_project_path.is_empty() {
-            registry.active_project_path = path.clone();
-        }
+        register_local_project(registry, &path);
         Ok(())
     })?;
     project_summary(
@@ -172,49 +205,13 @@ pub(super) fn import_remote_project_inner(
     let new_path = remote_project_path(&connection_string, &working_directory)?;
 
     let registry = mutate_projects(|registry| {
-        let path = registry
-            .projects
-            .iter()
-            .find(|project| {
-                project.remote.as_ref().is_some_and(|remote| {
-                    remote.connection_string == connection_string
-                        && remote.working_directory == working_directory
-                })
-            })
-            .map(|project| project.path.clone())
-            .unwrap_or_else(|| new_path.clone());
-        if let Some(project) = registry
-            .projects
-            .iter_mut()
-            .find(|project| project.path == path)
-        {
-            let previous = project.remote.take();
-            project.remote = Some(RemoteProjectRecord {
-                connection_string,
-                working_directory,
-                host,
-                active_session_id: previous
-                    .as_ref()
-                    .map(|remote| remote.active_session_id.clone())
-                    .unwrap_or_default(),
-                sessions: previous.map(|remote| remote.sessions).unwrap_or_default(),
-            });
-        } else {
-            registry.projects.push(ProjectRecord {
-                path: path.clone(),
-                collapsed: false,
-                remote: Some(RemoteProjectRecord {
-                    connection_string,
-                    working_directory,
-                    host,
-                    active_session_id: String::new(),
-                    sessions: Vec::new(),
-                }),
-            });
-        }
-        if registry.active_project_path.is_empty() {
-            registry.active_project_path = path;
-        }
+        register_remote_project(
+            registry,
+            &new_path,
+            connection_string,
+            working_directory,
+            host,
+        );
         Ok(())
     })?;
     let project = registry
@@ -269,7 +266,106 @@ pub(super) fn reorder_projects_inner(project_paths: Vec<String>) -> Result<(), S
 mod tests {
     use super::super::registry::{configured_pi_agent_dir, default_session_dir};
     use super::*;
+    use crate::models::RemoteSessionRecord;
     use std::ffi::{OsStr, OsString};
+
+    #[test]
+    fn registering_a_new_local_project_does_not_select_it() {
+        let mut registry = ProjectRegistry::default();
+
+        register_local_project(&mut registry, "/projects/new");
+
+        assert!(registry.active_project_path.is_empty());
+        assert_eq!(registry.projects.len(), 1);
+        assert_eq!(registry.projects[0].path, "/projects/new");
+        assert!(registry.projects[0].remote.is_none());
+    }
+
+    #[test]
+    fn registering_an_existing_local_project_preserves_selection() {
+        let mut registry = ProjectRegistry {
+            active_project_path: "/projects/active".into(),
+            projects: vec![ProjectRecord {
+                path: "/projects/existing".into(),
+                collapsed: true,
+                remote: None,
+            }],
+            ..ProjectRegistry::default()
+        };
+
+        register_local_project(&mut registry, "/projects/existing");
+
+        assert_eq!(registry.active_project_path, "/projects/active");
+        assert_eq!(registry.projects.len(), 1);
+        assert!(registry.projects[0].collapsed);
+    }
+
+    #[test]
+    fn registering_a_new_remote_project_does_not_select_it() {
+        let mut registry = ProjectRegistry::default();
+
+        register_remote_project(
+            &mut registry,
+            "ssh:[\"ssh build-box\",\"/workspace\"]",
+            "ssh build-box".into(),
+            "/workspace".into(),
+            "build-box".into(),
+        );
+
+        assert!(registry.active_project_path.is_empty());
+        assert_eq!(registry.projects.len(), 1);
+        assert_eq!(
+            registry.projects[0].path,
+            "ssh:[\"ssh build-box\",\"/workspace\"]"
+        );
+        assert!(registry.projects[0].remote.is_some());
+    }
+
+    #[test]
+    fn registering_an_existing_remote_project_preserves_sessions_and_selection() {
+        let mut registry = ProjectRegistry {
+            active_project_path: "/projects/active".into(),
+            projects: vec![ProjectRecord {
+                path: "ssh:[\"ssh build-box\",\"/workspace\"]".into(),
+                collapsed: true,
+                remote: Some(RemoteProjectRecord {
+                    connection_string: "ssh build-box".into(),
+                    working_directory: "/workspace".into(),
+                    host: "old-host".into(),
+                    active_session_id: "session-1".into(),
+                    sessions: vec![RemoteSessionRecord {
+                        id: "session-1".into(),
+                        path: "/workspace/.pi/sessions/session-1.jsonl".into(),
+                        name: Some("Preserved session".into()),
+                        archived: false,
+                        last_active: 42,
+                        sort_at: 42,
+                    }],
+                }),
+            }],
+            ..ProjectRegistry::default()
+        };
+
+        register_remote_project(
+            &mut registry,
+            "ssh:[\"ssh build-box\",\"/workspace\"]",
+            "ssh build-box".into(),
+            "/workspace".into(),
+            "new-host".into(),
+        );
+
+        let remote = registry.projects[0]
+            .remote
+            .as_ref()
+            .expect("remote project");
+        assert_eq!(registry.active_project_path, "/projects/active");
+        assert_eq!(registry.projects.len(), 1);
+        assert!(registry.projects[0].collapsed);
+        assert_eq!(remote.host, "new-host");
+        assert_eq!(remote.active_session_id, "session-1");
+        assert_eq!(remote.sessions.len(), 1);
+        assert_eq!(remote.sessions[0].id, "session-1");
+    }
     #[test]
     fn default_session_path_matches_pi_encoding() {
         let path = default_session_dir("/Users/timur/code/tau").expect("session path");

@@ -38,6 +38,7 @@ import {
 } from '../state';
 
 import {
+  beginNavigation,
   cancelSavedPreview,
   trackSelection,
   trackSelectionWrite,
@@ -134,6 +135,7 @@ function createSessions() {
     bootstrap = false,
   ): Promise<SessionController | undefined> {
     if (!bootstrap && projectActionsDisabled.value) return;
+    beginNavigation();
     const milestones = startActionMilestones('session.new');
     const actionSpan = milestones.span;
     try {
@@ -182,6 +184,7 @@ function createSessions() {
     session: SessionSummary,
   ): Promise<void> {
     if (projectActionsDisabled.value) return;
+    beginNavigation();
     const milestones = startActionMilestones(
       'session.select',
       controllerTelemetryScope(

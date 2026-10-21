@@ -18,6 +18,7 @@ import {
   type WorkspaceSnapshot,
 } from '../state';
 
+import { beginNavigation, isCurrentNavigation } from './navigation';
 import {
   writeWorkspace,
   foldIntent,
@@ -25,20 +26,26 @@ import {
   isCurrentOrderRevision,
 } from './workspace-writes';
 
-function mergeImportedProject(project: ProjectSummary): void {
+function mergeImportedProject(
+  project: ProjectSummary,
+): ProjectSummary | undefined {
   const workspace = state.workspace;
   if (!workspace) return;
-  const index = workspace.projects.findIndex(
+  const existing = workspace.projects.find(
     (item) => item.path === project.path,
   );
-  if (index < 0) workspace.projects.push(project);
-  else workspace.projects.splice(index, 1, project);
-  if (project.selected) {
-    workspace.activeProjectPath = project.path;
-    for (const item of workspace.projects)
-      item.selected = item.path === project.path;
+  if (existing) {
+    for (const session of project.sessions) {
+      if (!existing.sessions.some((item) => item.id === session.id))
+        existing.sessions.push({ ...session, selected: false });
+    }
+    return existing;
   }
+  workspace.projects.push({ ...project, selected: false });
+  return workspace.projects[workspace.projects.length - 1];
 }
+
+let localOpening = false;
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function createProjects(
@@ -51,8 +58,31 @@ function createProjects(
     bootstrap?: boolean,
   ) => Promise<SessionController | undefined>,
 ) {
+  function activateProject(project: ProjectSummary): void {
+    const target = state.workspace?.projects.find(
+      (item) => item.path === project.path,
+    );
+    if (!target || projectActionsDisabled.value) return;
+    const sessions = projectSessions(target).filter(
+      (session) => !session.archived,
+    );
+    const chosen =
+      sessions.find(
+        (session) =>
+          target.path === state.activeProjectPath &&
+          session.id === state.activeSessionId,
+      ) ??
+      sessions.find((session) => session.selected) ??
+      sessions[0];
+    if (target.collapsed) void toggleProject(target);
+    if (chosen) void selectSession(target, chosen);
+    else void newSession(target);
+  }
+
   async function addLocalProject(): Promise<void> {
-    if (projectActionsDisabled.value) return;
+    if (projectActionsDisabled.value || localOpening) return;
+    const intent = beginNavigation();
+    localOpening = true;
     let selection: string | null;
     try {
       selection = await open({
@@ -61,41 +91,31 @@ function createProjects(
         title: 'Choose a Project Folder',
       });
     } catch {
-      setWorkspaceError(errorCopy.folderPicker);
+      if (isCurrentNavigation(intent))
+        setWorkspaceError(errorCopy.folderPicker);
       return;
+    } finally {
+      localOpening = false;
     }
-    if (!selection) return;
+    if (!selection || !isCurrentNavigation(intent)) return;
     try {
-      mergeImportedProject(
-        await invokeTraced<ProjectSummary>('import_project', {
-          path: selection,
-        }),
-      );
+      const imported = await writeWorkspace<ProjectSummary>('import_project', {
+        path: selection,
+      });
+      if (!isCurrentNavigation(intent)) return;
       if (state.workspace && !state.workspace.piPath) {
-        state.workspace.piPath = (
-          await invokeTraced<WorkspaceSnapshot>('load_workspace', {})
-        ).piPath;
-      }
-      if (!state.activeProjectPath) {
-        state.activeProjectPath = state.workspace?.activeProjectPath ?? '';
-      }
-      if (!state.activeSessionId) {
-        const selectedProject = state.workspace?.projects.find(
-          (project) => project.selected,
+        const workspace = await invokeTraced<WorkspaceSnapshot>(
+          'load_workspace',
+          {},
         );
-        if (selectedProject) {
-          const selectedSession = selectedProject.sessions.find(
-            (session) => session.selected,
-          );
-          if (selectedSession) {
-            await selectSession(selectedProject, selectedSession);
-          } else if (projectSessions(selectedProject).length === 0) {
-            await newSession(selectedProject);
-          }
-        }
+        if (!isCurrentNavigation(intent)) return;
+        if (state.workspace) state.workspace.piPath = workspace.piPath;
       }
+      const project = mergeImportedProject(imported);
+      if (project) activateProject(project);
     } catch {
-      setWorkspaceError(errorCopy.importProject);
+      if (isCurrentNavigation(intent))
+        setWorkspaceError(errorCopy.importProject);
     }
   }
 
@@ -182,6 +202,7 @@ function createProjects(
     }
     removal.busy = true;
     removal.error = '';
+    beginNavigation();
     state.removingProjectPaths.push(project.path);
     const projectControllers = state.controllers.filter(
       (controller) => controller.projectPath === project.path,
@@ -222,6 +243,7 @@ function createProjects(
     }
   }
   return {
+    activateProject,
     addLocalProject,
     toggleProject,
     reorderProjects,

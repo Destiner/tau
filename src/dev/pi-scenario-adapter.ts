@@ -14,6 +14,7 @@ import {
   findPiScenario,
   piScenarioCatalogue,
 } from '../../tests/support/pi-scenario/catalogue';
+import { targetProjectPath } from '../../tests/support/pi-scenario/project-opening';
 import { state, type WorkspaceSnapshot } from '../composables/state';
 import type { PiBridgeEvent } from '../lib/pi/bridge';
 
@@ -81,8 +82,11 @@ declare global {
 const PROJECT_PATH = '/fixture/tau-project';
 const OTHER_PROJECT_PATH = '/fixture/other-project';
 const SECOND_PROJECT_PATH = OTHER_PROJECT_PATH;
+const TARGET_PROJECT_PATH = targetProjectPath;
 const REMOTE_CONNECTION = 'ssh fixture@example';
 const REMOTE_WORKING_DIRECTORY = '/remote/tau-project';
+const TARGET_REMOTE_CONNECTION = 'ssh target@example';
+const TARGET_REMOTE_WORKING_DIRECTORY = '/remote/target-project';
 const SESSION_ID = 'session-main';
 const SESSION_PATH = `${PROJECT_PATH}/session-main.jsonl`;
 const MAIN_SESSION = { id: SESSION_ID, path: SESSION_PATH, name: 'Main' };
@@ -100,6 +104,11 @@ const OTHER_PROJECT_SESSION = {
   id: 'session-other-project',
   path: `${OTHER_PROJECT_PATH}/session-other-project.jsonl`,
   name: 'Other project',
+};
+const TARGET_PROJECT_SESSION = {
+  id: 'session-target',
+  path: `${TARGET_PROJECT_PATH}/session-target.jsonl`,
+  name: 'Target',
 };
 const SIDEBAR_METADATA_ARCHIVES = [
   { projectPath: PROJECT_PATH, session: BACKUP_SESSION },
@@ -139,6 +148,9 @@ const REQUIRED_NATIVE_COUNTS = {
   'empty-workspace': {
     load_workspace: 1,
     'plugin:dialog|open': 1,
+  },
+  'project-opening': {
+    load_workspace: 1,
   },
   'saved-session-bootstrap': {
     load_workspace: 1,
@@ -441,6 +453,31 @@ function scenarioWorkspace(scenarioName: string): WorkspaceSnapshot {
     workspace.projects = [];
     return workspace;
   }
+  if (scenarioName === 'project-opening') {
+    const remote = projectOpeningMode() === 'remote';
+    workspace.projects.push({
+      path: TARGET_PROJECT_PATH,
+      name: 'Target fixture',
+      workingDirectory: remote
+        ? TARGET_REMOTE_WORKING_DIRECTORY
+        : TARGET_PROJECT_PATH,
+      connectionString: remote ? TARGET_REMOTE_CONNECTION : undefined,
+      collapsed: true,
+      selected: false,
+      sessions: [
+        {
+          id: TARGET_PROJECT_SESSION.id,
+          path: TARGET_PROJECT_SESSION.path,
+          title: TARGET_PROJECT_SESSION.name,
+          lastActive: '2026-01-02T03:04:03.000Z',
+          lastUserMessageAt: 0,
+          sortAt: 0,
+          archived: false,
+          selected: true,
+        },
+      ],
+    });
+  }
   if (scenarioName === 'saved-session-extension-prompt-project-switching') {
     workspace.projects.push({
       path: SECOND_PROJECT_PATH,
@@ -545,6 +582,25 @@ function scenarioWorkspace(scenarioName: string): WorkspaceSnapshot {
   return workspace;
 }
 
+function projectOpeningMode(): 'local' | 'remote' {
+  const mode = new URLSearchParams(globalThis.location.search).get(
+    'project-opening',
+  );
+  if (mode === 'local' || mode === 'remote') return mode;
+  throw new Error('Project opening fixture requires a local or remote mode.');
+}
+
+function projectOpeningTarget(
+  workspace: WorkspaceSnapshot,
+): WorkspaceSnapshot['projects'][number] {
+  const target = workspace.projects.find(
+    (project) => project.path === TARGET_PROJECT_PATH,
+  );
+  if (!target)
+    throw new Error('Project opening fixture requires a target project.');
+  return structuredClone({ ...target, selected: true });
+}
+
 function installPiScenarioAdapter(scenarioName: string): void {
   const scenario = findPiScenario(scenarioName);
   const ownershipDelay = Number(
@@ -639,17 +695,85 @@ function installPiScenarioAdapter(scenarioName: string): void {
         command === 'read_model_scope' ||
         (command === 'read_remote_model_scope' &&
           (scenarioName === 'remote-phantom-prompt-process-exit' ||
-            scenarioName === 'remote-saved-session-process-exit'))
+            scenarioName === 'remote-saved-session-process-exit' ||
+            scenarioName === 'project-opening'))
       ) {
         count(command);
         return [];
       }
-      if (
-        command === 'plugin:dialog|open' &&
-        scenarioName === 'empty-workspace'
-      ) {
+      if (command === 'plugin:dialog|open') {
+        if (scenarioName === 'empty-workspace') {
+          count(command);
+          return null;
+        }
+        if (
+          scenarioName === 'project-opening' &&
+          projectOpeningMode() === 'local'
+        ) {
+          count(command);
+          return TARGET_PROJECT_PATH;
+        }
+      }
+      if (command === 'import_project' && scenarioName === 'project-opening') {
+        if (projectOpeningMode() !== 'local') {
+          throw new Error(
+            'Local import ran during the remote opening fixture.',
+          );
+        }
+        requireEqual(
+          requiredString(args, 'path', command),
+          TARGET_PROJECT_PATH,
+          'import_project.path',
+        );
         count(command);
-        return null;
+        return projectOpeningTarget(workspace);
+      }
+      if (
+        command === 'probe_remote_project' &&
+        scenarioName === 'project-opening'
+      ) {
+        if (projectOpeningMode() !== 'remote') {
+          throw new Error('Remote probe ran during the local opening fixture.');
+        }
+        requireEqual(
+          requiredString(args, 'connectionString', command),
+          TARGET_REMOTE_CONNECTION,
+          'probe_remote_project.connectionString',
+        );
+        count(command);
+        return {
+          connectionString: TARGET_REMOTE_CONNECTION,
+          host: 'target',
+          workingDirectory: TARGET_REMOTE_WORKING_DIRECTORY,
+          directories: [],
+        };
+      }
+      if (
+        command === 'import_remote_project' &&
+        scenarioName === 'project-opening'
+      ) {
+        if (projectOpeningMode() !== 'remote') {
+          throw new Error(
+            'Remote import ran during the local opening fixture.',
+          );
+        }
+        requireEqual(
+          requiredString(args, 'connectionString', command),
+          TARGET_REMOTE_CONNECTION,
+          'import_remote_project.connectionString',
+        );
+        requireEqual(
+          requiredString(args, 'workingDirectory', command),
+          TARGET_REMOTE_WORKING_DIRECTORY,
+          'import_remote_project.workingDirectory',
+        );
+        requireEqual(
+          requiredString(args, 'host', command),
+          'target',
+          'import_remote_project.host',
+        );
+        count(command);
+        return projectOpeningTarget(workspace);
       }
       if (command === 'start_pi' || command === 'start_pi_remote') {
         requireOwner(args, activeOwner, command);
@@ -739,6 +863,20 @@ function installPiScenarioAdapter(scenarioName: string): void {
             ?.sessions.find((session) => session.id === value.sessionId) ??
             null,
         );
+      }
+      if (
+        command === 'set_project_collapsed' &&
+        scenarioName === 'project-opening'
+      ) {
+        const projectPath = requiredString(args, 'path', command);
+        if (projectPath !== TARGET_PROJECT_PATH) {
+          throw new Error('Project opening unfolded an unexpected project.');
+        }
+        if (typeof args.collapsed !== 'boolean' || args.collapsed) {
+          throw new Error('Project opening must unfold the imported target.');
+        }
+        count(command);
+        return null;
       }
       if (command === 'set_active_project') {
         count(command);
@@ -996,7 +1134,8 @@ function startPiArgs(args: Record<string, unknown>): StartPiArgs {
   };
   if (
     value.projectPath !== PROJECT_PATH &&
-    value.projectPath !== SECOND_PROJECT_PATH
+    value.projectPath !== SECOND_PROJECT_PATH &&
+    value.projectPath !== TARGET_PROJECT_PATH
   ) {
     throw new Error('start_pi.projectPath must identify a fixture project.');
   }
@@ -1005,6 +1144,7 @@ function startPiArgs(args: Record<string, unknown>): StartPiArgs {
     value.sessionPath !== SESSION_PATH &&
     value.sessionPath !== BACKUP_SESSION.path &&
     value.sessionPath !== SECOND_PROJECT_SESSION.path &&
+    value.sessionPath !== TARGET_PROJECT_SESSION.path &&
     value.sessionPath !== ARCHIVED_SESSION.path &&
     value.sessionPath !== PLAN_SESSION.path
   ) {
@@ -1032,14 +1172,15 @@ function startPiRemoteArgs(args: Record<string, unknown>): StartPiRemoteArgs {
     ),
     sessionPath,
   };
+  const targetProject = value.sessionPath === TARGET_PROJECT_SESSION.path;
   requireEqual(
     value.connectionString,
-    REMOTE_CONNECTION,
+    targetProject ? TARGET_REMOTE_CONNECTION : REMOTE_CONNECTION,
     'start_pi_remote.connectionString',
   );
   requireEqual(
     value.workingDirectory,
-    REMOTE_WORKING_DIRECTORY,
+    targetProject ? TARGET_REMOTE_WORKING_DIRECTORY : REMOTE_WORKING_DIRECTORY,
     'start_pi_remote.workingDirectory',
   );
   return value;
@@ -1071,7 +1212,9 @@ function registerSessionArgs(
     value.projectPath,
     expected.id === SECOND_PROJECT_SESSION.id
       ? SECOND_PROJECT_PATH
-      : PROJECT_PATH,
+      : expected.id === TARGET_PROJECT_SESSION.id
+        ? TARGET_PROJECT_PATH
+        : PROJECT_PATH,
     'register_session.projectPath',
   );
   requireEqual(value.sessionId, expected.id, 'register_session.sessionId');
@@ -1113,7 +1256,9 @@ function setActiveSessionArgs(
     value.projectPath,
     expected.id === SECOND_PROJECT_SESSION.id
       ? SECOND_PROJECT_PATH
-      : PROJECT_PATH,
+      : expected.id === TARGET_PROJECT_SESSION.id
+        ? TARGET_PROJECT_PATH
+        : PROJECT_PATH,
     'set_active_session.projectPath',
   );
   requireEqual(value.sessionId, expected.id, 'set_active_session.sessionId');
@@ -1125,6 +1270,14 @@ function expectedNativeSession(
   command: 'register_session' | 'set_active_session',
   invocation: number,
 ): NativeSessionIdentity {
+  if (scenarioName === 'project-opening') {
+    const expected =
+      invocation === 1
+        ? MAIN_SESSION
+        : { ...TARGET_PROJECT_SESSION, adopted: false };
+    if (invocation > 2) throw new Error(`${command} ran too many times.`);
+    return expected;
+  }
   if (scenarioName === 'phantom-command-replacement') {
     const expected =
       command === 'register_session'
@@ -1233,6 +1386,11 @@ function scenarioRuntimeKey(
   sessionPath: string | null,
   startCounts: Map<string, number>,
 ): string {
+  if (scenarioName === 'project-opening') {
+    if (sessionPath === SESSION_PATH) return 'main';
+    if (sessionPath === TARGET_PROJECT_SESSION.path) return 'target';
+    throw new Error('Project opening started an unexpected session.');
+  }
   const pathKey = sessionPath ?? '<new-session>';
   const count = (startCounts.get(pathKey) ?? 0) + 1;
   startCounts.set(pathKey, count);
