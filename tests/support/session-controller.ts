@@ -10,6 +10,7 @@ export default function sessionControllerFixture(
     sessionId: 'session-1',
     sessionPath: '/tmp/project/session.json',
     sessionName: '',
+    sessionOwnerSequence: 0,
     phantom: false,
     generation: 0,
     ready: false,

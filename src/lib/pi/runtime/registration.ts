@@ -1,5 +1,6 @@
 import { archiveRevision } from '../../../composables/archive-revision';
 import {
+  claimSessionOwnership,
   createPhantomSession,
   draftTitle,
   sessionTitleMarkdown,
@@ -369,11 +370,16 @@ async function persistProjectSelection(
 // not, so a replacement has to move it onto the identity Pi handed over
 // instead of leaving it pointing at the session that was swapped out.
 function rebindEphemeralSession(controller: SessionController): void {
+  claimSessionOwnership(controller);
   let session = ephemeralSessionByController(controller.key);
   if (!session && !workspaceContainsSession(controller)) {
     session = createPhantomSession(controller.projectPath, controller.key);
     session.phantom = false;
     state.ephemeralSessions.push(session);
+  }
+  if (isControllerSelected(controller)) {
+    state.activeSessionId = controller.sessionId;
+    state.activeSessionPath = controller.sessionPath;
   }
   if (!session) return;
   session.id = controller.sessionId;
@@ -386,10 +392,6 @@ function rebindEphemeralSession(controller: SessionController): void {
   // phase's ordering or leaving the predecessor highlighted.
   session.lastActive = 'now';
   session.sortAt = Date.now();
-  if (isControllerSelected(controller)) {
-    state.activeSessionId = controller.sessionId;
-    state.activeSessionPath = controller.sessionPath;
-  }
 }
 
 function markPiTranscript(controller: SessionController): void {
@@ -415,6 +417,7 @@ function materializePendingSession(
   controller.sessionId = sessionId;
   controller.sessionPath = sessionPath;
   controller.phantom = false;
+  claimSessionOwnership(controller);
   if (session) {
     session.id = sessionId;
     session.path = sessionPath;

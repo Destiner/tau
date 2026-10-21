@@ -185,6 +185,7 @@ interface SessionController {
   sessionId: string;
   sessionPath: string;
   sessionName: string;
+  sessionOwnerSequence: number;
   phantom: boolean;
   generation: number;
   ready: boolean;
@@ -449,6 +450,7 @@ const idleRuntimeLimit = 6;
 let phantomSequence = 0;
 let controllerSequence = 0;
 let activitySequence = 0;
+let sessionOwnerSequence = 0;
 let feedbackSequence = 0;
 const extensionDialogTimeouts = new Map<
   string,
@@ -486,11 +488,7 @@ const activeSession = computed(() => {
   const project = activeProject.value;
   if (!project) return undefined;
   return (
-    state.ephemeralSessions.find(
-      (session) =>
-        session.id === state.activeSessionId &&
-        session.projectPath === project.path,
-    ) ??
+    ephemeralSession(project.path, state.activeSessionId) ??
     project.sessions.find((session) => session.id === state.activeSessionId)
   );
 });
@@ -738,7 +736,9 @@ function canArchiveSession(
 
 function projectSessions(project: ProjectSummary): SessionSummary[] {
   const ephemeral = state.ephemeralSessions.filter(
-    (session) => session.projectPath === project.path,
+    (session) =>
+      session.projectPath === project.path &&
+      ephemeralSession(project.path, session.id) === session,
   );
   const ephemeralIds = new Set(ephemeral.map((session) => session.id));
   const phantomCreatedAt = new Map(
@@ -971,6 +971,7 @@ function ensureController(
   const controller =
     controllerForSession(project.path, session.id) ??
     createController(project, session, nextControllerKey());
+  reconcileSessionOwner(controller);
   const key = queueRecoveryKey(project.path, session.id);
   const recovered = interruptedQueueDrafts.get(key);
   if (recovered) {
@@ -1044,6 +1045,7 @@ function createController(
     sessionId: session.id,
     sessionPath: session.path,
     sessionName: session.title === 'New Session' ? '' : session.title,
+    sessionOwnerSequence: (sessionOwnerSequence += 1),
     phantom,
     generation: 0,
     ready: false,
@@ -1131,13 +1133,72 @@ function controllerForSession(
   projectPath: string,
   sessionId: string,
 ): SessionController | undefined {
-  const ephemeral = ephemeralSession(projectPath, sessionId);
-  if (ephemeral) return controllerByKey(ephemeral.controllerKey);
-  return state.controllers.find(
-    (controller) =>
-      controller.projectPath === projectPath &&
-      controller.sessionId === sessionId,
+  return state.controllers
+    .filter(
+      (controller) =>
+        !controller.disposed &&
+        controller.projectPath === projectPath &&
+        controller.sessionId === sessionId,
+    )
+    .sort(
+      (left, right) =>
+        sessionOwnerRank(right) - sessionOwnerRank(left) ||
+        right.sessionOwnerSequence - left.sessionOwnerSequence,
+    )[0];
+}
+
+function sessionOwnerRank(controller: SessionController): number {
+  if (
+    !controller.remoteDisconnected &&
+    (controller.ready ||
+      controller.starting ||
+      controller.connectingRemote ||
+      controller.stopping ||
+      controller.working ||
+      controller.streaming ||
+      controller.syncing ||
+      controller.generation > 0)
+  )
+    return 2;
+  return controller.remoteDisconnected ? 1 : 0;
+}
+
+// Identity adoption, not navigation or a late event, decides between live
+// duplicates. Never stop either process or move its extension continuation.
+function claimSessionOwnership(controller: SessionController): void {
+  controller.sessionOwnerSequence = sessionOwnerSequence += 1;
+  reconcileSessionOwner(controller);
+}
+
+function reconcileSessionOwner(controller: SessionController): void {
+  const owner = controllerForSession(
+    controller.projectPath,
+    controller.sessionId,
   );
+  if (!owner) return;
+  for (const duplicate of state.controllers) {
+    if (
+      duplicate === owner ||
+      duplicate.disposed ||
+      duplicate.projectPath !== owner.projectPath ||
+      duplicate.sessionId !== owner.sessionId ||
+      sessionOwnerRank(duplicate) === 2
+    )
+      continue;
+    if (duplicate.draft) {
+      owner.draft = owner.draft
+        ? `${owner.draft}\n\n${duplicate.draft}`
+        : duplicate.draft;
+      duplicate.draft = '';
+    }
+  }
+  if (
+    state.activeProjectPath === owner.projectPath &&
+    state.activeSessionId === owner.sessionId
+  ) {
+    state.activeControllerKey = owner.key;
+    state.activeSessionPath = owner.sessionPath;
+  }
 }
 
 function controllerByKey(key: string): SessionController | undefined {
@@ -1156,10 +1217,14 @@ function ephemeralSession(
   projectPath: string,
   sessionId: string,
 ): EphemeralSession | undefined {
-  return state.ephemeralSessions.find(
+  const candidates = state.ephemeralSessions.filter(
     (session) =>
       session.projectPath === projectPath && session.id === sessionId,
   );
+  const owner = controllerForSession(projectPath, sessionId);
+  return owner
+    ? candidates.find((session) => session.controllerKey === owner.key)
+    : candidates[0];
 }
 
 function ephemeralSessionByController(
@@ -1657,6 +1722,8 @@ export {
   inheritControllerSettings,
   createController,
   controllerForSession,
+  claimSessionOwnership,
+  reconcileSessionOwner,
   controllerByKey,
   controllerByRuntimeId,
   ephemeralSession,

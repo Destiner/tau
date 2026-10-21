@@ -198,7 +198,9 @@ function createSessions() {
         project.path === state.activeProjectPath &&
         session.id === state.activeSessionId;
       if (alreadySelected) {
-        const controller = activeController.value;
+        const controller = ensureController(project, session);
+        state.activeControllerKey = controller.key;
+        state.activeSessionPath = controller.sessionPath;
         if (controller) {
           controller.unread = false;
           if (controller.commandRefreshFailed && controller.generation)

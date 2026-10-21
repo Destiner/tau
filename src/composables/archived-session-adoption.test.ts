@@ -190,6 +190,109 @@ beforeEach(() => {
 });
 
 describe('a workflow phase Pi hands back', () => {
+  it('routes a saved row to its resumed owner after the old runtime stopped', async () => {
+    const { tau, project } = setup([
+      { ...LIVE_SESSION, archived: false },
+      { ...PHASE_SESSION, archived: false },
+    ]);
+    await tau.initialize();
+    const phase = project.sessions.find(
+      (session) => session.id === PHASE_SESSION.id,
+    )!;
+    const live = project.sessions.find(
+      (session) => session.id === LIVE_SESSION.id,
+    )!;
+    await tau.selectSession(project, phase);
+    const stale = tau.state.controllers.find(
+      (candidate) => candidate.sessionId === phase.id,
+    )!;
+    stale.starting = false;
+    stale.ready = false;
+    stale.generation = 0;
+    stale.draft = 'Keep my merge notes';
+    stale.feedback.push({
+      id: 999,
+      title: 'Old error',
+      message: 'Stale failure',
+      acknowledged: false,
+    });
+
+    await tau.selectSession(project, live);
+    const owner = tau.state.controllers.find(
+      (candidate) => candidate.sessionId === live.id,
+    )!;
+    owner.starting = false;
+    owner.ready = true;
+    owner.commands = [{ name: 'implement', source: 'extension' }];
+    owner.commandsLoaded = true;
+    tau.draft.value = '/implement Resume';
+    await tau.sendMessage();
+    await vi.waitFor(() =>
+      expect(sentRequests(owner, 'prompt')).toHaveLength(1),
+    );
+    emitRpc(owner, {
+      id: sentRequests(owner, 'prompt')[0]?.id,
+      type: 'response',
+      command: 'prompt',
+      success: true,
+    });
+    await vi.waitFor(() =>
+      expect(sentRequests(owner, 'get_state').length).toBeGreaterThan(0),
+    );
+    emitRpc(owner, {
+      id: sentRequests(owner, 'get_state').at(-1)?.id,
+      type: 'response',
+      command: 'get_state',
+      success: true,
+      data: replacementState(),
+    });
+    await vi.waitFor(() => expect(owner.sessionId).toBe(phase.id));
+    await vi.waitFor(() => expect(tau.state.activeSessionId).toBe(phase.id));
+    await tau.selectSession(project, live);
+    const starts = vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command.startsWith('start_pi')).length;
+    const stops = vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command === 'stop_pi').length;
+
+    // Approval arrives later, after identity registration removed the provisional row.
+    emitRpc(owner, {
+      type: 'extension_ui_request',
+      id: 'resume-approval',
+      method: 'confirm',
+      title: 'Merge?',
+    });
+    await tau.selectSession(project, phase);
+    await tau.selectSession(project, phase);
+    expect(tau.state.activeControllerKey).toBe(owner.key);
+    expect(tau.activeExtensionDialog.value?.controllerKey).toBe(owner.key);
+    expect(tau.draft.value).toBe('Keep my merge notes');
+    expect(stale.draft).toBe('');
+    expect(owner.feedback).toEqual([]);
+    expect(tau.sessionIndicator(project, phase)).toBe('new');
+    expect(
+      visibleSessions(tau).filter((session) => session.id === phase.id),
+    ).toHaveLength(1);
+    expect(visibleSessions(tau).some((session) => session.id === live.id)).toBe(
+      true,
+    );
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.filter(([command]) => command.startsWith('start_pi')),
+    ).toHaveLength(starts);
+    expect(
+      vi.mocked(invoke).mock.calls.filter(([command]) => command === 'stop_pi'),
+    ).toHaveLength(stops);
+    expect(sentRequests(owner, 'extension_ui_response')).toEqual([]);
+    expect(sentRequests(stale, 'extension_ui_response')).toEqual([]);
+    await tau.submitExtensionDialog(true);
+    expect(sentRequests(owner, 'extension_ui_response')).toHaveLength(1);
+    expect(sentRequests(stale, 'extension_ui_response')).toEqual([]);
+    tau.dispose();
+  });
+
   it('brings an archived session back into the sidebar', async () => {
     const { tau, project } = setup([
       { ...LIVE_SESSION, archived: false },
