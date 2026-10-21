@@ -131,9 +131,9 @@ test('previews and copies local transcript paths, links and revealed code', asyn
     expect((closeBox?.y ?? 0) + (closeBox?.height ?? 0) / 2).toBeCloseTo(
       (headerBox?.y ?? 0) + (headerBox?.height ?? 0) / 2,
     );
-    await expect(preview).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+    await expect(preview).toHaveCSS('background-color', 'rgb(248, 249, 250)');
     await page.emulateMedia({ colorScheme: 'dark' });
-    await expect(preview).toHaveCSS('background-color', 'rgb(0, 0, 0)');
+    await expect(preview).toHaveCSS('background-color', 'rgb(13, 16, 23)');
     await page.emulateMedia({ colorScheme: 'light' });
     const previewText = preview.locator('.file-viewer-code');
     await expect(

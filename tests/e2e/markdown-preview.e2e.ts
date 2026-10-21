@@ -272,7 +272,7 @@ flowchart LR
   expect(selection).toContain('const value = 42;');
   expect(selection).not.toContain('README.md');
   await page.emulateMedia({ colorScheme: 'dark' });
-  await expect(dialog).toHaveCSS('background-color', 'rgb(0, 0, 0)');
+  await expect(dialog).toHaveCSS('background-color', 'rgb(13, 16, 23)');
 
   await dialog.getByRole('heading', { name: 'Notes' }).click();
   await dialog.getByRole('link', { name: 'Site' }).click();

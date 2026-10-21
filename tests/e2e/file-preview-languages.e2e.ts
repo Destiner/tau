@@ -56,6 +56,14 @@ test('short source grammars have themed token colors', async ({ page }) => {
             ),
         )
         .toBeGreaterThan(1);
+      await expect(preview.locator('.file-viewer-code')).toHaveCSS(
+        'background-color',
+        'rgba(0, 0, 0, 0)',
+      );
+      await expect(preview.locator('.file-viewer-code pre')).toHaveCSS(
+        'background-color',
+        'rgba(0, 0, 0, 0)',
+      );
       colors.push(
         await preview
           .locator('.shiki span[style]')

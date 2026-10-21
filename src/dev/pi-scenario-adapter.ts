@@ -158,6 +158,42 @@ const REQUIRED_NATIVE_COUNTS = {
     register_session: 1,
     set_active_session: 1,
   },
+  'palette-settings': {
+    load_workspace: 1,
+    read_model_scope: 1,
+    register_session: 1,
+    set_active_session: 1,
+  },
+  'palette-settings-off': {
+    load_workspace: 1,
+    read_model_scope: 1,
+    register_session: 1,
+    set_active_session: 1,
+  },
+  'palette-settings-unavailable': {
+    load_workspace: 1,
+    read_model_scope: 1,
+    register_session: 1,
+    set_active_session: 1,
+  },
+  'palette-settings-empty': {
+    load_workspace: 1,
+    read_model_scope: 1,
+    register_session: 1,
+    set_active_session: 1,
+  },
+  'palette-settings-confirm': {
+    load_workspace: 1,
+    read_model_scope: 1,
+    register_session: 2,
+    set_active_session: 1,
+  },
+  'palette-settings-sessions': {
+    load_workspace: 1,
+    read_model_scope: 2,
+    register_session: 2,
+    set_active_session: 3,
+  },
   'command-list-scrolling': {
     load_workspace: 1,
     read_model_scope: 1,
@@ -469,7 +505,8 @@ function scenarioWorkspace(scenarioName: string): WorkspaceSnapshot {
     scenarioName === 'cross-project-sidebar-metadata-actions' ||
     scenarioName === 'saved-session-command-replacement' ||
     scenarioName === 'plan-implement-replacement' ||
-    scenarioName === 'delayed-successor-verification'
+    scenarioName === 'delayed-successor-verification' ||
+    scenarioName === 'palette-settings-sessions'
   ) {
     workspace.projects[0]?.sessions.push({
       id: BACKUP_SESSION.id,
@@ -1323,6 +1360,11 @@ function expectedNativeSession(
       ? { ...SECOND_PROJECT_SESSION, adopted: false }
       : MAIN_SESSION;
   }
+  if (scenarioName === 'palette-settings-sessions') {
+    const expected = [MAIN_SESSION, BACKUP_SESSION][invocation - 1];
+    if (!expected) throw new Error(`${command} ran too many times.`);
+    return expected;
+  }
   if (scenarioName === 'saved-session-extension-prompt-cycling') {
     const expected = (
       command === 'register_session'
@@ -1386,7 +1428,8 @@ function scenarioRuntimeKey(
     scenarioName === 'saved-session-extension-prompt-cycling' ||
     scenarioName === 'saved-session-command-replacement' ||
     scenarioName === 'plan-implement-replacement' ||
-    scenarioName === 'delayed-successor-verification'
+    scenarioName === 'delayed-successor-verification' ||
+    scenarioName === 'palette-settings-sessions'
   ) {
     if (count > 1) throw new Error('A scenario session started twice.');
     if (sessionPath === BACKUP_SESSION.path) return 'backup';
