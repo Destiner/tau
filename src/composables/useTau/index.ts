@@ -75,8 +75,14 @@ import { selectModel, renameSession, selectEffort } from './settings';
 function useTau() {
   const { archiveSession, unarchiveSession, newSession, selectSession } =
     createSessions();
-  const { addLocalProject, toggleProject, reorderProjects, removeProject } =
-    createProjects(selectSession, newSession);
+  const {
+    addLocalProject,
+    toggleProject,
+    reorderProjects,
+    requestProjectRemoval,
+    cancelProjectRemoval,
+    confirmProjectRemoval,
+  } = createProjects(selectSession, newSession);
   const { initialize, dispose } = createLifecycle(newSession);
   const {
     sendMessage,
@@ -153,7 +159,9 @@ function useTau() {
     chooseRemoteDirectory,
     toggleProject,
     reorderProjects,
-    removeProject,
+    requestProjectRemoval,
+    cancelProjectRemoval,
+    confirmProjectRemoval,
     archiveSession,
     unarchiveSession,
     newSession,

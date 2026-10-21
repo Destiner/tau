@@ -186,6 +186,7 @@ function createLifecycle(
   }
 
   function dispose(): void {
+    state.projectRemoval = null;
     cancelSelectionTracking();
     cancelSavedPreview();
     invalidateLifecycle();

@@ -159,8 +159,29 @@ function createProjects(
     }
   }
 
-  async function removeProject(project: ProjectSummary): Promise<void> {
+  function requestProjectRemoval(project: ProjectSummary): void {
     if (projectActionsDisabled.value) return;
+    if (!state.workspace?.projects.some((item) => item.path === project.path))
+      return;
+    state.projectRemoval = { project: { ...project }, busy: false, error: '' };
+  }
+
+  function cancelProjectRemoval(): void {
+    if (!state.projectRemoval?.busy) state.projectRemoval = null;
+  }
+
+  async function confirmProjectRemoval(): Promise<void> {
+    const removal = state.projectRemoval;
+    if (!removal || removal.busy) return;
+    const project = state.workspace?.projects.find(
+      (item) => item.path === removal.project.path,
+    );
+    if (!project) {
+      state.projectRemoval = null;
+      return;
+    }
+    removal.busy = true;
+    removal.error = '';
     state.removingProjectPaths.push(project.path);
     const projectControllers = state.controllers.filter(
       (controller) => controller.projectPath === project.path,
@@ -190,15 +211,24 @@ function createProjects(
         ),
       );
       removeProjectUiState(project.path);
+      state.projectRemoval = null;
     } catch {
-      setWorkspaceError(errorCopy.removeProject);
+      removal.error = 'The project could not be removed. Try again.';
     } finally {
+      removal.busy = false;
       state.removingProjectPaths = state.removingProjectPaths.filter(
         (path) => path !== project.path,
       );
     }
   }
-  return { addLocalProject, toggleProject, reorderProjects, removeProject };
+  return {
+    addLocalProject,
+    toggleProject,
+    reorderProjects,
+    requestProjectRemoval,
+    cancelProjectRemoval,
+    confirmProjectRemoval,
+  };
 }
 
 export { mergeImportedProject, createProjects };

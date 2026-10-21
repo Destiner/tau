@@ -222,6 +222,19 @@
       @close="restorePaletteFocus"
     />
 
+    <UiConfirmation
+      :open="state.projectRemoval !== null"
+      title="Remove project?"
+      action="Remove"
+      busy-action="Removing…"
+      class-prefix="project-removal"
+      :description="projectRemovalDescription"
+      :busy="state.projectRemoval?.busy"
+      :error="state.projectRemoval?.error"
+      :return-focus="projectRemovalReturnFocus"
+      @cancel="cancelProjectRemoval"
+      @confirm="confirmProjectRemoval"
+    />
     <QuitConfirmation
       :open="quitRequest !== null"
       :session-count="quitSessionCount"
@@ -287,6 +300,7 @@ import RemoteDialog from './components/RemoteDialog.vue';
 import SessionHeader from './components/SessionHeader.vue';
 import TranscriptView from './components/TranscriptView.vue';
 import UiButton from './components/ui/UiButton.vue';
+import UiConfirmation from './components/ui/UiConfirmation.vue';
 import UiIcon from './components/ui/UiIcon.vue';
 import UiIconButton from './components/ui/UiIconButton.vue';
 import UiMenu from './components/ui/UiMenu.vue';
@@ -315,6 +329,7 @@ import {
   sessionPickerEntries,
 } from './lib/session-picker';
 import { loadSidebarWidth } from './lib/sidebar-width';
+import sshDisplayHost from './lib/ssh-host';
 import { invokeTraced } from './lib/telemetry';
 import { useUpdate } from './lib/update';
 
@@ -400,7 +415,9 @@ const {
   projectSessions,
   selectSession,
   toggleProject,
-  removeProject,
+  requestProjectRemoval,
+  cancelProjectRemoval,
+  confirmProjectRemoval,
   isSessionUnread,
   markSessionRead,
   markSessionUnread,
@@ -470,6 +487,7 @@ const palettePlaceholder = computed(
 );
 function navigationBlockingSurface(): boolean {
   return Boolean(
+    state.projectRemoval ||
     quitRequest.value ||
     state.remoteDialogOpen ||
     feedbackDialogOpen.value ||
@@ -775,7 +793,16 @@ register(
   'Remove Project',
   undefined,
   active,
-  (ctx) => removeProject(commandProject(ctx)!),
+  (ctx) => {
+    if (
+      document.activeElement instanceof HTMLElement &&
+      document.activeElement !== document.body &&
+      !document.activeElement.closest('.command-palette')
+    ) {
+      removalOrigin = document.activeElement;
+    }
+    requestProjectRemoval(commandProject(ctx)!);
+  },
   'Project',
 );
 register(
@@ -1032,6 +1059,7 @@ const paletteRows = computed<CommandPaletteRow[]>(() => {
   }));
 });
 function openPalette(): void {
+  if (state.projectRemoval || quitRequest.value) return;
   sessionHeader.value?.preparePaletteOpen();
   paletteOrigin.value =
     document.activeElement instanceof HTMLElement
@@ -1068,6 +1096,7 @@ function focusAfterPaletteNavigation(): void {
 }
 function restorePaletteFocus(): void {
   void nextTick(() => {
+    if (state.projectRemoval || quitRequest.value) return;
     if (
       paletteOrigin.value?.isConnected &&
       paletteOrigin.value !== document.body
@@ -1102,6 +1131,7 @@ async function selectPaletteRow(id: string): Promise<void> {
       'effort.choose',
     ].includes(id);
     if (!nested) {
+      if (id === 'project.remove') removalOrigin = paletteOrigin.value;
       paletteOpen.value = false;
       await nextTick();
       composerBar.value?.closeSelectors();
@@ -1182,6 +1212,7 @@ const feedbackDialogOpen = computed(
     !remoteReconnectFeedback.value &&
     quitRequest.value === null &&
     !state.remoteDialogOpen &&
+    !state.projectRemoval &&
     !activeExtensionDialog.value &&
     !fullscreenViewerOpen.value,
 );
@@ -1343,12 +1374,16 @@ watch(
 
 watch(workspaceIsEmpty, (empty) => {
   if (!empty) return;
-  void nextTick(() => firstRunLocalProjectButton.value?.button?.focus());
+  void nextTick(() => {
+    if (!navigationBlockingSurface())
+      firstRunLocalProjectButton.value?.button?.focus();
+  });
 });
 
 watch(activeExtensionDialog, (dialog) => {
   void nextTick(() => {
     if (
+      !navigationBlockingSurface() &&
       !paletteOpen.value &&
       !dialog &&
       !activeFeedback.value &&
@@ -1389,6 +1424,7 @@ watch(
     if (!controllerKey) return;
     void nextTick(() => {
       if (
+        !navigationBlockingSurface() &&
         !paletteOpen.value &&
         !state.remoteDialogOpen &&
         !activeExtensionDialog.value &&
@@ -1424,6 +1460,7 @@ watch(sessionLoading, (loading) => {
   if (loading) return;
   void nextTick(() => {
     if (
+      !navigationBlockingSurface() &&
       !paletteOpen.value &&
       !state.remoteDialogOpen &&
       !activeExtensionDialog.value &&
@@ -1439,6 +1476,7 @@ watch(canDraft, (enabled) => {
   if (!enabled) return;
   void nextTick(() => {
     if (
+      !navigationBlockingSurface() &&
       !paletteOpen.value &&
       document.activeElement === document.body &&
       !sessionLoading.value &&
@@ -1455,6 +1493,7 @@ watch(canDraft, (enabled) => {
 watch(promptSubmitting, () => {
   void nextTick(() => {
     if (
+      !navigationBlockingSurface() &&
       !paletteOpen.value &&
       !state.remoteDialogOpen &&
       !activeExtensionDialog.value &&
@@ -1506,6 +1545,7 @@ async function handleFeedbackAction(): Promise<void> {
 function focusComposer(): void {
   if (
     !paletteOpen.value &&
+    !navigationBlockingSurface() &&
     !activeFeedback.value &&
     !fullscreenViewerOpen.value
   )
@@ -1523,6 +1563,30 @@ async function handleQueueClear(): Promise<void> {
 function handleQueueRecover(index: number): void {
   recoverQueueDraft(index);
   void nextTick(focusComposer);
+}
+
+let removalOrigin: HTMLElement | undefined;
+const projectRemovalDescription = computed(() => {
+  const project = state.projectRemoval?.project;
+  if (!project) return '';
+  const host = sshDisplayHost(project.connectionString);
+  return `This removes “${project.name}”${host ? ` on ${host}` : ''} from Tau, closes its live sessions, and discards unsent drafts.${project.connectionString ? ' Its saved-session list will also be removed from Tau.' : ''}`;
+});
+function projectRemovalReturnFocus(): HTMLElement | undefined {
+  if (quitRequest.value) return undefined;
+  if (
+    removalOrigin?.isConnected &&
+    removalOrigin.matches(':not(:disabled)') &&
+    removalOrigin !== document.body
+  )
+    return removalOrigin;
+  return [
+    composerBar.value?.input,
+    firstRunLocalProjectButton.value?.button,
+    projectSidebar.value?.openProjectButton,
+  ].find(
+    (control) => control?.isConnected && control.matches(':not(:disabled)'),
+  );
 }
 
 function remoteDialogReturnFocus(): HTMLElement | undefined {
