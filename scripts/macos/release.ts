@@ -285,7 +285,7 @@ function signed(
       '--strict',
       '--verbose=2',
       '--test-requirement',
-      `anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "${team}" and identifier "${bundleId}"`,
+      `=anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "${team}" and identifier "${bundleId}"`,
       path,
     ],
     'Signature verification failed',

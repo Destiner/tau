@@ -324,7 +324,29 @@ export function smoke(
       '--timestamp=none',
       binary,
     ]);
-    command('verify', ['/usr/bin/codesign', '--verify', '--strict', binary]);
+    command('verify', [
+      '/usr/bin/codesign',
+      '--verify',
+      '--strict',
+      '--test-requirement',
+      `=certificate leaf = H"${fingerprint}"`,
+      binary,
+    ]);
+    // Exit 3 distinguishes an unmet requirement from an invalid signature or invocation.
+    at('verify', () => {
+      const wrongFingerprint =
+        (fingerprint![0] === 'A' ? 'B' : 'A') + fingerprint!.slice(1);
+      const rejected = run([
+        '/usr/bin/codesign',
+        '--verify',
+        '--strict',
+        '--test-requirement',
+        `=certificate leaf = H"${wrongFingerprint}"`,
+        binary,
+      ]);
+      if (rejected.status !== 3)
+        throw failure('verify', 'command', rejected.status);
+    });
     command('remove', [helper, 'remove', owned]);
     if (snapshot() !== baseline) throw failure('snapshot', 'mismatch');
     phase = 'wrongpassword';
