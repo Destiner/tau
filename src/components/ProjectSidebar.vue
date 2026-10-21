@@ -102,7 +102,9 @@
                 tone="danger"
                 :label="`Remove ${project.name}`"
                 :disabled="projectActionsDisabled"
-                @click="() => handleRemoveProject(project)"
+                @click="
+                  (event: MouseEvent) => handleRemoveProject(project, event)
+                "
               >
                 <UiIcon name="trash" />
               </UiIconButton>
@@ -371,7 +373,7 @@ const {
   openRemoteProjectDialog,
   projectIndicator,
   projectSessions,
-  removeProject,
+  requestProjectRemoval,
   reorderProjects,
   selectSession,
   sessionIndicator,
@@ -565,12 +567,13 @@ function handleNewSession(project: ProjectSummary): void {
   newSession(project);
 }
 
-function handleRemoveProject(project: ProjectSummary): void {
+function handleRemoveProject(project: ProjectSummary, event: MouseEvent): void {
+  if (event.currentTarget instanceof HTMLElement) event.currentTarget.focus();
   if (appCommandDispatch) {
     appCommandDispatch('project.remove', projectTarget(project));
     return;
   }
-  removeProject(project);
+  requestProjectRemoval(project);
 }
 
 function handleArchiveSession(

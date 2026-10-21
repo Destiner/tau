@@ -48,6 +48,7 @@ type BrowserSandboxHandler = (
 ) => Promise<unknown>;
 
 interface BrowserSandboxOptions {
+  remoteProject?: boolean;
   updatesSupported?: boolean;
   updateAvailable?: boolean;
   updateCheckDelayMs?: number;
@@ -118,8 +119,10 @@ function session(
   };
 }
 
-function createBrowserSandboxWorkspace(): WorkspaceSnapshot {
-  return {
+function createBrowserSandboxWorkspace(
+  remoteProject = false,
+): WorkspaceSnapshot {
+  const workspace: WorkspaceSnapshot = {
     activeProjectPath: `${ROOT}/atlas`,
     piPath: '/browser-dev/bin/pi',
     projects: workspaceSeed.map((project, projectIndex) => ({
@@ -142,6 +145,9 @@ function createBrowserSandboxWorkspace(): WorkspaceSnapshot {
       ),
     })),
   };
+  if (remoteProject)
+    workspace.projects[0]!.connectionString = 'ssh tau@buildbox';
+  return workspace;
 }
 
 function record(value: InvokeArgs | undefined): Record<string, unknown> {
@@ -207,7 +213,7 @@ function createBrowserSandboxHandler(
   emitEvent: EmitPiEvent,
   options: BrowserSandboxOptions = {},
 ): BrowserSandboxHandler {
-  const workspace = createBrowserSandboxWorkspace();
+  const workspace = createBrowserSandboxWorkspace(options.remoteProject);
   let generation = 1;
   let nextSession = 1;
   let nextPreview = 1;
@@ -666,10 +672,13 @@ function createBrowserSandboxHandler(
     if (command === 'plugin:dialog|open') {
       return `${ROOT}/playground`;
     }
-    if (command === 'start_pi') {
+    if (command === 'start_pi' || command === 'start_pi_remote') {
       requireOwner(args, activeOwner);
       const runtimeId = requiredString(args, 'runtimeId');
-      const projectPath = requiredString(args, 'projectPath');
+      const projectPath = requiredString(
+        args,
+        command === 'start_pi_remote' ? 'workingDirectory' : 'projectPath',
+      );
       const sessionPath =
         typeof args.sessionPath === 'string' ? args.sessionPath : '';
       const existing = workspace.projects
@@ -779,9 +788,8 @@ function createBrowserSandboxHandler(
         (project) => project.path !== path,
       );
       if (workspace.activeProjectPath === path) {
-        const next = workspace.projects[0];
-        if (next) select(next.path, next.sessions[0]?.id);
-        else workspace.activeProjectPath = '';
+        workspace.activeProjectPath = '';
+        for (const project of workspace.projects) project.selected = false;
       }
       return null;
     }
@@ -847,9 +855,8 @@ function createBrowserSandboxHandler(
 
 function installBrowserSandbox(): void {
   setSidebarWidthStorage(createMemorySidebarWidthStorage());
-  const testUpdate = new URLSearchParams(window.location.search).get(
-    'test-update',
-  );
+  const search = new URLSearchParams(window.location.search);
+  const testUpdate = search.get('test-update');
   const updateFixtureRequested =
     testUpdate === 'available' ||
     testUpdate === 'checking' ||
@@ -863,6 +870,7 @@ function installBrowserSandbox(): void {
   const handleCommand = createBrowserSandboxHandler(
     (event) => emit<PiBridgeEvent>('pi-event', event),
     {
+      remoteProject: search.get('test-project-removal') === 'ssh',
       updatesSupported: updateFixtureRequested,
       updateAvailable,
       updateCheckDelayMs: testUpdate === 'checking' ? 1_000 : undefined,

@@ -80,7 +80,9 @@ function useTau() {
     addLocalProject,
     toggleProject,
     reorderProjects,
-    removeProject,
+    requestProjectRemoval,
+    cancelProjectRemoval,
+    confirmProjectRemoval,
   } = createProjects(selectSession, newSession);
   const { chooseRemoteDirectory } = createRemote(activateProject);
   const { initialize, dispose } = createLifecycle(newSession);
@@ -160,7 +162,9 @@ function useTau() {
     chooseRemoteDirectory,
     toggleProject,
     reorderProjects,
-    removeProject,
+    requestProjectRemoval,
+    cancelProjectRemoval,
+    confirmProjectRemoval,
     archiveSession,
     unarchiveSession,
     newSession,

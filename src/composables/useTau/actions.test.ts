@@ -98,6 +98,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
 
 beforeEach(() => {
   state.workspaceFeedback = [];
+  state.projectRemoval = null;
 });
 
 describe('project ordering', () => {
@@ -1729,6 +1730,153 @@ describe('session naming', () => {
 });
 
 describe('project removal', () => {
+  it('leaves the draft, controller, and selection intact when removal is cancelled', async () => {
+    const { tau, project, session, controller } = await setupNamedSession();
+    controller.draft = 'Keep this draft';
+    const controllerCount = tau.state.controllers.length;
+
+    tau.requestProjectRemoval(project);
+    expect(tau.state.projectRemoval).toMatchObject({
+      project: { path: project.path },
+      busy: false,
+      error: '',
+    });
+
+    tau.cancelProjectRemoval();
+
+    expect(tau.state.projectRemoval).toBeNull();
+    expect(controller.draft).toBe('Keep this draft');
+    expect(tau.state.controllers).toHaveLength(controllerCount);
+    expect(tau.state.controllers).toContain(controller);
+    expect(tau.state.activeProjectPath).toBe(project.path);
+    expect(tau.state.activeSessionId).toBe(session.id);
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith(
+      'remove_project',
+      expect.anything(),
+    );
+    expect(stoppedRuntimes()).toEqual([]);
+    tau.dispose();
+  });
+
+  it('does not retarget repeated requests after the active project changes', async () => {
+    const { tau, project } = await setupNamedSession();
+    const otherProject: ProjectSummary = {
+      path: '/tmp/tau-other-project',
+      name: 'tau-other-project',
+      workingDirectory: '/tmp/tau-other-project',
+      collapsed: false,
+      selected: false,
+      sessions: [],
+    };
+    const workspace = tau.state.workspace;
+    if (!workspace) throw new Error('Expected a workspace');
+    workspace.projects.push(otherProject);
+
+    tau.requestProjectRemoval(project);
+    tau.requestProjectRemoval(otherProject);
+    tau.state.activeProjectPath = otherProject.path;
+    workspace.activeProjectPath = otherProject.path;
+
+    expect(tau.state.projectRemoval?.project.path).toBe(project.path);
+    await tau.confirmProjectRemoval();
+
+    expect(invoke).toHaveBeenCalledWith(
+      'remove_project',
+      expect.objectContaining({ path: project.path }),
+    );
+    expect(tau.state.workspace?.projects).not.toContain(project);
+    expect(
+      tau.state.workspace?.projects.map((candidate) => candidate.path),
+    ).toContain(otherProject.path);
+    tau.dispose();
+  });
+
+  it('dismisses a removal whose target is no longer in the workspace', async () => {
+    const { tau, project, controller } = await setupNamedSession();
+    tau.requestProjectRemoval(project);
+    const workspace = tau.state.workspace;
+    if (!workspace) throw new Error('Expected a workspace');
+    workspace.projects = [];
+
+    await tau.confirmProjectRemoval();
+
+    expect(tau.state.projectRemoval).toBeNull();
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith(
+      'remove_project',
+      expect.anything(),
+    );
+    expect(stoppedRuntimes()).toEqual([]);
+    expect(controller.disposed).toBe(false);
+    tau.dispose();
+  });
+
+  it('defers duplicate confirmations to one removal request', async () => {
+    const { tau, project } = await setupNamedSession();
+    const defaultInvoke = vi.mocked(invoke).getMockImplementation();
+    let finishRemoval: ((workspace: WorkspaceSnapshot) => void) | undefined;
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === 'remove_project') {
+        return await new Promise<WorkspaceSnapshot>((resolve) => {
+          finishRemoval = resolve;
+        });
+      }
+      return defaultInvoke?.(command, args);
+    });
+
+    try {
+      tau.requestProjectRemoval(project);
+      const firstConfirmation = tau.confirmProjectRemoval();
+      const duplicateConfirmation = tau.confirmProjectRemoval();
+      await vi.waitFor(() => expect(finishRemoval).toBeDefined());
+
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.filter(([command]) => command === 'remove_project'),
+      ).toHaveLength(1);
+
+      finishRemoval?.({ activeProjectPath: '', piPath: null, projects: [] });
+      await Promise.all([firstConfirmation, duplicateConfirmation]);
+    } finally {
+      if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
+      tau.dispose();
+    }
+  });
+
+  it('starts one new removal request when a failed confirmation is retried', async () => {
+    const { tau, project, controller } = await setupNamedSession();
+    const defaultInvoke = vi.mocked(invoke).getMockImplementation();
+    let attempts = 0;
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === 'remove_project' && attempts++ === 0)
+        throw new Error('Could not update the project registry');
+      return defaultInvoke?.(command, args);
+    });
+
+    try {
+      tau.requestProjectRemoval(project);
+      await tau.confirmProjectRemoval();
+      expect(tau.state.projectRemoval).toMatchObject({
+        project: { path: project.path },
+        busy: false,
+        error: 'The project could not be removed. Try again.',
+      });
+      expect(controller.disposed).toBe(false);
+
+      await tau.confirmProjectRemoval();
+
+      expect(attempts).toBe(2);
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.filter(([command]) => command === 'remove_project'),
+      ).toHaveLength(2);
+    } finally {
+      if (defaultInvoke) vi.mocked(invoke).mockImplementation(defaultInvoke);
+      tau.dispose();
+    }
+  });
+
   it('persists removal before disposing controllers and blocks project actions meanwhile', async () => {
     const { tau, project, controller } = await setupNamedSession();
     const defaultInvoke = vi.mocked(invoke).getMockImplementation();
@@ -1745,7 +1893,8 @@ describe('project removal', () => {
     try {
       controller.draft = 'Keep this draft';
       const controllerCount = tau.state.controllers.length;
-      const removal = tau.removeProject(project);
+      tau.requestProjectRemoval(project);
+      const removal = tau.confirmProjectRemoval();
       await vi.waitFor(() => {
         expect(tau.isProjectRemoving(project.path)).toBe(true);
       });
@@ -1762,10 +1911,8 @@ describe('project removal', () => {
       expect(controller.disposed).toBe(false);
       expect(controller.draft).toBe('Keep this draft');
       expect(feedbackMessage(controller)).toBe('');
-      expect(tau.state.workspaceFeedback.at(-1)?.message ?? '').toBe(
-        'The project could not be removed. Try again.',
-      );
-      expect(tau.activeFeedback.value?.message ?? '').toBe(
+      expect(tau.state.workspaceFeedback).toEqual([]);
+      expect(tau.state.projectRemoval?.error).toBe(
         'The project could not be removed. Try again.',
       );
       expect(stoppedRuntimes()).toEqual([]);
@@ -1789,7 +1936,8 @@ describe('project removal', () => {
     });
 
     try {
-      const removal = tau.removeProject(project);
+      tau.requestProjectRemoval(project);
+      const removal = tau.confirmProjectRemoval();
       await vi.waitFor(() => expect(finishRemoval).toBeDefined());
       expect(controller.disposed).toBe(false);
       expect(stoppedRuntimes()).toEqual([]);

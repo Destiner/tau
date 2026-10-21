@@ -123,7 +123,8 @@ describe('workspace persistence and saved preview', () => {
         expect(invoke).toHaveBeenCalledWith(importCommand, expect.anything()),
       );
 
-      const removing = tau.removeProject(project);
+      tau.requestProjectRemoval(project);
+      const removing = tau.confirmProjectRemoval();
       expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
         importCommand,
       ]);

@@ -589,7 +589,8 @@ describe('project opening', () => {
       ),
     );
 
-    const removing = tau.removeProject(source);
+    tau.requestProjectRemoval(source);
+    const removing = tau.confirmProjectRemoval();
     imported.resolve(remote);
     await Promise.all([choosing, removing]);
 
