@@ -168,6 +168,8 @@ async function startController(
     parentContext,
   );
   controller.compacting = false;
+  controller.compactionReason = undefined;
+  controller.compactionStartedWhileStreaming = false;
   controller.compactionReconciliationPending = false;
   controller.compactionStreamSequence = controller.streamSequence;
   controller.bootstrapStateRequestId = '';
@@ -1100,6 +1102,8 @@ async function retireUnsavedSession(
   controller.materializationBarrierRequestId = '';
   controller.materializationStateRequestId = '';
   controller.materializationMessagesRequestId = '';
+  controller.compactionReason = undefined;
+  controller.compactionStartedWhileStreaming = false;
   controller.compactionReconciliationPending = false;
   controller.compactionStreamSequence = controller.streamSequence;
   controller.messages = [];
@@ -1338,6 +1342,8 @@ async function stopControllerProcess(
   controller.provisionalReplacement = undefined;
   controller.retry = undefined;
   controller.compacting = false;
+  controller.compactionReason = undefined;
+  controller.compactionStartedWhileStreaming = false;
   controller.compactionReconciliationPending = false;
   controller.compactionStreamSequence = controller.streamSequence;
   setControllerLifecycle(

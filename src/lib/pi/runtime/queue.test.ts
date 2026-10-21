@@ -114,6 +114,244 @@ describe('queued message RPCs', () => {
     expect(controller.messages).toEqual([]);
   });
 
+  describe.each(['steer', 'followUp'] as const)(
+    '%s during compaction',
+    (kind) => {
+      it.each(['threshold', 'overflow'] as const)(
+        'queues during active automatic %s compaction',
+        async (reason) => {
+          const { submitQueuedMessage, handleRpc } = await import('./index');
+          const controller = makeController({
+            streaming: true,
+            working: true,
+            draft: '  queued during compaction\n',
+            queueSteeringMode: 'all',
+            queueFollowUpMode: 'one-at-a-time',
+          });
+          state.controllers.push(controller);
+          await handleRpc(controller, { type: 'compaction_start', reason });
+          const send = submitQueuedMessage(controller, controller.draft, kind);
+          await vi.waitFor(() =>
+            expect(requestOf('prompt')).toMatchObject({
+              message: 'queued during compaction',
+              streamingBehavior: kind,
+            }),
+          );
+          await handleRpc(controller, {
+            type: 'response',
+            command: 'prompt',
+            id: requestOf('prompt').id,
+            success: true,
+          });
+          await send;
+          expect(controller.draft).toBe('');
+          expect(controller.queueSubmissions).toEqual([]);
+          expect(controller.queueFeedback).toBe('');
+          expect(controller.compacting).toBe(true);
+          expect(controller.streaming).toBe(true);
+          expect(controller.messages).toEqual([]);
+          expect(mockInvoke.mock.calls).toHaveLength(1);
+        },
+      );
+
+      it.each([
+        ['manual', true],
+        [undefined, true],
+        ['invalid', true],
+        ['threshold', false],
+        ['overflow', false],
+      ] as const)(
+        'denies %s compaction started while streaming=%s without touching the draft',
+        async (reason, startedWhileStreaming) => {
+          const { submitQueuedMessage, handleRpc } = await import('./index');
+          const controller = makeController({
+            streaming: startedWhileStreaming,
+          });
+          state.controllers.push(controller);
+          await handleRpc(controller, { type: 'compaction_start', reason });
+          // A later stream must not make pre-run compaction queueable.
+          controller.streaming = true;
+          controller.draft = '  keep exact draft\n';
+          await submitQueuedMessage(controller, controller.draft, kind);
+          expect(controller.draft).toBe('  keep exact draft\n');
+          expect(controller.queueSubmissions).toEqual([]);
+          expect(controller.queueFailedDrafts).toEqual([]);
+          expect(controller.queuePreparing).toBe(false);
+          expect(mockInvoke).not.toHaveBeenCalled();
+        },
+      );
+
+      describe.each([
+        ['settlement', { streaming: false, working: false }],
+        ['stopping', { stopping: true }],
+        ['reconciliation', { compactionReconciliationPending: true }],
+        ['manual compaction', { compactionReason: 'manual' }],
+        ['unknown compaction', { compactionReason: undefined }],
+        ['pre-run compaction', { compactionStartedWhileStreaming: false }],
+      ] satisfies [string, Partial<SessionController>][])(
+        'delayed preparation across %s',
+        (_label, transition) => {
+          it.each(['', 'newer draft'])(
+            'cancels without a prompt and recovers the exact draft with newer draft=%j',
+            async (newerDraft) => {
+              const { submitQueuedMessage, handleRpc } =
+                await import('./index');
+              const original = '  exact unsent\n';
+              const controller = makeController({
+                streaming: true,
+                working: true,
+                compacting: true,
+                compactionReason: 'threshold',
+                compactionStartedWhileStreaming: true,
+                draft: original,
+              });
+              state.controllers.push(controller);
+              const send = submitQueuedMessage(controller, original, kind);
+              expect(controller.draft).toBe('');
+              expect(controller.queuePreparing).toBe(true);
+              expect(controller.queueSubmissions).toHaveLength(1);
+              await handleRpc(controller, {
+                type: 'response',
+                command: 'set_steering_mode',
+                id: requestOf('set_steering_mode').id,
+                success: true,
+              });
+              await vi.waitFor(() => requestOf('set_follow_up_mode'));
+              Object.assign(controller, transition, { draft: newerDraft });
+              await handleRpc(controller, {
+                type: 'response',
+                command: 'set_follow_up_mode',
+                id: requestOf('set_follow_up_mode').id,
+                success: true,
+              });
+              await send;
+              expect(controller.draft).toBe(newerDraft || original);
+              expect(controller.queueFailedDrafts).toEqual(
+                newerDraft ? [original] : [],
+              );
+              expect(controller.queueSubmissions).toEqual([]);
+              expect(controller.queuePreparing).toBe(false);
+              expect(controller.queueFeedback).toContain('state changed');
+              expect(controller.messages).toEqual([]);
+              expect(
+                mockInvoke.mock.calls.map(
+                  ([, args]) =>
+                    (args as { request: { type: string } }).request.type,
+                ),
+              ).toEqual(['set_steering_mode', 'set_follow_up_mode']);
+            },
+          );
+        },
+      );
+
+      it.each(['threshold', 'overflow', 'finished'] as const)(
+        'still queues when delayed mode preparation completes during %s compaction state',
+        async (phase) => {
+          const { submitQueuedMessage, handleRpc } = await import('./index');
+          const controller = makeController({
+            streaming: true,
+            working: true,
+            draft: 'queued',
+          });
+          state.controllers.push(controller);
+          const send = submitQueuedMessage(controller, controller.draft, kind);
+          await handleRpc(controller, {
+            type: 'compaction_start',
+            reason: phase === 'finished' ? 'threshold' : phase,
+          });
+          await handleRpc(controller, {
+            type: 'response',
+            command: 'set_steering_mode',
+            id: requestOf('set_steering_mode').id,
+            success: true,
+          });
+          await vi.waitFor(() => requestOf('set_follow_up_mode'));
+          if (phase === 'finished') {
+            Object.assign(controller, {
+              compacting: false,
+              compactionReason: undefined,
+              compactionStartedWhileStreaming: false,
+            });
+          }
+          await handleRpc(controller, {
+            type: 'response',
+            command: 'set_follow_up_mode',
+            id: requestOf('set_follow_up_mode').id,
+            success: true,
+          });
+          await vi.waitFor(() =>
+            expect(requestOf('prompt')).toMatchObject({
+              message: 'queued',
+              streamingBehavior: kind,
+            }),
+          );
+          await handleRpc(controller, {
+            type: 'response',
+            command: 'prompt',
+            id: requestOf('prompt').id,
+            success: true,
+          });
+          await send;
+          expect(controller.queuePreparing).toBe(false);
+          expect(controller.queueSubmissions).toEqual([]);
+          expect(controller.queueFailedDrafts).toEqual([]);
+          expect(controller.draft).toBe('');
+          expect(controller.messages).toEqual([]);
+          expect(mockInvoke.mock.calls).toHaveLength(3);
+        },
+      );
+
+      it('does not replay identical text consumed before its acknowledgement', async () => {
+        const { submitQueuedMessage, handleRpc } = await import('./index');
+        const key = kind === 'steer' ? 'steering' : 'followUp';
+        const controller = makeController({
+          streaming: true,
+          compacting: true,
+          compactionReason: 'overflow',
+          compactionStartedWhileStreaming: true,
+          queueSteeringMode: 'all',
+          queueFollowUpMode: 'one-at-a-time',
+          queue: { steering: [], followUp: [], [key]: ['same'] },
+          draft: 'same',
+        });
+        state.controllers.push(controller);
+        const send = submitQueuedMessage(controller, controller.draft, kind);
+        await vi.waitFor(() => requestOf('prompt'));
+        const id = requestOf('prompt').id;
+        for (const items of [['same', 'same'], ['same'], []]) {
+          await handleRpc(controller, {
+            type: 'queue_update',
+            steering: [],
+            followUp: [],
+            [key]: items,
+          });
+          expect(controller.queue[key]).toEqual(items);
+        }
+        expect(controller.queueSubmissions).toHaveLength(1);
+        await handleRpc(controller, {
+          type: 'response',
+          command: 'prompt',
+          id,
+          success: true,
+        });
+        await send;
+        // Neither the acknowledgement nor a duplicate can resurrect consumed text.
+        await handleRpc(controller, {
+          type: 'response',
+          command: 'prompt',
+          id,
+          success: true,
+        });
+        expect(controller.queue).toEqual({ steering: [], followUp: [] });
+        expect(controller.queueSubmissions).toEqual([]);
+        expect(controller.queueFailedDrafts).toEqual([]);
+        expect(controller.draft).toBe('');
+        expect(controller.messages).toEqual([]);
+        expect(mockInvoke.mock.calls).toHaveLength(1);
+      });
+    },
+  );
+
   it('preserves a newer draft after a rejected follow-up and does not schedule an ordinary prompt', async () => {
     const { submitQueuedMessage, handleRpc } = await import('./index');
     const controller = makeController({

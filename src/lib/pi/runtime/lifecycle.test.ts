@@ -33,6 +33,8 @@ function makeController(
     sessionPath: '/tmp/project/session.jsonl',
     generation: 1,
     ready: true,
+    compactionReason: undefined,
+    compactionStartedWhileStreaming: false,
     ...overrides,
   });
 }
@@ -59,6 +61,54 @@ beforeEach(async () => {
 });
 
 describe('runtime failures and recovery', () => {
+  it.each(['agent_start', 'agent_settled', 'generation', 'exit', 'stop'])(
+    'clears compaction evidence at the %s boundary',
+    async (boundary) => {
+      const { handleRpc, handleBridgeEvent, stopControllerProcess } =
+        await import('./index');
+      const controller = makeController({
+        compacting: true,
+        compactionReason: 'overflow',
+        compactionStartedWhileStreaming: true,
+        compactionReconciliationPending: true,
+        compactionStreamSequence: 7,
+      });
+      state.controllers.push(controller);
+      if (boundary === 'generation' || boundary === 'exit') {
+        await handleBridgeEvent({
+          runtimeId: controller.runtimeId,
+          generation: boundary === 'generation' ? 2 : 1,
+          kind: boundary === 'generation' ? 'started' : 'exited',
+        });
+      } else if (boundary === 'stop') {
+        await stopControllerProcess(controller);
+      } else {
+        await handleRpc(controller, { type: boundary });
+      }
+      expect(controller.compactionReason).toBeUndefined();
+      expect(controller.compactionStartedWhileStreaming).toBe(false);
+      if (boundary === 'agent_start' || boundary === 'agent_settled') {
+        expect(controller.compactionReconciliationPending).toBe(true);
+        expect(controller.compactionStreamSequence).toBe(7);
+      }
+    },
+  );
+
+  it('ignores compaction evidence from an abandoned generation', async () => {
+    const { handleBridgeEvent } = await import('./index');
+    const controller = makeController({ generation: 2 });
+    state.controllers.push(controller);
+    await handleBridgeEvent({
+      runtimeId: controller.runtimeId,
+      generation: 1,
+      kind: 'rpc',
+      line: JSON.stringify({ type: 'compaction_start', reason: 'threshold' }),
+    });
+    expect(controller.compacting).toBe(false);
+    expect(controller.compactionReason).toBeUndefined();
+    expect(controller.compactionStartedWhileStreaming).toBe(false);
+  });
+
   it('does not evict command work or failed refreshes', async () => {
     const { canReleaseRuntime } = await import('./index');
     const controller = makeController({ key: 'idle-command' });
