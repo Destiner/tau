@@ -83,10 +83,6 @@ function createProjects(
     if (projectActionsDisabled.value || localOpening) return;
     const intent = beginNavigation();
     localOpening = true;
-    await openLocalProject(intent);
-  }
-
-  async function openLocalProject(intent: number): Promise<void> {
     let selection: string | null;
     try {
       selection = await open({
