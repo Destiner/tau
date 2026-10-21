@@ -57,8 +57,8 @@ const EXPAND_ICON =
   '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M216,48V88a8,8,0,0,1-16,0V56H168a8,8,0,0,1,0-16h40A8,8,0,0,1,216,48ZM88,200H56V168a8,8,0,0,0-16,0v40a8,8,0,0,0,8,8H88a8,8,0,0,0,0-16Zm120-40a8,8,0,0,0-8,8v32H168a8,8,0,0,0,0,16h40a8,8,0,0,0,8-8V168A8,8,0,0,0,208,160ZM88,40H48a8,8,0,0,0-8,8V88a8,8,0,0,0,16,0V56H88a8,8,0,0,0,0-16Z"/></svg>';
 
 /**
- * A drawn diagram's wrapper, holding exactly the svg the renderer drew. The
- * lazy close is safe for the renderer's output, which never nests an svg.
+ * A drawn diagram's wrapper, holding exactly the SVG the renderer drew.
+ * The closing SVG must be followed by the wrapper's closing div.
  */
 const DIAGRAM_BLOCK = /<div class="diagram"><svg[\s\S]*?<\/svg><\/div>/g;
 

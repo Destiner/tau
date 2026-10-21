@@ -1,9 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { type FlowchartModel, parse } from 'pele';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+
+import {
+  accessibleDiagram,
+  diagramCapabilities,
+} from '../dev/diagram-fixtures';
 
 import renderDiagram from './mermaid';
 
 const FLOWCHART = 'graph TD\n  Prompt[Prompt] --> Answer[Answer]\n';
-
 const SEQUENCE = 'sequenceDiagram\n  Tau->>Pi: prompt\n';
 
 const REPORTED_FLOWCHART = `flowchart TD
@@ -14,7 +19,7 @@ const REPORTED_FLOWCHART = `flowchart TD
   Review -->|Yes| Regression
   Regression -- two<br/>lines --> Topology[Topology assertions]
   Topology -- count ≤ 7 --> Viewer[Diagram viewer]
-  Viewer -- count > 7 --> Complete[/Ready to ship/]\n`;
+  Viewer -- count > 7 --> Complete[/Ready to ship/]`;
 
 const COMPACT_DOTTED_FLOWCHART = `flowchart TD
   S[Start; α] --> R{Retry?}
@@ -39,65 +44,87 @@ for both sides?}
 + no result?}
   I -->|Yes| J[Use fallback]`;
 
-async function ready(): Promise<void> {
-  await vi.waitFor(
-    () => {
-      expect(renderDiagram(FLOWCHART, 'mermaid')).not.toBeNull();
-    },
-    { timeout: 20_000 },
+function graph(source: string): FlowchartModel {
+  const model = parse(source);
+  if (model.type !== 'flowchart') throw new Error('Expected a flowchart');
+  return model;
+}
+
+function edges(source: string): string[][] {
+  return graph(source).edges.map(({ start, end, text }) => [start, end, text]);
+}
+
+function svg(source: string): string {
+  const result = renderDiagram(source, 'mermaid');
+  expect(result).not.toBeNull();
+  return result!;
+}
+
+function topology(source: string, nodes: number, edgeCount: number): string {
+  const result = svg(source);
+  expect([...result.matchAll(/class="pele-node(?:\s[^"]*)?"/g)]).toHaveLength(
+    nodes,
   );
+  expect([...result.matchAll(/class="pele-edge"/g)]).toHaveLength(edgeCount);
+  return result;
 }
 
-function ids(svg: string): string[] {
-  return [...svg.matchAll(/ id="([^"]*)"/g)].map(([, id]) => id ?? '');
+function textContent(source: string): string {
+  return source
+    .replace(/<[^>]*>/g, ' ')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&apos;', "'")
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&amp;', '&')
+    .replace(/\s+/g, ' ');
 }
 
-describe('drawing a fenced diagram', () => {
-  it('draws a diagram the parser can read', async () => {
-    await ready();
-    const svg = renderDiagram(SEQUENCE, 'mermaid');
+function ids(source: string): string[] {
+  return [...source.matchAll(/ id="([^"]*)"/g)].map(([, id]) => id!);
+}
 
-    expect(svg).toContain('<svg');
-    expect(svg).toContain('viewBox');
-    expect(svg).toContain('prompt');
+describe('drawing a fenced diagram with Pele', () => {
+  beforeAll(async () => {
+    await vi.waitFor(
+      () => expect(renderDiagram(FLOWCHART, 'mermaid')).not.toBeNull(),
+      {
+        timeout: 20_000,
+      },
+    );
   });
 
-  it('preserves physical newlines inside flowchart node labels', async () => {
-    await ready();
-    const svg = renderDiagram(MULTILINE_FLOWCHART, 'mermaid') ?? '';
-    const nodes = [...svg.matchAll(/<g class="node"[^>]+>/g)].map(
-      ([node]) => node,
-    );
-    const edges = [...svg.matchAll(/<polyline class="edge"[^>]*>/g)];
+  it.each(diagramCapabilities)(
+    'renders the $type family and its content',
+    ({ source, labels }) => {
+      const result = svg(source);
+      expect(result).toContain('<svg');
+      expect(result).toContain('viewBox');
+      expect(result).toContain('class="pele ');
+      for (const label of labels) expect(textContent(result)).toContain(label);
+      expect(result).not.toContain('@import');
+      expect(result).not.toContain('fonts.googleapis.com');
+    },
+  );
 
-    expect(nodes).toHaveLength(6);
-    expect(edges).toHaveLength(5);
-    expect(
-      edges.map(([edge]) => [
-        /data-from="([^"]+)"/.exec(edge)?.[1],
-        /data-to="([^"]+)"/.exec(edge)?.[1],
-        /data-label="([^"]+)"/.exec(edge)?.[1],
-      ]),
-    ).toEqual([
-      ['E', 'F', undefined],
+  it('preserves physical newlines without inventing nodes or losing branches', () => {
+    const result = topology(MULTILINE_FLOWCHART, 6, 5);
+    expect(edges(MULTILINE_FLOWCHART)).toEqual([
+      ['E', 'F', ''],
       ['F', 'G', 'No'],
       ['F', 'H', 'Yes'],
-      ['E', 'I', undefined],
+      ['E', 'I', ''],
       ['I', 'J', 'Yes'],
     ]);
-    expect(
-      nodes.filter((node) => node.includes('data-shape="diamond"')),
-    ).toHaveLength(2);
-    expect(nodes).toContainEqual(
-      expect.stringContaining(
-        'data-id="F" data-label="Route exists\nfor both sides?"',
-      ),
-    );
-    expect(nodes).toContainEqual(
-      expect.stringContaining(
-        'data-id="I" data-label="Delivery only\n+ dynamic preview\n+ no result?"',
-      ),
-    );
+    expect(graph(MULTILINE_FLOWCHART).nodes.get('F')).toMatchObject({
+      text: 'Route exists\nfor both sides?',
+      type: 'diamond',
+    });
+    expect(graph(MULTILINE_FLOWCHART).nodes.get('I')).toMatchObject({
+      text: 'Delivery only\n+ dynamic preview\n+ no result?',
+      type: 'diamond',
+    });
+    expect([...result.matchAll(/pele-shape-diam/g)]).toHaveLength(2);
     for (const label of [
       'Route exists',
       'for both sides?',
@@ -105,218 +132,445 @@ describe('drawing a fenced diagram', () => {
       '+ dynamic preview',
       '+ no result?',
     ]) {
-      expect(svg).toContain(label);
-    }
-    for (const label of ['F', 'I', 'for']) {
-      expect(nodes.some((node) => node.includes(`data-label="${label}"`))).toBe(
-        false,
-      );
+      expect(result).toContain(label);
     }
   });
 
-  it('renders every node and edge of a flowchart ending in a parallelogram', async () => {
-    await ready();
-    const svg = renderDiagram(REPORTED_FLOWCHART, 'mermaid') ?? '';
-    expect([...svg.matchAll(/<g class="node"[^>]+>/g)]).toHaveLength(7);
-    expect([...svg.matchAll(/<polyline class="edge"[^>]*>/g)]).toHaveLength(8);
-    expect(svg).toContain(
-      'data-id="Complete" data-label="Ready to ship" data-shape="parallelogram"',
-    );
-    expect(svg).toContain('data-label="two\nlines"');
-    expect(svg).toContain('data-label="count ≤ 7"');
-    expect(svg).toContain('data-label="count &gt; 7"');
-    expect(svg).toMatch(
-      /data-shape="parallelogram"[^>]*>\s*<polygon points="[^"]+"/,
-    );
+  it('keeps the complete reported topology, edge labels and final parallelogram', () => {
+    const result = topology(REPORTED_FLOWCHART, 7, 8);
+    expect(edges(REPORTED_FLOWCHART)).toEqual([
+      ['Plan', 'Fixture', ''],
+      ['Plan', 'Review', ''],
+      ['Fixture', 'Regression', ''],
+      ['Review', 'Fixture', 'No'],
+      ['Review', 'Regression', 'Yes'],
+      ['Regression', 'Topology', 'two<br/>lines'],
+      ['Topology', 'Viewer', 'count ≤ 7'],
+      ['Viewer', 'Complete', 'count > 7'],
+    ]);
+    expect(graph(REPORTED_FLOWCHART).nodes.get('Complete')).toMatchObject({
+      text: 'Ready to ship',
+      type: 'lean_right',
+    });
+    for (const label of [
+      'two',
+      'lines',
+      'count ≤ 7',
+      'count &gt; 7',
+      'Ready to ship',
+    ])
+      expect(result).toContain(label);
+    expect(result).toMatch(/pele-shape-lean-r[^>]*>\s*<polygon/);
   });
 
-  it('renders the full compact dotted-arrow graph with its edge styling', async () => {
-    await ready();
-    const svg = renderDiagram(COMPACT_DOTTED_FLOWCHART, 'mermaid') ?? '';
-    const nodes = [...svg.matchAll(/<g class="node"[^>]+>/g)].map(
-      ([node]) => node,
-    );
-    const edges = [...svg.matchAll(/<polyline class="edge"[^>]*>/g)].map(
-      ([edge]) => edge,
-    );
-
-    expect(nodes).toHaveLength(11);
-    expect(edges).toHaveLength(13);
-    expect(nodes).toContainEqual(
-      expect.stringContaining(
-        'data-id="R" data-label="Retry?" data-shape="diamond"',
-      ),
-    );
-    expect(nodes).toContainEqual(
-      expect.stringContaining('data-label="Start; α"'),
-    );
-    expect(nodes).toContainEqual(
-      expect.stringContaining('data-label="Accepted; ✓"'),
-    );
-    expect(edges.at(-1)).toContain('data-from="R" data-to="T"');
-    expect(edges.at(-1)).toContain('data-label="remaining-deadline fires"');
-    expect(edges.at(-1)).toMatch(/stroke-dasharray/);
-    expect(edges.at(-1)).toMatch(/marker-end=/);
-    expect(edges.at(-1)).not.toMatch(/marker-start=/);
+  it('keeps every node and directed edge in the compact dotted-arrow graph', () => {
+    const result = topology(COMPACT_DOTTED_FLOWCHART, 11, 13);
+    expect(
+      edges(COMPACT_DOTTED_FLOWCHART).map(([from, to]) => [from, to]),
+    ).toEqual([
+      ['S', 'R'],
+      ['R', 'Q'],
+      ['R', 'P'],
+      ['R', 'F'],
+      ['F', 'P2'],
+      ['P2', 'OK'],
+      ['P', 'W'],
+      ['P2', 'W'],
+      ['E', 'W'],
+      ['W', 'Z'],
+      ['Z', 'R'],
+      ['W', 'T'],
+      ['R', 'T'],
+    ]);
+    expect(graph(COMPACT_DOTTED_FLOWCHART).edges.at(-1)).toMatchObject({
+      start: 'R',
+      end: 'T',
+      text: 'remaining-deadline fires',
+      stroke: 'dotted',
+      type: 'arrow_point',
+    });
+    for (const label of [
+      'Start; α',
+      'Accepted; ✓',
+      'Retry?',
+      'remaining-deadline fires',
+    ])
+      expect(result).toContain(label);
+    expect(result).toContain('stroke-dasharray');
   });
 
-  it('renders mirrored slanted polygons with room for multiline labels', async () => {
-    await ready();
-    const svg =
-      renderDiagram(
-        String.raw`graph LR
-  A[/first\nsecond/] --> B[\opposite\]`,
-        'mermaid',
-      ) ?? '';
-    for (const shape of ['parallelogram', 'parallelogram-alt']) {
-      const points = new RegExp(
-        `data-shape="${shape}"[^>]*>\\s*<polygon points="([^"]+)"`,
-      ).exec(svg)?.[1];
-      expect(points).toBeDefined();
-      const corners = points!
-        .split(' ')
-        .map((pair) => pair.split(',').map(Number));
+  it.each([
+    '-.retry-now.->',
+    '-. retry-now.->',
+    '-.retry-now .->',
+    '-. retry-now .->',
+  ])('renders compact dotted text with boundary padding: %s', (arrow) => {
+    const source = `flowchart LR\n A[first\nsecond]:::hot ${arrow} B[/third\nfourth/]:::done`;
+    const result = topology(source, 2, 1);
+    expect(graph(source).edges[0]).toMatchObject({
+      text: 'retry-now',
+      stroke: 'dotted',
+      type: 'arrow_point',
+    });
+    for (const label of ['first', 'second', 'third', 'fourth', 'retry-now'])
+      expect(result).toContain(label);
+  });
+
+  it('preserves chained, bidirectional, unlabelled and thick edges', () => {
+    for (const [line, expected] of [
+      [
+        'A -.retry; café & ready.-> B --> C',
+        [
+          ['A', 'B', 'retry; café & ready'],
+          ['B', 'C', ''],
+        ],
+      ],
+      ['A -.-> B', [['A', 'B', '']]],
+      [
+        'A -->|yes| B ==> C',
+        [
+          ['A', 'B', 'yes'],
+          ['B', 'C', ''],
+        ],
+      ],
+      ['A <-.backtrack.-> B', [['A', 'B', 'backtrack']]],
+    ] as const) {
+      const source = `flowchart LR\n ${line}`;
+      topology(source, graph(source).nodes.size, expected.length);
+      expect(edges(source)).toEqual(expected);
+    }
+    expect(graph('flowchart LR\n A <-.backtrack.-> B').edges[0]).toMatchObject({
+      type: 'double_arrow_point',
+      stroke: 'dotted',
+    });
+    expect(graph('flowchart LR\n A ==> B').edges[0]?.stroke).toBe('thick');
+  });
+
+  it('distinguishes slash shapes, multiline labels and later definitions', () => {
+    const source = String.raw`graph LR
+  A[/first
+second/] --> B[\opposite\] --> C[/wide\] --> D[\narrow/]
+  D --> E
+  E[/named/]:::hot`;
+    const result = topology(source, 5, 4);
+    expect([...graph(source).nodes.values()].map(({ type }) => type)).toEqual([
+      'lean_right',
+      'lean_left',
+      'trapezoid',
+      'inv_trapezoid',
+      'lean_right',
+    ]);
+    for (const label of [
+      'first',
+      'second',
+      'opposite',
+      'wide',
+      'narrow',
+      'named',
+    ])
+      expect(result).toContain(label);
+    const polygons = [...result.matchAll(/<polygon points="([^"]+)"/g)].map(
+      ([, points]) =>
+        points!.split(' ').map((pair) => pair.split(',').map(Number)),
+    );
+    expect(polygons).toHaveLength(5);
+    for (const corners of polygons.slice(0, 2)) {
       expect(corners).toHaveLength(4);
       expect(corners[0]![0]).not.toBe(corners[3]![0]);
       expect(corners[1]![0]).not.toBe(corners[2]![0]);
       expect(corners[0]![1]).toBe(corners[1]![1]);
       expect(corners[2]![1]).toBe(corners[3]![1]);
     }
-    expect(svg).toContain('data-label="first\nsecond"');
+    expect(Math.sign(polygons[0]![0]![0]! - polygons[0]![3]![0]!)).toBe(
+      -Math.sign(polygons[1]![0]![0]! - polygons[1]![3]![0]!),
+    );
+    expect(svg('graph TD\n A[/"inner /] and \\]"/]')).toContain(
+      'inner /] and \\]',
+    );
   });
 
-  it('renders complete quoted code labels and later explicit shapes', async () => {
-    await ready();
-    const svg =
-      renderDiagram(
-        `graph TD
-  A["metadata.calls = request.tasks ?? []"] --> B
-  B{"root authority"} --> C["submit {proofs: []}, sponsored: true"]`,
-        'mermaid',
-      ) ?? '';
-    for (const [id, label, shape] of [
-      ['A', 'metadata.calls = request.tasks ?? []', 'rectangle'],
-      ['B', 'root authority', 'diamond'],
-      ['C', 'submit {proofs: []}, sponsored: true', 'rectangle'],
-    ]) {
-      expect(svg).toContain(
-        `data-id="${id}" data-label="${label}" data-shape="${shape}"`,
-      );
-      expect(svg).toContain(label);
-    }
-    expect(
-      [...svg.matchAll(/<polyline class="edge"[^>]*>/g)].map(([edge]) => [
-        /data-from="([^"]+)"/.exec(edge)?.[1],
-        /data-to="([^"]+)"/.exec(edge)?.[1],
-      ]),
-    ).toEqual([
-      ['A', 'B'],
-      ['B', 'C'],
+  it('preserves code-like quoted labels and forward definitions', () => {
+    const source = `flowchart LR
+  A["metadata.calls = request.tasks ?? []"] --> B["execute([bundle])"]
+  B --> C["execute([parent, ...children])"]
+  C --> D["submit {proofs: []}, sponsored: true"]`;
+    const result = topology(source, 4, 3);
+    for (const label of [
+      'metadata.calls = request.tasks ?? []',
+      'execute([bundle])',
+      'execute([parent, ...children])',
+      'submit {proofs: []}, sponsored: true',
+    ])
+      expect(textContent(result)).toContain(label);
+    expect([...graph(source).nodes.values()].map(({ text }) => text)).toEqual([
+      'metadata.calls = request.tasks ?? []',
+      'execute([bundle])',
+      'execute([parent, ...children])',
+      'submit {proofs: []}, sponsored: true',
+    ]);
+    expect(edges(source)).toEqual([
+      ['A', 'B', ''],
+      ['B', 'C', ''],
+      ['C', 'D', ''],
+    ]);
+
+    const forward = `graph TD
+  D1 --> E
+  F --> G
+  E{"root authority"} --> F
+  G["submit {proofs: []}, sponsored: true"] --> H
+  E{"final authority"}
+  H --> E`;
+    const forwardSvg = topology(forward, 5, 5);
+    expect(graph(forward).nodes.get('E')).toMatchObject({
+      text: 'final authority',
+      type: 'diamond',
+    });
+    expect(forwardSvg).toContain('final authority');
+    expect(forwardSvg).not.toContain('root authority');
+    expect(edges(forward)).toEqual([
+      ['D1', 'E', ''],
+      ['F', 'G', ''],
+      ['E', 'F', ''],
+      ['G', 'H', ''],
+      ['H', 'E', ''],
     ]);
   });
 
-  it('decodes supported XML entities but rejects quote entities that break the label', async () => {
-    await ready();
-    const svg =
-      renderDiagram('graph TD\n A["fish &amp; chips"]', 'mermaid') ?? '';
-    expect(svg).toContain('data-label="fish &amp; chips"');
-    expect(svg).toContain('fish &amp; chips');
-    expect(
-      renderDiagram('graph TD\n A["say &quot; hello"]', 'mermaid'),
-    ).toBeNull();
-  });
+  it.each([
+    ['(((', ')))'],
+    ['([', '])'],
+    ['((', '))'],
+    ['[[', ']]'],
+    ['[(', ')]'],
+    ['[/', '/]'],
+    ['[\\', '\\]'],
+    ['[/', '\\]'],
+    ['[\\', '/]'],
+    ['>', ']'],
+    ['{{', '}}'],
+    ['[', ']'],
+    ['(', ')'],
+    ['{', '}'],
+  ])(
+    'keeps quoted internal closers and physical newlines in %s … %s',
+    (open, close) => {
+      const label = `inner ${close} --> {[]()} & café's`;
+      const source = `graph TD\n A${open}"${label}\nsecond"${close}`;
+      const result = topology(source, 1, 0);
+      expect(graph(source).nodes.get('A')?.text).toBe(`${label}\nsecond`);
+      expect(result).toContain(
+        label.replaceAll('&', '&amp;').replaceAll('>', '&gt;'),
+      );
+      expect(result).toContain('second');
+      const unquoted = `graph TD\n A${open}first\nsecond${close}`;
+      const unquotedSvg = topology(unquoted, 1, 0);
+      expect(graph(unquoted).nodes.get('A')?.text).toBe('first\nsecond');
+      expect(textContent(unquotedSvg)).toContain('first second');
+    },
+  );
 
-  it('carries the app’s own colours rather than a palette of its own', async () => {
-    await ready();
-    const svg = renderDiagram(FLOWCHART, 'mermaid') ?? '';
+  it('preserves CRLF, blank lines, existing breaks and multiple same-line labels', () => {
+    const source =
+      'graph TD\r\n A["execute([bundle])\r\n\r\nnext<br>line\\nend"] --> B';
+    const result = topology(source, 2, 1);
+    for (const label of ['execute([bundle])', 'next', 'line', 'end'])
+      expect(result).toContain(label);
+    const multiple = `graph LR
+  A[first
 
-    // References rather than values, so the scheme in use is the app's.
-    expect(svg).toContain('--fg:var(--text)');
-    expect(svg).toContain('--bg:var(--canvas)');
-    // Every colour the library reads is given, including the three whose names
-    // Tau's own tokens share: an underived one would inherit the app's value.
-    for (const name of ['line', 'accent', 'muted', 'surface', 'border']) {
-      expect(svg).toContain(`--${name}:var(--`);
-    }
-  });
-
-  it('asks the network for nothing', async () => {
-    await ready();
-    // A class diagram asks for a second typeface for its members, so it is the
-    // diagram with more than one request in it.
-    const svg =
-      renderDiagram('classDiagram\n  Session : +load()\n', 'mermaid') ?? '';
-
-    expect(svg).not.toContain('@import');
-    expect(svg).not.toContain('fonts.googleapis.com');
-    // The typeface the app bundles, which is what the removed request was for.
-    expect(svg).toContain("'Inter Variable'");
-  });
-
-  it('marks its ids as its own', async () => {
-    await ready();
-    const flowchart = renderDiagram(FLOWCHART, 'mermaid') ?? '';
-    const sequence = renderDiagram(SEQUENCE, 'mermaid') ?? '';
-
-    // Two diagrams in one transcript would otherwise share whichever arrow
-    // head the document holds first, and a node named after part of the app
-    // would collide with the app itself.
-    expect(ids(flowchart).length).toBeGreaterThan(0);
-    expect(ids(flowchart)).not.toContain('arrowhead');
-    expect(ids(flowchart)).not.toContain('Prompt');
-    for (const id of ids(flowchart)) expect(ids(sequence)).not.toContain(id);
-
-    // Whatever is referenced by id is one the diagram gave itself.
-    for (const [, reference] of flowchart.matchAll(/url\(#([^)]*)\)/g)) {
-      expect(ids(flowchart)).toContain(reference);
-    }
-  });
-
-  it('rejects unsupported, malformed, incomplete and oversized fences', async () => {
-    await ready();
-    for (const source of [
-      'A["broken]',
-      'A --> B garbage',
-      'A -->',
-      'A[ok]:::',
-      'R -.label.-> T trailing garbage',
-      'R -.label.->',
-      'R -.label',
-    ]) {
-      expect(renderDiagram(`graph TD\n ${source}`, 'mermaid')).toBeNull();
-    }
-
-    expect(renderDiagram(FLOWCHART, 'ts')).toBeNull();
-    expect(renderDiagram(FLOWCHART, 'md')).toBeNull();
-    expect(
-      renderDiagram('graph TD\n A[/unfinished\n B --> C', 'mermaid'),
-    ).toBeNull();
-    expect(renderDiagram(FLOWCHART, '')).toBeNull();
-    // Source the parser cannot read, which is what half of a streamed diagram
-    // and a mislabelled fence both are.
-    expect(renderDiagram('not a diagram at all\n', 'mermaid')).toBeNull();
-    expect(renderDiagram('', 'mermaid')).toBeNull();
-    // An incomplete multiline label would otherwise become a plausible but
-    // partial graph, so it remains the source the reader was sent.
-    expect(
-      renderDiagram('graph TD\n  A[unfinished\n  B --> C', 'mermaid'),
-    ).toBeNull();
-    expect(
-      renderDiagram('graph TD\n  A[unfinished\n  B -.retry.-> C', 'mermaid'),
-    ).toBeNull();
-    // Longer than a diagram, whatever else it is.
-    expect(
-      renderDiagram(`graph TD\n${'  A --> B\n'.repeat(1_000)}`, 'mermaid'),
-    ).toBeNull();
-  });
-
-  it('holds a diagram it has already drawn', async () => {
-    await ready();
-
-    // The same diagram, ids and all: a re-mounted row and every delta of a
-    // streamed message ask for the diagrams around them again.
-    expect(renderDiagram(SEQUENCE, 'mermaid')).toBe(
-      renderDiagram(SEQUENCE, 'mermaid'),
+customer's second line] --> B{third
+fourth} & C(round
+node)`;
+    const multipleSvg = topology(multiple, 3, 2);
+    for (const label of [
+      'first',
+      "customer's second line",
+      'third',
+      'fourth',
+      'round',
+      'node',
+    ])
+      expect(multipleSvg).toContain(label);
+    topology(
+      'graph TD\n A[one\\ntwo] --> B[one<br>two] --> C[one<br/>two] --> D[one<br />two]',
+      4,
+      3,
     );
+    topology('graph TD\n A[one\ntwo]-.retry.->B{three\nfour}-.again.->C', 3, 2);
+    expect(
+      svg('graph TD\n A["literal -.retry.-> B\nstill a label"] --> C'),
+    ).toContain('still a label');
+  });
+
+  it('allows comment-prefixed headers', () => {
+    const result = topology(
+      '\n%% generated\nflowchart TB\n A[first\nsecond] --> B{third\nfourth}',
+      2,
+      1,
+    );
+    for (const label of ['first', 'second', 'third', 'fourth'])
+      expect(result).toContain(label);
+  });
+
+  it('preserves subgraph membership, nested ownership, classes and styles on redefinition', () => {
+    const source = `graph LR
+  subgraph group [Group]
+    A & B -->|yes| C
+    C --> D
+    D{"final"}:::hot
+  end
+  A -- maybe --> B
+  class D quiet
+  style D fill:#fff
+  linkStyle 0 stroke:#123`;
+    const result = topology(source, 4, 4);
+    expect(result).toContain('Group');
+    expect(result).toContain('#fff');
+    expect(result).toContain('#123');
+    expect(graph(source).subgraphs[0]?.nodes.slice().sort()).toEqual([
+      'A',
+      'B',
+      'C',
+      'D',
+    ]);
+    expect(graph(source).nodes.get('D')).toMatchObject({
+      text: 'final',
+      type: 'diamond',
+      classes: expect.arrayContaining(['quiet']),
+    });
+    expect(edges(source)).toEqual([
+      ['A', 'C', 'yes'],
+      ['B', 'C', 'yes'],
+      ['C', 'D', ''],
+      ['A', 'B', 'maybe'],
+    ]);
+    const nested =
+      'graph TD\n subgraph outer\n subgraph inner\n A --> B\n B{"named"}\n end\n end';
+    topology(nested, 2, 1);
+    expect(
+      graph(nested)
+        .subgraphs.find(({ id }) => id === 'inner')
+        ?.nodes.slice()
+        .sort(),
+    ).toEqual(['A', 'B']);
+    expect(
+      graph(nested).subgraphs.find(({ id }) => id === 'outer')?.nodes,
+    ).toEqual(['inner']);
+    expect(graph(nested).nodes.get('B')).toMatchObject({
+      text: 'named',
+      type: 'diamond',
+    });
+  });
+
+  it('decodes entities as label content rather than rejecting quoted text', () => {
+    expect(svg('graph TD\n A["fish &amp; chips"]')).toContain(
+      'fish &amp; chips',
+    );
+    expect(textContent(svg('graph TD\n A["say &quot; hello"]'))).toContain(
+      'say " hello',
+    );
+  });
+
+  it('preserves accessible titles and descriptions', () => {
+    const result = svg(accessibleDiagram);
+    expect(result).toContain('Delivery pipeline');
+    expect(result).toContain('A request flows from queue to completion.');
+    expect(result).toContain('aria-labelledby=');
+    expect(result).toContain('aria-describedby=');
+  });
+
+  it('scopes IDs and references independently for diagrams in one transcript', () => {
+    const first = svg(accessibleDiagram);
+    const second = svg(SEQUENCE);
+    expect(ids(first).length).toBeGreaterThan(0);
+    for (const id of ids(first)) expect(ids(second)).not.toContain(id);
+    for (const result of [first, second]) {
+      for (const [, reference] of result.matchAll(/url\(#([^)]*)\)/g))
+        expect(ids(result)).toContain(reference);
+      for (const [, references] of result.matchAll(
+        /aria-(?:labelledby|describedby)="([^"]+)"/g,
+      )) {
+        for (const reference of references!.split(/\s+/))
+          expect(ids(result)).toContain(reference);
+      }
+    }
+  });
+
+  it('falls back to source for unsupported fences, unknown diagrams and oversized input', () => {
+    for (const fence of ['ts', 'md', ''])
+      expect(renderDiagram(FLOWCHART, fence)).toBeNull();
+    for (const source of [
+      '',
+      'not a diagram at all\n',
+      `graph TD\n${'  A --> B\n'.repeat(1_000)}`,
+    ]) {
+      expect(renderDiagram(source, 'mermaid')).toBeNull();
+    }
+  });
+
+  it.each([
+    'A["unterminated}',
+    'A(((unfinished))',
+    'A[unfinished',
+    'A[valid] leftover',
+    'A[valid]::: --> B',
+    'A -->',
+    'A &',
+    'A --> B &',
+    'A --> B garbage',
+    'A[/unfinished',
+    'A[\\unfinished',
+    'A[/valid/] garbage',
+    'R -.label',
+    'R -.label.->',
+    'R -.label.-',
+    'R -.label.-> T garbage',
+    'R -. .-> T',
+    'R -.label.-> T &',
+    'A[unfinished\n B --> C',
+    'A[unfinished\n B -.retry.-> C[done]',
+    'A[unfinished\n B -. retry .-> C[done]',
+    'A{"unfinished\nsecond}',
+    'A[first\nsecond"still]',
+    'A[first\nsecond] trailing text',
+    'A["ambiguous \\" quote"]',
+    'A[first\nsecond] :::hot --> B',
+    'A[first\nsecond]::: --> B',
+    'style[first\nsecond] --> class{third\nfourth}',
+    'A[first\nsecond] -.retry.-> B[third\nfourth] trailing text',
+  ])(
+    'falls back rather than drawing an incomplete or malformed statement: %s',
+    (line) => {
+      expect(renderDiagram(`graph TD\n ${line}`, 'mermaid')).toBeNull();
+    },
+  );
+
+  it('rejects edge expansion beyond the configured limit before layout', () => {
+    const from = Array.from({ length: 80 }, (_, i) => `A${i}`).join(' & ');
+    const to = Array.from({ length: 80 }, (_, i) => `B${i}`).join(' & ');
+    const source = `flowchart LR\n ${from} --> ${to}`;
+    expect(source.length).toBeLessThan(8_000);
+    expect(renderDiagram(source, 'mermaid')).toBeNull();
+  });
+
+  it('keeps unresolved math and custom icons as visible label content without resolvers', () => {
+    expect(textContent(svg('flowchart LR\n A["$$x^2$$"]'))).toContain(
+      '$$x^2$$',
+    );
+    const icon = svg(
+      'flowchart LR\n A@{ icon: "custom:missing", label: "Missing icon" }',
+    );
+    expect(textContent(icon)).toContain('Missing icon');
+    expect(icon).toContain('data-icon="custom:missing"');
+    expect(icon).not.toMatch(/<(?:image|foreignObject)\b/);
+  });
+
+  it('gives identical cached diagrams independent accessibility IDs', () => {
+    const first = svg(accessibleDiagram);
+    const second = svg(accessibleDiagram);
+    expect(first).not.toBe(second);
+    expect(textContent(first)).toBe(textContent(second));
+    for (const id of ids(first)) expect(ids(second)).not.toContain(id);
   });
 });
