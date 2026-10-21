@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 
 import { expect, test } from './fixtures';
+import { releaseGate, waitForGate } from './pi-scenario-gates';
 
 const scenarioUrl = '/?test-scenario=saved-session-stale-generation';
 const beforeStaleGate = 'before-stale-generation-output';
@@ -91,18 +92,10 @@ test('ignores gated output from a stale runtime generation', async ({
   await composer.fill(prompt);
   await page.getByRole('button', { name: 'Send Message' }).click();
 
-  await page.evaluate(async (gateName) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Pi scenario API is unavailable.');
-    await scenario.waitForGate(gateName);
-  }, beforeStaleGate);
+  await waitForGate(page, beforeStaleGate);
   const beforeRelease = await snapshotVisibleSession(page);
 
-  await page.evaluate(async (gateName) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Pi scenario API is unavailable.');
-    await scenario.releaseGate(gateName);
-  }, beforeStaleGate);
+  await releaseGate(page, beforeStaleGate);
   const afterRelease = await snapshotVisibleSession(page);
 
   expectWorkingActiveSession(beforeRelease);

@@ -1,6 +1,5 @@
-import type { Page } from '@playwright/test';
-
 import { expect, test } from './fixtures';
+import { releaseGate, waitForGate } from './pi-scenario-gates';
 
 const scenarioUrl = '/?test-scenario=remote-phantom-prompt-process-exit';
 const prompt = 'Keep this remote draft';
@@ -11,22 +10,6 @@ const connectionFailure =
   'The remote Pi connection failed. Check the connection and try again.';
 const processFailure =
   'The remote Pi process stopped unexpectedly. Check the connection and try again.';
-
-async function waitForGate(page: Page, gate: string): Promise<void> {
-  await page.evaluate(async (name) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    await scenario.waitForGate(name);
-  }, gate);
-}
-
-async function releaseGate(page: Page, gate: string): Promise<void> {
-  await page.evaluate(async (name) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    await scenario.releaseGate(name);
-  }, gate);
-}
 
 test('restores a remote phantom first prompt and keeps retry actionable', async ({
   page,

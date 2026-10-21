@@ -1,4 +1,5 @@
 import { expect, test } from './fixtures';
+import { releaseGate, waitForGate } from './pi-scenario-gates';
 
 const scenarioUrl = '/?test-scenario=phantom-command-registration';
 const command = '/mcp';
@@ -22,25 +23,13 @@ test('registers a command-created session after assistant message_end while work
 
   await composer.fill(command);
   await page.getByRole('button', { name: 'Send Message' }).click();
-  await page.evaluate(async (gate) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    await scenario.waitForGate(gate);
-  }, syncGate);
+  await waitForGate(page, syncGate);
 
   await expect(page.getByLabel('Transcript')).toHaveCount(0);
 
-  await page.evaluate(async (gate) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    await scenario.releaseGate(gate);
-  }, syncGate);
+  await releaseGate(page, syncGate);
 
-  await page.evaluate(async (gate) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    await scenario.waitForGate(gate);
-  }, settlementGate);
+  await waitForGate(page, settlementGate);
   await expect(page.getByRole('heading', { name: sessionName })).toBeVisible();
   await expect(page.getByLabel('Transcript')).toContainText(
     'Real agent work started.',
@@ -49,16 +38,8 @@ test('registers a command-created session after assistant message_end while work
     page.getByRole('button', { name: `Archive ${sessionName}` }),
   ).toHaveCount(0);
 
-  await page.evaluate(async (gate) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    await scenario.releaseGate(gate);
-  }, settlementGate);
-  await page.evaluate(async (gate) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    await scenario.waitForGate(gate);
-  }, registeredWhileWorkingGate);
+  await releaseGate(page, settlementGate);
+  await waitForGate(page, registeredWhileWorkingGate);
 
   await expect
     .poll(() =>
@@ -74,11 +55,7 @@ test('registers a command-created session after assistant message_end while work
     page.getByRole('button', { name: `Archive ${sessionName}` }),
   ).toHaveCount(0);
 
-  await page.evaluate(async (gate) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    await scenario.releaseGate(gate);
-  }, registeredWhileWorkingGate);
+  await releaseGate(page, registeredWhileWorkingGate);
 
   const sessionRow = page
     .getByRole('complementary', { name: 'Projects and Sessions' })

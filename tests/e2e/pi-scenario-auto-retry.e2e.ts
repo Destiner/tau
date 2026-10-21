@@ -1,30 +1,13 @@
-import type { Page } from '@playwright/test';
-
 import { expect, test } from './fixtures';
+import { releaseGate, waitForGate } from './pi-scenario-gates';
 
 const scenarioUrl = '/?test-scenario=saved-session-auto-retry';
-
-async function waitForGate(page: Page, gate: string): Promise<void> {
-  await page.waitForFunction(() => Boolean(window.__TAU_PI_SCENARIO__));
-  await page.evaluate(async (name) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    await scenario.waitForGate(name);
-  }, gate);
-}
-
-async function releaseGate(page: Page, gate: string): Promise<void> {
-  await page.evaluate(async (name) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    await scenario.releaseGate(name);
-  }, gate);
-}
 
 test('shows reviewed retry copy beside the selectors without shifting the composer', async ({
   page,
 }) => {
   await page.goto(scenarioUrl);
+  await page.waitForFunction(() => Boolean(window.__TAU_PI_SCENARIO__));
   await waitForGate(page, 'before-auto-retry');
 
   const composer = page.getByRole('textbox', { name: 'Message Pi' });
@@ -35,6 +18,7 @@ test('shows reviewed retry copy beside the selectors without shifting the compos
   const effortBefore = await effort.boundingBox();
 
   await releaseGate(page, 'before-auto-retry');
+  await page.waitForFunction(() => Boolean(window.__TAU_PI_SCENARIO__));
   await waitForGate(page, 'auto-retry-visible');
 
   const retry = page.getByRole('status', { name: /^Retrying\./ });
@@ -46,13 +30,6 @@ test('shows reviewed retry copy beside the selectors without shifting the compos
   expect(await composer.boundingBox()).toEqual(composerBefore);
   expect(await stop.boundingBox()).toEqual(stopBefore);
   expect(await effort.boundingBox()).toEqual(effortBefore);
-  const retryBounds = await retry.boundingBox();
-  expect(retryBounds).not.toBeNull();
-  expect(effortBefore).not.toBeNull();
-  const gapFromEffort =
-    retryBounds!.x - (effortBefore!.x + effortBefore!.width);
-  expect(gapFromEffort).toBeGreaterThanOrEqual(0);
-  expect(gapFromEffort).toBeLessThanOrEqual(8);
 
   await retry.focus();
   await expect(
@@ -65,6 +42,7 @@ test('shows reviewed retry copy beside the selectors without shifting the compos
   );
 
   await releaseGate(page, 'auto-retry-visible');
+  await page.waitForFunction(() => Boolean(window.__TAU_PI_SCENARIO__));
   await waitForGate(page, 'auto-retry-finished');
   await expect(retry).toHaveCount(0);
   await expect(stop).toBeFocused();

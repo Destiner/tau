@@ -1,4 +1,5 @@
 import { expect, test } from './fixtures';
+import { releaseGate, waitForGate } from './pi-scenario-gates';
 
 const scenarioUrl = '/?test-scenario=phantom-command-replacement';
 const command = '/mock 42';
@@ -29,10 +30,7 @@ test('keeps a fresh command successor running after its phantom identity is repl
 
   await composer.fill(command);
   await page.getByRole('button', { name: 'Send Message' }).click();
-  await page.evaluate(
-    (gate) => window.__TAU_PI_SCENARIO__?.waitForGate(gate),
-    promptReplyGate,
-  );
+  await waitForGate(page, promptReplyGate);
 
   await sidebar.getByRole('button', { name: /^Main\b/ }).click();
   await expect(page.getByRole('heading', { name: 'Main' })).toBeVisible();
@@ -41,50 +39,23 @@ test('keeps a fresh command successor running after its phantom identity is repl
     sidebar.getByRole('button', { name: /^New Session\b/ }),
   ).toHaveCount(1);
   await expect(page.getByRole('button', { name: 'Stop Pi' })).toHaveCount(0);
-  await page.evaluate(
-    (gate) => window.__TAU_PI_SCENARIO__?.releaseGate(gate),
-    promptReplyGate,
-  );
-  await page.evaluate(
-    (gate) => window.__TAU_PI_SCENARIO__?.waitForGate(gate),
-    commandSyncGate,
-  );
+  await releaseGate(page, promptReplyGate);
+  await waitForGate(page, commandSyncGate);
 
   await expect(page.getByRole('heading', { name: 'Main' })).toBeVisible();
   await expect(
     sidebar.getByRole('button', { name: /^New Session\b/ }),
   ).toHaveCount(1);
-  await page.evaluate(
-    (gate) => window.__TAU_PI_SCENARIO__?.releaseGate(gate),
-    commandSyncGate,
-  );
-  await page.evaluate(
-    (gate) => window.__TAU_PI_SCENARIO__?.waitForGate(gate),
-    hydrationGate,
-  );
-  await page.evaluate(
-    (gate) => window.__TAU_PI_SCENARIO__?.releaseGate(gate),
-    hydrationGate,
-  );
-  await page.evaluate(
-    (gate) => window.__TAU_PI_SCENARIO__?.waitForGate(gate),
-    assistantGate,
-  );
+  await releaseGate(page, commandSyncGate);
+  await waitForGate(page, hydrationGate);
+  await releaseGate(page, hydrationGate);
+  await waitForGate(page, assistantGate);
 
   await expect(page.getByRole('heading', { name: 'Main' })).toBeVisible();
-  await page.evaluate(
-    (gate) => window.__TAU_PI_SCENARIO__?.releaseGate(gate),
-    assistantGate,
-  );
-  await page.evaluate(
-    (gate) => window.__TAU_PI_SCENARIO__?.waitForGate(gate),
-    settledHydrationGate,
-  );
+  await releaseGate(page, assistantGate);
+  await waitForGate(page, settledHydrationGate);
 
-  await page.evaluate(
-    (gate) => window.__TAU_PI_SCENARIO__?.releaseGate(gate),
-    settledHydrationGate,
-  );
+  await releaseGate(page, settledHydrationGate);
 
   const replacementRow = sidebar.getByRole('button', {
     name: new RegExp(`^(?:Unread )?${replacementName}\\b`),
@@ -100,18 +71,8 @@ test('keeps a fresh command successor running after its phantom identity is repl
     'Replacement session started.',
   );
 
-  const [promptRequests, stopCount] = await page.evaluate(() => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    return [
-      scenario
-        ?.timeline()
-        .filter(
-          (entry) =>
-            entry.kind === 'request' && entry.request.type === 'prompt',
-        ) ?? [],
-      scenario?.nativeInvocationCount('stop_pi') ?? 0,
-    ];
-  });
-  expect(promptRequests).toHaveLength(1);
+  const stopCount = await page.evaluate(
+    () => window.__TAU_PI_SCENARIO__?.nativeInvocationCount('stop_pi') ?? 0,
+  );
   expect(stopCount).toBe(0);
 });

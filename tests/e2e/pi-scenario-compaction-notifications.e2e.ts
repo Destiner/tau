@@ -1,25 +1,9 @@
 import type { Page } from '@playwright/test';
 
 import { expect, test } from './fixtures';
+import { releaseGate, waitForGate } from './pi-scenario-gates';
 
 const scenarioUrl = '/?test-scenario=saved-session-compaction-notifications';
-
-async function waitForGate(page: Page, gate: string): Promise<void> {
-  await page.waitForFunction(() => Boolean(window.__TAU_PI_SCENARIO__));
-  await page.evaluate(async (name) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    await scenario.waitForGate(name);
-  }, gate);
-}
-
-async function releaseGate(page: Page, gate: string): Promise<void> {
-  await page.evaluate(async (name) => {
-    const scenario = window.__TAU_PI_SCENARIO__;
-    if (!scenario) throw new Error('Expected the browser Pi scenario API.');
-    await scenario.releaseGate(name);
-  }, gate);
-}
 
 async function visibleRows(page: Page): Promise<string[]> {
   return page.locator('.message-window > .message').evaluateAll((rows) =>
@@ -36,6 +20,7 @@ test('clears compacted notifications and preserves fresh ordering', async ({
   page,
 }) => {
   await page.goto(scenarioUrl);
+  await page.waitForFunction(() => Boolean(window.__TAU_PI_SCENARIO__));
   await waitForGate(page, 'before-successful-compaction');
 
   for (const text of [
@@ -54,6 +39,7 @@ test('clears compacted notifications and preserves fresh ordering', async ({
   ).toHaveCount(1);
 
   await releaseGate(page, 'before-successful-compaction');
+  await page.waitForFunction(() => Boolean(window.__TAU_PI_SCENARIO__));
   await waitForGate(page, 'compacted-hydration-pending');
 
   await expect(page.locator('.message.notice')).toHaveCount(1);
@@ -67,6 +53,7 @@ test('clears compacted notifications and preserves fresh ordering', async ({
     ]);
 
   await releaseGate(page, 'compacted-hydration-pending');
+  await page.waitForFunction(() => Boolean(window.__TAU_PI_SCENARIO__));
   await waitForGate(page, 'compacted-notifications-reconciled');
 
   await expect(page.locator('.message.compaction')).toHaveText('compacted');

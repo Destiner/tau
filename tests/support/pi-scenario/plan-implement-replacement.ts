@@ -44,67 +44,12 @@ const planImplementReplacement = definePiScenario({
     { key: 'reopened-plan', generation: 1 },
   ],
   steps: [
-    { kind: 'runtime-event', runtime, event: 'started' },
-    {
-      kind: 'request',
+    ...successfulBootstrapSteps(
       runtime,
-      capture: 'bootstrap-models',
-      match: { type: 'get_available_models' },
-    },
-    {
-      kind: 'response',
-      request: 'bootstrap-models',
-      command: 'get_available_models',
-      data: { models: fixtureModels },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'bootstrap-commands',
-      match: { type: 'get_commands' },
-    },
-    {
-      kind: 'response',
-      request: 'bootstrap-commands',
-      command: 'get_commands',
-      data: { commands },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'bootstrap-state',
-      match: { type: 'get_state' },
-    },
-    {
-      kind: 'response',
-      request: 'bootstrap-state',
-      command: 'get_state',
-      data: { ...mainSessionState, isStreaming: false },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'bootstrap-messages',
-      match: { type: 'get_messages' },
-    },
-    {
-      kind: 'request',
-      runtime,
-      capture: 'bootstrap-efforts',
-      match: { type: 'get_available_thinking_levels' },
-    },
-    {
-      kind: 'response',
-      request: 'bootstrap-efforts',
-      command: 'get_available_thinking_levels',
-      data: { levels: fixtureThinkingLevels },
-    },
-    {
-      kind: 'response',
-      request: 'bootstrap-messages',
-      command: 'get_messages',
-      data: { messages: [] },
-    },
+      'bootstrap',
+      mainSessionState,
+      commands,
+    ),
     ...successfulBootstrapSteps('backup', 'backup', backupSessionState),
     {
       kind: 'request',
