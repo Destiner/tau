@@ -15,6 +15,8 @@ export default function sessionControllerFixture(
     ready: false,
     streaming: false,
     compacting: false,
+    compactionReason: undefined,
+    compactionStartedWhileStreaming: false,
     compactionReconciliationPending: false,
     compactionStreamSequence: 0,
     messagesHydrationSequence: 0,

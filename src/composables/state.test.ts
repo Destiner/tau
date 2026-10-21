@@ -496,6 +496,179 @@ describe('fallback feedback', () => {
   });
 });
 
+describe('compaction queue admission', () => {
+  it.each(['threshold', 'overflow'] as const)(
+    'allows active automatic %s compaction but not pre-run compaction',
+    async (compactionReason) => {
+      const { controllerCanQueue } = await import('./state');
+      const controller = testController({
+        ready: true,
+        streaming: true,
+        compacting: true,
+        compactionReason,
+        compactionStartedWhileStreaming: true,
+      });
+      expect(controllerCanQueue(controller)).toBe(true);
+      controller.compactionStartedWhileStreaming = false;
+      expect(controllerCanQueue(controller)).toBe(false);
+      controller.compacting = false;
+      expect(controllerCanQueue(controller)).toBe(true);
+    },
+  );
+
+  it.each(['manual', undefined] as const)(
+    'denies compaction reason %s even during an active stream',
+    async (compactionReason) => {
+      const { controllerCanQueue } = await import('./state');
+      expect(
+        controllerCanQueue(
+          testController({
+            ready: true,
+            streaming: true,
+            compacting: true,
+            compactionReason,
+            compactionStartedWhileStreaming: true,
+          }),
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it.each([
+    { ready: false },
+    { disposed: true },
+    { phantom: true },
+    { streaming: false },
+    { stopping: true },
+    { compactionReconciliationPending: true },
+    { starting: true },
+    { promptSubmitting: true },
+    { queueClearing: true },
+    { remoteDisconnected: true },
+  ] satisfies Partial<SessionController>[])(
+    'automatic compaction does not bypass the admission guard %j',
+    async (flags) => {
+      const { controllerCanQueue } = await import('./state');
+      expect(
+        controllerCanQueue(
+          testController({
+            ready: true,
+            streaming: true,
+            compacting: true,
+            compactionReason: 'threshold',
+            compactionStartedWhileStreaming: true,
+            ...flags,
+          }),
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it('keeps ordinary compose blocked through queue setup, unacknowledged submission, and compaction', async () => {
+    const {
+      state,
+      canCompose,
+      canDraft,
+      canQueue,
+      compactionRestriction,
+      queueBusy,
+    } = await import('./state');
+    const controller = testController({ ready: true });
+    const session: SessionSummary = {
+      id: controller.sessionId,
+      path: controller.sessionPath,
+      title: 'Session',
+      lastActive: 'now',
+      lastUserMessageAt: 0,
+      sortAt: 1,
+      archived: false,
+      selected: true,
+    };
+    state.workspace = {
+      activeProjectPath: controller.projectPath,
+      piPath: '/usr/local/bin/pi',
+      projects: [
+        {
+          path: controller.projectPath,
+          name: 'Project',
+          workingDirectory: controller.projectPath,
+          collapsed: false,
+          selected: true,
+          sessions: [session],
+        },
+      ],
+    };
+    state.controllers = [controller];
+    state.activeProjectPath = controller.projectPath;
+    state.activeSessionId = controller.sessionId;
+    state.activeControllerKey = controller.key;
+    const stored = state.controllers[0]!;
+    expect(canCompose.value).toBe(true);
+    expect(canDraft.value).toBe(true);
+    expect(canQueue.value).toBe(false);
+
+    stored.queuePreparing = true;
+    expect(queueBusy.value).toBe(true);
+    expect(canCompose.value).toBe(false);
+    stored.queueSubmissions.push({
+      id: 'queue-prompt',
+      text: 'same',
+      draft: ' same ',
+      kind: 'steer',
+      version: 0,
+      baselineCount: 0,
+    });
+    stored.queuePreparing = false;
+    expect(queueBusy.value).toBe(true);
+    expect(canCompose.value).toBe(false);
+    stored.queueSubmissions = [];
+    expect(queueBusy.value).toBe(false);
+    expect(canCompose.value).toBe(true);
+
+    for (const reason of ['threshold', 'overflow'] as const) {
+      Object.assign(stored, {
+        compacting: true,
+        streaming: true,
+        compactionReason: reason,
+        compactionStartedWhileStreaming: true,
+      });
+      expect(canQueue.value).toBe(true);
+      expect(canCompose.value).toBe(false);
+      expect(canDraft.value).toBe(true);
+      expect(compactionRestriction.value).toBe('');
+      for (const patch of [
+        { compactionReason: 'manual' },
+        { compactionReason: undefined },
+        { compactionStartedWhileStreaming: false },
+        { stopping: true },
+        { compactionReconciliationPending: true },
+      ] satisfies Partial<SessionController>[]) {
+        Object.assign(stored, patch);
+        expect(canQueue.value).toBe(false);
+        expect(canCompose.value).toBe(false);
+        expect(canDraft.value).toBe(true);
+        expect(compactionRestriction.value).toContain('Sending is unavailable');
+        Object.assign(stored, {
+          compactionReason: reason,
+          compactionStartedWhileStreaming: true,
+          stopping: false,
+          compactionReconciliationPending: false,
+        });
+      }
+    }
+    Object.assign(stored, {
+      streaming: false,
+      compacting: false,
+      compactionReconciliationPending: true,
+    });
+    expect(compactionRestriction.value).toBe('');
+    expect(canQueue.value).toBe(false);
+    expect(canCompose.value).toBe(false);
+    stored.compactionReconciliationPending = false;
+    expect(canCompose.value).toBe(true);
+  });
+});
+
 describe('queue recovery identity', () => {
   it('holds an interrupted predecessor draft until that session is reopened', async () => {
     const { ensureController, stashInterruptedQueueDrafts, state } =

@@ -48,6 +48,7 @@ import {
 } from './history';
 import {
   rpc,
+  clearCompactionRefreshWatch,
   piConnectionFailureMessage,
   piProcessExitMessage,
   remotePiConnectionFailureMessage,
@@ -104,6 +105,8 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
       discardControllerDialogs(controller);
       controller.retry = undefined;
       resetQueue(controller, true);
+      controller.compactionReason = undefined;
+      controller.compactionStartedWhileStreaming = false;
       controller.generation = event.generation;
     }
     return;
@@ -166,6 +169,8 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     return;
   }
   if (event.kind === 'exited') {
+    controller.compactionReason = undefined;
+    controller.compactionStartedWhileStreaming = false;
     abandonPendingRpcSpans(
       controller.runtimeId,
       event.generation,
@@ -226,6 +231,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
       });
     }
     controller.compacting = false;
+    clearCompactionRefreshWatch(controller);
     controller.compactionReconciliationPending = false;
     controller.compactionStreamSequence = controller.streamSequence;
     setControllerLifecycle(
@@ -305,6 +311,8 @@ async function handleRpc(
     resetStreamAggregate(controller.runtimeId, controller.generation);
     controller.localErrors = [];
     controller.compacting = false;
+    controller.compactionReason = undefined;
+    controller.compactionStartedWhileStreaming = false;
     if (!controller.compactionReconciliationPending) {
       controller.compactionStreamSequence = controller.streamSequence;
     }
@@ -426,6 +434,13 @@ async function handleRpc(
   }
   if (type === 'compaction_start') {
     controller.compacting = true;
+    controller.compactionReason =
+      event.reason === 'manual' ||
+      event.reason === 'threshold' ||
+      event.reason === 'overflow'
+        ? event.reason
+        : undefined;
+    controller.compactionStartedWhileStreaming = controller.streaming;
     return;
   }
   /**
@@ -435,6 +450,8 @@ async function handleRpc(
    */
   if (type === 'compaction_end') {
     controller.compacting = false;
+    controller.compactionReason = undefined;
+    controller.compactionStartedWhileStreaming = false;
     if (stringValue(event.errorMessage)) {
       const error = {
         key: controller.streamSequence++,
@@ -475,8 +492,7 @@ async function handleRpc(
           type: 'get_messages',
         });
       } catch {
-        // Settlement retries the authoritative hydration. Keep post-compaction
-        // stream rows separate from the stale projection until then.
+        // Dispatch cleanup surfaces the failure and allows an explicit read retry.
       }
     }
     return;
@@ -518,6 +534,8 @@ async function handleRpc(
       hasMeaningfulAssistantActivity(controller);
     clearAbortWatch(controller);
     controller.compacting = false;
+    controller.compactionReason = undefined;
+    controller.compactionStartedWhileStreaming = false;
     setControllerLifecycle(
       controller,
       { syncing: true, working: false, streaming: false, stopping: false },
