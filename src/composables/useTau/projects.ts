@@ -20,6 +20,11 @@ import {
 
 import { beginNavigation, isCurrentNavigation } from './navigation';
 import {
+  requestProjectRename,
+  cancelProjectRename,
+  confirmProjectRename,
+} from './project-rename';
+import {
   writeWorkspace,
   foldIntent,
   nextOrderRevision,
@@ -161,11 +166,12 @@ function createProjects(
       return;
     }
 
-    const projects = [...workspace.projects];
+    const previousProjects = workspace.projects;
+    const projects = [...previousProjects];
     const [project] = projects.splice(fromIndex, 1);
     if (!project) return;
     projects.splice(toIndex, 0, project);
-    state.workspace = { ...workspace, projects };
+    workspace.projects = projects;
     const revision = nextOrderRevision();
 
     try {
@@ -174,7 +180,7 @@ function createProjects(
       });
     } catch {
       if (isCurrentOrderRevision(revision) && state.workspace)
-        state.workspace.projects = workspace.projects;
+        state.workspace.projects = previousProjects;
       setWorkspaceError(errorCopy.projectOrder);
     }
   }
@@ -247,6 +253,9 @@ function createProjects(
     addLocalProject,
     toggleProject,
     reorderProjects,
+    requestProjectRename,
+    cancelProjectRename,
+    confirmProjectRename,
     requestProjectRemoval,
     cancelProjectRemoval,
     confirmProjectRemoval,

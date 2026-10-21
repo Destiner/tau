@@ -37,6 +37,7 @@ import {
   cancelSelectionTracking,
   cancelSavedPreview,
 } from './navigation';
+import { clearProjectRename } from './project-rename';
 
 interface InitializationOperation {
   lifecycle: number;
@@ -135,6 +136,7 @@ function createLifecycle(
         {},
       );
       if (operation.lifecycle !== currentLifecycle()) return;
+      clearProjectRename();
       state.workspace = workspace;
       state.activeProjectPath = state.workspace.activeProjectPath;
       const selectedProject = state.workspace.projects.find(
@@ -186,6 +188,7 @@ function createLifecycle(
   }
 
   function dispose(): void {
+    clearProjectRename();
     state.projectRemoval = null;
     cancelSelectionTracking();
     cancelSavedPreview();
