@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -145,6 +146,23 @@ function diagnosticFixture(
       writeFileSync(args[args.indexOf('-out') + 1]!, 'p12');
     if (args.includes('x509'))
       return { status: 0, stdout: `sha1 Fingerprint=${'A'.repeat(40)}` };
+    if (args[0] === '/usr/bin/codesign' && args.includes('--verify')) {
+      const binary = args.at(-1)!;
+      expect(binary.startsWith(join(root, 'tau-synthetic-'))).toBe(true);
+      expect(binary.endsWith('/harmless-mach-o')).toBe(true);
+      const positive = `=certificate leaf = H"${'A'.repeat(40)}"`;
+      const negative = `=certificate leaf = H"B${'A'.repeat(39)}"`;
+      expect([positive, negative]).toContain(args[4]!);
+      expect(args).toEqual([
+        '/usr/bin/codesign',
+        '--verify',
+        '--strict',
+        '--test-requirement',
+        args[4]!,
+        binary,
+      ]);
+      return { status: args[4] === positive ? 0 : 3, stdout: '' };
+    }
     if (args[0] === helper) {
       if (args[1] === 'remove') rmSync(args[2]!, { recursive: true });
       else if (args[1] === 'activate') {
@@ -223,6 +241,57 @@ describe('bounded synthetic smoke diagnostics (fake processes only)', () => {
         expect(active).toBe(false);
       });
   });
+  test('literal fingerprint checks accept only matching 0 and mismatching 3, restoring on all failures', () => {
+    const input = readFileSync('/usr/bin/true');
+    for (const negativeStatus of [3, 0, 1, 2, -1, 'throw'] as const)
+      diagnosticFixture((helper, root, run) => {
+        const checks: string[][] = [];
+        let active = false;
+        let removed = false;
+        const probe: SmokeRunner = (args, stdin) => {
+          if (args[0] === helper && args[1] === 'activate') active = true;
+          if (args[0] === helper && args[1] === 'remove') {
+            active = false;
+            removed = true;
+          }
+          if (args.includes('list-keychains'))
+            return {
+              status: 0,
+              stdout: active ? 'stable plus owned' : 'stable',
+            };
+          if (args[0] === '/usr/bin/codesign' && args.includes('--verify')) {
+            expect(active).toBe(true);
+            checks.push(args);
+            const result = run(args, stdin);
+            if (checks.length === 2) {
+              if (negativeStatus === 'throw') throw new Error('SECRET spawn');
+              return {
+                status: negativeStatus,
+                stdout: 'SECRET',
+                stderr: 'SECRET',
+              };
+            }
+            return result;
+          }
+          return run(args, stdin);
+        };
+        if (negativeStatus === 3) smoke(helper, root, context, probe);
+        else {
+          const summary = diagnostic(() => smoke(helper, root, context, probe));
+          expect(summary).toBe(
+            negativeStatus === 'throw'
+              ? 'phase=verify category=exception exitstatus=unavailable'
+              : `phase=verify category=command exitstatus=${negativeStatus}`,
+          );
+          expect(summary).not.toContain('SECRET');
+        }
+        expect(checks).toHaveLength(2);
+        expect(removed).toBe(true);
+        expect(active).toBe(false);
+        expect(readdirSync(root)).toEqual(['fake-helper']);
+        expect(readFileSync('/usr/bin/true')).toEqual(input);
+      });
+  });
   test('phase and numeric status for every command boundary', () => {
     const cases: [string, (args: string[], helper: string) => boolean][] = [
       ['snapshot', (a): boolean => a.includes('default-keychain')],
@@ -232,7 +301,12 @@ describe('bounded synthetic smoke diagnostics (fake processes only)', () => {
       ['fingerprint', (a): boolean => a.includes('x509')],
       ['activate', (a, h): boolean => a[0] === h && a[1] === 'activate'],
       ['sign', (a): boolean => a.includes('--sign')],
-      ['verify', (a): boolean => a.includes('--verify')],
+      [
+        'verify',
+        (a): boolean =>
+          a.includes('--verify') &&
+          a.includes(`=certificate leaf = H"${'A'.repeat(40)}"`),
+      ],
       ['remove', (a, h): boolean => a[0] === h && a[1] === 'remove'],
       [
         'wrongpassword',
@@ -684,6 +758,20 @@ describe('native package fail-closed policy (no network/OS APIs)', () => {
             status: 0,
             stdout: `sha1 Fingerprint=${'AA:'.repeat(19)}AA\n`,
           };
+        if (args[0] === '/usr/bin/codesign' && args.includes('--verify')) {
+          const positive = `=certificate leaf = H"${'A'.repeat(40)}"`;
+          const negative = `=certificate leaf = H"B${'A'.repeat(39)}"`;
+          expect([positive, negative]).toContain(args[4]!);
+          expect(args).toEqual([
+            '/usr/bin/codesign',
+            '--verify',
+            '--strict',
+            '--test-requirement',
+            args[4]!,
+            expect.stringContaining('/harmless-mach-o'),
+          ]);
+          return { status: args[4] === positive ? 0 : 3, stdout: '' };
+        }
         return { status: 0, stdout: args.includes('security') ? 'stable' : '' };
       });
       expect(

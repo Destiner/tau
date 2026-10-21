@@ -282,15 +282,6 @@ test('full order, copies input, closed output, credential isolation and durable 
   );
   expect(appStaple).toBeLessThan(dmgCreate);
   expect(f.commands.filter((r) => r.args[1] === 'notarytool')).toHaveLength(2);
-  for (const request of f.commands.filter(
-    (r) => r.args[0] === '/usr/bin/codesign' && r.args[1] === '--verify',
-  )) {
-    expect(request.args).toContain('--test-requirement');
-    expect(request.args.join(' ')).toContain('anchor apple generic');
-    expect(request.args.join(' ')).toContain(
-      'certificate leaf[field.1.2.840.113635.100.6.1.13] exists',
-    );
-  }
   for (const request of f.commands) {
     for (const secret of [
       secrets.APPLE_CERTIFICATE,
@@ -325,6 +316,27 @@ test('full order, copies input, closed output, credential isolation and durable 
     },
     f.runner,
   );
+  const signatureChecks = f.commands.filter(
+    (r) => r.args[0] === '/usr/bin/codesign' && r.args[1] === '--verify',
+  );
+  expect(signatureChecks.some((r) => r.args.at(-1)!.endsWith('.app'))).toBe(
+    true,
+  );
+  expect(signatureChecks.some((r) => r.args.at(-1)!.endsWith('.dmg'))).toBe(
+    true,
+  );
+  for (const { args } of signatureChecks) {
+    expect(args).toEqual([
+      '/usr/bin/codesign',
+      '--verify',
+      '--deep',
+      '--strict',
+      '--verbose=2',
+      '--test-requirement',
+      '=anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "ABCDE12345" and identifier "com.destiner.tau"',
+      args.at(-1)!,
+    ]);
+  }
 });
 
 test('stale, tampered, extra and symlink input reject before reading credentials', () => {

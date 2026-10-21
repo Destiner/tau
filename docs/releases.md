@@ -2,13 +2,15 @@
 
 ## Current boundary
 
-Native packaging infrastructure, signing-helper corrections and safe import
-diagnostics are merged. The latest candidate built and verified its unsigned input,
-but stopped with `Invalid base64 certificate` before PKCS12 import; owned cleanup
-succeeded. Line-wrapped encoding is a possible explanation, not a confirmed cause.
-ASCII-whitespace compatibility requires review and another protected attempt;
-credentials have not been inspected or changed. Production identity **com.destiner.tau**,
-native version **0.3.0**, and use of the existing protected main-only GitHub `release`
+Native packaging infrastructure, signing-helper corrections, safe diagnostics and
+wrapped-base64 support are merged. With unchanged certificate-secret metadata, the
+latest candidate passed import and the signing command, then stopped at signature
+verification; owned cleanup succeeded. The verification call omitted the `=` prefix
+that marks literal requirement text, so codesign treated the policy as a filename.
+The argument-format correction requires review and another protected attempt;
+the Apple-anchor/Developer ID/team/identifier policy remains unchanged. Credentials
+have not been inspected or changed. Production identity **com.destiner.tau**, native
+version **0.3.0**, and use of the existing protected main-only GitHub `release`
 environment were explicitly chosen. **No signed candidate or packaged runtime acceptance has
 been completed.** Implementation approval is not approval to merge, dispatch,
 publish or replace an installed app.
@@ -60,7 +62,12 @@ There is no permissive fallback or credential-in-argv workaround. Certificate in
 is standard base64 of the PKCS12 export. Only ASCII whitespace (HT/LF/VT/FF/CR/space)
 is removed to support line-wrapped exports; other non-base64 bytes remain errors.
 The password is not normalized, and the raw stdin JSON retains its 2 MiB limit
-before whitespace removal. Hosted synthetic acceptance exercises wrapped input.
+before whitespace removal. Hosted synthetic acceptance exercises wrapped input and
+an explicit literal signing requirement: the generated certificate must match,
+while a wrong certificate fingerprint must produce codesign's requirement-mismatch
+exit status 3. Parser errors, invalid signatures and process failures do not count
+as that negative acceptance. Production verification separately requires the Apple
+anchor, Developer ID certificate OID, expected team and bundle identifier.
 
 The disposable runner creates a fresh `0700`, marked parent beneath its account's
 real `~/Library/Keychains/tau-ci-<run>-<attempt>`. Only synthetic smoke and temporary
