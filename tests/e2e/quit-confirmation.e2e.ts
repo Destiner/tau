@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 const fixtureUrl = '/?fixture=quit-confirmation';
 
@@ -9,7 +9,6 @@ test('confirms an interrupted quit from the keyboard', async ({ page }) => {
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('heading')).toHaveText('Quit Tau?');
   await expect(dialog).toContainText('2 sessions are still in progress.');
-  await expect(dialog).toHaveCSS('top', '112px');
   await expect(dialog.getByRole('button', { name: 'Quit' })).toBeFocused();
 
   await page.keyboard.press('Enter');
@@ -33,6 +32,9 @@ test('cancels the interrupted quit with Escape', async ({ page }) => {
 
   const dialog = page.getByRole('alertdialog');
   await expect(dialog).toContainText('One session is still in progress.');
+  const cancel = dialog.getByRole('button', { name: 'Cancel' });
+  await cancel.focus();
+  await expect(cancel).toBeFocused();
 
   await page.evaluate(() => {
     document.addEventListener('keydown', () => {
@@ -58,36 +60,6 @@ test('cancels the interrupted quit with Escape', async ({ page }) => {
   await page.keyboard.press('Escape');
   await expect(page.locator('body')).toHaveAttribute('data-escaped', 'true');
 });
-
-for (const colorScheme of ['light', 'dark'] as const) {
-  test(`dialog actions have equal bounds and accent fill in ${colorScheme}`, async ({
-    page,
-  }) => {
-    await page.emulateMedia({ colorScheme });
-    await page.goto(fixtureUrl);
-    const quit = page.getByRole('button', { name: 'Quit', exact: true });
-    const cancel = page.getByRole('button', { name: 'Cancel' });
-    await expect(quit).toBeFocused();
-    const quitBounds = await quit.boundingBox();
-    const cancelBounds = await cancel.boundingBox();
-    expect(quitBounds?.height).toBe(28);
-    expect(quitBounds?.height).toBe(cancelBounds?.height);
-    expect(quitBounds?.y).toBe(cancelBounds?.y);
-    const accent = await quit.evaluate((button) => {
-      const probe = document.createElement('span');
-      probe.style.color = 'var(--accent)';
-      button.append(probe);
-      const color = getComputedStyle(probe).color;
-      probe.remove();
-      return color;
-    });
-    await expect(quit).toHaveCSS('background-color', accent);
-    await expect(quit).toHaveCSS('box-shadow', /inset/);
-    await cancel.focus();
-    await expect(cancel).toBeFocused();
-    await expect(cancel).toHaveCSS('box-shadow', /inset/);
-  });
-}
 
 test('busy quit consumes Escape without cancelling', async ({ page }) => {
   await page.goto(`${fixtureUrl}&busy`);

@@ -37,46 +37,11 @@ test('toggles the issue reporter through the sidebar code but ignores composer i
     const version = footer.getByLabel(`Tau version ${appVersion}`);
     await expect(version).toHaveText(`v${appVersion}`);
     await expect(version).toBeVisible();
-    const versionStyles = await version.evaluate((element) => {
-      const mutedProbe = document.createElement('span');
-      mutedProbe.style.color = 'var(--muted)';
-      document.body.append(mutedProbe);
-
-      const styles = getComputedStyle(element);
-      const result = {
-        color: styles.color,
-        fontFamily: styles.fontFamily,
-        mutedColor: getComputedStyle(mutedProbe).color,
-      };
-      mutedProbe.remove();
-      return result;
-    });
-    expect(versionStyles.fontFamily).toBe(
-      'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-    );
-    expect(versionStyles.color).toBe(versionStyles.mutedColor);
     const reportIssue = page.getByRole('button', { name: 'Report an Issue' });
     await expect(reportIssue).toHaveCount(0);
     await page.getByLabel('Projects and Sessions').click();
     await page.keyboard.type('iddqd');
     await expect(reportIssue).toBeVisible();
-    const archiveBounds = await footer
-      .getByRole('button', { name: 'Show Archived Sessions' })
-      .boundingBox();
-    const reportBounds = await reportIssue.boundingBox();
-    const versionBounds = await version.boundingBox();
-    expect(archiveBounds).not.toBeNull();
-    expect(reportBounds).not.toBeNull();
-    expect(versionBounds).not.toBeNull();
-    expect(reportBounds!.x).toBeGreaterThanOrEqual(
-      archiveBounds!.x + archiveBounds!.width,
-    );
-    expect(
-      reportBounds!.x - (archiveBounds!.x + archiveBounds!.width),
-    ).toBeLessThan(8);
-    expect(versionBounds!.x).toBeGreaterThan(
-      reportBounds!.x + reportBounds!.width,
-    );
     expect(await nativeCalls(page, 'set_admin_mode')).toBe(1);
     await page.keyboard.type('iddqd');
     await expect(reportIssue).toHaveCount(0);

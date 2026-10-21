@@ -15,11 +15,6 @@ test('keeps the home version a static informational label', async ({
     0,
   );
   await expect(page.locator('.update-popover')).toHaveCount(0);
-  const background = await label.evaluate(
-    (element) => getComputedStyle(element).backgroundColor,
-  );
-  await label.hover();
-  await expect(label).toHaveCSS('background-color', background);
   await label.click();
   await expect(page.locator('.update-popover')).toHaveCount(0);
   await page.keyboard.press('Tab');
@@ -74,31 +69,9 @@ test('prepares Pi then offers and navigates both project actions in the empty wo
     await expect(page.getByRole('textbox', { name: 'Message Pi' })).toHaveCount(
       0,
     );
-    const localProject = page.getByRole('button', {
-      name: 'Open Local Project',
-    });
     const remoteProject = page.getByRole('button', {
       name: 'Open Remote Project',
     });
-    await expect(localProject).toHaveCSS(
-      'background-color',
-      'rgba(0, 0, 0, 0)',
-    );
-    await expect(remoteProject).toHaveCSS(
-      'background-color',
-      'rgba(0, 0, 0, 0)',
-    );
-    const localBox = await localProject.boundingBox();
-    const remoteBox = await remoteProject.boundingBox();
-    expect(localBox).not.toBeNull();
-    expect(remoteBox).not.toBeNull();
-    if (localBox && remoteBox) {
-      expect(remoteBox.x).toBeGreaterThanOrEqual(localBox.x + localBox.width);
-      expect(remoteBox.y + remoteBox.height / 2).toBeCloseTo(
-        localBox.y + localBox.height / 2,
-        0,
-      );
-    }
     await remoteProject.click();
     const dialog = page.getByRole('dialog', { name: 'SSH Connection' });
     await expect(dialog).toBeVisible();

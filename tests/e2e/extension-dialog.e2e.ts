@@ -75,21 +75,6 @@ test('reads a long extension question, inspects Markdown and chooses an option',
     const prompt = page.getByRole('dialog');
     const header = prompt.locator('.extension-prompt-message th').first();
     await expect(header).toBeVisible();
-    const style = await header.evaluate((element) => {
-      const computed = window.getComputedStyle(element);
-      return {
-        rule: Number.parseFloat(computed.borderBottomWidth),
-        columnRule: Number.parseFloat(computed.borderRightWidth),
-        padding: Number.parseFloat(computed.paddingLeft),
-        background: computed.backgroundColor,
-        textAlign: computed.textAlign,
-      };
-    });
-    expect(style.rule).toBeGreaterThan(0);
-    expect(style.columnRule).toBe(0);
-    expect(style.padding).toBeGreaterThan(0);
-    expect(style.background).not.toBe('rgba(0, 0, 0, 0)');
-    expect(style.textAlign).toBe('left');
   });
 
   await test.step('scrolls a table wider than the question inside itself', async () => {

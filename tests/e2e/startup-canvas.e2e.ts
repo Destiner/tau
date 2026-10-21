@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 for (const scheme of ['dark', 'light'] as const) {
   test(`paints the ${scheme} canvas before the frontend loads`, async ({
@@ -8,7 +8,10 @@ for (const scheme of ['dark', 'light'] as const) {
     await page.route('**/*', (route) => {
       const type = route.request().resourceType();
       return type === 'script' || type === 'stylesheet'
-        ? route.abort()
+        ? route.fulfill({
+            contentType: type === 'script' ? 'text/javascript' : 'text/css',
+            body: '',
+          })
         : route.continue();
     });
     await page.goto('/');
