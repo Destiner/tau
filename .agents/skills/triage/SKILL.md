@@ -1,6 +1,6 @@
 ---
 name: triage
-description: Triages Tau user issue reports from the local feedback inbox (issues.jsonl) — lists and groups them, checks whether any are already fixed, investigates and fixes selected reports, and moves confirmed resolutions to done.jsonl. Use when the user asks to go through reported issues, triage feedback, list open reports, investigate or fix a reported issue, or mark a report as resolved.
+description: Triages Tau user issue reports from the local feedback inbox (issues.jsonl) — groups them, checks for existing fixes, provides standalone agent prompts for each report, investigates and fixes selected reports, and moves confirmed resolutions to done.jsonl. Use when the user asks to go through reported issues, triage feedback, list open reports, investigate or fix a reported issue, or mark a report as resolved.
 ---
 
 # Issue report triage
@@ -34,12 +34,58 @@ presenting. An empty `issues.jsonl` means no outstanding reports.
    since the report's timestamp and `done.jsonl` notes for overlapping work.
    Most reports are not fixed yet — flag "possibly fixed by `<commit>`" only
    with a concrete candidate commit.
-4. Present the grouped list in chat: category, then per-report date, a
-   one-line summary (quote verbatim where the wording matters), whether a
-   session ID is attached, and status (open / possibly fixed / needs
-   reproduction).
+4. Present a concise grouped overview in chat: category, then per-report
+   number, date, a one-line summary (quote verbatim where the wording matters),
+   whether a session ID is attached, and status (open / possibly fixed / needs
+   reproduction). Keep report numbers stable within the conversation, including
+   after cancellations or resolutions; do not renumber the remaining reports.
+5. Follow the overview with a standalone, copy-paste agent prompt for each
+   outstanding report, using the format below. Include these by default, not
+   only when the user asks for handoff prompts. Updated lists after cancellations
+   or resolutions should also include prompts for the remaining reports, unless
+   the user explicitly requests only a short overview. If the inbox is empty,
+   say so without generating prompts.
 
-Deliver the report in the conversation; do not write triage notes to disk.
+Deliver the overview and prompts in the conversation; do not write triage notes
+or prompt files to disk.
+
+## Standalone agent prompts
+
+Use a heading such as `### #5 — Allow queueing while compacting`, followed by one
+fenced `text` block containing the entire prompt. The receiving agent has no
+conversation context, so each block must be independently usable:
+
+- Identify the actual repository working directory and describe Tau as a native
+  Tauri desktop UI for Pi, with a Vue frontend and Rust backend. Tell the agent
+  to read `AGENTS.md`, `docs/quality.md`, and task-relevant repository docs.
+- Include the report's description, readable date with timezone, original
+  `timeUnixNano`, and exact session ID when present; otherwise state that no
+  session ID is attached. Resolve references such as “continuing” using related
+  reports so the prompt makes sense alone.
+- State what is known from triage, including concrete candidate commits or
+  relevant resolved work. Distinguish confirmed facts, user observations, and
+  hypotheses. Do not imply a candidate fix or shared root cause is verified.
+- Give a focused task and acceptance criteria grounded in the report. For a
+  clear request, ask for implementation; for an unexplained failure, ask for
+  evidence-backed investigation and a fix only if a defect is established.
+  Do not invent requirements or prescribe an unverified implementation.
+- Include relevant constraints, likely edge cases, and known code pointers
+  without investigating solely to flesh out the prompt. For runtime issues,
+  point to read-only telemetry in the applicable profile and warn that historical
+  records may have expired. Preserve Pi ownership and compatibility, session
+  isolation, drafts, and telemetry privacy where relevant.
+- Ask for deterministic regression coverage, relevant repository checks, and a
+  build for changes, followed by a summary of findings, changes, and validation.
+  If evidence is insufficient, ask for the limitation and smallest next step
+  rather than a speculative fix. For unsettled UI design, request design review
+  before implementation; do not reopen a settled design direction.
+- Explicitly prohibit modifying `feedback/issues.jsonl` or
+  `feedback/done.jsonl`: the main agent owns resolution bookkeeping.
+
+Keep each prompt proportionate to the report. Repeat essential context rather
+than referring to “the prompt above.” Related reports may be grouped in the
+summary, but each prompt should still stand alone; flag overlapping work so
+agents are not blindly assigned competing fixes.
 
 ## Using instrumentation
 
@@ -81,8 +127,9 @@ Only with the user's explicit confirmation of the outcome:
 
 ## Non-goals
 
-- Do not start investigating or fixing during the inbox pass; the pass ends at
-  the grouped list, and the user picks which reports to work on.
+- Do not start investigating, fixing, or delegating execution during the inbox
+  pass; the pass ends at the grouped overview and standalone prompts, and the
+  user picks which reports to work on.
 - Never move or edit inbox entries without the user naming the report and its
   resolution.
 - Do not modify telemetry files; they are read-only evidence.
