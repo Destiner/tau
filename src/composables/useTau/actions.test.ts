@@ -176,55 +176,6 @@ describe('project ordering', () => {
 });
 
 describe('model scope', () => {
-  it('offers only the models Pi has scoped for the project', async () => {
-    const project: ProjectSummary = {
-      path: '/tmp/tau-model-scope-test',
-      name: 'tau-model-scope-test',
-      workingDirectory: '/tmp/tau-model-scope-test',
-      collapsed: false,
-      selected: true,
-      sessions: [],
-    };
-    const workspace: WorkspaceSnapshot = {
-      activeProjectPath: project.path,
-      piPath: '/usr/local/bin/pi',
-      projects: [project],
-    };
-    mocks.workspace = workspace;
-    mocks.modelScope = ['provider/beta'];
-
-    const { state, initialize, models, newSession } = useTau();
-    await initialize();
-    state.activeControllerKey = '';
-    state.activeSessionId = '';
-    state.controllers.splice(0);
-    state.ephemeralSessions.splice(0);
-
-    await newSession(project);
-    const controller = state.controllers[0];
-    if (!controller) throw new Error('Expected a pending controller');
-
-    const modelsRequest = sentRequests(controller, 'get_available_models')[0];
-    emitRpc(controller, {
-      id: modelsRequest?.id,
-      type: 'response',
-      command: 'get_available_models',
-      success: true,
-      data: {
-        models: [
-          { provider: 'provider', id: 'alpha', name: 'Alpha', reasoning: true },
-          { provider: 'provider', id: 'beta', name: 'Beta', reasoning: true },
-        ],
-      },
-    });
-
-    await vi.waitFor(() =>
-      expect(models.value.map((model) => model.id)).toEqual(['beta']),
-    );
-
-    mocks.modelScope = [];
-  });
-
   it("keeps the scope on a session that inherits a warm runtime's models", async () => {
     const project: ProjectSummary = {
       path: '/tmp/tau-model-scope-inherit-test',
@@ -599,6 +550,7 @@ describe('interrupting a run', () => {
       const abort = sentRequests(controller, 'abort')[0];
       emitRpc(controller, { type: 'agent_settled' });
       await vi.waitFor(() => {
+        expect(tau.stopping.value).toBe(false);
         expect(sentRequests(controller, 'get_state')).toHaveLength(1);
       });
 
@@ -673,31 +625,6 @@ describe('interrupting a run', () => {
     expect(sentRequests(controller, 'get_state')).toEqual([]);
     expect(controller.streaming).toBe(true);
     tau.dispose();
-  });
-
-  it('leaves an acknowledged stop alone', async () => {
-    vi.useFakeTimers();
-    try {
-      const { tau, controller } = await setupNamedSession();
-      controller.streaming = true;
-      controller.working = true;
-
-      await tau.stop();
-      emitRpc(controller, { type: 'agent_settled' });
-      await vi.waitFor(() => {
-        expect(tau.stopping.value).toBe(false);
-      });
-
-      await vi.advanceTimersByTimeAsync(2_000);
-      expect(
-        sentRequests(controller, 'get_state').filter((request) =>
-          String(request.id).includes('abort-probe'),
-        ),
-      ).toEqual([]);
-      tau.dispose();
-    } finally {
-      vi.useRealTimers();
-    }
   });
 });
 

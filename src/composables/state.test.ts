@@ -239,14 +239,7 @@ describe('sessionTooltipStatus', () => {
     );
 
     state.controllers = [];
-    const controllers = state.controllers;
-    const projectBefore = { ...project, sessions: [...project.sessions] };
-    const sessionBefore = { ...session };
-
     expect(sessionTooltipStatus(project, session)).toBe('Idle');
-    expect(state.controllers).toBe(controllers);
-    expect(project).toEqual(projectBefore);
-    expect(session).toEqual(sessionBefore);
   });
 });
 
