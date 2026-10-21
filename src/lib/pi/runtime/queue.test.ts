@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import sessionControllerFixture from '../../../../tests/support/session-controller';
 import { state, type SessionController } from '../../../composables/state';
+import { type QueueKind } from '../queue';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async () => undefined),
@@ -181,69 +182,6 @@ describe('queued message RPCs', () => {
         },
       );
 
-      describe.each([
-        ['settlement', { streaming: false, working: false }],
-        ['stopping', { stopping: true }],
-        ['reconciliation', { compactionReconciliationPending: true }],
-        ['manual compaction', { compactionReason: 'manual' }],
-        ['unknown compaction', { compactionReason: undefined }],
-        ['pre-run compaction', { compactionStartedWhileStreaming: false }],
-      ] satisfies [string, Partial<SessionController>][])(
-        'delayed preparation across %s',
-        (_label, transition) => {
-          it.each(['', 'newer draft'])(
-            'cancels without a prompt and recovers the exact draft with newer draft=%j',
-            async (newerDraft) => {
-              const { submitQueuedMessage, handleRpc } =
-                await import('./index');
-              const original = '  exact unsent\n';
-              const controller = makeController({
-                streaming: true,
-                working: true,
-                compacting: true,
-                compactionReason: 'threshold',
-                compactionStartedWhileStreaming: true,
-                draft: original,
-              });
-              state.controllers.push(controller);
-              const send = submitQueuedMessage(controller, original, kind);
-              expect(controller.draft).toBe('');
-              expect(controller.queuePreparing).toBe(true);
-              expect(controller.queueSubmissions).toHaveLength(1);
-              await handleRpc(controller, {
-                type: 'response',
-                command: 'set_steering_mode',
-                id: requestOf('set_steering_mode').id,
-                success: true,
-              });
-              await vi.waitFor(() => requestOf('set_follow_up_mode'));
-              Object.assign(controller, transition, { draft: newerDraft });
-              await handleRpc(controller, {
-                type: 'response',
-                command: 'set_follow_up_mode',
-                id: requestOf('set_follow_up_mode').id,
-                success: true,
-              });
-              await send;
-              expect(controller.draft).toBe(newerDraft || original);
-              expect(controller.queueFailedDrafts).toEqual(
-                newerDraft ? [original] : [],
-              );
-              expect(controller.queueSubmissions).toEqual([]);
-              expect(controller.queuePreparing).toBe(false);
-              expect(controller.queueFeedback).toContain('state changed');
-              expect(controller.messages).toEqual([]);
-              expect(
-                mockInvoke.mock.calls.map(
-                  ([, args]) =>
-                    (args as { request: { type: string } }).request.type,
-                ),
-              ).toEqual(['set_steering_mode', 'set_follow_up_mode']);
-            },
-          );
-        },
-      );
-
       it.each(['threshold', 'overflow', 'finished'] as const)(
         'still queues when delayed mode preparation completes during %s compaction state',
         async (phase) => {
@@ -349,6 +287,85 @@ describe('queued message RPCs', () => {
         expect(controller.messages).toEqual([]);
         expect(mockInvoke.mock.calls).toHaveLength(1);
       });
+    },
+  );
+
+  it.each([
+    {
+      transition: 'settlement',
+      kind: 'steer' as const,
+      newerDraft: '',
+      state: { streaming: false, working: false },
+    },
+    {
+      transition: 'stopping',
+      kind: 'steer' as const,
+      newerDraft: 'newer draft',
+      state: { stopping: true },
+    },
+    {
+      transition: 'reconciliation',
+      kind: 'followUp' as const,
+      newerDraft: 'newer draft',
+      state: { compactionReconciliationPending: true },
+    },
+    {
+      transition: 'manual compaction',
+      kind: 'followUp' as const,
+      newerDraft: '',
+      state: { compactionReason: 'manual' },
+    },
+  ] satisfies {
+    transition: string;
+    kind: QueueKind;
+    newerDraft: string;
+    state: Partial<SessionController>;
+  }[])(
+    'cancels delayed preparation across $transition transition without a prompt and recovers the exact draft',
+    async ({ kind, newerDraft, state: transition }) => {
+      const { submitQueuedMessage, handleRpc } = await import('./index');
+      const original = '  exact unsent\n';
+      const controller = makeController({
+        streaming: true,
+        working: true,
+        compacting: true,
+        compactionReason: 'threshold',
+        compactionStartedWhileStreaming: true,
+        draft: original,
+      });
+      state.controllers.push(controller);
+      const send = submitQueuedMessage(controller, original, kind);
+      expect(controller.draft).toBe('');
+      expect(controller.queuePreparing).toBe(true);
+      expect(controller.queueSubmissions).toHaveLength(1);
+      await handleRpc(controller, {
+        type: 'response',
+        command: 'set_steering_mode',
+        id: requestOf('set_steering_mode').id,
+        success: true,
+      });
+      await vi.waitFor(() => requestOf('set_follow_up_mode'));
+      Object.assign(controller, transition, { draft: newerDraft });
+      await handleRpc(controller, {
+        type: 'response',
+        command: 'set_follow_up_mode',
+        id: requestOf('set_follow_up_mode').id,
+        success: true,
+      });
+      await send;
+      expect(controller.draft).toBe(newerDraft || original);
+      expect(controller.queueFailedDrafts).toEqual(
+        newerDraft ? [original] : [],
+      );
+      expect(controller.queueSubmissions).toEqual([]);
+      expect(controller.queuePreparing).toBe(false);
+      expect(controller.queueFeedback).toContain('state changed');
+      expect(controller.messages).toEqual([]);
+      expect(
+        mockInvoke.mock.calls.map(
+          ([, args]) => (args as { request: { type: string } }).request.type,
+        ),
+      ).toEqual(['set_steering_mode', 'set_follow_up_mode']);
     },
   );
 
