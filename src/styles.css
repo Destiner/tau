@@ -54,10 +54,9 @@
   --radius-lg: 8px;
 
   /* Surfaces encode depth: sunk wells, canvas/fields, attached panel chrome,
-     then floating panel-raised. Preview-canvas and user are dedicated surfaces.
+     then floating panel-raised. User is a dedicated surface.
      Scrim dims behind dialogs; only floating surfaces receive shadows. */
   --canvas: #fcfcfc;
-  --preview-canvas: #fff;
   --panel: #f8f9fa;
   --panel-raised: #fff;
   --sunk: #ebeef0;
@@ -158,7 +157,6 @@ textarea:disabled {
 @media (prefers-color-scheme: dark) {
   :root {
     --canvas: #10141c;
-    --preview-canvas: #000;
     --panel: #0d1017;
     --panel-raised: #141821;
     --sunk: #080b11;

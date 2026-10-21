@@ -409,6 +409,9 @@ const {
   efforts,
   effortLabels,
   models,
+  currentModelProvider,
+  currentModelId,
+  currentEffort,
   selectModel,
   selectEffort,
   settingsDisabled,
@@ -608,7 +611,11 @@ function page(value: PalettePage): void {
           state.activeProjectPath,
           state.activeSessionId,
         )
-      : null;
+      : value === 'models'
+        ? `${currentModelProvider.value}/${currentModelId.value}`
+        : value === 'efforts'
+          ? currentEffort.value
+          : null;
   void nextTick(() =>
     document.querySelector<HTMLInputElement>('.command-palette input')?.focus(),
   );

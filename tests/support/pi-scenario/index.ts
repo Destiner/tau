@@ -128,7 +128,12 @@ type ScriptedPiResponse =
   | {
       kind: 'response';
       request: string;
-      command: 'prompt' | 'set_steering_mode' | 'set_follow_up_mode';
+      command:
+        | 'prompt'
+        | 'set_steering_mode'
+        | 'set_follow_up_mode'
+        | 'set_model'
+        | 'set_thinking_level';
       success?: boolean;
       error?: string;
     }
