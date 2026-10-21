@@ -15,19 +15,24 @@ function nextOrderRevision(): number {
 function isCurrentOrderRevision(revision: number): boolean {
   return orderRevision === revision;
 }
-function writeWorkspace(
+function writeWorkspace<T = void>(
   command:
+    | 'import_project'
+    | 'import_remote_project'
     | 'set_project_collapsed'
     | 'reorder_projects'
     | 'remove_project'
     | 'archive_session'
     | 'unarchive_session',
   args: Record<string, unknown>,
-): Promise<void> {
+): Promise<T> {
   const write = workspaceWrite
     .catch(() => undefined)
-    .then(() => invokeTraced<void>(command, args));
-  workspaceWrite = write.catch(() => undefined);
+    .then(() => invokeTraced<T>(command, args));
+  workspaceWrite = write.then(
+    () => undefined,
+    () => undefined,
+  );
   return write;
 }
 

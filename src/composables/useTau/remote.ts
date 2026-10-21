@@ -16,10 +16,31 @@ import {
   type RemoteDirectoryListing,
 } from '../state';
 
+import {
+  beginNavigation,
+  currentLifecycle,
+  isCurrentNavigation,
+} from './navigation';
 import { mergeImportedProject } from './projects';
+import { writeWorkspace } from './workspace-writes';
+
+let dialogRevision = 0;
+let openingIntent = 0;
+function dialogOwner(): () => boolean {
+  const revision = dialogRevision;
+  const lifecycle = currentLifecycle();
+  const mode = state.remoteDialogMode;
+  return () =>
+    revision === dialogRevision &&
+    lifecycle === currentLifecycle() &&
+    mode === state.remoteDialogMode &&
+    state.remoteDialogOpen;
+}
 
 function openRemoteProjectDialog(): void {
   if (projectActionsDisabled.value) return;
+  openingIntent = beginNavigation();
+  dialogRevision += 1;
   clearRemoteRetry();
   state.remoteDialogMode = 'add';
   state.remoteDialogStep = 'connection';
@@ -32,6 +53,8 @@ function openRemoteProjectDialog(): void {
 
 function closeRemoteProjectDialog(): void {
   if (state.remoteConnecting) return;
+  if (state.remoteDialogOpen) beginNavigation();
+  dialogRevision += 1;
   const retryController = state.remoteRetry
     ? controllerByKey(state.remoteRetry.controllerKey)
     : undefined;
@@ -56,6 +79,7 @@ async function submitRemoteConnection(): Promise<void> {
     state.remoteConnectionError = 'Enter an SSH connection string.';
     return;
   }
+  const ownsDialog = dialogOwner();
   state.remoteConnecting = true;
   state.remoteConnectionError = '';
   try {
@@ -63,64 +87,81 @@ async function submitRemoteConnection(): Promise<void> {
       'probe_remote_project',
       { connectionString },
     );
+    if (!ownsDialog()) return;
     applyRemoteDirectoryListing(listing, true);
     state.remoteConnectionString = listing.connectionString;
     state.remoteDialogStep = 'directory';
   } catch {
-    state.remoteConnectionError = errorCopy.remoteConnection;
+    if (ownsDialog()) state.remoteConnectionError = errorCopy.remoteConnection;
   } finally {
-    state.remoteConnecting = false;
+    if (ownsDialog()) state.remoteConnecting = false;
   }
 }
 
-async function chooseRemoteDirectory(
-  path: string,
-  choice: RemoteDirectoryChoice,
-): Promise<void> {
-  if (
-    projectActionsDisabled.value ||
-    state.remoteConnecting ||
-    state.remoteDialogStep !== 'directory'
-  ) {
-    return;
-  }
-  state.remoteConnecting = true;
-  state.remoteConnectionError = '';
-  try {
-    if (choice === 'select') {
-      mergeImportedProject(
-        await invokeTraced<ProjectSummary>('import_remote_project', {
-          connectionString: state.remoteConnectionString,
-          workingDirectory: state.remoteWorkingDirectory,
-          host: state.remoteDirectoryHost,
-        }),
-      );
-      if (!state.activeProjectPath) {
-        state.activeProjectPath = state.workspace?.activeProjectPath ?? '';
-      }
-      state.remoteDialogOpen = false;
-      clearRemoteDirectoryBrowser();
-    } else {
-      const currentDirectory = state.remoteWorkingDirectory;
-      const listing = await invokeTraced<RemoteDirectoryListing>(
-        'list_remote_directories',
-        {
-          connectionString: state.remoteConnectionString,
-          workingDirectory: path,
-        },
-      );
-      if (choice === 'back') state.remoteDirectoryHistory.pop();
-      else state.remoteDirectoryHistory.push(currentDirectory);
-      applyRemoteDirectoryListing(listing);
+function createRemote(activateProject: (project: ProjectSummary) => void): {
+  chooseRemoteDirectory: (
+    path: string,
+    choice: RemoteDirectoryChoice,
+  ) => Promise<void>;
+} {
+  async function chooseRemoteDirectory(
+    path: string,
+    choice: RemoteDirectoryChoice,
+  ): Promise<void> {
+    if (
+      projectActionsDisabled.value ||
+      state.remoteConnecting ||
+      state.remoteDialogStep !== 'directory'
+    ) {
+      return;
     }
-  } catch {
-    state.remoteConnectionError =
-      choice === 'select'
-        ? errorCopy.importRemoteProject
-        : errorCopy.remoteDirectory;
-  } finally {
-    state.remoteConnecting = false;
+    const ownsDialog = dialogOwner();
+    const intent = openingIntent;
+    state.remoteConnecting = true;
+    state.remoteConnectionError = '';
+    try {
+      if (choice === 'select') {
+        const imported = await writeWorkspace<ProjectSummary>(
+          'import_remote_project',
+          {
+            connectionString: state.remoteConnectionString,
+            workingDirectory: state.remoteWorkingDirectory,
+            host: state.remoteDirectoryHost,
+          },
+        );
+        if (!ownsDialog()) return;
+        if (isCurrentNavigation(intent)) {
+          const project = mergeImportedProject(imported);
+          if (project) activateProject(project);
+        }
+        state.remoteConnecting = false;
+        state.remoteDialogOpen = false;
+        clearRemoteDirectoryBrowser();
+      } else {
+        const currentDirectory = state.remoteWorkingDirectory;
+        const listing = await invokeTraced<RemoteDirectoryListing>(
+          'list_remote_directories',
+          {
+            connectionString: state.remoteConnectionString,
+            workingDirectory: path,
+          },
+        );
+        if (!ownsDialog()) return;
+        if (choice === 'back') state.remoteDirectoryHistory.pop();
+        else state.remoteDirectoryHistory.push(currentDirectory);
+        applyRemoteDirectoryListing(listing);
+      }
+    } catch {
+      if (ownsDialog())
+        state.remoteConnectionError =
+          choice === 'select'
+            ? errorCopy.importRemoteProject
+            : errorCopy.remoteDirectory;
+    } finally {
+      if (ownsDialog()) state.remoteConnecting = false;
+    }
   }
+  return { chooseRemoteDirectory };
 }
 
 async function retryRemoteConnection(): Promise<void> {
@@ -169,6 +210,6 @@ export {
   openRemoteProjectDialog,
   closeRemoteProjectDialog,
   submitRemoteConnection,
-  chooseRemoteDirectory,
+  createRemote,
   reconnectRemoteSession,
 };

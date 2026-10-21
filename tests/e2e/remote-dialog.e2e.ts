@@ -92,6 +92,47 @@ test('keeps a margin from the window edges when it is narrower than the panel', 
   expect(box.x + box.width).toBeLessThanOrEqual(320 - 12);
 });
 
+for (const mode of ['local', 'remote'] as const) {
+  test(`opens an existing ${mode} project without losing the source draft`, async ({
+    page,
+  }) => {
+    await page.goto(`/?test-scenario=project-opening&project-opening=${mode}`);
+
+    const composer = page.getByRole('textbox', { name: 'Message Pi' });
+    await expect(composer).toBeEnabled();
+    await composer.fill('Keep the source draft');
+
+    await page.getByRole('button', { name: 'Open Project' }).click();
+    await page
+      .getByRole('menuitem', {
+        name: mode === 'local' ? 'Open Local Project' : 'Open Remote Project',
+      })
+      .click();
+
+    if (mode === 'remote') {
+      const connection = page.getByRole('textbox', {
+        name: 'SSH Connection String',
+      });
+      await connection.fill('ssh target@example');
+      await connection.press('Meta+Enter');
+      await page
+        .getByRole('option', { name: 'Select /remote/target-project' })
+        .click();
+    }
+
+    const targetSession = page.locator('[data-session-id="session-target"]');
+    await expect(targetSession).toHaveClass(/selected/);
+    await expect(composer).toBeEnabled();
+    await expect(composer).toHaveValue('');
+    await composer.fill('Target composer is usable');
+
+    await page
+      .locator('[data-session-id="session-main"] .session-select')
+      .click();
+    await expect(composer).toHaveValue('Keep the source draft');
+  });
+}
+
 test('restores focus to the open-project trigger after dismissal', async ({
   page,
 }) => {

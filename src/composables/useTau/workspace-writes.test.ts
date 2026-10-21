@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { state, type ProjectSummary, type SessionSummary } from '../state';
@@ -52,6 +53,7 @@ beforeEach(() => {
   vi.mocked(invoke)
     .mockReset()
     .mockImplementation(async () => undefined);
+  vi.mocked(open).mockReset().mockResolvedValue(null);
   state.controllers.splice(0);
   state.ephemeralSessions.splice(0);
   state.activeProjectPath = '';
@@ -86,6 +88,63 @@ describe('workspace persistence and saved preview', () => {
     ).toEqual([true, false]);
     tau.dispose();
   });
+
+  it.each(['local', 'remote'] as const)(
+    'waits to persist removal until an older %s import has finished',
+    async (kind) => {
+      const { project } = fixture();
+      const imported = deferred<ProjectSummary>();
+      vi.mocked(invoke).mockImplementation(async (command) => {
+        if (
+          command === 'import_project' ||
+          command === 'import_remote_project'
+        ) {
+          return imported.promise;
+        }
+        return undefined;
+      });
+      if (kind === 'local') vi.mocked(open).mockResolvedValue('/tmp/imported');
+      const tau = useTau();
+
+      let importing: Promise<void>;
+      if (kind === 'local') {
+        importing = tau.addLocalProject();
+      } else {
+        tau.openRemoteProjectDialog();
+        state.remoteDialogStep = 'directory';
+        state.remoteConnectionString = 'me@host';
+        state.remoteDirectoryHost = 'host';
+        state.remoteWorkingDirectory = '/tmp/imported';
+        importing = tau.chooseRemoteDirectory('/tmp/imported', 'select');
+      }
+      const importCommand =
+        kind === 'local' ? 'import_project' : 'import_remote_project';
+      await vi.waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith(importCommand, expect.anything()),
+      );
+
+      const removing = tau.removeProject(project);
+      expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+        importCommand,
+      ]);
+
+      imported.resolve({
+        path: '/tmp/imported',
+        name: 'imported',
+        workingDirectory: '/tmp/imported',
+        collapsed: false,
+        selected: false,
+        sessions: [],
+      });
+      await Promise.all([importing, removing]);
+
+      expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+        importCommand,
+        'remove_project',
+      ]);
+      tau.dispose();
+    },
+  );
 
   it('archives and restores rows optimistically without replacing the workspace', async () => {
     const { project, session } = fixture();

@@ -10,11 +10,21 @@ import {
   type SessionSummary,
 } from '../state';
 
+let navigationIntent = 0;
+function beginNavigation(): number {
+  navigationIntent += 1;
+  return navigationIntent;
+}
+function isCurrentNavigation(intent: number): boolean {
+  return intent === navigationIntent;
+}
+
 let lifecycle = 0;
 function currentLifecycle(): number {
   return lifecycle;
 }
 function invalidateLifecycle(): void {
+  beginNavigation();
   lifecycle += 1;
 }
 let currentSelectionTracker: (() => void) | undefined;
@@ -141,6 +151,8 @@ function readSavedSession(
 }
 
 export {
+  beginNavigation,
+  isCurrentNavigation,
   currentLifecycle,
   invalidateLifecycle,
   cancelSelectionTracking,
