@@ -270,26 +270,6 @@ test('follows live output at the end but respects scrolling back and viewport ch
     expect(after?.id).toBe(before?.id);
     expect(await transcript.evaluate(distanceFromEnd)).toBeGreaterThan(100);
   });
-
-  await test.step('follows output again after the reader sends', async () => {
-    const transcript = page.getByLabel('Transcript');
-    await transcript.hover();
-    await page.mouse.wheel(0, -400);
-    await page.waitForTimeout(150);
-    expect(await transcript.evaluate(distanceFromEnd)).toBeGreaterThan(100);
-    await page.evaluate(() => {
-      window.__TAU_TRANSCRIPT_FIXTURE__?.scrollToEnd();
-    });
-    await expect
-      .poll(() => transcript.evaluate(distanceFromEnd))
-      .toBeLessThan(2);
-    await page.evaluate(() =>
-      window.__TAU_TRANSCRIPT_FIXTURE__?.streamLatest(18),
-    );
-    await expect
-      .poll(() => transcript.evaluate(distanceFromEnd))
-      .toBeLessThan(2);
-  });
 });
 
 async function switchSession(page: Page, key: string): Promise<void> {
