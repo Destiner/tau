@@ -573,6 +573,84 @@ describe('active compaction', () => {
     ]);
   });
 
+  it('allows a read retry after rejected compaction dispatch without replaying a prompt', async () => {
+    const { handleResponse, handleRpc, retryCompactionRefresh } =
+      await import('./index');
+    const controller = makeController({ draft: 'exact draft\n' });
+    mockInvoke.mockRejectedValueOnce(new Error('bridge unavailable'));
+    await handleRpc(controller, { type: 'compaction_end', result: {} });
+    expect(controller.compactionReconciliationPending).toBe(true);
+    expect(feedbackMessage(controller)).toContain(
+      'Select it again to retry the read',
+    );
+
+    await retryCompactionRefresh(controller);
+    await retryCompactionRefresh(controller);
+    const requests = mockInvoke.mock.calls.map(
+      ([, input]) => (input as { request: Record<string, unknown> }).request,
+    );
+    expect(requests.map((request) => request.type)).toEqual([
+      'get_messages',
+      'get_messages',
+    ]);
+    await handleResponse(controller, {
+      id: requests[1]?.id,
+      command: 'get_messages',
+      success: true,
+      data: { messages: [{ role: 'compactionSummary', summary: 'summary' }] },
+    });
+    expect(controller.compactionReconciliationPending).toBe(false);
+    expect(controller.draft).toBe('exact draft\n');
+  });
+
+  it.each(['generation', 'sessionId', 'sessionPath', 'disposed'] as const)(
+    'does not surface a compaction timeout after %s changes',
+    async (field) => {
+      vi.useFakeTimers();
+      try {
+        const { handleRpc } = await import('./index');
+        const controller = makeController();
+        await handleRpc(controller, { type: 'compaction_end', result: {} });
+        if (field === 'generation') controller.generation += 1;
+        else if (field === 'disposed') controller.disposed = true;
+        else controller[field] += '-replacement';
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(feedbackMessage(controller)).toBe('');
+        expect(mockInvoke).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it('bounds the newest compaction read and ignores a superseded read timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const { handleRpc, handleResponse } = await import('./index');
+      const controller = makeController();
+      await handleRpc(controller, { type: 'compaction_end', result: {} });
+      await vi.advanceTimersByTimeAsync(9_000);
+      const id = await dispatchRequest(
+        controller,
+        'get_messages',
+        'settlement',
+      );
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(feedbackMessage(controller)).toBe('');
+      await handleResponse(controller, {
+        id,
+        command: 'get_messages',
+        success: true,
+        data: { messages: [] },
+      });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(feedbackMessage(controller)).toBe('');
+      expect(controller.compactionReconciliationPending).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('drops an older message hydration after a newer one was dispatched', async () => {
     const { handleResponse, handleRpc } = await import('./index');
     const controller = makeController({ streaming: true, working: true });

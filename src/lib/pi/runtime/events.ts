@@ -48,6 +48,7 @@ import {
 } from './history';
 import {
   rpc,
+  clearCompactionRefreshWatch,
   piConnectionFailureMessage,
   piProcessExitMessage,
   remotePiConnectionFailureMessage,
@@ -230,6 +231,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
       });
     }
     controller.compacting = false;
+    clearCompactionRefreshWatch(controller);
     controller.compactionReconciliationPending = false;
     controller.compactionStreamSequence = controller.streamSequence;
     setControllerLifecycle(
@@ -490,8 +492,7 @@ async function handleRpc(
           type: 'get_messages',
         });
       } catch {
-        // Settlement retries the authoritative hydration. Keep post-compaction
-        // stream rows separate from the stale projection until then.
+        // Dispatch cleanup surfaces the failure and allows an explicit read retry.
       }
     }
     return;

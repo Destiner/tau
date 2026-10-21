@@ -42,6 +42,8 @@ import {
 } from './history';
 import {
   rpcDispatchStillCurrent,
+  clearCompactionRefreshWatch,
+  failCompactionRefresh,
   rpc,
   remoteReconnectFailureMessage,
   promptAdmissionReconcileDelay,
@@ -339,6 +341,8 @@ async function handleResponse(
       ? errorCopy.historyLoad
       : rpcFailureCopy(command);
     setControllerError(controller, failureMessage);
+    if (command === 'get_messages')
+      failCompactionRefresh(controller, responseId);
     if (
       resolvesCommandSync ||
       (command === 'get_messages' &&
@@ -686,6 +690,7 @@ async function handleResponse(
       controller.compacting = data.isCompacting === true;
       controller.compactionReason = undefined;
       controller.compactionStartedWhileStreaming = false;
+      clearCompactionRefreshWatch(controller);
       controller.compactionReconciliationPending = false;
       controller.compactionStreamSequence = controller.streamSequence;
       rebindEphemeralSession(controller);
@@ -902,6 +907,7 @@ async function handleResponse(
       previousTail,
     );
     applyHistoryTail(controller, tail);
+    clearCompactionRefreshWatch(controller);
     controller.compactionReconciliationPending = false;
     controller.compactionStreamSequence = controller.streamSequence;
     const resolvesAdmission =
