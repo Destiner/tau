@@ -73,4 +73,4 @@ function highlightHtml(rendered: ReturnType<typeof renderHighlight>): string {
   return `${rendered.header}${rendered.lines.map((line) => line.html).join('')}</code></pre>`;
 }
 
-export { type HighlightLine, renderHighlight, highlightHtml };
+export { renderHighlight, highlightHtml };
