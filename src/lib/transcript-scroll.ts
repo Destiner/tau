@@ -6,6 +6,7 @@ interface TranscriptScrollPosition {
   offset: number;
 
   following: boolean;
+  leadingInset?: number;
   /**
    * The virtualizer's measured row sizes, by row key. Rows are estimated until
    * they are measured, so an offset alone points at different content on a

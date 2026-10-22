@@ -4,6 +4,10 @@
     class="transcript"
     aria-label="Transcript"
     @scroll="handleScroll"
+    @wheel.passive="cancelSearchNavigation"
+    @touchstart.passive="cancelSearchNavigation"
+    @pointerdown="cancelSearchNavigation"
+    @keydown="cancelSearchScrollKey"
   >
     <div
       v-if="virtualRows.length || compacting || prompt"
@@ -41,6 +45,7 @@
               <MarkdownText
                 v-if="messageAt(virtualRow.index)?.kind === 'user'"
                 class="user-bubble"
+                :search-entry-id="messageAt(virtualRow.index)?.id"
                 :source="messageAt(virtualRow.index)?.text ?? ''"
                 :base-path="basePath"
                 :copy-paths="copyPaths"
@@ -48,6 +53,7 @@
               />
               <MarkdownText
                 v-else-if="messageAt(virtualRow.index)?.kind === 'assistant'"
+                :search-entry-id="messageAt(virtualRow.index)?.id"
                 :source="messageAt(virtualRow.index)?.text ?? ''"
                 :base-path="basePath"
                 :copy-paths="copyPaths"
@@ -159,8 +165,10 @@ import {
 } from 'vue';
 
 import type { ExtensionDialog as ExtensionPrompt } from '../composables/state';
+import { useTranscriptSearch } from '../composables/useTranscriptSearch';
 import type { TranscriptEntry } from '../lib/pi/transcript';
 import { recallScroll, rememberScroll } from '../lib/transcript-scroll';
+import type { SearchMatch } from '../lib/transcript-search';
 
 import ActivityRow from './ActivityRow.vue';
 import CompactionDivider from './CompactionDivider.vue';
@@ -181,6 +189,9 @@ const props = defineProps<{
   remoteProjectPath?: string;
 
   sessionKey?: string;
+  searchMatches?: readonly SearchMatch[];
+  activeSearchMatch?: SearchMatch;
+  searchOpen?: boolean;
 
   prompt?: ExtensionPrompt;
   promptDisabled?: boolean;
@@ -251,6 +262,7 @@ const expandedEntries = ref(new Set<string>());
 const followThreshold = 48;
 
 const restored = recallScroll(props.sessionKey ?? '');
+const leadingInset = ref(restored?.leadingInset ?? 28);
 
 /**
  * Whether output should follow the end. The virtualizer only follows appends,
@@ -299,11 +311,72 @@ const rowVirtualizer = useVirtualizer<HTMLElement, HTMLElement>(
       initialMeasurementsCache: restored?.measurements,
       initialOffset: restored?.offset,
       overscan: 8,
-      paddingStart: 28,
+      paddingStart: leadingInset.value,
       paddingEnd: 30,
     };
   }),
 );
+
+const { revealSearchMatch, cancelSearchNavigation, isNavigating } =
+  useTranscriptSearch(
+    {
+      get searchMatches() {
+        return props.searchMatches;
+      },
+      get activeSearchMatch() {
+        return props.activeSearchMatch;
+      },
+      get searchOpen() {
+        return props.searchOpen;
+      },
+      get sessionKey() {
+        return props.sessionKey;
+      },
+    },
+    {
+      viewport: () => transcript.value,
+      indexOf: (id) =>
+        props.messages.findIndex(
+          (entry) =>
+            entry.id === id &&
+            (entry.kind === 'user' || entry.kind === 'assistant'),
+        ),
+      disengage: () => {
+        following = false;
+      },
+      prepareReveal: async (clearance) => {
+        const delta = Math.max(0, clearance - leadingInset.value);
+        if (!delta) return;
+        const offset = transcript.value?.scrollTop ?? 0;
+        // Keep this clearance after Find closes so historical content never jumps.
+        leadingInset.value += delta;
+        await nextTick();
+        rowVirtualizer.value.scrollToOffset(offset + delta);
+        lastScrollOffset = transcript.value?.scrollTop ?? offset + delta;
+      },
+      cancelScroll: () => {
+        const element = transcript.value;
+        if (element) rowVirtualizer.value.scrollToOffset(element.scrollTop);
+      },
+      scrollToIndex: (index) =>
+        rowVirtualizer.value.scrollToIndex(index, { align: 'start' }),
+      measure: (root) => {
+        const row = root.closest<HTMLElement>('[data-message-id]');
+        if (row) rowVirtualizer.value.measureElement(row);
+      },
+      scrollToOffset: (offset) => rowVirtualizer.value.scrollToOffset(offset),
+    },
+  );
+
+function cancelSearchScrollKey(event: KeyboardEvent): void {
+  if (
+    !event.isComposing &&
+    ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(
+      event.key,
+    )
+  )
+    cancelSearchNavigation();
+}
 
 const virtualRows = computed(() => rowVirtualizer.value.getVirtualItems());
 const totalSize = computed(() => rowVirtualizer.value.getTotalSize());
@@ -378,6 +451,7 @@ onBeforeUnmount(() => {
   rememberScroll(props.sessionKey ?? '', {
     offset,
     following,
+    leadingInset: leadingInset.value,
     measurements: rowVirtualizer.value.takeSnapshot(),
   });
 });
@@ -436,7 +510,8 @@ function handleScroll(): void {
   const offset = element.scrollTop;
   const atEnd =
     element.scrollHeight - offset - element.clientHeight <= followThreshold;
-  following = offset < lastScrollOffset ? atEnd : following || atEnd;
+  if (!isNavigating())
+    following = offset < lastScrollOffset ? atEnd : following || atEnd;
   lastScrollOffset = offset;
 }
 
@@ -543,10 +618,20 @@ function estimateRowSize(message: TranscriptEntry | undefined): number {
   return 144;
 }
 
-defineExpose({ scrollToEnd });
+defineExpose({ scrollToEnd, revealSearchMatch, cancelSearchNavigation });
 </script>
 
 <style scoped>
+.transcript :deep(::highlight(tau-transcript-matches)) {
+  background-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--text);
+}
+
+.transcript :deep(::highlight(tau-transcript-active)) {
+  background-color: var(--accent);
+  color: var(--on-accent);
+}
+
 .transcript {
   min-height: 0;
   overflow: hidden auto;

@@ -5,6 +5,18 @@
       <span data-testid="fixture-session">{{ sessionKey }}</span>
       <span data-testid="fixture-count">{{ messages.length }} messages</span>
     </header>
+    <TranscriptSearch
+      v-if="search && find.current.value.open"
+      :query="find.current.value.query"
+      :total="find.current.value.matches.length"
+      :current="findOrdinal"
+      :busy="find.current.value.busy"
+      :pending="find.current.value.pending"
+      :loaded-only="compacted"
+      @query="find.setQuery"
+      @navigate="find.navigate"
+      @close="find.close"
+    />
     <TranscriptView
       :key="sessionKey"
       ref="transcriptView"
@@ -17,15 +29,20 @@
       :copy-paths="remote"
       :remote-project-path="remote ? 'ssh:fixture-project' : undefined"
       :session-key="sessionKey"
+      :search-open="search && find.current.value.open"
+      :search-matches="find.current.value.matches"
+      :active-search-match="find.current.value.activeMatch ?? undefined"
       @load-history="loadCompactedHistory"
     />
   </main>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 
+import TranscriptSearch from '../components/TranscriptSearch.vue';
 import TranscriptView from '../components/TranscriptView.vue';
+import { useTranscriptFind } from '../composables/useTranscriptFind';
 
 import createLongTranscript, {
   createCompactToolTranscript,
@@ -58,6 +75,7 @@ declare global {
  */
 const parameters = new URLSearchParams(window.location.search);
 const requestedCount = parameters.get('count');
+const search = parameters.get('search') === 'true';
 const compactTools = parameters.get('compact-tools') === 'true';
 const verboseTool = parameters.get('verbose-tool') === 'true';
 const showcase = parameters.get('showcase') === 'true';
@@ -80,6 +98,40 @@ const initialMessages = verboseTool
                 ? 12
                 : undefined,
           );
+if (search && initialMessages.length >= 6) {
+  for (const [index, label] of [
+    [0, 'early'],
+    [Math.floor(initialMessages.length / 2), 'middle'],
+    [initialMessages.length - 1, 'late'],
+  ] as const) {
+    initialMessages[index] = {
+      id: `search-${label}`,
+      kind: index === 0 ? 'user' : 'assistant',
+      text: `Search checkpoint ${label}.\n\nCross **format** needle.\n\n\`\`\`ts\nconst codeNeedle = "checkpoint";\nconst wideLine = "${'horizontal padding '.repeat(40)}horizontal-search-target";\n\`\`\``,
+    };
+  }
+  initialMessages[1] = {
+    id: 'search-thinking',
+    kind: 'thinking',
+    text: 'excluded-thinking-needle',
+  };
+  initialMessages[2] = {
+    id: 'search-tool',
+    kind: 'tool',
+    text: 'excluded-tool-needle',
+    toolName: 'read',
+    toolCallId: 'search-tool-call',
+    toolArguments: '{"path":"excluded-argument-needle"}',
+    toolResult: 'excluded-result-needle',
+    toolRunning: false,
+    toolErrored: false,
+  };
+  initialMessages[3] = {
+    id: 'search-notice',
+    kind: 'notice',
+    text: 'excluded-notice-needle',
+  };
+}
 const messages = ref(
   compacted
     ? [
@@ -124,6 +176,30 @@ const working = ref(false);
 const sessionKey = ref('main');
 const transcriptView = ref<InstanceType<typeof TranscriptView>>();
 let sequence = messages.value.length;
+
+const controller = computed(() => ({
+  key: sessionKey.value,
+  sessionId: sessionKey.value,
+  sessionOwnerSequence: 0,
+  disposed: false,
+}));
+const find = useTranscriptFind({
+  activeController: controller,
+  controllers: () => [controller.value],
+  messages,
+});
+const findOrdinal = computed(() => {
+  const current = find.current.value;
+  return current.activeMatch
+    ? current.matches.indexOf(current.activeMatch) + 1
+    : 0;
+});
+watch(find.revealRequest, async (request) => {
+  if (!request) return;
+  await nextTick();
+  await transcriptView.value?.revealSearchMatch(request.match);
+});
+if (search) find.open();
 
 const showWorkingIndicator = computed(
   () =>
@@ -203,9 +279,12 @@ function loadCompactedHistory(): void {
     historyAvailable: false,
     historyLoading: false,
   };
-  const older = createLongTranscript(16).map((message) => ({
+  const older = createLongTranscript(16).map((message, index) => ({
     ...message,
     id: `history-${message.id}`,
+    ...(index === 0
+      ? { text: 'Search checkpoint from explicitly loaded earlier history.' }
+      : {}),
   }));
   messages.value = [
     ...messages.value.slice(0, boundary),
@@ -246,6 +325,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .transcript-fixture {
   display: grid;
+  position: relative;
   grid-template-rows: 38px minmax(0, 1fr);
   width: 100%;
   height: 100%;
