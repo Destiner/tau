@@ -86,6 +86,7 @@ safety rules above. State pairs share one binding.
 | Composer   | Queue follow-up                   | `⌘Enter` in composer   |
 | Composer   | Stop Pi                           | `⌘.`                   |
 | Recovery   | Review unsent messages            | `⌘⇧D`                  |
+| Transcript | Find in transcript                | `⌘F`                   |
 | Transcript | Load earlier messages             | `⌘⇧B`                  |
 | Remote     | Reconnect active session          | `⌘⇧C`                  |
 | Admin      | Open issue reporter               | `⌘⇧I`                  |
@@ -101,22 +102,44 @@ only within their sublists; individual rows are not root commands.
 These remain scoped to their existing surface and are excluded from the global
 palette unless their launcher appears above.
 
-| Surface                       | Target bindings                                                                                                                           |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Rename                        | Enter or `⌘Enter` commits; Escape cancels. Opening the palette does not blur-commit.                                                      |
-| Menus and context menus       | Arrows, Enter, and their existing typeahead; Escape dismisses that menu.                                                                  |
-| Remote project dialog         | Enter/`⌘Enter` submits where applicable; `⌘↑` goes to parent; Escape closes only when dismissible.                                        |
-| Pi prompts                    | Existing arrows/Enter selection; `⌘Enter` primary submit; `⌘⇧Enter` negative confirmation; Escape cancels only that prompt when eligible. |
-| Model and effort lists        | Existing list navigation and Enter selection; Escape closes the current list.                                                             |
-| Queue and unsent review       | Escape dismisses the focused status/review; `⌘Enter` restores a focused draft when eligible.                                              |
-| Feedback, quit, and update UI | `⌘Enter` activates the eligible primary action; `⌘⇧Enter` skips an update; Escape closes only a dismissible surface.                      |
-| Issue reporter                | `⌘⇧S` toggles Include Current Session within the report; `⌘Enter` submits; Escape retains unsent text.                                    |
+| Surface                       | Target bindings                                                                                                                                      |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Transcript Find               | Enter / Shift+Enter selects next / previous occurrence and wraps while Find has focus; Escape closes only when Find is the topmost eligible surface. |
+| Rename                        | Enter or `⌘Enter` commits; Escape cancels. Opening the palette does not blur-commit.                                                                 |
+| Menus and context menus       | Arrows, Enter, and their existing typeahead; Escape dismisses that menu.                                                                             |
+| Remote project dialog         | Enter/`⌘Enter` submits where applicable; `⌘↑` goes to parent; Escape closes only when dismissible.                                                   |
+| Pi prompts                    | Existing arrows/Enter selection; `⌘Enter` primary submit; `⌘⇧Enter` negative confirmation; Escape cancels only that prompt when eligible.            |
+| Model and effort lists        | Existing list navigation and Enter selection; Escape closes the current list.                                                                        |
+| Queue and unsent review       | Escape dismisses the focused status/review; `⌘Enter` restores a focused draft when eligible.                                                         |
+| Feedback, quit, and update UI | `⌘Enter` activates the eligible primary action; `⌘⇧Enter` skips an update; Escape closes only a dismissible surface.                                 |
+| Issue reporter                | `⌘⇧S` toggles Include Current Session within the report; `⌘Enter` submits; Escape retains unsent text.                                               |
 
 An inline Pi prompt blocks global palette and shortcut actions. Explicit sidebar
 row actions to mark a session read/unread or archive an eligible session remain
 available, including for another project; other blocking dialogs and workspace
 lockouts still apply. Escape from a row menu dismisses only the menu, not the
 prompt.
+
+## Transcript Find
+
+**Find in Transcript** opens a floating bar for the active transcript. Repeating
+`⌘F` focuses and selects the retained query; it never toggles the bar closed.
+On macOS this is Command-F, not literal Control-F; elsewhere it is Control-F.
+The command is unavailable on home, during initial session loading, or behind a
+rename, blocking dialog, fullscreen viewer, or inline Pi prompt.
+
+Find matches literal, case-insensitive occurrences in readable user and agent
+text, including formatted prose and code. It searches all **loaded** messages,
+including offscreen virtualized rows, not tool output, thinking, skill instructions,
+drafts, titles, image/diagram internals, or hidden Markdown markup. It does not
+fetch compacted history. “Loaded messages only” identifies an earlier-history
+boundary; explicitly loading earlier messages adds them to the search.
+
+Queries, open state, and active occurrences stay local to each live session and
+are not persisted or recorded in telemetry. Query edits select the first result;
+streaming refreshes counts without jumping. Closing removes highlights and keeps
+the reader's current position and query. The palette can open over Find; its first
+Escape restores Find rather than dismissing both surfaces.
 
 ## Discovery and tooltip policy
 

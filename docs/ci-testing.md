@@ -4,7 +4,7 @@
 
 `.github/workflows/ci.yml` reports `check` as the aggregate gate for three parallel macOS lanes:
 
-- `frontend`: frozen Bun install, frontend lint, typecheck/build, and Vitest.
+- `frontend`: frozen Bun install, frontend lint, typecheck/build, Chromium install, and Vitest. The rendered transcript-search projection/range tests launch headless Chromium; local `bun run test` also requires `bun x playwright install chromium` once.
 - `browser`: frozen Bun install, Chromium/WebKit install, isolated e2e bundle, functional tests in both browsers.
 - `native`: frozen Bun install, stable Rust, formatting, Vite bundle, Clippy (all targets, warnings denied), and Cargo tests. Tauri's `generate_context!` needs real `dist` assets even during checks/tests; Bun also runs the Pi stdio adapter in native tests.
 

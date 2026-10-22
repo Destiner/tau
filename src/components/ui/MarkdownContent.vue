@@ -7,6 +7,7 @@
     >
       <div
         v-bind="$attrs"
+        ref="markdownRoot"
         class="markdown"
         @click="activate"
         @contextmenu.stop="prepareContextMenu"
@@ -55,6 +56,7 @@ import {
   watch,
 } from 'vue';
 
+import { useTranscriptSearchSurface } from '../../composables/useTranscriptSearch';
 import {
   filePreviewDirectoryForPath,
   type FilePreviewDescriptor,
@@ -77,6 +79,7 @@ import type { UiMenuItem } from './UiMenu.vue';
 
 const props = defineProps<{
   source: string;
+  searchEntryId?: string;
   inline?: boolean;
   basePath?: string;
 
@@ -95,6 +98,12 @@ const emit = defineEmits<{
 }>();
 
 defineOptions({ inheritAttrs: false });
+
+const markdownRoot = ref<HTMLElement>();
+useTranscriptSearchSurface(
+  () => markdownRoot.value,
+  () => props.searchEntryId,
+);
 
 const rendered = computed(() => {
   const html = renderMarkdown(props.source, {

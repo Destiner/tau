@@ -29,6 +29,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run lint
       - run: bun run build
+      - name: Install Chromium for rendered-text tests
+        run: bun x playwright install chromium
       - run: bun run test
 
   browser:
