@@ -37,7 +37,9 @@ test('colors the final line near the read limit without losing scroll or text', 
   await expect(preview.locator('.file-viewer-code')).toContainText('lastToken');
   await content.evaluate((node) => node.scrollTo({ top: 500, left: 150 }));
   await expect
-    .poll(() => preview.locator('.shiki .line:last-child').count())
+    .poll(() =>
+      preview.locator('[data-tau-highlight] .line:last-child').count(),
+    )
     .toBe(1);
   await expect
     .poll(() => preview.locator('.file-viewer-code').textContent())
@@ -59,7 +61,7 @@ test('colors the final line near the read limit without losing scroll or text', 
   await expect(preview.locator('script')).toHaveCount(0);
   await expect(
     preview
-      .locator('.shiki .line')
+      .locator('[data-tau-highlight] .line')
       .filter({ hasText: 'lastToken' })
       .locator('span[style]')
       .first(),

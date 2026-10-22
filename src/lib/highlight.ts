@@ -1,21 +1,8 @@
-import type { HighlighterCore } from 'shiki/core';
 import { shallowRef } from 'vue';
 
-const THEMES = { light: 'ayu-light', dark: 'ayu-dark' } as const;
-
-/*
- * Every token carries both schemes as custom properties and the stylesheet
- * chooses between them, so changing appearance re-paints a transcript instead
- * of re-rendering one.
- */
-const VARIABLE_PREFIX = '--tau-code-';
-
-const ALIASES = new Map([
-  ['console', 'bash'],
-  ['jsx', 'tsx'],
-  ['patch', 'diff'],
-  ['shell-session', 'bash'],
-]);
+import type { HighlightEngine } from './highlight-engine';
+import resolveLanguage from './highlight-language';
+import { highlightHtml } from './highlight-render';
 
 /**
  * A grammar runs over the whole block on every delta of a streamed answer, so a
@@ -31,42 +18,22 @@ const MAX_LENGTH = 20_000;
  */
 const MAX_CACHED = 200;
 
-const LANGUAGE_TAG = /^\S+/;
-
-interface FenceLanguage {
-  tag: string;
-
-  language: string;
-}
-
 const cache = new Map<string, string>();
 
-const highlighter = shallowRef<HighlighterCore | null>(null);
+const highlighter = shallowRef<HighlightEngine | null>(null);
 
 void load()
   .then((core) => {
     highlighter.value = core;
   })
-  .catch((error: unknown) => {
-    console.error('Could not load the syntax highlighter', error);
+  .catch(() => {
+    console.error('Could not load the syntax highlighter');
   });
 
 /** Nothing about highlighting is loaded until the app itself has been. */
-async function load(): Promise<HighlighterCore> {
+async function load(): Promise<HighlightEngine> {
   const { default: loadHighlighter } = await import('./highlight-engine');
   return loadHighlighter();
-}
-
-function resolveLanguage(
-  core: HighlighterCore,
-  fence: string,
-): FenceLanguage | null {
-  const tag = LANGUAGE_TAG.exec(fence)?.[0].toLowerCase();
-  if (!tag) return null;
-
-  const language = ALIASES.get(tag) ?? tag;
-  if (!core.getLoadedLanguages().includes(language)) return null;
-  return { tag, language };
 }
 
 function remember(key: string, html: string): void {
@@ -85,11 +52,11 @@ function remember(key: string, html: string): void {
  */
 function highlightCode(code: string, fence: string): string | null {
   const core = highlighter.value;
-  if (!core || code.length > MAX_LENGTH) return null;
+  if (!core || code.length > MAX_LENGTH || code.includes('\0')) return null;
 
-  const resolved = resolveLanguage(core, fence);
+  const resolved = resolveLanguage(fence);
   if (!resolved) return null;
-  const { tag, language } = resolved;
+  const { tag } = resolved;
 
   const key = `${tag}\n${code}`;
   const cached = cache.get(key);
@@ -97,28 +64,9 @@ function highlightCode(code: string, fence: string): string | null {
 
   let html: string;
   try {
-    html = core.codeToHtml(code, {
-      lang: language,
-      themes: THEMES,
-      defaultColor: false,
-      cssVariablePrefix: VARIABLE_PREFIX,
-      transformers: [
-        {
-          // A block is content, not a control: the transcript's tab order is
-          // the app's, and Shiki's own focusable `pre` is not part of it.
-          pre(node): void {
-            delete node.properties.tabindex;
-          },
-          // The class marked would have written, naming the language as the
-          // fence did: it is what the block's wrapper reads its label from.
-          code(node): void {
-            node.properties.class = `language-${tag}`;
-          },
-        },
-      ],
-    });
-  } catch (error) {
-    console.error('Could not highlight the code block', error);
+    html = highlightHtml(core.render(code, tag));
+  } catch {
+    console.error('Could not highlight the code block');
     return null;
   }
 

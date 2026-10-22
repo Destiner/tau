@@ -398,7 +398,7 @@ describe('code copy buttons', () => {
     ).toContain(`<div class="code-block" ${CODE_LANGUAGE_ATTRIBUTE}="rust">`);
     expect(
       addCodeCopyButtons(
-        '<pre class="shiki"><code class="shiki-code language-ts"><span>a</span></code></pre>',
+        '<pre class="tau-highlight"><code class="tau-highlight-code language-ts"><span>a</span></code></pre>',
       ),
     ).toContain(`<div class="code-block" ${CODE_LANGUAGE_ATTRIBUTE}="ts">`);
 

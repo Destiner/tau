@@ -71,12 +71,14 @@ test('defers worker output during selection and discards output after close', as
       window as Window & { __TAU_RELEASE_HIGHLIGHT__?: () => void }
     ).__TAU_RELEASE_HIGHLIGHT__?.(),
   );
-  await expect(preview.locator('.shiki')).toHaveCount(0);
+  await expect(preview.locator('[data-tau-highlight]')).toHaveCount(0);
   expect(await page.evaluate(() => window.getSelection()?.toString())).toBe(
     selected,
   );
   await page.evaluate(() => window.getSelection()?.removeAllRanges());
-  await expect(preview.locator('.shiki .line:last-child')).toHaveCount(1);
+  await expect(
+    preview.locator('[data-tau-highlight] .line:last-child'),
+  ).toHaveCount(1);
   await expect
     .poll(() => preview.locator('.file-viewer-code').textContent())
     .toBe(source);

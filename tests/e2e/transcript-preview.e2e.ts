@@ -371,7 +371,9 @@ test('scrolls large file previews in both directions', async ({ page }) => {
     .locator('[data-tau-path="src/components/TranscriptView.vue"]')
     .click();
   const content = page.locator('.file-viewer-content');
-  await expect(content.locator('.shiki span').first()).toBeVisible();
+  await expect(
+    content.locator('[data-tau-highlight] span').first(),
+  ).toBeVisible();
   const overflow = await content.evaluate((element) => ({
     horizontal: element.scrollWidth > element.clientWidth,
     vertical: element.scrollHeight > element.clientHeight,

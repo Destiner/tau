@@ -76,7 +76,7 @@
                 />
               </template>
             </div>
-            <!-- eslint-disable vue/no-v-html -- highlightCode returns only Shiki-generated markup -->
+            <!-- eslint-disable vue/no-v-html -- highlightCode returns only escaped, Tau-owned markup -->
             <div
               v-else-if="highlighted"
               ref="textContent"
@@ -610,8 +610,8 @@ onBeforeUnmount(() => {
   line-height: 1.65;
 }
 
-:global(.file-viewer-code .shiki),
-:global(.file-viewer-code .shiki span) {
+:global(.file-viewer-code .tau-highlight),
+:global(.file-viewer-code .tau-highlight span) {
   color: var(--tau-code-light);
   font-style: var(--tau-code-light-font-style, normal);
   font-weight: var(--tau-code-light-font-weight, inherit);
@@ -669,8 +669,8 @@ onBeforeUnmount(() => {
 }
 
 @media (prefers-color-scheme: dark) {
-  :global(.file-viewer-code .shiki),
-  :global(.file-viewer-code .shiki span) {
+  :global(.file-viewer-code .tau-highlight),
+  :global(.file-viewer-code .tau-highlight span) {
     color: var(--tau-code-dark);
     font-style: var(--tau-code-dark-font-style, normal);
     font-weight: var(--tau-code-dark-font-weight, inherit);

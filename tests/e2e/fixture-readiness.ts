@@ -10,7 +10,7 @@ export default async function waitForShowcaseRendering(
   );
   await expect(showcase.locator('.diagram')).toHaveCount(5);
   await expect(
-    showcase.locator('.code-block[data-tau-lang="ts"] pre.shiki'),
+    showcase.locator('.code-block[data-tau-lang="ts"] [data-tau-highlight]'),
   ).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
 }

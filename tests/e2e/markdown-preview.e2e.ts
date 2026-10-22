@@ -215,7 +215,7 @@ flowchart LR
   await expect(document.getByRole('cell', { name: 'Tau' })).toBeVisible();
   await expect(document.getByRole('cell', { name: '2' })).toBeVisible();
   await expect(
-    document.locator('.code-block[data-tau-lang="ts"] pre.shiki'),
+    document.locator('.code-block[data-tau-lang="ts"] [data-tau-highlight]'),
   ).toContainText('const preview = true;');
   const markdownFence = document.locator('.code-block[data-tau-lang="md"]');
   const unlabelledFence = document
