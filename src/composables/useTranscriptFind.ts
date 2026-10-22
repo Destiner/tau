@@ -71,16 +71,9 @@ function identity(controller: TranscriptFindController): string {
 }
 
 /**
- * Call in a Vue effect scope. No DOM, focus, persistence, or global state.
- * `current` is a readonly computed snapshot for the active, live controller.
- * Closing retains query/selection/index; removal, disposal, identity replacement,
- * and scope disposal release them. Indexes are created only for nonblank queries.
- *
- * Watch `revealRequest` (not activeMatch) to scroll: each non-null request has a
- * globally increasing sequence, controller key, and match. Only a query edit
- * that finds a result or explicit navigation emits one. Switching/restoring,
- * opening, streaming, and hydration never emit requests. Ignore old requests
- * whose key is not the active controller. Focus belongs entirely to the caller.
+ * Scroll on revealRequest, not activeMatch: only query edits and explicit
+ * navigation request a reveal. Ignore requests for inactive controllers.
+ * Streaming, hydration, and session restoration must not move the reader.
  */
 interface TranscriptFindApi {
   current: ComputedRef<TranscriptFindState>;

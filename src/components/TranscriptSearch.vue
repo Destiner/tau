@@ -106,12 +106,7 @@ function focus(select = false): void {
   input.value?.focus({ preventScroll: true });
   if (select) input.value?.select();
 }
-defineExpose({
-  focus,
-  get input() {
-    return input.value;
-  },
-});
+defineExpose({ focus });
 </script>
 
 <style scoped>
