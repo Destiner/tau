@@ -107,7 +107,8 @@
               </span>
               <kbd
                 v-if="row.shortcut"
-                :title="`Shortcut: ${row.shortcut}`"
+                :title="`Shortcut: ${shortcutDescription(row.shortcut)}`"
+                :aria-label="`Shortcut: ${shortcutDescription(row.shortcut)}`"
                 ><span
                   v-for="(key, index) in shortcutKeys(row.shortcut)"
                   :key="index"
@@ -232,6 +233,18 @@ const activeDescendant = computed(() =>
     ? optionId(selectedId.value)
     : undefined,
 );
+
+function shortcutDescription(shortcut: string): string {
+  const names: Record<string, string> = {
+    '⌘': 'Command ',
+    '⌃': 'Control ',
+    '⌥': 'Option ',
+    '⇧': 'Shift ',
+    '⇥': 'Tab',
+    '↩': 'Return',
+  };
+  return shortcut.replace(/[⌘⌃⌥⇧⇥↩]/gu, (key) => names[key] ?? key);
+}
 
 function shortcutKeys(shortcut: string): string[] {
   if (shortcut.includes('+')) return shortcut.split('+');

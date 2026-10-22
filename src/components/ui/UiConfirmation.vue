@@ -236,11 +236,12 @@ function confirm(): void {
   display: flex;
   position: fixed;
   z-index: 31;
-  top: 112px;
+  top: min(112px, calc(100vh - 8px));
   left: 50%;
   flex-direction: column;
   width: min(348px, calc(100% - 36px));
-  overflow: hidden;
+  max-height: max(0px, calc(100vh - 120px));
+  overflow: auto;
   transform: translateX(-50%);
   border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
   border-radius: var(--radius-lg);

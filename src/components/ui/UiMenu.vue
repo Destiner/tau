@@ -24,9 +24,15 @@
           :key="`${item.label}:${index}`"
           class="ui-menu-item"
           :aria-label="item.label"
+          :data-tone="item.tone"
           :disabled="item.disabled || undefined"
           @select="() => runItem(item)"
         >
+          <UiIcon
+            v-if="item.icon"
+            class="ui-menu-icon"
+            :name="item.icon"
+          />
           <span>{{ item.label }}</span>
           <kbd
             v-if="item.shortcut"
@@ -54,6 +60,8 @@ import {
   type ShortcutPlatform,
 } from '../../lib/app-commands/shortcut';
 import { preserveSurfaceUnderPalette } from '../../lib/app-commands/surface';
+
+import UiIcon from './UiIcon.vue';
 
 const open = defineModel<boolean>('open', { default: false });
 
@@ -87,7 +95,9 @@ function runItem(item: UiMenuItem): void {
 
 export interface UiMenuItem {
   label: string;
+  icon?: InstanceType<typeof UiIcon>['$props']['name'];
   shortcut?: ShortcutInput;
+  tone?: 'danger';
   disabled?: boolean;
   run?: () => void;
 }

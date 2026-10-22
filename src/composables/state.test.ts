@@ -314,6 +314,79 @@ describe('sessionTooltipStatus', () => {
     sessions: [session],
   };
 
+  it('shows current successor reconciliation as Working without changing actual work', async () => {
+    const { sessionIndicator, projectIndicator, state } =
+      await import('./state');
+    const controller = testController({
+      generation: 2,
+      unread: true,
+      syncing: true,
+    });
+    controller.provisionalReplacement = {
+      generation: controller.generation,
+      sessionId: controller.sessionId,
+      sessionPath: controller.sessionPath,
+    };
+    state.controllers = [controller];
+    expect(sessionIndicator(project, session)).toBe('working');
+    expect(projectIndicator({ ...project, collapsed: true })).toBe('working');
+    expect(controller.working).toBe(false);
+    expect(controller.streaming).toBe(false);
+    state.extensionDialogs = [
+      {
+        key: 'successor-input',
+        requestId: 'successor-input',
+        method: 'confirm',
+        title: 'Continue?',
+        draft: '',
+        submitting: false,
+        error: '',
+        controllerKey: controller.key,
+        runtimeId: controller.runtimeId,
+        generation: controller.generation,
+        projectName: 'Project',
+        sessionName: 'Session',
+      },
+    ];
+    expect(sessionIndicator(project, session)).toBe('new');
+    expect(projectIndicator({ ...project, collapsed: true })).toBe('new');
+    state.extensionDialogs = [];
+    controller.syncing = false;
+    controller.postSettlementHydration = true;
+    controller.draft = 'Keep draft';
+    expect(sessionIndicator(project, session)).toBe('working');
+    controller.postSettlementHydration = false;
+    expect(sessionIndicator(project, session)).toBe('draft');
+    controller.draft = '';
+    expect(sessionIndicator(project, session)).toBe('new');
+    controller.unread = false;
+    expect(sessionIndicator(project, session)).toBe('');
+  });
+
+  it('ignores ordinary syncing and stale successor identities', async () => {
+    const { sessionIndicator, state } = await import('./state');
+    const controller = testController({
+      generation: 2,
+      unread: true,
+      syncing: true,
+    });
+    state.controllers = [controller];
+    expect(sessionIndicator(project, session)).toBe('new');
+    const identity = {
+      generation: 2,
+      sessionId: controller.sessionId,
+      sessionPath: controller.sessionPath,
+    };
+    for (const patch of [
+      { generation: 1 },
+      { sessionId: 'predecessor' },
+      { sessionPath: '/old.jsonl' },
+    ]) {
+      controller.provisionalReplacement = { ...identity, ...patch };
+      expect(sessionIndicator(project, session)).toBe('new');
+    }
+  });
+
   it('prioritizes existing session indicator statuses', async () => {
     const { sessionTooltipStatus, state } = await import('./state');
     state.extensionDialogs = [];

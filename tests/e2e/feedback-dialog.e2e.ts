@@ -54,7 +54,7 @@ test('retries initial feedback dialog focus with Mod+Enter', async ({
   const dialog = page.getByRole('dialog', { name: 'Pi Unavailable' });
   await expect(dialog).toBeFocused();
   const label = (await modShortcut(page)).startsWith('Meta')
-    ? '⌘Enter'
+    ? '⌘↩'
     : 'Ctrl+Enter';
   await expect(
     dialog.getByRole('button', { name: 'Try Again' }),

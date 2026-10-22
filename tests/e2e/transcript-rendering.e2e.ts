@@ -99,6 +99,16 @@ test('renders the showcase activity, Markdown and code contract', async ({
     }
   });
 
+  await test.step('opens a running tool from its end control', async () => {
+    const tool = page.locator('[data-message-id="fixture-tool-running"]');
+    const header = tool.locator('.activity-header');
+    const end = tool.locator('.activity-end');
+
+    await expect(tool.locator('.activity-mark.running')).toBeVisible();
+    await end.click();
+    await expect(header).toHaveAttribute('aria-expanded', 'true');
+  });
+
   await test.step('renders Markdown table headers and alignment', async () => {
     const headers = page
       .locator('[data-message-id="fixture-markdown-showcase"] table')

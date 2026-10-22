@@ -35,17 +35,11 @@ test('keeps a fresh command successor running after its phantom identity is repl
   await sidebar.getByRole('button', { name: /^Main\b/ }).click();
   await expect(page.getByRole('heading', { name: 'Main' })).toBeVisible();
   await composer.fill('Draft for Main');
-  await expect(
-    sidebar.getByRole('button', { name: /^New Session\b/ }),
-  ).toHaveCount(1);
   await expect(page.getByRole('button', { name: 'Stop Pi' })).toHaveCount(0);
   await releaseGate(page, promptReplyGate);
   await waitForGate(page, commandSyncGate);
 
   await expect(page.getByRole('heading', { name: 'Main' })).toBeVisible();
-  await expect(
-    sidebar.getByRole('button', { name: /^New Session\b/ }),
-  ).toHaveCount(1);
   await releaseGate(page, commandSyncGate);
   await waitForGate(page, hydrationGate);
   await releaseGate(page, hydrationGate);

@@ -29,7 +29,16 @@ describe('shortcuts', () => {
     });
     expect(formatShortcut('Mod+Shift+P', 'mac')).toBe('⌘⇧P');
     expect(formatShortcut('Mod+Shift+P', 'non-mac')).toBe('Ctrl+Shift+P');
-    expect(formatShortcut('Ctrl+Tab', 'mac')).toBe('⌃Tab');
+    expect(formatShortcut('Ctrl+Tab', 'mac')).toBe('⌃⇥');
+    expect(formatShortcut('Tab', 'mac')).toBe('⇥');
+    expect(formatShortcut('Enter', 'mac')).toBe('↩');
+    expect(formatShortcut('Return', 'mac')).toBe('↩');
+    expect(formatShortcut('Mod+Shift+Enter', 'mac')).toBe('⌘⇧↩');
+    expect(formatShortcut('Tab', 'non-mac')).toBe('Tab');
+    expect(formatShortcut('Return', 'non-mac')).toBe('Enter');
+    expect(formatShortcut('Ctrl+Alt+Shift+Enter', 'non-mac')).toBe(
+      'Ctrl+Alt+Shift+Enter',
+    );
     expect(formatShortcut('Mod+Alt+ArrowUp', 'non-mac')).toBe('Ctrl+Alt+Up');
   });
 

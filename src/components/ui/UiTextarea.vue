@@ -48,6 +48,7 @@ defineExpose({
   color: var(--text);
   font-size: var(--text-sm);
   line-height: var(--leading-ui);
+  resize: none;
 }
 
 .ui-textarea::placeholder {
@@ -58,7 +59,6 @@ defineExpose({
   min-height: 120px;
   max-height: min(300px, 35vh);
   border: 1px solid var(--border);
-  resize: vertical;
 }
 
 .ui-textarea[data-variant='bare'] {

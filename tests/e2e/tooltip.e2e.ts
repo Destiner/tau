@@ -41,8 +41,7 @@ async function expectAnchoredTo(
 /**
  * A project row shows a name that is not where the project is, and the row is
  * too narrow to show both. The path it reveals on hover is app-drawn like every
- * other tooltip, and it sits below the row rather than over the row's own
- * actions, which carry tooltips of their own.
+ * other tooltip, and it sits below the row rather than covering its name.
  */
 test('reveals project and control tooltips by pointer and keyboard without breaking anchored menus', async ({
   page,
@@ -70,12 +69,7 @@ test('reveals project and control tooltips by pointer and keyboard without break
     if (rowBox && tooltipBox) {
       expect(tooltipBox.y).toBeGreaterThanOrEqual(rowBox.y + rowBox.height);
     }
-    await page
-      .getByRole('button', { name: 'New Session in Tau fixture' })
-      .hover();
-    await expect(
-      page.locator('.ui-tooltip', { hasText: 'New Session' }),
-    ).toBeVisible();
+    await page.getByRole('textbox', { name: 'Message Pi' }).hover();
     await expect(tooltip).toHaveCount(0);
   });
 
@@ -134,15 +128,6 @@ test('reveals project and control tooltips by pointer and keyboard without break
     await expect(popover).toBeVisible();
     await expectAnchoredTo(popover, reportIssueBox);
     await page.keyboard.press('Escape');
-    const projectRow = page.locator('.project-row').first();
-    await projectRow.hover();
-    const newSession = projectRow.getByRole('button', {
-      name: /^New Session in/,
-    });
-    await newSession.hover();
-    await expect(
-      page.locator('.ui-tooltip', { hasText: 'New Session' }),
-    ).toBeVisible();
     await page.getByRole('textbox', { name: 'Message Pi' }).hover();
     await expect(page.locator('.ui-tooltip')).toHaveCount(0);
   });

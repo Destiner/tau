@@ -56,6 +56,20 @@
   color: var(--faint);
 }
 
+.ui-menu-item[data-tone='danger']:not([data-disabled]):is(
+    :hover,
+    [data-highlighted]
+  ) {
+  color: var(--danger);
+}
+
+.ui-menu-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-right: 8px;
+}
+
 .ui-menu-shortcut {
   margin-left: auto;
   padding-left: 16px;

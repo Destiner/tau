@@ -807,7 +807,10 @@ register(
       document.activeElement !== document.body &&
       !document.activeElement.closest('.command-palette')
     ) {
-      removalOrigin = document.activeElement;
+      // Menu items disappear; use the project's persistent trigger instead.
+      removalOrigin = document.activeElement.closest('.ui-menu')
+        ? projectSidebar.value?.projectActionAnchor(ctx.projectPath)
+        : document.activeElement;
     }
     requestProjectRemoval(commandProject(ctx)!);
   },

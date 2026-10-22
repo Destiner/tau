@@ -48,10 +48,12 @@ function registerPendingRpcSpan(
   dispatchSnapshot: RpcDispatchSnapshot,
   method: string,
   context?: TraceContext,
+  onTimeout?: () => void,
 ): void {
   endPendingRpcSpan(key, 'abandoned_duplicate_request');
   const timeoutHandle = setTimeout(() => {
     endPendingRpcSpan(key, 'timeout');
+    onTimeout?.();
   }, RPC_SPAN_TIMEOUT_MS);
   pendingRpcSpans.set(key, {
     end,

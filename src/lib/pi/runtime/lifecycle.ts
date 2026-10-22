@@ -465,6 +465,16 @@ function cleanupRejectedRpcDispatch(
       'bridge_event_failed',
     );
     scheduleMaterializationVerificationRetry(controller);
+  } else if (
+    method === 'get_messages' &&
+    controller.syncing &&
+    retainsProvisionalReplacement(controller)
+  ) {
+    setControllerLifecycle(
+      controller,
+      { syncing: false },
+      'bridge_event_failed',
+    );
   }
 }
 
@@ -517,7 +527,35 @@ async function rpc(
       },
     );
     if (expectsResponse) {
-      registerPendingRpcSpan(key, span.end, snapshot, method, span.context);
+      registerPendingRpcSpan(
+        key,
+        span.end,
+        snapshot,
+        method,
+        span.context,
+        () => {
+          // Span expiry must also settle an unanswered reconciliation read.
+          if (
+            !rpcDispatchStillCurrent(controller, snapshot, method) ||
+            !(
+              (method === 'get_state' &&
+                controller.materializationStateRequestId === requestId) ||
+              (method === 'get_messages' &&
+                controller.materializationMessagesRequestId === requestId) ||
+              (method === 'get_available_thinking_levels' &&
+                Boolean(snapshot.materializationMessagesRequestId) &&
+                controller.materializationMessagesRequestId ===
+                  snapshot.materializationMessagesRequestId) ||
+              (method === 'get_messages' &&
+                controller.syncing &&
+                retainsProvisionalReplacement(controller))
+            )
+          )
+            return;
+          setControllerError(controller, rpcFailureCopy(method));
+          cleanupRejectedRpcDispatch(controller, requestId, method, snapshot);
+        },
+      );
       if (
         method === 'prompt' &&
         controller.commandPromptRequestId === requestId
@@ -1424,6 +1462,7 @@ export {
   registerConnectedSession,
   promoteMaterializedSession,
   retireUnsavedSession,
+  retainsProvisionalReplacement,
   removeEmptyActivePhantom,
   discardUnregisteredEphemeralSession,
   removeRegisteredEphemeralSession,
