@@ -161,7 +161,11 @@ describe('transcript search surfaces', () => {
 
   it('refines range geometry inside the viewport and reveals code using pre.scrollLeft', async () => {
     const test = setup();
+    vi.stubGlobal('getComputedStyle', () => ({ overflowX: 'auto' }));
     const pre = {
+      parentElement: null,
+      scrollWidth: 1000,
+      clientWidth: 300,
       scrollLeft: 0,
       getBoundingClientRect: (): { left: number; right: number } => ({
         left: 0,
@@ -171,7 +175,7 @@ describe('transcript search surfaces', () => {
     Object.assign(test.root, { contains: () => true });
     vi.mocked(resolveTranscriptRanges).mockReturnValue([
       {
-        startContainer: { parentElement: { closest: () => pre } },
+        startContainer: { parentElement: pre },
         getClientRects: () => [
           { top: 20, bottom: 40, height: 20, left: 500, right: 540 },
         ],

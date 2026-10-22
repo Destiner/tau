@@ -621,58 +621,74 @@ test('compacted search only adds earlier results after explicitly loading histor
   await expectActiveRange(page, 'Search checkpoint', 'history-fixture-user-0');
 });
 
-test('a horizontally clipped code match scrolls its pre rather than the app', async ({
-  page,
-}) => {
-  await page.goto('/?fixture=long-transcript&search=true&count=12');
-  await query(page, 'const codeNeedle', '1 / 3');
-  await expectActiveRange(page, 'const codeNeedle', 'search-early');
-  const pre = page.locator('[data-message-id="search-early"] pre');
-  await expect
-    .poll(() =>
-      pre.evaluate((element) => element.scrollWidth - element.clientWidth),
-    )
-    .toBeGreaterThan(500);
-  expect(await pre.evaluate((element) => element.scrollLeft)).toBe(0);
-  const before = await page.evaluate(() => ({
-    x: window.scrollX,
-    left: document
-      .querySelector('[aria-label="Transcript"]')!
-      .getBoundingClientRect().left,
-  }));
-  await query(page, 'horizontal-search-target', '1 / 3');
-  await expectActiveRange(page, 'horizontal-search-target', 'search-early');
-  await expect
-    .poll(() => pre.evaluate((element) => element.scrollLeft))
-    .toBeGreaterThan(500);
-  expect(
-    await page
-      .getByLabel('Transcript', { exact: true })
-      .evaluate((element) => element.scrollLeft),
-  ).toBe(0);
-  expect(
-    await page.evaluate(() => ({
+for (const { container, initial, target, count } of [
+  {
+    container: 'pre',
+    initial: 'const codeNeedle',
+    target: 'horizontal-search-target',
+    count: '1 / 3',
+  },
+  {
+    container: 'table',
+    initial: 'Column 0',
+    target: 'table-search-target',
+    count: '1 / 1',
+  },
+]) {
+  test(`a horizontally clipped ${container} match scrolls its container rather than the app`, async ({
+    page,
+  }) => {
+    await page.goto('/?fixture=long-transcript&search=true&count=12');
+    await query(page, initial, container === 'pre' ? '1 / 3' : '1 / 1');
+    await expectActiveRange(page, initial, 'search-early');
+    const pre = page.locator(`[data-message-id="search-early"] ${container}`);
+    await expect
+      .poll(() =>
+        pre.evaluate((element) => element.scrollWidth - element.clientWidth),
+      )
+      .toBeGreaterThan(500);
+    expect(await pre.evaluate((element) => element.scrollLeft)).toBe(0);
+    const before = await page.evaluate(() => ({
       x: window.scrollX,
       left: document
         .querySelector('[aria-label="Transcript"]')!
         .getBoundingClientRect().left,
-    })),
-  ).toEqual(before);
-  await expect
-    .poll(() =>
-      page.evaluate(() => {
-        const range = [
-          ...CSS.highlights!.get('tau-transcript-active')!,
-        ][0] as Range;
-        const rect = range.getBoundingClientRect();
-        const box = range.startContainer
-          .parentElement!.closest('pre')!
-          .getBoundingClientRect();
-        return rect.left >= box.left && rect.right <= box.right;
-      }),
-    )
-    .toBe(true);
-});
+    }));
+    await query(page, target, count);
+    await expectActiveRange(page, target, 'search-early');
+    await expect(searchInput(page)).toBeFocused();
+    await expect
+      .poll(() => pre.evaluate((element) => element.scrollLeft))
+      .toBeGreaterThan(500);
+    expect(
+      await page
+        .getByLabel('Transcript', { exact: true })
+        .evaluate((element) => element.scrollLeft),
+    ).toBe(0);
+    expect(
+      await page.evaluate(() => ({
+        x: window.scrollX,
+        left: document
+          .querySelector('[aria-label="Transcript"]')!
+          .getBoundingClientRect().left,
+      })),
+    ).toEqual(before);
+    await expect
+      .poll(() =>
+        page.evaluate((selector) => {
+          const range = [
+            ...CSS.highlights!.get('tau-transcript-active')!,
+          ][0] as Range;
+          const rect = range.getBoundingClientRect();
+          const box = range.startContainer
+            .parentElement!.closest(selector)!
+            .getBoundingClientRect();
+          return rect.left >= box.left && rect.right <= box.right;
+        }, container),
+      )
+      .toBe(true);
+  });
+}
 
 test('closing Find at a historical match preserves the reader position through streaming', async ({
   page,

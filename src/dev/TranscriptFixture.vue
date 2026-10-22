@@ -107,7 +107,7 @@ if (search && initialMessages.length >= 6) {
     initialMessages[index] = {
       id: `search-${label}`,
       kind: index === 0 ? 'user' : 'assistant',
-      text: `Search checkpoint ${label}.\n\nCross **format** needle.\n\n\`\`\`ts\nconst codeNeedle = "checkpoint";\nconst wideLine = "${'horizontal padding '.repeat(40)}horizontal-search-target";\n\`\`\``,
+      text: `Search checkpoint ${label}.\n\nCross **format** needle.\n\n\`\`\`ts\nconst codeNeedle = "checkpoint";\nconst wideLine = "${'horizontal padding '.repeat(40)}horizontal-search-target";\n\`\`\`${index === 0 ? `\n\n| ${Array.from({ length: 32 }, (_, column) => `Column ${column}`).join(' | ')} |\n| ${Array(32).fill('---').join(' | ')} |\n| ${Array.from({ length: 32 }, (_, column) => (column === 31 ? 'table-search-target' : 'wide-table-padding')).join(' | ')} |` : ''}`,
     };
   }
   initialMessages[1] = {

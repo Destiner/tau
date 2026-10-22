@@ -207,16 +207,27 @@ function useTranscriptSearch(
         } else {
           settled++;
         }
-        const start = range.startContainer.parentElement;
-        const pre = start?.closest('pre');
-        if (pre && root.contains(pre)) {
-          const codeBounds = pre.getBoundingClientRect();
-          if (rect.left < codeBounds.left + 12)
-            pre.scrollLeft += rect.left - codeBounds.left - 12;
-          else if (rect.right > codeBounds.right - 12)
-            pre.scrollLeft += Math.min(
-              rect.left - codeBounds.left - 12,
-              rect.right - codeBounds.right + 12,
+        // Reveal inner scrollers first, without scrolling ancestors outside the message.
+        for (
+          let container = range.startContainer.parentElement;
+          container && root.contains(container);
+          container = container.parentElement
+        ) {
+          if (
+            container.scrollWidth <= container.clientWidth ||
+            !/^(auto|scroll)$/.test(getComputedStyle(container).overflowX)
+          )
+            continue;
+          const matchBounds = range.getClientRects()[0];
+          if (!matchBounds) continue;
+          const containerBounds = container.getBoundingClientRect();
+          if (matchBounds.left < containerBounds.left + 12)
+            container.scrollLeft +=
+              matchBounds.left - containerBounds.left - 12;
+          else if (matchBounds.right > containerBounds.right - 12)
+            container.scrollLeft += Math.min(
+              matchBounds.left - containerBounds.left - 12,
+              matchBounds.right - containerBounds.right + 12,
             );
         }
         if (settled >= 2) break;
