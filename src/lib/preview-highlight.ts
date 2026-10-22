@@ -26,8 +26,6 @@ function highlightPreview(
   let code: HTMLElement | undefined;
   let remainder: Text | undefined;
   let consumed = 0;
-  let lineIndex = 0;
-  const sourceLines = source.split('\n');
   let stopped = false;
   let draining = false;
   const deadline = window.setTimeout(stop, 15_000);
@@ -86,12 +84,6 @@ function highlightPreview(
       } else if (message.type === 'chunk' && code && remainder) {
         const template = document.createElement('template');
         template.innerHTML = message.html;
-        // HTML parsing normalizes CRLF; add each original CR as a text node.
-        for (const line of template.content.querySelectorAll('.line')) {
-          if (sourceLines[lineIndex]?.endsWith('\r'))
-            line.after(document.createTextNode('\r'));
-          lineIndex += 1;
-        }
         code.insertBefore(template.content, remainder);
         remainder.deleteData(0, message.offset - consumed);
         consumed = message.offset;

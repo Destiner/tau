@@ -49,7 +49,7 @@ test('short source grammars have themed token colors', async ({ page }) => {
       await expect
         .poll(() =>
           preview
-            .locator('.shiki span[style]')
+            .locator('[data-tau-highlight] span[style]')
             .evaluateAll(
               (nodes) =>
                 new Set(nodes.map((node) => getComputedStyle(node).color)).size,
@@ -58,7 +58,7 @@ test('short source grammars have themed token colors', async ({ page }) => {
         .toBeGreaterThan(1);
       colors.push(
         await preview
-          .locator('.shiki span[style]')
+          .locator('[data-tau-highlight] span[style]')
           .first()
           .evaluate((node) => getComputedStyle(node).color),
       );

@@ -1,12 +1,13 @@
 import { expect, test } from './fixtures';
 
 const source =
-  `/* opening comment\ncontinued comment */\nconst value: number = 42;\n${'export const item = value;\n'.repeat(850)}// end marker\n`.replaceAll(
-    '\n',
-    '\r\n',
-  );
+  '/* <script>window.__TAU_PREVIEW_EXECUTED__ = true</script> */\r\n' +
+  "const emoji = '🦊';\r" +
+  'const\tvalue: number = 42;\n' +
+  'export const item = value;\r\n'.repeat(850) +
+  '// end marker <img src=x onerror="window.__TAU_PREVIEW_EXECUTED__ = true">\r\n';
 
-test('colors source past the transcript cutoff in both appearances', async ({
+test('colors and preserves exact mixed source past the transcript cutoff', async ({
   page,
 }) => {
   await page.addInitScript((code) => {
@@ -21,7 +22,7 @@ test('colors source past the transcript cutoff in both appearances', async ({
                 filename: 'TranscriptView.ts',
                 sourcePath: '/project/TranscriptView.ts',
                 assetPath: `data:text/plain;charset=utf-8,${encodeURIComponent(code)}`,
-                byteLength: code.length,
+                byteLength: new TextEncoder().encode(code).length,
               })
             : Promise.resolve(null),
       },
@@ -39,7 +40,7 @@ test('colors source past the transcript cutoff in both appearances', async ({
     await expect
       .poll(() =>
         preview
-          .locator('.shiki span[style]')
+          .locator('[data-tau-highlight] span[style]')
           .evaluateAll(
             (nodes) =>
               new Set(
@@ -53,6 +54,14 @@ test('colors source past the transcript cutoff in both appearances', async ({
     '// end marker',
   );
   expect(await preview.locator('.file-viewer-code').textContent()).toBe(source);
+  await expect(preview.locator('script, img')).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () =>
+        (window as Window & { __TAU_PREVIEW_EXECUTED__?: boolean })
+          .__TAU_PREVIEW_EXECUTED__,
+    ),
+  ).not.toBe(true);
   await page.keyboard.press('Meta+A');
   expect(
     (await page.evaluate(() => window.getSelection()?.toString()))?.trimEnd(),

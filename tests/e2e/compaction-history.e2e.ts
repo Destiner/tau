@@ -13,7 +13,9 @@ for (const scheme of ['light', 'dark'] as const) {
       element.scrollTop = 0;
     });
     await expect(
-      page.locator('[data-message-id="current-fixture-assistant-1"] pre.shiki'),
+      page.locator(
+        '[data-message-id="current-fixture-assistant-1"] [data-tau-highlight]',
+      ),
     ).toBeVisible();
     await page.evaluate(() => document.fonts.ready);
     const button = page.getByRole('button', { name: 'Load earlier messages' });

@@ -162,7 +162,7 @@ test('renders the showcase activity, Markdown and code contract', async ({
         .locator('[data-message-id="fixture-markdown-showcase"] .code-block')
         .first();
 
-      await expect(block.locator('pre')).toHaveClass(/shiki/);
+      await expect(block.locator('[data-tau-highlight]')).toBeVisible();
 
       const light = await block.evaluate(tokenColors);
       expect(light.length).toBeGreaterThan(3);
@@ -453,7 +453,9 @@ test('draws diagrams and opens their pan-and-zoom viewer', async ({ page }) => {
 
 /** The distinct colours a highlighted block's tokens are drawn in. */
 function tokenColors(element: HTMLElement): string[] {
-  const spans = Array.from(element.querySelectorAll<HTMLElement>('pre span'));
+  const spans = Array.from(
+    element.querySelectorAll<HTMLElement>('[data-tau-highlight] span'),
+  );
   return [...new Set(spans.map((span) => getComputedStyle(span).color))];
 }
 

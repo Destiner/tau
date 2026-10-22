@@ -31,8 +31,7 @@
     "@opentelemetry/core": "^2.10.0",
     "@opentelemetry/sdk-trace": "^2.10.0",
     "@opentelemetry/semantic-conventions": "^1.43.0",
-    "@shikijs/langs": "^4.4.3",
-    "@shikijs/themes": "^4.4.3",
+    "@pierre/highlights": "0.2.0",
     "@tanstack/vue-virtual": "^3.13.35",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
@@ -42,7 +41,6 @@
     "dompurify": "^3.4.13",
     "marked": "^18.0.9",
     "reka-ui": "^2.10.3",
-    "shiki": "^4.4.3",
     "sortablejs": "^1.15.7",
     "vue": "^3.5.13",
     "yaml": "^2.8.2"

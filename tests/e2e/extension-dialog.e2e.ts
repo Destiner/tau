@@ -201,7 +201,9 @@ test('copies an absolute path from a remote dialog title', async ({ page }) => {
     };
   });
   await page.goto(`${fixtureUrl}&remote=true`);
-  await expect(page.locator('.extension-prompt-title pre.shiki')).toBeVisible();
+  await expect(
+    page.locator('.extension-prompt-title [data-tau-highlight]'),
+  ).toBeVisible();
 
   const plan = page.getByRole('button', {
     name: 'Preview path /home/agent/.pi/workflows/implement/RHI-6283/implementation-plan.md',

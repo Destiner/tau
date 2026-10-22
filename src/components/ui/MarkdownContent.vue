@@ -824,8 +824,8 @@ onBeforeUnmount(() => {
   tab-size: 2;
 }
 
-.markdown :deep(.shiki),
-.markdown :deep(.shiki span) {
+.markdown :deep(.tau-highlight),
+.markdown :deep(.tau-highlight span) {
   color: var(--tau-code-light);
   font-style: var(--tau-code-light-font-style, normal);
   font-weight: var(--tau-code-light-font-weight, inherit);
@@ -833,8 +833,8 @@ onBeforeUnmount(() => {
 }
 
 @media (prefers-color-scheme: dark) {
-  .markdown :deep(.shiki),
-  .markdown :deep(.shiki span) {
+  .markdown :deep(.tau-highlight),
+  .markdown :deep(.tau-highlight span) {
     color: var(--tau-code-dark);
     font-style: var(--tau-code-dark-font-style, normal);
     font-weight: var(--tau-code-dark-font-weight, inherit);
