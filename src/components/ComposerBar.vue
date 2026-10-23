@@ -3,7 +3,7 @@
     ref="composer"
     class="composer"
     :class="{ disabled: !canDraft }"
-    @keydown.escape.prevent.stop="dismissCommandMenu"
+    @keydown.escape="dismissCommandMenu"
   >
     <CommandMenu
       v-if="commandMenuActive"
@@ -392,8 +392,11 @@ function send(intent: 'steer' | 'followUp' = 'steer'): void {
   emit('send', intent);
 }
 
-function dismissCommandMenu(): void {
-  if (commandMenuActive.value) commandMenuDismissed.value = true;
+function dismissCommandMenu(event: KeyboardEvent): void {
+  if (!commandMenuActive.value || event.isComposing) return;
+  event.preventDefault();
+  event.stopPropagation();
+  commandMenuDismissed.value = true;
 }
 
 function handleModelChange(value: string): void {

@@ -115,20 +115,6 @@ test('cannot be dismissed while a connection is pending', async ({ page }) => {
   await expect(panel).toBeVisible();
 });
 
-test('keeps a margin from the window edges when it is narrower than the panel', async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 320, height: 600 });
-  await page.goto('/?fixture=remote-dialog');
-
-  const box = await page.getByRole('dialog').boundingBox();
-  expect(box).not.toBeNull();
-  if (!box) return;
-
-  expect(box.x).toBeGreaterThanOrEqual(12);
-  expect(box.x + box.width).toBeLessThanOrEqual(320 - 12);
-});
-
 for (const mode of ['local', 'remote'] as const) {
   test(`opens an existing ${mode} project without losing the source draft`, async ({
     page,

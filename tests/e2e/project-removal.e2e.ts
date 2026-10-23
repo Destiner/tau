@@ -134,7 +134,10 @@ async function openSidebarRemoval(page: Page, path = atlasPath): Promise<void> {
   await page.locator(project(path)).hover();
   await page
     .locator(project(path))
-    .getByRole('button', { name: /^Remove / })
+    .locator('.project-toggle')
+    .click({ button: 'right' });
+  await page
+    .getByRole('menuitem', { name: 'Remove Project', exact: true })
     .click();
 }
 

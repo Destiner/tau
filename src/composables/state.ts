@@ -822,7 +822,14 @@ function sessionIndicator(
   const controller = controllerForSession(project.path, session.id);
   if (!controller) return '';
   if (controllerHasPendingDialog(controller)) return 'new';
-  if (controller.working) return 'working';
+  const replacement = controller.provisionalReplacement;
+  const initializingSuccessor =
+    replacement &&
+    replacement.generation === controller.generation &&
+    replacement.sessionId === controller.sessionId &&
+    replacement.sessionPath === controller.sessionPath &&
+    (controller.syncing || controller.postSettlementHydration);
+  if (controller.working || initializingSuccessor) return 'working';
   if (controller.draft.trim()) return 'draft';
   return controller.unread ? 'new' : '';
 }

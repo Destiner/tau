@@ -179,7 +179,8 @@ function formatKey(key: string, platform: ShortcutPlatform): string {
     ArrowUp: '↑',
     ArrowDown: '↓',
     Escape: 'Esc',
-    Enter: 'Enter',
+    Enter: '↩',
+    Tab: '⇥',
     ' ': 'Space',
   };
   const otherLabels: Readonly<Record<string, string>> = {

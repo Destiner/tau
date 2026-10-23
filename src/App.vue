@@ -135,6 +135,20 @@
           @new-session="handleNewSession"
         />
 
+        <TranscriptSearch
+          v-if="find.current.value.open && !sessionLoading && !sessionIsEmpty"
+          ref="transcriptSearch"
+          :query="find.current.value.query"
+          :total="find.current.value.matches.length"
+          :current="findOrdinal"
+          :busy="find.current.value.busy"
+          :pending="find.current.value.pending"
+          :loaded-only="findLoadedOnly"
+          @query="updateFindQuery"
+          @navigate="navigateFind"
+          @close="closeFind"
+        />
+
         <div
           v-if="sessionLoading"
           class="session-loading"
@@ -150,6 +164,9 @@
           :key="state.activeControllerKey"
           ref="transcriptView"
           :messages="messages"
+          :search-open="find.current.value.open"
+          :search-matches="find.current.value.matches"
+          :active-search-match="find.current.value.activeMatch ?? undefined"
           :compacting="compacting"
           :show-working-indicator="showWorkingIndicator"
           :working-label="stopping ? 'Stopping' : 'Working'"
@@ -298,6 +315,7 @@ import QuitConfirmation from './components/QuitConfirmation.vue';
 import ReconnectStatus from './components/ReconnectStatus.vue';
 import RemoteDialog from './components/RemoteDialog.vue';
 import SessionHeader from './components/SessionHeader.vue';
+import TranscriptSearch from './components/TranscriptSearch.vue';
 import TranscriptView from './components/TranscriptView.vue';
 import UiButton from './components/ui/UiButton.vue';
 import UiConfirmation from './components/ui/UiConfirmation.vue';
@@ -308,6 +326,7 @@ import UiSpinner from './components/ui/UiSpinner.vue';
 import UiTooltip from './components/ui/UiTooltip.vue';
 import { type ProjectSummary, type SessionSummary } from './composables/state';
 import useTau from './composables/useTau';
+import { useTranscriptFind } from './composables/useTranscriptFind';
 import { createAdminCodeMatcher } from './lib/admin-code';
 import { adminMode, toggleAdminMode } from './lib/admin-mode';
 import {
@@ -348,6 +367,7 @@ interface QuitRequest {
 }
 
 const transcriptView = ref<InstanceType<typeof TranscriptView>>();
+const transcriptSearch = ref<InstanceType<typeof TranscriptSearch>>();
 const projectSidebar = ref<InstanceType<typeof ProjectSidebar>>();
 const sessionHeader = ref<InstanceType<typeof SessionHeader>>();
 const composerBar = ref<InstanceType<typeof ComposerBar>>();
@@ -523,6 +543,100 @@ const commandSession = (ctx: CommandContext): SessionSummary | undefined => {
     project.sessions.find((s) => s.id === ctx.sessionId)
   );
 };
+const find = useTranscriptFind({
+  activeController,
+  controllers: () => state.controllers,
+  messages,
+});
+const findOrigins = new Map<string, HTMLElement>();
+const findOrdinal = computed(() => {
+  const current = find.current.value;
+  return current.activeMatch
+    ? current.matches.indexOf(current.activeMatch) + 1
+    : 0;
+});
+const findLoadedOnly = computed(() =>
+  messages.value.some(
+    (entry) => entry.kind === 'compaction' && entry.historyAvailable,
+  ),
+);
+watch(
+  () =>
+    state.controllers
+      .filter((controller) => !controller.disposed)
+      .map((controller) => controller.key),
+  (keys) => {
+    for (const key of findOrigins.keys())
+      if (!keys.includes(key)) findOrigins.delete(key);
+  },
+);
+watch(
+  () => state.activeControllerKey,
+  () => transcriptView.value?.cancelSearchNavigation(),
+  { flush: 'sync' },
+);
+watch(find.revealRequest, (request) => {
+  if (
+    !request ||
+    request.key !== state.activeControllerKey ||
+    !find.current.value.open
+  )
+    return;
+  void nextTick(() => {
+    if (
+      request.key === state.activeControllerKey &&
+      find.revealRequest.value === request &&
+      find.current.value.open
+    )
+      void transcriptView.value?.revealSearchMatch(request.match);
+  });
+});
+function openFind(): void {
+  const origin =
+    document.activeElement instanceof HTMLElement &&
+    !document.activeElement.closest('.command-palette')
+      ? document.activeElement
+      : paletteOrigin.value;
+  if (!find.current.value.open && origin && origin !== document.body)
+    findOrigins.set(state.activeControllerKey, origin);
+  find.open();
+  void nextTick(() => {
+    if (!context().blocked && !paletteOpen.value)
+      transcriptSearch.value?.focus(true);
+  });
+}
+function updateFindQuery(query: string): void {
+  transcriptView.value?.cancelSearchNavigation();
+  find.setQuery(query);
+}
+function navigateFind(direction: number): void {
+  if (context().blocked || find.current.value.pending) return;
+  find.navigate(direction);
+  transcriptSearch.value?.focus();
+}
+function closeFind(): void {
+  if (context().blocked || paletteOpen.value) return;
+  const key = state.activeControllerKey;
+  transcriptView.value?.cancelSearchNavigation();
+  find.close();
+  void nextTick(() => {
+    if (
+      key !== state.activeControllerKey ||
+      context().blocked ||
+      paletteOpen.value
+    )
+      return;
+    const origin = findOrigins.get(key);
+    if (
+      origin?.isConnected &&
+      !origin.closest('.transcript-search') &&
+      !origin.matches(':disabled')
+    )
+      origin.focus({ preventScroll: true });
+    else composerBar.value?.focus();
+  });
+}
+
 const commands = new CommandRegistry<CommandContext>();
 function controlContext(id: string, target?: AppCommandTarget): CommandContext {
   return {
@@ -807,7 +921,10 @@ register(
       document.activeElement !== document.body &&
       !document.activeElement.closest('.command-palette')
     ) {
-      removalOrigin = document.activeElement;
+      // Menu items disappear; use the project's persistent trigger instead.
+      removalOrigin = document.activeElement.closest('.ui-menu')
+        ? projectSidebar.value?.projectActionAnchor(ctx.projectPath)
+        : document.activeElement;
     }
     requestProjectRemoval(commandProject(ctx)!);
   },
@@ -826,6 +943,18 @@ register('focus.sidebar', 'Focus Sidebar', 'Mod+Shift+L', safe, () => {
   if (document.activeElement === document.body)
     projectSidebar.value.openProjectButton?.focus({ preventScroll: true });
 });
+register(
+  'transcript.find',
+  'Find in Transcript',
+  'Mod+F',
+  (ctx) =>
+    safe(ctx) &&
+    !sessionLoading.value &&
+    Boolean(
+      activeController.value && transcriptView.value && messages.value.length,
+    ),
+  openFind,
+);
 register(
   'focus.transcript',
   'Focus Transcript',
@@ -1147,7 +1276,7 @@ async function selectPaletteRow(id: string): Promise<void> {
     }
     const result = await commands.dispatch(id, ctx);
     if (result.status !== 'executed' && !nested) paletteOpen.value = true;
-    else if (!nested && id !== 'queue.review') {
+    else if (!nested && !['queue.review', 'transcript.find'].includes(id)) {
       if (['session.new', 'session.next', 'session.previous'].includes(id))
         focusAfterPaletteNavigation();
       else if (!context().blocked) restorePaletteFocus();
@@ -1797,6 +1926,17 @@ function handleDocumentKeydown(event: KeyboardEvent): void {
   }
   if (paletteOpen.value) return;
   if (
+    event.key === 'Escape' &&
+    !event.isComposing &&
+    find.current.value.open &&
+    !context().blocked
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    closeFind();
+    return;
+  }
+  if (
     !event.repeat &&
     !event.isComposing &&
     !event.getModifierState?.('AltGraph')
@@ -2021,6 +2161,7 @@ function isTitlebarControl(target: EventTarget | null): boolean {
 
 .session-pane {
   display: grid;
+  position: relative;
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;

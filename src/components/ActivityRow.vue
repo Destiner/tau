@@ -11,19 +11,15 @@
         >
           <span class="activity-name">{{ name }}</span>
           <span class="activity-argument">{{ argument }}</span>
-          <!--
-            The disclosure keeps its place whether or not the row has one, so
-            the mark after it lands in the same column on every row that
-            carries one. A row with nothing to report ends at the argument.
-          -->
-          <span class="activity-end">
-            <span class="activity-disclosure-slot">
-              <UiIcon
-                v-if="expandable"
-                class="activity-disclosure"
-                :name="expanded ? 'chevron-up' : 'chevron-down'"
-              />
-            </span>
+          <span
+            class="activity-end"
+            :class="{ marked: entry.toolRunning || entry.toolErrored }"
+          >
+            <UiIcon
+              v-if="expandable"
+              class="activity-disclosure"
+              :name="expanded ? 'chevron-up' : 'chevron-down'"
+            />
             <span
               v-if="entry.toolRunning"
               class="activity-mark running"
@@ -158,7 +154,8 @@ const expandable = computed(() => {
 <style scoped>
 .activity-header {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  position: relative;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   width: 100%;
   min-width: 0;
@@ -178,8 +175,22 @@ const expandable = computed(() => {
 
 .activity-end {
   display: flex;
+  position: absolute;
+  top: 50%;
+  right: 6px;
   align-items: center;
+  padding-left: 3px;
+  transform: translateY(-50%);
   gap: 6px;
+}
+
+.activity-end.marked {
+  background: var(--canvas);
+}
+
+.activity-header:focus-visible .activity-end,
+.activity-header:enabled:hover .activity-end {
+  background: linear-gradient(var(--hover), var(--hover)), var(--canvas);
 }
 
 .activity-mark {
@@ -229,13 +240,6 @@ const expandable = computed(() => {
   line-height: var(--leading-tight);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.activity-disclosure-slot {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 12px;
 }
 
 .activity-disclosure {
@@ -314,5 +318,9 @@ const expandable = computed(() => {
 
 .activity-row :deep(.markdown.activity-thinking-prose p) {
   margin: 0;
+}
+
+.activity-row :deep(.markdown.activity-thinking-prose p + p) {
+  margin-top: 6px;
 }
 </style>

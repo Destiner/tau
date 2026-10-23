@@ -3,6 +3,7 @@
     <MarkdownContent
       v-bind="$attrs"
       :source="source"
+      :search-entry-id="searchEntryId"
       :inline="inline"
       :base-path="basePath"
       :copy-paths="copyPaths"
@@ -31,6 +32,7 @@ import MarkdownContent from './MarkdownContent.vue';
 
 defineProps<{
   source: string;
+  searchEntryId?: string;
   inline?: boolean;
   basePath?: string;
 

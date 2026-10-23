@@ -146,7 +146,7 @@ function handlePaletteToggle(): void {
 }
 
 function beginSessionRename(): void {
-  if (!canRenameSession.value) return;
+  if (!canRenameSession.value || renamingSession.value) return;
   sessionNameDraft.value = sessionTitle.value;
   renamingSession.value = true;
   void nextTick(() => {

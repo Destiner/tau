@@ -63,6 +63,7 @@ import {
   registerConnectedSession,
   promoteMaterializedSession,
   retireUnsavedSession,
+  retainsProvisionalReplacement,
   releaseOrCacheRuntime,
   releaseIdleRuntimes,
   stopControllerProcess,
@@ -372,7 +373,9 @@ async function handleResponse(
     }
     if (
       command === 'get_messages' &&
-      (resolvesStartMessages || resolvesMaterializationMessages)
+      (resolvesStartMessages ||
+        resolvesMaterializationMessages ||
+        (controller.syncing && retainsProvisionalReplacement(controller)))
     ) {
       if (resolvesStartMessages) controller.startMessagesRequestId = '';
       setControllerLifecycle(
