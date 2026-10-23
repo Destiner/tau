@@ -9,7 +9,7 @@ const implementName = 'docs · RHI-6267 · Implement';
 const backupDraft = 'Keep this Backup draft while Pi starts Implement';
 const planDraft = 'Keep this Plan draft while Pi starts Implement';
 
-test('preserves an empty successor across a second command, settlement, and a late Plan read', async ({
+test('preserves an empty successor across settlement and a late Plan read', async ({
   page,
 }) => {
   await page.goto(scenarioUrl);
@@ -57,6 +57,26 @@ test('preserves an empty successor across a second command, settlement, and a la
   await releaseGate(page, 'before-late-plan-command-sync');
 
   await waitForGate(page, 'before-implement-identity');
+  await page.evaluate(() => {
+    const samples: string[] = [];
+    Object.assign(window, { __statusSamples: samples });
+    const record = (): void => {
+      const row = [...document.querySelectorAll('button.session-select')].find(
+        (element) =>
+          element.textContent?.includes('docs · RHI-6267 · Implement'),
+      );
+      if (row)
+        samples.push(
+          row.querySelector('[role="img"]')?.getAttribute('aria-label') ??
+            'Idle',
+        );
+    };
+    new MutationObserver(record).observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+    });
+  });
   await releaseGate(page, 'before-implement-identity');
   await waitForGate(page, 'implement-identity-visible-before-late-sync');
 
@@ -66,13 +86,38 @@ test('preserves an empty successor across a second command, settlement, and a la
   await expect(planRow).toHaveCount(1);
   await expect(implementRow).toHaveCount(1);
   await expect(implementRow).toHaveAttribute('aria-current', 'page');
+  expect(
+    await page.evaluate(() => [
+      ...new Set(
+        (window as Window & { __statusSamples?: string[] }).__statusSamples,
+      ),
+    ]),
+  ).toEqual(['Working']);
+  await expect(
+    implementRow.getByRole('img', { name: 'Working' }),
+  ).toBeVisible();
+  await backupRow.click();
+  await expect(composer).toHaveValue(backupDraft);
+  await expect(
+    implementRow.getByRole('img', { name: 'Working' }),
+  ).toBeVisible();
+  await implementRow.click();
   await releaseGate(page, 'implement-identity-visible-before-late-sync');
   await waitForGate(page, 'before-implement-retry-one');
+  await expect(
+    implementRow.getByRole('img', { name: 'Working' }),
+  ).toBeVisible();
 
   await releaseGate(page, 'before-implement-retry-one');
   await page.clock.runFor(1);
+  await expect(
+    implementRow.getByRole('img', { name: 'Working' }),
+  ).toBeVisible();
   await page.clock.runFor(250);
   await waitForGate(page, 'before-implement-retry-two');
+  await expect(
+    implementRow.getByRole('img', { name: 'Working' }),
+  ).toBeVisible();
 
   await releaseGate(page, 'before-implement-retry-two');
   await page.clock.runFor(1);
@@ -84,6 +129,9 @@ test('preserves an empty successor across a second command, settlement, and a la
   await page.clock.runFor(1_500);
   await page.clock.runFor(2_000);
   await waitForGate(page, 'before-delayed-successor-start');
+  await expect(implementRow.getByRole('img', { name: 'Working' })).toHaveCount(
+    0,
+  );
   await backupRow.click();
   await expect(page.getByRole('heading', { name: 'Backup' })).toBeVisible();
   await expect(composer).toHaveValue(backupDraft);

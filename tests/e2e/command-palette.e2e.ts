@@ -961,7 +961,7 @@ test('shows shared shortcuts for state-dependent palette and composer commands',
   await page.getByRole('button', { name: 'Send Message' }).focus();
   await expect(
     page.locator('.ui-tooltip', { hasText: 'Send Message' }).locator('kbd'),
-  ).toHaveText('Enter');
+  ).toHaveText('↩');
 });
 
 test('palette actions return focus to an editable destination, including the current session', async ({
@@ -1082,7 +1082,10 @@ test('a project-row New Session targets that row, not the active project', async
     '.project-group[data-project-path="/browser-dev/projects/notes"]',
   );
   await notes.hover();
-  await notes.getByRole('button', { name: 'New Session in notes' }).click();
+  await notes.locator('.project-toggle').click({ button: 'right' });
+  await page
+    .getByRole('menuitem', { name: 'New Session', exact: true })
+    .click();
   await expect(notes.locator('.project-row')).toHaveClass(/selected/);
 });
 

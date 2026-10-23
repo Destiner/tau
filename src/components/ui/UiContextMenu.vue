@@ -25,9 +25,15 @@
           :key="`${item.label}:${index}`"
           class="ui-menu-item"
           :aria-label="item.label"
+          :data-tone="item.tone"
           :disabled="item.disabled || undefined"
           @select="() => runItem(item)"
         >
+          <UiIcon
+            v-if="item.icon"
+            class="ui-menu-icon"
+            :name="item.icon"
+          />
           <span>{{ item.label }}</span>
           <kbd
             v-if="item.shortcut"
@@ -55,6 +61,7 @@ import {
   type ShortcutPlatform,
 } from '../../lib/app-commands/shortcut';
 
+import UiIcon from './UiIcon.vue';
 import type { UiMenuItem } from './UiMenu.vue';
 
 const props = withDefaults(

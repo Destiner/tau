@@ -94,11 +94,11 @@ function handleCloseAutoFocus(event: Event): void {
   display: flex;
   position: fixed;
   z-index: 21;
-  top: 68px;
+  top: min(68px, calc(100vh - 8px));
   left: 50%;
   flex-direction: column;
   width: min(440px, calc(100% - 36px));
-  max-height: calc(100vh - 120px);
+  max-height: max(0px, calc(100vh - 120px));
   overflow: hidden;
   transform: translateX(-50%);
   border: 1px solid var(--border);

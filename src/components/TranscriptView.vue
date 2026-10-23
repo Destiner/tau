@@ -674,8 +674,8 @@ defineExpose({ scrollToEnd, revealSearchMatch, cancelSearchNavigation });
 }
 
 .message.user :deep(.user-bubble) {
-  width: fit-content;
-  max-width: 90%;
+  width: 100%;
+  min-width: 0;
   padding: 9px 13px;
   border-radius: 7px;
   background: var(--user);

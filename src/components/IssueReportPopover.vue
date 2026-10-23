@@ -21,6 +21,7 @@
             side="top"
             align="end"
             :side-offset="5"
+            :collision-padding="8"
             aria-label="Report an Issue"
             :aria-busy="submitting || undefined"
             @interact-outside="preserveSurfaceUnderPalette"
@@ -172,8 +173,10 @@ async function handleSubmit(): Promise<void> {
 
 :global(.issue-report-popover) {
   z-index: 20;
-  width: min(280px, calc(100vw - 18px));
+  width: min(280px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
   padding: 10px;
+  overflow: auto;
   outline: 0;
 }
 
@@ -193,7 +196,6 @@ async function handleSubmit(): Promise<void> {
 
 .description-field :deep(.ui-textarea) {
   min-height: 108px;
-  resize: none;
 }
 
 .issue-report-error {

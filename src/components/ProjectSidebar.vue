@@ -37,79 +37,46 @@
           :data-id="project.path"
           :data-project-path="project.path"
         >
-          <div
-            class="project-row"
-            :class="{ selected: project.path === state.activeProjectPath }"
-          >
-            <UiTooltip text="Drag to Reorder">
-              <span
-                class="project-drag-handle"
-                aria-hidden="true"
-              >
-                <UiIcon name="grip" />
-              </span>
-            </UiTooltip>
-            <!--
-              Sided below, clear of the row's own actions, which sit to the
-              right of this button and carry tooltips of their own. Slower than
-              a control's name, too: this one answers a question the reader
-              stopped to ask, rather than naming what is under the pointer on
-              the way to a session.
-            -->
-            <UiTooltip
-              :text="projectLocation(project)"
-              side="bottom"
-              :delay="700"
+          <UiContextMenu :items="() => projectActionItems(project)">
+            <div
+              class="project-row"
+              :class="{ selected: project.path === state.activeProjectPath }"
             >
-              <button
-                class="project-toggle"
-                type="button"
-                :disabled="projectActionsDisabled"
-                @click="() => handleProjectToggle(project)"
+              <UiTooltip text="Drag to Reorder">
+                <span
+                  class="project-drag-handle"
+                  aria-hidden="true"
+                >
+                  <UiIcon name="grip" />
+                </span>
+              </UiTooltip>
+              <!-- Slower than control tooltips: reveal the location only when
+                   the pointer pauses, not on the way to a session. -->
+              <UiTooltip
+                :text="projectLocation(project)"
+                side="bottom"
+                :delay="700"
               >
-                <UiStatusDot
-                  v-if="projectIndicator(project)"
-                  class="project-status"
-                  :tone="projectIndicator(project) || undefined"
-                  :label="indicatorLabel(projectIndicator(project))"
-                />
-                <span>{{ project.name }}</span>
-                <UiIcon
-                  :name="project.collapsed ? 'chevron-right' : 'chevron-down'"
-                />
-              </button>
-            </UiTooltip>
-            <UiTooltip
-              text="New Session"
-              shortcut="Mod+N"
-            >
-              <UiIconButton
-                class="row-action"
-                size="md"
-                variant="reveal"
-                :label="`New Session in ${project.name}`"
-                :disabled="projectActionsDisabled"
-                @click="() => handleNewSession(project)"
-              >
-                <UiIcon name="plus" />
-              </UiIconButton>
-            </UiTooltip>
-            <UiTooltip text="Remove Project">
-              <UiIconButton
-                class="row-action"
-                size="md"
-                variant="reveal"
-                tone="danger"
-                :label="`Remove ${project.name}`"
-                :disabled="projectActionsDisabled"
-                @click="
-                  (event: MouseEvent) => handleRemoveProject(project, event)
-                "
-              >
-                <UiIcon name="trash" />
-              </UiIconButton>
-            </UiTooltip>
-          </div>
+                <button
+                  class="project-toggle"
+                  type="button"
+                  :disabled="projectActionsDisabled"
+                  @click="() => handleProjectToggle(project)"
+                >
+                  <UiStatusDot
+                    v-if="projectIndicator(project)"
+                    class="project-status"
+                    :tone="projectIndicator(project) || undefined"
+                    :label="indicatorLabel(projectIndicator(project))"
+                  />
+                  <span>{{ project.name }}</span>
+                  <UiIcon
+                    :name="project.collapsed ? 'chevron-right' : 'chevron-down'"
+                  />
+                </button>
+              </UiTooltip>
+            </div>
+          </UiContextMenu>
 
           <div
             v-if="!project.collapsed"
@@ -567,8 +534,16 @@ function handleNewSession(project: ProjectSummary): void {
   newSession(project);
 }
 
-function handleRemoveProject(project: ProjectSummary, event: MouseEvent): void {
-  if (event.currentTarget instanceof HTMLElement) event.currentTarget.focus();
+function projectActionAnchor(path: string): HTMLButtonElement | undefined {
+  const group = Array.from(
+    sidebar.value?.querySelectorAll<HTMLElement>('.project-group') ?? [],
+  ).find((element) => element.dataset.projectPath === path);
+  return (
+    group?.querySelector<HTMLButtonElement>('.project-toggle') ?? undefined
+  );
+}
+
+function handleRemoveProject(project: ProjectSummary): void {
   if (appCommandDispatch) {
     appCommandDispatch('project.remove', projectTarget(project));
     return;
@@ -631,6 +606,30 @@ function projectMenuItems(): UiMenuItem[] {
       label: 'Open Remote Project',
       disabled: projectActionsDisabled.value,
       run: handleOpenRemoteProject,
+    },
+  ];
+}
+
+function projectActionItems(project: ProjectSummary): UiMenuItem[] {
+  const target = projectTarget(project);
+  const newSessionHint = commandHint?.('session.new', target);
+  const removeHint = commandHint?.('project.remove', target);
+  return [
+    {
+      label: newSessionHint?.title ?? 'New Session',
+      icon: 'note-pencil',
+      shortcut: newSessionHint?.shortcut,
+      disabled:
+        projectActionsDisabled.value || newSessionHint?.available === false,
+      run: () => handleNewSession(project),
+    },
+    {
+      label: removeHint?.title ?? 'Remove Project',
+      icon: 'trash',
+      tone: 'danger',
+      shortcut: removeHint?.shortcut,
+      disabled: projectActionsDisabled.value || removeHint?.available === false,
+      run: () => handleRemoveProject(project),
     },
   ];
 }
@@ -807,6 +806,7 @@ function isTitlebarControl(target: EventTarget | null): boolean {
 }
 
 defineExpose({
+  projectActionAnchor,
   focusSelectedRow,
   focusedProjectPath,
   focusedSessionId,
@@ -1031,11 +1031,6 @@ defineExpose({
   opacity: 0.98;
   background: var(--panel-raised);
   box-shadow: 0 15px 30px var(--shadow-strong);
-}
-
-.project-row:hover :deep(.row-action),
-.project-row:focus-within :deep(.row-action) {
-  opacity: 0.65;
 }
 
 .session-list {

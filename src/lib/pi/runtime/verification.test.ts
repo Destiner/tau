@@ -859,6 +859,203 @@ describe('command-created session durability — verification', () => {
     },
   );
 
+  it('ends a rejected successor history read outside settlement', async () => {
+    mockInvoke.mockResolvedValue(undefined);
+    vi.useFakeTimers();
+    try {
+      const { handleResponse, rpc } = await import('./index');
+      const { sessionIndicator } = await import('../../../composables/state');
+      const controller = makeController();
+      addEphemeral(controller);
+      const stateId = nextRequestId('successor-discovery');
+      await rpc(controller, { id: stateId, type: 'get_state' });
+      await handleResponse(controller, {
+        id: stateId,
+        command: 'get_state',
+        success: true,
+        data: {
+          sessionId: 'successor',
+          sessionFile: '/tmp/project/successor.jsonl',
+          isStreaming: false,
+        },
+      });
+      const historyRequest = mockInvoke.mock.calls
+        .filter(([command]) => command === 'send_pi')
+        .map(
+          ([, input]) =>
+            (input as { request: Record<string, unknown> }).request,
+        )
+        .reverse()
+        .find((request) => request.type === 'get_messages');
+      expect(historyRequest).toBeDefined();
+      expect(controller.startMessagesRequestId).toBe('');
+      expect(controller.materializationMessagesRequestId).toBe('');
+      expect(controller.postSettlementHydration).toBe(false);
+      expect(controller.syncing).toBe(true);
+      const project = state.workspace!.projects[0]!;
+      const successor = state.ephemeralSessions[0]!;
+      expect(sessionIndicator(project, successor)).toBe('working');
+
+      await handleResponse(controller, {
+        id: historyRequest!.id,
+        command: 'get_messages',
+        success: false,
+      });
+      expect(controller.syncing).toBe(false);
+      expect(controller.working).toBe(false);
+      expect(sessionIndicator(project, successor)).not.toBe('working');
+      expect(feedbackMessage(controller)).not.toBe('');
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1_000);
+      expect(controller.syncing).toBe(false);
+      expect(controller.disposed).toBe(false);
+      expect(state.ephemeralSessions[0]?.id).toBe('successor');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    { generation: 2 },
+    { sessionId: 'next' },
+    { sessionPath: '/next.jsonl' },
+    { messagesHydrationSequence: 2 },
+    { disposed: true },
+  ])('ignores stale successor history rejection after %j', async (patch) => {
+    mockInvoke.mockResolvedValue(undefined);
+    const { handleResponse, rpc } = await import('./index');
+    const controller = makeController({ syncing: true });
+    controller.provisionalReplacement = {
+      generation: controller.generation,
+      sessionId: controller.sessionId,
+      sessionPath: controller.sessionPath,
+    };
+    addEphemeral(controller);
+    const requestId = nextRequestId('replacement-history');
+    await rpc(controller, { id: requestId, type: 'get_messages' });
+    Object.assign(controller, patch);
+    await handleResponse(controller, {
+      id: requestId,
+      command: 'get_messages',
+      success: false,
+    });
+    expect(controller.syncing).toBe(true);
+    expect(feedbackMessage(controller)).toBe('');
+  });
+
+  it('ends an unanswered successor history read outside settlement', async () => {
+    mockInvoke.mockResolvedValue(undefined);
+    vi.useFakeTimers();
+    try {
+      const { rpc } = await import('./index');
+      const controller = makeController({ syncing: true });
+      controller.provisionalReplacement = {
+        generation: controller.generation,
+        sessionId: controller.sessionId,
+        sessionPath: controller.sessionPath,
+      };
+      addEphemeral(controller);
+      await rpc(controller, {
+        id: nextRequestId('replacement-history'),
+        type: 'get_messages',
+      });
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1_000);
+      expect(controller.syncing).toBe(false);
+      expect(controller.working).toBe(false);
+      expect(feedbackMessage(controller)).not.toBe('');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    { generation: 2 },
+    { sessionId: 'next' },
+    { sessionPath: '/next.jsonl' },
+    { messagesHydrationSequence: 2 },
+    { disposed: true },
+  ])('ignores stale successor history timeout after %j', async (patch) => {
+    mockInvoke.mockResolvedValue(undefined);
+    vi.useFakeTimers();
+    try {
+      const { rpc } = await import('./index');
+      const controller = makeController({ syncing: true });
+      controller.provisionalReplacement = {
+        generation: controller.generation,
+        sessionId: controller.sessionId,
+        sessionPath: controller.sessionPath,
+      };
+      addEphemeral(controller);
+      await rpc(controller, {
+        id: nextRequestId('replacement-history'),
+        type: 'get_messages',
+      });
+      Object.assign(controller, patch);
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1_000);
+      expect(controller.syncing).toBe(true);
+      expect(feedbackMessage(controller)).toBe('');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['get_messages', 'get_available_thinking_levels'])(
+    'retries unanswered settlement hydration %s',
+    async (method) => {
+      mockInvoke.mockResolvedValue(undefined);
+      vi.useFakeTimers();
+      try {
+        const {
+          rpc,
+          stopControllerProcess,
+          watchingMaterializationVerification,
+        } = await import('./index');
+        const controller = makeController({
+          syncing: true,
+          postSettlementHydration: true,
+        });
+        addEphemeral(controller);
+        const messagesId = nextRequestId('settled-messages');
+        controller.materializationMessagesRequestId = messagesId;
+        await rpc(controller, {
+          id:
+            method === 'get_messages'
+              ? messagesId
+              : nextRequestId('settled-efforts'),
+          type: method,
+        });
+        await vi.advanceTimersByTimeAsync(10 * 60 * 1_000);
+        expect(controller.materializationMessagesRequestId).toBe('');
+        expect(controller.syncing).toBe(false);
+        expect(controller.postSettlementHydration).toBe(true);
+        expect(watchingMaterializationVerification(controller)).toBe(true);
+        expect(feedbackMessage(controller)).not.toBe('');
+        await stopControllerProcess(controller, undefined, false);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it('ends successor reconciliation when verification RPCs never answer', async () => {
+    mockInvoke.mockResolvedValue(undefined);
+    vi.useFakeTimers();
+    try {
+      const { watchingMaterializationVerification } = await import('./index');
+      const { controller } = await discoverDelayedReplacement();
+      for (const delay of [250, 750, 1_500]) {
+        await vi.advanceTimersByTimeAsync(delay);
+        expect(controller.materializationStateRequestId).not.toBe('');
+        await vi.advanceTimersByTimeAsync(10 * 60 * 1_000);
+      }
+      expect(controller.postSettlementHydration).toBe(false);
+      expect(controller.syncing).toBe(false);
+      expect(watchingMaterializationVerification(controller)).toBe(false);
+      expect(feedbackMessage(controller)).not.toBe('');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('stops retrying and releases an unverified identity after the bounded policy', async () => {
     vi.useFakeTimers();
     try {
