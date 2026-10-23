@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
 import { expect, test } from './fixtures';
 
@@ -344,6 +344,95 @@ test('a narrow removal confirmation wraps a long project name from IPC', async (
   );
   const box = await dialog.boundingBox();
   expect(box?.width).toBeLessThanOrEqual(444);
+});
+
+test('long-name removal keeps warning and pointer actions reachable at native minimum size', async ({
+  page,
+}) => {
+  const viewport = { width: 720, height: 520 };
+  const longName =
+    'Invented clockwork puffin observatory and interplanetary marmalade archive '.repeat(
+      40,
+    );
+  await interceptInitialProjectName(page, longName);
+  await page.setViewportSize(viewport);
+  await page.goto('/');
+  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
+  await installRemovalMock(page);
+  await openSidebarRemoval(page);
+
+  const dialog = page.locator('[role="alertdialog"].project-removal');
+  const copy = dialog.locator('.project-removal-copy');
+  const description = dialog.locator('.project-removal-description');
+  const cancel = dialog.getByRole('button', { name: 'Cancel' });
+  const remove = dialog.getByRole('button', { name: 'Remove', exact: true });
+  await expect(cancel).toBeFocused();
+  const dialogBox = await dialog.boundingBox();
+  expect(dialogBox).not.toBeNull();
+  expect(dialogBox!.x).toBeGreaterThanOrEqual(0);
+  expect(dialogBox!.y).toBeGreaterThanOrEqual(0);
+  expect(dialogBox!.x + dialogBox!.width).toBeLessThanOrEqual(viewport.width);
+  expect(dialogBox!.y + dialogBox!.height).toBeLessThanOrEqual(viewport.height);
+
+  async function pointerClick(control: Locator): Promise<void> {
+    const box = await control.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.y).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height);
+    await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  }
+
+  const actions = dialog.locator('.project-removal-actions');
+  const actionsBefore = await actions.boundingBox();
+  expect(
+    await copy.evaluate(
+      (element) => element.scrollHeight > element.clientHeight,
+    ),
+  ).toBe(true);
+  const copyBox = await copy.boundingBox();
+  expect(copyBox).not.toBeNull();
+  await page.mouse.move(
+    copyBox!.x + copyBox!.width / 2,
+    copyBox!.y + copyBox!.height / 2,
+  );
+  await page.mouse.wheel(0, 10000);
+  await expect
+    .poll(() =>
+      description.evaluate((element) => {
+        const text = [...element.childNodes]
+          .filter(
+            (node) =>
+              node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
+          )
+          .at(-1)!;
+        const range = document.createRange();
+        range.setStart(text, (text.textContent?.length ?? 0) - 1);
+        range.setEnd(text, text.textContent?.length ?? 0);
+        const end = range.getBoundingClientRect();
+        const bounds = element.parentElement!.getBoundingClientRect();
+        return end.top >= bounds.top && end.bottom <= bounds.bottom;
+      }),
+    )
+    .toBe(true);
+  await expect(description).toContainText('discards unsent drafts.');
+  const actionsAfter = await actions.boundingBox();
+  expect(actionsAfter).not.toBeNull();
+  expect(actionsAfter!.y).toBeCloseTo(actionsBefore!.y, 0);
+  expect(actionsAfter!.height).toBeCloseTo(actionsBefore!.height, 0);
+
+  await pointerClick(cancel);
+  await expect(dialog).toHaveCount(0);
+  expect(await removalCalls(page)).toBe(0);
+
+  // Confirm separately so both actions must work without locator auto-scrolling.
+  await openSidebarRemoval(page);
+  await expect(cancel).toBeFocused();
+  await pointerClick(remove);
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator(project(atlasPath))).toHaveCount(0);
+  expect(await removalCalls(page)).toBe(1);
 });
 
 test('a pending confirmation prevents duplicate submission and unsafe dismissal', async ({

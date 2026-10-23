@@ -5,13 +5,14 @@
   >
     <DialogPortal>
       <DialogOverlay
-        class="ui-confirmation-overlay"
+        class="ui-confirmation-overlay ui-modal-overlay"
         :class="`${classPrefix}-overlay`"
       />
       <DialogContent
         ref="content"
-        class="ui-confirmation"
+        class="ui-confirmation ui-modal"
         :class="classPrefix"
+        data-modal-size="compact"
         role="alertdialog"
         :aria-busy="busy || undefined"
         @keydown.capture="handleKeydown"
@@ -23,14 +24,14 @@
           :class="`${classPrefix}-copy`"
         >
           <DialogTitle
-            class="ui-confirmation-title"
+            class="ui-confirmation-title ui-modal-title"
             :class="`${classPrefix}-title`"
           >
             {{ title }}
           </DialogTitle>
           <DialogDescription
             v-if="description"
-            class="ui-confirmation-description"
+            class="ui-confirmation-description ui-modal-description"
             :class="`${classPrefix}-description`"
           >
             {{ description }}
@@ -45,7 +46,7 @@
           </p>
         </div>
         <footer
-          class="ui-confirmation-actions"
+          class="ui-confirmation-actions ui-modal-actions"
           :class="`${classPrefix}-actions`"
         >
           <UiButton
@@ -226,63 +227,27 @@ function confirm(): void {
 
 <style scoped>
 :global(.ui-confirmation-overlay) {
-  position: fixed;
   z-index: 30;
-  background: color-mix(in srgb, var(--scrim) 72%, transparent);
-  inset: 0;
 }
 
 :global(.ui-confirmation) {
-  display: flex;
-  position: fixed;
   z-index: 31;
-  top: min(112px, calc(100vh - 8px));
-  left: 50%;
-  flex-direction: column;
-  width: min(348px, calc(100% - 36px));
-  max-height: max(0px, calc(100vh - 120px));
-  overflow: auto;
-  transform: translateX(-50%);
-  border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
-  border-radius: var(--radius-lg);
-  outline: 0;
-  background: color-mix(in srgb, var(--panel-raised) 96%, transparent);
-  box-shadow: 0 18px 42px var(--shadow-strong);
-  backdrop-filter: blur(22px);
 }
 
 :global(.ui-confirmation-copy) {
-  padding: 18px 20px 14px;
-}
-
-:global(.ui-confirmation-title) {
-  margin: 0;
-  color: var(--text);
-  font-size: var(--text-md);
-  font-weight: 500;
-  line-height: var(--leading-tight);
+  min-height: 0;
+  padding: var(--modal-gutter);
+  overflow: auto;
 }
 
 :global(.ui-confirmation-description),
 :global(.ui-confirmation-error) {
-  margin: 6px 0 0;
-  font-size: var(--text-sm);
-  line-height: var(--leading-ui);
-}
-
-:global(.ui-confirmation-description) {
-  color: var(--muted);
-  overflow-wrap: anywhere;
+  margin: 8px 0 0;
 }
 
 :global(.ui-confirmation-error) {
   color: var(--danger);
-}
-
-:global(.ui-confirmation-actions) {
-  display: flex;
-  justify-content: flex-end;
-  padding: 0 16px 14px;
-  gap: 8px;
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
 }
 </style>

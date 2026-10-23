@@ -9,9 +9,13 @@
     @update:open="handleOpenChange"
   >
     <template #footer>
-      <div ref="footerElement">
+      <div
+        ref="footerElement"
+        class="ui-modal-action-group"
+      >
         <UiButton
           v-if="incident?.action"
+          size="md"
           variant="primary"
           :disabled="busy"
           :title="
@@ -22,6 +26,7 @@
         >
         <UiButton
           v-if="dismissible"
+          size="md"
           :disabled="busy"
           @click="requestClose"
           >Close</UiButton
