@@ -23,7 +23,11 @@ for (const step of ['connection', 'directory'] as const) {
     expect(box).not.toBeNull();
     if (!box) return;
 
-    expect(box.y).toBeCloseTo(68, 0);
+    // The native title bar occupies the first 30px; stay in the upper third.
+    expect(box.y).toBeGreaterThanOrEqual(30);
+    expect(box.y).toBeLessThan(viewport.height / 3);
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
     expect(box.x + box.width / 2).toBeCloseTo(viewport.width / 2, 0);
     expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
   });
@@ -52,6 +56,39 @@ for (const step of ['connection', 'directory'] as const) {
     }
   });
 }
+
+test('remote directories remain keyboard and wheel reachable at native minimum size', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 720, height: 520 });
+  await page.goto('/?fixture=remote-dialog&step=directory');
+
+  const dialog = page.getByRole('dialog');
+  const filter = dialog.getByRole('textbox', {
+    name: 'Filter Remote Directories',
+  });
+  const options = dialog.getByRole('option');
+  await expect(filter).toBeFocused();
+  await expect(options).toHaveCount(24);
+  for (let index = 1; index < 24; index += 1) {
+    await filter.press('ArrowDown');
+  }
+  await expect(options.last()).toHaveAttribute('aria-selected', 'true');
+  await expect(options.last()).toBeInViewport({ ratio: 1 });
+  await expect(filter).toBeFocused();
+  await expect(filter).toBeInViewport({ ratio: 1 });
+
+  const list = dialog.getByRole('listbox');
+  const box = await list.boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.wheel(0, -10000);
+  await expect(options.first()).toBeInViewport({ ratio: 1 });
+  await expect(options.last()).not.toBeInViewport();
+  await expect(filter).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+});
 
 test('submits an SSH connection with Mod+Enter', async ({ page }) => {
   await page.goto('/?fixture=remote-dialog');

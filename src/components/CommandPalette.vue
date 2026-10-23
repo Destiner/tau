@@ -4,10 +4,11 @@
     @update:open="handleOpenChange"
   >
     <DialogPortal>
-      <DialogOverlay class="command-palette-scrim" />
+      <DialogOverlay class="command-palette-scrim ui-modal-overlay" />
       <!-- App's blocking-surface selector must not treat the palette as an underlying dialog. -->
       <DialogContent
-        class="command-palette"
+        class="command-palette ui-modal"
+        data-modal-size="wide"
         :data-state="undefined"
         :aria-label="pageTitle"
         @open-auto-focus="handleOpenAutoFocus"
@@ -382,27 +383,11 @@ export type CommandPaletteRow = {
 
 <style scoped>
 :global(.command-palette-scrim) {
-  position: fixed;
   z-index: 101;
-  background: var(--scrim);
-  inset: 0;
 }
 
 :global(.command-palette) {
-  display: flex;
-  position: fixed;
   z-index: 102;
-  top: 15vh;
-  left: 50%;
-  flex-direction: column;
-  width: min(490px, calc(100% - 28px));
-  max-height: min(520px, calc(85vh - 32px));
-  overflow: hidden;
-  transform: translateX(-50%);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--panel-raised);
-  box-shadow: 0 12px 36px var(--shadow-strong);
 }
 
 .command-palette-title-hidden {
@@ -416,10 +401,10 @@ export type CommandPaletteRow = {
 
 .command-palette-header {
   display: flex;
+  flex: none;
   align-items: center;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-  gap: 6px;
+  padding: var(--modal-gutter);
+  gap: 8px;
 }
 
 .command-palette-header input {
@@ -457,7 +442,8 @@ export type CommandPaletteRow = {
 }
 
 .command-palette-results {
-  padding: 6px;
+  min-height: 0;
+  padding: 0 6px 6px;
   overflow: auto;
   overscroll-behavior: contain;
 }

@@ -4,30 +4,34 @@
     @update:open="handleOpenChange"
   >
     <DialogPortal>
-      <DialogOverlay class="ui-dialog-overlay" />
+      <DialogOverlay class="ui-dialog-overlay ui-modal-overlay" />
       <DialogContent
-        class="ui-dialog-content"
-        :class="`width-${width}`"
+        class="ui-dialog-content ui-modal"
+        :data-modal-size="width === 'md' ? 'wide' : 'standard'"
         :aria-busy="busy || undefined"
         @close-auto-focus="handleCloseAutoFocus"
       >
-        <header class="ui-dialog-head">
-          <DialogTitle class="ui-dialog-title">{{ title }}</DialogTitle>
-          <DialogDescription
-            v-if="description"
-            class="ui-dialog-desc"
-            >{{ description }}</DialogDescription
+        <div class="ui-dialog-scroll">
+          <header class="ui-dialog-head">
+            <DialogTitle class="ui-dialog-title ui-modal-title">{{
+              title
+            }}</DialogTitle>
+            <DialogDescription
+              v-if="description"
+              class="ui-dialog-desc ui-modal-description"
+              >{{ description }}</DialogDescription
+            >
+          </header>
+          <div
+            v-if="$slots.default"
+            class="ui-dialog-body"
           >
-        </header>
-        <div
-          v-if="$slots.default"
-          class="ui-dialog-body"
-        >
-          <slot />
+            <slot />
+          </div>
         </div>
         <footer
           v-if="$slots.footer"
-          class="ui-dialog-foot"
+          class="ui-dialog-foot ui-modal-actions"
         >
           <slot name="footer" />
         </footer>
@@ -84,54 +88,31 @@ function handleCloseAutoFocus(event: Event): void {
 
 <style scoped>
 :global(.ui-dialog-overlay) {
-  position: fixed;
   z-index: 20;
-  background: var(--scrim);
-  inset: 0;
 }
 
 :global(.ui-dialog-content) {
-  display: flex;
-  position: fixed;
   z-index: 21;
-  top: 68px;
-  left: 50%;
-  flex-direction: column;
-  width: min(440px, calc(100% - 36px));
-  max-height: calc(100vh - 120px);
-  overflow: hidden;
-  transform: translateX(-50%);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--panel-raised);
-  box-shadow: 0 14px 40px var(--shadow-strong);
 }
 
-:global(.ui-dialog-content.width-md) {
-  width: min(480px, calc(100% - 36px));
+:global(.ui-dialog-scroll) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
 }
 
 :global(.ui-dialog-head) {
   display: flex;
+  flex: none;
   flex-direction: column;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
-  gap: 3px;
-}
-
-:global(.ui-dialog-title) {
-  margin: 0;
-  color: var(--text);
-  font-size: var(--text-md);
-  font-weight: 500;
-  line-height: var(--leading-tight);
+  padding: var(--modal-gutter);
+  gap: 8px;
 }
 
 :global(.ui-dialog-desc) {
   margin: 0;
-  color: var(--muted);
-  font-size: var(--text-sm);
-  line-height: var(--leading-ui);
 }
 
 :global(.ui-dialog-body) {
@@ -139,17 +120,8 @@ function handleCloseAutoFocus(event: Event): void {
   flex: 1;
   flex-direction: column;
   min-height: 0;
-  padding: 12px;
+  padding: 0 var(--modal-gutter) var(--modal-gutter);
   overflow: auto;
   gap: 8px;
-}
-
-:global(.ui-dialog-foot) {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  padding: 10px 12px;
-  border-top: 1px solid var(--border);
-  gap: 6px;
 }
 </style>

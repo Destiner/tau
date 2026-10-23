@@ -59,6 +59,7 @@
         <UiInput
           ref="directoryFilterInput"
           v-model="directoryFilter"
+          class="remote-directory-filter"
           variant="mono"
           :error="Boolean(connectionError)"
           type="text"
@@ -261,6 +262,10 @@ function scrollSelected(): void {
 
 .remote-directory-dialog {
   display: contents;
+}
+
+.remote-directory-filter {
+  flex: none;
 }
 
 .remote-dialog-error {
