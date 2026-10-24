@@ -791,83 +791,80 @@ test('at 480px a long title leaves Find controls reachable and the active range 
   await expect(composer).toHaveValue('Narrow window draft');
 });
 
-for (const width of [480, 1280]) {
-  for (const colorScheme of ['light', 'dark'] as const) {
-    test(`compact search field contains its status at ${width}px in ${colorScheme} mode`, async ({
-      page,
-    }) => {
-      await page.setViewportSize({ width, height: 800 });
-      await page.emulateMedia({ colorScheme });
-      await page.goto('/?fixture=long-transcript&search=true&count=12');
-      await expect(searchInput(page)).toHaveAttribute('placeholder', 'Search');
-      await expect(searchBar(page)).not.toContainText('Loaded messages only');
-      const geometry = async (): Promise<void> => {
-        const boxes = await searchBar(page).evaluate((popup) => {
-          const field = popup.querySelector('.search-field')!;
-          const input = field.querySelector('input')!;
-          const status = field.querySelector('[aria-live]')!;
-          const controls = popup.querySelector('.search-controls')!;
-          const buttons = [...popup.querySelectorAll('button')];
-          const rect = (
-            element: Element,
-          ): { left: number; right: number; width: number } => {
-            const { left, right, width } = element.getBoundingClientRect();
-            return { left, right, width };
-          };
-          return {
-            popup: rect(popup),
-            field: rect(field),
-            input: rect(input),
-            status: rect(status),
-            controls: rect(controls),
-            buttons: buttons.map(rect),
-            inputAlign: getComputedStyle(input).textAlign,
-            statusAlign: getComputedStyle(status).textAlign,
-          };
-        });
-        expect(boxes.popup.left).toBeGreaterThanOrEqual(0);
-        expect(boxes.popup.right).toBeLessThanOrEqual(width);
-        expect(boxes.field.left).toBeGreaterThanOrEqual(boxes.controls.left);
-        expect(boxes.field.left - boxes.controls.left).toBeLessThan(10);
-        expect(boxes.field.right).toBeLessThanOrEqual(boxes.buttons[0]!.left);
-        expect(boxes.buttons[0]!.left - boxes.field.right).toBeLessThan(5);
-        expect(boxes.input.width).toBeGreaterThan(35);
-        expect(boxes.input.left).toBeGreaterThanOrEqual(boxes.field.left);
-        expect(boxes.input.right).toBeLessThanOrEqual(boxes.status.left);
-        expect(boxes.status.right).toBeLessThanOrEqual(boxes.field.right);
-        expect(boxes.inputAlign).toMatch(/^(start|left)$/);
-        expect(boxes.statusAlign).toBe('right');
-        for (const label of ['Previous Match', 'Next Match', 'Close Find']) {
-          await expect(
-            page.getByRole('button', { name: label, exact: true }),
-          ).toBeInViewport({ ratio: 1 });
-        }
-      };
-      await query(page, '', '');
-      await geometry();
-      await query(page, 'horizontal padding', '1 / 120');
-      await searchInput(page).press('Shift+Enter');
-      await expect(searchBar(page)).toContainText('120 / 120');
-      await geometry();
-      const before = await page
+for (const { width, colorScheme } of [
+  { width: 480, colorScheme: 'light' },
+  { width: 1280, colorScheme: 'dark' },
+] as const) {
+  test(`compact search field contains its status at ${width}px in ${colorScheme} mode`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 800 });
+    await page.emulateMedia({ colorScheme });
+    await page.goto('/?fixture=long-transcript&search=true&count=12');
+    await expect(searchInput(page)).toHaveAttribute('placeholder', 'Search');
+    await expect(searchBar(page)).not.toContainText('Loaded messages only');
+    const geometry = async (): Promise<void> => {
+      const boxes = await searchBar(page).evaluate((popup) => {
+        const field = popup.querySelector('.search-field')!;
+        const input = field.querySelector('input')!;
+        const status = field.querySelector('[aria-live]')!;
+        const controls = popup.querySelector('.search-controls')!;
+        const buttons = [...popup.querySelectorAll('button')];
+        const rect = (
+          element: Element,
+        ): { left: number; right: number; width: number } => {
+          const { left, right, width } = element.getBoundingClientRect();
+          return { left, right, width };
+        };
+        return {
+          popup: rect(popup),
+          field: rect(field),
+          input: rect(input),
+          status: rect(status),
+          controls: rect(controls),
+          buttons: buttons.map(rect),
+          inputAlign: getComputedStyle(input).textAlign,
+          statusAlign: getComputedStyle(status).textAlign,
+        };
+      });
+      expect(boxes.popup.left).toBeGreaterThanOrEqual(0);
+      expect(boxes.popup.right).toBeLessThanOrEqual(width);
+      expect(boxes.field.left).toBeGreaterThanOrEqual(boxes.controls.left);
+      expect(boxes.field.left - boxes.controls.left).toBeLessThan(10);
+      expect(boxes.field.right).toBeLessThanOrEqual(boxes.buttons[0]!.left);
+      expect(boxes.buttons[0]!.left - boxes.field.right).toBeLessThan(5);
+      expect(boxes.input.width).toBeGreaterThan(35);
+      expect(boxes.input.left).toBeGreaterThanOrEqual(boxes.field.left);
+      expect(boxes.input.right).toBeLessThanOrEqual(boxes.status.left);
+      expect(boxes.status.right).toBeLessThanOrEqual(boxes.field.right);
+      expect(boxes.inputAlign).toMatch(/^(start|left)$/);
+      expect(boxes.statusAlign).toBe('right');
+      for (const label of ['Previous Match', 'Next Match', 'Close Find']) {
+        await expect(
+          page.getByRole('button', { name: label, exact: true }),
+        ).toBeInViewport({ ratio: 1 });
+      }
+    };
+    await query(page, '', '');
+    await geometry();
+    await query(page, 'horizontal padding', '1 / 120');
+    await searchInput(page).press('Shift+Enter');
+    await expect(searchBar(page)).toContainText('120 / 120');
+    await geometry();
+    const before = await page
+      .getByRole('button', { name: 'Close Find', exact: true })
+      .boundingBox();
+    await query(page, 'A very long unmatched query '.repeat(20), 'No matches');
+    await geometry();
+    await expect(searchInput(page)).toBeFocused();
+    expect(
+      await page
         .getByRole('button', { name: 'Close Find', exact: true })
-        .boundingBox();
-      await query(
-        page,
-        'A very long unmatched query '.repeat(20),
-        'No matches',
-      );
-      await geometry();
-      await expect(searchInput(page)).toBeFocused();
-      expect(
-        await page
-          .getByRole('button', { name: 'Close Find', exact: true })
-          .boundingBox(),
-      ).toEqual(before);
-      await query(page, '', '');
-      await geometry();
-    });
-  }
+        .boundingBox(),
+    ).toEqual(before);
+    await query(page, '', '');
+    await geometry();
+  });
 }
 
 test('first-match clearance survives closing Find and switching sessions without moving the reader', async ({

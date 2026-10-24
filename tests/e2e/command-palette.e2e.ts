@@ -928,7 +928,7 @@ test('project switcher selects the nonfirst active project, including when colla
   const expectSelectedProject = async (
     name: string,
     search: Locator,
-  ): Promise<Locator> => {
+  ): Promise<void> => {
     const row = page.locator('.command-palette-row').filter({
       has: page.locator('.command-palette-title', { hasText: name }),
     });
@@ -938,7 +938,6 @@ test('project switcher selects the nonfirst active project, including when colla
       'aria-activedescendant',
       (await row.getAttribute('id'))!,
     );
-    return row;
   };
 
   await page.keyboard.press(await modShortcut(page, 'Shift+p'));
