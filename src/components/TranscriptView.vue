@@ -44,7 +44,7 @@
             >
               <MarkdownText
                 v-if="messageAt(virtualRow.index)?.kind === 'user'"
-                class="user-bubble"
+                class="user-bubble transcript-markdown"
                 :search-entry-id="messageAt(virtualRow.index)?.id"
                 :source="messageAt(virtualRow.index)?.text ?? ''"
                 :base-path="basePath"
@@ -53,6 +53,7 @@
               />
               <MarkdownText
                 v-else-if="messageAt(virtualRow.index)?.kind === 'assistant'"
+                class="transcript-markdown"
                 :search-entry-id="messageAt(virtualRow.index)?.id"
                 :source="messageAt(virtualRow.index)?.text ?? ''"
                 :base-path="basePath"
@@ -422,8 +423,8 @@ onMounted(() => {
    * knows about, so its next update does not undo it.
    */
   viewportObserver = new ResizeObserver(() => {
-    if (following) rowVirtualizer.value.scrollToOffset(element.scrollHeight);
-    reconcileUnscrollableOffset();
+    if (following) scrollToLatest();
+    else reconcileUnscrollableOffset();
   });
   viewportObserver.observe(element);
 });
@@ -485,6 +486,9 @@ function scrollToLatest(): void {
   const element = transcript.value;
   if (element) {
     rowVirtualizer.value.scrollToOffset(element.scrollHeight);
+    // Reflow can clamp our end write below the previous offset. Its scroll
+    // event must not look like the reader moving backwards out of follow mode.
+    lastScrollOffset = element.scrollTop;
     reconcileUnscrollableOffset();
     return;
   }
@@ -640,9 +644,16 @@ defineExpose({ scrollToEnd, revealSearchMatch, cancelSearchNavigation });
 }
 
 .message-list-shell {
-  width: min(100%, 880px);
+  --transcript-column-width: 700px;
+  --transcript-content-inset: 12px;
+  --transcript-outer-gutter: 24px;
+
+  width: min(
+    100%,
+    calc(var(--transcript-column-width) + 2 * var(--transcript-outer-gutter))
+  );
   margin: 0 auto;
-  padding: 0 clamp(20px, 5vw, 60px);
+  padding: 0 var(--transcript-outer-gutter);
 }
 
 .message-list {
@@ -665,8 +676,6 @@ defineExpose({ scrollToEnd, revealSearchMatch, cancelSearchNavigation });
 .message.user {
   display: flex;
   justify-content: flex-start;
-  margin-right: 20px;
-  margin-left: -5px;
 }
 
 .message.user.pending {
@@ -676,7 +685,7 @@ defineExpose({ scrollToEnd, revealSearchMatch, cancelSearchNavigation });
 .message.user :deep(.user-bubble) {
   width: 100%;
   min-width: 0;
-  padding: 9px 13px;
+  padding: 9px 0;
   border-radius: 7px;
   background: var(--user);
 }
@@ -693,13 +702,12 @@ defineExpose({ scrollToEnd, revealSearchMatch, cancelSearchNavigation });
   background: var(--panel-raised);
 }
 
-.message.assistant,
 .message.error,
 .message.notice,
 .message.prompt,
 .stream-state {
-  margin-right: 20px;
-  margin-left: 8px;
+  margin-right: var(--transcript-content-inset);
+  margin-left: var(--transcript-content-inset);
 }
 
 /*
@@ -709,16 +717,16 @@ defineExpose({ scrollToEnd, revealSearchMatch, cancelSearchNavigation });
 .message.thinking,
 .message.tool,
 .message.skill {
-  margin-right: 20px;
-  margin-left: 8px;
+  margin-right: var(--transcript-content-inset);
+  margin-left: var(--transcript-content-inset);
 }
 
 /* Contain the divider's vertical margins so its measured row includes the full
  * 54px rhythm instead of reporting only the 22px control. */
 .message.compaction {
   display: flow-root;
-  margin-right: 20px;
-  margin-left: 8px;
+  margin-right: var(--transcript-content-inset);
+  margin-left: var(--transcript-content-inset);
   padding-bottom: 0;
 }
 
