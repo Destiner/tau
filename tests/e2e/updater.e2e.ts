@@ -18,6 +18,46 @@ async function finishCheck(
   }, fail);
 }
 
+for (const sidebarWidth of [200, 260]) {
+  test(`insets the version popover from viewport edges with a ${sidebarWidth}px sidebar`, async ({
+    page,
+  }) => {
+    await page.addInitScript((width) => {
+      localStorage.setItem('tau.sidebar-width', String(width));
+    }, sidebarWidth);
+    await page.goto('/?test-update=controlled');
+    const trigger = page.getByRole('button', {
+      name: `Tau version ${appVersion}`,
+    });
+    await trigger.click();
+    const popover = page.locator('.update-popover');
+    await expect(popover).toBeVisible();
+
+    for (const width of [1000, 640, 1200]) {
+      await page.setViewportSize({ width, height: 720 });
+      await expect
+        .poll(async () => {
+          const box = await popover.boundingBox();
+          if (!box) return false;
+          return (
+            box.x >= 7.5 &&
+            box.y >= 7.5 &&
+            box.x + box.width <= width - 7.5 &&
+            box.y + box.height <= 720 - 7.5
+          );
+        })
+        .toBe(true);
+      if (sidebarWidth === 200) {
+        const box = (await popover.boundingBox())!;
+        expect(box.x + box.width).toBeGreaterThan(sidebarWidth);
+      }
+    }
+    await page.keyboard.press('Escape');
+    await expect(popover).toBeHidden();
+    await expect(trigger).toBeFocused();
+  });
+}
+
 test('keeps failed checks inside the sidebar popover before and after viewing, then recovers', async ({
   page,
 }) => {

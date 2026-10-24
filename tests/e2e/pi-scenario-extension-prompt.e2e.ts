@@ -222,17 +222,22 @@ test('keeps navigation commands available in the palette and restores prompt foc
   await expect(option).toBeFocused();
 });
 
-test('cycles sessions with Ctrl+Tab while an extension prompt is pending', async ({
+test('cycles sessions through palette-only commands while an extension prompt is pending', async ({
   page,
 }) => {
   await page.goto('/?test-scenario=saved-session-extension-prompt-cycling');
   await expect(page.getByRole('option', { name: 'patch' })).toBeFocused();
 
-  await page.keyboard.press('Control+Tab');
+  await openPalette(page);
+  const search = page.getByRole('combobox', { name: 'Command Palette' });
+  await search.fill('Next Session');
+  await search.press('Enter');
   await expect(page.getByRole('heading', { name: 'Backup' })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeFocused();
 
-  await page.keyboard.press('Control+Shift+Tab');
+  await openPalette(page);
+  await search.fill('Previous Session');
+  await search.press('Enter');
   await expect(
     page.getByRole('dialog', { name: 'Which label should the release carry?' }),
   ).toBeVisible();

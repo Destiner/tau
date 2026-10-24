@@ -243,15 +243,15 @@ const expandable = computed(() => {
 }
 
 .activity-disclosure {
+  display: none;
   flex: none;
-  opacity: 0;
   color: var(--faint);
   font-size: 11px;
 }
 
-.activity-header:hover .activity-disclosure,
-.activity-header:focus-visible .activity-disclosure {
-  opacity: 1;
+.activity-header:enabled:hover .activity-disclosure,
+.activity-header:enabled:focus-visible .activity-disclosure {
+  display: block;
 }
 
 .activity-details {
