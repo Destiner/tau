@@ -265,14 +265,16 @@ function createCompactToolTranscript(): TranscriptEntry[] {
       text: `/tmp/tau-fixture/compact-${number}.jsonl`,
       toolCallId: `fixture-compact-call-${number}`,
       toolName: 'read',
-      toolRunning: false,
+      toolRunning: index === 0,
       toolErrored: false,
-      toolArguments: JSON.stringify(
-        { path: `/tmp/compact-${number}` },
-        null,
-        2,
-      ),
-      toolResult: `Read compact result ${number}.\n${'A measured detail line. '.repeat(4)}`,
+      toolArguments:
+        index === 0
+          ? undefined
+          : JSON.stringify({ path: `/tmp/compact-${number}` }, null, 2),
+      toolResult:
+        index === 0
+          ? undefined
+          : `Read compact result ${number}.\n${'A measured detail line. '.repeat(4)}`,
     };
   });
   return [user, ...tools];
@@ -317,7 +319,7 @@ Inspect selection, scrolling, keyboard behavior, window behavior, and perceived 
     return {
       id: 'fixture-tool-running',
       kind: 'tool',
-      text: 'bun run test -- transcript',
+      text: `bun run test -- transcript ${'--include=src/components/TranscriptView.vue '.repeat(8)}`,
       toolCallId: 'fixture-call-running',
       toolName: 'bash',
       toolRunning: true,
@@ -329,7 +331,7 @@ Inspect selection, scrolling, keyboard behavior, window behavior, and perceived 
     return {
       id: 'fixture-tool-failed',
       kind: 'tool',
-      text: 'src/components/TranscriptView.vue',
+      text: `${'src/components/long-directory/'.repeat(12)}TranscriptView.vue`,
       toolCallId: 'fixture-call-failed',
       toolName: 'edit',
       toolRunning: false,
@@ -342,7 +344,7 @@ Inspect selection, scrolling, keyboard behavior, window behavior, and perceived 
     return {
       id: 'fixture-tool-done',
       kind: 'tool',
-      text: 'src/lib/pi/runtime.ts',
+      text: `${'src/lib/pi/long-directory/'.repeat(12)}runtime.ts`,
       toolCallId: 'fixture-call-done',
       toolName: 'read',
       toolRunning: false,

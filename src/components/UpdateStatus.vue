@@ -21,6 +21,7 @@
         side="top"
         align="end"
         :side-offset="5"
+        :collision-padding="8"
         aria-label="Tau Update"
         :aria-busy="isBusy || undefined"
         @interact-outside="preserveSurfaceUnderPalette"
