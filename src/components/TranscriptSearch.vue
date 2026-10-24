@@ -5,20 +5,22 @@
     aria-label="Find in Transcript"
   >
     <div class="search-controls">
-      <input
-        ref="input"
-        :value="query"
-        aria-label="Find in Transcript"
-        placeholder="Find in transcript"
-        spellcheck="false"
-        @input="handleInput"
-        @keydown="handleKeydown"
-      />
-      <span
-        class="match-count"
-        aria-live="polite"
-        >{{ status }}</span
-      >
+      <div class="search-field">
+        <input
+          ref="input"
+          :value="query"
+          aria-label="Find in Transcript"
+          placeholder="Search"
+          spellcheck="false"
+          @input="handleInput"
+          @keydown="handleKeydown"
+        />
+        <span
+          class="match-count"
+          aria-live="polite"
+          >{{ status }}</span
+        >
+      </div>
       <UiIconButton
         label="Previous Match"
         :disabled="pending || !total"
@@ -40,11 +42,6 @@
         ><UiIcon name="cross"
       /></UiIconButton>
     </div>
-    <span
-      v-if="loadedOnly"
-      class="search-scope"
-      >Loaded messages only</span
-    >
   </div>
 </template>
 
@@ -60,7 +57,6 @@ const props = defineProps<{
   current: number;
   busy: boolean;
   pending: boolean;
-  loadedOnly: boolean;
 }>();
 const emit = defineEmits<{
   query: [value: string];
@@ -69,13 +65,11 @@ const emit = defineEmits<{
 }>();
 const input = ref<HTMLInputElement>();
 const status = computed(() =>
-  props.busy
-    ? 'Indexing…'
-    : props.pending || !props.query.trim()
-      ? ''
-      : props.total
-        ? `${props.current} / ${props.total}`
-        : 'No matches',
+  props.busy || props.pending || !props.query.trim()
+    ? ''
+    : props.total
+      ? `${props.current} / ${props.total}`
+      : 'No matches',
 );
 function handleInput(event: Event): void {
   emit('query', (event.target as HTMLInputElement).value);
@@ -129,21 +123,27 @@ defineExpose({ focus });
   gap: 2px;
 }
 
+.search-field {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+}
+
 .search-controls input {
   flex: 1;
   width: 0;
   min-width: 35px;
-  height: 23px;
+  height: var(--control-md);
   padding: 0 6px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--canvas);
-  font-size: 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--text-md);
 }
 
 .search-controls input:focus {
-  outline: 1px solid var(--accent);
-  outline-offset: -1px;
+  outline: none;
 }
 
 .search-controls :deep(svg) {
@@ -152,20 +152,13 @@ defineExpose({ focus });
 }
 
 .match-count {
-  min-width: 58px;
+  flex-shrink: 0;
+  width: 72px;
+  padding-right: 6px;
   color: var(--muted);
-  font-size: 11px;
-  text-align: center;
+  font-size: var(--text-sm);
+  text-align: right;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
-}
-
-.search-scope {
-  padding: 3px 6px;
-  float: right;
-  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
-  background: var(--panel-raised);
-  color: var(--muted);
-  font-size: 10px;
 }
 </style>

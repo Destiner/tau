@@ -636,6 +636,143 @@ test('traverses session groups with the keyboard and preserves drafts when switc
   await expect(composer).toHaveValue('Keep this atlas draft');
 });
 
+for (const destination of ['Composer', 'Sidebar', 'Transcript'] as const) {
+  test(`palette-only Focus ${destination} keeps its destination`, async ({
+    page,
+  }) => {
+    await page.goto('/');
+    const composer = page.getByRole('textbox', { name: 'Message Pi' });
+    const sidebar = page
+      .locator(
+        '.session-row.selected .session-select, .project-row.selected .project-toggle',
+      )
+      .first();
+    const transcript = page.getByLabel('Transcript', { exact: true });
+    await expect(composer).toBeEnabled();
+    await composer.fill('Keep the focus draft');
+    const origin = destination === 'Composer' ? sidebar : composer;
+    const target =
+      destination === 'Composer'
+        ? composer
+        : destination === 'Sidebar'
+          ? sidebar
+          : transcript;
+    await origin.focus();
+    await openPalette(page);
+    await openNestedPage(page, `Focus ${destination}`);
+    await expect(
+      page.getByRole('dialog', { name: 'Command Palette' }),
+    ).toHaveCount(0);
+    await expect(target).toBeFocused();
+    await expect(composer).toHaveValue('Keep the focus draft');
+  });
+}
+
+test('all seven retired shortcuts are unconsumed and do not dispatch app actions', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const composer = page.getByRole('textbox', { name: 'Message Pi' });
+  await expect(composer).toBeEnabled();
+  await composer.fill('Retain the draft');
+  const order = await page
+    .locator('.project-group')
+    .evaluateAll((groups) =>
+      groups.map((group) => group.getAttribute('data-project-path')),
+    );
+  for (const origin of [
+    composer,
+    page.locator('.project-group').last().locator('.project-toggle'),
+  ]) {
+    await origin.focus();
+    const prevented = await origin.evaluate((element) => {
+      const mod = /Mac|iPhone|iPad/.test(navigator.platform)
+        ? { metaKey: true }
+        : { ctrlKey: true };
+      return [
+        { key: 'l', code: 'KeyL', ...mod },
+        { key: 'L', code: 'KeyL', shiftKey: true, ...mod },
+        { key: 'T', code: 'KeyT', shiftKey: true, ...mod },
+        { key: 'ArrowUp', code: 'ArrowUp', altKey: true, ...mod },
+        { key: 'ArrowDown', code: 'ArrowDown', altKey: true, ...mod },
+        { key: 'Tab', code: 'Tab', ctrlKey: true },
+        { key: 'Tab', code: 'Tab', ctrlKey: true, shiftKey: true },
+      ].map((keys) => {
+        const event = new KeyboardEvent('keydown', {
+          ...keys,
+          bubbles: true,
+          cancelable: true,
+        });
+        element.dispatchEvent(event);
+        return event.defaultPrevented;
+      });
+    });
+    expect(prevented).toEqual(Array(7).fill(false));
+    await expect(origin).toBeFocused();
+    await expect(
+      page.getByRole('heading', { name: 'Workspace overview', exact: true }),
+    ).toBeVisible();
+    await expect(
+      page
+        .locator('.project-group')
+        .evaluateAll((groups) =>
+          groups.map((group) => group.getAttribute('data-project-path')),
+        ),
+    ).resolves.toEqual(order);
+    await expect(composer).toHaveValue('Retain the draft');
+  }
+});
+
+test('palette-only navigation commands have no shortcut hints and still move projects and sessions', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const composer = page.getByRole('textbox', { name: 'Message Pi' });
+  await expect(composer).toBeEnabled();
+  await composer.fill('Keep the navigation draft');
+  await openPalette(page);
+  for (const title of [
+    'Focus Composer',
+    'Focus Sidebar',
+    'Focus Transcript',
+    'Move Project Down',
+    'Next Session',
+    'Previous Session',
+  ]) {
+    const row = page.getByRole('option', { name: title, exact: true });
+    await expect(row).toHaveCount(1);
+    await expect(row.locator('kbd')).toHaveCount(0);
+  }
+  await openNestedPage(page, 'Move Project Down');
+  await expect(page.locator('.project-group').last()).toHaveAttribute(
+    'data-project-path',
+    '/browser-dev/projects/atlas',
+  );
+  await expect(composer).toBeFocused();
+  await openPalette(page);
+  const up = page.getByRole('option', { name: 'Move Project Up', exact: true });
+  await expect(up).toHaveCount(1);
+  await expect(up.locator('kbd')).toHaveCount(0);
+  await openNestedPage(page, 'Move Project Up');
+  await expect(page.locator('.project-group').first()).toHaveAttribute(
+    'data-project-path',
+    '/browser-dev/projects/atlas',
+  );
+  await openPalette(page);
+  await openNestedPage(page, 'Next Session');
+  await expect(
+    page.getByRole('heading', { name: 'Navigation review', exact: true }),
+  ).toBeVisible();
+  await expect(composer).toBeFocused();
+  await openPalette(page);
+  await openNestedPage(page, 'Previous Session');
+  await expect(
+    page.getByRole('heading', { name: 'Workspace overview', exact: true }),
+  ).toBeVisible();
+  await expect(composer).toBeFocused();
+  await expect(composer).toHaveValue('Keep the navigation draft');
+});
+
 test('Escape closes the palette and restores focus to its origin', async ({
   page,
 }) => {
@@ -907,6 +1044,85 @@ test('opens the session page with Ctrl/Meta+P from the composer', async ({
   ).toBeVisible();
 });
 
+test('project switcher selects the nonfirst active project, including when collapsed', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 900, height: 360 });
+  await page.goto('/');
+  const composer = page.getByRole('textbox', { name: 'Message Pi' });
+  await expect(composer).toBeEnabled();
+  const notesGroup = page.locator(
+    '.project-group[data-project-path="/browser-dev/projects/notes"]',
+  );
+  await notesGroup.locator('.session-select').first().click();
+  await expect(
+    page.getByRole('heading', { name: 'Triage inbox' }),
+  ).toBeVisible();
+  await composer.fill('Keep this notes draft');
+  await notesGroup.locator('.project-toggle').click();
+  await expect(notesGroup.locator('.session-row')).toHaveCount(0);
+
+  const expectSelectedProject = async (
+    name: string,
+    search: Locator,
+  ): Promise<void> => {
+    const row = page.locator('.command-palette-row').filter({
+      has: page.locator('.command-palette-title', { hasText: name }),
+    });
+    await expect(row).toHaveAttribute('aria-selected', 'true');
+    await expect(row).toBeInViewport();
+    await expect(search).toHaveAttribute(
+      'aria-activedescendant',
+      (await row.getAttribute('id'))!,
+    );
+  };
+
+  await page.keyboard.press(await modShortcut(page, 'Shift+p'));
+  const direct = page.getByRole('dialog', { name: 'Switch Project' });
+  const directSearch = direct.getByRole('combobox', { name: 'Switch Project' });
+  await expect(directSearch).toBeFocused();
+  await expect(directSearch).toHaveValue('');
+  await expect(
+    direct.locator('.command-palette-title').allTextContents(),
+  ).resolves.toEqual(['atlas', 'notes']);
+  await expectSelectedProject('notes', directSearch);
+  await directSearch.press('Enter');
+  await expect(
+    page.getByRole('heading', { name: 'Triage inbox' }),
+  ).toBeVisible();
+  await expect(composer).toBeFocused();
+  await expect(composer).toHaveValue('Keep this notes draft');
+
+  await page.keyboard.press(await modShortcut(page, 'Shift+p'));
+  await expect(directSearch).toBeFocused();
+  await expectSelectedProject('notes', directSearch);
+  await directSearch.fill('no matching project');
+  await expect(direct.getByRole('option')).toHaveCount(0);
+  await expect(directSearch).not.toHaveAttribute('aria-activedescendant');
+  await directSearch.fill('');
+  await expectSelectedProject('atlas', directSearch);
+  await directSearch.press('Escape');
+
+  await openPalette(page);
+  await openNestedPage(page, 'Switch Project');
+  const nested = page.getByRole('dialog', { name: 'Switch Project' });
+  const nestedSearch = nested.getByRole('combobox', { name: 'Switch Project' });
+  await expect(nestedSearch).toBeFocused();
+  await expect(nestedSearch).toHaveValue('');
+  await expectSelectedProject('notes', nestedSearch);
+  await nestedSearch.fill('atlas');
+  await expectSelectedProject('atlas', nestedSearch);
+  await nestedSearch.press('Enter');
+  await expect(
+    page.getByRole('heading', { name: 'Workspace overview' }),
+  ).toBeVisible();
+
+  await page.keyboard.press(await modShortcut(page, 'Shift+p'));
+  await expect(directSearch).toBeFocused();
+  await expectSelectedProject('atlas', directSearch);
+  await directSearch.press('Escape');
+});
+
 test('uses project identity and its location fallback when switching projects', async ({
   page,
 }) => {
@@ -1112,7 +1328,7 @@ test('New Session shortcut uses a focused project row', async ({ page }) => {
   await expect(notes.locator('.project-row')).toHaveClass(/selected/);
 });
 
-test('focused sidebar rows do not retarget composer and session cycling shortcuts', async ({
+test('focused sidebar rows do not retarget composer shortcuts and palette session cycling', async ({
   page,
 }) => {
   await page.goto('/');
@@ -1131,7 +1347,8 @@ test('focused sidebar rows do not retarget composer and session cycling shortcut
   ).toBeVisible();
   await page.keyboard.press('Escape');
   await noteSession.focus();
-  await page.keyboard.press('Control+Tab');
+  await openPalette(page);
+  await openNestedPage(page, 'Next Session');
   await expect(
     page.getByRole('heading', { name: 'Navigation review' }),
   ).toBeVisible();

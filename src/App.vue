@@ -143,7 +143,6 @@
           :current="findOrdinal"
           :busy="find.current.value.busy"
           :pending="find.current.value.pending"
-          :loaded-only="findLoadedOnly"
           @query="updateFindQuery"
           @navigate="navigateFind"
           @close="closeFind"
@@ -555,11 +554,6 @@ const findOrdinal = computed(() => {
     ? current.matches.indexOf(current.activeMatch) + 1
     : 0;
 });
-const findLoadedOnly = computed(() =>
-  messages.value.some(
-    (entry) => entry.kind === 'compaction' && entry.historyAvailable,
-  ),
-);
 watch(
   () =>
     state.controllers
@@ -730,7 +724,9 @@ function page(value: PalettePage): void {
         ? `${currentModelProvider.value}/${currentModelId.value}`
         : value === 'efforts'
           ? currentEffort.value
-          : null;
+          : value === 'projects'
+            ? state.activeProjectPath
+            : null;
   void nextTick(() =>
     document.querySelector<HTMLInputElement>('.command-palette input')?.focus(),
   );
@@ -890,7 +886,7 @@ register(
 register(
   'project.moveUp',
   'Move Project Up',
-  'Mod+Alt+ArrowUp',
+  undefined,
   (ctx) =>
     active(ctx) &&
     (state.workspace?.projects.findIndex((p) => p.path === ctx.projectPath) ??
@@ -901,7 +897,7 @@ register(
 register(
   'project.moveDown',
   'Move Project Down',
-  'Mod+Alt+ArrowDown',
+  undefined,
   (ctx) =>
     active(ctx) &&
     (state.workspace?.projects.findIndex((p) => p.path === ctx.projectPath) ??
@@ -933,11 +929,11 @@ register(
 register(
   'focus.composer',
   'Focus Composer',
-  'Mod+L',
+  undefined,
   (ctx) => safe(ctx) && Boolean(composerBar.value),
   () => composerBar.value?.focus(),
 );
-register('focus.sidebar', 'Focus Sidebar', 'Mod+Shift+L', safe, () => {
+register('focus.sidebar', 'Focus Sidebar', undefined, safe, () => {
   if (!projectSidebar.value) return;
   projectSidebar.value.focusSelectedRow();
   if (document.activeElement === document.body)
@@ -958,7 +954,7 @@ register(
 register(
   'focus.transcript',
   'Focus Transcript',
-  'Mod+Shift+T',
+  undefined,
   (ctx) => safe(ctx) && Boolean(transcriptView.value),
   () => {
     const el = document.querySelector<HTMLElement>('.transcript');
@@ -1108,7 +1104,7 @@ register(
 register(
   'session.next',
   'Next Session',
-  'Ctrl+Tab',
+  undefined,
   (ctx) =>
     navigationActive(ctx) &&
     projectSessions(commandProject(ctx)!).some((s) => !s.archived),
@@ -1117,7 +1113,7 @@ register(
 register(
   'session.previous',
   'Previous Session',
-  'Ctrl+Shift+Tab',
+  undefined,
   (ctx) =>
     navigationActive(ctx) &&
     projectSessions(commandProject(ctx)!).some((s) => !s.archived),
@@ -1276,7 +1272,16 @@ async function selectPaletteRow(id: string): Promise<void> {
     }
     const result = await commands.dispatch(id, ctx);
     if (result.status !== 'executed' && !nested) paletteOpen.value = true;
-    else if (!nested && !['queue.review', 'transcript.find'].includes(id)) {
+    else if (
+      !nested &&
+      ![
+        'queue.review',
+        'transcript.find',
+        'focus.composer',
+        'focus.sidebar',
+        'focus.transcript',
+      ].includes(id)
+    ) {
       if (['session.new', 'session.next', 'session.previous'].includes(id))
         focusAfterPaletteNavigation();
       else if (!context().blocked) restorePaletteFocus();

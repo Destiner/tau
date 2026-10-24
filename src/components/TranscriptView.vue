@@ -683,11 +683,17 @@ defineExpose({ scrollToEnd, revealSearchMatch, cancelSearchNavigation });
 }
 
 .message.user :deep(.user-bubble) {
-  width: 100%;
+  width: fit-content;
   min-width: 0;
+  max-width: 100%;
   padding: 9px 0;
   border-radius: 7px;
   background: var(--user);
+}
+
+/* Structured messages need the shared rails; plain short prompts stay compact. */
+.message.user :deep(.user-bubble:has(> :not(p))) {
+  width: 100%;
 }
 
 /*
