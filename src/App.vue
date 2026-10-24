@@ -143,7 +143,6 @@
           :current="findOrdinal"
           :busy="find.current.value.busy"
           :pending="find.current.value.pending"
-          :loaded-only="findLoadedOnly"
           @query="updateFindQuery"
           @navigate="navigateFind"
           @close="closeFind"
@@ -555,11 +554,6 @@ const findOrdinal = computed(() => {
     ? current.matches.indexOf(current.activeMatch) + 1
     : 0;
 });
-const findLoadedOnly = computed(() =>
-  messages.value.some(
-    (entry) => entry.kind === 'compaction' && entry.historyAvailable,
-  ),
-);
 watch(
   () =>
     state.controllers
@@ -730,7 +724,9 @@ function page(value: PalettePage): void {
         ? `${currentModelProvider.value}/${currentModelId.value}`
         : value === 'efforts'
           ? currentEffort.value
-          : null;
+          : value === 'projects'
+            ? state.activeProjectPath
+            : null;
   void nextTick(() =>
     document.querySelector<HTMLInputElement>('.command-palette input')?.focus(),
   );

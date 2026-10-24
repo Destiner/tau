@@ -907,6 +907,86 @@ test('opens the session page with Ctrl/Meta+P from the composer', async ({
   ).toBeVisible();
 });
 
+test('project switcher selects the nonfirst active project, including when collapsed', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 900, height: 360 });
+  await page.goto('/');
+  const composer = page.getByRole('textbox', { name: 'Message Pi' });
+  await expect(composer).toBeEnabled();
+  const notesGroup = page.locator(
+    '.project-group[data-project-path="/browser-dev/projects/notes"]',
+  );
+  await notesGroup.locator('.session-select').first().click();
+  await expect(
+    page.getByRole('heading', { name: 'Triage inbox' }),
+  ).toBeVisible();
+  await composer.fill('Keep this notes draft');
+  await notesGroup.locator('.project-toggle').click();
+  await expect(notesGroup.locator('.session-row')).toHaveCount(0);
+
+  const expectSelectedProject = async (
+    name: string,
+    search: Locator,
+  ): Promise<Locator> => {
+    const row = page.locator('.command-palette-row').filter({
+      has: page.locator('.command-palette-title', { hasText: name }),
+    });
+    await expect(row).toHaveAttribute('aria-selected', 'true');
+    await expect(row).toBeInViewport();
+    await expect(search).toHaveAttribute(
+      'aria-activedescendant',
+      (await row.getAttribute('id'))!,
+    );
+    return row;
+  };
+
+  await page.keyboard.press(await modShortcut(page, 'Shift+p'));
+  const direct = page.getByRole('dialog', { name: 'Switch Project' });
+  const directSearch = direct.getByRole('combobox', { name: 'Switch Project' });
+  await expect(directSearch).toBeFocused();
+  await expect(directSearch).toHaveValue('');
+  await expect(
+    direct.locator('.command-palette-title').allTextContents(),
+  ).resolves.toEqual(['atlas', 'notes']);
+  await expectSelectedProject('notes', directSearch);
+  await directSearch.press('Enter');
+  await expect(
+    page.getByRole('heading', { name: 'Triage inbox' }),
+  ).toBeVisible();
+  await expect(composer).toBeFocused();
+  await expect(composer).toHaveValue('Keep this notes draft');
+
+  await page.keyboard.press(await modShortcut(page, 'Shift+p'));
+  await expect(directSearch).toBeFocused();
+  await expectSelectedProject('notes', directSearch);
+  await directSearch.fill('no matching project');
+  await expect(direct.getByRole('option')).toHaveCount(0);
+  await expect(directSearch).not.toHaveAttribute('aria-activedescendant');
+  await directSearch.fill('');
+  await expectSelectedProject('atlas', directSearch);
+  await directSearch.press('Escape');
+
+  await openPalette(page);
+  await openNestedPage(page, 'Switch Project');
+  const nested = page.getByRole('dialog', { name: 'Switch Project' });
+  const nestedSearch = nested.getByRole('combobox', { name: 'Switch Project' });
+  await expect(nestedSearch).toBeFocused();
+  await expect(nestedSearch).toHaveValue('');
+  await expectSelectedProject('notes', nestedSearch);
+  await nestedSearch.fill('atlas');
+  await expectSelectedProject('atlas', nestedSearch);
+  await nestedSearch.press('Enter');
+  await expect(
+    page.getByRole('heading', { name: 'Workspace overview' }),
+  ).toBeVisible();
+
+  await page.keyboard.press(await modShortcut(page, 'Shift+p'));
+  await expect(directSearch).toBeFocused();
+  await expectSelectedProject('atlas', directSearch);
+  await directSearch.press('Escape');
+});
+
 test('uses project identity and its location fallback when switching projects', async ({
   page,
 }) => {

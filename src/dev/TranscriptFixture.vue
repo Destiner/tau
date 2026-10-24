@@ -12,7 +12,6 @@
       :current="findOrdinal"
       :busy="find.current.value.busy"
       :pending="find.current.value.pending"
-      :loaded-only="compacted"
       @query="find.setQuery"
       @navigate="find.navigate"
       @close="find.close"
