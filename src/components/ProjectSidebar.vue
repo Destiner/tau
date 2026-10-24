@@ -1033,6 +1033,12 @@ defineExpose({
   box-shadow: 0 15px 30px var(--shadow-strong);
 }
 
+/* Context-menu triggers set inline pointer-events: auto. The floating clone
+ * must stay transparent to hit testing so Sortable can find drop targets. */
+.project-sortable-drag :deep(*) {
+  pointer-events: none !important;
+}
+
 .session-list {
   margin: 1px 0 5px;
 }
