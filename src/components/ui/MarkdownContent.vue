@@ -683,11 +683,7 @@ onBeforeUnmount(() => {
 }
 
 .markdown.transcript-markdown :deep(> .code-block pre),
-.markdown.transcript-markdown :deep(> .diagram) {
-  padding-right: calc(var(--transcript-content-inset) - 1px);
-  padding-left: calc(var(--transcript-content-inset) - 1px);
-}
-
+.markdown.transcript-markdown :deep(> .diagram),
 .markdown.transcript-markdown :deep(> table :is(th, td)) {
   padding-right: calc(var(--transcript-content-inset) - 1px);
   padding-left: calc(var(--transcript-content-inset) - 1px);

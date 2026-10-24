@@ -240,20 +240,12 @@ test('keeps rows disjoint and the end anchored when the viewport narrows', async
   await expect(page.getByTestId('fixture-count')).toHaveText('18 messages');
   await reveal(page, 'geometry-compaction-boundary');
   await page.evaluate(() => window.__TAU_TRANSCRIPT_FIXTURE__!.scrollToEnd());
-  const endGap = (): Promise<number> =>
-    page
-      .locator('.transcript')
-      .evaluate((element) =>
-        Math.abs(
-          element.scrollHeight - element.clientHeight - element.scrollTop,
-        ),
-      );
-  await expect.poll(endGap).toBeLessThanOrEqual(2);
+  await expect.poll(() => endGap(page)).toBeLessThanOrEqual(2);
   await page.setViewportSize({ width: 390, height: 700 });
-  await expect.poll(endGap).toBeLessThanOrEqual(2);
+  await expect.poll(() => endGap(page)).toBeLessThanOrEqual(2);
   await page.evaluate(() => window.__TAU_TRANSCRIPT_FIXTURE__!.appendMessage());
   await page.evaluate(() => window.__TAU_TRANSCRIPT_FIXTURE__!.streamLatest(6));
-  await expect.poll(endGap).toBeLessThanOrEqual(2);
+  await expect.poll(() => endGap(page)).toBeLessThanOrEqual(2);
   for (const id of [
     'geometry-user-prose',
     'geometry-assistant-code',
