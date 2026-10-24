@@ -44,8 +44,8 @@ telemetry.
   projects are excluded even from search. The active session is highlighted on open
   when eligible, otherwise the first listed session. Search matches project names
   and session titles; headings are not keyboard stops. An empty workspace list says
-  “No sessions”; a search without results says “No matches”. Project-local
-  `Ctrl+Tab` navigation is unchanged.
+  “No sessions”; a search without results says “No matches”. Palette-only
+  **Previous Session** and **Next Session** navigate within the active project.
 - **Switch Project** (`⌘⇧P`) opens imported projects in their existing order.
 - Model and effort selection are embedded palette lists, not handoffs to
   separate selectors. Their options are filtered and chosen inside the palette.
@@ -64,37 +64,35 @@ chrome text. Home shows the Tau version as a static label, not an update control
 The following are intended global commands, subject to the availability and
 safety rules above. State pairs share one binding.
 
-| Area       | Command                           | Shortcut               |
-| ---------- | --------------------------------- | ---------------------- |
-| App        | Command palette                   | `⌘K`                   |
-| Session    | New session                       | `⌘N`                   |
-| Project    | Open project                      | `⌘O`                   |
-| Project    | Open local project                | `⌘⇧O`                  |
-| Project    | Open remote project               | `⌘⌥O`                  |
-| Session    | Switch session                    | `⌘P`                   |
-| Project    | Switch project                    | `⌘⇧P`                  |
-| Session    | Previous / next session           | `Ctrl⇧Tab` / `CtrlTab` |
-| Session    | Rename session                    | `⌘⇧R`                  |
-| Session    | Archive / unarchive session       | `⌘⇧A`                  |
-| Session    | Mark read / unread                | `⌘⇧U`                  |
-| Sidebar    | Show archived / active sessions   | `⌘⇧H`                  |
-| Project    | Expand / collapse focused project | `→` / `←`              |
-| Project    | Move focused project up / down    | `⌘⌥↑` / `⌘⌥↓`          |
-| Focus      | Composer / sidebar / transcript   | `⌘L` / `⌘⇧L` / `⌘⇧T`   |
-| Composer   | Choose model / thinking effort    | `⌘⇧M` / `⌘⇧E`          |
-| Composer   | Send or queue steering message    | Enter in composer      |
-| Composer   | Queue follow-up                   | `⌘Enter` in composer   |
-| Composer   | Stop Pi                           | `⌘.`                   |
-| Recovery   | Review unsent messages            | `⌘⇧D`                  |
-| Transcript | Find in transcript                | `⌘F`                   |
-| Transcript | Load earlier messages             | `⌘⇧B`                  |
-| Remote     | Reconnect active session          | `⌘⇧C`                  |
-| Admin      | Open issue reporter               | `⌘⇧I`                  |
-| App        | Quit (native-owned)               | `⌘Q`                   |
+| Area       | Command                           | Shortcut             |
+| ---------- | --------------------------------- | -------------------- |
+| App        | Command palette                   | `⌘K`                 |
+| Session    | New session                       | `⌘N`                 |
+| Project    | Open project                      | `⌘O`                 |
+| Project    | Open local project                | `⌘⇧O`                |
+| Project    | Open remote project               | `⌘⌥O`                |
+| Session    | Switch session                    | `⌘P`                 |
+| Project    | Switch project                    | `⌘⇧P`                |
+| Session    | Rename session                    | `⌘⇧R`                |
+| Session    | Archive / unarchive session       | `⌘⇧A`                |
+| Session    | Mark read / unread                | `⌘⇧U`                |
+| Sidebar    | Show archived / active sessions   | `⌘⇧H`                |
+| Project    | Expand / collapse focused project | `→` / `←`            |
+| Composer   | Choose model / thinking effort    | `⌘⇧M` / `⌘⇧E`        |
+| Composer   | Send or queue steering message    | Enter in composer    |
+| Composer   | Queue follow-up                   | `⌘Enter` in composer |
+| Composer   | Stop Pi                           | `⌘.`                 |
+| Recovery   | Review unsent messages            | `⌘⇧D`                |
+| Transcript | Find in transcript                | `⌘F`                 |
+| Transcript | Load earlier messages             | `⌘⇧B`                |
+| Remote     | Reconnect active session          | `⌘⇧C`                |
+| Admin      | Open issue reporter               | `⌘⇧I`                |
+| App        | Quit (native-owned)               | `⌘Q`                 |
 
-Palette-only target commands are **Remove Project**, **Clear Queued Messages**,
-**Show Update Status**, and **Check for Updates**. They have no destructive or
-ambiguous global chord. Session/project pickers expose their dynamic results
+Palette-only target commands are **Focus Composer**, **Focus Sidebar**,
+**Focus Transcript**, **Move Project Up**, **Move Project Down**,
+**Previous Session**, **Next Session**, **Remove Project**, **Clear Queued Messages**,
+**Show Update Status**, and **Check for Updates**. They have no global shortcut. Session/project pickers expose their dynamic results
 only within their sublists; individual rows are not root commands.
 
 ## Local surfaces

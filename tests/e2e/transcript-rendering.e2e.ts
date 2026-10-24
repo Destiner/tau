@@ -16,6 +16,173 @@ test.beforeEach(async ({ page }) => {
   await waitForShowcaseRendering(page);
 });
 
+for (const width of [480, 1440]) {
+  test(`fits user bubbles to content without overflow at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    for (const id of ['fixture-short-user', 'fixture-markdown-showcase-user']) {
+      const message = page.locator(`[data-message-id="${id}"]`);
+      const bubble = message.locator('.user-bubble');
+      await bubble.scrollIntoViewIfNeeded();
+      const geometry = await bubble.evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        const parent = element.closest('.message')!.getBoundingClientRect();
+        const paragraph = element.querySelector('p')!;
+        const range = document.createRange();
+        range.selectNodeContents(paragraph);
+        const style = getComputedStyle(element);
+        return {
+          width: box.width,
+          available: parent.width,
+          left: box.left,
+          right: box.right,
+          parentLeft: parent.left,
+          parentRight: parent.right,
+          scrollWidth: element.scrollWidth,
+          clientWidth: element.clientWidth,
+          textWidth: range.getBoundingClientRect().width,
+          padding:
+            parseFloat(style.paddingLeft) + parseFloat(style.paddingRight),
+        };
+      });
+      expect(geometry.left).toBeCloseTo(geometry.parentLeft, 1);
+      expect(geometry.right).toBeLessThanOrEqual(geometry.parentRight + 1);
+      expect(geometry.scrollWidth).toBeLessThanOrEqual(
+        geometry.clientWidth + 1,
+      );
+      if (id === 'fixture-short-user') {
+        expect(geometry.width).toBeCloseTo(
+          geometry.textWidth + geometry.padding,
+          0,
+        );
+        expect(geometry.width).toBeLessThan(geometry.available - 20);
+      } else {
+        expect(geometry.width).toBeCloseTo(geometry.available, 0);
+      }
+    }
+  });
+
+  test(`masks only visible activity controls without shifting geometry at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    for (const state of ['running', 'failed', 'done']) {
+      const row = page.locator(`[data-message-id="fixture-tool-${state}"]`);
+      const header = row.locator('.activity-header');
+      await header.scrollIntoViewIfNeeded();
+      await page.mouse.move(0, 0);
+      const rest = await header.evaluate(activityGeometry);
+      expect(rest.disclosureWidth).toBe(0);
+      expect(rest.argumentOverflow).toBe(true);
+      expect(rest.argument.right).toBeGreaterThanOrEqual(rest.end.right);
+      expect(rest.endOnTop).toBe(state !== 'done');
+      expect(rest.end.width).toBeCloseTo(rest.mark.width + 3, 1);
+      if (state !== 'done') {
+        expect(rest.background).not.toBe('rgba(0, 0, 0, 0)');
+        expect(rest.end.right).toBeCloseTo(rest.mark.right, 1);
+      } else {
+        expect(rest.background).toBe('rgba(0, 0, 0, 0)');
+      }
+
+      const assertRevealed = async (): Promise<void> => {
+        const active = await header.evaluate(activityGeometry);
+        expect(active.disclosureWidth).toBeGreaterThan(0);
+        expect(active.end.width).toBeCloseTo(
+          rest.end.width + active.disclosureWidth + (state === 'done' ? 0 : 6),
+          1,
+        );
+        expect(active.backgroundImage).toContain('linear-gradient');
+        expect(active.endOnTop).toBe(true);
+        expect(active.end.right).toBeCloseTo(rest.end.right, 1);
+        expect(active.mark).toEqual(rest.mark);
+        expect(active.header).toEqual(rest.header);
+        expect(active.name).toEqual(rest.name);
+        expect(active.argument).toEqual(rest.argument);
+      };
+      await header.hover();
+      await assertRevealed();
+      await page.mouse.move(0, 0);
+      // Tab establishes keyboard modality before programmatically selecting this row.
+      await page.keyboard.press('Tab');
+      await header.focus();
+      await expect(header).toBeFocused();
+      expect(
+        await header.evaluate((element) => element.matches(':focus-visible')),
+      ).toBe(true);
+      await assertRevealed();
+      await page.keyboard.press('Enter');
+      await expect(header).toHaveAttribute('aria-expanded', 'true');
+      await assertRevealed();
+      await page.keyboard.press('Enter');
+      await expect(header).toHaveAttribute('aria-expanded', 'false');
+      await assertRevealed();
+      await header.evaluate((element) => element.blur());
+      expect(await header.evaluate(activityGeometry)).toEqual(rest);
+    }
+  });
+}
+
+interface ActivityRect {
+  left: number;
+  right: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+interface ActivityGeometry {
+  argumentOverflow: boolean;
+  endOnTop: boolean;
+  header: { width: number; height: number };
+  name: ActivityRect;
+  argument: ActivityRect;
+  end: ActivityRect;
+  mark: ActivityRect;
+  disclosureWidth: number;
+  background: string;
+  backgroundImage: string;
+}
+
+function activityGeometry(element: HTMLElement): ActivityGeometry {
+  const rect = (selector: string): ActivityRect => {
+    const box = element.querySelector(selector)?.getBoundingClientRect();
+    const header = element.getBoundingClientRect();
+    return box
+      ? {
+          left: box.left - header.left,
+          right: box.right - header.left,
+          top: box.top - header.top,
+          width: box.width,
+          height: box.height,
+        }
+      : { left: 0, right: 0, top: 0, width: 0, height: 0 };
+  };
+  const end = element.querySelector('.activity-end')!;
+  const style = getComputedStyle(end);
+  const endBox = end.getBoundingClientRect();
+  const argument = element.querySelector('.activity-argument')!;
+  const topmost = document.elementFromPoint(
+    endBox.left + 1,
+    endBox.top + endBox.height / 2,
+  );
+  return {
+    argumentOverflow: argument.scrollWidth > argument.clientWidth,
+    endOnTop: topmost === end || (topmost !== null && end.contains(topmost)),
+    header: {
+      width: element.getBoundingClientRect().width,
+      height: element.getBoundingClientRect().height,
+    },
+    name: rect('.activity-name'),
+    argument: rect('.activity-argument'),
+    end: rect('.activity-end'),
+    mark: rect('.activity-mark'),
+    disclosureWidth: rect('.activity-disclosure').width,
+    background: style.backgroundColor,
+    backgroundImage: style.backgroundImage,
+  };
+}
+
 test('renders the showcase activity, Markdown and code contract', async ({
   page,
 }) => {
