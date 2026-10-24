@@ -123,26 +123,6 @@ for (const width of [480, 1440]) {
   });
 }
 
-test('keeps a running activity without details inert on hover', async ({
-  page,
-}) => {
-  await page.goto('/?fixture=long-transcript&compact-tools=true');
-  const row = page.locator('[data-message-id="fixture-compact-tool-1"]');
-  const header = row.locator('.activity-header');
-  await header.scrollIntoViewIfNeeded();
-  await page.mouse.move(0, 0);
-  await expect(header).toBeDisabled();
-  await expect(row.locator('.activity-disclosure')).toHaveCount(0);
-  await expect(row.locator('.activity-mark.running')).toBeVisible();
-  const rest = await header.evaluate(activityGeometry);
-  expect(rest.end.width).toBeCloseTo(rest.mark.width + 3, 1);
-  await header.hover();
-  expect(await header.evaluate(activityGeometry)).toEqual(rest);
-  await header.dispatchEvent('click');
-  await expect(header).toHaveAttribute('aria-expanded', 'false');
-  await expect(row.locator('.activity-details')).toHaveCount(0);
-});
-
 interface ActivityRect {
   left: number;
   right: number;

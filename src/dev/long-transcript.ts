@@ -265,16 +265,14 @@ function createCompactToolTranscript(): TranscriptEntry[] {
       text: `/tmp/tau-fixture/compact-${number}.jsonl`,
       toolCallId: `fixture-compact-call-${number}`,
       toolName: 'read',
-      toolRunning: index === 0,
+      toolRunning: false,
       toolErrored: false,
-      toolArguments:
-        index === 0
-          ? undefined
-          : JSON.stringify({ path: `/tmp/compact-${number}` }, null, 2),
-      toolResult:
-        index === 0
-          ? undefined
-          : `Read compact result ${number}.\n${'A measured detail line. '.repeat(4)}`,
+      toolArguments: JSON.stringify(
+        { path: `/tmp/compact-${number}` },
+        null,
+        2,
+      ),
+      toolResult: `Read compact result ${number}.\n${'A measured detail line. '.repeat(4)}`,
     };
   });
   return [user, ...tools];

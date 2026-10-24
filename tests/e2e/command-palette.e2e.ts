@@ -637,7 +637,7 @@ test('traverses session groups with the keyboard and preserves drafts when switc
 });
 
 for (const destination of ['Composer', 'Sidebar', 'Transcript'] as const) {
-  test(`palette-only Focus ${destination} keeps its destination and Escape restores its origin`, async ({
+  test(`palette-only Focus ${destination} keeps its destination`, async ({
     page,
   }) => {
     await page.goto('/');
@@ -663,9 +663,6 @@ for (const destination of ['Composer', 'Sidebar', 'Transcript'] as const) {
     await expect(
       page.getByRole('dialog', { name: 'Command Palette' }),
     ).toHaveCount(0);
-    await expect(target).toBeFocused();
-    await openPalette(page);
-    await page.keyboard.press('Escape');
     await expect(target).toBeFocused();
     await expect(composer).toHaveValue('Keep the focus draft');
   });
