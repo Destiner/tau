@@ -49,12 +49,14 @@ import createLongTranscript, {
   createShowcaseTranscript,
   createVerboseToolTranscript,
 } from './long-transcript';
+import createGeometryTranscript from './transcript-geometry';
 
 interface TranscriptFixtureApi {
   appendMessage(kind?: 'assistant' | 'tool'): string;
   truncate(count: number): void;
   hydrate(count: number): void;
   replaceLatestMessage(): string;
+  updateMessage(id: string, text: string): void;
   scrollToEnd(): void;
   setWorking(working: boolean): void;
   streamLatest(chunks?: number): Promise<void>;
@@ -82,21 +84,26 @@ const preview = parameters.get('preview') === 'true';
 const remote = parameters.get('remote') === 'true';
 const compacted = parameters.get('compacted') === 'true';
 const initialCount = Number(requestedCount);
-const initialMessages = verboseTool
-  ? createVerboseToolTranscript()
-  : compactTools
-    ? createCompactToolTranscript()
-    : preview
-      ? createPreviewTranscript()
-      : showcase
-        ? createShowcaseTranscript()
-        : createLongTranscript(
-            requestedCount && Number.isFinite(initialCount) && initialCount >= 0
-              ? initialCount
-              : compacted
-                ? 12
-                : undefined,
-          );
+const initialMessages =
+  parameters.get('geometry') === 'true'
+    ? createGeometryTranscript()
+    : verboseTool
+      ? createVerboseToolTranscript()
+      : compactTools
+        ? createCompactToolTranscript()
+        : preview
+          ? createPreviewTranscript()
+          : showcase
+            ? createShowcaseTranscript()
+            : createLongTranscript(
+                requestedCount &&
+                  Number.isFinite(initialCount) &&
+                  initialCount >= 0
+                  ? initialCount
+                  : compacted
+                    ? 12
+                    : undefined,
+              );
 if (search && initialMessages.length >= 6) {
   for (const [index, label] of [
     [0, 'early'],
@@ -230,6 +237,11 @@ function appendMessage(kind: 'assistant' | 'tool' = 'assistant'): string {
   return id;
 }
 
+function updateMessage(id: string, text: string): void {
+  const message = messages.value.find((entry) => entry.id === id);
+  if (message) message.text = text;
+}
+
 function replaceLatestMessage(): string {
   const lastIndex = messages.value.length - 1;
   const last = messages.value[lastIndex];
@@ -310,6 +322,7 @@ window.__TAU_TRANSCRIPT_FIXTURE__ = {
   truncate,
   hydrate,
   replaceLatestMessage,
+  updateMessage,
   scrollToEnd,
   setWorking,
   streamLatest,

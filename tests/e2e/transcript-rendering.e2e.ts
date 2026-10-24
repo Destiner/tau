@@ -32,6 +32,7 @@ for (const width of [480, 1440]) {
         const range = document.createRange();
         range.selectNodeContents(paragraph);
         const style = getComputedStyle(element);
+        const paragraphStyle = getComputedStyle(paragraph);
         return {
           width: box.width,
           available: parent.width,
@@ -42,8 +43,11 @@ for (const width of [480, 1440]) {
           scrollWidth: element.scrollWidth,
           clientWidth: element.clientWidth,
           textWidth: range.getBoundingClientRect().width,
-          padding:
-            parseFloat(style.paddingLeft) + parseFloat(style.paddingRight),
+          inset:
+            parseFloat(style.paddingLeft) +
+            parseFloat(style.paddingRight) +
+            parseFloat(paragraphStyle.marginLeft) +
+            parseFloat(paragraphStyle.marginRight),
         };
       });
       expect(geometry.left).toBeCloseTo(geometry.parentLeft, 1);
@@ -53,7 +57,7 @@ for (const width of [480, 1440]) {
       );
       if (id === 'fixture-short-user') {
         expect(geometry.width).toBeCloseTo(
-          geometry.textWidth + geometry.padding,
+          geometry.textWidth + geometry.inset,
           0,
         );
         expect(geometry.width).toBeLessThan(geometry.available - 20);

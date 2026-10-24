@@ -673,6 +673,22 @@ onBeforeUnmount(() => {
   max-width: 80ch;
 }
 
+/* Only transcript messages share these rails; nested structures keep their
+ * parent-relative indentation and other Markdown surfaces retain their measure. */
+.markdown.transcript-markdown
+  :deep(> :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6, hr)) {
+  max-width: none;
+  margin-right: var(--transcript-content-inset);
+  margin-left: var(--transcript-content-inset);
+}
+
+.markdown.transcript-markdown :deep(> .code-block pre),
+.markdown.transcript-markdown :deep(> .diagram),
+.markdown.transcript-markdown :deep(> table :is(th, td)) {
+  padding-right: calc(var(--transcript-content-inset) - 1px);
+  padding-left: calc(var(--transcript-content-inset) - 1px);
+}
+
 .markdown :deep(p),
 .markdown :deep(ul),
 .markdown :deep(ol),
