@@ -66,10 +66,28 @@ user-visible latency.
 
 Plain browser development installs a small mock IPC adapter with in-memory
 workspace, transcripts, and sidebar width. Separate tabs do not share mutations.
-Reloading resets them; existing browser localStorage is untouched. Mock replies
+Reloading resets them, including project display-name changes; existing browser
+localStorage is untouched. Rename regressions may install a test-local persisted
+name store to verify that a fresh workspace consumes confirmed labels; that fake
+does not change the ordinary sandbox's reset behavior or prove disk persistence. Mock replies
 are generated locally, with no model calls, credentials, real filesystem writes,
 or SSH connections. This is a playground, not a substitute for native integration
 checks or deterministic reproduction scenarios.
+
+## Project display names
+
+Project rename persists only an optional display name in the existing project
+registry, for local and SSH projects alike. Records without a saved name keep
+their location-derived default. Reimporting an existing identity preserves its
+custom name; renaming does not move folders, rewrite Pi transcripts, change
+session storage, or reconnect SSH.
+
+Native development keeps confirmed names in its current disposable profile,
+including across frontend reloads/HMR and fresh registry reads. Restarting the
+native process intentionally creates a fresh profile and resets those names.
+Production registry names survive application restarts. Native storage tests
+verify persistence by reading the same saved registry again, independently of
+the browser fake and development-profile reset policy.
 
 ## Production and architecture
 

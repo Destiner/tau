@@ -18,8 +18,18 @@ test('project context actions target an inactive project and restore focus', asy
     name: 'Remove Project',
     exact: true,
   });
-  await expect(page.getByRole('menuitem')).toHaveCount(2);
+  const rename = page.getByRole('menuitem', {
+    name: 'Rename Project…',
+    exact: true,
+  });
+  await expect(page.getByRole('menuitem').locator(':scope > span')).toHaveText([
+    'New Session',
+    'Rename Project…',
+    'Remove Project',
+  ]);
   await newSession.hover();
+  await page.keyboard.press('ArrowDown');
+  await expect(rename).toBeFocused();
   await page.keyboard.press('ArrowDown');
   await expect(remove).toBeFocused();
   await expect(group.locator('.session-list')).toBeVisible();
@@ -44,6 +54,9 @@ test('project menus do not replace session or background context menus', async (
   await expect(page.getByRole('menuitem', { name: /Mark as/ })).toBeVisible();
   await expect(
     page.getByRole('menuitem', { name: 'Remove Project' }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('menuitem', { name: 'Rename Project…' }),
   ).toHaveCount(0);
   await page.keyboard.press('Escape');
   await page

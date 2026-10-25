@@ -746,6 +746,22 @@ function createBrowserSandboxHandler(
       );
       return null;
     }
+    if (command === 'rename_project') {
+      const path = requiredString(args, 'path');
+      const name = requiredString(args, 'name').trim();
+      if (!name || name.length > 240) {
+        throw new Error(
+          'Browser sandbox expected a project name of 1–240 UTF-16 code units.',
+        );
+      }
+      const project = workspace.projects.find(
+        (candidate) => candidate.path === path,
+      );
+      if (!project)
+        throw new Error('Browser sandbox cannot rename an unknown project.');
+      project.name = name;
+      return name;
+    }
     if (command === 'set_project_collapsed') {
       const project = workspace.projects.find(
         (candidate) => candidate.path === requiredString(args, 'path'),

@@ -9,6 +9,7 @@
         class="ui-dialog-content ui-modal"
         :data-modal-size="width === 'md' ? 'wide' : 'standard'"
         :aria-busy="busy || undefined"
+        v-bind="$attrs"
         @close-auto-focus="handleCloseAutoFocus"
       >
         <div class="ui-dialog-scroll">
@@ -72,6 +73,8 @@ const props = withDefaults(
     returnFocus: undefined,
   },
 );
+
+defineOptions({ inheritAttrs: false });
 
 function handleOpenChange(next: boolean): void {
   if (!next && (props.busy || !props.dismissible)) return;

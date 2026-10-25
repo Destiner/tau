@@ -142,6 +142,7 @@ pub const TAURI_INVOKE_COMMANDS: &[&str] = &[
     "submit_issue_report",
     "import_project",
     "import_remote_project",
+    "rename_project",
     "remove_project",
     "set_active_project",
     "set_project_collapsed",

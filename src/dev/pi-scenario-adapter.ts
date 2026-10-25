@@ -878,6 +878,23 @@ function installPiScenarioAdapter(scenarioName: string): void {
         count(command);
         return null;
       }
+      if (command === 'rename_project') {
+        const path = requiredString(args, 'path', command);
+        const name = requiredString(args, 'name', command).trim();
+        if (!name || name.length > 240) {
+          throw new Error(
+            'rename_project.name must contain 1–240 UTF-16 code units.',
+          );
+        }
+        const project = workspace.projects.find(
+          (candidate) => candidate.path === path,
+        );
+        if (!project)
+          throw new Error('rename_project used an unknown project.');
+        count(command);
+        project.name = name;
+        return name;
+      }
       if (command === 'set_active_project') {
         count(command);
         const projectPath = requiredString(args, 'path', command);

@@ -374,6 +374,14 @@ const state = reactive({
   remoteDirectoryFilter: '',
   remoteDirectorySelectedIndex: 0,
   remoteRetry: undefined as RemoteRetry | undefined,
+  projectRename: null as {
+    projectPath: string;
+    name: string;
+    saving: boolean;
+    showProgress: boolean;
+    unconfirmed: boolean;
+    error: string;
+  } | null,
   projectRemoval: null as {
     project: ProjectSummary;
     busy: boolean;
@@ -478,6 +486,7 @@ const projectActionsDisabled = computed(
     state.initializing ||
     state.ownershipFailure !== null ||
     state.projectRemoval !== null ||
+    state.projectRename !== null ||
     state.removingProjectPaths.length > 0,
 );
 

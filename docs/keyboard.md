@@ -91,9 +91,29 @@ safety rules above. State pairs share one binding.
 
 Palette-only target commands are **Focus Composer**, **Focus Sidebar**,
 **Focus Transcript**, **Move Project Up**, **Move Project Down**,
-**Previous Session**, **Next Session**, **Remove Project**, **Clear Queued Messages**,
+**Previous Session**, **Next Session**, **Rename Project**, **Remove Project**, **Clear Queued Messages**,
 **Show Update Status**, and **Check for Updates**. They have no global shortcut. Session/project pickers expose their dynamic results
 only within their sublists; individual rows are not root commands.
+
+## Project display names
+
+**Rename Project…** is in each project row's context menu, between **New Session**
+and **Remove Project**. It targets that row without switching projects or sessions.
+The palette's **Rename Project** targets the active project and shows its name and
+location to distinguish duplicate labels. It has no new shortcut; `⌘⇧R` still
+renames the session.
+
+The compact dialog selects the current name (or that project's retained draft).
+Enter or `⌘Enter` saves; IME composition does not submit. Cancel or Escape keeps
+unfinished text for reopening and restores valid origin focus or the composer.
+Names are trimmed, nonblank, and limited to 240 UTF-16 code units; duplicate
+labels, Unicode, punctuation, and internal spaces are allowed. A display-name
+change does not move the folder or change project, session, or runtime identity.
+
+While saving, repeated submission and dismissal are blocked. An inline failure
+keeps the draft and offers **Retry**. After 10 seconds without confirmation,
+**Close** permits leaving the dialog while the write finishes; it does not cancel
+the save, and another save for that project is blocked until it settles.
 
 ## Local surfaces
 
@@ -107,7 +127,7 @@ palette unless their launcher appears above.
 | Surface                       | Target bindings                                                                                                                                      |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Transcript Find               | Enter / Shift+Enter selects next / previous occurrence and wraps while Find has focus; Escape closes only when Find is the topmost eligible surface. |
-| Rename                        | Enter or `⌘Enter` commits; Escape cancels. Opening the palette does not blur-commit.                                                                 |
+| Session rename                | Enter or `⌘Enter` commits; Escape cancels. Opening the palette does not blur-commit.                                                                 |
 | Menus and context menus       | Arrows, Enter, and their existing typeahead; Escape dismisses that menu.                                                                             |
 | Remote project dialog         | Enter/`⌘Enter` submits where applicable; `⌘↑` goes to parent; Escape closes only when dismissible.                                                   |
 | Pi prompts                    | Existing arrows/Enter selection; `⌘Enter` primary submit; `⌘⇧Enter` negative confirmation; Escape cancels only that prompt when eligible.            |
