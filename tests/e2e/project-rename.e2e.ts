@@ -47,7 +47,7 @@ async function openRename(
   expectFocused = true,
 ): Promise<void> {
   await project(page, path)
-    .locator('.project-toggle')
+    .locator('.project-select')
     .click({ button: 'right' });
   await page.getByRole('menuitem', { name: 'Rename Project…' }).click();
   await expect(dialog(page)).toBeVisible();
@@ -200,7 +200,7 @@ test('inactive project context menu does not change selection and selects the pr
     .getByRole('button', { name: 'Cancel', exact: true })
     .click();
   await expect(
-    project(page, notesPath).locator('.project-toggle'),
+    project(page, notesPath).locator('.project-select'),
   ).toBeFocused();
 });
 
@@ -220,9 +220,9 @@ test('Cancel and Escape preserve rename and composer drafts on reopen and restor
         .click();
     else await page.keyboard.press('Escape');
     await expect(dialog(page)).toHaveCount(0);
-    await expect(project(page).locator('.project-toggle')).toBeFocused();
+    await expect(project(page).locator('.project-select')).toBeFocused();
     await expect(composer).toHaveValue('Unsent composer draft');
-    await expect(project(page).locator('.project-toggle')).toHaveText('atlas');
+    await expect(project(page).locator('.project-select')).toHaveText('atlas');
     await openRename(page);
     await expect(
       dialog(page).getByRole('textbox', { name: 'Project Name' }),
@@ -263,7 +263,7 @@ test('blank Enter validates inline; IME Enter is ignored; real Enter saves a tri
   }
   await input.press('Enter');
   await expect(dialog(page)).toHaveCount(0);
-  await expect(project(page).locator('.project-toggle')).toHaveText(
+  await expect(project(page).locator('.project-select')).toHaveText(
     'Atlas Renamed',
   );
   expect(await calls(page)).toEqual([
@@ -311,8 +311,8 @@ test('accepts a duplicate project name without changing either project identity'
     .getByRole('button', { name: 'Rename', exact: true })
     .click();
 
-  await expect(project(page).locator('.project-toggle')).toHaveText('atlas');
-  await expect(project(page, notesPath).locator('.project-toggle')).toHaveText(
+  await expect(project(page).locator('.project-select')).toHaveText('atlas');
+  await expect(project(page, notesPath).locator('.project-select')).toHaveText(
     'atlas',
   );
   await expect(selected).toHaveAttribute('data-session-id', sessionId!);
@@ -354,7 +354,7 @@ test('failure rolls back the label, keeps the draft inline, and supports retry',
     'The project could not be renamed. Try again.',
   );
   await expect(dialog(page)).not.toContainText('Private registry failure');
-  await expect(project(page).locator('.project-toggle')).toHaveText('atlas');
+  await expect(project(page).locator('.project-select')).toHaveText('atlas');
   await expect(input).toHaveValue('Atlas Retry');
   await expect(input).toBeEnabled();
   await expect(page.getByRole('alertdialog')).toHaveCount(0);
@@ -363,7 +363,7 @@ test('failure rolls back the label, keeps the draft inline, and supports retry',
     .getByRole('button', { name: 'Retry', exact: true })
     .click();
   await expect(dialog(page)).toHaveCount(0);
-  await expect(project(page).locator('.project-toggle')).toHaveText(
+  await expect(project(page).locator('.project-select')).toHaveText(
     'Atlas Retry',
   );
   expect(await calls(page)).toEqual(
@@ -381,7 +381,7 @@ test('deferred rename is optimistic, delays busy copy, and prevents duplicate su
   const input = dialog(page).getByRole('textbox', { name: 'Project Name' });
   await input.fill('Atlas Pending');
   await input.press('Enter');
-  await expect(project(page).locator('.project-toggle')).toHaveText(
+  await expect(project(page).locator('.project-select')).toHaveText(
     'Atlas Pending',
   );
   await expect(
@@ -414,7 +414,7 @@ test('deferred rename is optimistic, delays busy copy, and prevents duplicate su
   ]);
   await page.evaluate(() => window.__tauRenameMock!.release());
   await expect(dialog(page)).toHaveCount(0);
-  await expect(project(page).locator('.project-toggle')).toBeFocused();
+  await expect(project(page).locator('.project-select')).toBeFocused();
 });
 
 test('timeout permits closing, retains the draft, and fences a late result from another dialog', async ({
@@ -457,7 +457,7 @@ test('timeout permits closing, retains the draft, and fences a late result from 
   await newer.fill('Notes draft');
   await page.evaluate(() => window.__tauRenameMock!.release());
 
-  await expect(project(page).locator('.project-toggle')).toHaveText(name);
+  await expect(project(page).locator('.project-select')).toHaveText(name);
   await expect(dialog(page)).toBeVisible();
   await expect(newer).toHaveValue('Notes draft');
   expect(await calls(page)).toEqual([{ path: atlasPath, name }]);
@@ -471,7 +471,7 @@ test('palette targets the active identity and refreshes sidebar, palette and rem
   await composer.fill('Identity draft');
   const selected = page.locator('.session-row.selected');
   const sessionId = await selected.getAttribute('data-session-id');
-  await project(page, notesPath).locator('.project-toggle').focus();
+  await project(page, notesPath).locator('.project-select').focus();
   await openPalette(page);
   const option = page.getByRole('option', { name: /Rename Project/ });
   await expect(option.locator('.command-palette-detail')).toHaveText(
@@ -488,10 +488,10 @@ test('palette targets the active identity and refreshes sidebar, palette and rem
     .getByRole('button', { name: 'Rename', exact: true })
     .click();
   await expect(dialog(page)).toHaveCount(0);
-  await expect(project(page).locator('.project-toggle')).toHaveText(
+  await expect(project(page).locator('.project-select')).toHaveText(
     'Atlas Display Name',
   );
-  await expect(project(page, notesPath).locator('.project-toggle')).toHaveText(
+  await expect(project(page, notesPath).locator('.project-select')).toHaveText(
     'notes',
   );
   await expect(selected).toHaveAttribute('data-session-id', sessionId!);
@@ -525,7 +525,7 @@ test('test-local IPC names survive reload without changing project or session id
   await expect(dialog(page)).toHaveCount(0);
   await page.reload();
   await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
-  await expect(project(page).locator('.project-toggle')).toHaveText(
+  await expect(project(page).locator('.project-select')).toHaveText(
     'Persistent Atlas',
   );
   await expect(page.locator('.session-row.selected')).toHaveAttribute(
@@ -553,7 +553,7 @@ test('Unicode names propagate to pickers and survive reorder and project switchi
     .fill(`\u2003${name}\u00a0`);
   await page.keyboard.press(await shortcut(page, 'Enter'));
   await expect(dialog(page)).toHaveCount(0);
-  await expect(project(page).locator('.project-toggle')).toHaveText(name);
+  await expect(project(page).locator('.project-select')).toHaveText(name);
 
   await openPalette(page);
   await page.getByRole('option', { name: /Switch Session/ }).click();
@@ -606,7 +606,7 @@ test('late rejected save rolls back only its project and preserves another dialo
     .fill('Rejected Atlas');
   await page.keyboard.press('Enter');
   await expect.poll(() => calls(page)).toHaveLength(1);
-  await expect(project(page).locator('.project-toggle')).toHaveText(
+  await expect(project(page).locator('.project-select')).toHaveText(
     'Rejected Atlas',
   );
   await page.clock.runFor(10_000);
@@ -617,7 +617,7 @@ test('late rejected save rolls back only its project and preserves another dialo
   const input = dialog(page).getByRole('textbox', { name: 'Project Name' });
   await input.fill('Unfinished Notes');
   await page.evaluate(() => window.__tauRenameMock!.release());
-  await expect(project(page).locator('.project-toggle')).toHaveText('atlas');
+  await expect(project(page).locator('.project-select')).toHaveText('atlas');
   await expect(input).toHaveValue('Unfinished Notes');
   await expect(input).toBeFocused();
   await expect(page.getByRole('alertdialog')).toHaveCount(0);
@@ -631,7 +631,7 @@ test('late rejected save rolls back only its project and preserves another dialo
     .getByRole('button', { name: 'Retry', exact: true })
     .click();
   await expect(dialog(page)).toHaveCount(0);
-  await expect(project(page).locator('.project-toggle')).toHaveText(
+  await expect(project(page).locator('.project-select')).toHaveText(
     'Rejected Atlas',
   );
 });
@@ -639,7 +639,7 @@ test('late rejected save rolls back only its project and preserves another dialo
 test('palette rename restores the original control on Cancel and successful save', async ({
   page,
 }) => {
-  const origin = project(page, notesPath).locator('.project-toggle');
+  const origin = project(page, notesPath).locator('.project-select');
   for (const save of [false, true]) {
     await origin.focus();
     await openPalette(page);
@@ -692,7 +692,7 @@ test('rename blocks global shortcuts and Enter on Cancel does not submit', async
     .focus();
   await page.keyboard.press('Enter');
   await expect(dialog(page)).toHaveCount(0);
-  await expect(project(page).locator('.project-toggle')).toHaveText('atlas');
+  await expect(project(page).locator('.project-select')).toHaveText('atlas');
   await expect(composer).toHaveValue('Do not submit this draft');
   expect(await calls(page)).toEqual([]);
 });
@@ -730,7 +730,7 @@ for (const fails of [true, false]) {
       .fill('Pending Atlas');
     await page.keyboard.press('Enter');
     await expect.poll(() => calls(page)).toHaveLength(1);
-    await expect(project(page).locator('.project-toggle')).toHaveText(
+    await expect(project(page).locator('.project-select')).toHaveText(
       'Pending Atlas',
     );
     await page.clock.runFor(10_000);
@@ -748,7 +748,7 @@ for (const fails of [true, false]) {
       .poll(() => page.evaluate(() => window.__tauRenameMock!.settled))
       .toBe(1);
     const finalName = fails ? 'atlas' : 'Pending Atlas';
-    await expect(project(page).locator('.project-toggle')).toHaveText(
+    await expect(project(page).locator('.project-select')).toHaveText(
       finalName,
     );
     // The rollback must update an already-open confirmation, not just its next opening.
@@ -775,7 +775,7 @@ test('remote project rename uses registry identity without starting an SSH conne
     .fill('Remote Notes');
   await page.keyboard.press('Enter');
   await expect(dialog(page)).toHaveCount(0);
-  await expect(project(page, notesPath).locator('.project-toggle')).toHaveText(
+  await expect(project(page, notesPath).locator('.project-select')).toHaveText(
     'Remote Notes',
   );
   await expect(page.locator('.session-row.selected')).toHaveAttribute(
