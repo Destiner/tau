@@ -60,6 +60,7 @@
                 <button
                   class="project-select"
                   type="button"
+                  tabindex="0"
                   :disabled="projectActionsDisabled"
                   @click="() => handleProjectSelect(project)"
                 >
@@ -74,6 +75,7 @@
               </UiTooltip>
               <UiIconButton
                 class="project-toggle"
+                tabindex="0"
                 size="md"
                 :label="`${project.collapsed ? 'Expand' : 'Collapse'} ${project.name}`"
                 :aria-expanded="!project.collapsed"
