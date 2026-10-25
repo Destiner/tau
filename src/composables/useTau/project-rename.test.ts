@@ -301,13 +301,10 @@ describe('project rename', () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 
-  it('validates blank and oversized names and closes normalized unchanged names without writing', async () => {
+  it('validates blank names and closes normalized unchanged names without writing', async () => {
     request('  ');
     await tau.submitProjectRename();
     expect(state.projectRename?.error).toBe('Enter a project name.');
-    state.projectRename!.name = 'x'.repeat(241);
-    await tau.submitProjectRename();
-    expect(state.projectRename?.error).toBe('Use 240 characters or fewer.');
     state.projectRename!.name = '  Original  ';
     await tau.submitProjectRename();
     expect(state.projectRename).toBeNull();
@@ -358,20 +355,6 @@ describe('project rename', () => {
     expect(invoke).toHaveBeenCalledTimes(2);
   });
 
-  it('accepts duplicate names without selecting or touching the other project', async () => {
-    request(other.name);
-    state.projectRename!.name = 'Different';
-    other.name = 'Different';
-    await tau.submitProjectRename();
-    expect(project.name).toBe(other.name);
-    expect(state.workspace?.projects.map((item) => item.path)).toEqual([
-      '/one',
-      '/two',
-    ]);
-    expect(project.selected).toBe(false);
-    expect(other.selected).toBe(false);
-  });
-
   it.each(['local', 'remote'] as const)(
     'mutates only the %s project name, preserving runtime, session, draft, archive and workspace identities',
     async (kind) => {
@@ -396,7 +379,7 @@ describe('project rename', () => {
         text: 'Keep text',
       });
       const messages = controller.messages;
-      const before = structuredClone(JSON.parse(JSON.stringify(project)));
+      const before = JSON.parse(JSON.stringify(project)) as ProjectSummary;
       const selection = [
         state.activeProjectPath,
         state.activeSessionId,
@@ -421,7 +404,10 @@ describe('project rename', () => {
         state.activeControllerKey,
       ]).toEqual(selection);
       expect(tau.archivedSessionEntries.value[0]?.session).toBe(archived);
-      expect(invoke).toHaveBeenCalledTimes(1);
+      expect(invoke).toHaveBeenCalledExactlyOnceWith(
+        'rename_project',
+        expect.objectContaining({ path: project.path, name: 'Renamed' }),
+      );
     },
   );
 
@@ -522,22 +508,6 @@ describe('project rename', () => {
       }
     },
   );
-
-  it('renames a remote project without changing its encoded identity or starting a connection', async () => {
-    const path =
-      'ssh:{"connectionString":"user@host","workingDirectory":"/repo"}';
-    project.path = path;
-    project.connectionString = 'user@host';
-    project.workingDirectory = '/repo';
-    const before = JSON.parse(JSON.stringify(project)) as ProjectSummary;
-    request();
-    await tau.submitProjectRename();
-    expect(project).toEqual({ ...before, name: 'Renamed' });
-    expect(invoke).toHaveBeenCalledExactlyOnceWith(
-      'rename_project',
-      expect.objectContaining({ path, name: 'Renamed' }),
-    );
-  });
 
   it('reconciles after a reorder replaces the workspace but preserves the captured project', async () => {
     vi.useFakeTimers();

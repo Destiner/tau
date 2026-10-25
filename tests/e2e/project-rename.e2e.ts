@@ -271,14 +271,6 @@ test('blank Enter validates inline; IME Enter is ignored; real Enter saves a tri
   ]);
 });
 
-test('unchanged Enter closes without a write', async ({ page }) => {
-  await openRename(page);
-  await page.keyboard.press('Enter');
-  await expect(dialog(page)).toHaveCount(0);
-  await expect(project(page).locator('.project-toggle')).toBeFocused();
-  expect(await calls(page)).toEqual([]);
-});
-
 test('keeps Tab and Shift+Tab contained in the rename dialog', async ({
   page,
   browserName,
