@@ -134,7 +134,7 @@ async function openSidebarRemoval(page: Page, path = atlasPath): Promise<void> {
   await page.locator(project(path)).hover();
   await page
     .locator(project(path))
-    .locator('.project-toggle')
+    .locator('.project-select')
     .click({ button: 'right' });
   await page
     .getByRole('menuitem', { name: 'Remove Project', exact: true })
@@ -164,7 +164,7 @@ test('sidebar and palette request removal without mutating until confirmation', 
   expect(await removalCalls(page)).toBe(0);
   await page.getByRole('button', { name: 'Cancel' }).click();
 
-  await page.locator(project(notesPath)).locator('.project-toggle').focus();
+  await page.locator(project(notesPath)).locator('.project-select').focus();
   await openPalette(page);
   const remove = page.getByRole('option', { name: /Remove Project/ });
   await expect(remove.locator('.command-palette-detail')).toHaveText(

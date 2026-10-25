@@ -8,8 +8,8 @@ test('project context actions target an inactive project and restore focus', asy
   const group = page.locator(
     '.project-group[data-project-path="/browser-dev/projects/notes"]',
   );
-  const toggle = group.locator('.project-toggle');
-  await toggle.click({ button: 'right' });
+  const projectSelect = group.locator('.project-select');
+  await projectSelect.click({ button: 'right' });
   const newSession = page.getByRole('menuitem', {
     name: 'New Session',
     exact: true,
@@ -35,14 +35,14 @@ test('project context actions target an inactive project and restore focus', asy
   await expect(group.locator('.session-list')).toBeVisible();
   await expect(group).not.toHaveClass(/project-sortable-chosen/);
   await page.keyboard.press('Escape');
-  await expect(toggle).toBeFocused();
+  await expect(projectSelect).toBeFocused();
 
-  await toggle.click({ button: 'right' });
+  await projectSelect.click({ button: 'right' });
   await remove.click();
   const dialog = page.locator('.project-removal');
   await expect(dialog).toContainText('“notes”');
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await expect(toggle).toBeFocused();
+  await expect(projectSelect).toBeFocused();
 });
 
 test('project menus do not replace session or background context menus', async ({

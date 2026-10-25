@@ -2013,7 +2013,7 @@ function handleDocumentKeydown(event: KeyboardEvent): void {
     const projectCtx = focusedProjectContext();
     const sessionCtx = focusedSessionContext();
     if (
-      document.activeElement?.matches('.project-toggle') &&
+      document.activeElement?.matches('.project-select, .project-toggle') &&
       !event.metaKey &&
       !event.ctrlKey &&
       !event.altKey &&

@@ -58,10 +58,11 @@
                 :delay="700"
               >
                 <button
-                  class="project-toggle"
+                  class="project-select"
                   type="button"
+                  tabindex="0"
                   :disabled="projectActionsDisabled"
-                  @click="() => handleProjectToggle(project)"
+                  @click="() => handleProjectSelect(project)"
                 >
                   <UiStatusDot
                     v-if="projectIndicator(project)"
@@ -70,11 +71,21 @@
                     :label="indicatorLabel(projectIndicator(project))"
                   />
                   <span>{{ project.name }}</span>
-                  <UiIcon
-                    :name="project.collapsed ? 'chevron-right' : 'chevron-down'"
-                  />
                 </button>
               </UiTooltip>
+              <UiIconButton
+                class="project-toggle"
+                tabindex="0"
+                size="md"
+                :label="`${project.collapsed ? 'Expand' : 'Collapse'} ${project.name}`"
+                :aria-expanded="!project.collapsed"
+                :disabled="projectActionsDisabled"
+                @click="() => handleProjectToggle(project)"
+              >
+                <UiIcon
+                  :name="project.collapsed ? 'chevron-right' : 'chevron-down'"
+                />
+              </UiIconButton>
             </div>
           </UiContextMenu>
 
@@ -327,6 +338,7 @@ const emit = defineEmits<{
 }>();
 
 const {
+  activateProject,
   addLocalProject,
   archiveSession,
   canArchiveSession,
@@ -413,7 +425,7 @@ function focusedSessionId(): string | undefined {
 
 function focusSelectedRow(): void {
   const selectedRow = sidebar.value?.querySelector<HTMLButtonElement>(
-    '.session-row.selected .session-select, .project-row.selected .project-toggle',
+    '.session-row.selected .session-select, .project-row.selected .project-select',
   );
   selectedRow?.focus({ preventScroll: true });
 }
@@ -516,6 +528,15 @@ function sessionTarget(
   return { projectPath: project.path, sessionId: session.id };
 }
 
+function handleProjectSelect(project: ProjectSummary): void {
+  if (projectActionsDisabled.value) return;
+  activateProject(project);
+  // Explicit navigation must reveal its session even while background order is held.
+  if (heldOrder.value.has(project.path)) {
+    heldOrder.value.set(project.path, heldSessions(projectSessions(project)));
+  }
+}
+
 function handleProjectToggle(project: ProjectSummary): void {
   if (appCommandDispatch) {
     appCommandDispatch(
@@ -540,7 +561,7 @@ function projectActionAnchor(path: string): HTMLButtonElement | undefined {
     sidebar.value?.querySelectorAll<HTMLElement>('.project-group') ?? [],
   ).find((element) => element.dataset.projectPath === path);
   return (
-    group?.querySelector<HTMLButtonElement>('.project-toggle') ?? undefined
+    group?.querySelector<HTMLButtonElement>('.project-select') ?? undefined
   );
 }
 
@@ -982,7 +1003,7 @@ defineExpose({
   opacity: 1;
 }
 
-.project-toggle {
+.project-select {
   display: flex;
   flex: 1;
   align-items: center;
@@ -1013,7 +1034,7 @@ defineExpose({
   --status-dot-nudge: 1px;
 }
 
-.project-toggle span {
+.project-select span {
   overflow: hidden;
   font-size: 13px;
   font-weight: 400;
@@ -1021,13 +1042,13 @@ defineExpose({
   white-space: nowrap;
 }
 
-.project-row.selected .project-toggle span {
+.project-row.selected .project-select span {
   color: var(--text);
 }
 
-.project-row:hover > .project-toggle,
-.project-sortable-chosen > .project-row .project-toggle,
-.project-sortable-drag > .project-row .project-toggle {
+.project-row:hover > .project-select,
+.project-sortable-chosen > .project-row .project-select,
+.project-sortable-drag > .project-row .project-select {
   padding-left: 27px;
 }
 

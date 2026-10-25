@@ -21,7 +21,7 @@ async function projectTops(page: Page): Promise<Record<string, number>> {
     .evaluateAll((elements) =>
       Object.fromEntries(
         elements.map((element) => [
-          element.querySelector('.project-toggle span')?.textContent ?? '',
+          element.querySelector('.project-select span')?.textContent ?? '',
           element.getBoundingClientRect().top,
         ]),
       ),

@@ -264,6 +264,39 @@ describe('project opening', () => {
     });
   });
 
+  it('reuses the new session when a collapsed empty project is activated repeatedly during startup', async () => {
+    const empty = project('/projects/empty', [], { collapsed: true });
+    resetState([empty]);
+    const startup = deferred<number>();
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === 'start_pi') return startup.promise;
+      return undefined;
+    });
+    tau = useTau();
+
+    tau.activateProject(empty);
+    const sessionId = state.activeSessionId;
+    const controller = tau.activeController.value;
+    expect(sessionId).toMatch(/^phantom-/);
+    expect(controller).toBeDefined();
+    expect(empty.collapsed).toBe(false);
+    tau.activateProject(empty);
+    tau.activateProject(empty);
+    expect(state.activeSessionId).toBe(sessionId);
+    expect(tau.activeController.value).toBe(controller);
+    expect(state.controllers).toHaveLength(1);
+    expect(tau.projectSessions(empty)).toHaveLength(1);
+    await vi.waitFor(() => {
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.filter(([command]) => command === 'start_pi'),
+      ).toHaveLength(1);
+    });
+    startup.resolve(1);
+    await expectActive(empty.path, sessionId);
+  });
+
   it('opens a first remote project into a new session', async () => {
     const remote = project('ssh:example:/empty', [], {
       connectionString: 'dev@example',
