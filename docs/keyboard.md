@@ -97,6 +97,10 @@ only within their sublists; individual rows are not root commands.
 
 ## Local surfaces
 
+Activating a focused project header makes that project active and expands it. Its
+separate chevron controls folding only; it does not activate the project. Right
+expands and Left collapses the project when either control has focus.
+
 These remain scoped to their existing surface and are excluded from the global
 palette unless their launcher appears above.
 

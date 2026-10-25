@@ -644,7 +644,7 @@ for (const destination of ['Composer', 'Sidebar', 'Transcript'] as const) {
     const composer = page.getByRole('textbox', { name: 'Message Pi' });
     const sidebar = page
       .locator(
-        '.session-row.selected .session-select, .project-row.selected .project-toggle',
+        '.session-row.selected .session-select, .project-row.selected .project-select',
       )
       .first();
     const transcript = page.getByLabel('Transcript', { exact: true });
@@ -682,7 +682,7 @@ test('all seven retired shortcuts are unconsumed and do not dispatch app actions
     );
   for (const origin of [
     composer,
-    page.locator('.project-group').last().locator('.project-toggle'),
+    page.locator('.project-group').last().locator('.project-select'),
   ]) {
     await origin.focus();
     const prevented = await origin.evaluate((element) => {
@@ -1273,7 +1273,7 @@ test('a palette New Session targets its captured project, not the sidebar row th
   const notes = page.locator(
     '.project-group[data-project-path="/browser-dev/projects/notes"]',
   );
-  await notes.locator('.project-toggle').focus();
+  await notes.locator('.project-select').focus();
   await openPalette(page);
   await expect(
     page
@@ -1298,7 +1298,7 @@ test('a project-row New Session targets that row, not the active project', async
     '.project-group[data-project-path="/browser-dev/projects/notes"]',
   );
   await notes.hover();
-  await notes.locator('.project-toggle').click({ button: 'right' });
+  await notes.locator('.project-select').click({ button: 'right' });
   await page
     .getByRole('menuitem', { name: 'New Session', exact: true })
     .click();
@@ -1311,7 +1311,7 @@ test('New Session shortcut uses a focused project row', async ({ page }) => {
   const notes = page.locator(
     '.project-group[data-project-path="/browser-dev/projects/notes"]',
   );
-  await notes.locator('.project-toggle').focus();
+  await notes.locator('.project-select').focus();
   await page.evaluate(async () => {
     const internals = (
       window as typeof window & {
