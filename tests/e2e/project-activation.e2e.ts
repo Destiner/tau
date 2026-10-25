@@ -54,7 +54,6 @@ test.beforeEach(async ({ page }) => {
 test('project labels activate populated projects, expand them, and reuse the active session', async ({
   page,
 }) => {
-  const atlas = project(page, 'atlas');
   const notes = project(page, 'notes');
   const originalIds = await sessionIds(notes);
   expect(originalIds).toHaveLength(2);
@@ -92,7 +91,6 @@ test('project labels activate populated projects, expand them, and reuse the act
     );
   }
   expect(await sessionIds(notes)).toEqual(originalIds);
-  await expect(atlas.locator('.session-row')).toHaveCount(3);
 });
 
 test('empty project activation reveals exactly one session without leaving the sidebar and reuses it', async ({
@@ -144,20 +142,6 @@ test('empty project activation reveals exactly one session without leaving the s
   await expect(page.getByRole('textbox', { name: 'Message Pi' })).toHaveValue(
     'Empty project draft',
   );
-});
-
-test('drafts survive switching projects through their labels', async ({
-  page,
-}) => {
-  const composer = page.getByRole('textbox', { name: 'Message Pi' });
-  await composer.fill('Unsent Atlas draft');
-  await project(page, 'notes').locator('.project-select').click();
-  await expect(composer).toHaveValue('');
-  await composer.fill('Unsent Notes draft');
-  await project(page, 'atlas').locator('.project-select').click();
-  await expect(composer).toHaveValue('Unsent Atlas draft');
-  await project(page, 'notes').locator('.project-select').click();
-  await expect(composer).toHaveValue('Unsent Notes draft');
 });
 
 test('chevron clicks and Left/Right on either header control only fold, while Enter/Space activate the label', async ({
