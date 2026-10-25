@@ -104,7 +104,7 @@ Inspect both commits and the actual diff from that baseline to `RELEASE_SHA` (no
 - ...
 ```
 
-Match previous releases' brevity, capitalization, and grouping. Omit empty sections. Exclude routine version bumps, internal refactors, tests, CI, and skill/docs changes unless they have a clear user-facing effect. Do not invent benefits or claim fixes unsupported by the diff. Flag breaking changes or required migration steps prominently when present. If there are no user-facing changes, use a short accurate maintenance note rather than fictional features/fixes.
+Match previous releases' brevity, capitalization, and grouping. Keep feature descriptions simple: use a short, plain-language action describing what the user can do. Omit technical qualifiers, exhaustive lists of supported variants, and secondary interaction details unless they materially change the meaning. For example, prefer “Rename projects from the menu” over “Rename local and remote project display names from the project menu or command palette”. Omit empty sections. Exclude routine version bumps, internal refactors, tests, CI, and skill/docs changes unless they have a clear user-facing effect. Do not invent benefits or claim fixes unsupported by the diff. Flag breaking changes or required migration steps prominently when present. If there are no user-facing changes, use a short accurate maintenance note rather than fictional features/fixes.
 
 Write notes to a temporary Markdown file outside the repository, then update the draft:
 
