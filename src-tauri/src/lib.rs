@@ -130,6 +130,7 @@ pub fn run() {
             storage::import_remote_project,
             storage::load_workspace,
             storage::register_session,
+            storage::rename_project,
             storage::remove_project,
             storage::reorder_projects,
             storage::set_active_project,

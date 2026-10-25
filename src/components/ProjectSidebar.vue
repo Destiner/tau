@@ -337,6 +337,7 @@ const {
   markSessionRead,
   markSessionUnread,
   newSession,
+  openProjectRename,
   openRemoteProjectDialog,
   projectIndicator,
   projectSessions,
@@ -543,6 +544,14 @@ function projectActionAnchor(path: string): HTMLButtonElement | undefined {
   );
 }
 
+function handleRenameProject(project: ProjectSummary): void {
+  if (appCommandDispatch) {
+    appCommandDispatch('project.rename', projectTarget(project));
+    return;
+  }
+  openProjectRename(project);
+}
+
 function handleRemoveProject(project: ProjectSummary): void {
   if (appCommandDispatch) {
     appCommandDispatch('project.remove', projectTarget(project));
@@ -613,6 +622,7 @@ function projectMenuItems(): UiMenuItem[] {
 function projectActionItems(project: ProjectSummary): UiMenuItem[] {
   const target = projectTarget(project);
   const newSessionHint = commandHint?.('session.new', target);
+  const renameHint = commandHint?.('project.rename', target);
   const removeHint = commandHint?.('project.remove', target);
   return [
     {
@@ -622,6 +632,12 @@ function projectActionItems(project: ProjectSummary): UiMenuItem[] {
       disabled:
         projectActionsDisabled.value || newSessionHint?.available === false,
       run: () => handleNewSession(project),
+    },
+    {
+      label: renameHint?.title ?? 'Rename Project…',
+      icon: 'note-pencil',
+      disabled: projectActionsDisabled.value || renameHint?.available === false,
+      run: () => handleRenameProject(project),
     },
     {
       label: removeHint?.title ?? 'Remove Project',

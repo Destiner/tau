@@ -60,6 +60,11 @@ import {
 
 import createComposer from './composer';
 import createLifecycle from './lifecycle';
+import {
+  openProjectRename,
+  closeProjectRename,
+  submitProjectRename,
+} from './project-rename';
 import { createProjects } from './projects';
 import {
   openRemoteProjectDialog,
@@ -195,6 +200,9 @@ function useTau() {
     submitExtensionDialog,
     cancelExtensionDialog,
     renameSession,
+    openProjectRename,
+    closeProjectRename,
+    submitProjectRename,
     selectModel,
     selectEffort,
   };

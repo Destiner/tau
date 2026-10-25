@@ -1192,16 +1192,19 @@ mod tests {
             let mut projects = vec![
                 ProjectRecord {
                     path: "/tmp/alpha".into(),
+                    name: None,
                     collapsed: false,
                     remote: None,
                 },
                 ProjectRecord {
                     path: "/tmp/beta".into(),
+                    name: None,
                     collapsed: true,
                     remote: None,
                 },
                 ProjectRecord {
                     path: "/tmp/gamma".into(),
+                    name: None,
                     collapsed: false,
                     remote: None,
                 },

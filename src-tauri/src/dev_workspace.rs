@@ -93,6 +93,7 @@ pub fn seed(profile: &StorageProfile) -> Result<(), String> {
         }
         registry.projects.push(ProjectRecord {
             path: project_path,
+            name: None,
             collapsed: false,
             remote: None,
         });
@@ -201,6 +202,7 @@ fn seed_performance(profile: &StorageProfile) -> Result<(), String> {
         }
         registry.projects.push(ProjectRecord {
             path,
+            name: None,
             collapsed: false,
             remote: None,
         });
@@ -212,6 +214,7 @@ fn seed_performance(profile: &StorageProfile) -> Result<(), String> {
         serde_json::to_string(&(connection_string, working_directory)).map_err(seed_error)?;
     registry.projects.push(ProjectRecord {
         path: format!("ssh:{remote_path}"),
+        name: None,
         collapsed: false,
         remote: Some(RemoteProjectRecord {
             connection_string: connection_string.into(),
