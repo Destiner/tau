@@ -1,5 +1,12 @@
 import type { Page } from '@playwright/test';
 
+import {
+  accessibleDiagram,
+  diagramCapabilities,
+  diagramFence,
+  unsafeDiagram,
+} from '../../src/dev/diagram-fixtures';
+
 import waitForShowcaseRendering from './fixture-readiness';
 import { expect, test } from './fixtures';
 
@@ -90,6 +97,166 @@ async function openDocument(page: Page, remote = false): Promise<void> {
         .locator(`[data-tau-path="${transcriptPath}"]`);
   await path.click();
 }
+
+test('renders supported diagram families with visible content', async ({
+  page,
+}) => {
+  await openFixture(page, {
+    [transcriptPath]: {
+      filename: 'diagrams.md',
+      sourcePath: `${localRoot}/diagrams.md`,
+      source: diagramCapabilities
+        .map(({ source }) => diagramFence(source))
+        .join('\n\n'),
+    },
+  });
+  await openDocument(page);
+  const document = page.getByRole('dialog', { name: 'diagrams.md' });
+  await expect(document.locator('.diagram')).toHaveCount(
+    diagramCapabilities.length,
+    { timeout: 20_000 },
+  );
+  for (const [index, fixture] of diagramCapabilities.entries()) {
+    const svg = document.locator('.diagram > svg').nth(index);
+    await expect(svg).toHaveClass(new RegExp(`pele-${fixture.type}`));
+    for (const label of fixture.labels) await expect(svg).toContainText(label);
+    if (fixture.type === 'flowchart') {
+      await expect(svg.locator('.pele-shape-lean-r polygon')).toHaveCount(1);
+      await expect(svg.locator('.pele-shape-lean-l polygon')).toHaveCount(1);
+      await expect(svg.locator('.pele-node[data-id="A"] tspan')).toHaveText([
+        'First line',
+        'Second "quote"',
+      ]);
+      await expect(svg.locator('.pele-node[data-id="B"] tspan')).toHaveText([
+        'Other slope',
+        'A & B',
+      ]);
+    }
+  }
+});
+
+test('isolates repeated diagrams and fullscreen accessibility across appearances', async ({
+  page,
+}) => {
+  await openFixture(page, {
+    [transcriptPath]: {
+      filename: 'repeated.md',
+      sourcePath: `${localRoot}/repeated.md`,
+      source: [
+        accessibleDiagram,
+        accessibleDiagram,
+        accessibleDiagram.replaceAll('Queue', 'Inbox'),
+      ]
+        .map(diagramFence)
+        .join('\n\n'),
+    },
+  });
+  await openDocument(page);
+  // The fullscreen modal hides the underlying document from the accessibility tree.
+  const document = page.getByRole('dialog', {
+    name: 'repeated.md',
+    includeHidden: true,
+  });
+  const diagrams = document.locator('.diagram > svg');
+  await expect(diagrams).toHaveCount(3, { timeout: 20_000 });
+  const assertReferences = async (): Promise<void> => {
+    const issues = await page
+      .locator('.diagram > svg, .viewer-drawing > svg')
+      .evaluateAll((svgs) => {
+        const ids = svgs.flatMap((svg) =>
+          Array.from(svg.querySelectorAll('[id]'), (node) => node.id),
+        );
+        const issues = ids.filter((id, index) => ids.indexOf(id) !== index);
+        for (const svg of svgs) {
+          for (const attribute of ['aria-labelledby', 'aria-describedby']) {
+            for (const id of (svg.getAttribute(attribute) ?? '')
+              .split(/\s+/)
+              .filter(Boolean)) {
+              if (
+                !Array.from(svg.querySelectorAll('[id]')).some(
+                  (node) => node.id === id,
+                )
+              )
+                issues.push(`${attribute}:${id}`);
+            }
+          }
+        }
+        return issues;
+      });
+    expect(issues).toEqual([]);
+  };
+  for (const svg of await diagrams.all()) {
+    await expect(svg).toHaveAccessibleName('Delivery pipeline');
+    await expect(svg).toHaveAccessibleDescription(
+      'A request flows from queue to completion.',
+    );
+  }
+  await assertReferences();
+  const geometry = await diagrams.evaluateAll((svgs) =>
+    svgs.map((svg) => svg.getAttribute('viewBox')),
+  );
+  const firstNode = diagrams
+    .first()
+    .locator('.pele-node')
+    .first()
+    .locator('rect');
+  await page.emulateMedia({ colorScheme: 'light' });
+  const light = await firstNode.evaluate((node) => getComputedStyle(node).fill);
+  await document.locator('.diagram-expand').first().click();
+  const viewer = page.getByRole('dialog', { name: 'Diagram', exact: true });
+  await expect(viewer).toBeVisible();
+  await assertReferences();
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect
+    .poll(() => firstNode.evaluate((node) => getComputedStyle(node).fill))
+    .not.toBe(light);
+  const dark = await firstNode.evaluate((node) => getComputedStyle(node).fill);
+  await expect(viewer.locator('.pele-node rect').first()).toHaveCSS(
+    'fill',
+    dark,
+  );
+  expect(
+    await diagrams.evaluateAll((svgs) =>
+      svgs.map((svg) => svg.getAttribute('viewBox')),
+    ),
+  ).toEqual(geometry);
+  await page.keyboard.press('Escape');
+  await expect(viewer).toHaveCount(0);
+  await expect(document.locator('.diagram-expand').first()).toBeFocused();
+  await assertReferences();
+});
+
+test('disables diagram navigation and relative or remote image loading', async ({
+  page,
+}) => {
+  const requests: string[] = [];
+  page.on('request', (request) => {
+    if (/diagram\.invalid|diagram-relative\.png/.test(request.url()))
+      requests.push(request.url());
+  });
+  await page.route('**/*diagram.invalid/**', (route) => route.abort());
+  await openFixture(page, {
+    [transcriptPath]: {
+      filename: 'security.md',
+      sourcePath: `${localRoot}/security.md`,
+      source: diagramFence(unsafeDiagram),
+    },
+  });
+  await openDocument(page);
+  const document = page.getByRole('dialog', { name: 'security.md' });
+  const diagram = document.locator('.diagram');
+  await expect(diagram).toHaveCount(1, { timeout: 20_000 });
+  await expect(diagram).toContainText('Safe label');
+  await expect(
+    diagram.locator('image, img, a[href], script, [onerror], [onclick]'),
+  ).toHaveCount(0);
+  await diagram.locator('.pele-node[data-id="A"]').click();
+  expect(await page.evaluate(() => window.__TAU_MARKDOWN_URLS__)).toEqual([]);
+  expect(
+    await page.evaluate(() => window.__TAU_MARKDOWN_IMAGE_EXECUTED__),
+  ).not.toBe(true);
+  expect(requests).toEqual([]);
+});
 
 test('reads a composite Markdown document, uses its controls, and follows a local link', async ({
   page,
@@ -227,9 +394,12 @@ flowchart LR
   await expect(unlabelledFence.locator('.diagram')).toHaveCount(0);
   const diagram = document.locator('.diagram > svg');
   await expect(diagram).toHaveCount(1, { timeout: 20_000 });
-  await expect(
-    diagram.locator('g.node[data-id="C"][data-label="Ready to ship"]'),
-  ).toHaveAttribute('data-shape', 'parallelogram');
+  await expect(diagram.locator('.pele-node[data-id="C"]')).toHaveClass(
+    /pele-shape-lean-r/,
+  );
+  await expect(diagram.locator('.pele-node[data-id="C"] text')).toHaveText(
+    'Ready to ship',
+  );
   await expect(dialog.locator('.file-viewer-code')).toHaveCount(0);
   await expect(document).toContainText('Relative picture');
   await expect(document.locator('img')).toHaveCount(0);

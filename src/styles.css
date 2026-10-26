@@ -86,6 +86,26 @@
   --scrim: rgb(0 0 0 / 10%);
   --shadow-soft: rgb(0 0 0 / 12%);
   --shadow-strong: rgb(0 0 0 / 20%);
+
+  /* Shared by inline diagrams and the fullscreen viewer teleported to body. */
+  --pele-bg: var(--canvas);
+  --pele-fg: var(--text);
+  --pele-muted: var(--muted);
+  --pele-line: var(--text);
+  --pele-surface: var(--panel);
+  --pele-surface-alt: var(--sunk);
+  --pele-border: var(--muted);
+  --pele-accent: var(--accent);
+  --pele-critical: var(--danger);
+  --pele-error: var(--danger);
+  --pele-series-1: var(--link);
+  --pele-series-2: var(--accent);
+  --pele-series-3: var(--danger);
+  --pele-series-4: var(--muted);
+  --pele-series-5: color-mix(in srgb, var(--link) 65%, var(--accent));
+  --pele-series-6: color-mix(in srgb, var(--danger) 65%, var(--link));
+  --pele-series-7: color-mix(in srgb, var(--accent) 65%, var(--text));
+  --pele-series-8: var(--text);
 }
 
 ::selection {

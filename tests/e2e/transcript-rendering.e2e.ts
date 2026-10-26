@@ -394,28 +394,29 @@ test('draws diagrams and opens their pan-and-zoom viewer', async ({ page }) => {
     await expect(
       diagram.locator('text', { hasText: 'Session live?' }),
     ).toHaveCount(1);
-    await expect(diagram.locator('g.node')).toHaveCount(11);
-    await expect(diagram.locator('polyline.edge')).toHaveCount(11);
-    await expect(diagram.locator('g.node[data-shape="diamond"]')).toHaveCount(
-      3,
-    );
-    await expect(diagram.locator('g.node[data-id="F"]')).toHaveAttribute(
-      'data-label',
-      'Route exists\nfor both sides?',
-    );
-    await expect(diagram.locator('g.node[data-id="I"]')).toHaveAttribute(
-      'data-label',
-      'Delivery only\n+ dynamic preview\n+ no result?',
-    );
+    await expect(diagram.locator('.pele-node')).toHaveCount(11);
+    await expect(diagram.locator('.pele-edge')).toHaveCount(11);
+    await expect(diagram.locator('.pele-shape-diam')).toHaveCount(3);
+    await expect(diagram.locator('.pele-node[data-id="F"] tspan')).toHaveText([
+      'Route exists',
+      'for both sides?',
+    ]);
+    await expect(diagram.locator('.pele-node[data-id="I"] tspan')).toHaveText([
+      'Delivery only',
+      '+ dynamic preview',
+      '+ no result?',
+    ]);
     for (const label of ['F', 'I', 'for']) {
       await expect(
-        diagram.locator(`g.node[data-label="${label}"]`),
+        diagram
+          .locator('.pele-label')
+          .filter({ hasText: new RegExp(`^${label}$`) }),
       ).toHaveCount(0);
     }
     const codeDiagram = showcase.locator('.diagram').filter({
-      has: page.locator(
-        'g.node[data-id="A"][data-label="metadata.calls = request.tasks ?? []"]',
-      ),
+      has: page.locator('.pele-node[data-id="A"]', {
+        hasText: 'metadata.calls =',
+      }),
     });
     await expect(codeDiagram).toHaveCount(1);
     const codeSvg = codeDiagram.locator('svg');
@@ -426,46 +427,76 @@ test('draws diagrams and opens their pan-and-zoom viewer', async ({ page }) => {
       ['D', 'root authority', 'diamond'],
       ['E', 'submit {proofs: []}, sponsored: true', 'rectangle'],
     ] as const) {
-      const node = codeSvg.locator(`g.node[data-id="${id}"]`);
-      await expect(node).toHaveAttribute('data-label', label);
-      await expect(node).toHaveAttribute('data-shape', shape);
-      await expect(node.locator('text')).toHaveText(label);
+      const node = codeSvg.locator(`.pele-node[data-id="${id}"]`);
+      await expect(node).toHaveClass(
+        new RegExp(`pele-shape-${shape === 'diamond' ? 'diam' : 'rect'}`),
+      );
+      await expect
+        .poll(() =>
+          node.locator('text').evaluate((text) => {
+            const spans = Array.from(text.querySelectorAll('tspan'));
+            const label = spans.length
+              ? spans.map((span) => span.textContent).join(' ')
+              : text.textContent;
+            return label?.replace(/\s+/g, ' ').trim();
+          }),
+        )
+        .toBe(label);
     }
-    await expect(codeSvg.locator('polyline.edge')).toHaveCount(4);
+    await expect(codeSvg.locator('.pele-edge')).toHaveCount(4);
     const syntheticDiagram = showcase.locator('.diagram').filter({
-      has: page.locator(
-        'g.node[data-id="Complete"][data-label="Ready to ship"]',
-      ),
+      has: page.locator('.pele-node[data-id="Complete"]'),
     });
     await expect(syntheticDiagram).toHaveCount(1);
     const syntheticSvg = syntheticDiagram.locator('svg');
-    await expect(syntheticSvg.locator('g.node')).toHaveCount(7);
-    await expect(syntheticSvg.locator('polyline.edge')).toHaveCount(8);
+    await expect(syntheticSvg.locator('.pele-node')).toHaveCount(7);
+    await expect(syntheticSvg.locator('.pele-edge')).toHaveCount(8);
     const compactDiagram = showcase.locator('.diagram').filter({
-      has: page.locator('g.node[data-id="S"][data-label="Start; α"]'),
+      has: page.locator('.pele-node[data-id="S"]'),
     });
     await expect(compactDiagram).toHaveCount(1);
     const compactSvg = compactDiagram.locator('svg');
-    await expect(compactSvg.locator('g.node')).toHaveCount(11);
-    await expect(compactSvg.locator('polyline.edge')).toHaveCount(13);
-    await expect(compactSvg.locator('g.node[data-id="R"]')).toHaveAttribute(
-      'data-shape',
-      'diamond',
+    await expect(compactSvg.locator('.pele-node')).toHaveCount(11);
+    await expect(compactSvg.locator('.pele-edge')).toHaveCount(13);
+    await expect(compactSvg.locator('.pele-node[data-id="R"]')).toHaveClass(
+      /pele-shape-diam/,
     );
-    const compactEdge = compactSvg.locator(
-      'polyline.edge[data-from="R"][data-to="T"]',
+    const compactEdge = compactSvg.locator('.pele-edge[data-id="L_R_T_0"]');
+    await expect(
+      compactSvg.locator('.pele-edge-label[data-id="L_R_T_0"]'),
+    ).toHaveText('remaining-deadline fires');
+    await expect(compactEdge.locator('path').first()).toHaveAttribute(
+      'stroke-dasharray',
+      /.+/,
     );
-    await expect(compactEdge).toHaveAttribute(
-      'data-label',
-      'remaining-deadline fires',
-    );
-    await expect(compactEdge).toHaveAttribute('stroke-dasharray', /.+/);
-    await expect(compactEdge).toHaveAttribute('marker-end', /url\(#.+\)/);
-    await expect(compactEdge).not.toHaveAttribute('marker-start', /.+/);
+    await expect(compactEdge.locator('.pele-marker')).toHaveCount(1);
+    // Stable edge identifiers preserve fan-in, cycle, and dotted endpoint semantics.
+    for (const [from, to] of [
+      ['P', 'W'],
+      ['P2', 'W'],
+      ['E', 'W'],
+      ['Z', 'R'],
+      ['W', 'T'],
+    ]) {
+      await expect(
+        compactSvg.locator(`.pele-edge[data-id="L_${from}_${to}_0"]`),
+      ).toHaveCount(1);
+    }
     await expect(compactDiagram.locator('.diagram-expand')).toHaveCount(1);
     await expect(
-      syntheticSvg.locator('g.node[data-id="Complete"]'),
-    ).toHaveAttribute('data-shape', 'parallelogram');
+      syntheticSvg.locator('.pele-node[data-id="Complete"]'),
+    ).toHaveClass(/pele-shape-lean-r/);
+    await expect(
+      syntheticSvg.locator(
+        '.pele-edge-label[data-id="L_Regression_Topology_0"] tspan',
+      ),
+    ).toHaveText(['two', 'lines']);
+    await expect(
+      syntheticSvg.locator('.pele-edge-label[data-id="L_Topology_Viewer_0"]'),
+    ).toHaveText('count ≤ 7');
+    await expect(
+      syntheticSvg.locator('.pele-edge-label[data-id="L_Viewer_Complete_0"]'),
+    ).toHaveText('count > 7');
     const sourceBlocks = showcase.locator(
       '.code-block[data-tau-lang="mermaid"]',
     );
@@ -489,9 +520,7 @@ test('draws diagrams and opens their pan-and-zoom viewer', async ({ page }) => {
       '[data-message-id="fixture-markdown-showcase"]',
     );
     const figure = showcase.locator('.diagram').filter({
-      has: page.locator(
-        'g.node[data-id="Complete"][data-label="Ready to ship"]',
-      ),
+      has: page.locator('.pele-node[data-id="Complete"]'),
     });
     const button = figure.locator('.diagram-expand');
     await expect(figure).toHaveCount(1, { timeout: 20_000 });
@@ -518,11 +547,10 @@ test('draws diagrams and opens their pan-and-zoom viewer', async ({ page }) => {
     await expect(
       vector.locator('text', { hasText: 'Ready to ship' }),
     ).toHaveCount(1);
-    await expect(vector.locator('g.node')).toHaveCount(7);
-    await expect(vector.locator('polyline.edge')).toHaveCount(8);
-    await expect(vector.locator('g.node[data-id="Complete"]')).toHaveAttribute(
-      'data-shape',
-      'parallelogram',
+    await expect(vector.locator('.pele-node')).toHaveCount(7);
+    await expect(vector.locator('.pele-edge')).toHaveCount(8);
+    await expect(vector.locator('.pele-node[data-id="Complete"]')).toHaveClass(
+      /pele-shape-lean-r/,
     );
     await expect(vector).toHaveAttribute('width', '100%');
     await expect(vector).toHaveAttribute('height', '100%');
@@ -616,16 +644,19 @@ test('draws diagrams and opens their pan-and-zoom viewer', async ({ page }) => {
       '[data-message-id="fixture-markdown-showcase"]',
     );
     const figure = showcase.locator('.diagram').filter({
-      has: page.locator('g.node[data-id="S"][data-label="Start; α"]'),
+      has: page.locator('.pele-node[data-id="S"]'),
     });
     const button = figure.locator('.diagram-expand');
     await button.click({ force: true });
     const viewer = page.locator('.diagram-viewer');
-    await expect(viewer.locator('g.node')).toHaveCount(11);
-    await expect(viewer.locator('polyline.edge')).toHaveCount(13);
+    await expect(viewer.locator('.pele-node')).toHaveCount(11);
+    await expect(viewer.locator('.pele-edge')).toHaveCount(13);
+    await expect(viewer.locator('.pele-edge[data-id="L_R_T_0"]')).toHaveCount(
+      1,
+    );
     await expect(
-      viewer.locator('polyline.edge[data-from="R"][data-to="T"]'),
-    ).toHaveAttribute('data-label', 'remaining-deadline fires');
+      viewer.locator('.pele-edge-label[data-id="L_R_T_0"]'),
+    ).toHaveText('remaining-deadline fires');
     await page.keyboard.press('Escape');
     await expect(viewer).toHaveCount(0);
     await expect(button).toBeFocused();
