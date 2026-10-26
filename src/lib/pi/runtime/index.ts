@@ -5,6 +5,7 @@ export {
   rpc,
   requestSessionNameRefresh,
   syncAfterCommand,
+  retryCompactionRefresh,
   watchSessionReplacement,
   probeSessionReplacement,
   scheduleMaterializationVerificationRetry,

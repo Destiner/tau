@@ -168,7 +168,7 @@ type PiRpcEvent =
       result: { content: readonly { type: 'text'; text: string }[] };
       isError: boolean;
     }
-  | { type: 'compaction_start' }
+  | { type: 'compaction_start'; reason?: unknown }
   | {
       type: 'compaction_end';
       result?: { summary: string };

@@ -1755,6 +1755,106 @@ describe('session replacement hardening', () => {
     tau.dispose();
   });
 
+  it.each(['failed response', 'timeout'] as const)(
+    'retains the compaction barrier after a %s and retries it through reselection without replaying the draft',
+    async (failure) => {
+      const {
+        firstSession,
+        project,
+        secondController: controller,
+        secondSession,
+        tau,
+      } = await setupExtensionControllers();
+      controller.streaming = false;
+      controller.working = false;
+      tau.draft.value = 'Keep this draft while compaction is reconciled';
+
+      if (failure === 'timeout') vi.useFakeTimers();
+      try {
+        emitRpc(controller, {
+          type: 'compaction_end',
+          result: { summary: 'Compacted context' },
+        });
+        await vi.waitFor(() => {
+          expect(sentRequests(controller, 'get_messages')).toHaveLength(1);
+        });
+        expect(controller.compactionReconciliationPending).toBe(true);
+        expect(tau.canCompose.value).toBe(false);
+
+        const firstRefresh = sentRequests(controller, 'get_messages')[0];
+        if (failure === 'failed response') {
+          emitRpc(controller, {
+            id: firstRefresh?.id,
+            type: 'response',
+            command: 'get_messages',
+            success: false,
+          });
+        } else {
+          await vi.advanceTimersByTimeAsync(10_001);
+        }
+        await vi.waitFor(() => {
+          expect(feedbackMessage(controller)).not.toBe('');
+        });
+        expect(controller.compactionReconciliationPending).toBe(true);
+        expect(tau.draft.value).toBe(
+          'Keep this draft while compaction is reconciled',
+        );
+        expect(tau.canCompose.value).toBe(false);
+
+        // The selected-session branch must retry an abandoned compaction read.
+        await tau.selectSession(project, secondSession);
+        await vi.waitFor(() => {
+          expect(sentRequests(controller, 'get_messages')).toHaveLength(2);
+        });
+        const selectedRetry = sentRequests(controller, 'get_messages')[1];
+        emitRpc(controller, {
+          id: selectedRetry?.id,
+          type: 'response',
+          command: 'get_messages',
+          success: false,
+        });
+        await vi.waitFor(() => {
+          expect(feedbackMessage(controller)).not.toBe('');
+        });
+
+        // The normal selection branch must also retry when returning to it.
+        await tau.selectSession(project, firstSession);
+        await tau.selectSession(project, secondSession);
+        await vi.waitFor(() => {
+          expect(sentRequests(controller, 'get_messages')).toHaveLength(3);
+        });
+        const returnedRetry = sentRequests(controller, 'get_messages')[2];
+        emitRpc(controller, {
+          id: returnedRetry?.id,
+          type: 'response',
+          command: 'get_messages',
+          success: true,
+          data: {
+            messages: [
+              { role: 'compactionSummary', summary: 'Compacted context' },
+              { role: 'user', content: 'Durable question' },
+              {
+                role: 'assistant',
+                content: [{ type: 'text', text: 'Durable answer' }],
+              },
+            ],
+          },
+        });
+        await vi.waitFor(() => {
+          expect(controller.compactionReconciliationPending).toBe(false);
+          expect(tau.canCompose.value).toBe(true);
+        });
+        expect(tau.draft.value).toBe(
+          'Keep this draft while compaction is reconciled',
+        );
+        expect(sentRequests(controller, 'prompt')).toEqual([]);
+      } finally {
+        if (failure === 'timeout') vi.useRealTimers();
+        tau.dispose();
+      }
+    },
+  );
+
   it('bounds command read reconciliation without timing out the handler', async () => {
     const { controller, otherSession, project, tau } =
       await setupUnansweredPhantomCommand();

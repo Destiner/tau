@@ -42,6 +42,8 @@ import {
 } from './history';
 import {
   rpcDispatchStillCurrent,
+  clearCompactionRefreshWatch,
+  failCompactionRefresh,
   rpc,
   remoteReconnectFailureMessage,
   promptAdmissionReconcileDelay,
@@ -340,6 +342,8 @@ async function handleResponse(
       ? errorCopy.historyLoad
       : rpcFailureCopy(command);
     setControllerError(controller, failureMessage);
+    if (command === 'get_messages')
+      failCompactionRefresh(controller, responseId);
     if (
       resolvesCommandSync ||
       (command === 'get_messages' &&
@@ -623,9 +627,16 @@ async function handleResponse(
     if (resolvesAdmissionState && controller.submittedPrompt) {
       controller.submittedPrompt.admissionStateRequestId = '';
     }
-    if (data.isCompacting === true) controller.compacting = true;
-    else if (data.isCompacting === false || !nowStreaming) {
+    if (data.isCompacting === true) {
+      if (!controller.compacting) {
+        controller.compactionReason = undefined;
+        controller.compactionStartedWhileStreaming = false;
+      }
+      controller.compacting = true;
+    } else if (data.isCompacting === false || !nowStreaming) {
       controller.compacting = false;
+      controller.compactionReason = undefined;
+      controller.compactionStartedWhileStreaming = false;
     }
     if (sessionChanged) controller.retry = undefined;
     clearRemoteConnectionWatch(controller);
@@ -680,6 +691,9 @@ async function handleResponse(
       controller.materializationMessagesRequestId = '';
       controller.lastUserMessageAt = 0;
       controller.compacting = data.isCompacting === true;
+      controller.compactionReason = undefined;
+      controller.compactionStartedWhileStreaming = false;
+      clearCompactionRefreshWatch(controller);
       controller.compactionReconciliationPending = false;
       controller.compactionStreamSequence = controller.streamSequence;
       rebindEphemeralSession(controller);
@@ -896,6 +910,7 @@ async function handleResponse(
       previousTail,
     );
     applyHistoryTail(controller, tail);
+    clearCompactionRefreshWatch(controller);
     controller.compactionReconciliationPending = false;
     controller.compactionStreamSequence = controller.streamSequence;
     const resolvesAdmission =

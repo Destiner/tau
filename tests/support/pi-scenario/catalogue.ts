@@ -14,6 +14,9 @@ import savedSessionAutoRetry from './saved-session-auto-retry';
 import savedSessionCommandReplacement from './saved-session-command-replacement';
 import savedSessionCompaction from './saved-session-compaction';
 import savedSessionCompactionNotifications from './saved-session-compaction-notifications';
+import compactionQueueScenarios, {
+  compactionQueueNativeProfile,
+} from './saved-session-compaction-queue';
 import savedSessionExtensionPrompt, {
   emptySessionExtensionPrompt,
   escapeCancellationPrompt,
@@ -60,6 +63,7 @@ const scenarios = [
   savedSessionConversation,
   savedSessionCompaction,
   savedSessionCompactionNotifications,
+  ...compactionQueueScenarios,
   savedSessionPromptAdmission,
   savedSessionMessageQueue,
   savedSessionQueuePills,
@@ -100,6 +104,24 @@ function piScenarioCatalogue(): readonly PiScenarioMetadata[] {
 }
 
 function findPiScenario(name: string): PiScenario | undefined {
+  // The browser adapter's native fixtures are keyed by established scenario
+  // names. Queue cases vary the RPC script, not those native fixtures.
+  const location = (globalThis as { location?: { search: string } }).location;
+  const variant = new URLSearchParams(location?.search).get(
+    'test-scenario-variant',
+  );
+  const queueScenario = compactionQueueScenarios.find(
+    (scenario) => scenario.metadata.name === variant,
+  );
+  if (queueScenario) {
+    const profile = compactionQueueNativeProfile(queueScenario.metadata.name);
+    if (name !== profile) {
+      throw new Error(
+        `Queue scenario ${variant} requires native profile ${profile}.`,
+      );
+    }
+    return queueScenario;
+  }
   return catalogue.get(name);
 }
 

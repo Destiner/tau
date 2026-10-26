@@ -9,6 +9,7 @@ import {
   removeRegisteredEphemeralSession,
   startController,
   syncAfterCommand,
+  retryCompactionRefresh,
 } from '../../lib/pi/runtime';
 import { startActionMilestones } from '../../lib/telemetry';
 import { advanceArchiveRevision, archiveRevision } from '../archive-revision';
@@ -203,6 +204,7 @@ function createSessions() {
         state.activeSessionPath = controller.sessionPath;
         if (controller) {
           controller.unread = false;
+          void retryCompactionRefresh(controller);
           if (controller.commandRefreshFailed && controller.generation)
             void syncAfterCommand(controller);
           if (controller.remoteDisconnected) reopenRemoteFeedback(controller);
@@ -236,6 +238,7 @@ function createSessions() {
         cancelSavedPreview();
       if (controller.remoteDisconnected) reopenRemoteFeedback(controller);
       controller.unread = false;
+      void retryCompactionRefresh(controller);
       if (controller.commandRefreshFailed && controller.generation)
         void syncAfterCommand(controller);
       trackSelection(controller, milestones, project.path, session.id);
