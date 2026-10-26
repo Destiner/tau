@@ -69,6 +69,74 @@ import {
 const materializationVerificationRetryDelays = [250, 750, 1_500];
 const commandRefreshTimeoutMs = 10_000;
 const commandRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const compactionRefreshTimeoutMs = 10_000;
+const compactionRefreshWatches = new Map<
+  string,
+  {
+    requestId: string;
+    snapshot: RpcDispatchSnapshot;
+    timer: ReturnType<typeof setTimeout>;
+  }
+>();
+
+function clearCompactionRefreshWatch(controller: SessionController): void {
+  const watch = compactionRefreshWatches.get(controller.key);
+  if (watch) clearTimeout(watch.timer);
+  compactionRefreshWatches.delete(controller.key);
+}
+
+function failCompactionRefresh(
+  controller: SessionController,
+  requestId: string,
+): void {
+  const watch = compactionRefreshWatches.get(controller.key);
+  if (!watch || watch.requestId !== requestId) return;
+  clearCompactionRefreshWatch(controller);
+  if (
+    controller.compactionReconciliationPending &&
+    rpcDispatchStillCurrent(controller, watch.snapshot, 'get_messages')
+  ) {
+    // Keep the ordering barrier until an authoritative read succeeds.
+    setControllerError(controller, errorCopy.sessionRefresh);
+  }
+}
+
+function watchCompactionRefresh(
+  controller: SessionController,
+  requestId: string,
+  snapshot: RpcDispatchSnapshot,
+): void {
+  clearCompactionRefreshWatch(controller);
+  const timer = setTimeout(() => {
+    endPendingRpcSpan(
+      rpcSpanKey(controller.runtimeId, snapshot.generation, requestId),
+      'timeout',
+    );
+    failCompactionRefresh(controller, requestId);
+  }, compactionRefreshTimeoutMs);
+  compactionRefreshWatches.set(controller.key, { requestId, snapshot, timer });
+}
+
+async function retryCompactionRefresh(
+  controller: SessionController,
+): Promise<void> {
+  if (
+    !controller.compactionReconciliationPending ||
+    compactionRefreshWatches.has(controller.key) ||
+    controller.disposed ||
+    !controller.ready ||
+    controller.remoteDisconnected
+  )
+    return;
+  try {
+    await rpc(controller, {
+      id: nextRequestId('compaction-messages'),
+      type: 'get_messages',
+    });
+  } catch {
+    // Dispatch cleanup surfaces the failed read; only explicit reselection retries.
+  }
+}
 
 function commandHasPendingWork(controller: SessionController): boolean {
   return Boolean(
@@ -168,6 +236,9 @@ async function startController(
     parentContext,
   );
   controller.compacting = false;
+  controller.compactionReason = undefined;
+  controller.compactionStartedWhileStreaming = false;
+  clearCompactionRefreshWatch(controller);
   controller.compactionReconciliationPending = false;
   controller.compactionStreamSequence = controller.streamSequence;
   controller.bootstrapStateRequestId = '';
@@ -359,6 +430,7 @@ function cleanupRejectedRpcDispatch(
 ): void {
   if (!rpcDispatchStillCurrent(controller, snapshot, method)) return;
 
+  if (method === 'get_messages') failCompactionRefresh(controller, requestId);
   if (controller.bootstrapStateRequestId === requestId) {
     controller.bootstrapStateRequestId = '';
     setControllerLifecycle(
@@ -509,6 +581,9 @@ async function rpc(
     controller.messagesHydrationSequence += 1;
   }
   const snapshot = captureRpcDispatchSnapshot(controller);
+  if (method === 'get_messages' && controller.compactionReconciliationPending) {
+    watchCompactionRefresh(controller, requestId, snapshot);
+  }
   const key = requestId
     ? rpcSpanKey(controller.runtimeId, controller.generation, requestId)
     : undefined;
@@ -1138,6 +1213,9 @@ async function retireUnsavedSession(
   controller.materializationBarrierRequestId = '';
   controller.materializationStateRequestId = '';
   controller.materializationMessagesRequestId = '';
+  controller.compactionReason = undefined;
+  controller.compactionStartedWhileStreaming = false;
+  clearCompactionRefreshWatch(controller);
   controller.compactionReconciliationPending = false;
   controller.compactionStreamSequence = controller.streamSequence;
   controller.messages = [];
@@ -1376,6 +1454,9 @@ async function stopControllerProcess(
   controller.provisionalReplacement = undefined;
   controller.retry = undefined;
   controller.compacting = false;
+  controller.compactionReason = undefined;
+  controller.compactionStartedWhileStreaming = false;
+  clearCompactionRefreshWatch(controller);
   controller.compactionReconciliationPending = false;
   controller.compactionStreamSequence = controller.streamSequence;
   setControllerLifecycle(
@@ -1425,6 +1506,9 @@ export {
   refreshModelScope,
   requestBootstrap,
   rpcDispatchStillCurrent,
+  retryCompactionRefresh,
+  clearCompactionRefreshWatch,
+  failCompactionRefresh,
   rpc,
   piConnectionFailureMessage,
   piProcessExitMessage,

@@ -191,6 +191,8 @@ interface SessionController {
   ready: boolean;
   streaming: boolean;
   compacting: boolean;
+  compactionReason: 'manual' | 'threshold' | 'overflow' | undefined;
+  compactionStartedWhileStreaming: boolean;
 
   compactionReconciliationPending: boolean;
 
@@ -579,23 +581,38 @@ const queueBusy = computed(() =>
 const queueFailedDrafts = computed(
   () => activeController.value?.queueFailedDrafts ?? [],
 );
-const canQueue = computed(() => {
-  const controller = activeController.value;
+function controllerCanQueue(controller: SessionController): boolean {
   return Boolean(
-    controller &&
-    canDraft.value &&
     controller.ready &&
+    !controller.disposed &&
     !controller.phantom &&
     controller.streaming &&
     !controller.stopping &&
-    !controller.compacting &&
+    (!controller.compacting ||
+      (controller.compactionStartedWhileStreaming &&
+        (controller.compactionReason === 'threshold' ||
+          controller.compactionReason === 'overflow'))) &&
     !controller.compactionReconciliationPending &&
     !controller.starting &&
+    !controller.promptSubmitting &&
     !controller.pendingPrompt &&
     !controller.submittedPrompt &&
     !controller.queueClearing &&
     !controller.remoteDisconnected,
   );
+}
+const canQueue = computed(() =>
+  Boolean(
+    activeController.value &&
+    canDraft.value &&
+    controllerCanQueue(activeController.value),
+  ),
+);
+const compactionRestriction = computed(() => {
+  const controller = activeController.value;
+  return controller?.compacting && !controllerCanQueue(controller)
+    ? 'Sending is unavailable during this compaction. Send your draft after it finishes.'
+    : '';
 });
 const compacting = computed(() => activeController.value?.compacting === true);
 const stopping = computed(() => activeController.value?.stopping === true);
@@ -670,6 +687,12 @@ const canCompose = computed(() => {
   if (
     controller.starting ||
     controller.working ||
+    controller.streaming ||
+    controller.stopping ||
+    controller.compacting ||
+    controller.compactionReconciliationPending ||
+    controller.queuePreparing ||
+    controller.queueSubmissions.length > 0 ||
     controller.promptSubmitting ||
     admittingOrdinaryPrompt ||
     projectActionsDisabled.value
@@ -1067,6 +1090,8 @@ function createController(
     ready: false,
     streaming: false,
     compacting: false,
+    compactionReason: undefined,
+    compactionStartedWhileStreaming: false,
     compactionReconciliationPending: false,
     compactionStreamSequence: 0,
     messagesHydrationSequence: 0,
@@ -1694,6 +1719,8 @@ export {
   queueBusy,
   queueFailedDrafts,
   canQueue,
+  controllerCanQueue,
+  compactionRestriction,
   compacting,
   stopping,
   promptSubmitting,

@@ -56,6 +56,14 @@
         :max-width="110"
         @update:model-value="handleEffortChange"
       />
+      <span
+        v-if="compactionRestriction"
+        class="compaction-restriction"
+        role="status"
+        :title="compactionRestriction"
+      >
+        {{ compactionRestriction }}
+      </span>
       <UiTooltip
         v-if="retryPresentation"
         :text="retryPresentation.reason"
@@ -172,6 +180,7 @@ const {
   canCompose,
   canDraft,
   canQueue,
+  compactionRestriction,
   commands,
   compacting,
   currentEffort,
@@ -462,6 +471,16 @@ defineExpose({
 
 .composer textarea::placeholder {
   color: var(--faint);
+}
+
+.compaction-restriction {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .composer-toolbar {

@@ -1,5 +1,6 @@
 import {
   nextRequestId,
+  controllerCanQueue,
   type SessionController,
 } from '../../../composables/state';
 import { emptyQueue, type QueueKind, type QueueSubmission } from '../queue';
@@ -95,16 +96,7 @@ async function submitQueuedMessage(
   kind: QueueKind,
 ): Promise<void> {
   const text = draft.trim();
-  if (
-    !text ||
-    !controller.ready ||
-    !controller.streaming ||
-    controller.stopping ||
-    controller.compacting ||
-    controller.queueClearing ||
-    controller.disposed
-  )
-    return;
+  if (!text || !controllerCanQueue(controller)) return;
   const generation = controller.generation;
   const sessionId = controller.sessionId;
   const sessionPath = controller.sessionPath;
@@ -124,13 +116,14 @@ async function submitQueuedMessage(
   const prepared = await prepareQueueModes(controller);
   if (!queueIdentityCurrent(controller, generation, sessionId, sessionPath))
     return;
-  if (!prepared) {
+  if (!prepared || !controllerCanQueue(controller)) {
     controller.queueSubmissions = controller.queueSubmissions.filter(
       (item) => item.id !== submission.id,
     );
     recoverQueueDraft(controller, draft);
-    controller.queueFeedback =
-      'Could not prepare queue delivery. Check the Pi version and try again.';
+    controller.queueFeedback = prepared
+      ? 'Message was not queued because Pi’s state changed. Send it again when ready.'
+      : 'Could not prepare queue delivery. Check the Pi version and try again.';
     return;
   }
   const result = await queueRpc(controller, {
