@@ -31,7 +31,9 @@ const listGeometry = `- Tight item one
 2. Second ordered item
    1. Nested ordered item`;
 
-const codeGeometry = `\`\`\`ts
+const codeGeometry = `Code borders and prose share the same rails.
+
+\`\`\`ts
 const indented = {
   leading: '  two spaces remain after the quote',
   trailing: 'spaces before this fence should remain visible  ',
@@ -42,7 +44,7 @@ function preserveWhitespace(value: string) {
 }
 \`\`\`
 
-\`\`\`text
+\`\`\`
 THIS_IS_A_DELIBERATELY_UNBREAKABLE_CODE_LINE_FOR_HORIZONTAL_SCROLL_REVIEW_0123456789_abcdefghijklmnopqrstuvwxyz_ABCDEFGHIJKLMNOPQRSTUVWXYZ_/Users/agent/Code/tau/src/components/TranscriptView.vue:418
 \`\`\``;
 
