@@ -65,6 +65,7 @@ import {
   selectRegisteredSession,
   canRegisterConnectedSession,
 } from './registration';
+import { cancelSetup, failPendingSetup } from './setup';
 
 const materializationVerificationRetryDelays = [250, 750, 1_500];
 const commandRefreshTimeoutMs = 10_000;
@@ -222,6 +223,7 @@ async function startController(
   parentContext?: TraceContext,
 ): Promise<void> {
   if (controller.starting || controller.disposed) return;
+  cancelSetup(controller);
   resetQueue(controller, controller.generation > 0);
   setControllerLifecycle(
     controller,
@@ -494,7 +496,8 @@ function cleanupRejectedRpcDispatch(
         pending.messagesRequestId)),
   );
   if (rejectsPendingPrompt) {
-    cancelPendingPrompt(controller, rpcFailureCopy(method));
+    if (pending?.settingsRequestId === requestId) failPendingSetup(controller);
+    else cancelPendingPrompt(controller, rpcFailureCopy(method));
   }
 
   const submitted = snapshot.submittedPrompt;
@@ -1333,6 +1336,7 @@ function canReleaseRuntime(controller: SessionController): boolean {
     !controller.working &&
     !commandHasPendingWork(controller) &&
     !controller.commandRefreshFailed &&
+    !controller.setupFailure &&
     !controller.starting &&
     !controller.syncing &&
     !controller.pendingSettingRequestId &&
@@ -1364,6 +1368,7 @@ async function discardReleasedEmptySession(
     workspaceContainsSession(controller) ||
     controller.materializationVerified ||
     controller.remoteDisconnected ||
+    controller.setupFailure ||
     controller.commandRefreshFailed ||
     controller.draft.trim() ||
     queueHasWork(controller.queue, controller.queueSubmissions) ||
@@ -1450,6 +1455,7 @@ async function stopControllerProcess(
   abandonPendingRpcSpans(controller.runtimeId, generation, 'abandoned_stop');
   flushStreamAggregate(controller.runtimeId, generation);
   resetQueue(controller, true);
+  cancelSetup(controller);
   controller.generation = 0;
   controller.provisionalReplacement = undefined;
   controller.retry = undefined;

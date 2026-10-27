@@ -45,6 +45,11 @@ function createComposer(
     const controller = activeController.value;
     const submittedDraft = controller?.draft ?? '';
     const message = submittedDraft.trim();
+    if (
+      controller?.setupFailure &&
+      !invokesExtensionCommand(controller, message)
+    )
+      return;
     if (controller?.streaming) {
       if (
         !message ||

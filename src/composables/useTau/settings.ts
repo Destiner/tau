@@ -5,6 +5,7 @@ import {
   clearSettingRequestWatch,
   requestSessionNameRefresh,
   rpc,
+  recoverSetupModel,
   watchSettingRequest,
 } from '../../lib/pi/runtime';
 import { startActionSpan } from '../../lib/telemetry';
@@ -33,6 +34,10 @@ async function selectModel(value: string): Promise<void> {
     controllerTelemetryScope(controller),
   );
   try {
+    if (controller.setupFailure) {
+      await recoverSetupModel(controller, model.provider, model.id, model.name);
+      return;
+    }
     if (controller.phantom) {
       controller.currentModelProvider = model.provider;
       controller.currentModelId = model.id;
