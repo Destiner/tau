@@ -260,6 +260,12 @@ const REQUIRED_NATIVE_COUNTS = {
     register_session: 2,
     set_active_session: 2,
   },
+  'saved-session-notice-boundaries': {
+    load_workspace: 1,
+    read_model_scope: 2,
+    register_session: 7,
+    set_active_session: 3,
+  },
   'saved-session-extension-prompt-cycling': {
     load_workspace: 1,
     read_model_scope: 2,
@@ -502,6 +508,7 @@ function scenarioWorkspace(scenarioName: string): WorkspaceSnapshot {
   if (
     scenarioName === 'saved-session-prompt-process-exit' ||
     scenarioName === 'saved-session-extension-prompt-cycling' ||
+    scenarioName === 'saved-session-notice-boundaries' ||
     scenarioName === 'cross-project-sidebar-metadata-actions' ||
     scenarioName === 'saved-session-command-replacement' ||
     scenarioName === 'plan-implement-replacement' ||
@@ -817,17 +824,20 @@ function installPiScenarioAdapter(scenarioName: string): void {
         const expected =
           scenarioName === 'phantom-command-registration' ||
           scenarioName === 'phantom-first-prompt-registration' ||
-          scenarioName === 'delayed-successor-verification'
+          scenarioName === 'delayed-successor-verification' ||
+          scenarioName === 'saved-session-notice-boundaries'
             ? ((): NativeSessionIdentity => {
                 const candidates =
-                  scenarioName === 'delayed-successor-verification'
-                    ? [
-                        MAIN_SESSION,
-                        BACKUP_SESSION,
-                        PLAN_SESSION,
-                        IMPLEMENT_SESSION,
-                      ]
-                    : [MAIN_SESSION, COMMAND_SESSION, FIRST_PROMPT_SESSION];
+                  scenarioName === 'saved-session-notice-boundaries'
+                    ? [MAIN_SESSION, BACKUP_SESSION]
+                    : scenarioName === 'delayed-successor-verification'
+                      ? [
+                          MAIN_SESSION,
+                          BACKUP_SESSION,
+                          PLAN_SESSION,
+                          IMPLEMENT_SESSION,
+                        ]
+                      : [MAIN_SESSION, COMMAND_SESSION, FIRST_PROMPT_SESSION];
                 const session =
                   candidates.find(
                     (candidate) => candidate.id === args.sessionId,
@@ -835,12 +845,14 @@ function installPiScenarioAdapter(scenarioName: string): void {
                 return {
                   ...session,
                   adopted:
-                    scenarioName === 'delayed-successor-verification'
-                      ? (session.id === PLAN_SESSION.id ||
-                          session.id === IMPLEMENT_SESSION.id) &&
-                        !registeredSessionIds.has(session.id)
-                      : session.id !== MAIN_SESSION.id &&
-                        !registeredSessionIds.has(session.id),
+                    scenarioName === 'saved-session-notice-boundaries'
+                      ? false
+                      : scenarioName === 'delayed-successor-verification'
+                        ? (session.id === PLAN_SESSION.id ||
+                            session.id === IMPLEMENT_SESSION.id) &&
+                          !registeredSessionIds.has(session.id)
+                        : session.id !== MAIN_SESSION.id &&
+                          !registeredSessionIds.has(session.id),
                 };
               })()
             : expectedRegisteredSession(scenarioName, invocation);
@@ -1399,6 +1411,7 @@ function scenarioRuntimeKey(
   if (
     scenarioName === 'saved-session-prompt-process-exit' ||
     scenarioName === 'saved-session-extension-prompt-cycling' ||
+    scenarioName === 'saved-session-notice-boundaries' ||
     scenarioName === 'saved-session-command-replacement' ||
     scenarioName === 'plan-implement-replacement' ||
     scenarioName === 'delayed-successor-verification' ||
