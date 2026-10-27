@@ -309,7 +309,6 @@ async function handleRpc(
     clearMaterializationVerificationWatch(controller);
     clearAbortWatch(controller);
     resetStreamAggregate(controller.runtimeId, controller.generation);
-    controller.localErrors = [];
     controller.compacting = false;
     controller.compactionReason = undefined;
     controller.compactionStartedWhileStreaming = false;
@@ -444,9 +443,9 @@ async function handleRpc(
     return;
   }
   /**
-   * A failed compaction is reported once and kept nowhere: Pi's message list
-   * has no entry for it, so the row is held on the controller and re-appended
-   * to every list hydrated until the next run begins.
+   * Pi does not persist compaction failures in its message list, so each
+   * failure row is held on the controller and reinserted
+   * during hydration until successful compaction or session replacement.
    */
   if (type === 'compaction_end') {
     controller.compacting = false;

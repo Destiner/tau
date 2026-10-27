@@ -58,6 +58,88 @@ beforeEach(async () => {
   vi.mocked(telemetry.invokeTraced).mockResolvedValue(undefined);
 });
 
+describe('local compaction failure lifetime', () => {
+  async function hydrate(
+    controller: SessionController,
+    messages: unknown[],
+  ): Promise<void> {
+    const { handleResponse, rpc } = await import('./index');
+    const id = `lifetime-messages-${controller.streamSequence++}`;
+    await rpc(controller, { id, type: 'get_messages' });
+    await handleResponse(controller, {
+      id,
+      command: 'get_messages',
+      success: true,
+      data: { messages },
+    });
+  }
+
+  it('retains a compaction failure through a new run and repeated hydration', async () => {
+    const { handleRpc } = await import('./index');
+    const controller = makeController({ messagesLoaded: true });
+    const original = [{ role: 'user', content: 'Original question' }];
+    await hydrate(controller, original);
+    await handleRpc(controller, {
+      type: 'compaction_end',
+      errorMessage: 'Compaction failed',
+    });
+    const failure = controller.localErrors[0];
+    const failureId = controller.messages[1]?.id;
+
+    await handleRpc(controller, { type: 'agent_start' });
+    expect(controller.localErrors).toEqual([failure]);
+    await handleRpc(controller, {
+      type: 'message_start',
+      message: { role: 'user', content: 'Next question' },
+    });
+    const later = [
+      ...original,
+      { role: 'user', content: 'Next question' },
+      { role: 'assistant', content: [{ type: 'text', text: 'Next reply' }] },
+    ];
+    await hydrate(controller, later);
+    await hydrate(controller, later);
+
+    expect(controller.messages.map((entry) => entry.kind)).toEqual([
+      'user',
+      'error',
+      'user',
+      'assistant',
+    ]);
+    expect(
+      controller.messages.filter((entry) => entry.id === failureId),
+    ).toHaveLength(1);
+    expect(controller.messages[1]?.errorLabel).toBe(
+      'Conversation Not Shortened',
+    );
+  });
+
+  it('clears a retained failure on successful compaction and does not restore it', async () => {
+    const { handleRpc } = await import('./index');
+    const controller = makeController({ messagesLoaded: true });
+    await hydrate(controller, [{ role: 'user', content: 'Original question' }]);
+    await handleRpc(controller, {
+      type: 'compaction_end',
+      errorMessage: 'Compaction failed',
+    });
+    const failureId = controller.messages[1]?.id;
+
+    await handleRpc(controller, { type: 'compaction_end', result: {} });
+    expect(controller.localErrors).toEqual([]);
+    expect(controller.messages.some((entry) => entry.id === failureId)).toBe(
+      false,
+    );
+    const compacted = [{ role: 'compactionSummary', summary: 'Short context' }];
+    await hydrate(controller, compacted);
+    await handleRpc(controller, { type: 'agent_start' });
+    await hydrate(controller, compacted);
+    expect(controller.messages.map((entry) => entry.kind)).toEqual([
+      'compaction',
+    ]);
+    expect(controller.localErrors).toEqual([]);
+  });
+});
+
 describe('extension failures', () => {
   it('uses reviewed status copy for extension_error without retaining raw details', async () => {
     const { handleRpc } = await import('./index');
