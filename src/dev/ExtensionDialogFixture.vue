@@ -22,6 +22,35 @@
     >
       Show prompt
     </button>
+    <div
+      v-if="focusControls"
+      class="focus-controls"
+    >
+      <input
+        ref="unrelatedInput"
+        aria-label="Unrelated input"
+      />
+      <button @click="beginSubmit">Begin Submit</button>
+      <button @click="failSubmit">Fail Submit</button>
+      <button @click="toggleDisabled">Toggle Disabled</button>
+      <button @click="updatePrompt">Update Prompt</button>
+      <button @click="openConfirmation">Open Confirmation</button>
+      <button @click="openPalette">Open Palette</button>
+      <CommandPalette
+        v-model:open="paletteOpen"
+        :rows="[]"
+      />
+      <button @click="failConfirmation">Fail Confirmation</button>
+      <UiConfirmation
+        :open="confirmationOpen"
+        title="Fixture Confirmation"
+        action="Continue"
+        :busy="confirmationBusy"
+        :return-focus="() => unrelatedInput"
+        @cancel="closeConfirmation"
+        @confirm="submitConfirmation"
+      />
+    </div>
     <output data-testid="dialog-outcome">{{ outcome }}</output>
   </main>
 </template>
@@ -29,7 +58,9 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue';
 
+import CommandPalette from '../components/CommandPalette.vue';
 import TranscriptView from '../components/TranscriptView.vue';
+import UiConfirmation from '../components/ui/UiConfirmation.vue';
 import type { ExtensionDialog } from '../composables/state';
 import type { TranscriptEntry } from '../lib/pi/transcript';
 
@@ -39,7 +70,12 @@ const delayed = params.get('delayed') === 'true';
 const requestedMethod = params.get('method');
 const method = isPromptMethod(requestedMethod) ? requestedMethod : 'select';
 const submitting = params.get('submitting') === 'true';
-const disabled = params.get('disabled') === 'true';
+const disabled = ref(params.get('disabled') === 'true');
+const focusControls = params.get('focusControls') === 'true';
+const unrelatedInput = ref<HTMLInputElement>();
+const confirmationOpen = ref(false);
+const paletteOpen = ref(false);
+const confirmationBusy = ref(false);
 const toolHistory = params.get('history') === 'tools';
 const compactPrompt = params.get('prompt') === 'compact';
 
@@ -127,6 +163,43 @@ const promptVisible = ref(!delayed);
 const answered = ref(false);
 const outcome = ref('');
 const cancelCount = ref(0);
+
+function beginSubmit(): void {
+  prompt.submitting = true;
+}
+
+function toggleDisabled(): void {
+  disabled.value = !disabled.value;
+}
+
+function updatePrompt(): void {
+  prompt.title += ' Updated';
+}
+
+function openPalette(): void {
+  paletteOpen.value = true;
+}
+
+function openConfirmation(): void {
+  confirmationOpen.value = true;
+}
+
+function closeConfirmation(): void {
+  confirmationOpen.value = false;
+}
+
+function submitConfirmation(): void {
+  confirmationBusy.value = true;
+}
+
+function failConfirmation(): void {
+  confirmationBusy.value = false;
+}
+
+function failSubmit(): void {
+  prompt.submitting = false;
+  prompt.error = 'Response failed. Try again.';
+}
 
 function showPrompt(): void {
   promptVisible.value = true;

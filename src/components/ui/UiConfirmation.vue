@@ -83,6 +83,8 @@ import {
 } from 'reka-ui';
 import { nextTick, ref, watch } from 'vue';
 
+import useDisabledFocusRepair from '../../composables/useDisabledFocusRepair';
+
 import UiButton from './UiButton.vue';
 import registerConfirmation from './confirmation-stack';
 
@@ -132,6 +134,12 @@ const content = ref<InstanceType<typeof DialogContent>>();
 const cancelButton = ref<InstanceType<typeof UiButton>>();
 const confirmButton = ref<InstanceType<typeof UiButton>>();
 
+useDisabledFocusRepair(
+  () => content.value?.$el as HTMLElement | undefined,
+  () => props.busy,
+  focusInitialButton,
+);
+
 watch(
   () => [props.open, content.value] as const,
   ([open, element], _, onCleanup) => {
@@ -147,13 +155,14 @@ function handleOpenChange(next: boolean): void {
 
 function handleOpenAutoFocus(event: Event): void {
   event.preventDefault();
-  void nextTick(() => {
-    const button =
-      props.initialFocus === 'confirm'
-        ? confirmButton.value
-        : cancelButton.value;
-    button?.button?.focus({ preventScroll: true });
-  });
+  void nextTick(focusInitialButton);
+}
+
+function focusInitialButton(): void {
+  if (!props.open || props.busy) return;
+  const button =
+    props.initialFocus === 'confirm' ? confirmButton.value : cancelButton.value;
+  button?.button?.focus({ preventScroll: true });
 }
 
 function handleCloseAutoFocus(event: Event): void {
@@ -180,7 +189,7 @@ function handleCloseAutoFocus(event: Event): void {
 function anotherModal(): HTMLElement | undefined {
   return [
     ...document.querySelectorAll<HTMLElement>(
-      '[role="dialog"], [role="alertdialog"]',
+      '[role="dialog"]:not([aria-modal="false"]), [role="alertdialog"]:not([aria-modal="false"])',
     ),
   ]
     .filter((dialog) => {

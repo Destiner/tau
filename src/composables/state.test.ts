@@ -799,6 +799,38 @@ describe('compaction queue admission', () => {
     expect(canDraft.value).toBe(true);
     expect(canQueue.value).toBe(false);
 
+    state.extensionDialogs.push({
+      key: 'dialog',
+      requestId: 'request',
+      method: 'input',
+      title: 'Extension input',
+      draft: '',
+      submitting: false,
+      error: '',
+      controllerKey: 'other-controller',
+      runtimeId: stored.runtimeId,
+      generation: stored.generation,
+      projectName: 'Project',
+      sessionName: 'Session',
+    });
+    stored.draft = '  keep exact draft\n';
+    expect(canCompose.value).toBe(true);
+    state.extensionDialogs[0]!.controllerKey = stored.key;
+    expect(canCompose.value).toBe(false);
+    expect(canDraft.value).toBe(true);
+    expect(stored.draft).toBe('  keep exact draft\n');
+    stored.streaming = true;
+    expect(canQueue.value).toBe(false);
+    state.extensionDialogs[0]!.controllerKey = 'other-controller';
+    expect(canQueue.value).toBe(true);
+    state.extensionDialogs[0]!.controllerKey = stored.key;
+    expect(canQueue.value).toBe(false);
+    state.extensionDialogs.splice(0);
+    expect(canQueue.value).toBe(true);
+    stored.streaming = false;
+    expect(canCompose.value).toBe(true);
+    expect(stored.draft).toBe('  keep exact draft\n');
+
     stored.queuePreparing = true;
     expect(queueBusy.value).toBe(true);
     expect(canCompose.value).toBe(false);

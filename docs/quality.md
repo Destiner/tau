@@ -119,6 +119,12 @@ Concurrency bugs are the worst UX bugs.
 
 ## 6. Keyboard and focus
 
+- Nonmodal prompts take initial focus once, unless a modal or command palette
+  is open. Updates and retry failures never reclaim unrelated focus. When a
+  surface disables its focused control, it may repair that lost focus after
+  re-enabling only if the user has not focused elsewhere and no other modal
+  owns focus. Nonmodal dialogs are not modal restoration targets. `[e2e]`
+
 - When transient UI closes, focus returns to a still-valid originating
   control or the active composer — never behind another modal or onto the
   document body. `[e2e]`

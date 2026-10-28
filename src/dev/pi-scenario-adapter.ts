@@ -272,6 +272,18 @@ const REQUIRED_NATIVE_COUNTS = {
     register_session: 2,
     set_active_session: 2,
   },
+  'saved-session-extension-input': {
+    load_workspace: 1,
+    read_model_scope: 1,
+    register_session: 1,
+    set_active_session: 0,
+  },
+  'saved-session-extension-editor': {
+    load_workspace: 1,
+    read_model_scope: 1,
+    register_session: 1,
+    set_active_session: 0,
+  },
   'saved-session-extension-input-navigation': {
     load_workspace: 1,
     read_model_scope: 1,
@@ -879,18 +891,26 @@ function installPiScenarioAdapter(scenarioName: string): void {
             null,
         );
       }
-      if (
-        command === 'set_project_collapsed' &&
-        scenarioName === 'project-opening'
-      ) {
+      if (command === 'set_project_collapsed') {
         const projectPath = requiredString(args, 'path', command);
-        if (projectPath !== TARGET_PROJECT_PATH) {
-          throw new Error('Project opening unfolded an unexpected project.');
+        if (typeof args.collapsed !== 'boolean') {
+          throw new Error('set_project_collapsed.collapsed must be a boolean.');
         }
-        if (typeof args.collapsed !== 'boolean' || args.collapsed) {
-          throw new Error('Project opening must unfold the imported target.');
+        const project = workspace.projects.find(
+          (candidate) => candidate.path === projectPath,
+        );
+        if (!project)
+          throw new Error('set_project_collapsed used an unknown project.');
+        if (scenarioName === 'project-opening') {
+          if (projectPath !== TARGET_PROJECT_PATH) {
+            throw new Error('Project opening unfolded an unexpected project.');
+          }
+          if (args.collapsed) {
+            throw new Error('Project opening must unfold the imported target.');
+          }
         }
         count(command);
+        project.collapsed = args.collapsed;
         return null;
       }
       if (command === 'rename_project') {
@@ -1089,6 +1109,8 @@ function installPiScenarioAdapter(scenarioName: string): void {
           ![
             'saved-session-extension-prompt-project-switching',
             'saved-session-extension-prompt-cycling',
+            'saved-session-extension-input',
+            'saved-session-extension-editor',
             'saved-session-extension-input-navigation',
             'saved-session-extension-editor-navigation',
           ].includes(scenarioName)

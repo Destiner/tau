@@ -60,6 +60,7 @@
 import { computed, ref } from 'vue';
 
 import { state } from '../composables/state';
+import useDisabledFocusRepair from '../composables/useDisabledFocusRepair';
 import useTau from '../composables/useTau';
 import textFieldItems from '../lib/text-menu';
 
@@ -72,6 +73,13 @@ defineProps<{ returnFocus: () => HTMLElement | undefined }>();
 const { closeProjectRename, submitProjectRename } = useTau();
 const rename = computed(() => state.projectRename);
 const nameInput = ref<InstanceType<typeof UiInput>>();
+useDisabledFocusRepair(
+  () =>
+    nameInput.value?.input?.closest<HTMLElement>('[role="dialog"]') ??
+    undefined,
+  () => Boolean(rename.value?.saving),
+  () => nameInput.value?.input?.focus({ preventScroll: true }),
+);
 const location = computed(() => {
   const project = state.workspace?.projects.find(
     (item) => item.path === rename.value?.projectPath,

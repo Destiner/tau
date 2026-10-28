@@ -371,6 +371,27 @@ test('failure rolls back the label, keeps the draft inline, and supports retry',
   );
 });
 
+test('rename failure repairs the input disabled by submission without reselecting its draft', async ({
+  page,
+}) => {
+  await setMode(page, 'defer-fail');
+  await openRename(page);
+  const input = dialog(page).getByRole('textbox', { name: 'Project Name' });
+  await input.fill('Atlas Pending');
+  await input.press('Enter');
+  await expect(input).toBeDisabled();
+  await page.evaluate(() => window.__tauRenameMock!.release());
+  await expect(input).toBeEnabled();
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue('Atlas Pending');
+  expect(
+    await input.evaluate((element) => {
+      const field = element as HTMLInputElement;
+      return field.selectionStart === field.selectionEnd;
+    }),
+  ).toBe(true);
+});
+
 test('deferred rename is optimistic, delays busy copy, and prevents duplicate submit or dismissal', async ({
   page,
 }) => {

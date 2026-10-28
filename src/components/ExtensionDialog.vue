@@ -1,5 +1,6 @@
 <template>
   <form
+    ref="prompt"
     class="extension-prompt"
     role="dialog"
     aria-modal="false"
@@ -133,6 +134,9 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref, watch } from 'vue';
 
+import useDisabledFocusRepair, {
+  topModal,
+} from '../composables/useDisabledFocusRepair';
 import textFieldItems from '../lib/text-menu';
 
 import MarkdownText from './ui/MarkdownText.vue';
@@ -166,6 +170,7 @@ const emit = defineEmits<{
 const dialogInput = ref<
   InstanceType<typeof UiInput> | InstanceType<typeof UiTextarea>
 >();
+const prompt = ref<HTMLFormElement>();
 const primaryAction = ref<InstanceType<typeof UiButton>>();
 const selectedIndex = ref(0);
 let escapeClaimed = false;
@@ -175,33 +180,51 @@ let escapeClaimed = false;
  * brings itself to it, and a browser scrolling to a control instead would land
  * on the control rather than on the question above it.
  */
+let initialFocusHandled = false;
+function focusInitially(): void {
+  if (initialFocusHandled) return;
+  if (topModal()) {
+    initialFocusHandled = true;
+    return;
+  }
+  if (props.disabled || props.submitting) return;
+  initialFocusHandled = true;
+  focusDialog();
+}
 onMounted(() => {
-  void nextTick(focusDialog);
+  void nextTick(focusInitially);
 });
+watch(
+  () => Boolean(props.disabled) || props.submitting,
+  () => void nextTick(focusInitially),
+);
+
+useDisabledFocusRepair(
+  () => prompt.value,
+  () => props.submitting || Boolean(props.disabled),
+  focusDialog,
+);
 
 watch(
   () => props.submitting,
   (submitting, wasSubmitting) => {
     if (!submitting && wasSubmitting) {
       escapeClaimed = false;
-      void nextTick(focusDialog);
     }
   },
 );
 
-watch(
-  () => props.disabled,
-  (disabled, wasDisabled) => {
-    if (!disabled && wasDisabled && document.activeElement === document.body)
-      void nextTick(focusDialog);
-  },
-);
-
 function focusDialog(): void {
+  if (props.submitting || props.disabled) return;
   if (props.method === 'select') {
-    document
-      .getElementById('extension-prompt-option-0')
-      ?.focus({ preventScroll: true });
+    const options = prompt.value?.querySelectorAll<HTMLButtonElement>(
+      '.extension-prompt-option',
+    );
+    (
+      options?.[selectedIndex.value] ??
+      options?.[0] ??
+      prompt.value?.querySelector<HTMLButtonElement>('button:not(:disabled)')
+    )?.focus({ preventScroll: true });
   } else if (props.method === 'confirm') {
     primaryAction.value?.button?.focus({ preventScroll: true });
   } else {
@@ -287,9 +310,9 @@ function handleSelectKeydown(event: KeyboardEvent): void {
     const delta = event.key === 'ArrowDown' ? 1 : -1;
     selectedIndex.value =
       (selectedIndex.value + delta + options.length) % options.length;
-    document
-      .getElementById(`extension-prompt-option-${selectedIndex.value}`)
-      ?.focus();
+    prompt.value
+      ?.querySelectorAll<HTMLButtonElement>('.extension-prompt-option')
+      [selectedIndex.value]?.focus({ preventScroll: true });
   }
 }
 </script>
