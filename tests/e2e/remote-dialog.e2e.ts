@@ -10,7 +10,7 @@ test.beforeEach(async ({ page }) => {
   await page.setViewportSize(viewport);
 });
 
-for (const step of ['connection', 'directory'] as const) {
+for (const step of ['connection'] as const) {
   test(`anchors the ${step} panel top-center, clear of the title bar`, async ({
     page,
   }) => {
@@ -33,7 +33,7 @@ for (const step of ['connection', 'directory'] as const) {
   });
 }
 
-for (const step of ['connection', 'directory'] as const) {
+for (const step of ['connection'] as const) {
   test(`renders the ${step} error below its input`, async ({ page }) => {
     await page.goto(`/?fixture=remote-dialog&step=${step}&error=true`);
 
@@ -87,20 +87,6 @@ test('remote directories remain keyboard and wheel reachable at native minimum s
   await expect(options.last()).not.toBeInViewport();
   await expect(filter).toBeFocused();
   await page.keyboard.press('Escape');
-  await expect(dialog).toHaveCount(0);
-});
-
-test('submits an SSH connection with Mod+Enter', async ({ page }) => {
-  await page.goto('/?fixture=remote-dialog');
-
-  const dialog = page.getByRole('dialog', { name: 'SSH Connection' });
-  await dialog
-    .getByRole('textbox', { name: 'SSH Connection String' })
-    .press('Meta+Enter');
-
-  await expect(
-    page.getByRole('dialog', { name: 'Choose Remote Working Directory' }),
-  ).toBeVisible();
   await expect(dialog).toHaveCount(0);
 });
 

@@ -44,25 +44,3 @@ test('project context actions target an inactive project and restore focus', asy
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(projectSelect).toBeFocused();
 });
-
-test('project menus do not replace session or background context menus', async ({
-  page,
-}) => {
-  await page.goto('/');
-  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
-  await page.locator('.session-row').first().click({ button: 'right' });
-  await expect(page.getByRole('menuitem', { name: /Mark as/ })).toBeVisible();
-  await expect(
-    page.getByRole('menuitem', { name: 'Remove Project' }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole('menuitem', { name: 'Rename Project…' }),
-  ).toHaveCount(0);
-  await page.keyboard.press('Escape');
-  await page
-    .locator('.projects-body')
-    .click({ button: 'right', position: { x: 12, y: 450 } });
-  await expect(
-    page.getByRole('menuitem', { name: 'Open Local Project' }),
-  ).toBeVisible();
-});

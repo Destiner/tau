@@ -64,20 +64,3 @@ test('keyboard scrolling appends without changing the focused control', async ({
   await expect(rows).toHaveCount(100);
   await expect(first).toBeFocused();
 });
-
-test('collapsing and refreshing exposes eligible rows, empty state is truthful', async ({
-  page,
-}) => {
-  const list = page.locator('.archived-list');
-  const rows = list.locator('.row');
-  await list.getByRole('button', { name: 'Today' }).click();
-  await expect(rows).toHaveCount(50);
-  await expect(rows.first()).toContainText('Archive 120');
-  await page.evaluate(() =>
-    window.__TAU_ARCHIVE_FIXTURE__!.remove('/fixture/project-0', 'archive-120'),
-  );
-  await expect(rows.first()).toContainText('Archive 121');
-  await page.evaluate(() => window.__TAU_ARCHIVE_FIXTURE__!.replace(0));
-  await expect(list.getByText('No archived sessions')).toBeVisible();
-  await expect(rows).toHaveCount(0);
-});

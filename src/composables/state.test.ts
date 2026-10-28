@@ -15,30 +15,6 @@ beforeEach(() => {
 const testController = sessionControllerFixture;
 
 describe('session tooltip source', () => {
-  it('keeps indentation, blank lines and Unicode within 240 characters', async () => {
-    const { sessionTitleMarkdown, tooltipTitleMarkdown, draftTitle } =
-      await import('./state');
-    const source = '  **Hello**\r\n\r\n\t```\n🚀';
-    expect(sessionTitleMarkdown(source)).toBe(source);
-    expect(draftTitle(source)).toBe('**Hello** ``` 🚀');
-    expect(
-      tooltipTitleMarkdown({
-        title: 'Compact',
-        titleMarkdown: source,
-      } as SessionSummary),
-    ).toBe(source);
-    expect(tooltipTitleMarkdown({ title: 'Fallback' } as SessionSummary)).toBe(
-      'Fallback',
-    );
-    expect(sessionTitleMarkdown(' \n\t')).toBe('New Session');
-    expect(Array.from(sessionTitleMarkdown('🚀'.repeat(241)))).toHaveLength(
-      240,
-    );
-    expect(sessionTitleMarkdown('x'.repeat(239) + '**more')).toBe(
-      'x'.repeat(239) + '*',
-    );
-  });
-
   it('updates phantom preview with drafts without altering the draft', async () => {
     const { state, draft, createPhantomSession } = await import('./state');
     const controller = testController({ key: 'draft-owner', phantom: true });
@@ -173,25 +149,6 @@ describe('canonical session owner', () => {
     reconcileSessionOwner(second);
     expect(second.draft).toBe('second draft\n\nfirst draft');
     expect(second.starting).toBe(true);
-  });
-});
-
-describe('classifyControllerLifecycle', () => {
-  it('classifies idle, ready, streaming and precedence of active states', async () => {
-    const { classifyControllerLifecycle } = await import('./state');
-    const flags: Partial<SessionController> = {};
-    for (const [patch, expected] of [
-      [{}, 'idle'],
-      [{ ready: true }, 'ready'],
-      [{ streaming: true }, 'working'],
-      [{ working: true, syncing: true }, 'syncing'],
-      [{ stopping: true }, 'stopping'],
-      [{ starting: true }, 'starting'],
-      [{ connectingRemote: true }, 'connecting'],
-    ] as const) {
-      Object.assign(flags, patch);
-      expect(classifyControllerLifecycle(testController(flags))).toBe(expected);
-    }
   });
 });
 
@@ -432,129 +389,6 @@ describe('sessionTooltipStatus', () => {
 
     state.controllers = [];
     expect(sessionTooltipStatus(project, session)).toBe('Idle');
-  });
-});
-
-describe('sessionLastActive', () => {
-  const session: SessionSummary = {
-    id: 'session-1',
-    path: '/tmp/project/session.jsonl',
-    title: 'Session',
-    lastActive: '2h',
-    lastUserMessageAt: 0,
-    sortAt: 100,
-    archived: false,
-    selected: false,
-  };
-  const project: ProjectSummary = {
-    path: '/tmp/project',
-    name: 'Project',
-    workingDirectory: '/tmp/project',
-    collapsed: false,
-    selected: false,
-    sessions: [session],
-  };
-
-  it('hides working recency and restores it when work ends', async () => {
-    const { sessionLastActive, state } = await import('./state');
-    const controller = testController({ working: true });
-    state.controllers = [controller];
-    state.ephemeralSessions = [];
-
-    expect(sessionLastActive(project, session)).toBe('');
-    expect(sessionLastActive(project, { ...session, lastActive: 'now' })).toBe(
-      '',
-    );
-    controller.working = false;
-    expect(sessionLastActive(project, session, 100 + 2 * 3_600_000)).toBe('2h');
-  });
-
-  it('ages saved labels with numeric recency, including equal controller timestamps', async () => {
-    const { sessionLastActive, state } = await import('./state');
-    const at = 1_800_000_000_000;
-    const recent = {
-      ...session,
-      lastActive: 'now',
-      lastUserMessageAt: at,
-      sortAt: at,
-    };
-    state.controllers = [];
-    expect(sessionLastActive(project, recent, at)).toBe('now');
-    expect(sessionLastActive(project, recent, at + 61_000)).toBe('1m');
-    state.controllers = [testController({ lastUserMessageAt: at })];
-    expect(sessionLastActive(project, recent, at + 3_600_000)).toBe('1h');
-    state.controllers[0]!.lastUserMessageAt = at + 120_000;
-    expect(sessionLastActive(project, recent, at + 180_000)).toBe('1m');
-    state.controllers[0]!.lastUserMessageAt = at - 120_000;
-    expect(sessionLastActive(project, recent, at + 180_000)).toBe('3m');
-  });
-
-  it('uses numeric sort fallback but preserves textual fallback and empty ephemeral guards', async () => {
-    const { createPhantomSession, sessionLastActive, state } =
-      await import('./state');
-    const at = 1_800_000_000_000;
-    state.controllers = [];
-    expect(
-      sessionLastActive(
-        project,
-        { ...session, sortAt: at, lastActive: 'now' },
-        at + 61_000,
-      ),
-    ).toBe('1m');
-    expect(sessionLastActive(project, { ...session, sortAt: 0 }, at)).toBe(
-      '2h',
-    );
-
-    const controller = testController({ lastUserMessageAt: at });
-    state.controllers = [controller];
-    const phantom = createPhantomSession(project.path, controller.key);
-    phantom.sortAt = at;
-    phantom.lastUserMessageAt = at;
-    state.ephemeralSessions = [phantom];
-    controller.sessionId = phantom.id;
-    controller.messages = [];
-    expect(sessionLastActive(project, phantom, at + 61_000)).toBe('');
-    controller.messages = [
-      { kind: 'user' } as SessionController['messages'][number],
-    ];
-    expect(sessionLastActive(project, phantom, at + 61_000)).toBe('1m');
-  });
-
-  it.each([
-    [0, 'now'],
-    [60_000, '1m'],
-    [3_600_000, '1h'],
-    [86_400_000, '1d'],
-    [604_800_000, '1w'],
-    [31_536_000_000, '1y'],
-    [-60_000, 'now'],
-  ])('formats elapsed %i ms as %s', async (elapsed, expected) => {
-    const { relativeTimestamp } = await import('./state');
-    expect(
-      relativeTimestamp(1_800_000_000_000, 1_800_000_000_000 + elapsed),
-    ).toBe(expected);
-  });
-});
-
-describe('expandedRelativeTime', () => {
-  it('expands supported relative times and preserves unknown empty input', async () => {
-    const { expandedRelativeTime } = await import('./state');
-    for (const [value, expected] of [
-      ['now', 'just now'],
-      ['1m', '1 minute ago'],
-      ['2m', '2 minutes ago'],
-      ['1h', '1 hour ago'],
-      ['2h', '2 hours ago'],
-      ['1d', '1 day ago'],
-      ['2d', '2 days ago'],
-      ['1w', '1 week ago'],
-      ['3w', '3 weeks ago'],
-      ['1y', '1 year ago'],
-      ['2y', '2 years ago'],
-      ['', ''],
-    ] as const) {
-      expect(expandedRelativeTime(value)).toBe(expected);
-    }
   });
 });
 

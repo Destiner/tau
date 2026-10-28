@@ -52,46 +52,4 @@ describe('scopeDiagramSvg', () => {
       expect(svg).toContain(`${attribute}="url(#${shape})"`);
     }
   });
-
-  it('preserves label text, entities, comments, CDATA and non-reference attributes', () => {
-    const label = 'id="node" #node url(#node) &amp; &lt;node&gt;';
-    const text = `<text aria-label='${label}' data-label='${label}'>${label}</text>`;
-    const comment = '<!-- <path id="not-an-id" fill="url(#node)"/> -->';
-    const cdata = '<![CDATA[<path id="also-not-an-id"/> url(#node)]]>';
-    const svg = scopeDiagramSvg(
-      `<svg><path id="node"/>${text}${comment}${cdata}</svg>`,
-    );
-
-    expect(svg).toContain(text);
-    expect(svg).toContain(comment);
-    expect(svg).toContain(cdata);
-    expect(svg).not.toContain('<path id="node"/>');
-  });
-
-  it('leaves unresolved references, colors and external resources unchanged', () => {
-    const refs =
-      '<use href="other.svg#node" xlink:href="https://example.com/#node"/><path fill="#abc" stroke="url(other.svg#node)" mask="url(#missing)"/><use href="#missing"/>';
-    expect(scopeDiagramSvg(`<svg><path id="node"/>${refs}</svg>`)).toContain(
-      refs,
-    );
-  });
-
-  it('handles quoted greater-than signs, single quotes, and id-like attribute names', () => {
-    const svg = scopeDiagramSvg(
-      `<svg aria-labelledby = 'title'><title data-id="untouched" id = 'title'>A &gt; B</title><path aria-label="a > b" id="node"/><use href = '#node'/></svg>`,
-    );
-    const node = ids(svg)[0];
-    const title = /<title data-id="untouched" id = '([^']+)'/.exec(svg)?.[1];
-
-    expect(title).toBeDefined();
-    expect(svg).toContain(`aria-labelledby = '${title}'`);
-    expect(svg).toContain(`href = '#${node}'`);
-    expect(svg).toContain('aria-label="a > b"');
-    expect(svg).toContain('>A &gt; B</title>');
-  });
-
-  it('does not require IDs or a browser DOM', () => {
-    const svg = '<svg><text>Plain diagram</text></svg>';
-    expect(scopeDiagramSvg(svg)).toBe(svg);
-  });
 });

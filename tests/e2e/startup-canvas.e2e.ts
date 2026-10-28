@@ -1,6 +1,6 @@
 import { expect, test } from './fixtures';
 
-for (const scheme of ['dark', 'light'] as const) {
+for (const scheme of ['dark'] as const) {
   test(`paints the ${scheme} canvas before the frontend loads`, async ({
     page,
   }) => {

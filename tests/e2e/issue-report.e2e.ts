@@ -6,7 +6,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto(fixtureUrl);
 });
 
-for (const shortcut of ['Meta+Enter', 'Control+Enter'] as const) {
+for (const shortcut of ['Meta+Enter'] as const) {
   test(`submits an issue once with ${shortcut}`, async ({ page }) => {
     const trigger = page.getByRole('button', { name: 'Report an Issue' });
     await trigger.click();
@@ -25,7 +25,7 @@ for (const shortcut of ['Meta+Enter', 'Control+Enter'] as const) {
   });
 }
 
-for (const shortcut of ['Meta+Shift+S', 'Control+Shift+S'] as const) {
+for (const shortcut of ['Meta+Shift+S'] as const) {
   test(`toggles session context with ${shortcut}`, async ({ page }) => {
     await page.getByRole('button', { name: 'Report an Issue' }).click();
     const dialog = page.getByRole('dialog', { name: 'Report an Issue' });

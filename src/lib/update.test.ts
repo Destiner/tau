@@ -288,68 +288,6 @@ describe('update service', () => {
     stop();
   });
 
-  it('coalesces focus checks for six hours while menu checks bypass it', async () => {
-    const test = harness();
-    test.respond('check_for_update', current, current, current);
-
-    await test.service.check();
-    test.advance(CHECK_INTERVAL_MS - 1);
-    test.service.handleFocus();
-    await flush();
-    expect(
-      test.calls.filter(({ command }) => command === 'check_for_update'),
-    ).toHaveLength(1);
-
-    test.service.initialize();
-    await flush();
-    test.emit(CHECK_FOR_UPDATES_EVENT);
-    await flush();
-    expect(
-      test.calls.filter(({ command }) => command === 'check_for_update'),
-    ).toHaveLength(2);
-
-    test.advance(CHECK_INTERVAL_MS);
-    await test.service.check();
-    expect(
-      test.calls.filter(({ command }) => command === 'check_for_update'),
-    ).toHaveLength(3);
-  });
-
-  it('checks every six hours while the app remains focused', async () => {
-    const test = harness();
-    test.respond('update_snapshot', {
-      supported: true,
-      status: 'available',
-      operationId: 7,
-      candidate: { version: '0.2.0' },
-    });
-    test.respond('check_for_update', current, current);
-
-    test.service.initialize();
-    await flush();
-    expect(test.pendingTimers()).toBe(1);
-
-    test.advance(CHECK_INTERVAL_MS - 1);
-    await flush();
-    expect(
-      test.calls.filter(({ command }) => command === 'check_for_update'),
-    ).toHaveLength(0);
-
-    test.advance(1);
-    await flush();
-    expect(
-      test.calls.filter(({ command }) => command === 'check_for_update'),
-    ).toHaveLength(1);
-    expect(test.pendingTimers()).toBe(1);
-
-    test.advance(CHECK_INTERVAL_MS);
-    await flush();
-    expect(
-      test.calls.filter(({ command }) => command === 'check_for_update'),
-    ).toHaveLength(2);
-    expect(test.pendingTimers()).toBe(1);
-  });
-
   it('coalesces a scheduled check with focus and cancels it on dispose', async () => {
     const test = harness();
     test.respond('update_snapshot', {

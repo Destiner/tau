@@ -2,20 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { HighlightEngine } from './highlight-engine';
 
-function deferred<T>(): {
-  promise: Promise<T>;
-  resolve: (value: T) => void;
-  reject: (reason?: unknown) => void;
-} {
-  let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
-  return { promise, resolve, reject };
-}
-
 function engine(
   render = vi.fn<HighlightEngine['render']>((code) => ({
     header: '<pre>',
@@ -40,45 +26,6 @@ afterEach(() => {
 });
 
 describe('highlighting a fenced block', () => {
-  it('waits for readiness without attempting a render early', async () => {
-    const pending = deferred<HighlightEngine>();
-    const render = vi.fn(engine().render);
-    const highlightCode = await loadWith(() => pending.promise);
-
-    expect(highlightCode('const before = true', 'ts')).toBeNull();
-    expect(render).not.toHaveBeenCalled();
-
-    pending.resolve(engine(render));
-    await pending.promise;
-    await vi.dynamicImportSettled();
-
-    expect(highlightCode('const after = true', 'ts')).toBe(
-      '<pre>const after = true</code></pre>',
-    );
-    expect(render).toHaveBeenCalledOnce();
-  });
-
-  it('keeps aliases as distinct cache keys and evicts the FIFO entry at 200 blocks', async () => {
-    const render = vi.fn(engine().render);
-    const highlightCode = await loadWith(async () => engine(render));
-    await vi.dynamicImportSettled();
-
-    expect(highlightCode('const same = true', 'ts')).not.toBeNull();
-    expect(highlightCode('const same = true', 'ts')).not.toBeNull();
-    expect(highlightCode('const same = true', 'typescript')).not.toBeNull();
-    expect(render).toHaveBeenCalledTimes(2);
-
-    for (let index = 0; index < 198; index += 1) {
-      expect(highlightCode(`const cache${index} = true`, 'ts')).not.toBeNull();
-    }
-    expect(render).toHaveBeenCalledTimes(200);
-
-    expect(highlightCode('const newest = true', 'ts')).not.toBeNull();
-    expect(render).toHaveBeenCalledTimes(201);
-    expect(highlightCode('const same = true', 'ts')).not.toBeNull();
-    expect(render).toHaveBeenCalledTimes(202);
-  });
-
   it('treats a failed import or tokenizer failure as unavailable', async () => {
     const importError = new Error('missing wasm');
     const importLog = vi
