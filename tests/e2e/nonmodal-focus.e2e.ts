@@ -118,6 +118,8 @@ test('confirmation failure repairs its disabled control without selecting a nonm
   await trigger(page, 'Open Confirmation');
   const modal = page.getByRole('alertdialog');
   const confirm = modal.getByRole('button', { name: 'Continue' });
+  await confirm.focus();
+  await expect(confirm).toBeFocused();
   await confirm.click();
   await expect(confirm).toBeDisabled();
   await trigger(page, 'Fail Confirmation');
