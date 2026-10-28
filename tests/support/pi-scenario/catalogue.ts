@@ -167,7 +167,7 @@ function initialSettingsFailure(picker: boolean): PiScenario {
         match: {
           type: 'set_model',
           provider: 'fixture',
-          modelId: 'alpha',
+          modelId: picker ? 'beta' : 'alpha',
         },
       },
       { kind: 'gate', name: 'setup-recovering', required: true },
@@ -187,7 +187,10 @@ function initialSettingsFailure(picker: boolean): PiScenario {
             },
           ] satisfies PiScenarioStep[])
         : []),
-      ...setupReadback('recovered', mainSessionState.model),
+      ...setupReadback(
+        'recovered',
+        picker ? fallbackModel : mainSessionState.model,
+      ),
       { kind: 'gate', name: 'setup-ready', required: true },
       {
         kind: 'request',

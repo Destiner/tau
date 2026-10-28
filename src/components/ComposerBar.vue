@@ -61,7 +61,7 @@
         :fallback-label="currentModelLabel"
         :disabled="settingsDisabled"
         aria-label="Model"
-        @update:model-value="handleModelChange"
+        @select="handleModelChange"
       />
       <UiSelect
         v-model:open="effortSelectorOpen"
@@ -432,6 +432,11 @@ function dismissCommandMenu(event: KeyboardEvent): void {
 }
 
 function handleModelChange(value: string): void {
+  if (
+    !setupFailure.value &&
+    value === `${currentModelProvider.value}/${currentModelId.value}`
+  )
+    return;
   void selectModel(value);
 }
 

@@ -15,7 +15,7 @@ const setupFailureMessage =
 function setupFailureCopy(raw: unknown): string {
   const text = typeof raw === 'string' ? raw.toLowerCase() : '';
   if (
-    /\bunauthori[sz]ed\b|\bauthentication (?:failed|failure|expired|required)\b|\b(?:invalid|missing|expired) (?:api[ _-]?key|credentials?|access token)\b|\bno api[ _-]?key (?:found|provided|configured)\b|\bnot logged in\b/.test(
+    /\bunauthori[sz]ed\b|\bauthentication (?:failed|failure|expired|required)\b|\b(?:invalid|missing|expired) (?:api[ _-]?key|credentials?|access token)\b|\bno api[ _-]?key (?:found|provided|configured|for)\b|\bnot logged in\b/.test(
       text,
     )
   )
@@ -31,6 +31,7 @@ function setupFailureCopy(raw: unknown): string {
 
 type SetupFailure = NonNullable<SessionController['setupFailure']>;
 type Operation = {
+  cancelled: Promise<false>;
   current: () => boolean;
   cancel: () => void;
   captureSettings: () => void;
@@ -49,6 +50,68 @@ const responses = new Map<
   }
 >();
 
+// A timeout retires the UI waiter, not Pi's asynchronous mutation. Keep
+// ownership until the backend replies, even if its operation was superseded.
+const writes = new WeakMap<
+  SessionController,
+  Map<
+    string,
+    {
+      generation: number;
+      method: string;
+      settled: Promise<void>;
+      settle: () => void;
+    }
+  >
+>();
+
+function trackWrite(
+  controller: SessionController,
+  id: string,
+  method: string,
+): void {
+  let pending = writes.get(controller);
+  if (!pending) {
+    pending = new Map();
+    writes.set(controller, pending);
+  }
+  let settle!: () => void;
+  const settled = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
+  pending.set(id, {
+    generation: controller.generation,
+    method,
+    settled,
+    settle,
+  });
+}
+
+function waitForWrites(
+  controller: SessionController,
+  operation: Operation,
+): Promise<boolean> | undefined {
+  const pending = writes.get(controller);
+  if (!pending) return;
+  for (const [id, write] of pending) {
+    if (write.generation !== controller.generation) {
+      write.settle();
+      pending.delete(id);
+    }
+  }
+  if (!pending.size) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    operation.cancelled,
+    Promise.all([...pending.values()].map((write) => write.settled)).then(
+      () => true,
+    ),
+    new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), setupTimeoutMs);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 function clearPendingSetupWatch(
   controller: SessionController,
   id?: string,
@@ -62,6 +125,11 @@ function clearPendingSetupWatch(
 function watchPendingSetup(controller: SessionController, id: string): void {
   clearPendingSetupWatch(controller);
   const pending = controller.pendingPrompt;
+  trackWrite(
+    controller,
+    id,
+    pending?.settingsStep === 'effort' ? 'set_thinking_level' : 'set_model',
+  );
   const generation = controller.generation;
   const sessionId = controller.sessionId;
   const sessionPath = controller.sessionPath;
@@ -103,6 +171,15 @@ function handleSetupResponse(
   response: Record<string, unknown>,
 ): boolean {
   const id = stringValue(response.id);
+  const pending = writes.get(controller);
+  const write = pending?.get(id);
+  if (
+    write?.generation === controller.generation &&
+    write.method === response.command
+  ) {
+    pending!.delete(id);
+    write.settle();
+  }
   if (!id.startsWith('tau-setup-')) return false;
   const waiter = responses.get(id);
   if (waiter?.controller === controller && waiter.method === response.command)
@@ -129,7 +206,12 @@ function beginOperation(
       controller.currentEffort,
     ]);
   let settings = settingsKey();
+  let cancelWait!: () => void;
+  const cancelledPromise = new Promise<false>((resolve) => {
+    cancelWait = (): void => resolve(false);
+  });
   const operation: Operation = {
+    cancelled: cancelledPromise,
     captureSettings: () => {
       settings = settingsKey();
     },
@@ -145,6 +227,7 @@ function beginOperation(
       operations.get(controller) === operation,
     cancel: () => {
       cancelled = true;
+      cancelWait();
       for (const waiter of responses.values()) {
         if (waiter.controller === controller) waiter.resolve();
       }
@@ -162,6 +245,8 @@ async function request(
 ): Promise<Record<string, unknown> | undefined> {
   if (!operation.current()) return;
   const id = nextRequestId('setup-' + type);
+  if (type === 'set_model' || type === 'set_thinking_level')
+    trackWrite(controller, id, type);
   return new Promise((resolve) => {
     const finish = (response?: Record<string, unknown>): void => {
       clearTimeout(timer);
@@ -225,7 +310,7 @@ async function reconcile(
     (controller.currentModelProvider === expected.provider &&
       controller.currentModelId === expected.modelId &&
       (expected.effort === undefined ||
-        controller.currentEffort === expected.effort))
+        controller.efforts.includes(controller.currentEffort)))
   );
 }
 
@@ -287,7 +372,13 @@ async function recover(
   let confirmed = false;
   let message = failure.message;
   try {
+    // Do not apply or confirm newer settings while an older Pi write can
+    // still mutate them. A missing reply stays gated until settlement or a
+    // new runtime generation; read-only reconciliation cannot prove safety.
+    const settlement = waitForWrites(controller, operation);
+    if ((settlement && !(await settlement)) || !operation.current()) return;
     const modelAlreadyConfirmed =
+      !settlement &&
       retryEffort &&
       failure.step === 'effort' &&
       controller.currentModelProvider === settings.provider &&

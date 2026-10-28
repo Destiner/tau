@@ -131,6 +131,7 @@ afterEach(() => {
 describe('session-local initial setup recovery', () => {
   it.each([
     ['No API key found for provider', 'authentication'],
+    ['No API key for fixture/desired', 'authentication'],
     ['Authentication failed', 'authentication'],
     ['Authentication failure', 'authentication'],
     ['Invalid API key', 'authentication'],
@@ -636,6 +637,9 @@ describe('session-local initial setup recovery', () => {
       id: staleMutation.id,
       success: true,
     });
+    await vi.waitFor(() =>
+      expect(requests().at(-1)?.id).not.toBe(staleMutation.id),
+    );
     await respond(c, 'set_model');
     await reconcile(c, 'alternate', ['off'], 'off');
     await Promise.all([older, newer]);
@@ -647,6 +651,133 @@ describe('session-local initial setup recovery', () => {
     ).toBe(false);
     expect(c.setupFailure).toBeUndefined();
   });
+
+  it.each(['initial', 'recovery'])(
+    'serializes a timed-out %s backend mutation before newer recovery',
+    async (phase) => {
+      vi.useFakeTimers();
+      const c = controller();
+      let older: Promise<void> | undefined;
+      if (phase === 'recovery') {
+        await rejectInitial(c);
+        await reconcile(c);
+        older = retrySetup(c);
+      } else {
+        await applyPendingSessionSettings(c);
+      }
+      const staleWrite = requests().at(-1)!;
+      await vi.advanceTimersByTimeAsync(10_000);
+      await reconcile(c);
+      await older;
+      const modelWriteCount = requests().filter(
+        (r) => r.type === 'set_model',
+      ).length;
+      const newer = recoverSetupModel(c, 'invented', 'alternate', 'Alternate');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(requests().filter((r) => r.type === 'set_model')).toHaveLength(
+        modelWriteCount,
+      );
+      expect(c.setupFailure?.recovering).toBe(true);
+
+      // Pi can apply the old model *after* Tau's waiter has timed out.
+      let backendModel = 'desired';
+      await handleResponse(c, {
+        id: staleWrite.id,
+        command: 'set_model',
+        success: true,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(requests().filter((r) => r.type === 'set_model')).toHaveLength(
+        modelWriteCount + 1,
+      );
+      expect(c.setupFailure).toBeDefined();
+      expect(backendModel).toBe('desired');
+      backendModel = String(requests().at(-1)!.modelId);
+      await respond(c, 'set_model');
+      await reconcile(c, backendModel, ['off'], 'off');
+      await newer;
+      expect(backendModel).toBe('alternate');
+      expect(c.currentModelId).toBe(backendModel);
+      expect(c.setupFailure).toBeUndefined();
+      expect(requests().some((r) => r.type === 'prompt')).toBe(false);
+    },
+  );
+
+  it('keeps unresolved backend writes gated after a bounded recovery wait', async () => {
+    vi.useFakeTimers();
+    const c = controller();
+    await applyPendingSessionSettings(c);
+    const staleWrite = requests().at(-1)!;
+    await vi.advanceTimersByTimeAsync(10_000);
+    await reconcile(c);
+    const retry = recoverSetupModel(c, 'invented', 'alternate', 'Alternate');
+    await vi.advanceTimersByTimeAsync(10_000);
+    await retry;
+    expect(c.setupFailure?.recovering).toBe(false);
+    expect(requests().filter((r) => r.type === 'set_model')).toHaveLength(1);
+    await handleResponse(c, {
+      id: staleWrite.id,
+      command: 'set_model',
+      success: true,
+    });
+    expect(c.setupFailure).toBeDefined();
+    const deliberateRetry = recoverSetupModel(
+      c,
+      'invented',
+      'alternate',
+      'Alternate',
+    );
+    await respond(c, 'set_model');
+    await reconcile(c, 'alternate');
+    await deliberateRetry;
+    expect(c.setupFailure).toBeUndefined();
+  });
+
+  it.each([
+    { requested: 'max', effective: 'high', levels: ['off', 'high'] },
+    { requested: 'high', effective: 'off', levels: ['off'] },
+  ] as const)(
+    'accepts successful effort clamp from $requested to $effective',
+    async ({ requested, effective, levels }) => {
+      const c = controller();
+      c.pendingPrompt!.selectedEffort = requested;
+      await rejectInitial(c);
+      await reconcile(c);
+      const retry = retrySetup(c);
+      await respond(c, 'set_model');
+      expect(requests().at(-1)).toMatchObject({
+        type: 'set_thinking_level',
+        level: requested,
+      });
+      await respond(c, 'set_thinking_level');
+      await reconcile(c, 'desired', [...levels], effective);
+      await retry;
+      expect(c.currentEffort).toBe(effective);
+      expect(c.efforts).toEqual(levels);
+      expect(c.setupFailure).toBeUndefined();
+      expect(requests().some((r) => r.type === 'prompt')).toBe(false);
+    },
+  );
+
+  it.each([
+    { model: 'default', effort: 'high', levels: ['off', 'high'] },
+    { model: 'desired', effort: 'high', levels: ['off'] },
+    { model: 'desired', effort: 'off', levels: [] },
+  ])(
+    'does not accept unconfirmed recovery settings: %j',
+    async ({ model, effort, levels }) => {
+      const c = controller();
+      await rejectInitial(c);
+      await reconcile(c);
+      const retry = retrySetup(c);
+      await respond(c, 'set_model');
+      await respond(c, 'set_thinking_level');
+      await reconcile(c, model, levels, effort);
+      await retry;
+      expect(c.setupFailure?.recovering).toBe(false);
+      expect(c.setupFailure).toBeDefined();
+    },
+  );
 
   it.each(['generation', 'disposed', 'sessionId'] as const)(
     'drops an initial failure after changed %s',

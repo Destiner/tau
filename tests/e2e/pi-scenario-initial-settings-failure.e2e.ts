@@ -98,7 +98,12 @@ for (const recovery of ['retry', 'picker'] as const) {
       await retry.click();
     } else {
       await page.getByRole('combobox', { name: 'Model', exact: true }).click();
-      await page.getByRole('option', { name: 'Alpha', exact: true }).click();
+      const fallbackModel = page.getByRole('option', {
+        name: 'Beta',
+        exact: true,
+      });
+      await expect(fallbackModel).toHaveAttribute('aria-selected', 'true');
+      await fallbackModel.click();
     }
     await waitForGate(page, 'setup-recovering');
     await expect(send).toBeDisabled();
