@@ -3,6 +3,15 @@ import type { PiErrorDescription } from './error';
 
 type TranscriptNoticeType = 'info' | 'warning' | 'error';
 
+/** Ephemeral projection identity, never a Pi session-file identifier. */
+interface TranscriptSource {
+  message: string;
+  block: number;
+  offset: number;
+}
+
+let projectionSequence = 0;
+
 interface TranscriptEntry {
   id: string;
   kind:
@@ -27,6 +36,9 @@ interface TranscriptEntry {
   errorLabel?: string;
 
   anchor?: number;
+  boundary?: TranscriptSource;
+  afterToolCallId?: string;
+  source?: TranscriptSource;
   noticeType?: TranscriptNoticeType;
 
   basePath?: string;
@@ -45,6 +57,8 @@ interface LocalError {
   label: string;
   text: string;
   anchor?: number;
+  boundary?: TranscriptSource;
+  afterToolCallId?: string;
 }
 
 function localErrorId(key: number): string {
@@ -84,12 +98,19 @@ function hydrateTranscript(
     const message = asRecord(value);
     if (!message) continue;
     const role = stringValue(message.role);
+    const sourceMessage = `projection-${projectionSequence++}`;
+    const add = (entry: TranscriptEntry, block = 0): void => {
+      entries.push({
+        ...entry,
+        source: { message: sourceMessage, block, offset: 0 },
+      });
+    };
 
     if (role === 'user') {
       const text = contentText(message.content);
       const skill = parseSkillBlock(text);
       if (skill) {
-        entries.push({
+        add({
           id: '',
           kind: 'skill',
           text: skill.content,
@@ -97,7 +118,7 @@ function hydrateTranscript(
           ...(skill.userMessage ? { skillPrompt: skill.userMessage } : {}),
         });
       } else if (text) {
-        entries.push({ id: '', kind: 'user', text });
+        add({ id: '', kind: 'user', text });
       }
       continue;
     }
@@ -108,41 +129,47 @@ function hydrateTranscript(
       const terminalToolCall =
         stopReason === 'aborted' || stopReason === 'error';
       const failure = messageFailure(message);
-      for (const partValue of content) {
+      for (const [block, partValue] of content.entries()) {
         const part = asRecord(partValue);
         if (!part) continue;
         const type = stringValue(part.type);
         if (type === 'text') {
           const text = stringValue(part.text);
-          if (text) entries.push({ id: '', kind: 'assistant', text });
+          if (text) add({ id: '', kind: 'assistant', text }, block);
         } else if (type === 'thinking') {
           const text = stringValue(part.thinking);
-          if (text) entries.push({ id: '', kind: 'thinking', text });
+          if (text) add({ id: '', kind: 'thinking', text }, block);
         } else if (type === 'toolCall') {
           const toolCallId = stringValue(part.id);
           const toolName = stringValue(part.name) || 'tool';
-          entries.push({
-            id: '',
-            kind: 'tool',
-            text: toolSummary(part.arguments),
-            toolCallId,
-            toolName,
-            // A terminal turn cannot still be running without a recorded result.
-            toolRunning: !terminalToolCall,
-            toolErrored: terminalToolCall,
-            toolArguments: toolArgumentsText(part.arguments),
-          });
+          add(
+            {
+              id: '',
+              kind: 'tool',
+              text: toolSummary(part.arguments),
+              toolCallId,
+              toolName,
+              // A terminal turn cannot still be running without a recorded result.
+              toolRunning: !terminalToolCall,
+              toolErrored: terminalToolCall,
+              toolArguments: toolArgumentsText(part.arguments),
+            },
+            block,
+          );
         }
       }
       // A turn that failed carries its reason beside content that is usually
       // empty, so the row stands for the reply the reader never got.
       if (failure) {
-        entries.push({
-          id: '',
-          kind: 'error',
-          text: failure.message,
-          errorLabel: failure.label,
-        });
+        add(
+          {
+            id: '',
+            kind: 'error',
+            text: failure.message,
+            errorLabel: failure.label,
+          },
+          content.length,
+        );
       }
       continue;
     }
@@ -160,7 +187,7 @@ function hydrateTranscript(
         existing.toolResult = toolResultText(message.content);
       } else {
         const toolName = stringValue(message.toolName) || 'tool';
-        entries.push({
+        add({
           id: '',
           kind: 'tool',
           text: '',
@@ -176,7 +203,7 @@ function hydrateTranscript(
 
     if (role === 'bashExecution') {
       const command = stringValue(message.command);
-      entries.push({
+      add({
         id: '',
         kind: 'tool',
         text: command,
@@ -189,7 +216,7 @@ function hydrateTranscript(
     }
 
     if (role === 'compactionSummary') {
-      entries.push({
+      add({
         id: '',
         kind: 'compaction',
         text: '',
@@ -198,7 +225,23 @@ function hydrateTranscript(
       });
     }
   }
-  return assignIds(entries, previous, pendingLiveUserEvents);
+  const stoppedToolIds = new Set(
+    previous
+      .filter((entry) => entry.kind === 'tool' && entry.toolRunning === false)
+      .map((entry) => entry.toolCallId)
+      .filter(Boolean),
+  );
+  for (const entry of entries) {
+    // A missing persisted result cannot restart an interrupted execution.
+    // Recorded results above still own the result and error state.
+    if (entry.kind === 'tool' && stoppedToolIds.has(entry.toolCallId)) {
+      entry.toolRunning = false;
+    }
+  }
+  return restoreSourceSegments(
+    assignIds(entries, previous, pendingLiveUserEvents),
+    previous,
+  );
 }
 
 /**
@@ -348,6 +391,86 @@ function historyPrefix(
   return prefix;
 }
 
+function sameSource(
+  left?: TranscriptSource,
+  right?: TranscriptSource,
+): boolean {
+  return Boolean(
+    left &&
+    right &&
+    left.message === right.message &&
+    left.block === right.block,
+  );
+}
+
+/** Restore only proven offsets; refinements fall back inside the owning block. */
+function restoreSourceSegments(
+  entries: TranscriptEntry[],
+  previous: TranscriptEntry[],
+): TranscriptEntry[] {
+  const segments = new Map<string, TranscriptEntry[]>();
+  const boundaries = new Map<string, number[]>();
+  for (const entry of previous) {
+    if (entry.boundary) {
+      const key = `${entry.boundary.message}:${entry.boundary.block}`;
+      const offsets = boundaries.get(key) ?? [];
+      offsets.push(entry.boundary.offset);
+      boundaries.set(key, offsets);
+    }
+  }
+  for (const entry of previous) {
+    if (!entry.source || isLocalEntry(entry)) continue;
+    const key = `${entry.source.message}:${entry.source.block}`;
+    const group = segments.get(key) ?? [];
+    group.push(entry);
+    segments.set(key, group);
+  }
+  return entries.flatMap((entry) => {
+    if (
+      !entry.source ||
+      (entry.kind !== 'assistant' && entry.kind !== 'thinking')
+    )
+      return [entry];
+    const group =
+      segments.get(`${entry.source.message}:${entry.source.block}`) ?? [];
+    const oldText = group.map((segment) => segment.text).join('');
+    const result: TranscriptEntry[] = [];
+    let offset = 0;
+    let id = entry.id;
+    const cuts = new Set([
+      ...group.slice(1).map((segment) => segment.source!.offset),
+      ...(boundaries.get(`${entry.source.message}:${entry.source.block}`) ??
+        []),
+    ]);
+    for (const cut of [...cuts].sort((a, b) => a - b)) {
+      if (
+        cut <= offset ||
+        cut >= entry.text.length ||
+        cut > oldText.length ||
+        entry.text.slice(0, cut) !== oldText.slice(0, cut)
+      )
+        continue;
+      result.push({
+        ...entry,
+        id,
+        text: entry.text.slice(offset, cut),
+        source: { ...entry.source, offset },
+      });
+      offset = cut;
+      id =
+        group.find((segment) => segment.source!.offset === cut)?.id ??
+        `${entry.id}-segment-${cut}`;
+    }
+    result.push({
+      ...entry,
+      id,
+      text: entry.text.slice(offset),
+      source: { ...entry.source, offset },
+    });
+    return result;
+  });
+}
+
 function assignIds(
   entries: TranscriptEntry[],
   previous: TranscriptEntry[],
@@ -356,17 +479,67 @@ function assignIds(
   // Only Pi-owned rows take part: the local entries sitting between them are
   // merged back afterwards, and counting them here would stall the walk at the
   // first one and cost every row below it the height the virtualizer measured.
-  const candidates = previous.filter((entry) => !isLocalEntry(entry));
+  const candidates: TranscriptEntry[] = [];
+  for (const entry of previous.filter((entry) => !isLocalEntry(entry))) {
+    const last = candidates[candidates.length - 1];
+    if (last && sameSource(last.source, entry.source)) {
+      last.text += entry.text;
+    } else {
+      candidates.push({ ...entry });
+    }
+  }
   const adopted = new Map<number, string>();
   let cursor = 0;
+  let projectedMessage: string | undefined;
+  let previousMessage: string | undefined;
   entries.forEach((entry, index) => {
+    if (entry.source?.message !== projectedMessage) {
+      // A refinement may remove blocks, but cannot donate them to the next message.
+      while (
+        previousMessage &&
+        candidates[cursor]?.source?.message === previousMessage
+      )
+        cursor++;
+      projectedMessage = entry.source?.message;
+      const candidate = candidates[cursor];
+      const messageKind = (row: TranscriptEntry): string =>
+        row.kind === 'user' || row.kind === 'skill'
+          ? 'user'
+          : row.kind === 'compaction'
+            ? 'compaction'
+            : 'assistant';
+      previousMessage =
+        candidate && messageKind(candidate) === messageKind(entry)
+          ? candidate.source?.message
+          : undefined;
+    }
+    if (entry.source && previousMessage) {
+      while (
+        candidates[cursor]?.source?.message === previousMessage &&
+        candidates[cursor]!.source!.block < entry.source.block
+      )
+        cursor++;
+      entry.source = { ...entry.source, message: previousMessage };
+    }
     const candidate = candidates[cursor];
     if (!candidate || !holdsSameRow(entry, candidate)) return;
+    if (
+      entry.source &&
+      candidate.source &&
+      (candidate.source.message !== previousMessage ||
+        candidate.source.block !== entry.source.block)
+    )
+      return;
     adopted.set(index, candidate.id);
     cursor += 1;
   });
 
-  const taken = new Set(adopted.values());
+  const taken = new Set([
+    ...adopted.values(),
+    ...previous
+      .filter((entry) => (entry.source?.offset ?? 0) > 0)
+      .map((entry) => entry.id),
+  ]);
   const candidatesById = new Map(
     candidates.map((candidate) => [candidate.id, candidate]),
   );
@@ -385,6 +558,7 @@ function assignIds(
     if (carried) {
       entry.id = carried;
       const candidate = candidatesById.get(carried);
+      if (candidate?.source) entry.source = { ...candidate.source, offset: 0 };
       if (pendingLiveUserEvents && candidate?.pendingUserEvent) {
         entry.pendingUserEvent = candidate.pendingUserEvent;
       }
@@ -451,9 +625,8 @@ function isLocalEntry(entry: TranscriptEntry): boolean {
 /**
  * Restores the entries Tau owns into a freshly hydrated transcript: the
  * failures Pi reports as events but never keeps in its messages, and the
- * fire-and-forget notices its extensions raise. Each one holds the number of
- * Pi-owned rows that preceded it and goes back at that spot, because appending
- * them instead walks them to the bottom of the transcript on every rebuild.
+ * fire-and-forget notices its extensions raise. Source boundaries survive row
+ * coalescing; numeric tail coordinates cover feedback without known provenance.
  *
  * An entry with no spot to claim is given the one it lands in, on the entry
  * itself and on the failure it was built from, so a row that settled at the
@@ -472,6 +645,10 @@ function mergeLocalEntries(
     text: error.text,
     errorLabel: error.label,
     ...(error.anchor === undefined ? {} : { anchor: error.anchor }),
+    ...(error.boundary ? { boundary: error.boundary } : {}),
+    ...(error.afterToolCallId
+      ? { afterToolCallId: error.afterToolCallId }
+      : {}),
   });
   const locals: TranscriptEntry[] = errors
     .filter((error) => !previousIds.has(localErrorId(error.key)))
@@ -499,8 +676,22 @@ function mergeLocalEntries(
     // Resolving the spot here is what keeps an entry that arrived before the
     // transcript had loaded from drifting again on the rebuild after this one.
     const error = held.get(entry.id);
-    if (error) error.anchor = anchor;
-    merged.push(...entries.slice(cursor, anchor), { ...entry, anchor });
+    const predecessor = entries[anchor - 1];
+    const boundary = predecessor?.source
+      ? {
+          ...predecessor.source,
+          offset: predecessor.source.offset + predecessor.text.length,
+        }
+      : entry.boundary;
+    if (error) {
+      error.anchor = anchor;
+      error.boundary = boundary;
+    }
+    merged.push(...entries.slice(cursor, anchor), {
+      ...entry,
+      anchor,
+      ...(boundary ? { boundary } : {}),
+    });
     cursor = anchor;
   }
   merged.push(...entries.slice(cursor));
@@ -513,6 +704,33 @@ function mergeLocalEntries(
  * has since dropped; both settle at the bottom of the transcript as it stands.
  */
 function anchorOf(entry: TranscriptEntry, entries: TranscriptEntry[]): number {
+  if (entry.afterToolCallId) {
+    const tool = entries.findIndex(
+      (candidate) =>
+        candidate.kind === 'tool' &&
+        candidate.toolCallId === entry.afterToolCallId,
+    );
+    if (tool >= 0) return tool + 1;
+  }
+  if (entry.boundary) {
+    let last = -1;
+    for (let index = 0; index < entries.length; index++) {
+      const candidate = entries[index]!;
+      if (!sameSource(candidate.source, entry.boundary)) continue;
+      last = index;
+      if (
+        candidate.source!.offset + candidate.text.length >=
+        entry.boundary.offset
+      )
+        return index + 1;
+    }
+    if (last >= 0) return last + 1;
+    // A removed/refined block must not push feedback into a later message.
+    for (let index = entries.length - 1; index >= 0; index--) {
+      if (entries[index]?.source?.message === entry.boundary.message)
+        return index + 1;
+    }
+  }
   return Math.min(entry.anchor ?? entries.length, entries.length);
 }
 
@@ -594,6 +812,7 @@ function compactJson(value: unknown): string {
 
 export type {
   HistoryLayer,
+  TranscriptSource,
   LocalError,
   ParsedSkillBlock,
   TranscriptEntry,

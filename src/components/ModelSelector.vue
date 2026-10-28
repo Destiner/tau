@@ -9,6 +9,7 @@
     :aria-label="ariaLabel"
     options-label="Models"
     filterable
+    @select="forwardSelect"
   />
 </template>
 
@@ -35,6 +36,11 @@ const props = withDefaults(
     ariaLabel: undefined,
   },
 );
+const emit = defineEmits<{ select: [value: string] }>();
+
+function forwardSelect(value: string): void {
+  emit('select', value);
+}
 
 const options = computed(() =>
   props.models.map((model) => ({

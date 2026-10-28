@@ -8,6 +8,7 @@ import { computed, reactive } from 'vue';
 
 import type { CommandOption } from '../lib/commands';
 import { errorCopy, feedbackTitle } from '../lib/error-copy';
+import invokesExtensionCommand from '../lib/pi/extension-command';
 import { scopeModels } from '../lib/pi/model-scope';
 import type { ModelOption, ThinkingLevel } from '../lib/pi/model-scope';
 import {
@@ -250,6 +251,14 @@ interface SessionController {
   efforts: ThinkingLevel[];
   commands: CommandOption[];
   commandsLoaded: boolean;
+  setupFailure?: {
+    step: 'model' | 'effort';
+    provider: string;
+    modelId: string;
+    effort: ThinkingLevel;
+    message: string;
+    recovering: boolean;
+  };
   pendingPrompt?: PendingPrompt;
   submittedPrompt?: SubmittedPrompt;
   queue: QueueSnapshot;
@@ -288,6 +297,7 @@ interface SessionController {
   lastActiveSequence: number;
   disposed: boolean;
   streamSequence: number;
+  streamMessage?: string;
 }
 
 type ControllerLifecycleField =
@@ -605,6 +615,7 @@ const canQueue = computed(() =>
   Boolean(
     activeController.value &&
     canDraft.value &&
+    !activeController.value.setupFailure &&
     controllerCanQueue(activeController.value),
   ),
 );
@@ -681,6 +692,11 @@ const canReconnectRemote = computed(() => {
 const canCompose = computed(() => {
   const controller = activeController.value;
   if (!activeProject.value || !activeSession.value || !controller) return false;
+  if (
+    controller.setupFailure &&
+    !invokesExtensionCommand(controller, controller.draft.trim())
+  )
+    return false;
   const admittingOrdinaryPrompt = Boolean(
     controller.submittedPrompt?.optimisticId,
   );
@@ -731,6 +747,7 @@ const settingsDisabled = computed(() => {
     controller.stopping ||
     controller.starting ||
     Boolean(controller.pendingSettingRequestId) ||
+    Boolean(controller.setupFailure?.recovering) ||
     projectActionsDisabled.value
   );
 });

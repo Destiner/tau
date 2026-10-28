@@ -696,6 +696,11 @@ defineExpose({ scrollToEnd, revealSearchMatch, cancelSearchNavigation });
   width: 100%;
 }
 
+.message.user :deep(.user-bubble > .code-block) {
+  margin-right: var(--transcript-content-inset);
+  margin-left: var(--transcript-content-inset);
+}
+
 /*
  * Code and table headers sit on the bubble rather than the canvas, and their
  * shared sunk background is too close to it to read as a surface of their

@@ -77,6 +77,7 @@ import {
   markPiTranscript,
 } from './registration';
 import handleResponse from './responses';
+import { cancelSetup, failSetupConnection } from './setup';
 
 async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
   const controller = controllerByRuntimeId(event.runtimeId);
@@ -84,6 +85,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
   touchController(controller);
   if (event.kind === 'started') {
     if (event.generation > controller.generation) {
+      cancelSetup(controller);
       if (controller.submittedPrompt?.generation === controller.generation) {
         const accepted = controller.submittedPrompt.accepted;
         settleInterruptedSubmittedPrompt(controller);
@@ -125,6 +127,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
   }
   if (event.kind === 'stderr') return;
   if (event.kind === 'error') {
+    if (failSetupConnection(controller)) return;
     controller.retry = undefined;
     const project = state.workspace?.projects.find(
       (item) => item.path === controller.projectPath,
@@ -227,7 +230,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
         kind: 'notice',
         text: 'The remote connection was interrupted.',
         noticeType: 'warning',
-        anchor: controller.messages.length,
+        ...anchorFields(controller),
       });
     }
     controller.compacting = false;
@@ -262,6 +265,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     controller.pendingSettingRequestId = '';
     controller.remoteConnectionTimedOut = false;
     clearSettingRequestWatch(controller);
+    cancelSetup(controller);
     controller.generation = 0;
     controller.provisionalReplacement = undefined;
     controller.remoteDisconnected = recoverableRemoteExit;
@@ -309,7 +313,7 @@ async function handleRpc(
     clearMaterializationVerificationWatch(controller);
     clearAbortWatch(controller);
     resetStreamAggregate(controller.runtimeId, controller.generation);
-    controller.localErrors = [];
+    controller.streamMessage = undefined;
     controller.compacting = false;
     controller.compactionReason = undefined;
     controller.compactionStartedWhileStreaming = false;
@@ -332,6 +336,9 @@ async function handleRpc(
     if (role === 'user' || role === 'assistant') {
       confirmSubmittedPrompt(controller);
       markPiTranscript(controller);
+    }
+    if (role === 'assistant') {
+      controller.streamMessage = `live-${controller.streamSequence++}`;
     }
     if (role !== 'user') return;
     const text = contentText(message?.content);
@@ -401,11 +408,25 @@ async function handleRpc(
       recordStreamDelta(controller, deltaText);
     }
     if (deltaType === 'text_delta') {
-      appendStream(controller, 'assistant', deltaText);
+      appendStream(
+        controller,
+        'assistant',
+        deltaText,
+        typeof delta?.contentIndex === 'number'
+          ? delta.contentIndex
+          : undefined,
+      );
       if (!isControllerSelected(controller)) controller.unread = true;
     }
     if (deltaType === 'thinking_delta') {
-      appendStream(controller, 'thinking', deltaText);
+      appendStream(
+        controller,
+        'thinking',
+        deltaText,
+        typeof delta?.contentIndex === 'number'
+          ? delta.contentIndex
+          : undefined,
+      );
     }
     return;
   }
@@ -417,6 +438,8 @@ async function handleRpc(
     const failure = messageFailure(event.message);
     if (failure) pushError(controller, failure.message, failure.label);
     const message = asRecord(event.message);
+    if (stringValue(message?.role) === 'assistant')
+      controller.streamMessage = undefined;
     const ephemeral = ephemeralSessionByController(controller.key);
     if (
       stringValue(message?.role) === 'assistant' &&
@@ -444,9 +467,9 @@ async function handleRpc(
     return;
   }
   /**
-   * A failed compaction is reported once and kept nowhere: Pi's message list
-   * has no entry for it, so the row is held on the controller and re-appended
-   * to every list hydrated until the next run begins.
+   * Pi does not persist compaction failures in its message list, so each
+   * failure row is held on the controller and reinserted
+   * during hydration until successful compaction or session replacement.
    */
   if (type === 'compaction_end') {
     controller.compacting = false;
@@ -469,6 +492,10 @@ async function handleRpc(
         text: error.text,
         errorLabel: error.label,
         ...(error.anchor === undefined ? {} : { anchor: error.anchor }),
+        ...(error.boundary ? { boundary: error.boundary } : {}),
+        ...(error.afterToolCallId
+          ? { afterToolCallId: error.afterToolCallId }
+          : {}),
       });
       if (!isControllerSelected(controller)) controller.unread = true;
     } else if (asRecord(event.result)) {

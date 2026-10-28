@@ -260,6 +260,12 @@ const REQUIRED_NATIVE_COUNTS = {
     register_session: 2,
     set_active_session: 2,
   },
+  'saved-session-notice-boundaries': {
+    load_workspace: 1,
+    read_model_scope: 2,
+    register_session: 7,
+    set_active_session: 3,
+  },
   'saved-session-extension-prompt-cycling': {
     load_workspace: 1,
     read_model_scope: 2,
@@ -502,6 +508,7 @@ function scenarioWorkspace(scenarioName: string): WorkspaceSnapshot {
   if (
     scenarioName === 'saved-session-prompt-process-exit' ||
     scenarioName === 'saved-session-extension-prompt-cycling' ||
+    scenarioName === 'saved-session-notice-boundaries' ||
     scenarioName === 'cross-project-sidebar-metadata-actions' ||
     scenarioName === 'saved-session-command-replacement' ||
     scenarioName === 'plan-implement-replacement' ||
@@ -817,8 +824,16 @@ function installPiScenarioAdapter(scenarioName: string): void {
         const expected =
           scenarioName === 'phantom-command-registration' ||
           scenarioName === 'phantom-first-prompt-registration' ||
-          scenarioName === 'delayed-successor-verification'
+          scenarioName === 'delayed-successor-verification' ||
+          scenarioName === 'saved-session-notice-boundaries'
             ? ((): NativeSessionIdentity => {
+                if (scenarioName === 'saved-session-notice-boundaries') {
+                  const session =
+                    [MAIN_SESSION, BACKUP_SESSION].find(
+                      (candidate) => candidate.id === args.sessionId,
+                    ) ?? MAIN_SESSION;
+                  return { ...session, adopted: false };
+                }
                 const candidates =
                   scenarioName === 'delayed-successor-verification'
                     ? [
@@ -1399,6 +1414,7 @@ function scenarioRuntimeKey(
   if (
     scenarioName === 'saved-session-prompt-process-exit' ||
     scenarioName === 'saved-session-extension-prompt-cycling' ||
+    scenarioName === 'saved-session-notice-boundaries' ||
     scenarioName === 'saved-session-command-replacement' ||
     scenarioName === 'plan-implement-replacement' ||
     scenarioName === 'delayed-successor-verification' ||

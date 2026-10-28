@@ -1,3 +1,4 @@
+export { retrySetup, recoverSetupModel } from './setup';
 export {
   startController,
   refreshModelScope,

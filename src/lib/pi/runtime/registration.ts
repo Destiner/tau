@@ -370,6 +370,7 @@ async function persistProjectSelection(
 // not, so a replacement has to move it onto the identity Pi handed over
 // instead of leaving it pointing at the session that was swapped out.
 function rebindEphemeralSession(controller: SessionController): void {
+  controller.localErrors = [];
   claimSessionOwnership(controller);
   let session = ephemeralSessionByController(controller.key);
   if (!session && !workspaceContainsSession(controller)) {

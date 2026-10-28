@@ -128,10 +128,18 @@ for (const width of [390]) {
 
         const code = await reveal(page, `geometry-${role}-code`);
         sameRails(await rails(code.locator('.markdown > h2')), current);
+        sameRails(await rails(code.locator('.markdown > p')), current);
         for (const block of await code
           .locator('.markdown > .code-block')
           .all()) {
-          sameRails(await rails(block), currentOuter);
+          const expected = role === 'user' ? current : currentOuter;
+          sameRails(await rails(block), expected);
+          sameRails(await rails(block.locator('pre')), expected);
+          const padding = await block.locator('pre').evaluate((element) => {
+            const style = getComputedStyle(element);
+            return [style.paddingLeft, style.paddingRight];
+          });
+          expect(padding).toEqual(['11px', '11px']);
           const contentLeft = await block.locator('pre').evaluate((element) => {
             const style = getComputedStyle(element);
             return (
@@ -140,9 +148,13 @@ for (const width of [390]) {
               parseFloat(style.paddingLeft)
             );
           });
-          expect(Math.abs(contentLeft - current.left)).toBeLessThanOrEqual(
-            tolerance,
-          );
+          if (role === 'user') {
+            expect(contentLeft - current.left).toBe(12);
+          } else {
+            expect(Math.abs(contentLeft - current.left)).toBeLessThanOrEqual(
+              tolerance,
+            );
+          }
         }
         await assertLocalScroll(code.locator('pre').last());
 
@@ -169,6 +181,93 @@ for (const width of [390]) {
         await assertLocalScroll(wideTable);
         await assertNoPageOverflow(page);
       }
+    });
+
+    test('insets code-only user fences and keeps copy reachable after local scrolling', async ({
+      page,
+    }) => {
+      await page.evaluate(() => {
+        window.__TAU_CLIPBOARD_WRITES__ = [];
+        window.__TAURI_INTERNALS__ = {
+          transformCallback: (callback: unknown): unknown => callback,
+          invoke: (
+            command: string,
+            payload?: { text?: string },
+          ): Promise<unknown> => {
+            if (
+              command === 'plugin:clipboard-manager|write_text' &&
+              payload?.text
+            ) {
+              window.__TAU_CLIPBOARD_WRITES__!.push(payload.text);
+            }
+            return Promise.resolve(null);
+          },
+        };
+      });
+      const id = 'geometry-user-code';
+      const row = await reveal(page, id);
+      const prose = await rails(row.locator('.markdown > p'));
+      const source = 'long_unbroken_code_'.repeat(30);
+      for (const language of ['ts', '', 'mermaid']) {
+        await updateMarkdown(page, id, `\`\`\`${language}\n${source}\n\`\`\``);
+        const block = row.locator('.markdown > .code-block');
+        await expect(block).toHaveCount(1);
+        sameRails(await rails(block), prose);
+        sameRails(await rails(block.locator('pre')), prose);
+        await assertLocalScroll(block.locator('pre'));
+        sameRails(await rails(block), prose);
+        const copy = block.getByRole('button', { name: 'Copy Code' });
+        await block.hover();
+        await expect(copy).toHaveCSS('opacity', '0.45');
+        contained(await rails(copy), await rails(block));
+        await copy.click();
+        await expect
+          .poll(() =>
+            page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__!.at(-1)),
+          )
+          .toBe(source + '\n');
+        await page.mouse.move(0, 0);
+        await page.keyboard.press('Tab');
+        await copy.focus();
+        await expect(copy).toBeFocused();
+        await expect(copy).toHaveCSS('opacity', '1');
+        const writes = await page.evaluate(
+          () => window.__TAU_CLIPBOARD_WRITES__!.length,
+        );
+        await copy.press('Enter');
+        await expect
+          .poll(() =>
+            page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__!.length),
+          )
+          .toBe(writes + 1);
+        await assertNoPageOverflow(page);
+      }
+    });
+
+    test('preserves nested user code rails and compact plain-text bubbles', async ({
+      page,
+    }) => {
+      const id = 'geometry-user-code';
+      const row = await reveal(page, id);
+      for (const text of [
+        '- List paragraph\n\n  ```ts\n  const nested = true;\n  ```',
+        '> Quote paragraph\n>\n> ```ts\n> const nested = true;\n> ```',
+      ]) {
+        await updateMarkdown(page, id, text);
+        const block = row.locator('.code-block');
+        sameRails(
+          await rails(block),
+          await rails(row.locator('li > p, blockquote > p')),
+        );
+        await expect(block).toHaveCSS('margin-left', '0px');
+        await expect(block).toHaveCSS('margin-right', '0px');
+      }
+      await updateMarkdown(page, id, 'Short prompt');
+      await expect(row.locator('.code-block')).toHaveCount(0);
+      expect((await rails(row.locator('.user-bubble'))).width).toBeLessThan(
+        (await rails(row)).width,
+      );
+      await assertNoPageOverflow(page);
     });
 
     test('preserves natural image dimensions and contains nested structured content', async ({
