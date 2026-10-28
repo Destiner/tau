@@ -328,7 +328,6 @@ function failPendingSetup(
     step: pending.settingsStep === 'effort' ? 'effort' : 'model',
     provider: pending.selectedModelProvider,
     modelId: pending.selectedModelId,
-    modelName: pending.selectedModelName,
     effort: pending.selectedEffort,
     message: setupFailureCopy(rawError),
     recovering: false,
@@ -356,7 +355,7 @@ function failSetupConnection(controller: SessionController): boolean {
 
 async function recover(
   controller: SessionController,
-  settings: Pick<SetupFailure, 'provider' | 'modelId' | 'modelName' | 'effort'>,
+  settings: Pick<SetupFailure, 'provider' | 'modelId' | 'effort'>,
   retryEffort = true,
 ): Promise<void> {
   if (controller.disposed || !controller.generation || !controller.setupFailure)
@@ -433,7 +432,6 @@ async function recoverSetupModel(
   controller: SessionController,
   provider: string,
   modelId: string,
-  modelName: string,
 ): Promise<void> {
   const failure = controller.setupFailure;
   if (!failure) return;
@@ -442,7 +440,6 @@ async function recoverSetupModel(
     {
       provider,
       modelId,
-      modelName,
       effort: failure.effort,
     },
     false,

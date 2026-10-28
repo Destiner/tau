@@ -35,7 +35,7 @@ async function selectModel(value: string): Promise<void> {
   );
   try {
     if (controller.setupFailure) {
-      await recoverSetupModel(controller, model.provider, model.id, model.name);
+      await recoverSetupModel(controller, model.provider, model.id);
       return;
     }
     if (controller.phantom) {

@@ -625,7 +625,7 @@ describe('session-local initial setup recovery', () => {
     const staleRead = requests().at(-1)!;
     const older = retrySetup(c);
     const staleMutation = requests().at(-1)!;
-    const newer = recoverSetupModel(c, 'invented', 'alternate', 'Alternate');
+    const newer = recoverSetupModel(c, 'invented', 'alternate');
     await handleResponse(c, {
       command: 'get_state',
       id: staleRead.id,
@@ -672,7 +672,7 @@ describe('session-local initial setup recovery', () => {
       const modelWriteCount = requests().filter(
         (r) => r.type === 'set_model',
       ).length;
-      const newer = recoverSetupModel(c, 'invented', 'alternate', 'Alternate');
+      const newer = recoverSetupModel(c, 'invented', 'alternate');
       await vi.advanceTimersByTimeAsync(0);
       expect(requests().filter((r) => r.type === 'set_model')).toHaveLength(
         modelWriteCount,
@@ -710,7 +710,7 @@ describe('session-local initial setup recovery', () => {
     const staleWrite = requests().at(-1)!;
     await vi.advanceTimersByTimeAsync(10_000);
     await reconcile(c);
-    const retry = recoverSetupModel(c, 'invented', 'alternate', 'Alternate');
+    const retry = recoverSetupModel(c, 'invented', 'alternate');
     await vi.advanceTimersByTimeAsync(10_000);
     await retry;
     expect(c.setupFailure?.recovering).toBe(false);
@@ -721,12 +721,7 @@ describe('session-local initial setup recovery', () => {
       success: true,
     });
     expect(c.setupFailure).toBeDefined();
-    const deliberateRetry = recoverSetupModel(
-      c,
-      'invented',
-      'alternate',
-      'Alternate',
-    );
+    const deliberateRetry = recoverSetupModel(c, 'invented', 'alternate');
     await respond(c, 'set_model');
     await reconcile(c, 'alternate');
     await deliberateRetry;

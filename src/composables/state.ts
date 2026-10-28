@@ -255,7 +255,6 @@ interface SessionController {
     step: 'model' | 'effort';
     provider: string;
     modelId: string;
-    modelName: string;
     effort: ThinkingLevel;
     message: string;
     recovering: boolean;

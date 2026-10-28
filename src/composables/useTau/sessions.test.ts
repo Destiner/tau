@@ -907,7 +907,6 @@ describe('session drafts and selection', () => {
       expect(tau.setupFailure.value).toMatchObject({
         provider: 'provider',
         modelId: 'beta',
-        modelName: 'Beta',
         effort: 'max',
         recovering: false,
       });
