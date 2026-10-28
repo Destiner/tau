@@ -225,6 +225,19 @@ function hydrateTranscript(
       });
     }
   }
+  const stoppedToolIds = new Set(
+    previous
+      .filter((entry) => entry.kind === 'tool' && entry.toolRunning === false)
+      .map((entry) => entry.toolCallId)
+      .filter(Boolean),
+  );
+  for (const entry of entries) {
+    // A missing persisted result cannot restart an interrupted execution.
+    // Recorded results above still own the result and error state.
+    if (entry.kind === 'tool' && stoppedToolIds.has(entry.toolCallId)) {
+      entry.toolRunning = false;
+    }
+  }
   return restoreSourceSegments(
     assignIds(entries, previous, pendingLiveUserEvents),
     previous,

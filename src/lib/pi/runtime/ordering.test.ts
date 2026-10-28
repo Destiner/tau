@@ -590,6 +590,98 @@ describe('local feedback source ordering', () => {
     },
   );
 
+  it.each(['unresolved', 'success', 'error'] as const)(
+    'keeps an interrupted remote tool final after reconnect: %s',
+    async (result) => {
+      const { handleBridgeEvent, handleRpc, handleResponse, rpc } =
+        await import('./index');
+      const c = controller({ streaming: true, working: true });
+      state.controllers.push(c);
+      state.workspace = {
+        activeProjectPath: c.projectPath,
+        piPath: null,
+        projects: [
+          {
+            path: c.projectPath,
+            name: 'Remote',
+            workingDirectory: '/remote/project',
+            connectionString: 'ssh fixture@example',
+            collapsed: false,
+            selected: true,
+            sessions: [],
+          },
+        ],
+      };
+      const call = {
+        role: 'assistant',
+        content: [
+          {
+            type: 'toolCall',
+            id: 'interrupted-call',
+            name: 'bash',
+            arguments: { command: 'command' },
+          },
+        ],
+      };
+      await start(c);
+      await handleRpc(c, { type: 'message_end', message: call });
+      await handleRpc(c, {
+        type: 'tool_execution_start',
+        toolCallId: 'interrupted-call',
+        toolName: 'bash',
+        args: { command: 'command' },
+      });
+      const tool = (): (typeof c.messages)[number] =>
+        c.messages.find((entry) => entry.kind === 'tool')!;
+      const toolId = tool().id;
+      expect(tool().toolRunning).toBe(true);
+      await handleBridgeEvent({
+        runtimeId: c.runtimeId,
+        generation: c.generation,
+        kind: 'exited',
+        code: 255,
+      });
+      expect(tool().toolRunning).toBe(false);
+      const history: unknown[] = [call];
+      if (result !== 'unresolved') {
+        history.push({
+          role: 'toolResult',
+          toolCallId: 'interrupted-call',
+          content: [{ type: 'text', text: 'persisted result' }],
+          isError: result === 'error',
+        });
+      }
+      c.generation++;
+      c.reconnectingRemote = true;
+      const id = nextRequestId('start-messages');
+      c.startMessagesRequestId = id;
+      await rpc(c, { id, type: 'get_messages' });
+      await handleResponse(c, {
+        id,
+        command: 'get_messages',
+        success: true,
+        data: { messages: history },
+      });
+      const assertFinal = (): void => {
+        expect(
+          c.messages.filter((entry) => entry.kind === 'tool'),
+        ).toHaveLength(1);
+        expect(tool()).toMatchObject({ id: toolId, toolRunning: false });
+        if (result !== 'unresolved') {
+          expect(tool()).toMatchObject({
+            toolResult: 'persisted result',
+            toolErrored: result === 'error',
+          });
+        }
+      };
+      assertFinal();
+      await hydrate(c, history);
+      assertFinal();
+      await hydrate(c, [...history, user('later'), assistant('later reply')]);
+      assertFinal();
+    },
+  );
+
   it('does not reconcile missing reconnect text against a different message with equal text', async () => {
     const { hydrateTranscript, mergeLocalEntries } =
       await import('../transcript');
