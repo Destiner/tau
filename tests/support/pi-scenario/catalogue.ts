@@ -39,6 +39,7 @@ import {
   savedSessionShortHistory,
 } from './saved-session-history';
 import savedSessionMessageQueue from './saved-session-message-queue';
+import savedSessionNoticeBoundaries from './saved-session-notice-boundaries';
 import {
   remotePhantomPromptProcessExit,
   remoteSavedSessionProcessExit,
@@ -223,6 +224,7 @@ const scenarios = [
   savedSessionConversation,
   savedSessionCompaction,
   savedSessionCompactionNotifications,
+  savedSessionNoticeBoundaries,
   ...compactionQueueScenarios,
   savedSessionPromptAdmission,
   savedSessionMessageQueue,

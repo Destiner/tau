@@ -40,6 +40,10 @@ Before sending a new session's first ordinary message or skill, Tau applies its 
 
 Ordinary messages and skills stay blocked until **Retry Setup** or a deliberate model-picker change succeeds and readback confirms the settings and capabilities. Recovery never sends the draft; submit it deliberately afterward. Independent extension commands remain available because Pi executes them without a model request. Authentication guidance refers to the Pi provider login on the machine running Pi (local or remote); Tau does not manage OAuth or infer token expiry. Provider failures that occur only when a request reaches the provider remain Pi's responsibility.
 
+### Local compaction failures
+
+Tau-local compaction failures remain in the live session's transcript across later runs and history refreshes. Successful compaction or session identity replacement clears them. They are not persisted to Pi session files and do not survive app restart.
+
 ### Queue delivery and lifetime
 
 While a saved session is working, Tau sends ordinary `prompt` requests with `streamingBehavior: "steer"` or `"followUp"`. Pi decides whether the message is queued or starts an ordinary run if it became idle. Steering messages are delivered as separate user messages together at Pi's next eligible turn boundary; follow-ups run one at a time after the current work. Shift+Enter inserts a newline. Idle submissions use the ordinary prompt path; extension slash commands are not run immediately from the busy queue path.

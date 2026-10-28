@@ -38,6 +38,7 @@ import {
   setHistoryLoading,
   applyHistoryTail,
   mergeLiveStreamSuffix,
+  mergeReconnectedStream,
   reanchorCompactionLocalEntries,
 } from './history';
 import {
@@ -739,6 +740,7 @@ async function handleResponse(
       // prompt; the replacement hydration reconciles them without exposing
       // any completed transcript from the outgoing identity.
       controller.messages = replacementPromptRows;
+      controller.streamMessage = undefined;
       resetHistory(controller);
       controller.models = [];
       controller.efforts = [];
@@ -931,7 +933,7 @@ async function handleResponse(
           controller.compactionStreamSequence,
         )
       : resolvesStart && controller.reconnectingRemote
-        ? mergeLiveStreamSuffix(hydrated, previousTail, 0)
+        ? mergeReconnectedStream(hydrated, previousTail)
         : hydrated;
     if (reconcilingCompaction) {
       reanchorCompactionLocalEntries(

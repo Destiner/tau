@@ -1307,7 +1307,11 @@ describe('session replacement hardening', () => {
         },
       ]);
       expect(firstController.messages).toEqual([
-        { id: 'stream-user-0', kind: 'user', text: 'Review the plan' },
+        expect.objectContaining({
+          id: 'stream-user-0',
+          kind: 'user',
+          text: 'Review the plan',
+        }),
       ]);
     });
     await settleAndHydrateCompleted(firstController, 'Plan ready');

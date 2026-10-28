@@ -1222,6 +1222,7 @@ async function retireUnsavedSession(
   controller.compactionReconciliationPending = false;
   controller.compactionStreamSequence = controller.streamSequence;
   controller.messages = [];
+  controller.localErrors = [];
   if (isControllerSelected(controller)) {
     state.activeSessionId = session.id;
     state.activeSessionPath = '';
