@@ -77,6 +77,7 @@ import {
   markPiTranscript,
 } from './registration';
 import handleResponse from './responses';
+import { cancelSetup, failSetupConnection } from './setup';
 
 async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
   const controller = controllerByRuntimeId(event.runtimeId);
@@ -84,6 +85,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
   touchController(controller);
   if (event.kind === 'started') {
     if (event.generation > controller.generation) {
+      cancelSetup(controller);
       if (controller.submittedPrompt?.generation === controller.generation) {
         const accepted = controller.submittedPrompt.accepted;
         settleInterruptedSubmittedPrompt(controller);
@@ -125,6 +127,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
   }
   if (event.kind === 'stderr') return;
   if (event.kind === 'error') {
+    if (failSetupConnection(controller)) return;
     controller.retry = undefined;
     const project = state.workspace?.projects.find(
       (item) => item.path === controller.projectPath,
@@ -262,6 +265,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     controller.pendingSettingRequestId = '';
     controller.remoteConnectionTimedOut = false;
     clearSettingRequestWatch(controller);
+    cancelSetup(controller);
     controller.generation = 0;
     controller.provisionalReplacement = undefined;
     controller.remoteDisconnected = recoverableRemoteExit;

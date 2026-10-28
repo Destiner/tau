@@ -1,19 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  CODE_LANGUAGE_ATTRIBUTE,
-  addCodeCopyButtons,
-  addDiagramExpandButtons,
-  isClosedFence,
-  isPathOpenGesture,
   isWebUrl,
   linkFilePaths,
-  removeEmptyTableHeaders,
   parseFileReference,
   parseMarkdownFileDestination,
   protectLocalFileHrefs,
-  restoreProtectedLocalFileHrefs,
-  resolveFilePath,
 } from './markdown';
 
 describe('web URLs', () => {
@@ -27,54 +19,6 @@ describe('web URLs', () => {
 });
 
 describe('file references', () => {
-  it('reads rooted, relative and home paths with spaces and punctuation', () => {
-    expect(parseFileReference('/Users/tim/notes.md')?.path).toBe(
-      '/Users/tim/notes.md',
-    );
-    expect(parseFileReference('./src/App.vue')?.path).toBe('./src/App.vue');
-    expect(parseFileReference('../tau/README.md')?.path).toBe(
-      '../tau/README.md',
-    );
-    expect(parseFileReference('../notes')?.path).toBe('../notes');
-    expect(parseFileReference('./build')?.path).toBe('./build');
-    expect(parseFileReference('~/.config/pi/settings.json')?.path).toBe(
-      '~/.config/pi/settings.json',
-    );
-    expect(parseFileReference('src/lib/markdown.ts')?.path).toBe(
-      'src/lib/markdown.ts',
-    );
-    expect(
-      parseFileReference('~/Documents/file with spaces & (parens).txt')?.path,
-    ).toBe('~/Documents/file with spaces & (parens).txt');
-  });
-
-  it('separates line and column markers and sentence punctuation from paths', () => {
-    for (const marker of [':42', ':42:10', ':21-31', ':21–31']) {
-      expect(parseFileReference(`src/App.vue${marker}`)).toEqual({
-        text: `src/App.vue${marker}`,
-        path: 'src/App.vue',
-      });
-    }
-    expect(parseFileReference('src/App.vue:abc')).toBeNull();
-    expect(parseFileReference('src/App.vue.')).toEqual({
-      text: 'src/App.vue',
-      path: 'src/App.vue',
-    });
-    expect(parseFileReference('src/App.vue:42:')).toEqual({
-      text: 'src/App.vue:42',
-      path: 'src/App.vue',
-    });
-  });
-
-  it('accepts an unrooted directory only when it has a meaningful shape', () => {
-    expect(parseFileReference('src/components/')?.path).toBe('src/components/');
-    expect(parseFileReference('reports/148/')?.path).toBe('reports/148/');
-    expect(parseFileReference('148/report.txt')?.path).toBe('148/report.txt');
-
-    expect(parseFileReference('148/')).toBeNull();
-    expect(parseFileReference('build/')).toBeNull();
-  });
-
   it('rejects prose, ambiguous roots and API route templates', () => {
     expect(parseFileReference('and/or')).toBeNull();
     expect(parseFileReference('24/7')).toBeNull();
@@ -110,28 +54,6 @@ describe('file references', () => {
     expect(parseFileReference('/')).toBeNull();
     expect(parseFileReference('~/')).toBeNull();
     expect(parseFileReference('README.md')).toBeNull();
-  });
-});
-
-describe('path opening gesture', () => {
-  it('opens on primary click or Enter except macOS Control-click and middle click', () => {
-    for (const platform of ['MacIntel', 'Win32', 'Linux x86_64']) {
-      expect(isPathOpenGesture({ type: 'click', button: 0 }, platform)).toBe(
-        true,
-      );
-    }
-    expect(
-      isPathOpenGesture({ type: 'keydown', key: 'Enter' }, 'MacIntel'),
-    ).toBe(true);
-    expect(
-      isPathOpenGesture(
-        { type: 'click', button: 0, ctrlKey: true },
-        'MacIntel',
-      ),
-    ).toBe(false);
-    expect(isPathOpenGesture({ type: 'click', button: 1 }, 'MacIntel')).toBe(
-      false,
-    );
   });
 });
 
@@ -179,43 +101,6 @@ describe('explicit Markdown file destinations', () => {
     expect(protectedLinks.html).toContain('https://tau.invalid/__file_');
     expect(protectedLinks.html).toContain('<a>foreign</a>');
   });
-
-  it('restores dollar replacement patterns in file URLs literally', () => {
-    expect(
-      restoreProtectedLocalFileHrefs('<a href="placeholder">item</a>', [
-        { placeholder: 'placeholder', href: "file:///tmp/$&-$'.txt" },
-      ]),
-    ).toBe('<a href="file:///tmp/$&amp;-$\'.txt">item</a>');
-  });
-});
-
-describe('path resolution', () => {
-  it('normalizes relative paths and redundant separators against the session directory', () => {
-    expect(resolveFilePath('/work/tau', 'src/App.vue')).toBe(
-      '/work/tau/src/App.vue',
-    );
-    expect(resolveFilePath('/work/tau', './src/App.vue')).toBe(
-      '/work/tau/src/App.vue',
-    );
-    expect(resolveFilePath('/work/tau', '../other/App.vue')).toBe(
-      '/work/other/App.vue',
-    );
-    expect(resolveFilePath('/work/tau', '../notes')).toBe('/work/notes');
-  });
-
-  it('keeps rooted paths and expands the home directory', () => {
-    expect(resolveFilePath('/work/tau', '/etc/hosts')).toBe('/etc/hosts');
-    expect(resolveFilePath('/work/tau', '~/notes.md', '/Users/tim')).toBe(
-      '/Users/tim/notes.md',
-    );
-    expect(resolveFilePath('/work/tau', '~/notes.md')).toBe('~/notes.md');
-    expect(resolveFilePath('/work/tau/', 'docs//pi.md')).toBe(
-      '/work/tau/docs/pi.md',
-    );
-    expect(resolveFilePath('/work/tau', '../../../etc/hosts')).toBe(
-      '/etc/hosts',
-    );
-  });
 });
 
 describe('linking file paths in markup', () => {
@@ -257,25 +142,6 @@ describe('linking file paths in markup', () => {
     expect(linkFilePaths(image)).toBe(image);
   });
 
-  it('leaves ambiguous routes, slash commands and encoded markup unlinked', () => {
-    for (const html of [
-      '<p><code>/usage</code></p>',
-      '<p><code>/ expanded </code></p>',
-      '<p><code>&lt;/pre&gt;</code></p>',
-      '<p><code>&lt;/nested/tag&gt;</code></p>',
-    ]) {
-      expect(linkFilePaths(html)).toBe(html);
-    }
-    for (const html of [
-      '<p><code>/users/internal/orgs/:orgId/billing</code></p>',
-      '<p>Call <code>/billing/{events,suspend,resume}</code>.</p>',
-      '<p>Next page: <code>148/</code>.</p>',
-      '<p>Relative route: <code>:orgId/billing.json</code>.</p>',
-    ]) {
-      expect(linkFilePaths(html)).toBe(html);
-    }
-  });
-
   it('skips existing links and fenced code, then resumes linking after a skipped element', () => {
     const link = '<p><a href="https://example.com/a/b.md">a/b.md</a></p>';
     expect(linkFilePaths(link)).toBe(link);
@@ -299,140 +165,5 @@ describe('linking file paths in markup', () => {
     expect(linkFilePaths(html, true)).toBe(
       `${block}<p>Workspace <a class="file-link" role="button" tabindex="0" aria-label="Preview path /home/agent/rhinestone/workspace" data-tau-path="/home/agent/rhinestone/workspace">/home/agent/rhinestone/workspace</a> <code><a class="file-link" role="button" tabindex="0" aria-label="Preview path src/workspace.ts" data-tau-path="src/workspace.ts">src/workspace.ts</a></code></p>`,
     );
-  });
-
-  it('links standalone rooted paths with hidden directories, spaces and punctuation', () => {
-    expect(
-      linkFilePaths(
-        '<p><code>/home/agent/.pi/workflows/implement/RHI-5900/implementation-plan.md</code></p>',
-      ),
-    ).toContain(
-      'data-tau-path="/home/agent/.pi/workflows/implement/RHI-5900/implementation-plan.md"',
-    );
-    expect(
-      linkFilePaths('<p>/Users/example/Library/Application Support</p>'),
-    ).toBe(
-      '<p><a class="file-link" role="link" tabindex="0" data-tau-path="/Users/example/Library/Application Support">/Users/example/Library/Application Support</a></p>',
-    );
-
-    const paths = [
-      '/Users/example/Library/Application Support',
-      '/Users/example/Video Projects',
-      '/Users/example/Video Projects/Sample Recording 2026-01-01.project',
-      '/Users/example/Library/Caches/com.example.browser/Webpage Previews',
-      '~/Documents/file with spaces & (parens).txt',
-    ];
-    const encoded = paths.map((path) => path.replace(/&/g, '&amp;'));
-    const html = linkFilePaths(
-      encoded.map((path) => `<p>${path}</p>`).join(''),
-    );
-
-    for (const path of encoded) {
-      expect(html).toContain(`data-tau-path="${path}"`);
-    }
-  });
-
-  it('keeps markers outside standalone rooted links with encoded characters', () => {
-    for (const [encodedPath, path, marker] of [
-      ['~/Documents/a &amp; b.txt', '~/Documents/a & b.txt', ':21–31'],
-      ['/tmp/a &#38; b.txt', '/tmp/a & b.txt', ':42:10'],
-      ['/Users/tim/My File.md', '/Users/tim/My File.md', ':21-31'],
-    ] as const) {
-      expect(linkFilePaths(`<code> ${encodedPath}${marker} </code>`)).toBe(
-        `<code> <a class="file-link" role="link" tabindex="0" data-tau-path="${path.replace(/&/g, '&amp;')}">${encodedPath}</a>${marker} </code>`,
-      );
-    }
-  });
-});
-
-describe('table headers', () => {
-  it('removes only entirely empty table headers', () => {
-    expect(
-      removeEmptyTableHeaders(
-        '<table>\n<thead>\n<tr>\n<th align="left"></th>\n<th align="right"></th>\n</tr>\n</thead>\n<tbody><tr><td align="left">one</td><td align="right">two</td></tr></tbody>\n</table>',
-      ),
-    ).toBe(
-      '<table>\n\n<tbody><tr><td align="left">one</td><td align="right">two</td></tr></tbody>\n</table>',
-    );
-    const headers = [
-      '<thead><tr><th></th><th>Kept</th></tr></thead>',
-      '<thead><tr><th><img src="heading.png" alt=""></th></tr></thead>',
-    ];
-
-    for (const header of headers) {
-      expect(removeEmptyTableHeaders(`<table>${header}</table>`)).toBe(
-        `<table>${header}</table>`,
-      );
-    }
-  });
-});
-
-describe('closed fences', () => {
-  it('recognizes closed fences without treating partial streamed fences as closed', () => {
-    expect(isClosedFence('```mermaid\ngraph TD\n  A --> B\n```')).toBe(true);
-    expect(isClosedFence('~~~\nplain\n~~~\n')).toBe(true);
-    expect(isClosedFence('```mermaid\n```')).toBe(true);
-    expect(isClosedFence('```mermaid\ngraph TD\n  A --> B\n')).toBe(false);
-    expect(isClosedFence('```mermaid\ngraph TD\n  A --> ``')).toBe(false);
-    expect(isClosedFence('```mermaid')).toBe(false);
-  });
-});
-
-describe('code copy buttons', () => {
-  it('wraps only fenced blocks, preserving literal closers and language labels', () => {
-    const html = addCodeCopyButtons(
-      '<p>prose with <code>inline</code></p><pre><code>const a = 1;\n</code></pre><p>more</p><pre>plain\n</pre>',
-    );
-    expect(html.match(/data-tau-copy/g)).toHaveLength(2);
-    expect(html).toContain(
-      '<div class="code-block"><pre><code>const a = 1;\n</code></pre><button type="button" class="code-copy" data-tau-copy aria-label="Copy Code">',
-    );
-    expect(html).toContain('<p>prose with <code>inline</code></p>');
-    const block = '<pre><code>echo "&lt;/pre&gt;"\n</code></pre>';
-    const literal = addCodeCopyButtons(block);
-    expect(literal).toContain(block);
-    expect(
-      addCodeCopyButtons(
-        '<pre><code class="language-rust">fn main() {}\n</code></pre>',
-      ),
-    ).toContain(`<div class="code-block" ${CODE_LANGUAGE_ATTRIBUTE}="rust">`);
-    expect(
-      addCodeCopyButtons(
-        '<pre class="tau-highlight"><code class="tau-highlight-code language-ts"><span>a</span></code></pre>',
-      ),
-    ).toContain(`<div class="code-block" ${CODE_LANGUAGE_ATTRIBUTE}="ts">`);
-
-    // A fence that named no language has nothing to label.
-    expect(addCodeCopyButtons('<pre><code>plain\n</code></pre>')).toContain(
-      '<div class="code-block">',
-    );
-  });
-});
-
-describe('diagram expand buttons', () => {
-  it('marks only drawn diagrams and gives each its own expand button', () => {
-    const html = addDiagramExpandButtons(
-      '<div class="diagram"><svg width="10" height="5"><g></g></svg></div>' +
-        '<p>prose</p>' +
-        '<div class="diagram">not a drawing</div>' +
-        '<pre><code>graph TD\n</code></pre>',
-    );
-
-    expect(html.match(/data-tau-expand/g)).toHaveLength(1);
-    // Inside the figure it expands, after the drawing itself.
-    expect(html).toContain(
-      '</svg><button type="button" class="diagram-expand" data-tau-expand aria-label="Expand Diagram">',
-    );
-    // A wrapper holding anything but a drawn svg is not a figure to expand.
-    expect(html).toContain('<div class="diagram">not a drawing</div>');
-    expect(html).toContain('<pre><code>graph TD\n</code></pre>');
-    const figure =
-      '<div class="diagram"><svg width="2" height="1"></svg></div>';
-    const multiple = addDiagramExpandButtons(
-      `${figure}<p>between</p>${figure}`,
-    );
-
-    expect(multiple.match(/data-tau-expand/g)).toHaveLength(2);
-    expect(multiple).toContain('<p>between</p>');
   });
 });

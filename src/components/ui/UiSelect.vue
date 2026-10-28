@@ -193,6 +193,7 @@ const props = withDefaults(
     filterable: false,
   },
 );
+const emit = defineEmits<{ select: [value: string] }>();
 
 const selectId = useId();
 const listId = `${selectId}-list`;
@@ -290,6 +291,7 @@ function setCursor(option: UiSelectOption): void {
 
 function selectOption(option: UiSelectOption): void {
   modelValue.value = option.value;
+  emit('select', option.value);
   open.value = false;
 }
 

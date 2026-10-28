@@ -5,6 +5,23 @@
     :class="{ disabled: !canDraft }"
     @keydown.escape="dismissCommandMenu"
   >
+    <div
+      v-if="setupFailure"
+      class="setup-failure"
+      role="alert"
+    >
+      <ErrorNotice
+        label="Model Setup Failed"
+        :text="setupFailure.message"
+      />
+      <UiButton
+        size="sm"
+        :disabled="!canRetrySetup || !canDraft"
+        @click="retrySetup"
+      >
+        {{ setupFailure.recovering ? 'Retrying…' : 'Retry Setup' }}
+      </UiButton>
+    </div>
     <CommandMenu
       v-if="commandMenuActive"
       ref="commandMenu"
@@ -44,7 +61,7 @@
         :fallback-label="currentModelLabel"
         :disabled="settingsDisabled"
         aria-label="Model"
-        @update:model-value="handleModelChange"
+        @select="handleModelChange"
       />
       <UiSelect
         v-model:open="effortSelectorOpen"
@@ -161,7 +178,9 @@ import type { ThinkingLevel } from '../lib/pi/model-scope';
 import textFieldItems from '../lib/text-menu';
 
 import CommandMenu from './CommandMenu.vue';
+import ErrorNotice from './ErrorNotice.vue';
 import ModelSelector from './ModelSelector.vue';
+import UiButton from './ui/UiButton.vue';
 import UiContextMenu from './ui/UiContextMenu.vue';
 import UiIcon from './ui/UiIcon.vue';
 import UiIconButton from './ui/UiIconButton.vue';
@@ -177,6 +196,9 @@ const appCommandDispatch = inject(appCommandDispatchKey, undefined);
 const commandHint = inject(appCommandLookupKey, undefined);
 
 const {
+  setupFailure,
+  canRetrySetup,
+  retrySetup,
   canCompose,
   canDraft,
   canQueue,
@@ -398,6 +420,7 @@ function stopViaCommand(): void {
   else void stop();
 }
 function send(intent: 'steer' | 'followUp' = 'steer'): void {
+  if (setupFailure.value && !extensionCommandDraft.value) return;
   emit('send', intent);
 }
 
@@ -409,6 +432,11 @@ function dismissCommandMenu(event: KeyboardEvent): void {
 }
 
 function handleModelChange(value: string): void {
+  if (
+    !setupFailure.value &&
+    value === `${currentModelProvider.value}/${currentModelId.value}`
+  )
+    return;
   void selectModel(value);
 }
 

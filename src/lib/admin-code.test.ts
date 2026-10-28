@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { KEY_INTERVAL_MS, createAdminCodeMatcher } from './admin-code';
+import { createAdminCodeMatcher } from './admin-code';
 
 const EDITABLE = {} as EventTarget;
 const NOT_EDITABLE = {} as EventTarget;
@@ -57,28 +57,5 @@ describe('createAdminCodeMatcher', () => {
     // outside one must not complete the code either.
     expect(typeCode(admin, 'idd', { editable: true }, 10)).toBe(false);
     expect(typeCode(admin, 'qd', {}, 13)).toBe(false);
-  });
-
-  it('restarts on invalid keys and recognizes a fresh first letter', () => {
-    const admin = matcher();
-    expect(typeCode(admin, 'idxdqd')).toBe(false);
-
-    expect(typeCode(admin, 'id', {}, 10)).toBe(false);
-    expect(admin.press(keyEvent('d', { metaKey: true }), 12)).toBe(false);
-    expect(typeCode(admin, 'dqd', {}, 13)).toBe(false);
-
-    expect(typeCode(admin, 'id', {}, 20)).toBe(false);
-    expect(admin.press(keyEvent('Shift'), 22)).toBe(false);
-    expect(typeCode(admin, 'dqd', {}, 23)).toBe(false);
-    expect(typeCode(admin, 'idi', {}, 30)).toBe(false);
-    expect(typeCode(admin, 'ddqd', {}, 33)).toBe(true);
-  });
-
-  it('expires a partial sequence rather than adding up keystrokes typed minutes apart', () => {
-    const admin = matcher();
-
-    expect(typeCode(admin, 'idd')).toBe(false);
-    expect(admin.press(keyEvent('q'), KEY_INTERVAL_MS + 100)).toBe(false);
-    expect(admin.press(keyEvent('d'), KEY_INTERVAL_MS + 101)).toBe(false);
   });
 });

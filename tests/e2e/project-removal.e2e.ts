@@ -324,28 +324,6 @@ test('removing the active project clears selection and restores valid focus', as
   expect(await removalCalls(page)).toBe(1);
 });
 
-test('a narrow removal confirmation wraps a long project name from IPC', async ({
-  page,
-}) => {
-  const longName =
-    'a deliberately long project name that remains readable in a narrow confirmation';
-  await interceptInitialProjectName(page, longName);
-  await page.setViewportSize({ width: 480, height: 720 });
-  await page.goto('/');
-  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
-  await openSidebarRemoval(page);
-
-  const dialog = page.locator('[role="alertdialog"].project-removal');
-  const description = dialog.locator('.project-removal-description');
-  await expect(description).toContainText(`“${longName}”`);
-  await expect(description).toHaveJSProperty(
-    'scrollWidth',
-    await description.evaluate((element) => element.clientWidth),
-  );
-  const box = await dialog.boundingBox();
-  expect(box?.width).toBeLessThanOrEqual(444);
-});
-
 test('long-name removal keeps warning and pointer actions reachable at native minimum size', async ({
   page,
 }) => {

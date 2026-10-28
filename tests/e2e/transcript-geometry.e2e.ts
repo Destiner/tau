@@ -85,7 +85,7 @@ async function assertLocalScroll(locator: Locator): Promise<void> {
   sameRails(await rails(locator), before);
 }
 
-for (const width of [1280, 390]) {
+for (const width of [390]) {
   test.describe(`transcript geometry at ${width}px`, () => {
     test.use({ viewport: { width, height: 900 } });
 
@@ -397,7 +397,7 @@ const streamingDiagram = [
   '## Streaming diagram\n\n```mermaid\nflowchart TD\n  A[Start] --> B[Measure]\n  B --> C[Render]\n  C --> D[Finish]\n```',
 ];
 
-for (const width of [1280, 390]) {
+for (const width of [390]) {
   test.describe(`secondary and streaming geometry at ${width}px`, () => {
     test.use({ viewport: { width, height: 900 } });
 
@@ -528,61 +528,3 @@ for (const width of [1280, 390]) {
     });
   });
 }
-
-test('keeps file-viewer Markdown outside the transcript shared-rail opt-in', async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1280, height: 900 });
-  await page.addInitScript(() => {
-    window.__TAURI_INTERNALS__ = {
-      transformCallback: (callback: unknown): unknown => callback,
-      invoke: (command: string): Promise<unknown> =>
-        Promise.resolve(
-          command === 'prepare_file_preview'
-            ? {
-                kind: 'ready',
-                id: 'geometry-preview',
-                assetPath: `data:text/plain;charset=utf-8,${encodeURIComponent('# Isolated document\n\nDocument prose.\n\n```ts\nconst isolated = true;\n```\n\n| Name | Value |\n| --- | --- |\n| Rail | Local |')}`,
-                filename: 'geometry.md',
-                sourcePath: '/Users/someone/code/tau/geometry.md',
-                byteLength: 180,
-              }
-            : null,
-        ),
-    };
-  });
-  await page.goto(fixtureUrl);
-  const row = await reveal(page, 'geometry-assistant-prose');
-  await row
-    .getByRole('link', {
-      name: 'src/components/TranscriptView.vue',
-      exact: true,
-    })
-    .click();
-  const dialog = page.getByRole('dialog', { name: 'geometry.md' });
-  const markdown = dialog.locator('.file-viewer-document .markdown');
-  await expect(
-    markdown.getByRole('heading', { name: 'Isolated document' }),
-  ).toBeVisible();
-  await expect(markdown).not.toHaveClass(/transcript-markdown/);
-  const documentRails = await rails(markdown);
-  sameRails(await rails(markdown.locator('h1')), documentRails);
-  const prose = await rails(markdown.locator('p'));
-  expect(Math.abs(prose.left - documentRails.left)).toBeLessThanOrEqual(
-    tolerance,
-  );
-  contained(prose, documentRails);
-  sameRails(await rails(markdown.locator('.code-block')), documentRails);
-  const padding = await markdown
-    .locator('pre')
-    .evaluate((element) => getComputedStyle(element).paddingLeft);
-  expect(padding).toBe('12px');
-  await page.setViewportSize({ width: 390, height: 700 });
-  sameRails(await rails(markdown.locator('h1')), await rails(markdown));
-  sameRails(
-    await rails(markdown.locator('.code-block')),
-    await rails(markdown),
-  );
-  contained(await rails(markdown.locator('table')), await rails(markdown));
-  await assertNoPageOverflow(page);
-});

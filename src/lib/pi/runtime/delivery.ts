@@ -22,12 +22,18 @@ import {
   cancelPendingPrompt,
   releaseSubmittedPrompt,
 } from './prompts';
+import { watchPendingSetup } from './setup';
 
 async function applyPendingSessionSettings(
   controller: SessionController,
 ): Promise<void> {
   const pending = controller.pendingPrompt;
   if (!pending) return;
+  // Extension commands do not need model preparation, even after failed setup.
+  if (pending.command) {
+    await requestPendingMessages(controller);
+    return;
+  }
   const modelChanged =
     Boolean(pending.selectedModelProvider && pending.selectedModelId) &&
     (pending.selectedModelProvider !== controller.currentModelProvider ||
@@ -40,6 +46,7 @@ async function applyPendingSessionSettings(
   const requestId = nextRequestId('initial-model');
   pending.settingsRequestId = requestId;
   pending.settingsStep = 'model';
+  watchPendingSetup(controller, requestId);
   await rpc(
     controller,
     {
@@ -49,7 +56,7 @@ async function applyPendingSessionSettings(
       modelId: pending.selectedModelId,
     },
     pending.telemetryContext,
-  );
+  ).catch(() => undefined);
 }
 
 async function applyPendingSessionEffort(
@@ -66,6 +73,7 @@ async function applyPendingSessionEffort(
   const requestId = nextRequestId('initial-effort');
   pending.settingsRequestId = requestId;
   pending.settingsStep = 'effort';
+  watchPendingSetup(controller, requestId);
   await rpc(
     controller,
     {
@@ -74,7 +82,7 @@ async function applyPendingSessionEffort(
       level: pending.selectedEffort,
     },
     pending.telemetryContext,
-  );
+  ).catch(() => undefined);
 }
 
 async function requestPendingMessages(

@@ -34,6 +34,12 @@ This matrix describes Tau's extension compatibility with Pi 0.84.1. Queue contro
 - **Extension installation or management UI (deferred):** Install extensions through Pi's normal global, project, package, or settings mechanisms.
 - **Dedicated workflow dashboard (deferred):** Workflow phases appear as ordinary Tau sessions.
 
+### Initial model setup recovery
+
+Before sending a new session's first ordinary message or skill, Tau applies its selected model and effort. A rejected or timed-out setup preserves the editable draft and shows a session-local notice above the composer, not a dialog or persisted transcript entry. Tau reads actual state and effort capabilities without sending a prompt or hydrating history; those reads never silently accept a fallback model as the intended selection.
+
+Ordinary messages and skills stay blocked until **Retry Setup** or a deliberate model-picker change succeeds and readback confirms the settings and capabilities. Recovery never sends the draft; submit it deliberately afterward. Independent extension commands remain available because Pi executes them without a model request. Authentication guidance refers to the Pi provider login on the machine running Pi (local or remote); Tau does not manage OAuth or infer token expiry. Provider failures that occur only when a request reaches the provider remain Pi's responsibility.
+
 ### Local compaction failures
 
 Tau-local compaction failures remain in the live session's transcript across later runs and history refreshes. Successful compaction or session identity replacement clears them. They are not persisted to Pi session files and do not survive app restart.

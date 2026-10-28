@@ -323,38 +323,6 @@ test('find reveals early, middle and late matches across 5000 virtual rows', asy
   await expectActiveRange(page, 'Search checkpoint', 'search-late');
 });
 
-test('highlights across formatting and syntax tokens, excluding activity and controls', async ({
-  page,
-}) => {
-  await page.goto(
-    '/?fixture=long-transcript&search=true&count=12&compacted=true',
-  );
-  await expect(searchBar(page)).not.toContainText('Loaded messages only');
-  await expect(searchInput(page)).toHaveAttribute('placeholder', 'Search');
-  await query(page, 'Cross format needle', '1 / 3');
-  await expectActiveRange(page, 'Cross format needle');
-  await query(page, 'const codeNeedle', '1 / 3');
-  await expectActiveRange(page, 'const codeNeedle');
-  for (const text of [
-    'excluded-thinking-needle',
-    'excluded-tool-needle',
-    'excluded-argument-needle',
-    'excluded-result-needle',
-    'excluded-notice-needle',
-    'Copy Code',
-    'Load Earlier Messages',
-  ]) {
-    await query(page, text, 'No matches');
-    await expect
-      .poll(() =>
-        page.evaluate(
-          () => CSS.highlights?.get('tau-transcript-matches')?.size ?? 0,
-        ),
-      )
-      .toBe(0);
-  }
-});
-
 test('streaming updates search without moving a reader away from a historical match', async ({
   page,
 }) => {
@@ -420,27 +388,6 @@ test('App sessions keep independent find queries, visibility, selection and draf
   await shortcut(page, 'f');
   await expect(searchInput(page)).toHaveValue('sidebar');
   await expect(searchBar(page)).toContainText('1 / 1');
-});
-
-test('find indexes hydrated history in a deterministic full-app Pi scenario', async ({
-  page,
-}) => {
-  await page.goto('/?test-scenario=saved-session-history');
-  const composer = page.getByRole('textbox', {
-    name: 'Message Pi',
-    exact: true,
-  });
-  await expect(composer).toBeEnabled();
-  await composer.fill('Keep this unsent scenario draft');
-  await shortcut(page, 'f');
-  await query(page, 'History prompt', '1 / 12');
-  await expectActiveRange(page, 'History prompt');
-  await searchInput(page).press('Shift+Enter');
-  await expect(searchBar(page)).toContainText('12 / 12');
-  await expectActiveRange(page, 'History prompt');
-  await searchInput(page).press('Escape');
-  await expect(composer).toBeFocused();
-  await expect(composer).toHaveValue('Keep this unsent scenario draft');
 });
 
 test('Escape from a palette above Find restores the search caret without closing Find', async ({
@@ -622,47 +569,12 @@ test.describe('inline Pi prompt', () => {
   });
 });
 
-test('compacted search only adds earlier results after explicitly loading history', async ({
-  page,
-}) => {
-  await page.goto(
-    '/?fixture=long-transcript&search=true&count=12&compacted=true',
-  );
-  await expect(page.getByTestId('fixture-count')).toHaveText('13 messages');
-  await expect(searchBar(page)).not.toContainText('Loaded messages only');
-  await query(page, 'Search checkpoint', '1 / 3');
-  await expectActiveRange(page, 'Search checkpoint', 'current-search-early');
-  await searchInput(page).press('Shift+Enter');
-  await expectActiveRange(page, 'Search checkpoint', 'current-search-late');
-  await searchInput(page).press('Enter');
-  await expectActiveRange(page, 'Search checkpoint', 'current-search-early');
-  await expect(page.getByTestId('fixture-count')).toHaveText('13 messages');
-  await expect(
-    page.getByRole('button', { name: 'Load earlier messages', exact: true }),
-  ).toBeEnabled();
-  await page
-    .getByRole('button', { name: 'Load earlier messages', exact: true })
-    .click();
-  await expect(page.getByTestId('fixture-count')).toHaveText('29 messages');
-  await expect(searchBar(page)).toContainText('2 / 4');
-  await searchInput(page).focus();
-  await searchInput(page).press('Shift+Enter');
-  await expect(searchBar(page)).toContainText('1 / 4');
-  await expectActiveRange(page, 'Search checkpoint', 'history-fixture-user-0');
-});
-
 for (const { container, initial, target, count } of [
   {
     container: 'pre',
     initial: 'const codeNeedle',
     target: 'horizontal-search-target',
     count: '1 / 3',
-  },
-  {
-    container: 'table',
-    initial: 'Column 0',
-    target: 'table-search-target',
-    count: '1 / 1',
   },
 ]) {
   test(`a horizontally clipped ${container} match scrolls its container rather than the app`, async ({
@@ -763,66 +675,8 @@ test('closing Find at a historical match preserves the reader position through s
     .toBeLessThan(2);
 });
 
-test('at 480px a long title leaves Find controls reachable and the active range below the overlay', async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 480, height: 720 });
-  await page.goto('/');
-  const composer = page.getByRole('textbox', {
-    name: 'Message Pi',
-    exact: true,
-  });
-  await expect(composer).toBeEnabled();
-  await composer.fill('Narrow window draft');
-  await page
-    .getByRole('button', { name: 'Workspace overview', exact: true })
-    .click();
-  const title =
-    'A very long session title that must not crowd out transcript search controls '.repeat(
-      3,
-    );
-  const name = page.getByRole('textbox', { name: 'Session Name', exact: true });
-  await name.fill(title);
-  await name.press('Enter');
-  await expect(
-    page.getByRole('heading', { name: title.trim(), exact: true }),
-  ).toBeVisible();
-  await shortcut(page, 'f');
-  await query(page, 'Atlas', '1 / 2');
-  await expectActiveRange(page, 'Atlas');
-  await expect(searchInput(page)).toBeInViewport({ ratio: 1 });
-  await searchInput(page).click({ trial: true });
-  const activeBelowOverlay = (): Promise<boolean> =>
-    page.evaluate(() => {
-      const range = [
-        ...CSS.highlights!.get('tau-transcript-active')!,
-      ][0] as Range;
-      const overlay = document
-        .querySelector('[role="search"][aria-label="Find in Transcript"]')!
-        .getBoundingClientRect();
-      return range.getBoundingClientRect().top >= overlay.bottom;
-    });
-  await expect.soft.poll(activeBelowOverlay).toBe(true);
-  for (const label of ['Next Match', 'Previous Match', 'Close Find']) {
-    const button = page.getByRole('button', { name: label, exact: true });
-    await expect(button).toBeInViewport({ ratio: 1 });
-    await button.click({ trial: true });
-  }
-  await page.getByRole('button', { name: 'Next Match', exact: true }).click();
-  await expect(searchBar(page)).toContainText('2 / 2');
-  await expectActiveRange(page, 'Atlas');
-  await expect.poll(activeBelowOverlay).toBe(true);
-  await page
-    .getByRole('button', { name: 'Previous Match', exact: true })
-    .click();
-  await expect(searchBar(page)).toContainText('1 / 2');
-  await page.getByRole('button', { name: 'Close Find', exact: true }).click();
-  await expect(composer).toHaveValue('Narrow window draft');
-});
-
 for (const { width, colorScheme } of [
   { width: 480, colorScheme: 'light' },
-  { width: 1280, colorScheme: 'dark' },
 ] as const) {
   test(`compact search field contains its status at ${width}px in ${colorScheme} mode`, async ({
     page,

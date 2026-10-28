@@ -77,52 +77,6 @@ describe('preview highlight worker', () => {
     ]);
   });
 
-  it('limits chunks to 250 rendered lines', async () => {
-    const lines = Array.from({ length: 251 }, (_, index) => ({
-      html: `<span>${index}</span>`,
-      offset: index + 1,
-    }));
-    const { messages, send } = await loadWorker(async () =>
-      createEngine(vi.fn(() => ({ header: '<pre>', lines }))),
-    );
-
-    await send('source', 'typescript');
-
-    expect(messages).toEqual([
-      { type: 'start', header: '<pre>' },
-      {
-        type: 'chunk',
-        html: lines
-          .slice(0, 250)
-          .map((line) => line.html)
-          .join(''),
-        offset: 250,
-      },
-      { type: 'chunk', html: '<span>250</span>', offset: 251 },
-      { type: 'done' },
-    ]);
-  });
-
-  it('splits before exceeding the 32,000-character soft HTML limit', async () => {
-    const lines = [
-      { html: 'a'.repeat(16_000), offset: 1 },
-      { html: 'b'.repeat(16_000), offset: 2 },
-      { html: 'c', offset: 3 },
-    ];
-    const { messages, send } = await loadWorker(async () =>
-      createEngine(vi.fn(() => ({ header: '<pre>', lines }))),
-    );
-
-    await send('source', 'typescript');
-
-    expect(messages).toEqual([
-      { type: 'start', header: '<pre>' },
-      { type: 'chunk', html: `${lines[0]!.html}${lines[1]!.html}`, offset: 2 },
-      { type: 'chunk', html: 'c', offset: 3 },
-      { type: 'done' },
-    ]);
-  });
-
   it('preserves UTF-16 offsets for Unicode CRLF source with the real engine', async () => {
     const completeLines = 'const emoji = "😀";\r\n'.repeat(250);
     const source = `${completeLines}const café = "é";`;

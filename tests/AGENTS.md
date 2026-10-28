@@ -11,10 +11,11 @@ Deterministic unit and browser coverage for Tau's visible behavior and Pi protoc
 ## Commands
 
 - `bun run test` - Run the product's Vitest tests.
-- `bun run test:e2e` - Run Chromium and WebKit functional tests with two workers (including independent tests within each file), then the dependent single-worker performance phase.
-- `CI=1 bun run test:e2e:performance --retries=0` - Run only the Chromium performance project without its functional dependencies or trace-recording overhead.
-- `bun x playwright test tests/e2e/<file>.e2e.ts` - Run one e2e file. `--project=chromium` selects functional Chromium coverage only.
-- `bun x playwright test --project=chromium-performance` - Run the performance project after both functional dependencies; add `--no-deps` only for an intentionally isolated performance run.
+- `bun run test:e2e` - Run Chromium functional tests only, with two workers. This remains Chromium-only when `CI=1`.
+- `bun run test:e2e:webkit` - Run a bounded WebKit startup preflight, then WebKit functional tests only.
+- `bun run test:e2e:ci --retries=1` - Preflight WebKit, then run both functional browser projects; this is the CI command.
+- `bun run test:e2e:performance` - Run only the two Chromium performance guards: isolated from functional projects, one worker, tracing off, and zero retries.
+- `bun x playwright test tests/e2e/<file>.e2e.ts` - Run one e2e file with the Chromium functional default. Select another available project explicitly when needed.
 - `bun run repro -- <scenario>` - Inspect a scenario interactively.
 
 ## Patterns
@@ -28,6 +29,6 @@ Deterministic unit and browser coverage for Tau's visible behavior and Pi protoc
 - Keep scenarios deterministic and private-data-free. Use the browser fake for product orchestration and the stdio fake for native process/JSONL behavior.
 - `bun run test:pi-contract` is an opt-in read-only compatibility canary, not a replacement for fake-based regressions.
 - A quality-rubric bug fix must fail before the fix and pass afterward at the narrowest appropriate layer.
-- Playwright builds a separate fixture-enabled bundle in `node_modules/.cache/tau-e2e`; normal builds still exclude fixtures. Interactive reproduction continues to use Vite dev.
+- Playwright builds a separate fixture-enabled bundle in `node_modules/.cache/tau-e2e`; normal builds still exclude fixtures. Interactive reproduction continues to use Vite dev. Every browser invocation owns a fresh preview server: an occupied configured port fails rather than reusing its contents. Use `TAU_PLAYWRIGHT_PORT` with an unused port when necessary, and never overlap browser runs in one worktree because that bundle cache is shared.
 - Use `?fixture=long-transcript&showcase=true` for rendering checks and `?fixture=long-transcript&preview=true` for file-preview checks; reserve the default 5,000-message fixture for scrolling and virtualization. Install mocks before the test's single navigation, not after a shared navigation that will be discarded.
-- Keep test state in the page/context so functional cases can run independently. CI records traces on the first retry; local runs retain failure traces. Use `CI=1` with `--retries=0` for untraced timing/performance measurements. See `docs/ci-testing.md` for the gates and measurement procedure.
+- Keep test state in the page/context so functional cases can run independently. Functional CI records traces on the first retry; local functional runs retain failure traces. The explicit performance command is already untraced with zero retries. The standard agent macOS VM has a known WebKit startup limitation, so use Chromium for routine local validation and leave required WebKit execution to CI. See `docs/ci-testing.md` for the gates and measurement procedure.

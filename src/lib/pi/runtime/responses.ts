@@ -87,6 +87,12 @@ import {
   rebindEphemeralSession,
   materializePendingSession,
 } from './registration';
+import {
+  clearPendingSetupWatch,
+  failPendingSetup,
+  handleSetupResponse,
+  invalidateSetup,
+} from './setup';
 
 async function handleResponse(
   controller: SessionController,
@@ -121,6 +127,34 @@ async function handleResponse(
     });
   }
   const responseContext = pendingResult.context;
+  if (handleSetupResponse(controller, response)) return;
+  // Initial setup owns an inline failure surface, never the global queue.
+  if (
+    responseId.startsWith('tau-initial-') &&
+    (!pendingResult.dispatchSnapshot ||
+      pendingResult.method !== command ||
+      !rpcDispatchStillCurrent(
+        controller,
+        pendingResult.dispatchSnapshot,
+        command,
+      ))
+  )
+    return;
+  if (
+    responseId &&
+    responseId === controller.pendingPrompt?.settingsRequestId
+  ) {
+    clearPendingSetupWatch(controller, responseId);
+    if (response.success !== true) {
+      failPendingSetup(controller, true, response.error);
+      return;
+    }
+  }
+  if (
+    responseId.startsWith('tau-initial-') &&
+    responseId !== controller.pendingPrompt?.settingsRequestId
+  )
+    return;
   const queueWaiter = queueWaiters.get(responseId);
   if (
     queueWaiter &&
@@ -639,7 +673,10 @@ async function handleResponse(
       controller.compactionReason = undefined;
       controller.compactionStartedWhileStreaming = false;
     }
-    if (sessionChanged) controller.retry = undefined;
+    if (sessionChanged) {
+      controller.retry = undefined;
+      invalidateSetup(controller);
+    }
     clearRemoteConnectionWatch(controller);
     finishRemoteConnection(controller);
 
