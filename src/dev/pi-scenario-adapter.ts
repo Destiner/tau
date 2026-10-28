@@ -827,17 +827,22 @@ function installPiScenarioAdapter(scenarioName: string): void {
           scenarioName === 'delayed-successor-verification' ||
           scenarioName === 'saved-session-notice-boundaries'
             ? ((): NativeSessionIdentity => {
+                if (scenarioName === 'saved-session-notice-boundaries') {
+                  const session =
+                    [MAIN_SESSION, BACKUP_SESSION].find(
+                      (candidate) => candidate.id === args.sessionId,
+                    ) ?? MAIN_SESSION;
+                  return { ...session, adopted: false };
+                }
                 const candidates =
-                  scenarioName === 'saved-session-notice-boundaries'
-                    ? [MAIN_SESSION, BACKUP_SESSION]
-                    : scenarioName === 'delayed-successor-verification'
-                      ? [
-                          MAIN_SESSION,
-                          BACKUP_SESSION,
-                          PLAN_SESSION,
-                          IMPLEMENT_SESSION,
-                        ]
-                      : [MAIN_SESSION, COMMAND_SESSION, FIRST_PROMPT_SESSION];
+                  scenarioName === 'delayed-successor-verification'
+                    ? [
+                        MAIN_SESSION,
+                        BACKUP_SESSION,
+                        PLAN_SESSION,
+                        IMPLEMENT_SESSION,
+                      ]
+                    : [MAIN_SESSION, COMMAND_SESSION, FIRST_PROMPT_SESSION];
                 const session =
                   candidates.find(
                     (candidate) => candidate.id === args.sessionId,
@@ -845,14 +850,12 @@ function installPiScenarioAdapter(scenarioName: string): void {
                 return {
                   ...session,
                   adopted:
-                    scenarioName === 'saved-session-notice-boundaries'
-                      ? false
-                      : scenarioName === 'delayed-successor-verification'
-                        ? (session.id === PLAN_SESSION.id ||
-                            session.id === IMPLEMENT_SESSION.id) &&
-                          !registeredSessionIds.has(session.id)
-                        : session.id !== MAIN_SESSION.id &&
-                          !registeredSessionIds.has(session.id),
+                    scenarioName === 'delayed-successor-verification'
+                      ? (session.id === PLAN_SESSION.id ||
+                          session.id === IMPLEMENT_SESSION.id) &&
+                        !registeredSessionIds.has(session.id)
+                      : session.id !== MAIN_SESSION.id &&
+                        !registeredSessionIds.has(session.id),
                 };
               })()
             : expectedRegisteredSession(scenarioName, invocation);

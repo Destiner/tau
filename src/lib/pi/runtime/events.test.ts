@@ -2,7 +2,11 @@ import { invoke } from '@tauri-apps/api/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import sessionControllerFixture from '../../../../tests/support/session-controller';
-import { state, type SessionController } from '../../../composables/state';
+import {
+  nextRequestId,
+  state,
+  type SessionController,
+} from '../../../composables/state';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async () => undefined),
@@ -64,7 +68,7 @@ describe('local compaction failure lifetime', () => {
     messages: unknown[],
   ): Promise<void> {
     const { handleResponse, rpc } = await import('./index');
-    const id = `lifetime-messages-${controller.streamSequence++}`;
+    const id = nextRequestId('lifetime-messages');
     await rpc(controller, { id, type: 'get_messages' });
     await handleResponse(controller, {
       id,
