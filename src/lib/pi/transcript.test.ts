@@ -107,7 +107,11 @@ describe('ordinary user event projection', () => {
     );
 
     expect(entries).toEqual([
-      { id, kind: 'user', text: 'Injected by extension' },
+      expect.objectContaining({
+        id,
+        kind: 'user',
+        text: 'Injected by extension',
+      }),
       {
         id: 'stream-user-2',
         kind: 'user',
@@ -158,8 +162,16 @@ describe('ordinary user event projection', () => {
     );
 
     expect(settled.filter((entry) => entry.kind === 'user')).toEqual([
-      { id: 'stream-user-7', kind: 'user', text: 'Repeat this' },
-      { id: 'stream-user-8', kind: 'user', text: 'Repeat this' },
+      expect.objectContaining({
+        id: 'stream-user-7',
+        kind: 'user',
+        text: 'Repeat this',
+      }),
+      expect.objectContaining({
+        id: 'stream-user-8',
+        kind: 'user',
+        text: 'Repeat this',
+      }),
     ]);
   });
 });
@@ -809,7 +821,7 @@ describe('mergeLocalEntries', () => {
 
     expect(entries).toEqual([
       expect.objectContaining({ kind: 'user', text: 'hello' }),
-      carried,
+      expect.objectContaining(carried),
     ]);
   });
 

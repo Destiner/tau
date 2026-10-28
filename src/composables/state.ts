@@ -288,6 +288,7 @@ interface SessionController {
   lastActiveSequence: number;
   disposed: boolean;
   streamSequence: number;
+  streamMessage?: string;
 }
 
 type ControllerLifecycleField =

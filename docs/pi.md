@@ -34,6 +34,10 @@ This matrix describes Tau's extension compatibility with Pi 0.84.1. Queue contro
 - **Extension installation or management UI (deferred):** Install extensions through Pi's normal global, project, package, or settings mechanisms.
 - **Dedicated workflow dashboard (deferred):** Workflow phases appear as ordinary Tau sessions.
 
+### Local compaction failures
+
+Tau-local compaction failures remain in the live session's transcript across later runs and history refreshes. Successful compaction or session identity replacement clears them. They are not persisted to Pi session files and do not survive app restart.
+
 ### Queue delivery and lifetime
 
 While a saved session is working, Tau sends ordinary `prompt` requests with `streamingBehavior: "steer"` or `"followUp"`. Pi decides whether the message is queued or starts an ordinary run if it became idle. Steering messages are delivered as separate user messages together at Pi's next eligible turn boundary; follow-ups run one at a time after the current work. Shift+Enter inserts a newline. Idle submissions use the ordinary prompt path; extension slash commands are not run immediately from the busy queue path.

@@ -148,6 +148,82 @@ describe('command-created session durability — replacement', () => {
     };
   }
 
+  it('clears outgoing local compaction failures on identity replacement without a new run', async () => {
+    const { handleResponse, handleRpc } = await import('./index');
+    const controller = makeController({ messagesLoaded: true });
+    addEphemeral(controller);
+    await handleRpc(controller, {
+      type: 'compaction_end',
+      errorMessage: 'Compaction failed',
+    });
+    const failureId = controller.messages[0]?.id;
+    expect(controller.localErrors).toHaveLength(1);
+    const requestId = await dispatchRequest(
+      controller,
+      'get_state',
+      'replacement-probe',
+    );
+    controller.replacementProbeRequestId = requestId;
+
+    await handleResponse(controller, {
+      id: requestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'replacement-b',
+        sessionFile: '/tmp/project/replacement-b.jsonl',
+        isStreaming: false,
+      },
+    });
+
+    expect(controller.sessionId).toBe('replacement-b');
+    expect(controller.localErrors).toEqual([]);
+    const messagesId = await dispatchRequest(
+      controller,
+      'get_messages',
+      'replacement-messages',
+    );
+    await handleResponse(controller, {
+      id: messagesId,
+      command: 'get_messages',
+      success: true,
+      data: { messages: [{ role: 'user', content: 'New identity question' }] },
+    });
+    expect(controller.messages.map((entry) => entry.kind)).toEqual(['user']);
+    expect(controller.messages.some((entry) => entry.id === failureId)).toBe(
+      false,
+    );
+  });
+
+  it('clears outgoing local compaction failures when an unsaved identity is retired', async () => {
+    const { handleResponse, handleRpc, retireUnsavedSession } =
+      await import('./index');
+    const controller = makeController({ messagesLoaded: true });
+    addEphemeral(controller);
+    await handleRpc(controller, {
+      type: 'compaction_end',
+      errorMessage: 'Compaction failed',
+    });
+    expect(controller.localErrors).toHaveLength(1);
+
+    await retireUnsavedSession(controller);
+
+    expect(controller.phantom).toBe(true);
+    expect(controller.localErrors).toEqual([]);
+    const messagesId = await dispatchRequest(
+      controller,
+      'get_messages',
+      'retired-messages',
+    );
+    await handleResponse(controller, {
+      id: messagesId,
+      command: 'get_messages',
+      success: true,
+      data: { messages: [] },
+    });
+    expect(controller.messages).toEqual([]);
+  });
+
   it('registers a completed predecessor before settlement verification applies its replacement', async () => {
     const telemetry = await import('../../telemetry');
     const { handleResponse, rpc } = await import('./index');

@@ -10,6 +10,7 @@ import {
   stringValue,
   type LocalError,
   type TranscriptEntry,
+  type TranscriptSource,
 } from '../transcript';
 
 function resetHistory(controller: SessionController): void {
@@ -63,7 +64,7 @@ function applyHistoryTail(
 
 function streamEntrySequence(entry: TranscriptEntry): number | undefined {
   const match =
-    /^stream-(?:assistant|thinking|tool|skill|user|error)-(\d+)$/.exec(
+    /^stream-(?:assistant|thinking|tool|skill|user|error)-(\d+)(?:-segment-\d+)*$/.exec(
       entry.id,
     );
   if (!match) return undefined;
@@ -117,7 +118,11 @@ function mergeLiveStreamSuffix(
     if (
       last &&
       (entry.kind === 'assistant' || entry.kind === 'thinking') &&
-      last.kind === entry.kind
+      last.kind === entry.kind &&
+      (!last.source ||
+        !entry.source ||
+        (last.source.message === entry.source.message &&
+          last.source.block === entry.source.block))
     ) {
       last.text += entry.text;
     } else {
@@ -125,20 +130,121 @@ function mergeLiveStreamSuffix(
     }
   }
 
-  const maximumOverlap = Math.min(hydrated.length, comparableLive.length);
+  const comparableHydrated: { entry: TranscriptEntry; start: number }[] = [];
+  hydrated.forEach((entry, start) => {
+    const last = comparableHydrated[comparableHydrated.length - 1]?.entry;
+    if (
+      last &&
+      (entry.kind === 'assistant' || entry.kind === 'thinking') &&
+      last.kind === entry.kind &&
+      last.source &&
+      entry.source &&
+      last.source.message === entry.source.message &&
+      last.source.block === entry.source.block
+    ) {
+      last.text += entry.text;
+    } else {
+      comparableHydrated.push({ entry: { ...entry }, start });
+    }
+  });
+  const maximumOverlap = Math.min(
+    comparableHydrated.length,
+    comparableLive.length,
+  );
   for (let overlap = maximumOverlap; overlap > 0; overlap -= 1) {
-    const hydratedStart = hydrated.length - overlap;
+    const hydratedStart = comparableHydrated.length - overlap;
     if (
       comparableLive
         .slice(0, overlap)
         .every((entry, index) =>
-          sameLiveRow(hydrated[hydratedStart + index]!, entry),
+          sameLiveRow(comparableHydrated[hydratedStart + index]!.entry, entry),
         )
     ) {
-      return [...hydrated.slice(0, hydratedStart), ...live];
+      const completedTools = new Map(
+        hydrated
+          .filter(
+            (entry) =>
+              entry.kind === 'tool' &&
+              entry.toolCallId &&
+              entry.toolRunning === false,
+          )
+          .map((entry) => [entry.toolCallId, entry]),
+      );
+      return [
+        ...hydrated.slice(0, comparableHydrated[hydratedStart]!.start),
+        ...live.map((entry) => {
+          const completed =
+            entry.toolRunning && completedTools.get(entry.toolCallId);
+          return completed
+            ? {
+                ...completed,
+                id: entry.id,
+                source: entry.source ?? completed.source,
+              }
+            : entry;
+        }),
+      ];
     }
   }
   return [...hydrated, ...live];
+}
+
+function mergeReconnectedStream(
+  hydrated: TranscriptEntry[],
+  previous: TranscriptEntry[],
+): TranscriptEntry[] {
+  const sourceKey = (entry: TranscriptEntry): string | undefined =>
+    entry.source ? `${entry.source.message}:${entry.source.block}` : undefined;
+  const persisted = new Map<string, string>();
+  for (const entry of hydrated) {
+    const key = sourceKey(entry);
+    if (key) persisted.set(key, (persisted.get(key) ?? '') + entry.text);
+  }
+  const hydratedIds = new Set(hydrated.map((entry) => entry.id));
+  const toolIds = new Set(
+    hydrated.map((entry) => entry.toolCallId).filter(Boolean),
+  );
+  const live = liveStreamSuffix(previous, 0);
+  const liveText = new Map<string, string>();
+  for (const entry of live) {
+    const key = sourceKey(entry);
+    if (key) liveText.set(key, (liveText.get(key) ?? '') + entry.text);
+  }
+  const missing = live.filter((entry) => {
+    if (entry.toolCallId && toolIds.has(entry.toolCallId)) return false;
+    const key = sourceKey(entry);
+    if (!key || !persisted.has(key)) return !hydratedIds.has(entry.id);
+    const text = liveText.get(key)!;
+    const authoritative = persisted.get(key)!;
+    // Preserve genuinely unrecorded partial output, not content Pi refined.
+    return text.length > authoritative.length && text.startsWith(authoritative);
+  });
+  // Matched source blocks must be extended in place. Text overlap with the
+  // hydrated tail is not provenance: another assistant message may repeat it.
+  const extensions = new Map<string, TranscriptEntry[]>();
+  const appended: TranscriptEntry[] = [];
+  for (const entry of missing) {
+    const key = sourceKey(entry);
+    if (!key || !persisted.has(key)) {
+      appended.push(entry);
+      continue;
+    }
+    const group = extensions.get(key) ?? [];
+    group.push(entry);
+    extensions.set(key, group);
+  }
+  const replaced = new Set<string>();
+  return [
+    ...hydrated.flatMap((entry) => {
+      const key = sourceKey(entry);
+      const extension = key ? extensions.get(key) : undefined;
+      if (!key || !extension) return [entry];
+      if (replaced.has(key)) return [];
+      replaced.add(key);
+      return extension;
+    }),
+    ...appended,
+  ];
 }
 
 function reanchorCompactionLocalEntries(
@@ -194,19 +300,34 @@ function revealCachedHistory(controller: SessionController): void {
 }
 
 /**
- * The spot a local entry has to hold on to so a rebuild from Pi's messages puts
- * it back where it was: the number of transcript rows Pi owns right now, zero
- * of them included. A session whose transcript has not loaded yet cannot tell a
- * session without history from one whose history has yet to arrive, and an entry
- * anchored above history it actually followed would be worse than one left at
- * the bottom, so only that case claims no spot at all.
+ * Capture a source boundary where possible, with a tail-relative row fallback.
+ * Before bootstrap, an unknown predecessor settles once against loaded history.
  */
-function anchorFields(controller: SessionController): { anchor?: number } {
+function anchorFields(controller: SessionController): {
+  anchor?: number;
+  boundary?: TranscriptSource;
+  afterToolCallId?: string;
+} {
   if (!controller.messagesLoaded) return {};
-  return {
-    anchor: controller.messages.filter(
+  const owned = controller.messages
+    .slice(controller.historyPrefixLength)
+    .filter(
       (message) => message.kind !== 'notice' && message.anchor === undefined,
-    ).length,
+    );
+  const predecessor = owned[owned.length - 1];
+  return {
+    anchor: owned.length,
+    ...(predecessor?.kind === 'tool' && predecessor.toolCallId
+      ? { afterToolCallId: predecessor.toolCallId }
+      : {}),
+    ...(predecessor?.source
+      ? {
+          boundary: {
+            ...predecessor.source,
+            offset: predecessor.source.offset + predecessor.text.length,
+          },
+        }
+      : {}),
   };
 }
 
@@ -233,8 +354,33 @@ function appendStream(
   controller: SessionController,
   kind: 'assistant' | 'thinking',
   delta: string,
+  contentIndex?: number,
 ): void {
   if (!delta) return;
+  controller.streamMessage ??= `live-${controller.streamSequence++}`;
+  let predecessor: TranscriptEntry | undefined;
+  for (
+    let index = controller.messages.length - 1;
+    index >= controller.historyPrefixLength;
+    index--
+  ) {
+    const entry = controller.messages[index]!;
+    if (entry.source?.message === controller.streamMessage) {
+      predecessor = entry;
+      break;
+    }
+    if (entry.kind !== 'notice' && entry.anchor === undefined) break;
+  }
+  const block =
+    contentIndex ??
+    (predecessor?.kind === kind
+      ? predecessor.source!.block
+      : (predecessor?.source?.block ?? -1) + 1);
+  const source: TranscriptSource = {
+    message: controller.streamMessage,
+    block,
+    offset: 0,
+  };
   const last = controller.messages[controller.messages.length - 1];
   const lastSequence = last ? streamEntrySequence(last) : undefined;
   const belongsToReconciledRun =
@@ -244,6 +390,8 @@ function appendStream(
   if (
     last?.kind === kind &&
     last.id.startsWith('stream-') &&
+    last.source?.message === source.message &&
+    last.source.block === block &&
     belongsToReconciledRun
   ) {
     last.text += delta;
@@ -253,6 +401,13 @@ function appendStream(
     id: `stream-${kind}-${controller.streamSequence++}`,
     kind,
     text: delta,
+    source: {
+      ...source,
+      offset:
+        predecessor?.source?.block === block
+          ? predecessor.source.offset + predecessor.text.length
+          : 0,
+    },
   });
 }
 
@@ -261,6 +416,7 @@ export {
   setHistoryLoading,
   applyHistoryTail,
   mergeLiveStreamSuffix,
+  mergeReconnectedStream,
   reanchorCompactionLocalEntries,
   revealCachedHistory,
   anchorFields,
