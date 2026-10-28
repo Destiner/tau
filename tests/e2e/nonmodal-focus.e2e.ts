@@ -120,7 +120,7 @@ test('confirmation failure repairs its disabled control without selecting a nonm
   const confirm = modal.getByRole('button', { name: 'Continue' });
   await confirm.focus();
   await expect(confirm).toBeFocused();
-  await confirm.click();
+  await confirm.press('Enter');
   await expect(confirm).toBeDisabled();
   await trigger(page, 'Fail Confirmation');
   await expect(confirm).toBeFocused();
