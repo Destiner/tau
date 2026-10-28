@@ -1,5 +1,7 @@
 import type { Locator, Page } from '@playwright/test';
 
+import { promptTimeout } from '../support/pi-scenario/saved-session-extension-text-prompt-navigation';
+
 import { expect, test } from './fixtures';
 
 const searchInput = (page: Page): Locator =>
@@ -498,45 +500,72 @@ test('Find is unavailable in a fullscreen viewer without losing the composer dra
 test.describe('inline Pi prompt', () => {
   test.use({ pausedClock: true });
 
-  test('Find remains unavailable and preserves a typed prompt answer', async ({
-    page,
-  }) => {
-    await page.goto('/?test-scenario=saved-session-extension-input-navigation');
-    const input = page.getByRole('textbox', { name: 'Release note label' });
-    await expect(input).toBeFocused();
-    await input.fill('Unsubmitted rc.2 answer');
-    await shortcut(page, 'f');
-    await expect(searchBar(page)).toHaveCount(0);
-    await expect(input).toBeFocused();
-    await expect(input).toHaveValue('Unsubmitted rc.2 answer');
-    await shortcut(page, 'k');
-    const palette = page.getByRole('dialog', {
-      name: 'Command Palette',
-      exact: true,
+  for (const { method, title } of [
+    { method: 'input', title: 'Release note label' },
+    { method: 'editor', title: 'Release notes' },
+  ]) {
+    test(`Find shortcut and palette preserve a pending ${method} answer and selection`, async ({
+      page,
+    }) => {
+      await page.goto(`/?test-scenario=saved-session-extension-${method}`);
+      const input = page.getByRole('textbox', { name: title, exact: true });
+      await expect(input).toBeVisible();
+      await input.fill('Unsubmitted rc.2 answer');
+      await input.evaluate((node: HTMLInputElement | HTMLTextAreaElement) =>
+        node.setSelectionRange(2, 8, 'backward'),
+      );
+      await shortcut(page, 'f');
+      await expect(searchInput(page)).toBeFocused();
+      await query(page, 'release', '1 / 2');
+      await expectActiveRange(page, 'release');
+      await searchInput(page).press('Escape');
+      await expect(searchBar(page)).toHaveCount(0);
+      await expect(input).toBeFocused();
+      await expect(input).toHaveValue('Unsubmitted rc.2 answer');
+      expect(
+        await input.evaluate((node: HTMLInputElement | HTMLTextAreaElement) => [
+          node.selectionStart,
+          node.selectionEnd,
+          node.selectionDirection,
+        ]),
+      ).toEqual([2, 8, 'backward']);
+      await shortcut(page, 'k');
+      const palette = page.getByRole('dialog', {
+        name: 'Command Palette',
+        exact: true,
+      });
+      await palette.getByRole('combobox').fill('Find in Transcript');
+      await palette.getByRole('option', { name: /Find in Transcript/ }).click();
+      await expect(palette).toHaveCount(0);
+      await expect(searchInput(page)).toBeFocused();
+      await expect(searchInput(page)).toHaveValue('release');
+      await expect(input).toHaveValue('Unsubmitted rc.2 answer');
+      await page
+        .getByRole('button', { name: 'Close Find', exact: true })
+        .click();
+      await expect(input).toBeFocused();
+      await expect(input).toHaveValue('Unsubmitted rc.2 answer');
     });
-    await expect(palette).toBeVisible();
-    await palette.getByRole('combobox').fill('Find in Transcript');
-    await expect(
-      palette.getByRole('option', { name: /Find in Transcript/ }),
-    ).toHaveCount(0);
-    await palette.getByRole('combobox').press('Escape');
-    await expect(input).toBeFocused();
-    await expect(input).toHaveValue('Unsubmitted rc.2 answer');
+  }
 
-    // Complete the scenario's expected session navigation, preserving the answer.
-    await shortcut(page, 'k');
-    await palette.getByRole('combobox').fill('New Session');
-    await palette.getByRole('option', { name: /New Session/ }).click();
+  test('prompt expiry leaves Find focus and query intact', async ({ page }) => {
+    await page.goto('/?test-scenario=saved-session-extension-input');
+    const input = page.getByRole('textbox', { name: 'Release note label' });
+    await expect(input).toBeVisible();
+    await input.fill('Unsubmitted answer');
+    await shortcut(page, 'f');
+    await expect(searchInput(page)).toBeFocused();
+    await query(page, 'release', '1 / 2');
+    await page.clock.fastForward(promptTimeout);
+    await expect(input).toHaveCount(0);
+    await expect(searchInput(page)).toBeFocused();
+    await expect(searchInput(page)).toHaveValue('release');
+    await expect(searchBar(page)).toContainText('1 / 2');
+    await searchInput(page).press('Escape');
+    await expect(searchBar(page)).toHaveCount(0);
     await expect(
-      page.getByRole('heading', { name: 'New Session', exact: true }),
-    ).toBeVisible();
-    await shortcut(page, 'p');
-    await page
-      .getByRole('dialog', { name: 'Switch Session' })
-      .getByRole('option', { name: /^Main(?:\s|$)/ })
-      .click();
-    await expect(input).toBeFocused();
-    await expect(input).toHaveValue('Unsubmitted rc.2 answer');
+      page.getByRole('textbox', { name: 'Message Pi', exact: true }),
+    ).toBeFocused();
   });
 });
 

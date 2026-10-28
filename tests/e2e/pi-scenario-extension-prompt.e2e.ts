@@ -35,12 +35,271 @@ async function pressSessionSwitcher(page: Page): Promise<void> {
   await modifiedShortcut(page, 'p');
 }
 
+async function switchSession(page: Page, name: string): Promise<void> {
+  await pressSessionSwitcher(page);
+  await page
+    .getByRole('dialog', { name: 'Switch Session' })
+    .getByRole('option', { name: new RegExp(`^${name}(?:\\s|$)`) })
+    .click();
+  await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
+}
+
 async function openPalette(page: Page): Promise<void> {
   await modifiedShortcut(page, 'k');
   await expect(
     page.getByRole('dialog', { name: 'Command Palette' }),
   ).toBeVisible();
 }
+
+for (const interaction of ['pointer', 'keyboard'] as const) {
+  test(`pending prompt allows project collapse by ${interaction}`, async ({
+    page,
+  }) => {
+    await page.goto(scenarioUrl);
+    const prompt = page.getByRole('dialog', {
+      name: 'Which label should the release carry?',
+    });
+    await expect(prompt).toBeVisible();
+    await prompt.getByRole('option', { name: 'patch' }).focus();
+    const collapse = page.getByRole('button', {
+      name: 'Collapse Tau fixture',
+      exact: true,
+    });
+    if (interaction === 'pointer') await collapse.click();
+    else {
+      await collapse.focus();
+      await collapse.press('ArrowLeft');
+    }
+    const expand = page.getByRole('button', {
+      name: 'Expand Tau fixture',
+      exact: true,
+    });
+    await expect(expand).toBeVisible();
+    await expect(expand).toBeFocused();
+    await expect(prompt).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: 'Main', exact: true }),
+    ).toBeVisible();
+    await expand.press(interaction === 'keyboard' ? 'ArrowRight' : 'Enter');
+    await expect(collapse).toBeFocused();
+    expect(
+      (await page.evaluate(() => window.__TAU_PI_SCENARIO__?.verify()))?.ok,
+    ).toBe(true);
+  });
+}
+
+test('pending prompt allows active session rename from palette', async ({
+  page,
+}) => {
+  await page.goto(scenarioUrl);
+  const prompt = page.getByRole('dialog', {
+    name: 'Which label should the release carry?',
+  });
+  await expect(prompt).toBeVisible();
+  await prompt.getByRole('option', { name: 'patch' }).focus();
+  await openPalette(page);
+  await page
+    .getByRole('combobox', { name: 'Command Palette' })
+    .fill('Rename Session');
+  await page.getByRole('option', { name: /Rename Session/ }).click();
+  const name = page.getByRole('textbox', {
+    name: 'Session Name',
+    exact: true,
+  });
+  await expect(name).toBeFocused();
+  await name.fill('Uncommitted pending prompt rename');
+  await expect(prompt).toBeVisible();
+  await name.press('Escape');
+  await expect(name).toHaveCount(0);
+  await expect(
+    page.getByRole('heading', { name: 'Main', exact: true }),
+  ).toBeVisible();
+  await expect(prompt).toBeVisible();
+  expect(
+    (await page.evaluate(() => window.__TAU_PI_SCENARIO__?.verify()))?.ok,
+  ).toBe(true);
+});
+
+for (const target of ['active', 'inactive'] as const) {
+  test(`pending prompt allows ${target} project rename from context without switching sessions`, async ({
+    page,
+  }) => {
+    await page.goto(
+      '/?test-scenario=saved-session-extension-prompt-project-switching',
+    );
+    const prompt = page.getByRole('dialog', {
+      name: 'Which label should the release carry?',
+    });
+    await expect(prompt).toBeVisible();
+    await switchSession(page, 'Other Main');
+    await switchSession(page, 'Main');
+    await expect(prompt).toBeVisible();
+    const project = page.getByRole('button', {
+      name: target === 'active' ? 'Tau fixture' : 'Other fixture',
+      exact: true,
+    });
+    await project.click({ button: 'right' });
+    await page
+      .getByRole('menuitem', { name: 'Rename Project…', exact: true })
+      .click();
+    const dialog = page.getByRole('dialog', {
+      name: 'Rename Project',
+      exact: true,
+    });
+    const name = dialog.getByRole('textbox', {
+      name: 'Project Name',
+      exact: true,
+    });
+    await expect(name).toBeFocused();
+    await expect(name).toHaveValue(
+      target === 'active' ? 'Tau fixture' : 'Other fixture',
+    );
+    await name.fill('Uncommitted project title');
+    await expect(
+      page.getByRole('dialog', {
+        name: 'Which label should the release carry?',
+        includeHidden: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('heading', {
+        name: 'Main',
+        exact: true,
+        includeHidden: true,
+      }),
+    ).toBeVisible();
+    await name.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(project).toBeFocused();
+    await expect(prompt).toBeVisible();
+  });
+}
+
+test('pending prompt allows project rename from palette without cancelling its answer', async ({
+  page,
+}) => {
+  await page.goto('/?test-scenario=saved-session-extension-input');
+  const input = page.getByRole('textbox', {
+    name: 'Release note label',
+    exact: true,
+  });
+  await expect(input).toBeVisible();
+  await input.fill('Keep this pending answer');
+  await openPalette(page);
+  await page
+    .getByRole('combobox', { name: 'Command Palette' })
+    .fill('Rename Project');
+  await page.getByRole('option', { name: /Rename Project/ }).click();
+  const dialog = page.getByRole('dialog', {
+    name: 'Rename Project',
+    exact: true,
+  });
+  const name = dialog.getByRole('textbox', {
+    name: 'Project Name',
+    exact: true,
+  });
+  await expect(name).toBeFocused();
+  await name.fill('Uncommitted project title');
+  await name.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue('Keep this pending answer');
+});
+
+test('inactive session context does not rename the active pending session', async ({
+  page,
+}) => {
+  await page.goto('/?test-scenario=saved-session-extension-prompt-cycling');
+  const prompt = page.getByRole('dialog', {
+    name: 'Which label should the release carry?',
+  });
+  await expect(prompt).toBeVisible();
+  await page
+    .getByRole('complementary', { name: 'Projects and Sessions' })
+    .getByRole('button', { name: /^(?:Unread )?Backup(?: |$)/ })
+    .click({ button: 'right' });
+  await expect(page.getByRole('menu')).toBeVisible();
+  await expect(
+    page.getByRole('menuitem', { name: /Rename Session/ }),
+  ).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(
+    page.getByRole('textbox', { name: 'Session Name', exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('heading', { name: 'Main', exact: true }),
+  ).toBeVisible();
+  await expect(prompt).toBeVisible();
+  await switchSession(page, 'Backup');
+  await switchSession(page, 'Main');
+  await expect(prompt).toBeVisible();
+});
+
+for (const { method, title } of [
+  { method: 'input', title: 'Release note label' },
+  { method: 'editor', title: 'Release notes' },
+]) {
+  test(`collapse and rename preserve a pending ${method} draft`, async ({
+    page,
+  }) => {
+    await page.goto(`/?test-scenario=saved-session-extension-${method}`);
+    const input = page.getByRole('textbox', { name: title, exact: true });
+    await expect(input).toBeVisible();
+    await input.fill('Preserve this unfinished release answer');
+    const collapse = page.getByRole('button', {
+      name: 'Collapse Tau fixture',
+      exact: true,
+    });
+    await collapse.click();
+    const expand = page.getByRole('button', {
+      name: 'Expand Tau fixture',
+      exact: true,
+    });
+    await expect(expand).toBeFocused();
+    await expect(input).toHaveValue('Preserve this unfinished release answer');
+    await expand.press('Enter');
+    await openPalette(page);
+    await page
+      .getByRole('combobox', { name: 'Command Palette' })
+      .fill('Rename Session');
+    await page.getByRole('option', { name: /Rename Session/ }).click();
+    const name = page.getByRole('textbox', {
+      name: 'Session Name',
+      exact: true,
+    });
+    await expect(name).toBeFocused();
+    await name.fill('Uncommitted rename');
+    await name.press('Escape');
+    await expect(input).toHaveValue('Preserve this unfinished release answer');
+    await input.focus();
+    await expect(input).toBeFocused();
+    await expect(
+      page.getByRole('heading', { name: 'Main', exact: true }),
+    ).toBeVisible();
+  });
+}
+
+test('prompt expiry does not steal focus from an unfinished session rename', async ({
+  page,
+}) => {
+  await page.goto(scenarioUrl);
+  const prompt = page.getByRole('dialog', {
+    name: 'Which label should the release carry?',
+  });
+  await expect(prompt).toBeVisible();
+  await modifiedShortcut(page, 'Shift+r');
+  const name = page.getByRole('textbox', { name: 'Session Name', exact: true });
+  await expect(name).toBeFocused();
+  await name.fill('Unfinished rename survives expiry');
+  await page.clock.fastForward(promptTimeout);
+  await expect(prompt).toHaveCount(0);
+  await expect(name).toBeFocused();
+  await expect(name).toHaveValue('Unfinished rename survives expiry');
+  await name.press('Escape');
+  await expect(
+    page.getByRole('heading', { name: 'Main', exact: true }),
+  ).toBeVisible();
+});
 
 test('retains a pending question after a native New Session event', async ({
   page,
@@ -207,12 +466,24 @@ test('keeps navigation commands available in the palette and restores prompt foc
   await expect(
     page.getByRole('option', { name: /Switch Project/ }),
   ).toBeVisible();
-  await expect(page.getByRole('option', { name: /Choose Model/ })).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByRole('option', { name: /Choose Model/ }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('option', { name: /Rename Session/ }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('option', { name: /Rename Project/ }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('option', { name: /Collapse Project/ }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('option', { name: /Find in Transcript/ }),
+  ).toBeVisible();
   await expect(
     page.getByRole('option', { name: /Archive Session/ }),
-  ).toHaveCount(0);
+  ).toBeVisible();
 
   await page.keyboard.press('Escape');
   await expect(
@@ -347,7 +618,7 @@ test('keeps an extension question under a dismissible layer until it times out',
   });
 
   await test.step('renders an extension prompt in the transcript in place of the composer', async () => {
-    await page.getByRole('option', { name: 'patch' }).focus();
+    await page.goto(scenarioUrl);
     const composer = page.getByRole('textbox', { name: 'Message Pi' });
     const transcript = page.getByLabel('Transcript');
     const prompt = page.getByRole('dialog', {
@@ -360,6 +631,7 @@ test('keeps an extension question under a dismissible layer until it times out',
     await expect(transcript).toContainText(
       'Working through the checklist now.',
     );
+    await prompt.getByRole('option', { name: 'patch' }).focus();
     await expect(prompt.getByRole('option', { name: 'patch' })).toBeFocused();
     await page.clock.fastForward(promptTimeout - 1);
     await expect(prompt).toBeVisible();

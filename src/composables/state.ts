@@ -608,6 +608,7 @@ function controllerCanQueue(controller: SessionController): boolean {
     !controller.pendingPrompt &&
     !controller.submittedPrompt &&
     !controller.queueClearing &&
+    !controllerHasPendingDialog(controller) &&
     !controller.remoteDisconnected,
   );
 }
@@ -711,6 +712,7 @@ const canCompose = computed(() => {
     controller.queueSubmissions.length > 0 ||
     controller.promptSubmitting ||
     admittingOrdinaryPrompt ||
+    controllerHasPendingDialog(controller) ||
     projectActionsDisabled.value
   )
     return false;

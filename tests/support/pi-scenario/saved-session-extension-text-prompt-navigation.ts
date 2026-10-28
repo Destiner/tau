@@ -60,6 +60,18 @@ function textPrompt(
   });
 }
 
+const savedSessionExtensionInput = textPrompt(
+  'saved-session-extension-input',
+  'input',
+  'Release note label',
+);
+
+const savedSessionExtensionEditor = textPrompt(
+  'saved-session-extension-editor',
+  'editor',
+  'Release notes',
+);
+
 const savedSessionExtensionInputNavigation = textPrompt(
   'saved-session-extension-input-navigation',
   'input',
@@ -75,6 +87,8 @@ const savedSessionExtensionEditorNavigation = textPrompt(
 export default savedSessionExtensionInputNavigation;
 export {
   promptTimeout,
+  savedSessionExtensionEditor,
   savedSessionExtensionEditorNavigation,
+  savedSessionExtensionInput,
   savedSessionExtensionInputNavigation,
 };

@@ -30,7 +30,9 @@ import savedSessionExtensionPrompt, {
 } from './saved-session-extension-prompt';
 import savedSessionExtensionPromptCycling from './saved-session-extension-prompt-navigation';
 import {
+  savedSessionExtensionEditor,
   savedSessionExtensionEditorNavigation,
+  savedSessionExtensionInput,
   savedSessionExtensionInputNavigation,
 } from './saved-session-extension-text-prompt-navigation';
 import {
@@ -250,6 +252,8 @@ const scenarios = [
   savedSessionExtensionPrompt,
   savedSessionExtensionPromptProjectSwitching,
   savedSessionExtensionPromptCycling,
+  savedSessionExtensionInput,
+  savedSessionExtensionEditor,
   savedSessionExtensionInputNavigation,
   savedSessionExtensionEditorNavigation,
   emptySessionExtensionPrompt,

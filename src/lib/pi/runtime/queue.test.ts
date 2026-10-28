@@ -64,6 +64,122 @@ describe('queued message RPCs', () => {
     return (call[1] as { request: Record<string, unknown> }).request;
   }
 
+  function addDialog(controller: SessionController): void {
+    state.extensionDialogs.push({
+      key: 'dialog',
+      requestId: 'extension-request',
+      method: 'input',
+      title: 'Extension input',
+      draft: '',
+      submitting: false,
+      error: '',
+      controllerKey: controller.key,
+      runtimeId: controller.runtimeId,
+      generation: controller.generation,
+      projectName: 'Project',
+      sessionName: 'Session',
+    });
+  }
+
+  describe('queue admission with a pending extension dialog', () => {
+    const kind = 'steer';
+    it('blocks the owning controller without touching its draft or sending RPCs', async () => {
+      const { submitQueuedMessage } = await import('./index');
+      const controller = makeController({
+        streaming: true,
+        draft: '  keep exact draft\n',
+      });
+      state.controllers.push(controller);
+      // Admission must use the target controller, not the selected session.
+      state.activeControllerKey = 'other-controller';
+      addDialog(controller);
+      await submitQueuedMessage(controller, controller.draft, kind);
+      expect(controller.draft).toBe('  keep exact draft\n');
+      expect(controller.queueSubmissions).toEqual([]);
+      expect(controller.queueFailedDrafts).toEqual([]);
+      expect(controller.queuePreparing).toBe(false);
+      expect(mockInvoke).not.toHaveBeenCalled();
+    });
+
+    it.each(['', 'newer draft'])(
+      'recovers the exact draft after a dialog arrives during preparation, preserving newer draft %j',
+      async (newerDraft) => {
+        const { submitQueuedMessage, handleRpc } = await import('./index');
+        const original = '  exact unsent\n';
+        const controller = makeController({
+          streaming: true,
+          draft: original,
+        });
+        state.controllers.push(controller);
+        const send = submitQueuedMessage(controller, original, kind);
+        expect(controller.draft).toBe('');
+        expect(controller.queuePreparing).toBe(true);
+        await handleRpc(controller, {
+          type: 'response',
+          command: 'set_steering_mode',
+          id: requestOf('set_steering_mode').id,
+          success: true,
+        });
+        await vi.waitFor(() => requestOf('set_follow_up_mode'));
+        addDialog(controller);
+        state.activeControllerKey = 'other-controller';
+        controller.draft = newerDraft;
+        await handleRpc(controller, {
+          type: 'response',
+          command: 'set_follow_up_mode',
+          id: requestOf('set_follow_up_mode').id,
+          success: true,
+        });
+        await send;
+        expect(controller.draft).toBe(newerDraft || original);
+        expect(controller.queueFailedDrafts).toEqual(
+          newerDraft ? [original] : [],
+        );
+        expect(controller.queueSubmissions).toEqual([]);
+        expect(controller.queuePreparing).toBe(false);
+        expect(controller.queueFeedback).toContain('state changed');
+        expect(
+          mockInvoke.mock.calls.map(
+            ([, args]) => (args as { request: { type: string } }).request.type,
+          ),
+        ).toEqual(['set_steering_mode', 'set_follow_up_mode']);
+      },
+    );
+
+    it('allows another controller to queue despite the selected session’s dialog', async () => {
+      const { submitQueuedMessage, handleRpc } = await import('./index');
+      const blocked = makeController({ key: 'blocked' });
+      const controller = makeController({
+        key: 'unblocked',
+        streaming: true,
+        draft: 'queued',
+        queueSteeringMode: 'all',
+        queueFollowUpMode: 'one-at-a-time',
+      });
+      state.controllers.push(blocked, controller);
+      state.activeControllerKey = blocked.key;
+      addDialog(blocked);
+      const send = submitQueuedMessage(controller, controller.draft, kind);
+      await vi.waitFor(() =>
+        expect(requestOf('prompt')).toMatchObject({
+          message: 'queued',
+          streamingBehavior: kind,
+        }),
+      );
+      await handleRpc(controller, {
+        type: 'response',
+        command: 'prompt',
+        id: requestOf('prompt').id,
+        success: true,
+      });
+      await send;
+      expect(controller.draft).toBe('');
+      expect(controller.queueSubmissions).toEqual([]);
+      expect(controller.queueFailedDrafts).toEqual([]);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('prepares modes lazily, correlates replies, and reconciles snapshots before acknowledgement', async () => {
     const { submitQueuedMessage, handleRpc } = await import('./index');
     const controller = makeController({

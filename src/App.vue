@@ -121,8 +121,7 @@
         :class="{
           'empty-session': sessionIsEmpty,
           'loading-session': sessionLoading,
-          'has-queue':
-            queueVisible && !activeExtensionDialog && !remoteReconnectFeedback,
+          'has-queue': queueVisible && !remoteReconnectFeedback,
         }"
       >
         <SessionHeader
@@ -188,12 +187,7 @@
         session is waiting on an answer, so there is nothing to send.
       -->
         <MessageQueue
-          v-if="
-            queueVisible &&
-            !sessionLoading &&
-            !activeExtensionDialog &&
-            !remoteReconnectFeedback
-          "
+          v-if="queueVisible && !sessionLoading && !remoteReconnectFeedback"
           ref="messageQueue"
           :queue="activeQueue"
           :feedback="queueFeedback"
@@ -340,7 +334,6 @@ import {
   appCommandLookupKey,
   type AppCommandTarget,
 } from './lib/app-commands/binding';
-import controlBlocked from './lib/app-commands/control-context';
 import { paletteLayerOpen } from './lib/app-commands/surface';
 import appVersion from './lib/app-version';
 import {
@@ -473,7 +466,6 @@ type CommandContext = {
   projectPath: string;
   sessionId: string;
   blocked: boolean;
-  navigationBlocked: boolean;
 };
 const platform = /Mac|iPhone|iPad/.test(navigator.platform) ? 'mac' : 'non-mac';
 const paletteOpen = ref(false);
@@ -524,7 +516,6 @@ function navigationBlockingSurface(): boolean {
   );
 }
 const context = (pinned = false): CommandContext => {
-  const navigationBlocked = navigationBlockingSurface();
   return {
     projectPath: pinned
       ? paletteSelection.value.projectPath
@@ -532,8 +523,7 @@ const context = (pinned = false): CommandContext => {
     sessionId: pinned
       ? paletteSelection.value.sessionId
       : state.activeSessionId,
-    blocked: Boolean(activeExtensionDialog.value) || navigationBlocked,
-    navigationBlocked,
+    blocked: navigationBlockingSurface(),
   };
 };
 const commandProject = (ctx: CommandContext): ProjectSummary | undefined =>
@@ -631,28 +621,19 @@ function closeFind(): void {
       !origin.matches(':disabled')
     )
       origin.focus({ preventScroll: true });
-    else composerBar.value?.focus();
+    else focusAfterPaletteNavigation();
   });
 }
 
 const commands = new CommandRegistry<CommandContext>();
-function controlContext(id: string, target?: AppCommandTarget): CommandContext {
-  return {
-    ...context(),
-    ...target,
-    blocked: controlBlocked(
-      id,
-      target,
-      Boolean(activeExtensionDialog.value),
-      navigationBlockingSurface(),
-    ),
-  };
+function controlContext(target?: AppCommandTarget): CommandContext {
+  return { ...context(), ...target };
 }
 provide(appCommandDispatchKey, (id, target) => {
-  void commands.dispatch(id, controlContext(id, target));
+  void commands.dispatch(id, controlContext(target));
 });
 provide(appCommandLookupKey, (id, target) => {
-  const entry = commands.discover(id, controlContext(id, target));
+  const entry = commands.discover(id, controlContext(target));
   return (
     entry && {
       title: entry.title,
@@ -692,12 +673,6 @@ function safe(ctx: CommandContext): boolean {
 }
 function active(ctx: CommandContext): boolean {
   return safe(ctx) && Boolean(commandProject(ctx));
-}
-function navigationSafe(ctx: CommandContext): boolean {
-  return !ctx.navigationBlocked && !projectActionsDisabled.value;
-}
-function navigationActive(ctx: CommandContext): boolean {
-  return navigationSafe(ctx) && Boolean(commandProject(ctx));
 }
 function session(ctx: CommandContext): boolean {
   return active(ctx) && Boolean(commandSession(ctx));
@@ -739,7 +714,7 @@ register(
   'session.new',
   'New Session',
   'Mod+N',
-  navigationActive,
+  active,
   async (ctx) => {
     const project = commandProject(ctx);
     if (project) await newSession(project);
@@ -791,7 +766,7 @@ register(
   'session.switch',
   'Switch Session',
   'Mod+P',
-  (ctx) => navigationSafe(ctx) && Boolean(state.workspace?.projects.length),
+  (ctx) => safe(ctx) && Boolean(state.workspace?.projects.length),
   () => {
     if (!paletteOpen.value) openPalette();
     page('sessions');
@@ -801,7 +776,7 @@ register(
   'project.switch',
   'Switch Project',
   'Mod+Shift+P',
-  (ctx) => navigationSafe(ctx) && Boolean(state.workspace?.projects.length),
+  (ctx) => safe(ctx) && Boolean(state.workspace?.projects.length),
   () => {
     if (!paletteOpen.value) openPalette();
     page('projects');
@@ -1129,7 +1104,7 @@ register(
   'Next Session',
   undefined,
   (ctx) =>
-    navigationActive(ctx) &&
+    active(ctx) &&
     projectSessions(commandProject(ctx)!).some((s) => !s.archived),
   () => navigateSession(1),
 );
@@ -1138,7 +1113,7 @@ register(
   'Previous Session',
   undefined,
   (ctx) =>
-    navigationActive(ctx) &&
+    active(ctx) &&
     projectSessions(commandProject(ctx)!).some((s) => !s.archived),
   () => navigateSession(-1),
 );
@@ -1317,7 +1292,7 @@ async function selectPaletteRow(id: string): Promise<void> {
     return;
   }
   const ctx = context(true);
-  if (ctx.navigationBlocked || projectActionsDisabled.value) return;
+  if (ctx.blocked || projectActionsDisabled.value) return;
   if (palettePage.value === 'sessions') {
     const target = resolveSessionPickerTarget(
       id,
@@ -1379,7 +1354,6 @@ const feedbackDialogOpen = computed(
     !state.remoteDialogOpen &&
     !state.projectRename &&
     !state.projectRemoval &&
-    !activeExtensionDialog.value &&
     !fullscreenViewerOpen.value,
 );
 const quitTitle = computed(() =>
@@ -1547,11 +1521,19 @@ watch(workspaceIsEmpty, (empty) => {
 });
 
 watch(activeExtensionDialog, (dialog) => {
+  const focused = document.activeElement;
+  const needsRepair =
+    focused === document.body ||
+    (focused instanceof HTMLElement &&
+      Boolean(focused.closest('.extension-prompt')));
   void nextTick(() => {
     if (
       !navigationBlockingSurface() &&
       !paletteOpen.value &&
       !dialog &&
+      needsRepair &&
+      (document.activeElement === document.body ||
+        document.activeElement === focused) &&
       !activeFeedback.value &&
       !fullscreenViewerOpen.value
     ) {
@@ -1721,21 +1703,20 @@ function focusComposer(): void {
 async function handleQueueClear(): Promise<void> {
   await clearQueue();
   if (!queueVisible.value) {
-    await nextTick();
-    focusComposer();
+    focusAfterPaletteNavigation();
   }
 }
 
 function handleQueueRecover(index: number): void {
   recoverQueueDraft(index);
-  void nextTick(focusComposer);
+  focusAfterPaletteNavigation();
 }
 
 let renameOrigin: HTMLElement | undefined;
 function projectRenameReturnFocus(): HTMLElement | undefined {
   const newerModal = Array.from(
     document.querySelectorAll<HTMLElement>(
-      '[role="dialog"], [role="alertdialog"]',
+      '[role="dialog"]:not([aria-modal="false"]), [role="alertdialog"]',
     ),
   )
     .reverse()
