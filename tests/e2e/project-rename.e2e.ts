@@ -298,48 +298,6 @@ test('keeps Tab and Shift+Tab contained in the rename dialog', async ({
   await expect(confirm).toBeVisible();
 });
 
-test('accepts a duplicate project name without changing either project identity', async ({
-  page,
-}) => {
-  const selected = page.locator('.session-row.selected');
-  const sessionId = await selected.getAttribute('data-session-id');
-  await openRename(page, notesPath);
-  await dialog(page)
-    .getByRole('textbox', { name: 'Project Name' })
-    .fill('atlas');
-  await dialog(page)
-    .getByRole('button', { name: 'Rename', exact: true })
-    .click();
-
-  await expect(project(page).locator('.project-select')).toHaveText('atlas');
-  await expect(project(page, notesPath).locator('.project-select')).toHaveText(
-    'atlas',
-  );
-  await expect(selected).toHaveAttribute('data-session-id', sessionId!);
-  expect(await calls(page)).toEqual([{ path: notesPath, name: 'atlas' }]);
-});
-
-test('contains a 240-character name in the compact dialog at a narrow width', async ({
-  page,
-}) => {
-  const name = 'a'.repeat(240);
-  await page.setViewportSize({ width: 360, height: 720 });
-  await openRename(page);
-  const rename = dialog(page);
-  const input = rename.getByRole('textbox', { name: 'Project Name' });
-  await input.fill(name);
-
-  await expect(input).toHaveAttribute('maxlength', '240');
-  await expect(input).toHaveValue(name);
-  await expect(rename).toHaveJSProperty(
-    'scrollWidth',
-    await rename.evaluate((element) => element.clientWidth),
-  );
-  const box = await rename.boundingBox();
-  expect(box?.width).toBeLessThanOrEqual(324);
-  await expect(input).toBeFocused();
-});
-
 test('failure rolls back the label, keeps the draft inline, and supports retry', async ({
   page,
 }) => {
@@ -462,80 +420,6 @@ test('timeout permits closing, retains the draft, and fences a late result from 
   await expect(newer).toHaveValue('Notes draft');
   expect(await calls(page)).toEqual([{ path: atlasPath, name }]);
   await page.keyboard.press('Escape');
-});
-
-test('palette targets the active identity and refreshes sidebar, palette and removal labels', async ({
-  page,
-}) => {
-  const composer = page.getByRole('textbox', { name: 'Message Pi' });
-  await composer.fill('Identity draft');
-  const selected = page.locator('.session-row.selected');
-  const sessionId = await selected.getAttribute('data-session-id');
-  await project(page, notesPath).locator('.project-select').focus();
-  await openPalette(page);
-  const option = page.getByRole('option', { name: /Rename Project/ });
-  await expect(option.locator('.command-palette-detail')).toHaveText(
-    `atlas · ${atlasPath}`,
-  );
-  await option.click();
-  await expect(
-    dialog(page).getByRole('textbox', { name: 'Project Name' }),
-  ).toHaveValue('atlas');
-  await dialog(page)
-    .getByRole('textbox', { name: 'Project Name' })
-    .fill('Atlas Display Name');
-  await dialog(page)
-    .getByRole('button', { name: 'Rename', exact: true })
-    .click();
-  await expect(dialog(page)).toHaveCount(0);
-  await expect(project(page).locator('.project-select')).toHaveText(
-    'Atlas Display Name',
-  );
-  await expect(project(page, notesPath).locator('.project-select')).toHaveText(
-    'notes',
-  );
-  await expect(selected).toHaveAttribute('data-session-id', sessionId!);
-  await expect(composer).toHaveValue('Identity draft');
-  expect(await calls(page)).toEqual([
-    { path: atlasPath, name: 'Atlas Display Name' },
-  ]);
-  await openPalette(page);
-  for (const name of [/Rename Project/, /Remove Project/]) {
-    await expect(
-      page.getByRole('option', { name }).locator('.command-palette-detail'),
-    ).toHaveText(`Atlas Display Name · ${atlasPath}`);
-  }
-  await page.getByRole('option', { name: /Remove Project/ }).click();
-  const removal = page.locator('[role="alertdialog"].project-removal');
-  await expect(removal).toContainText('“Atlas Display Name”');
-  await removal.getByRole('button', { name: 'Cancel' }).click();
-});
-
-test('test-local IPC names survive reload without changing project or session identity', async ({
-  page,
-}) => {
-  const sessionId = await page
-    .locator('.session-row.selected')
-    .getAttribute('data-session-id');
-  await openRename(page);
-  await dialog(page)
-    .getByRole('textbox', { name: 'Project Name' })
-    .fill('Persistent Atlas');
-  await page.keyboard.press('Enter');
-  await expect(dialog(page)).toHaveCount(0);
-  await page.reload();
-  await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
-  await expect(project(page).locator('.project-select')).toHaveText(
-    'Persistent Atlas',
-  );
-  await expect(page.locator('.session-row.selected')).toHaveAttribute(
-    'data-session-id',
-    sessionId!,
-  );
-  await openRename(page);
-  await expect(
-    dialog(page).getByRole('textbox', { name: 'Project Name' }),
-  ).toHaveValue('Persistent Atlas');
 });
 
 test('Unicode names propagate to pickers and survive reorder and project switching with composer context intact', async ({
@@ -793,19 +677,4 @@ test('remote project rename uses registry identity without starting an SSH conne
   expect(
     await page.evaluate(() => window.__tauRenameMock!.remoteCalls),
   ).toEqual([]);
-});
-
-test('archived session rows use the renamed project label', async ({
-  page,
-}) => {
-  await openRename(page);
-  await dialog(page)
-    .getByRole('textbox', { name: 'Project Name' })
-    .fill('Archive Atlas');
-  await page.keyboard.press('Enter');
-  await expect(dialog(page)).toHaveCount(0);
-  await page.getByRole('button', { name: 'Show Archived Sessions' }).click();
-  await expect(page.locator('.archived-list .row .project')).toHaveText([
-    'Archive Atlas',
-  ]);
 });

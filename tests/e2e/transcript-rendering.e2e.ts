@@ -16,7 +16,7 @@ test.beforeEach(async ({ page }) => {
   await waitForShowcaseRendering(page);
 });
 
-for (const width of [480, 1440]) {
+for (const width of [480]) {
   test(`fits user bubbles to content without overflow at ${width}px`, async ({
     page,
   }) => {

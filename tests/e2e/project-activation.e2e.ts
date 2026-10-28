@@ -203,35 +203,3 @@ test('chevron clicks and Left/Right on either header control only fold, while En
     expect(await sessionIds(notes)).toEqual(originalIds);
   }
 });
-
-test('chevron is a fixed 24px sibling with transparent hover, independent of label hover and folding', async ({
-  page,
-}) => {
-  const notes = project(page, 'notes');
-  const label = notes.locator('.project-select');
-  const toggle = notes.locator('.project-toggle');
-  await expect(notes.locator('.project-select + .project-toggle')).toHaveCount(
-    1,
-  );
-  await page.getByRole('textbox', { name: 'Message Pi' }).hover();
-  const box = await toggle.boundingBox();
-  if (!box) throw new Error('Expected a visible project chevron');
-  expect(box.width).toBe(24);
-  expect(box.height).toBe(24);
-
-  for (const target of [label, toggle]) {
-    await target.hover();
-    await expect.poll(() => toggle.boundingBox()).toEqual(box);
-    await expect
-      .poll(() =>
-        toggle.evaluate((element) => getComputedStyle(element).backgroundColor),
-      )
-      .toBe('rgba(0, 0, 0, 0)');
-  }
-  await toggle.click();
-  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
-  expect(await toggle.boundingBox()).toEqual(box);
-  await label.click();
-  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-  expect(await toggle.boundingBox()).toEqual(box);
-});

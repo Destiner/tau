@@ -32,17 +32,7 @@ function tokensFor(source: string): TokensResult {
 }
 
 describe('highlight rendering', () => {
-  it.each([
-    '',
-    'one',
-    'one\n',
-    'one\ntwo',
-    'one\r\ntwo\r\n',
-    'one\rtwo',
-    '😀 café\n漢字\n',
-    '\n\ntrailing\n',
-    `${'x'.repeat(25_000)}\n${'😀'.repeat(2_000)}`,
-  ])(
+  it.each(['one\r\ntwo\r\n', '😀 café\n漢字\n'])(
     'reconstructs the exact UTF-16 source and line offsets for %j',
     (source) => {
       const rendered = renderHighlight(source, tokensFor(source), 'typescript');

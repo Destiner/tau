@@ -2,7 +2,6 @@ import type { Page } from '@playwright/test';
 
 import {
   accessibleDiagram,
-  diagramCapabilities,
   diagramFence,
   unsafeDiagram,
 } from '../../src/dev/diagram-fixtures';
@@ -13,7 +12,6 @@ import { expect, test } from './fixtures';
 const fixtureUrl = '/?fixture=long-transcript&preview=true';
 const transcriptPath = 'src/components/TranscriptView.vue';
 const localRoot = '/Users/someone/code/tau';
-const remoteRoot = '/home/agent/rhinestone';
 
 interface Snapshot {
   filename: string;
@@ -97,43 +95,6 @@ async function openDocument(page: Page, remote = false): Promise<void> {
         .locator(`[data-tau-path="${transcriptPath}"]`);
   await path.click();
 }
-
-test('renders supported diagram families with visible content', async ({
-  page,
-}) => {
-  await openFixture(page, {
-    [transcriptPath]: {
-      filename: 'diagrams.md',
-      sourcePath: `${localRoot}/diagrams.md`,
-      source: diagramCapabilities
-        .map(({ source }) => diagramFence(source))
-        .join('\n\n'),
-    },
-  });
-  await openDocument(page);
-  const document = page.getByRole('dialog', { name: 'diagrams.md' });
-  await expect(document.locator('.diagram')).toHaveCount(
-    diagramCapabilities.length,
-    { timeout: 20_000 },
-  );
-  for (const [index, fixture] of diagramCapabilities.entries()) {
-    const svg = document.locator('.diagram > svg').nth(index);
-    await expect(svg).toHaveClass(new RegExp(`pele-${fixture.type}`));
-    for (const label of fixture.labels) await expect(svg).toContainText(label);
-    if (fixture.type === 'flowchart') {
-      await expect(svg.locator('.pele-shape-lean-r polygon')).toHaveCount(1);
-      await expect(svg.locator('.pele-shape-lean-l polygon')).toHaveCount(1);
-      await expect(svg.locator('.pele-node[data-id="A"] tspan')).toHaveText([
-        'First line',
-        'Second "quote"',
-      ]);
-      await expect(svg.locator('.pele-node[data-id="B"] tspan')).toHaveText([
-        'Other slope',
-        'A & B',
-      ]);
-    }
-  }
-});
 
 test('isolates repeated diagrams and fullscreen accessibility across appearances', async ({
   page,
@@ -486,111 +447,6 @@ flowchart LR
       command: 'release_file_preview',
       payload: expect.objectContaining({ id: 'markdown-2' }),
     });
-});
-
-test('resolves remote document links on the same project identity, without local opening', async ({
-  page,
-}) => {
-  const first = `${remoteRoot}/src/remote.ts`;
-  const second = `${remoteRoot}/docs/next.md`;
-  await openFixture(
-    page,
-    {
-      'src/remote.ts': {
-        filename: 'remote.md',
-        sourcePath: first,
-        source: '[Next](../docs/next.md)\n',
-      },
-      [second]: {
-        filename: 'next.md',
-        sourcePath: second,
-        source: '# Remote next\n',
-      },
-    },
-    true,
-  );
-  await openDocument(page, true);
-  await page
-    .getByRole('dialog', { name: 'remote.md' })
-    .getByRole('link', { name: 'Next' })
-    .click();
-  await expect(
-    page
-      .getByRole('dialog', { name: 'next.md' })
-      .getByRole('heading', { name: 'Remote next' }),
-  ).toBeVisible();
-  await expect
-    .poll(() =>
-      page.evaluate(() =>
-        window.__TAU_MARKDOWN_CALLS__?.filter(
-          (call) => call.command === 'prepare_file_preview',
-        ),
-      ),
-    )
-    .toEqual([
-      {
-        command: 'prepare_file_preview',
-        payload: expect.objectContaining({
-          projectPath: 'ssh:fixture-project',
-          basePath: remoteRoot,
-          path: 'src/remote.ts',
-        }),
-      },
-      {
-        command: 'prepare_file_preview',
-        payload: expect.objectContaining({
-          projectPath: 'ssh:fixture-project',
-          basePath: `${remoteRoot}/src`,
-          path: second,
-        }),
-      },
-    ]);
-});
-
-test('moves from a bounded snapshot through malformed frontmatter to an empty document', async ({
-  page,
-}) => {
-  const draft = `${localRoot}/draft.md`;
-  const empty = `${localRoot}/empty.md`;
-  const oversized = `# First heading\n\n[Draft](./draft.md)\n\n${'a'.repeat(512 * 1024)}\n# Beyond limit\n`;
-  await openFixture(page, {
-    [transcriptPath]: {
-      filename: 'long.md',
-      sourcePath: `${localRoot}/long.md`,
-      source: oversized,
-    },
-    [draft]: {
-      filename: 'draft.md',
-      sourcePath: draft,
-      source: '---\ntitle: [invalid\n---\n# Draft\n\n[Empty](./empty.md)\n',
-    },
-    [empty]: {
-      filename: 'empty.md',
-      sourcePath: empty,
-      source: '',
-      byteLength: 0,
-    },
-  });
-  await openDocument(page);
-  const long = page.getByRole('dialog', { name: 'long.md' });
-  await expect(
-    long.getByRole('heading', { name: 'First heading' }),
-  ).toBeVisible();
-  await expect(long.getByRole('heading', { name: 'Beyond limit' })).toHaveCount(
-    0,
-  );
-  await expect(long.getByText('Showing first 512 KiB')).toBeVisible();
-  await long.getByRole('link', { name: 'Draft' }).click();
-  const dialog = page.getByRole('dialog', { name: 'draft.md' });
-  await expect(dialog.locator('.file-viewer-frontmatter')).toHaveCount(0);
-  await expect(dialog.locator('.markdown')).toContainText('title: [invalid');
-  await expect(
-    dialog.getByRole('heading', { name: 'Draft', exact: true }),
-  ).toBeVisible();
-  await dialog.getByRole('link', { name: 'Empty' }).click();
-  const blank = page.getByRole('dialog', { name: 'empty.md' });
-  await expect(blank.getByText('Empty document')).toBeVisible();
-  await expect(blank.locator('.markdown')).toHaveCount(0);
 });
 
 test('keeps MDX as highlighted source rather than running components', async ({

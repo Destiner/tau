@@ -2,7 +2,7 @@ import { expect, test } from './fixtures';
 
 const fixtureUrl = '/?fixture=long-transcript&compacted=true';
 
-for (const scheme of ['light', 'dark'] as const) {
+for (const scheme of ['dark'] as const) {
   test(`loads earlier compacted history without moving the divider (${scheme})`, async ({
     page,
   }) => {

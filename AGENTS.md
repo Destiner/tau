@@ -10,7 +10,10 @@ Native Tauri desktop UI for the Pi coding agent, with a Vue frontend and Rust ba
 - `bun run format` / `bun run lint` - Format or run all frontend linters.
 - `bun run typecheck` - Check Vue and Node TypeScript.
 - `bun run test` - Run Vitest unit tests.
-- `bun run test:e2e` - Run Playwright in Chromium and WebKit.
+- `bun run test:e2e` - Run Chromium functional Playwright tests (the default, including when `CI=1`).
+- `bun run test:e2e:webkit` - Preflight WebKit, then run WebKit functional tests only.
+- `bun run test:e2e:ci` - Preflight WebKit, then run both functional browser projects; CI uses `bun run test:e2e:ci --retries=1`.
+- `bun run test:e2e:performance` - Run the two isolated Chromium performance guards (one worker, tracing off, zero retries).
 - `bun run repro -- --list` - List deterministic Pi scenarios.
 - `bun run repro -- <scenario>` - Open a scenario in the development app.
 - `bun run test:pi-contract` - Explicitly check the installed Pi RPC contract.
@@ -20,7 +23,9 @@ Native Tauri desktop UI for the Pi coding agent, with a Vue frontend and Rust ba
 - `bun tauri build` - Validate the full native build; on macOS, produces only an unsigned `.app` without opening Finder. Use this for routine agent validation, not DMG packaging.
 - `bun run release:macos` - Build and verify the Apple Silicon, signed, notarized macOS DMG.
 
-Install Playwright once with `bun x playwright install chromium webkit`.
+Install Playwright once with `bun x playwright install chromium webkit`. Browser runs always build and own a fresh preview server; an occupied default port fails instead of reusing another server. Set `TAU_PLAYWRIGHT_PORT` to an unused port when needed, and serialize browser runs in one worktree because they share `node_modules/.cache/tau-e2e`.
+
+The standard agent macOS VM cannot currently start WebKit reliably. Use Chromium for routine local validation; reserve `test:e2e:webkit` for a working desktop or bounded diagnosis, and let CI execute the required WebKit coverage.
 
 ## Structure
 

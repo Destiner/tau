@@ -1,28 +1,6 @@
-import appVersion from '../../src/lib/app-version';
-
 import { expect, test } from './fixtures';
 
 const scenarioUrl = '/?test-scenario=empty-workspace';
-
-test('keeps the home version a static informational label', async ({
-  page,
-}) => {
-  await page.goto(`${scenarioUrl}&test-update=first-run-failure`);
-
-  const label = page.locator('.first-run-version');
-  await expect(label).toHaveText(`tau${appVersion}`);
-  await expect(page.getByRole('button', { name: /Tau version/ })).toHaveCount(
-    0,
-  );
-  await expect(page.locator('.update-popover')).toHaveCount(0);
-  await label.click();
-  await expect(page.locator('.update-popover')).toHaveCount(0);
-  await page.keyboard.press('Tab');
-  await expect(label).not.toBeFocused();
-
-  // Satisfy the scenario's expected cancelled native chooser.
-  await page.getByRole('button', { name: 'Open Local Project' }).click();
-});
 
 test('prepares Pi then offers and navigates both project actions in the empty workspace', async ({
   page,

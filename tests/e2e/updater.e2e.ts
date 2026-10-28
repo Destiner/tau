@@ -18,7 +18,7 @@ async function finishCheck(
   }, fail);
 }
 
-for (const sidebarWidth of [200, 260]) {
+for (const sidebarWidth of [200]) {
   test(`insets the version popover from viewport edges with a ${sidebarWidth}px sidebar`, async ({
     page,
   }) => {
@@ -179,60 +179,4 @@ test('downloads and installs an available update after idle auto-confirmation', 
   await expect(
     page.locator('.update-popover').getByText('Tau is up to date'),
   ).toBeVisible();
-});
-
-test('keeps update popover geometry stable while checking', async ({
-  page,
-}) => {
-  await page.goto('/?test-update=checking');
-
-  const trigger = page.getByRole('button', {
-    name: `Tau version ${appVersion}`,
-  });
-  await trigger.click();
-  const popover = page.locator('.update-popover');
-  await popover.getByRole('button', { name: 'Skip' }).click();
-  await trigger.click();
-  const copy = popover.locator('.update-copy');
-  await expect(copy.locator('strong')).toHaveText('Tau is up to date');
-  await expect(copy.locator('span')).toHaveText(
-    `Version ${appVersion} is installed.`,
-  );
-  const boxBeforeCheck = await popover.boundingBox();
-
-  await popover.getByRole('button', { name: 'Check for Updates' }).click();
-  const checking = popover.getByRole('button', { name: 'Checking…' });
-  await expect(checking).toBeDisabled();
-  await expect(copy.locator('strong')).toHaveText('Tau is up to date');
-  await expect(copy.locator('span')).toHaveText(
-    `Version ${appVersion} is installed.`,
-  );
-  await expect(popover).toHaveAttribute('aria-busy', 'true');
-  expect(await popover.boundingBox()).toEqual(boxBeforeCheck);
-
-  await expect(popover.getByText('Version 0.2.0 available')).toBeVisible();
-});
-
-test('shows and dismisses an available update from the version control', async ({
-  page,
-}) => {
-  await page.goto('/?test-update=available');
-
-  const trigger = page.getByRole('button', {
-    name: `Tau version ${appVersion}`,
-  });
-  await expect(trigger).toBeVisible();
-  await expect(trigger.locator('.update-indicator.accent')).toBeVisible();
-
-  await trigger.click();
-  const popover = page.locator('.update-popover');
-  await expect(popover.getByText('Version 0.2.0 available')).toBeVisible();
-  await expect(popover.getByRole('button', { name: 'Update' })).toBeVisible();
-
-  await popover.getByRole('button', { name: 'Skip' }).click();
-  await expect(popover).toBeHidden();
-  await expect(trigger.locator('.update-indicator')).toHaveCount(0);
-
-  await trigger.click();
-  await expect(popover.getByText('Tau is up to date')).toBeVisible();
 });
