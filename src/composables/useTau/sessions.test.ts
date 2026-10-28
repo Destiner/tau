@@ -810,6 +810,143 @@ describe('session drafts and selection', () => {
     });
   });
 
+  it('keeps an initial model rejection inline and blocks all subsequent drafts', async () => {
+    const saved = savedSession('saved', 10_000);
+    const project: ProjectSummary = {
+      path: '/tmp/tau-initial-settings-rejection-test',
+      name: 'tau-initial-settings-rejection-test',
+      workingDirectory: '/tmp/tau-initial-settings-rejection-test',
+      collapsed: false,
+      selected: true,
+      sessions: [saved],
+    };
+    const workspace: WorkspaceSnapshot = {
+      activeProjectPath: project.path,
+      piPath: '/usr/local/bin/pi',
+      projects: [project],
+    };
+    mocks.workspace = workspace;
+    mocks.generation = 0;
+    vi.mocked(invoke).mockClear();
+
+    const tau = useTau();
+    await tau.initialize();
+    tau.state.activeControllerKey = '';
+    tau.state.activeSessionId = '';
+    tau.state.controllers.splice(0);
+    tau.state.ephemeralSessions.splice(0);
+    tau.state.workspace = workspace;
+
+    await tau.selectSession(project, saved);
+    const savedController = tau.state.controllers[0];
+    if (!savedController) throw new Error('Expected the saved controller');
+    savedController.starting = false;
+    savedController.ready = true;
+    savedController.models = [
+      {
+        provider: 'provider',
+        id: 'alpha',
+        name: 'Alpha',
+        reasoning: true,
+      },
+      {
+        provider: 'provider',
+        id: 'beta',
+        name: 'Beta',
+        reasoning: true,
+      },
+    ];
+    savedController.efforts = ['off', 'high', 'max'];
+    savedController.commands = [{ name: 'session-name', source: 'extension' }];
+    savedController.commandsLoaded = true;
+    savedController.currentModelProvider = 'provider';
+    savedController.currentModelId = 'alpha';
+    savedController.currentModelName = 'Alpha';
+    savedController.currentEffort = 'high';
+
+    await tau.newSession(project);
+    await tau.selectModel('provider/beta');
+    await tau.selectEffort('max');
+    expect(tau.currentModelId.value).toBe('beta');
+    expect(tau.currentEffortLabel.value).toBe('Max');
+    tau.draft.value = 'Keep this initial draft';
+    await tau.sendMessage();
+
+    const controller = tau.state.controllers.find(
+      (candidate) => candidate !== savedController,
+    );
+    if (!controller) throw new Error('Expected the new controller');
+
+    emitRpc(controller, {
+      id: controller.bootstrapStateRequestId,
+      type: 'response',
+      command: 'get_state',
+      success: true,
+      data: {
+        model: { provider: 'provider', id: 'alpha', name: 'Alpha' },
+        thinkingLevel: 'off',
+        sessionId: 'new-session',
+        sessionFile: '/tmp/new-session.jsonl',
+        sessionName: '',
+        isStreaming: false,
+      },
+    });
+    await vi.waitFor(() => {
+      expect(sentRequests(controller, 'set_model')).toHaveLength(1);
+    });
+    const modelRequest = sentRequests(controller, 'set_model')[0];
+    emitRpc(controller, {
+      id: modelRequest?.id,
+      type: 'response',
+      command: 'set_model',
+      success: false,
+      error: 'model unavailable',
+    });
+
+    await vi.waitFor(() => {
+      expect(tau.setupFailure.value).toMatchObject({
+        provider: 'provider',
+        modelId: 'beta',
+        effort: 'max',
+        recovering: false,
+      });
+    });
+    expect(tau.draft.value).toBe('Keep this initial draft');
+    controller.commands = [{ name: 'session-name', source: 'extension' }];
+    controller.commandsLoaded = true;
+    expect(tau.activeFeedback.value).toBeUndefined();
+    controller.ready = true;
+    expect(tau.canCompose.value).toBe(false);
+    expect(sentRequests(controller, 'prompt')).toEqual([]);
+
+    const requestCount = vi
+      .mocked(invoke)
+      .mock.calls.filter(
+        ([command, args]) =>
+          command === 'send_pi' &&
+          (args as { runtimeId?: string })?.runtimeId === controller.runtimeId,
+      ).length;
+    tau.draft.value = 'An edited ordinary draft';
+    await tau.sendMessage();
+    tau.draft.value = '/skill:synthetic An edited skill draft';
+    expect(tau.canCompose.value).toBe(false);
+    await tau.sendMessage();
+
+    expect(tau.draft.value).toBe('/skill:synthetic An edited skill draft');
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.filter(
+          ([command, args]) =>
+            command === 'send_pi' &&
+            (args as { runtimeId?: string })?.runtimeId ===
+              controller.runtimeId,
+        ),
+    ).toHaveLength(requestCount);
+    expect(sentRequests(controller, 'prompt')).toEqual([]);
+    expect(controller.pendingPrompt).toBeUndefined();
+  });
+
   it('does not archive a session while its controller is streaming', async () => {
     const firstSession = savedSession('first', 2_000);
     const secondSession = savedSession('second', 1_000);

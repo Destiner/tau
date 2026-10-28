@@ -3,6 +3,7 @@ import {
   setControllerLifecycle,
   type SessionController,
 } from '../../../composables/state';
+import invokesExtensionCommand from '../extension-command';
 
 const confirmedAdmissionRequestIds = new Set<string>();
 
@@ -48,23 +49,6 @@ function skillInvocation(
     name: commandName.slice('skill:'.length),
     userMessage: space < 0 ? '' : message.slice(space + 1).trim(),
   };
-}
-
-function invokesExtensionCommand(
-  controller: SessionController,
-  message: string,
-): boolean {
-  if (!message.startsWith('/')) return false;
-  // Pi takes the command name from the first space, so anything else is a
-  // prompt for the model even when it opens with a slash.
-  const space = message.indexOf(' ');
-  const name = space < 0 ? message.slice(1) : message.slice(1, space);
-  return (
-    Boolean(name) &&
-    controller.commands.some(
-      (command) => command.name === name && command.source === 'extension',
-    )
-  );
 }
 
 function restoreSubmittedDraft(

@@ -1,6 +1,9 @@
 import { computed } from 'vue';
 
-import { invokesExtensionCommand } from '../../lib/pi/runtime';
+import {
+  invokesExtensionCommand,
+  retrySetup as retryControllerSetup,
+} from '../../lib/pi/runtime';
 import { invokeTraced } from '../../lib/telemetry';
 import {
   activeController,
@@ -205,6 +208,20 @@ function useTau() {
     openProjectRename,
     closeProjectRename,
     submitProjectRename,
+    setupFailure: computed(() => activeController.value?.setupFailure),
+    canRetrySetup: computed(() => {
+      const controller = activeController.value;
+      return Boolean(
+        controller?.generation &&
+        controller.ready &&
+        !controller.starting &&
+        !controller.setupFailure?.recovering,
+      );
+    }),
+    retrySetup: async (): Promise<void> => {
+      const controller = activeController.value;
+      if (controller) await retryControllerSetup(controller);
+    },
     selectModel,
     selectEffort,
   };
