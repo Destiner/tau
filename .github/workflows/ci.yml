@@ -51,7 +51,7 @@ jobs:
       - name: Install browsers
         run: bun x playwright install chromium webkit
       - name: Browser tests
-        run: bun x playwright test --project=chromium --project=webkit --retries=1
+        run: bun run test:e2e:ci --retries=1
 
   native:
     runs-on: macos-15
