@@ -88,39 +88,37 @@ for (const interaction of ['pointer', 'keyboard'] as const) {
   });
 }
 
-for (const source of ['palette'] as const) {
-  test(`pending prompt allows active session rename from ${source}`, async ({
-    page,
-  }) => {
-    await page.goto(scenarioUrl);
-    const prompt = page.getByRole('dialog', {
-      name: 'Which label should the release carry?',
-    });
-    await expect(prompt).toBeVisible();
-    await prompt.getByRole('option', { name: 'patch' }).focus();
-    await openPalette(page);
-    await page
-      .getByRole('combobox', { name: 'Command Palette' })
-      .fill('Rename Session');
-    await page.getByRole('option', { name: /Rename Session/ }).click();
-    const name = page.getByRole('textbox', {
-      name: 'Session Name',
-      exact: true,
-    });
-    await expect(name).toBeFocused();
-    await name.fill('Uncommitted pending prompt rename');
-    await expect(prompt).toBeVisible();
-    await name.press('Escape');
-    await expect(name).toHaveCount(0);
-    await expect(
-      page.getByRole('heading', { name: 'Main', exact: true }),
-    ).toBeVisible();
-    await expect(prompt).toBeVisible();
-    expect(
-      (await page.evaluate(() => window.__TAU_PI_SCENARIO__?.verify()))?.ok,
-    ).toBe(true);
+test('pending prompt allows active session rename from palette', async ({
+  page,
+}) => {
+  await page.goto(scenarioUrl);
+  const prompt = page.getByRole('dialog', {
+    name: 'Which label should the release carry?',
   });
-}
+  await expect(prompt).toBeVisible();
+  await prompt.getByRole('option', { name: 'patch' }).focus();
+  await openPalette(page);
+  await page
+    .getByRole('combobox', { name: 'Command Palette' })
+    .fill('Rename Session');
+  await page.getByRole('option', { name: /Rename Session/ }).click();
+  const name = page.getByRole('textbox', {
+    name: 'Session Name',
+    exact: true,
+  });
+  await expect(name).toBeFocused();
+  await name.fill('Uncommitted pending prompt rename');
+  await expect(prompt).toBeVisible();
+  await name.press('Escape');
+  await expect(name).toHaveCount(0);
+  await expect(
+    page.getByRole('heading', { name: 'Main', exact: true }),
+  ).toBeVisible();
+  await expect(prompt).toBeVisible();
+  expect(
+    (await page.evaluate(() => window.__TAU_PI_SCENARIO__?.verify()))?.ok,
+  ).toBe(true);
+});
 
 for (const target of ['active', 'inactive'] as const) {
   test(`pending prompt allows ${target} project rename from context without switching sessions`, async ({
