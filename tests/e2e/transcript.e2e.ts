@@ -61,15 +61,29 @@ test('reads virtual history, holds its anchor through output and restores it aft
         'Arguments',
       );
       await expect(header).toHaveAttribute('aria-expanded', 'true');
+      // Clicking an overscan row scrolls it into view; a height percentage does
+      // not identify that row once the virtualizer has measured more content.
+      const returnOffset = await call.evaluate((element) => {
+        const viewport = element.closest<HTMLElement>('.transcript')!;
+        return (
+          viewport.scrollTop +
+          element.getBoundingClientRect().top -
+          viewport.getBoundingClientRect().top
+        );
+      });
       await transcript.evaluate((element) => {
         element.scrollTop = 0;
       });
       await expect(page.locator('[data-index="0"]')).toBeVisible();
-      await transcript.evaluate((element) => {
-        element.scrollTop = element.scrollHeight * 0.45;
-      });
-      await page.waitForTimeout(150);
+      await expect(call).toHaveCount(0);
+      await transcript.evaluate((element, offset) => {
+        element.scrollTop = offset;
+      }, returnOffset);
+      await expect(header).toBeInViewport();
       await expect(header).toHaveAttribute('aria-expanded', 'true');
+      await expect(call.locator('.activity-detail-label').first()).toHaveText(
+        'Arguments',
+      );
     });
     await test.step('does not move a reader in history when output changes', async () => {
       const transcript = page.getByLabel('Transcript');
