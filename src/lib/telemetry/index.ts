@@ -64,18 +64,27 @@ interface AdapterState {
 let state: AdapterState | undefined;
 
 let lastReportedDroppedCount = 0;
-/** Telemetry records nothing until admin mode says it may (see
- * `src/lib/admin-mode.ts`). Off is the starting state, not a fallback: a
- * failed or slow read of the setting leaves the app recording nothing. */
+/** Both admin mode and a configured Grafana connection are required. */
 let enabled = false;
 let telemetryEpoch = 0;
+const enableListeners = new Set<(enabled: boolean) => void>();
+
+function onTelemetryEnabledChange(
+  listener: (enabled: boolean) => void,
+): () => void {
+  enableListeners.add(listener);
+  listener(enabled);
+  return () => {
+    enableListeners.delete(listener);
+  };
+}
 
 function setTelemetryEnabled(next: boolean): void {
   if (enabled === next) return;
   enabled = next;
   telemetryEpoch++;
-  if (next || !state) return;
-  state.queue.drain(Number.MAX_SAFE_INTEGER);
+  if (!next) state?.queue.drain(Number.MAX_SAFE_INTEGER);
+  for (const listener of enableListeners) listener(next);
 }
 
 function ensureState(): AdapterState {
@@ -231,6 +240,8 @@ function startFamilySpan(
   parentContext?: TraceContext,
   scope?: TelemetryScope,
 ): CommandSpanHandle {
+  if (!enabled) return { end(): void {} };
+  const epoch = telemetryEpoch;
   try {
     const { tracer, scheduleFlush } = ensureState();
     const context = parentContext
@@ -259,6 +270,7 @@ function startFamilySpan(
     return {
       context: linkedContext,
       end(outcome?: TauriInvokeOutcome): void {
+        if (!enabled || epoch !== telemetryEpoch) return;
         try {
           if (
             family === TAURI_INVOKE.name &&
@@ -459,6 +471,8 @@ function startRpcSpan(
   parentContext?: TraceContext,
   scope?: Pick<TelemetryScope, 'sessionId' | 'controllerId'>,
 ): RpcSpanHandle {
+  if (!enabled) return { end(): void {} };
+  const epoch = telemetryEpoch;
   try {
     const { tracer, scheduleFlush } = ensureState();
     const context = parentContext
@@ -498,6 +512,7 @@ function startRpcSpan(
     return {
       context: linkedContext,
       end(outcome: PiRpcOutcome): void {
+        if (!enabled || epoch !== telemetryEpoch) return;
         try {
           if (validateAttribute(PI_RPC.name, 'pi.rpc.outcome', outcome).valid) {
             span.setAttribute('pi.rpc.outcome', outcome);
@@ -523,6 +538,7 @@ function recordStreamAggregate(
   endTime: number,
   scope?: Pick<TelemetryScope, 'sessionId' | 'controllerId'>,
 ): void {
+  if (!enabled) return;
   try {
     const { tracer, scheduleFlush } = ensureState();
     const span = tracer.startSpan(PI_STREAM.name, { startTime }, ROOT_CONTEXT);
@@ -550,6 +566,7 @@ function recordRpcResponseAnomaly(
   requestId: string,
   scope?: TelemetryScope,
 ): void {
+  if (!enabled) return;
   try {
     const { queue, scheduleFlush, flushNow } = ensureState();
     const family = PI_RPC_ANOMALY.name;
@@ -582,6 +599,7 @@ function recordControllerTransition(
   scope?: TelemetryScope,
   context?: TraceContext,
 ): void {
+  if (!enabled) return;
   try {
     const { queue, scheduleFlush } = ensureState();
     const family = CONTROLLER_LIFECYCLE.name;
@@ -620,6 +638,7 @@ function recordFrontendError(
   kind: string,
   location: string,
 ): void {
+  if (!enabled) return;
   try {
     const { queue, scheduleFlush, flushNow } = ensureState();
     const record: FrontendLogRecord = {
@@ -752,6 +771,7 @@ interface HeartbeatInput {
 }
 
 function recordHeartbeat(input: HeartbeatInput): void {
+  if (!enabled) return;
   try {
     const { queue, scheduleFlush } = ensureState();
     const family = FRONTEND_HEARTBEAT.name;
@@ -786,6 +806,7 @@ function recordMetric(
   value: number,
   attributes: Record<string, string | number>,
 ): void {
+  if (!enabled) return;
   try {
     if (!Number.isFinite(value) || value < 0 || value > MAX_METRIC_VALUE_MS) {
       return;
@@ -845,6 +866,7 @@ interface StateSummaryInput {
 }
 
 function recordStateSummary(input: StateSummaryInput): void {
+  if (!enabled) return;
   try {
     const { queue, scheduleFlush } = ensureState();
     const family = FRONTEND_STATE_SUMMARY.name;
@@ -895,6 +917,7 @@ export {
   initTelemetry,
   installFrontendErrorCapture,
   invokeTraced,
+  onTelemetryEnabledChange,
   recordControllerTransition,
   recordEventLoopLag,
   recordHeartbeat,

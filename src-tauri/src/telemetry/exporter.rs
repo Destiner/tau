@@ -1,5 +1,4 @@
-//! Convert SDK logs/spans and frontend spans to the same OTLP JSONL mapping:
-//! <https://opentelemetry.io/docs/specs/otel/protocol/file-exporter/>.
+//! Map reviewed SDK records to OTLP JSON for direct, memory-only cloud delivery.
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -15,136 +14,100 @@ use opentelemetry_sdk::trace::{SpanData, SpanExporter};
 use opentelemetry_sdk::Resource;
 use serde_json::{json, Value};
 
-use super::store::{Signal, Store};
+use super::transport::{Pipeline as Store, Signal};
 
-pub struct JsonFileLogExporter {
+pub struct CloudLogExporter {
     store: Arc<Store>,
     resource_json: Value,
-    /// Optional development target; absent without the feature or endpoint, so ordinary builds
-    /// never send.
-    #[cfg(feature = "otlp_export")]
-    otlp: Option<Arc<super::otlp_export::OtlpTarget>>,
 }
 
-impl std::fmt::Debug for JsonFileLogExporter {
+impl std::fmt::Debug for CloudLogExporter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("JsonFileLogExporter")
-            .finish_non_exhaustive()
+        f.debug_struct("CloudLogExporter").finish_non_exhaustive()
     }
 }
 
-impl JsonFileLogExporter {
+impl CloudLogExporter {
     /// Capture resource at construction rather than depending on the SDK’s `set_resource` hook.
     pub fn new(store: Arc<Store>, resource: &Resource) -> Self {
-        JsonFileLogExporter {
+        CloudLogExporter {
             store,
             resource_json: resource_to_json(resource),
-            #[cfg(feature = "otlp_export")]
-            otlp: super::otlp_export::OtlpTarget::from_env(
-                "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
-                "/v1/logs",
-            )
-            .map(Arc::new),
         }
     }
 }
 
-impl LogExporter for JsonFileLogExporter {
+impl LogExporter for CloudLogExporter {
     async fn export(&self, batch: LogBatch<'_>) -> OTelSdkResult {
-        // Gate before optional network export as well as disk persistence; disabling the store
-        // alone is insufficient.
         if !self.store.is_enabled() {
             return Ok(());
         }
         for (record, scope) in batch.iter() {
             let value = log_record_to_otlp_json(&self.resource_json, scope.name(), record);
-            #[cfg(feature = "otlp_export")]
-            if let Some(target) = &self.otlp {
-                target.send(&value);
-            }
             self.store.append(Signal::Log, value);
         }
         Ok(())
     }
 }
 
-pub struct JsonFileSpanExporter {
+pub struct CloudSpanExporter {
     store: Arc<Store>,
     resource_json: Value,
-    #[cfg(feature = "otlp_export")]
-    otlp: Option<Arc<super::otlp_export::OtlpTarget>>,
 }
 
-impl std::fmt::Debug for JsonFileSpanExporter {
+impl std::fmt::Debug for CloudSpanExporter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("JsonFileSpanExporter")
-            .finish_non_exhaustive()
+        f.debug_struct("CloudSpanExporter").finish_non_exhaustive()
     }
 }
 
-impl JsonFileSpanExporter {
+impl CloudSpanExporter {
     pub fn new(store: Arc<Store>, resource: &Resource) -> Self {
-        JsonFileSpanExporter {
+        CloudSpanExporter {
             store,
             resource_json: resource_to_json(resource),
-            #[cfg(feature = "otlp_export")]
-            otlp: super::otlp_export::OtlpTarget::from_env(
-                "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-                "/v1/traces",
-            )
-            .map(Arc::new),
         }
     }
 }
 
-impl SpanExporter for JsonFileSpanExporter {
+impl SpanExporter for CloudSpanExporter {
     async fn export(&self, batch: Vec<SpanData>) -> OTelSdkResult {
         if !self.store.is_enabled() {
             return Ok(());
         }
         for span in &batch {
             let value = span_data_to_otlp_json(&self.resource_json, span);
-            #[cfg(feature = "otlp_export")]
-            if let Some(target) = &self.otlp {
-                target.send(&value);
-            }
             self.store.append(Signal::Trace, value);
         }
         Ok(())
     }
 }
 
-/// One self-contained OTLP JSONL record per metric instrument per periodic collection.
-pub struct JsonFileMetricExporter {
+/// One OTLP metric record per instrument per periodic collection.
+pub struct CloudMetricExporter {
     store: Arc<Store>,
     resource_json: Value,
-    #[cfg(feature = "otlp_export")]
-    otlp: Option<Arc<super::otlp_export::OtlpTarget>>,
+    revision: u64,
 }
 
-impl std::fmt::Debug for JsonFileMetricExporter {
+impl std::fmt::Debug for CloudMetricExporter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("JsonFileMetricExporter")
+        f.debug_struct("CloudMetricExporter")
             .finish_non_exhaustive()
     }
 }
 
-impl JsonFileMetricExporter {
-    pub fn new(store: Arc<Store>, resource: &Resource) -> Self {
-        JsonFileMetricExporter {
+impl CloudMetricExporter {
+    pub fn new(store: Arc<Store>, resource: &Resource, revision: u64) -> Self {
+        CloudMetricExporter {
             store,
             resource_json: resource_to_json(resource),
-            #[cfg(feature = "otlp_export")]
-            otlp: super::otlp_export::OtlpTarget::from_env(
-                "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
-                "/v1/metrics",
-            )
-            .map(Arc::new),
+            revision,
         }
     }
 }
 
-impl PushMetricExporter for JsonFileMetricExporter {
+impl PushMetricExporter for CloudMetricExporter {
     async fn export(&self, metrics: &data::ResourceMetrics) -> OTelSdkResult {
         if !self.store.is_enabled() {
             return Ok(());
@@ -153,11 +116,8 @@ impl PushMetricExporter for JsonFileMetricExporter {
             for metric in scope_metrics.metrics() {
                 let value =
                     metric_to_otlp_json(&self.resource_json, scope_metrics.scope().name(), metric);
-                #[cfg(feature = "otlp_export")]
-                if let Some(target) = &self.otlp {
-                    target.send(&value);
-                }
-                self.store.append(Signal::Metric, value);
+                self.store
+                    .append_at(Signal::Metric, value, Some(self.revision));
             }
         }
         Ok(())
@@ -171,7 +131,7 @@ impl PushMetricExporter for JsonFileMetricExporter {
         Ok(())
     }
 
-    /// Cumulative points keep each append-only line meaningful without replaying history.
+    /// Cumulative points are isolated to one configured target/admin epoch.
     fn temporality(&self) -> Temporality {
         Temporality::Cumulative
     }

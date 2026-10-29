@@ -4,7 +4,6 @@ import {
   invokesExtensionCommand,
   retrySetup as retryControllerSetup,
 } from '../../lib/pi/runtime';
-import { invokeTraced } from '../../lib/telemetry';
 import {
   activeController,
   activeExtensionDialog,
@@ -111,16 +110,6 @@ function useTau() {
       controller && invokesExtensionCommand(controller, draft.value.trim()),
     );
   });
-  function submitIssueReport(
-    description: string,
-    sessionId?: string,
-  ): Promise<void> {
-    return invokeTraced('submit_issue_report', {
-      description,
-      ...(sessionId ? { sessionId } : {}),
-    });
-  }
-
   return {
     state,
     activeProject,
@@ -163,7 +152,6 @@ function useTau() {
     sessionLoading,
     initialize,
     dispose,
-    submitIssueReport,
     activateProject,
     addLocalProject,
     openRemoteProjectDialog,

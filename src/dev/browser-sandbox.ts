@@ -13,6 +13,7 @@ import {
   type SidebarWidthStorage,
 } from '../lib/sidebar-width';
 
+import { createCloudCommandHandler } from './cloud-fixture';
 import workspaceSeed from './workspace-seed.json';
 
 type PiMessage =
@@ -214,6 +215,7 @@ function createBrowserSandboxHandler(
   options: BrowserSandboxOptions = {},
 ): BrowserSandboxHandler {
   const workspace = createBrowserSandboxWorkspace(options.remoteProject);
+  const cloudCommand = createCloudCommandHandler();
   let generation = 1;
   let nextSession = 1;
   let nextPreview = 1;
@@ -480,7 +482,8 @@ function createBrowserSandboxHandler(
     }
     if (command === 'load_workspace') return cloneWorkspace();
     if (command === 'read_model_scope') return [];
-    if (command === 'read_admin_mode') return false;
+    const cloudReply = cloudCommand(command, args);
+    if (cloudReply !== undefined) return cloudReply;
     if (command === 'get_dismissed_update_version') return null;
     if (command === 'set_check_for_updates_menu_enabled') return null;
     if (command === 'pending_quit_request') return pendingQuitRequest;
@@ -651,11 +654,9 @@ function createBrowserSandboxHandler(
       };
     }
     if (
-      command === 'set_admin_mode' ||
       command === 'set_dismissed_update_version' ||
       command === 'release_file_preview' ||
       command === 'ingest_telemetry' ||
-      command === 'submit_issue_report' ||
       command === 'plugin:window|show' ||
       command === 'plugin:opener|open_url' ||
       command === 'plugin:opener|open_path' ||

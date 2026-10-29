@@ -14,6 +14,7 @@ import { oldestPendingRpcAgeMs, pendingRpcCount } from '../pi/runtime';
 import type { HeartbeatVisibility } from './attributes';
 
 import {
+  onTelemetryEnabledChange,
   recordEventLoopLag,
   recordHeartbeat,
   recordLongTask,
@@ -24,6 +25,8 @@ import {
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
 let heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
+let unsubscribeHeartbeat: (() => void) | undefined;
+let unsubscribeLongTasks: (() => void) | undefined;
 
 function currentVisibility(): HeartbeatVisibility {
   try {
@@ -82,11 +85,17 @@ function scheduleNext(): void {
 }
 
 function startHeartbeat(): void {
-  if (heartbeatTimer) return;
-  scheduleNext();
+  if (unsubscribeHeartbeat) return;
+  unsubscribeHeartbeat = onTelemetryEnabledChange((enabled) => {
+    if (heartbeatTimer) clearTimeout(heartbeatTimer);
+    heartbeatTimer = undefined;
+    if (enabled) scheduleNext();
+  });
 }
 
 function stopHeartbeat(): void {
+  unsubscribeHeartbeat?.();
+  unsubscribeHeartbeat = undefined;
   if (heartbeatTimer) clearTimeout(heartbeatTimer);
   heartbeatTimer = undefined;
 }
@@ -98,10 +107,19 @@ let longTaskObserver: PerformanceObserver | undefined;
  * webview supports them (still not universal). Each entry's duration is
  * recorded as a native OTel histogram, never a log — a stalled webview can
  * generate many of these, and a histogram aggregates client-side instead of
- * producing one persisted line per task. Safe to call more than once and
+ * exporting one log per task. Safe to call more than once and
  * safe when unsupported: both are a no-op.
  */
 function installLongTaskObserver(): void {
+  if (unsubscribeLongTasks) return;
+  unsubscribeLongTasks = onTelemetryEnabledChange((enabled) => {
+    longTaskObserver?.disconnect();
+    longTaskObserver = undefined;
+    if (enabled) observeLongTasks();
+  });
+}
+
+function observeLongTasks(): void {
   try {
     if (longTaskObserver) return;
     if (typeof PerformanceObserver === 'undefined') return;
@@ -121,6 +139,8 @@ function installLongTaskObserver(): void {
 }
 
 function stopLongTaskObserver(): void {
+  unsubscribeLongTasks?.();
+  unsubscribeLongTasks = undefined;
   longTaskObserver?.disconnect();
   longTaskObserver = undefined;
 }

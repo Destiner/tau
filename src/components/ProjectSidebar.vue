@@ -259,7 +259,6 @@
           v-if="adminMode"
           ref="issueReporter"
           :session-id="state.activeSessionId || undefined"
-          :submit-report="submitIssueReport"
         />
       </div>
       <UpdateStatus ref="updateStatus" />
@@ -361,7 +360,6 @@ const {
   expandedRelativeTime,
   sessionLastActive,
   state,
-  submitIssueReport,
   toggleProject,
 } = useTau();
 

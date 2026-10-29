@@ -1,11 +1,12 @@
-//! Admin mode: the hidden switch behind Tau's diagnostics. It is off in a
-//! normal run, which is why telemetry records nothing and the issue
-//! reporter is not offered; the frontend cheat code turns it on, and this
-//! module persists that choice beside the data it gates so the *next* run
-//! knows before it records its first line.
+//! Persist the admin preference; CloudState owns the authoritative runtime gate.
+//! Enabling admin mode alone does not enable telemetry without a configured target.
 
+use crate::cloud::CloudState;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+static PREFERENCES_LOCK: Mutex<()> = Mutex::new(());
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -30,20 +31,21 @@ pub fn admin_mode_enabled() -> bool {
 
 #[tauri::command]
 pub fn read_admin_mode(
+    cloud: State<'_, CloudState>,
     telemetry: State<'_, Telemetry>,
     telemetry_context: Option<TraceContext>,
 ) -> bool {
     let _span = telemetry_context
         .as_ref()
         .and_then(|context| telemetry.start_command_span(context, "read_admin_mode"));
-    admin_mode_enabled()
+    cloud.admin_enabled()
 }
 
-/// Applies the switch to this run before persisting it, so telemetry starts
-/// or stops immediately and a failed write costs the preference, not the
-/// behaviour the user just asked for.
+/// Apply the runtime gate before persisting: a failed preference write cannot keep
+/// telemetry active after the user has disabled admin mode.
 #[tauri::command]
-pub fn set_admin_mode(
+pub async fn set_admin_mode(
+    cloud: State<'_, CloudState>,
     telemetry: State<'_, Telemetry>,
     telemetry_context: Option<TraceContext>,
     enabled: bool,
@@ -51,11 +53,19 @@ pub fn set_admin_mode(
     let _span = telemetry_context
         .as_ref()
         .and_then(|context| telemetry.start_command_span(context, "set_admin_mode"));
-    telemetry.set_enabled(enabled);
-    let dir = resolve_preferences_dir();
-    let mut preferences = read_preferences_in(&dir);
-    preferences.admin_mode = enabled;
-    write_preferences_in(&dir, &preferences)
+    let cloud = cloud.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = PREFERENCES_LOCK
+            .lock()
+            .map_err(|_| WRITE_ERROR.to_string())?;
+        cloud.set_admin(enabled);
+        let dir = resolve_preferences_dir();
+        let mut preferences = read_preferences_in(&dir);
+        preferences.admin_mode = enabled;
+        write_preferences_in(&dir, &preferences)
+    })
+    .await
+    .map_err(|_| WRITE_ERROR.to_string())?
 }
 
 #[tauri::command]
@@ -75,6 +85,9 @@ pub fn set_dismissed_update_version(version: Option<String>) -> Result<(), Strin
         return Err(WRITE_ERROR.to_string());
     }
 
+    let _guard = PREFERENCES_LOCK
+        .lock()
+        .map_err(|_| WRITE_ERROR.to_string())?;
     let dir = resolve_preferences_dir();
     let mut preferences = read_preferences_in(&dir);
     preferences.dismissed_update_version = version;
@@ -107,7 +120,14 @@ fn write_preferences_in(dir: &Path, preferences: &Preferences) -> Result<(), Str
     let contents = serde_json::to_vec(preferences).map_err(|_| WRITE_ERROR.to_string())?;
     fs::create_dir_all(dir).map_err(|_| WRITE_ERROR.to_string())?;
     let path = dir.join(PREFERENCES_FILE);
-    fs::write(&path, contents).map_err(|_| WRITE_ERROR.to_string())?;
+    use std::io::Write;
+    let mut file = tempfile::NamedTempFile::new_in(dir).map_err(|_| WRITE_ERROR.to_string())?;
+    file.write_all(&contents)
+        .map_err(|_| WRITE_ERROR.to_string())?;
+    file.as_file()
+        .sync_all()
+        .map_err(|_| WRITE_ERROR.to_string())?;
+    file.persist(&path).map_err(|_| WRITE_ERROR.to_string())?;
     set_owner_only_file_permissions(&path);
     Ok(())
 }
@@ -176,7 +196,7 @@ mod tests {
     }
 
     #[test]
-    fn preferences_live_beside_the_telemetry_and_feedback_directories() {
+    fn preferences_live_in_the_native_profile() {
         assert_eq!(
             resolve_preferences_dir(),
             profile::current().unwrap().data_dir()

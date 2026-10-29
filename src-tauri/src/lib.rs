@@ -1,4 +1,5 @@
 mod admin;
+mod cloud;
 #[cfg(any(dev, test))]
 mod dev_workspace;
 mod feedback;
@@ -42,6 +43,7 @@ pub fn run() {
         return;
     }
     let telemetry = telemetry::Telemetry::init();
+    let cloud = cloud::CloudState::init(telemetry.pipeline.clone());
     telemetry.install_panic_hook();
     telemetry.record_app_started();
 
@@ -51,6 +53,7 @@ pub fn run() {
         .manage(quit::QuitState::default())
         .manage(update::UpdateState::default())
         .manage(telemetry)
+        .manage(cloud)
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -108,6 +111,11 @@ pub fn run() {
             admin::get_dismissed_update_version,
             admin::set_dismissed_update_version,
             feedback::submit_issue_report,
+            cloud::read_cloud_connections,
+            cloud::validate_linear_connection,
+            cloud::save_linear_connection,
+            cloud::save_grafana_connection,
+            cloud::disconnect_cloud_connection,
             file_preview::prepare_file_preview,
             file_preview::release_file_preview,
             pi::claim_pi_frontend,

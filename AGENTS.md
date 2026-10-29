@@ -41,7 +41,7 @@ The standard agent macOS VM cannot currently start WebKit reliably. Use Chromium
 - Pi owns extension execution and session files. Preserve Pi compatibility rather than creating a parallel runtime or data model.
 - Each live session owns an isolated Pi runtime. Session switching, stale responses, failures, and idle eviction must not leak state or lose drafts/workflow context.
 - Telemetry is bounded, content-free, and best-effort. Never record prompts, transcripts, drafts, payloads, paths, credentials, stderr, or raw errors.
-- Telemetry and the issue reporter are admin mode's, off by default, and unlocked together by the `iddqd` code. Keep new diagnostics behind the same switch.
+- Telemetry and the issue reporter are admin mode's, off by default, and unlocked together by the `iddqd` code. Collection additionally requires Grafana configuration. Linear/Grafana are the only report/telemetry stores; no local outbox or backfill.
 - Prefer deterministic fake-based tests; the real-Pi contract check is an explicit canary, not a default test dependency.
 
 ## Documentation
@@ -49,7 +49,7 @@ The standard agent macOS VM cannot currently start WebKit reliably. Use Chromium
 - `docs/ci-testing.md` - CI gates, browser test execution, and reproducible timing.
 - `docs/development-storage.md` - Isolated development profiles, browser sandbox, and performance fixtures.
 - `docs/pi.md` - Pi extension compatibility, runtime lifetime, and session replacement behavior.
-- `docs/observability.md` - Telemetry storage, privacy limits, issue reports, and optional OTLP export.
+- `docs/observability.md` - Admin-only Linear/Grafana setup, Keychain credentials, cloud delivery, and privacy limits.
 - `docs/quality.md` - Product principles and the verification rubric for all UI work.
 - `docs/releases.md` - Signing infrastructure, updater trust, local verification, and release recovery; publication uses `.agents/skills/release/SKILL.md`.
 - `docs/reproduction.md` - Scenarios, manual fixtures, regression authoring, and the explicit Pi canary.
