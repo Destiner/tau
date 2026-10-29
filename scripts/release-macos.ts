@@ -754,6 +754,41 @@ function verifyReleaseAssets(directory: string): void {
   }
 }
 
+function buildReleaseBundles(configPath: string): void {
+  const attempts = 3;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    rmSync(targetBundle, { recursive: true, force: true });
+    command('bun', [
+      'tauri',
+      attempt === 1 ? 'build' : 'bundle',
+      '--target',
+      'aarch64-apple-darwin',
+      '--bundles',
+      'app,dmg',
+      '--config',
+      configPath,
+      '--ci',
+    ]);
+    const app = onlyArtifact(join(targetBundle, 'macos'), '.app');
+    if (existsSync(join(app, 'Contents/CodeResources'))) {
+      command('/usr/bin/xcrun', ['stapler', 'validate', app]);
+      return;
+    }
+
+    // Tauri 2.11.4 ignores stapler's exit status. Rebundle all artifacts together
+    // so the DMG and signed updater contain the same stapled app.
+    if (attempt === attempts) {
+      fail(
+        `the app is missing its stapled notarization ticket (Contents/CodeResources) after ${attempts} packaging attempts; no release assets were staged`,
+      );
+    }
+    console.warn(
+      `macOS release: app notarization ticket is missing; retrying packaging (${attempt + 1}/${attempts}) in 15 seconds`,
+    );
+    command('/bin/sleep', ['15']);
+  }
+}
+
 function buildRelease(): string {
   command('bun', ['run', 'build'], { env: frontendEnvironment });
   const publicKey = requirePinnedUpdaterPublicKey();
@@ -771,19 +806,8 @@ function buildRelease(): string {
     }),
   );
 
-  rmSync(targetBundle, { recursive: true, force: true });
   try {
-    command('bun', [
-      'tauri',
-      'build',
-      '--target',
-      'aarch64-apple-darwin',
-      '--bundles',
-      'app,dmg',
-      '--config',
-      configPath,
-      '--ci',
-    ]);
+    buildReleaseBundles(configPath);
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }

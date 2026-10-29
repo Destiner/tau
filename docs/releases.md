@@ -66,6 +66,8 @@ Alternatively, notarize with `APPLE_ID`, app-specific `APPLE_PASSWORD`, and `APP
 
 The script builds/typechecks the frontend without signing variables, then runs the credentialed native build. Updater artifacts are enabled only by `src-tauri/tauri.release.conf.json`; the public key is injected through a temporary configuration. Assets are staged atomically under `src-tauri/target/release-assets/<version>` without overwriting. Preserve or explicitly remove an existing local version directory before rebuilding.
 
+Tauri CLI 2.11.4 does not check its app-stapling command's exit status. Tau checks for the app's `Contents/CodeResources` notarization ticket immediately after bundling and validates it with `stapler`. A missing ticket retries packaging at most twice, 15 seconds apart, using the compiled binary but rebuilding, signing, and notarizing all bundles together. An invalid ticket or command failure stops immediately. This happens before DMG notarization and asset staging; signed archives are never patched, and final verification still requires the ticket and identical app contents in the DMG and updater.
+
 The verifier checks the exact four assets (DMG, updater archive, signature, `latest.json`), manifest correspondence, cryptographic updater signature, safe archive entries, app/DMG equality, arm64 architecture, minimum OS, signing, notarization, Gatekeeper, system-only linkage, file allowlists, and synchronized versions. It prints SHA-256 checksums. Reverify without rebuilding:
 
 ```sh
