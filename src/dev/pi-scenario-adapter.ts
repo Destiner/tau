@@ -18,6 +18,8 @@ import { targetProjectPath } from '../../tests/support/pi-scenario/project-openi
 import { state, type WorkspaceSnapshot } from '../composables/state';
 import type { PiBridgeEvent } from '../lib/pi/bridge';
 
+import { createCloudCommandHandler } from './cloud-fixture';
+
 interface ScenarioVerification {
   ok: boolean;
   error?: string;
@@ -621,6 +623,7 @@ function projectOpeningTarget(
 }
 
 function installPiScenarioAdapter(scenarioName: string): void {
+  const cloudCommand = createCloudCommandHandler(true);
   const scenario = findPiScenario(scenarioName);
   const ownershipDelay = Number(
     new URLSearchParams(globalThis.location.search).get('ownership-delay') ?? 0,
@@ -1021,12 +1024,10 @@ function installPiScenarioAdapter(scenarioName: string): void {
               ?.sessions.find((candidate) => candidate.selected)?.id ?? '',
         };
       }
-      // Admin mode has no scenario state: a scenario always starts in the
-      // default off, and a test that types the cheat code drives the
-      // frontend switch it is actually exercising.
-      if (command === 'read_admin_mode') {
+      const cloudReply = cloudCommand(command, args);
+      if (cloudReply !== undefined) {
         count(command);
-        return false;
+        return await cloudReply;
       }
       if (command === 'pending_quit_request') {
         count(command);
@@ -1058,13 +1059,6 @@ function installPiScenarioAdapter(scenarioName: string): void {
       if (command === 'check_for_update') {
         count(command);
         return { status: 'unavailable' };
-      }
-      if (command === 'set_admin_mode') {
-        if (typeof args.enabled !== 'boolean') {
-          throw new Error('set_admin_mode enabled must be a boolean.');
-        }
-        count(command);
-        return null;
       }
       if (command === 'ingest_telemetry') {
         if (!Array.isArray(args.records)) {

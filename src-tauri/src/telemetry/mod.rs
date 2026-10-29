@@ -1,21 +1,21 @@
-//! Native telemetry providers, bounded local storage, and lifecycle diagnostics.
+//! Native telemetry providers and bounded, memory-only cloud delivery.
 //! Command spans link native work to its frontend request; the panic hook
-//! records only sanitized locations without recursing into the writer.
+//! records only sanitized locations.
 
 pub mod attributes;
 mod exporter;
 pub mod ingest;
-#[cfg(feature = "otlp_export")]
-mod otlp_export;
+#[cfg(test)]
+mod tests;
+
 pub mod privacy;
-mod store;
 pub mod trace_context;
+pub mod transport;
 
 use std::cell::Cell;
-use std::fs;
-use std::io::Write as _;
 use std::panic::PanicHookInfo;
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -35,24 +35,14 @@ use opentelemetry_semantic_conventions::resource::{
     SERVICE_VERSION,
 };
 
-use crate::profile::{self, ENVIRONMENT_NAME};
+use crate::profile::ENVIRONMENT_NAME;
 use privacy::{sanitize_source_location, truncate_to_limit, DEFAULT_MAX_ATTRIBUTE_LEN};
 use trace_context::TraceContext;
-
-/// Start marker shares the segments’ owner-only directory; presence on the next launch means no
-/// clean exit.
-const RUN_MARKER_FILE: &str = "run.marker";
 
 // Skip telemetry on panic-hook re-entry to avoid recursion; still invoke the previous hook.
 thread_local! {
     static IN_PANIC_HOOK: Cell<bool> = const { Cell::new(false) };
 }
-
-pub const TELEMETRY_DIR_NAME: &str = "telemetry";
-
-pub const TRACE_SEGMENT_FILE: &str = "traces.jsonl";
-pub const LOG_SEGMENT_FILE: &str = "logs.jsonl";
-pub const METRIC_SEGMENT_FILE: &str = "metrics.jsonl";
 
 const SCOPE_NAME: &str = "tau";
 
@@ -79,10 +69,8 @@ struct Metrics {
     active_controller_gauge: Gauge<u64>,
     runtime_count_gauge: Gauge<u64>,
     queue_length_gauge: Gauge<u64>,
-    /// Populated from the frontend's own `telemetry.health` log (dropped
-    /// count) and natively at `record_writer_health` (failed-write count).
+    /// Populated from the validated frontend `telemetry.health` log.
     telemetry_dropped_gauge: Gauge<u64>,
-    telemetry_failed_write_gauge: Gauge<u64>,
 }
 
 impl Metrics {
@@ -126,150 +114,122 @@ impl Metrics {
             runtime_count_gauge: meter.u64_gauge("tau.telemetry.runtime_count").build(),
             queue_length_gauge: meter.u64_gauge("tau.telemetry.queue_length").build(),
             telemetry_dropped_gauge: meter.u64_gauge("tau.telemetry.dropped_count").build(),
-            telemetry_failed_write_gauge: meter
-                .u64_gauge("tau.telemetry.failed_write_count")
-                .build(),
         }
     }
 }
 
-/// Per-launch pipeline. Store failures fall back to bounded memory, never blocking startup.
-/// Outside admin mode providers exist but remain disabled.
+/// Per-launch pipeline. Nothing is collected without both runtime admin mode and a target.
 pub struct Telemetry {
     logger_provider: SdkLoggerProvider,
     tracer_provider: SdkTracerProvider,
-    meter_provider: SdkMeterProvider,
-    metrics: Metrics,
-    store: Arc<store::Store>,
+    metric_pipeline: std::sync::Mutex<Option<MetricPipeline>>,
+    resource: Resource,
+    pub(crate) pipeline: Arc<transport::Pipeline>,
     resource_json: serde_json::Value,
-    /// Where the run marker lives, so `record_app_exited` can clear it.
-    telemetry_dir: PathBuf,
-    /// Capture the previous run’s marker before writing this run’s marker.
-    previous_run_unclean: bool,
-    /// Gate marker/lifecycle events separately; they bypass the store gate.
-    enabled: std::sync::atomic::AtomicBool,
+}
+
+struct MetricPipeline {
+    provider: SdkMeterProvider,
+    metrics: Metrics,
+    revision: u64,
+}
+impl MetricPipeline {
+    fn new(pipeline: Arc<transport::Pipeline>, resource: &Resource, revision: u64) -> Self {
+        let exporter = exporter::CloudMetricExporter::new(pipeline, resource, revision);
+        let reader = PeriodicReader::builder(exporter)
+            .with_interval(METRIC_EXPORT_INTERVAL)
+            .build();
+        let provider = SdkMeterProvider::builder()
+            .with_resource(resource.clone())
+            .with_reader(reader)
+            .build();
+        let metrics = Metrics::new(&provider.meter(SCOPE_NAME));
+        Self {
+            provider,
+            metrics,
+            revision,
+        }
+    }
 }
 
 impl Telemetry {
     pub fn init() -> Self {
-        Telemetry::new(
-            resolve_telemetry_dir(),
-            Arc::new(store::SystemClock),
-            crate::admin::admin_mode_enabled(),
-        )
+        Telemetry::new(Arc::new(transport::Pipeline::new(Arc::new(
+            crate::cloud::Network,
+        ))))
     }
 
     #[cfg(test)]
-    pub(crate) fn for_test(dir: PathBuf) -> Self {
-        Telemetry::new(dir, Arc::new(store::SystemClock), true)
+    pub(crate) fn for_test(_dir: PathBuf) -> Self {
+        struct NoNetwork;
+        impl crate::cloud::Http for NoNetwork {
+            fn send(&self, _: crate::cloud::Request) -> crate::cloud::Result<serde_json::Value> {
+                Err(crate::cloud::error("unavailable"))
+            }
+        }
+        Self::new(Arc::new(transport::Pipeline::new(Arc::new(NoNetwork))))
     }
 
-    fn new(dir: PathBuf, clock: Arc<dyn store::Clock>, enabled: bool) -> Self {
-        let previous_run_unclean = enabled && previous_run_was_unclean(&dir);
-        if enabled {
-            write_run_marker(&dir);
-        }
-        let store = Arc::new(store::Store::with_enabled(
-            dir.clone(),
-            store::StoreConfig::production(),
-            clock,
-            enabled,
-        ));
+    fn new(store: Arc<transport::Pipeline>) -> Self {
         let resource = build_resource();
         let resource_json = exporter::resource_to_json(&resource);
-        let log_exporter = exporter::JsonFileLogExporter::new(Arc::clone(&store), &resource);
-        let span_exporter = exporter::JsonFileSpanExporter::new(Arc::clone(&store), &resource);
-        let metric_exporter = exporter::JsonFileMetricExporter::new(Arc::clone(&store), &resource);
+        let log_exporter = exporter::CloudLogExporter::new(Arc::clone(&store), &resource);
+        let span_exporter = exporter::CloudSpanExporter::new(Arc::clone(&store), &resource);
         let logger_provider = SdkLoggerProvider::builder()
             .with_resource(resource.clone())
             .with_simple_exporter(log_exporter)
             .build();
-        let metric_reader = PeriodicReader::builder(metric_exporter)
-            .with_interval(METRIC_EXPORT_INTERVAL)
-            .build();
-        let meter_provider = SdkMeterProvider::builder()
-            .with_resource(resource.clone())
-            .with_reader(metric_reader)
-            .build();
-        let metrics = Metrics::new(&meter_provider.meter(SCOPE_NAME));
         let tracer_provider = SdkTracerProvider::builder()
-            .with_resource(resource)
+            .with_resource(resource.clone())
             .with_sampler(Sampler::AlwaysOn)
             .with_simple_exporter(span_exporter)
             .build();
         Telemetry {
             logger_provider,
             tracer_provider,
-            meter_provider,
-            metrics,
-            store,
+            metric_pipeline: std::sync::Mutex::new(None),
+            resource,
+            pipeline: store,
             resource_json,
-            telemetry_dir: dir,
-            previous_run_unclean,
-            enabled: std::sync::atomic::AtomicBool::new(enabled),
         }
     }
 
     pub fn is_enabled(&self) -> bool {
-        self.enabled.load(std::sync::atomic::Ordering::Relaxed)
+        self.pipeline.is_enabled()
     }
 
-    /// On admin enable, start a run marker and lifecycle; on disable, flush and clear it so
-    /// toggling does not imply a crash.
-    pub fn set_enabled(&self, enabled: bool) {
-        if self
-            .enabled
-            .swap(enabled, std::sync::atomic::Ordering::Relaxed)
-            == enabled
-        {
-            return;
-        }
-        if enabled {
-            write_run_marker(&self.telemetry_dir);
-            self.store.set_enabled(true);
-            self.emit_lifecycle_log("app.started");
-            self.force_flush_logs();
-            return;
-        }
-        self.emit_lifecycle_log("app.telemetry_disabled");
-        self.force_flush_logs();
-        self.force_flush_metrics();
-        self.store.set_enabled(false);
-        clear_run_marker(&self.telemetry_dir);
-    }
-
-    /// Flush the prior unclean-exit event in case this launch also crashes.
     pub fn record_app_started(&self) {
         self.emit_lifecycle_log("app.started");
-        if self.previous_run_unclean {
-            self.emit_lifecycle_log("app.unclean_exit_detected");
-            let _ = self.logger_provider.force_flush();
-        }
     }
 
-    /// Flush exit and writer-health events before clearing the marker; call from
-    /// `RunEvent::Exit`.
+    /// Queue the final lifecycle/metrics records on `RunEvent::Exit`, best-effort.
     pub fn record_app_exited(&self) {
         if !self.is_enabled() {
             return;
         }
         self.emit_lifecycle_log("app.exited");
-        self.record_writer_health();
         let _ = self.logger_provider.force_flush();
         self.force_flush_metrics();
-        clear_run_marker(&self.telemetry_dir);
     }
 
     pub fn shutdown(&self) {
         let _ = self.logger_provider.shutdown();
         let _ = self.tracer_provider.shutdown();
-        let _ = self.meter_provider.shutdown();
+        if let Ok(mut pipeline) = self.metric_pipeline.lock() {
+            if let Some(pipeline) = pipeline.take() {
+                let _ = pipeline.provider.shutdown();
+            }
+        }
     }
 
     /// Force collection for tests and explicit flush points; otherwise the periodic reader
     /// waits.
     pub fn force_flush_metrics(&self) {
-        let _ = self.meter_provider.force_flush();
+        if let Ok(pipeline) = self.metric_pipeline.lock() {
+            if let Some(pipeline) = pipeline.as_ref() {
+                let _ = pipeline.provider.force_flush();
+            }
+        }
     }
 
     /// The simple processor syncs each emit already; explicit flush preserves exit/failure
@@ -279,6 +239,9 @@ impl Telemetry {
     }
 
     fn emit_lifecycle_log(&self, event_name: &'static str) {
+        if !self.is_enabled() {
+            return;
+        }
         let logger = self.logger_provider.logger(SCOPE_NAME);
         let mut record = logger.create_log_record();
         record.set_timestamp(SystemTime::now());
@@ -288,73 +251,96 @@ impl Telemetry {
         logger.emit(record);
     }
 
-    /// Count failed writes even when fallback records have since been evicted.
-    fn record_writer_health(&self) {
-        let failed_writes = self.store.failed_writes();
-        self.metrics
-            .telemetry_failed_write_gauge
-            .record(failed_writes, &[]);
-        if failed_writes == 0 {
+    fn with_metrics(&self, record: impl FnOnce(&Metrics)) {
+        if !self.is_enabled() {
             return;
         }
-        self.emit_family_log(
-            attributes::TELEMETRY_HEALTH.name,
-            "telemetry.writer_failure",
-            None,
-            None,
-            None,
-            &[(
-                "tau.telemetry.failed_write_count",
-                opentelemetry::Value::I64(i64::try_from(failed_writes).unwrap_or(i64::MAX)),
-            )],
-        );
+        let revision = self.pipeline.revision();
+        let Ok(mut pipeline) = self.metric_pipeline.lock() else {
+            return;
+        };
+        if pipeline.as_ref().is_none_or(|p| p.revision != revision) {
+            // A new target/admin epoch never inherits accumulated counters or gauges.
+            *pipeline = Some(MetricPipeline::new(
+                self.pipeline.clone(),
+                &self.resource,
+                revision,
+            ));
+        }
+        if self.is_enabled() && self.pipeline.revision() == revision {
+            if let Some(pipeline) = pipeline.as_ref() {
+                record(&pipeline.metrics);
+            }
+        }
     }
 
     /// Unknown families are no-ops so new span families cannot break ingestion.
     pub(super) fn record_operation_duration(&self, family: &str, duration_ms: f64) {
-        let histogram = if family == attributes::TAURI_INVOKE.name {
-            &self.metrics.invoke_duration
-        } else if family == attributes::UI_ACTION.name {
-            &self.metrics.ui_action_duration
-        } else if family == attributes::PI_RPC.name {
-            &self.metrics.pi_rpc_duration
-        } else {
+        if !self.is_enabled() {
             return;
-        };
-        histogram.record(duration_ms, &[]);
+        }
+        self.with_metrics(|metrics| {
+            let histogram = if family == attributes::TAURI_INVOKE.name {
+                &metrics.invoke_duration
+            } else if family == attributes::UI_ACTION.name {
+                &metrics.ui_action_duration
+            } else if family == attributes::PI_RPC.name {
+                &metrics.pi_rpc_duration
+            } else {
+                return;
+            };
+            histogram.record(duration_ms, &[]);
+        });
     }
 
     pub(super) fn record_controller_start_duration(&self, duration_ms: f64) {
-        self.metrics
-            .controller_start_duration
-            .record(duration_ms, &[]);
+        if !self.is_enabled() {
+            return;
+        }
+        self.with_metrics(|m| m.controller_start_duration.record(duration_ms, &[]));
     }
 
     /// Increments the `pi.rpc` failure counter: called once per ingested
     /// `pi.rpc` span whose own `pi.rpc.outcome` attribute is present and not
     /// `"success"`.
     pub(super) fn record_rpc_failure(&self) {
-        self.metrics.pi_rpc_failures.add(1, &[]);
+        if !self.is_enabled() {
+            return;
+        }
+        self.with_metrics(|m| m.pi_rpc_failures.add(1, &[]));
     }
 
     pub(super) fn record_rpc_abandoned(&self) {
-        self.metrics.pi_rpc_abandoned.add(1, &[]);
+        if !self.is_enabled() {
+            return;
+        }
+        self.with_metrics(|m| m.pi_rpc_abandoned.add(1, &[]));
     }
 
     pub(super) fn record_rpc_unmatched(&self) {
-        self.metrics.pi_rpc_unmatched.add(1, &[]);
+        if !self.is_enabled() {
+            return;
+        }
+        self.with_metrics(|m| m.pi_rpc_unmatched.add(1, &[]));
     }
 
     pub fn record_pi_process_start(&self) {
-        self.metrics.pi_process_starts.add(1, &[]);
+        if !self.is_enabled() {
+            return;
+        }
+        self.with_metrics(|m| m.pi_process_starts.add(1, &[]));
     }
 
     /// Only two hardcoded exit outcomes; no untrusted metric dimension enters here.
     pub fn record_pi_process_exit(&self, clean: bool) {
+        if !self.is_enabled() {
+            return;
+        }
         let outcome = if clean { "clean" } else { "unexpected" };
-        self.metrics
-            .pi_process_exits
-            .add(1, &[KeyValue::new("tau.process.exit_outcome", outcome)]);
+        self.with_metrics(|m| {
+            m.pi_process_exits
+                .add(1, &[KeyValue::new("tau.process.exit_outcome", outcome)])
+        });
     }
 
     pub(super) fn record_heartbeat_gauges(
@@ -365,33 +351,40 @@ impl Telemetry {
         runtime_count: u64,
         queue_length: u64,
     ) {
-        self.metrics
-            .pending_rpc_gauge
-            .record(pending_rpc_count, &[]);
-        self.metrics
-            .controller_count_gauge
-            .record(controller_count, &[]);
-        self.metrics
-            .active_controller_gauge
-            .record(active_controller_count, &[]);
-        self.metrics.runtime_count_gauge.record(runtime_count, &[]);
-        self.metrics.queue_length_gauge.record(queue_length, &[]);
+        if !self.is_enabled() {
+            return;
+        }
+        self.with_metrics(|m| {
+            m.pending_rpc_gauge.record(pending_rpc_count, &[]);
+            m.controller_count_gauge.record(controller_count, &[]);
+            m.active_controller_gauge
+                .record(active_controller_count, &[]);
+            m.runtime_count_gauge.record(runtime_count, &[]);
+            m.queue_length_gauge.record(queue_length, &[]);
+        });
     }
 
     /// Records the frontend's own `telemetry.health` drop count (already
     /// validated by the time this is called) into the native gauge.
     pub(super) fn record_telemetry_dropped_gauge(&self, dropped_count: u64) {
-        self.metrics
-            .telemetry_dropped_gauge
-            .record(dropped_count, &[]);
+        if !self.is_enabled() {
+            return;
+        }
+        self.with_metrics(|m| m.telemetry_dropped_gauge.record(dropped_count, &[]));
     }
 
     pub(super) fn record_event_loop_lag(&self, lag_ms: f64, dimensions: &[KeyValue]) {
-        self.metrics.event_loop_lag.record(lag_ms, dimensions);
+        if !self.is_enabled() {
+            return;
+        }
+        self.with_metrics(|m| m.event_loop_lag.record(lag_ms, dimensions));
     }
 
     pub(super) fn record_long_task_duration(&self, duration_ms: f64) {
-        self.metrics.long_task_duration.record(duration_ms, &[]);
+        if !self.is_enabled() {
+            return;
+        }
+        self.with_metrics(|m| m.long_task_duration.record(duration_ms, &[]));
     }
 
     /// Links native work to the frontend trace via explicit context, never ambient
@@ -402,6 +395,9 @@ impl Telemetry {
         context: &TraceContext,
         command: &'static str,
     ) -> Option<CommandSpan> {
+        if !self.is_enabled() {
+            return None;
+        }
         let context = TraceContext::parse(&context.to_traceparent()).ok()?;
         let trace_id = TraceId::from_hex(&context.trace_id).ok()?;
         let span_id = SpanId::from_hex(&context.span_id).ok()?;
@@ -428,18 +424,18 @@ impl Telemetry {
         Some(CommandSpan { span })
     }
 
-    /// Persists an already-validated OTLP trace JSON record. Used only by
+    /// Queues an already-validated OTLP trace JSON record. Used only by
     /// `ingest.rs`, after it has revalidated a frontend record against the
     /// attribute catalog.
     pub(super) fn record_trace(&self, value: serde_json::Value) -> bool {
-        self.store.append(store::Signal::Trace, value)
+        self.pipeline.append(transport::Signal::Trace, value)
     }
 
-    /// Persists an already-validated OTLP log JSON record. Used only by
+    /// Queues an already-validated OTLP log JSON record. Used only by
     /// `ingest.rs`, for frontend-originated logs (`frontend.error`) after
     /// it has revalidated the record against the attribute catalog.
     pub(super) fn record_log(&self, value: serde_json::Value) -> bool {
-        self.store.append(store::Signal::Log, value)
+        self.pipeline.append(transport::Signal::Log, value)
     }
 
     /// Records a bounded native ownership transition. Owner ids and raw
@@ -512,7 +508,8 @@ impl Telemetry {
             None,
             attributes,
         );
-        if event_name == "pi.reader.line_dropped"
+        if self.is_enabled()
+            && event_name == "pi.reader.line_dropped"
             && attributes.iter().any(|(key, value)| {
                 *key == "tau.reader.drop_reason"
                     && matches!(
@@ -522,7 +519,7 @@ impl Telemetry {
                     )
             })
         {
-            self.metrics.pi_reader_malformed.add(1, &[]);
+            self.with_metrics(|m| m.pi_reader_malformed.add(1, &[]));
         }
         self.force_flush_logs();
     }
@@ -537,6 +534,9 @@ impl Telemetry {
         span_context: Option<&SpanContext>,
         attributes: &[(&'static str, opentelemetry::Value)],
     ) {
+        if !self.is_enabled() {
+            return;
+        }
         let mut validated: Vec<(&'static str, opentelemetry::Value)> = Vec::new();
 
         if let Some(runtime_id) = runtime_id {
@@ -581,7 +581,7 @@ impl Telemetry {
     /// Preserves the previous panic hook, then records only a sanitized location,
     /// never the payload. A thread-local guard prevents recursive recording.
     pub fn install_panic_hook(&self) {
-        let store = Arc::clone(&self.store);
+        let store = Arc::clone(&self.pipeline);
         let resource_json = self.resource_json.clone();
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info: &PanicHookInfo<'_>| {
@@ -614,9 +614,9 @@ fn guarded_panic_record(record: impl FnOnce()) {
 }
 
 /// Uses nonblocking `try_append` instead of the OTel logger: a panic may
-/// occur while this thread holds the writer lock. Only the sanitized location
+/// occur while this thread holds the queue lock. Only the sanitized location
 /// is attached; neither the panic payload nor arbitrary attributes are stored.
-fn record_panic_to(store: &store::Store, resource_json: &serde_json::Value, location: &str) {
+fn record_panic_to(store: &transport::Pipeline, resource_json: &serde_json::Value, location: &str) {
     let family = attributes::RUST_PANIC.name;
     let location_value =
         opentelemetry::Value::String(truncate_to_limit(location, DEFAULT_MAX_ATTRIBUTE_LEN).into());
@@ -657,55 +657,8 @@ fn record_panic_to(store: &store::Store, resource_json: &serde_json::Value, loca
         SCOPE_NAME,
         serde_json::Value::Object(log_record),
     );
-    let _ = store.try_append(store::Signal::Log, wrapped);
+    let _ = store.try_append(transport::Signal::Log, wrapped);
 }
-
-/// Check before writing this run’s marker to identify the previous unclean exit.
-fn previous_run_was_unclean(dir: &Path) -> bool {
-    dir.join(RUN_MARKER_FILE).is_file()
-}
-
-/// Sync the marker until clean exit so the next launch can detect an interruption.
-fn write_run_marker(dir: &Path) {
-    let _ = fs::create_dir_all(dir);
-    set_owner_only_marker_dir_permissions(dir);
-    let marker = dir.join(RUN_MARKER_FILE);
-    if let Ok(mut file) = fs::File::create(&marker) {
-        set_owner_only_marker_file_permissions(&marker);
-        let _ = file.write_all(b"running");
-        let _ = file.sync_all();
-        sync_directory(dir);
-    }
-}
-
-/// Removes this run's start marker, recording a clean exit.
-fn clear_run_marker(dir: &Path) {
-    if fs::remove_file(dir.join(RUN_MARKER_FILE)).is_ok() {
-        sync_directory(dir);
-    }
-}
-
-fn sync_directory(dir: &Path) {
-    if let Ok(directory) = fs::File::open(dir) {
-        let _ = directory.sync_all();
-    }
-}
-
-#[cfg(unix)]
-fn set_owner_only_marker_dir_permissions(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
-}
-#[cfg(not(unix))]
-fn set_owner_only_marker_dir_permissions(_path: &Path) {}
-
-#[cfg(unix)]
-fn set_owner_only_marker_file_permissions(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
-}
-#[cfg(not(unix))]
-fn set_owner_only_marker_file_permissions(_path: &Path) {}
 
 /// Drop ends the span even on early return; each invocation owns its context.
 pub struct CommandSpan {
@@ -770,8 +723,4 @@ fn host_arch_value() -> &'static str {
         "aarch64" => "arm64",
         other => other,
     }
-}
-
-fn resolve_telemetry_dir() -> PathBuf {
-    profile::app_data_dir().join(TELEMETRY_DIR_NAME)
 }

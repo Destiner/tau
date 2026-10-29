@@ -26,6 +26,7 @@ opentelemetry-semantic-conventions = { version = "0.32", features = ["semconv_ex
 opentelemetry_sdk = "0.32"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json", "blocking"] }
 shell-words = "1"
 tauri-plugin-opener = "2"
 tauri-plugin-updater = "=2.10.1"
@@ -33,20 +34,13 @@ tauri-plugin-window-state = "2.4.1"
 tokio = { version = "1", features = ["rt", "time"] }
 uuid = { version = "1", features = ["v4"] }
 tempfile = "3"
+time = { version = "0.3", features = ["formatting"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 flate2 = "1"
 libc = "0.2"
 tar = "0.4"
+security-framework = "3.7"
 
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }
-
-[features]
-# Off by default: no code in this feature is compiled into an ordinary
-# build, so it adds no runtime dependency to the shipped app. Enables an
-# opt-in, development-only OTLP/HTTP JSON export path honoring the standard
-# OTEL_EXPORTER_OTLP_* environment variables, reusing the same OTLP JSON this
-# module already produces for local storage — no new crate, since it is a
-# raw std::net::TcpStream HTTP/1.1 client, not a full HTTP stack.
-otlp_export = []

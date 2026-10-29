@@ -16,16 +16,19 @@ scenario-specific behavior.
 
 Each native process creates a private `tau-dev-*` temporary directory. The app
 prints its Tau data directory at startup. It holds workspace metadata, sample
-project directories, preferences, feedback, and telemetry; a sibling `sessions/`
-holds the Pi transcripts and per-project Tau session registries. Even importing
+project directories, preferences, and nonsecret cloud connection configuration;
+a sibling `sessions/` holds the Pi transcripts and per-project Tau session registries.
+Cloud credentials are memory-only in development; no production Keychain entries
+are read or changed. Reports and telemetry are never stored in the profile. Even importing
 the same local project into two dev apps gives each its own session directory.
 The previous persistent `tau-dev` profile and existing Pi transcripts are neither
 loaded, migrated, nor deleted.
 
 The webview uses non-persistent storage, and window geometry is not restored or
 saved. Frontend HMR keeps the native workspace alive. A native process restart,
-including a Rust rebuild, creates a fresh seed. Clean app exit stops Pi writers,
-flushes telemetry, and removes the temporary directory. A crash or forced kill
+including a Rust rebuild, creates a fresh seed and clears cloud connections. Clean
+app exit stops Pi writers and removes the temporary directory. Telemetry delivery
+is best-effort; pending in-memory uploads need not complete before exit. A crash or forced kill
 can leave temporary files behind, but no subsequent launch reuses them; they can
 be removed using the OS's normal temporary-file cleanup.
 
@@ -60,7 +63,9 @@ to seed Atlas/Notes. Production builds cannot invoke this seed.
 Use the real dev window and admin diagnostics to inspect input-to-paint,
 readable content, runtime readiness, and persistence. Record sample counts
 and environment separately; filesystem timings alone do not establish
-user-visible latency.
+user-visible latency. For cloud diagnostics, enable admin mode and connect Grafana
+before measuring; use a development stack/destination to avoid mixing fixture
+runs with production reports. See `docs/observability.md`.
 
 ## Browser development
 
@@ -72,7 +77,9 @@ name store to verify that a fresh workspace consumes confirmed labels; that fake
 does not change the ordinary sandbox's reset behavior or prove disk persistence. Mock replies
 are generated locally, with no model calls, credentials, real filesystem writes,
 or SSH connections. This is a playground, not a substitute for native integration
-checks or deterministic reproduction scenarios.
+checks or deterministic reproduction scenarios. The issue-report fixture and
+browser scenario adapter also mock Linear/Grafana in memory; no credentials or
+reports are sent to either service.
 
 ## Project display names
 

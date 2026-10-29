@@ -65,7 +65,7 @@ test('keeps an issue draft through dismissal and failure, then submits with and 
     await description.fill('fail');
     await dialog.getByRole('button', { name: 'Submit' }).click();
     await expect(dialog.getByRole('alert')).toHaveText(
-      'The report could not be saved. Try again.',
+      'Could not send the report. Try again.',
     );
     await expect(description).toHaveValue('fail');
   });

@@ -2,7 +2,7 @@
   <main class="fixture-shell">
     <IssueReportPopover
       session-id="fixture-session"
-      :submit-report="submitReport"
+      :api="api"
     />
     <output data-testid="submitted-report">{{ submittedReport }}</output>
   </main>
@@ -13,15 +13,20 @@ import { ref } from 'vue';
 
 import IssueReportPopover from '../components/IssueReportPopover.vue';
 
-const submittedReport = ref('');
+import { createCloudFixture } from './cloud-fixture';
 
-async function submitReport(
-  description: string,
-  sessionId?: string,
-): Promise<void> {
-  if (description === 'fail') throw new Error('Fixture failure');
-  submittedReport.value = JSON.stringify({ description, sessionId });
-}
+const submittedReport = ref('');
+const search = new URLSearchParams(window.location.search);
+const api = createCloudFixture({
+  configured: search.get('setup') !== 'true',
+  delay: search.get('slow') === 'true' ? 350 : 0,
+  onReport(report) {
+    submittedReport.value = JSON.stringify({
+      description: report.description,
+      ...(report.sessionId ? { sessionId: report.sessionId } : {}),
+    });
+  },
+});
 </script>
 
 <style scoped>

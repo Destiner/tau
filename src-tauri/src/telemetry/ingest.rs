@@ -1,6 +1,8 @@
 //! Frontend records are revalidated against the attribute catalog before
-//! persistence. Ingest itself must not be traced, or sending telemetry would
+//! export. Ingest itself must not be traced, or sending telemetry would
 //! recursively generate more telemetry.
+#[cfg(test)]
+mod tests;
 use std::collections::HashMap;
 
 use opentelemetry::logs::Severity;
@@ -94,6 +96,12 @@ pub fn ingest_telemetry(telemetry: State<'_, Telemetry>, records: Vec<Value>) ->
 }
 
 fn ingest_records(telemetry: &Telemetry, records: Vec<Value>) -> IngestOutcome {
+    if !telemetry.is_enabled() {
+        return IngestOutcome {
+            accepted: 0,
+            rejected: u32::try_from(records.len()).unwrap_or(u32::MAX),
+        };
+    }
     let overflow = records.len().saturating_sub(MAX_RECORDS_PER_CALL) as u32;
     let mut outcome = IngestOutcome {
         accepted: 0,
@@ -113,20 +121,36 @@ fn ingest_records(telemetry: &Telemetry, records: Vec<Value>) -> IngestOutcome {
 /// Decode disjoint span/log/metric shapes independently; reject invalid families.
 fn ingest_one(telemetry: &Telemetry, raw: Value) -> bool {
     if let Ok(record) = serde_json::from_value::<FrontendSpanRecord>(raw.clone()) {
+        if !telemetry
+            .pipeline
+            .accepts_timestamp(&record.start_time_unix_nano)
+        {
+            return false;
+        }
         if let Some(value) = validated_span_json(&record, &telemetry.resource_json, SCOPE_NAME) {
-            telemetry.record_trace(value);
+            if !telemetry.record_trace(value) {
+                return false;
+            }
             record_span_metrics(telemetry, &record);
             return true;
         }
     }
     if let Ok(record) = serde_json::from_value::<FrontendLogRecord>(raw.clone()) {
+        if !telemetry.pipeline.accepts_timestamp(&record.time_unix_nano) {
+            return false;
+        }
         if let Some(value) = validated_log_json(&record, &telemetry.resource_json, SCOPE_NAME) {
-            telemetry.record_log(value);
+            if !telemetry.record_log(value) {
+                return false;
+            }
             record_log_metrics(telemetry, &record);
             return true;
         }
     }
     if let Ok(record) = serde_json::from_value::<FrontendMetricRecord>(raw) {
+        if !telemetry.pipeline.accepts_timestamp(&record.time_unix_nano) {
+            return false;
+        }
         if validate_metric(&record) {
             record_metric(telemetry, &record);
             return true;
@@ -135,7 +159,7 @@ fn ingest_one(telemetry: &Telemetry, raw: Value) -> bool {
     false
 }
 
-/// Derives metrics from validated, persisted spans rather than accepting
+/// Derives metrics from validated, queued spans rather than accepting
 /// a second wire format for durations or RPC outcomes.
 fn record_span_metrics(telemetry: &Telemetry, record: &FrontendSpanRecord) {
     let (Some(start), Some(end)) = (
@@ -174,7 +198,7 @@ fn record_span_metrics(telemetry: &Telemetry, record: &FrontendSpanRecord) {
     }
 }
 
-/// Only validated, persisted heartbeat and health logs may update native gauges.
+/// Only validated heartbeat and health logs may update native gauges.
 fn record_log_metrics(telemetry: &Telemetry, record: &FrontendLogRecord) {
     let int_attribute = |key: &str| -> u64 {
         match record.attributes.get(key) {
@@ -329,7 +353,7 @@ fn validated_log_json(
     ))
 }
 
-/// Rejects the entire record on validation failure; never persist a
+/// Rejects the entire record on validation failure; never export a
 /// partially validated span or unreviewed attributes.
 fn required_attributes(family: &str) -> Option<&'static [&'static str]> {
     if family == attributes::TAURI_INVOKE.name {
@@ -352,9 +376,8 @@ fn required_attributes(family: &str) -> Option<&'static [&'static str]> {
             "pi.generation",
         ])
     } else if family == attributes::TELEMETRY_HEALTH.name {
-        // Only the frontend's own counter is accepted from the frontend;
-        // `tau.telemetry.failed_write_count` is native-only (see
-        // `Telemetry::record_writer_health`) and never sent here.
+        // The legacy native failed-write key remains in the catalog, but frontend callers
+        // may only supply their own dropped counter.
         Some(&["tau.telemetry.dropped_count"])
     } else if family == attributes::FRONTEND_ERROR.name {
         Some(&["tau.error.source", "tau.error.kind", "tau.error.location"])

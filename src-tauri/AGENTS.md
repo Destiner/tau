@@ -18,7 +18,8 @@ Run these commands from the repository root.
 - `src/pi/` - Local/remote Pi process lifecycle and JSONL RPC transport.
 - `src/ssh.rs` - OpenSSH connection parsing, probing, and remote commands.
 - `src/storage/` / `src/settings.rs` - Workspace/session persistence and Pi settings.
-- `src/telemetry/` - Native OpenTelemetry ingestion, local segments, retention, privacy, and optional export.
+- `src/cloud.rs` / `src/feedback.rs` - Runtime-admin-gated cloud setup, secure credentials, and direct Linear reports.
+- `src/telemetry/` - Privacy-validated OpenTelemetry ingestion and bounded, memory-only Grafana OTLP delivery.
 - `src/profile.rs` - Isolated development and production profile paths.
 
 ## Patterns
@@ -28,5 +29,6 @@ Run these commands from the repository root.
 - Pi RPC is newline-delimited JSON over stdio. Preserve request IDs and emit lifecycle events without exposing raw child-process data to the UI.
 - Remote projects use the system OpenSSH client and must remain non-interactive; preserve SSH config aliases/options and login-shell `PATH` resolution.
 - Register new Tauri commands in `src/lib.rs` and update the corresponding frontend contract and tests.
-- Telemetry persistence/export must remain bounded and best-effort; apply privacy sanitization before records leave their source layer.
+- Telemetry export is memory-only, bounded, and best-effort; collect only when runtime admin mode and a Grafana target are both enabled. Apply privacy sanitization before records leave their source layer.
+- Persist only nonsecret cloud config locally. Production credentials belong in macOS Keychain; development/test profiles use memory-only secrets. Never migrate or delete historical feedback/telemetry content.
 - Keep focused Rust tests in each module's `#[cfg(test)]` section.

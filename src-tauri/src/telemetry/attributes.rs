@@ -140,6 +140,11 @@ pub const TAURI_INVOKE_COMMANDS: &[&str] = &[
     "get_dismissed_update_version",
     "set_dismissed_update_version",
     "submit_issue_report",
+    "read_cloud_connections",
+    "validate_linear_connection",
+    "save_linear_connection",
+    "save_grafana_connection",
+    "disconnect_cloud_connection",
     "import_project",
     "import_remote_project",
     "rename_project",
@@ -454,23 +459,15 @@ pub const PI_READER: RecordFamily = RecordFamily {
     ],
 };
 
-/// Frontend reports only its queue drops; native failed writes are recorded separately.
+/// The frontend's bounded ingestion queue reports dropped records.
 pub const TELEMETRY_HEALTH: RecordFamily = RecordFamily {
     name: "telemetry.health",
-    attributes: &[
-        AttributeSpec {
-            key: "tau.telemetry.dropped_count",
-            kind: AttributeKind::I64,
-            max_len: None,
-            metric_safe: true,
-        },
-        AttributeSpec {
-            key: "tau.telemetry.failed_write_count",
-            kind: AttributeKind::I64,
-            max_len: None,
-            metric_safe: true,
-        },
-    ],
+    attributes: &[AttributeSpec {
+        key: "tau.telemetry.dropped_count",
+        kind: AttributeKind::I64,
+        max_len: None,
+        metric_safe: true,
+    }],
 };
 
 /// A Rust panic. Carries only a sanitized `basename:line:column` source

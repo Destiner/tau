@@ -85,6 +85,11 @@ const TAURI_INVOKE_COMMANDS = [
   'load_workspace',
   'set_admin_mode',
   'submit_issue_report',
+  'read_cloud_connections',
+  'validate_linear_connection',
+  'save_linear_connection',
+  'save_grafana_connection',
+  'disconnect_cloud_connection',
   'import_project',
   'import_remote_project',
   'remove_project',
@@ -326,12 +331,6 @@ const TELEMETRY_HEALTH: RecordFamily = {
   attributes: [
     {
       key: 'tau.telemetry.dropped_count',
-      kind: 'int',
-      maxLen: null,
-      metricSafe: true,
-    },
-    {
-      key: 'tau.telemetry.failed_write_count',
       kind: 'int',
       maxLen: null,
       metricSafe: true,
