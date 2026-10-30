@@ -10,7 +10,15 @@
       variant="ghost"
       :disabled="disabled || busy"
       @click="requestReconnect"
-      >{{ busy ? 'Reconnecting…' : 'Reconnect' }}</UiButton
+      >{{
+        busy
+          ? remote
+            ? 'Reconnecting…'
+            : 'Retrying…'
+          : remote
+            ? 'Reconnect'
+            : 'Retry'
+      }}</UiButton
     >
   </div>
 </template>
@@ -23,6 +31,7 @@ defineProps<{
   message: string;
   busy?: boolean;
   disabled?: boolean;
+  remote?: boolean;
 }>();
 
 const emit = defineEmits<{ reconnect: [] }>();

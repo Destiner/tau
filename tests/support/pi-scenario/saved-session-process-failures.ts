@@ -35,6 +35,21 @@ function processFailure(
   ];
 }
 
+function localRecoveryBootstrapSteps(): readonly PiScenarioStep[] {
+  return successfulBootstrapSteps(
+    'recovered-main',
+    'recovered-main',
+    mainSessionState,
+  ).flatMap((step): PiScenarioStep[] =>
+    step.kind === 'response' && step.command === 'get_messages'
+      ? [
+          { kind: 'gate', name: 'before-recovery-history', required: true },
+          step,
+        ]
+      : [step],
+  );
+}
+
 const savedSessionBootstrapProcessExit = definePiScenario({
   metadata: {
     name: 'saved-session-bootstrap-process-exit',
@@ -66,11 +81,7 @@ const savedSessionBootstrapProcessExit = definePiScenario({
         }) as PiScenarioStep,
     ),
     ...processFailure('failed-bootstrap', 'bootstrap'),
-    ...successfulBootstrapSteps(
-      'recovered-main',
-      'recovered-main',
-      mainSessionState,
-    ),
+    ...localRecoveryBootstrapSteps(),
   ],
 });
 
@@ -151,6 +162,7 @@ const savedSessionPromptProcessExit = definePiScenario({
   runtimes: [
     { key: 'main', generation: 2 },
     { key: 'backup', generation: 1 },
+    { key: 'recovered-main', generation: 3 },
   ],
   steps: [
     ...successfulBootstrapSteps('main', 'main-bootstrap', mainSessionState),
@@ -190,6 +202,7 @@ const savedSessionPromptProcessExit = definePiScenario({
       },
     },
     ...processFailure('main', 'prompt'),
+    ...localRecoveryBootstrapSteps(),
   ],
 });
 

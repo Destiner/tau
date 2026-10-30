@@ -3,7 +3,7 @@ import {
   finishRemoteConnection,
   nextRequestId,
   normalizeEffort,
-  resolveRemoteFeedback,
+  resolveRecoveryFeedback,
   setControllerError,
   setControllerLifecycle,
   type SessionController,
@@ -46,7 +46,7 @@ import {
   clearCompactionRefreshWatch,
   failCompactionRefresh,
   rpc,
-  remoteReconnectFailureMessage,
+  failRuntimeRecovery,
   promptAdmissionReconcileDelay,
   clearRemoteConnectionWatch,
   clearSettingRequestWatch,
@@ -69,7 +69,6 @@ import {
   retainsProvisionalReplacement,
   releaseOrCacheRuntime,
   releaseIdleRuntimes,
-  stopControllerProcess,
 } from './lifecycle';
 import {
   confirmedAdmissionRequestIds,
@@ -373,6 +372,15 @@ async function handleResponse(
       return;
     }
 
+    if (
+      controller.recoveringRuntime &&
+      (resolvesBootstrap || resolvesStartMessages)
+    ) {
+      controller.bootstrapStateRequestId = '';
+      controller.startMessagesRequestId = '';
+      failRuntimeRecovery(controller, responseContext);
+      return;
+    }
     const failureMessage = resolvesHistory
       ? errorCopy.historyLoad
       : rpcFailureCopy(command);
@@ -425,13 +433,6 @@ async function handleResponse(
         'get_messages_failed',
         responseContext,
       );
-      if (resolvesStartMessages && controller.reconnectingRemote) {
-        controller.reconnectingRemote = false;
-        controller.remoteDisconnected = true;
-        setControllerError(controller, remoteReconnectFailureMessage);
-        void stopControllerProcess(controller, responseContext, false);
-        return;
-      }
     }
     if (resolvesAdmissionState || resolvesAdmissionMessages) {
       releaseSubmittedPrompt(controller);
@@ -481,13 +482,6 @@ async function handleResponse(
         'get_state_failed',
         responseContext,
       );
-      if (resolvesBootstrap && controller.reconnectingRemote) {
-        controller.reconnectingRemote = false;
-        controller.remoteDisconnected = true;
-        setControllerError(controller, remoteReconnectFailureMessage);
-        void stopControllerProcess(controller, responseContext, false);
-        return;
-      }
       releaseOrCacheRuntime(controller);
     }
     if (command === 'prompt') {
@@ -620,6 +614,10 @@ async function handleResponse(
       Boolean(piSessionId && piSessionPath) &&
       (controller.sessionId !== piSessionId ||
         controller.sessionPath !== piSessionPath);
+    const recoveringUnwrittenSession =
+      resolvesBootstrap &&
+      controller.recoveringRuntime &&
+      !controller.bootstrapSessionPath;
     // A persistence barrier or settled-run read can first observe B after Pi
     // moved on, so preserve completed A before B can rebind its row.
     const outgoingIdentity = sessionChanged
@@ -627,6 +625,7 @@ async function handleResponse(
       : undefined;
     if (
       outgoingIdentity &&
+      !recoveringUnwrittenSession &&
       (resolvesMaterializationBarrier ||
         Boolean(controller.materializationBarrierRequestId) ||
         shouldRegisterMaterializedPredecessor(controller))
@@ -652,13 +651,15 @@ async function handleResponse(
     const nowStreaming = data.isStreaming === true;
     const promptTriggeredReplacement =
       sessionChanged && (resolvesRunState || resolvesAdmissionState);
-    const replacementPromptRows = promptTriggeredReplacement
-      ? controller.messages.filter(
-          (entry) =>
-            entry.kind === 'user' &&
-            (entry.pending === true || Boolean(entry.pendingUserEvent)),
-        )
-      : [];
+    const replacementPromptRows = recoveringUnwrittenSession
+      ? controller.messages
+      : promptTriggeredReplacement
+        ? controller.messages.filter(
+            (entry) =>
+              entry.kind === 'user' &&
+              (entry.pending === true || Boolean(entry.pendingUserEvent)),
+          )
+        : [];
     if (resolvesAdmissionState && controller.submittedPrompt) {
       controller.submittedPrompt.admissionStateRequestId = '';
     }
@@ -923,7 +924,9 @@ async function handleResponse(
     const hydrated = hydrateTranscript(
       piMessages,
       previousTail,
-      controller.streaming || resolvesPending,
+      controller.streaming ||
+        resolvesPending ||
+        (resolvesStart && controller.recoveringRuntime),
     );
     const reconcilingCompaction = controller.compactionReconciliationPending;
     const reconciled = reconcilingCompaction
@@ -932,8 +935,12 @@ async function handleResponse(
           previousTail,
           controller.compactionStreamSequence,
         )
-      : resolvesStart && controller.reconnectingRemote
-        ? mergeReconnectedStream(hydrated, previousTail)
+      : resolvesStart && controller.recoveringRuntime
+        ? mergeReconnectedStream(
+            hydrated,
+            previousTail,
+            !controller.bootstrapSessionPath,
+          )
         : hydrated;
     if (reconcilingCompaction) {
       reanchorCompactionLocalEntries(
@@ -957,10 +964,10 @@ async function handleResponse(
       responseId === controller.submittedPrompt?.admissionMessagesRequestId;
     if (resolvesStart) {
       controller.startMessagesRequestId = '';
-      if (controller.reconnectingRemote) {
-        controller.remoteDisconnected = false;
-        controller.reconnectingRemote = false;
-        resolveRemoteFeedback(controller);
+      if (controller.recoveringRuntime) {
+        controller.runtimeDisconnected = false;
+        controller.recoveringRuntime = false;
+        resolveRecoveryFeedback(controller);
       }
     }
     setControllerLifecycle(

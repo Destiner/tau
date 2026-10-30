@@ -289,7 +289,7 @@ describe('command-created session durability — durability', () => {
     ['local', undefined],
     ['remote', 'ssh://fixture'],
   ])(
-    'adopts an unverified %s session Pi did write when the process is lost',
+    'retains an unverified %s session until explicit recovery can adopt its file',
     async (_kind, connectionString) => {
       const telemetry = await import('../../telemetry');
       const { handleBridgeEvent, handleRpc } = await import('./index');
@@ -323,26 +323,16 @@ describe('command-created session durability — durability', () => {
         code: 1,
       } satisfies PiBridgeEvent);
 
-      if (connectionString) {
-        expect(telemetry.invokeTraced).not.toHaveBeenCalledWith(
-          'register_session',
-          expect.anything(),
-          expect.anything(),
-        );
-        expect(state.ephemeralSessions).toHaveLength(1);
-        expect(controller.remoteDisconnected).toBe(true);
-      } else {
-        expect(telemetry.invokeTraced).toHaveBeenCalledWith(
-          'register_session',
-          expect.objectContaining({
-            sessionId: 'materialized-session',
-            adopted: true,
-          }),
-          undefined,
-        );
-        expect(state.workspace).toEqual(adopted);
-        expect(state.ephemeralSessions).toEqual([]);
-      }
+      expect(telemetry.invokeTraced).not.toHaveBeenCalledWith(
+        'register_session',
+        expect.anything(),
+        expect.anything(),
+      );
+      expect(state.ephemeralSessions).toHaveLength(1);
+      expect(controller.runtimeDisconnected).toBe(true);
+      expect(
+        controller.messages.some((entry) => entry.text === 'Partial'),
+      ).toBe(true);
       expect(state.controllers).toHaveLength(1);
       expect(state.controllers[0]?.sessionId).toBe('materialized-session');
     },
@@ -469,7 +459,7 @@ describe('command-created session durability — durability', () => {
     ['local', undefined],
     ['remote', 'ssh://fixture'],
   ])(
-    'discards a partial assistant stream Pi never wrote after %s process loss',
+    'preserves an unwritten partial assistant stream for explicit %s recovery',
     async (_kind, connectionString) => {
       const telemetry = await import('../../telemetry');
       const { handleBridgeEvent, handleRpc } = await import('./index');
@@ -499,14 +489,17 @@ describe('command-created session durability — durability', () => {
         code: 1,
       } satisfies PiBridgeEvent);
 
-      if (connectionString) {
-        expect(state.ephemeralSessions).toHaveLength(1);
-        expect(state.controllers).toEqual([controller]);
-        expect(controller.remoteDisconnected).toBe(true);
-      } else {
-        expect(state.ephemeralSessions).toEqual([]);
-        expect(state.controllers).toEqual([]);
-      }
+      expect(state.ephemeralSessions).toHaveLength(1);
+      expect(state.controllers).toEqual([controller]);
+      expect(controller.runtimeDisconnected).toBe(true);
+      expect(
+        controller.messages.some((entry) => entry.text === 'Partial'),
+      ).toBe(true);
+      expect(telemetry.invokeTraced).not.toHaveBeenCalledWith(
+        'register_session',
+        expect.anything(),
+        expect.anything(),
+      );
     },
   );
 

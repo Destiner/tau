@@ -2345,6 +2345,699 @@ describe('archive failure locality', () => {
   });
 });
 
+describe('local session recovery', () => {
+  it('leaves an initial local launch rejection as ordinary feedback', async () => {
+    const { tau, project } = await setupNamedSession();
+    const original = vi.mocked(invoke).getMockImplementation();
+    try {
+      const unopened = savedSession('initial-launch-failure');
+      project.sessions.push(unopened);
+      vi.mocked(invoke).mockImplementation(async (command, args) => {
+        if (command === 'start_pi') throw new Error('launch failed');
+        return original?.(command, args);
+      });
+      await tau.selectSession(project, unopened);
+      const controller = tau.state.controllers.find(
+        (entry) => entry.sessionId === unopened.id,
+      );
+      expect(controller).toBeDefined();
+      expect(controller?.runtimeDisconnected).toBe(false);
+      expect(tau.canRecoverRuntime.value).toBe(false);
+      expect(tau.activeFeedback.value).toBeDefined();
+      expect(tau.activeFeedback.value?.action).not.toBe('reconnect');
+    } finally {
+      if (original) vi.mocked(invoke).mockImplementation(original);
+      tau.dispose();
+    }
+  });
+
+  it.each([false, true])(
+    'verifies a provisional first-prompt file before recovery (written: %s)',
+    async (written) => {
+      const { tau, project, controller } = await setupNamedSession();
+      const original = vi.mocked(invoke).getMockImplementation();
+      const provisional = savedSession('provisional-first-prompt');
+      try {
+        // Pi has reported a path, but the workspace has not verified its file.
+        project.sessions.splice(0);
+        controller.sessionId = provisional.id;
+        controller.sessionPath = provisional.path;
+        controller.materializationVerified = false;
+        controller.messages = [
+          { id: 'first-user', kind: 'user', text: 'First prompt' },
+          {
+            id: 'stream-assistant-1',
+            kind: 'assistant',
+            text: 'Partial first reply',
+          },
+        ];
+        controller.draft = 'Newer unsent draft';
+        tau.state.activeSessionId = controller.sessionId;
+        tau.state.activeSessionPath = controller.sessionPath;
+        vi.mocked(invoke).mockImplementation(async (command, args) => {
+          if (command === 'register_session')
+            return written ? provisional : null;
+          return original?.(command, args);
+        });
+        emitBridge(controller.runtimeId, controller.generation, 'exited', 1);
+        await vi.waitFor(() =>
+          expect(controller.runtimeDisconnected).toBe(true),
+        );
+        expect(tau.state.controllers).toContain(controller);
+        await tau.recoverSession();
+        expect(invoke).toHaveBeenCalledWith(
+          'register_session',
+          expect.objectContaining({ sessionId: provisional.id }),
+        );
+        expect(invoke).toHaveBeenCalledWith(
+          'start_pi',
+          expect.objectContaining({
+            sessionPath: written ? provisional.path : null,
+          }),
+        );
+        expect(controller.draft).toBe('Newer unsent draft');
+        expect(
+          controller.messages.some(
+            (entry) => entry.text === 'Partial first reply',
+          ),
+        ).toBe(true);
+        expect(sentRequests(controller, 'prompt')).toEqual([]);
+        if (!written) expect(project.sessions).toEqual([]);
+      } finally {
+        if (original) vi.mocked(invoke).mockImplementation(original);
+        tau.dispose();
+      }
+    },
+  );
+
+  it('rebinds an unwritten recovery to a fresh identity without losing the visible transcript', async () => {
+    const { tau, project, controller } = await setupNamedSession();
+    const original = vi.mocked(invoke).getMockImplementation();
+    const fresh = savedSession('fresh-unwritten-recovery');
+    const previousId = controller.sessionId;
+    const controllerKey = controller.key;
+    const runtimeId = controller.runtimeId;
+    try {
+      project.sessions.splice(0);
+      controller.materializationVerified = false;
+      controller.messages = [
+        {
+          id: 'history-user',
+          kind: 'user',
+          text: 'Earlier question',
+          source: { message: 'previous-user', block: 0, offset: 0 },
+        },
+        {
+          id: 'history-assistant',
+          kind: 'assistant',
+          text: 'Earlier complete answer',
+          source: { message: 'previous-assistant', block: 0, offset: 0 },
+        },
+        { id: 'first-user', kind: 'user', text: 'Interrupted question' },
+        { id: 'stream-assistant-1', kind: 'assistant', text: 'Partial reply' },
+        {
+          id: 'stream-tool-2',
+          kind: 'tool',
+          text: 'Inspecting',
+          toolRunning: true,
+        },
+      ];
+      controller.draft = 'Newer unsent draft';
+      vi.mocked(invoke).mockImplementation(async (command, args) => {
+        if (command === 'register_session') return null;
+        return original?.(command, args);
+      });
+      emitBridge(runtimeId, controller.generation, 'exited', 1);
+      await vi.waitFor(() => expect(tau.canRecoverRuntime.value).toBe(true));
+      const previousTranscript = controller.messages.map((entry) => ({
+        ...entry,
+      }));
+
+      await tau.recoverSession();
+      expect(invoke).toHaveBeenCalledWith(
+        'start_pi',
+        expect.objectContaining({ runtimeId, sessionPath: null }),
+      );
+      expect(project.sessions).toEqual([]);
+      expect(controller.messages).toEqual(previousTranscript);
+      emitRpc(controller, {
+        id: controller.bootstrapStateRequestId,
+        type: 'response',
+        command: 'get_state',
+        success: true,
+        data: {
+          sessionId: fresh.id,
+          sessionFile: fresh.path,
+          isStreaming: false,
+        },
+      });
+      await vi.waitFor(() =>
+        expect(controller.startMessagesRequestId).not.toBe(''),
+      );
+      expect(controller.messages).toEqual(previousTranscript);
+      expect(controller).toMatchObject({
+        key: controllerKey,
+        runtimeId,
+        sessionId: fresh.id,
+        sessionPath: fresh.path,
+      });
+      expect(tau.state.activeControllerKey).toBe(controllerKey);
+      expect(tau.state.activeSessionId).toBe(fresh.id);
+      expect(tau.state.activeSessionPath).toBe(fresh.path);
+      expect(tau.state.ephemeralSessions).toEqual([
+        expect.objectContaining({
+          controllerKey,
+          id: fresh.id,
+          path: fresh.path,
+          phantom: false,
+        }),
+      ]);
+      emitRpc(controller, {
+        id: controller.startMessagesRequestId,
+        type: 'response',
+        command: 'get_messages',
+        success: true,
+        data: { messages: [] },
+      });
+      await vi.waitFor(() => expect(controller.recoveringRuntime).toBe(false));
+      expect(controller.messages).toEqual(previousTranscript);
+      expect(controller.draft).toBe('Newer unsent draft');
+      expect(tau.draft.value).toBe('Newer unsent draft');
+      expect(controller.ready).toBe(true);
+      expect(controller.runtimeDisconnected).toBe(false);
+      expect(project.sessions).toEqual([]);
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.filter(([command]) => command === 'register_session'),
+      ).toEqual([
+        [
+          'register_session',
+          expect.objectContaining({ sessionId: previousId }),
+        ],
+      ]);
+      expect(sentRequests(controller, 'prompt')).toEqual([]);
+      expect(tau.activeFeedback.value).toBeUndefined();
+    } finally {
+      if (original) vi.mocked(invoke).mockImplementation(original);
+      tau.dispose();
+    }
+  });
+
+  it('retries failed recovery cleanup before launching another runtime', async () => {
+    const { tau, session, controller } = await setupNamedSession();
+    const original = vi.mocked(invoke).getMockImplementation();
+    const processCalls: string[] = [];
+    let failedStops = 0;
+    let ownedGeneration = 0;
+    try {
+      controller.draft = 'Keep my draft';
+      controller.messages = [
+        { id: 'partial', kind: 'assistant', text: 'Keep partial answer' },
+      ];
+      emitBridge(controller.runtimeId, controller.generation, 'exited', 1);
+      await vi.waitFor(() => expect(tau.canRecoverRuntime.value).toBe(true));
+      vi.mocked(invoke).mockImplementation(async (command, args) => {
+        if (command === 'stop_pi') {
+          processCalls.push('stop');
+          if (failedStops++ < 2) throw new Error('RAW_CLEANUP_FAILURE');
+          ownedGeneration = 0;
+        }
+        if (command === 'start_pi') {
+          expect(ownedGeneration).toBe(0);
+          processCalls.push('start');
+          const generation = await original?.(command, args);
+          ownedGeneration = generation as number;
+          return generation;
+        }
+        return original?.(command, args);
+      });
+      await tau.recoverSession();
+      const failedGeneration = controller.generation;
+      emitRpc(controller, {
+        id: controller.bootstrapStateRequestId,
+        type: 'response',
+        command: 'get_state',
+        success: false,
+      });
+      await vi.waitFor(() => expect(controller.recoveryStopFailed).toBe(true));
+      const expectRetryableIncident = (): void => {
+        expect(controller).toMatchObject({
+          generation: failedGeneration,
+          runtimeDisconnected: true,
+          recoveringRuntime: false,
+          recoveryStopFailed: true,
+          draft: 'Keep my draft',
+        });
+        expect(tau.canRecoverRuntime.value).toBe(true);
+        expect(
+          controller.feedback.filter((entry) => !entry.acknowledged),
+        ).toEqual([
+          expect.objectContaining({
+            action: 'reconnect',
+            message: 'The Pi connection failed. Try again.',
+          }),
+        ]);
+        expect(tau.activeFeedback.value?.action).toBe('reconnect');
+        expect(tau.state.workspaceFeedback).toEqual([]);
+        expect(tau.state.remoteDialogOpen).toBe(false);
+        expect(controller.messages.map((entry) => entry.text)).toEqual([
+          'Keep partial answer',
+        ]);
+      };
+      expectRetryableIncident();
+      expect(processCalls).toEqual(['start', 'stop']);
+
+      await tau.recoverSession();
+      expectRetryableIncident();
+      expect(processCalls).toEqual(['start', 'stop', 'stop']);
+      expect(ownedGeneration).toBe(failedGeneration);
+
+      await tau.recoverSession();
+      expect(processCalls).toEqual(['start', 'stop', 'stop', 'stop', 'start']);
+      expect(controller.recoveryStopFailed).toBe(false);
+      expect(controller.recoveringRuntime).toBe(true);
+      expect(controller.generation).toBeGreaterThan(failedGeneration);
+      expect(tau.canRecoverRuntime.value).toBe(false);
+      emitRpc(controller, {
+        id: controller.bootstrapStateRequestId,
+        type: 'response',
+        command: 'get_state',
+        success: true,
+        data: {
+          sessionId: session.id,
+          sessionFile: session.path,
+          isStreaming: false,
+        },
+      });
+      await vi.waitFor(() =>
+        expect(controller.startMessagesRequestId).not.toBe(''),
+      );
+      emitRpc(controller, {
+        id: controller.startMessagesRequestId,
+        type: 'response',
+        command: 'get_messages',
+        success: true,
+        data: { messages: [] },
+      });
+      await vi.waitFor(() => expect(controller.recoveringRuntime).toBe(false));
+      expect(controller.runtimeDisconnected).toBe(false);
+      expect(controller.ready).toBe(true);
+      expect(controller.recoveryStopFailed).toBe(false);
+      expect(tau.activeFeedback.value).toBeUndefined();
+      expect(tau.state.workspaceFeedback).toEqual([]);
+      expect(controller.draft).toBe('Keep my draft');
+      expect(sentRequests(controller, 'prompt')).toEqual([]);
+    } finally {
+      if (original) vi.mocked(invoke).mockImplementation(original);
+      tau.dispose();
+    }
+  });
+
+  it.each([false, true])(
+    'waits for exit and recovers explicitly without replay (bootstrap: %s)',
+    async (bootstrapping) => {
+      const { tau, project, session, controller } = await setupNamedSession();
+      try {
+        controller.starting = bootstrapping;
+        controller.ready = !bootstrapping;
+        controller.messages = [
+          { id: 'prompt', kind: 'user', text: 'Interrupted question' },
+          {
+            id: 'stream-assistant-1',
+            kind: 'assistant',
+            text: 'Partial reply',
+          },
+        ];
+        controller.draft = 'Newer draft';
+        const oldGeneration = controller.generation;
+        const oldBootstrapId = controller.bootstrapStateRequestId;
+        emitBridge(controller.runtimeId, oldGeneration, 'error');
+        await vi.waitFor(() =>
+          expect(controller.runtimeDisconnected).toBe(true),
+        );
+        expect(tau.canRecoverRuntime.value).toBe(false);
+        expect(tau.canCompose.value).toBe(false);
+        expect(tau.activeFeedback.value).toMatchObject({
+          action: 'reconnect',
+          message: 'The Pi connection failed. Try again.',
+        });
+        await tau.recoverSession();
+        expect(
+          vi
+            .mocked(invoke)
+            .mock.calls.filter(([name]) => name.startsWith('start_pi')),
+        ).toHaveLength(0);
+
+        emitBridge(controller.runtimeId, oldGeneration, 'exited', 1);
+        await vi.waitFor(() => expect(tau.canRecoverRuntime.value).toBe(true));
+        expect(
+          controller.feedback.filter((entry) => !entry.acknowledged),
+        ).toHaveLength(1);
+        expect(tau.activeFeedback.value?.message).toBe(
+          'The Pi process stopped unexpectedly. Try again.',
+        );
+        await tau.selectSession(project, session);
+        expect(
+          vi
+            .mocked(invoke)
+            .mock.calls.filter(([name]) => name.startsWith('start_pi')),
+        ).toHaveLength(0);
+
+        await Promise.all([tau.recoverSession(), tau.recoverSession()]);
+        expect(controller.recoveringRuntime).toBe(true);
+        expect(tau.canRecoverRuntime.value).toBe(false);
+        expect(tau.activeFeedback.value?.action).toBe('reconnect');
+        expect(
+          vi
+            .mocked(invoke)
+            .mock.calls.filter(([name]) => name.startsWith('start_pi')),
+        ).toEqual([
+          [
+            'start_pi',
+            expect.objectContaining({
+              runtimeId: controller.runtimeId,
+              sessionPath: session.path,
+            }),
+          ],
+        ]);
+        emitRpc(controller, {
+          id: controller.bootstrapStateRequestId,
+          type: 'response',
+          command: 'get_state',
+          success: true,
+          data: {
+            sessionId: session.id,
+            sessionFile: session.path,
+            isStreaming: false,
+          },
+        });
+        await vi.waitFor(() =>
+          expect(controller.startMessagesRequestId).not.toBe(''),
+        );
+        expect(controller.recoveringRuntime).toBe(true);
+        expect(tau.activeFeedback.value?.action).toBe('reconnect');
+        emitRpc(controller, {
+          id: controller.startMessagesRequestId,
+          type: 'response',
+          command: 'get_messages',
+          success: true,
+          data: {
+            messages: [{ role: 'user', content: 'Interrupted question' }],
+          },
+        });
+        await vi.waitFor(() =>
+          expect(controller.recoveringRuntime).toBe(false),
+        );
+        expect(controller.runtimeDisconnected).toBe(false);
+        expect(controller.ready).toBe(true);
+        expect(controller.draft).toBe('Newer draft');
+        expect(controller.messages.map((entry) => entry.text)).toEqual([
+          'Interrupted question',
+          'Partial reply',
+        ]);
+        expect(sentRequests(controller, 'prompt')).toEqual([]);
+        expect(tau.activeFeedback.value).toBeUndefined();
+
+        emitBridge(controller.runtimeId, oldGeneration, 'exited', 1);
+        emitBridge(controller.runtimeId, oldGeneration, 'error');
+        emitRpc(
+          { runtimeId: controller.runtimeId, generation: oldGeneration },
+          {
+            id: oldBootstrapId,
+            type: 'response',
+            command: 'get_state',
+            success: true,
+            data: {
+              sessionId: 'stale-session',
+              sessionFile: '/tmp/stale.jsonl',
+              isStreaming: true,
+            },
+          },
+        );
+        await Promise.resolve();
+        expect(controller.sessionId).toBe(session.id);
+        expect(controller.ready).toBe(true);
+        expect(controller.runtimeDisconnected).toBe(false);
+        expect(tau.activeFeedback.value).toBeUndefined();
+      } finally {
+        tau.dispose();
+      }
+    },
+  );
+
+  it.each([
+    ['get_state', 'rejection'],
+    ['get_messages', 'rejection'],
+    ['get_state', 'expiry'],
+    ['get_messages', 'expiry'],
+  ] as const)(
+    'keeps local recovery retryable after %s send %s without a bridge modal',
+    async (method, failure) => {
+      const { tau, session, controller } = await setupNamedSession();
+      const original = vi.mocked(invoke).getMockImplementation();
+      try {
+        controller.draft = 'Keep my unsent draft';
+        controller.messages = [
+          { id: 'partial', kind: 'assistant', text: 'Keep the partial reply' },
+        ];
+        emitBridge(controller.runtimeId, controller.generation, 'exited', 1);
+        await vi.waitFor(() => expect(tau.canRecoverRuntime.value).toBe(true));
+        vi.useFakeTimers();
+        vi.mocked(invoke).mockImplementation(async (command, args) => {
+          if (
+            failure === 'rejection' &&
+            command === 'send_pi' &&
+            (args as { request?: { type?: string } })?.request?.type === method
+          ) {
+            throw new Error('RAW_RECOVERY_SEND_FAILURE');
+          }
+          return original?.(command, args);
+        });
+
+        await tau.recoverSession();
+        if (method === 'get_messages') {
+          emitRpc(controller, {
+            id: controller.bootstrapStateRequestId,
+            type: 'response',
+            command: 'get_state',
+            success: true,
+            data: {
+              sessionId: session.id,
+              sessionFile: session.path,
+              isStreaming: false,
+            },
+          });
+          await vi.waitFor(() =>
+            expect(sentRequests(controller, 'get_messages')).toHaveLength(1),
+          );
+        }
+        if (failure === 'expiry') {
+          expect(controller.recoveringRuntime).toBe(true);
+          await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+        }
+        // Let both the rejected event handler and its outer lifecycle catch settle.
+        await vi.waitFor(() => expect(controller.generation).toBe(0));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(controller).toMatchObject({
+          runtimeDisconnected: true,
+          recoveringRuntime: false,
+          ready: false,
+          starting: false,
+          syncing: false,
+          draft: 'Keep my unsent draft',
+        });
+        expect(controller.messages.map((entry) => entry.text)).toContain(
+          'Keep the partial reply',
+        );
+        expect(tau.canRecoverRuntime.value).toBe(true);
+        expect(
+          controller.feedback.filter((entry) => !entry.acknowledged),
+        ).toEqual([
+          expect.objectContaining({
+            action: 'reconnect',
+            message: 'The Pi connection failed. Try again.',
+          }),
+        ]);
+        expect(tau.state.workspaceFeedback).toEqual([]);
+        expect(tau.state.remoteDialogOpen).toBe(false);
+        expect(invoke).toHaveBeenCalledWith(
+          'stop_pi',
+          expect.objectContaining({ runtimeId: controller.runtimeId }),
+        );
+        expect(sentRequests(controller, 'prompt')).toEqual([]);
+
+        if (original) vi.mocked(invoke).mockImplementation(original);
+        await tau.recoverSession();
+        expect(controller.recoveringRuntime).toBe(true);
+        expect(controller.generation).toBeGreaterThan(0);
+        expect(tau.canRecoverRuntime.value).toBe(false);
+        expect(
+          vi
+            .mocked(invoke)
+            .mock.calls.filter(([command]) => command === 'start_pi'),
+        ).toHaveLength(2);
+      } finally {
+        if (original) vi.mocked(invoke).mockImplementation(original);
+        tau.dispose();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it('keeps a rejected provisional-session probe recoverable without launching Pi', async () => {
+    const { tau, project, controller } = await setupNamedSession();
+    const original = vi.mocked(invoke).getMockImplementation();
+    try {
+      project.sessions.splice(0);
+      controller.materializationVerified = false;
+      controller.draft = 'Keep the provisional draft';
+      controller.messages = [
+        { id: 'first-user', kind: 'user', text: 'First prompt' },
+      ];
+      const identity = {
+        sessionId: controller.sessionId,
+        sessionPath: controller.sessionPath,
+      };
+      emitBridge(controller.runtimeId, controller.generation, 'exited', 1);
+      await vi.waitFor(() => expect(tau.canRecoverRuntime.value).toBe(true));
+      vi.mocked(invoke).mockImplementation(async (command, args) => {
+        if (command === 'register_session') {
+          throw new Error('RAW_REGISTRATION_PROBE_FAILURE');
+        }
+        return original?.(command, args);
+      });
+
+      await tau.recoverSession();
+      expect(invoke).toHaveBeenCalledWith(
+        'register_session',
+        expect.objectContaining({ sessionId: identity.sessionId }),
+      );
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.filter(([command]) => command === 'start_pi'),
+      ).toEqual([]);
+      expect(controller).toMatchObject({
+        ...identity,
+        generation: 0,
+        runtimeDisconnected: true,
+        recoveringRuntime: false,
+        draft: 'Keep the provisional draft',
+      });
+      expect(tau.state.controllers).toContain(controller);
+      expect(project.sessions).toEqual([]);
+      expect(tau.canRecoverRuntime.value).toBe(true);
+      expect(
+        controller.feedback.filter((entry) => !entry.acknowledged),
+      ).toEqual([
+        expect.objectContaining({
+          action: 'reconnect',
+          message: 'The Pi connection failed. Try again.',
+        }),
+      ]);
+      expect(tau.state.workspaceFeedback).toEqual([]);
+      expect(sentRequests(controller, 'prompt')).toEqual([]);
+
+      if (original) vi.mocked(invoke).mockImplementation(original);
+      await tau.recoverSession();
+      expect(controller.recoveringRuntime).toBe(true);
+      expect(invoke).toHaveBeenCalledWith(
+        'start_pi',
+        expect.objectContaining({ sessionPath: null }),
+      );
+    } finally {
+      if (original) vi.mocked(invoke).mockImplementation(original);
+      tau.dispose();
+    }
+  });
+
+  it('keeps a rejected recovery launch retryable in place', async () => {
+    const { tau, controller } = await setupNamedSession();
+    const original = vi.mocked(invoke).getMockImplementation();
+    try {
+      emitBridge(controller.runtimeId, controller.generation, 'exited', 1);
+      await vi.waitFor(() => expect(tau.canRecoverRuntime.value).toBe(true));
+      vi.mocked(invoke).mockImplementation(async (command, args) => {
+        if (command === 'start_pi') throw new Error('launch failed');
+        return original?.(command, args);
+      });
+      await tau.recoverSession();
+      expect(controller).toMatchObject({
+        generation: 0,
+        starting: false,
+        recoveringRuntime: false,
+        runtimeDisconnected: true,
+      });
+      expect(tau.canRecoverRuntime.value).toBe(true);
+      expect(
+        controller.feedback.filter((entry) => !entry.acknowledged),
+      ).toEqual([
+        expect.objectContaining({
+          action: 'reconnect',
+          message: 'The Pi connection failed. Try again.',
+        }),
+      ]);
+      if (original) vi.mocked(invoke).mockImplementation(original);
+      await tau.recoverSession();
+      expect(controller.recoveringRuntime).toBe(true);
+      expect(controller.generation).toBeGreaterThan(0);
+      emitBridge(controller.runtimeId, controller.generation, 'exited', 1);
+      await vi.waitFor(() => expect(tau.canRecoverRuntime.value).toBe(true));
+      expect(controller.recoveringRuntime).toBe(false);
+      expect(
+        controller.feedback.filter((entry) => !entry.acknowledged),
+      ).toHaveLength(1);
+      expect(tau.activeFeedback.value?.message).toBe(
+        'The Pi process stopped unexpectedly. Try again.',
+      );
+    } finally {
+      if (original) vi.mocked(invoke).mockImplementation(original);
+      tau.dispose();
+    }
+  });
+
+  it('keeps a background failure with its owner across navigation', async () => {
+    const {
+      tau,
+      project,
+      firstSession,
+      secondSession,
+      firstController,
+      secondController,
+    } = await setupExtensionControllers();
+    try {
+      firstController.draft = 'Failed session draft';
+      secondController.draft = 'Sibling draft';
+      const siblingGeneration = secondController.generation;
+      emitBridge(
+        firstController.runtimeId,
+        firstController.generation,
+        'exited',
+        1,
+      );
+      await vi.waitFor(() =>
+        expect(firstController.runtimeDisconnected).toBe(true),
+      );
+      expect(tau.activeFeedback.value).toBeUndefined();
+      expect(secondController.generation).toBe(siblingGeneration);
+      await tau.selectSession(project, firstSession);
+      expect(tau.activeFeedback.value?.action).toBe('reconnect');
+      expect(tau.draft.value).toBe('Failed session draft');
+      await tau.selectSession(project, secondSession);
+      expect(tau.draft.value).toBe('Sibling draft');
+      expect(tau.activeFeedback.value).toBeUndefined();
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.filter(([name]) => name.startsWith('start_pi')),
+      ).toHaveLength(0);
+    } finally {
+      tau.dispose();
+    }
+  });
+});
+
 describe('remote session recovery', () => {
   it('reconnects an established session explicitly with the same identity', async () => {
     const { tau, project, session, controller } = await setupNamedSession();
@@ -2357,9 +3050,9 @@ describe('remote session recovery', () => {
     const oldGeneration = controller.generation;
 
     emitBridge(controller.runtimeId, oldGeneration, 'exited', 255);
-    await vi.waitFor(() => expect(controller.remoteDisconnected).toBe(true));
+    await vi.waitFor(() => expect(controller.runtimeDisconnected).toBe(true));
 
-    expect(tau.canReconnectRemote.value).toBe(true);
+    expect(tau.canRecoverRuntime.value).toBe(true);
     expect(tau.canCompose.value).toBe(false);
     await tau.selectSession(project, session);
     expect(
@@ -2368,10 +3061,10 @@ describe('remote session recovery', () => {
         .mock.calls.filter(([command]) => command.startsWith('start_pi')),
     ).toHaveLength(0);
 
-    await tau.reconnectRemoteSession();
+    await tau.recoverSession();
 
-    expect(tau.canReconnectRemote.value).toBe(false);
-    expect(controller.reconnectingRemote).toBe(true);
+    expect(tau.canRecoverRuntime.value).toBe(false);
+    expect(controller.recoveringRuntime).toBe(true);
     expect(invoke).toHaveBeenCalledWith(
       'start_pi_remote',
       expect.objectContaining({
@@ -2415,9 +3108,9 @@ describe('remote session recovery', () => {
       success: true,
       data: { messages: [] },
     });
-    await vi.waitFor(() => expect(controller.reconnectingRemote).toBe(false));
+    await vi.waitFor(() => expect(controller.recoveringRuntime).toBe(false));
 
-    expect(controller.remoteDisconnected).toBe(false);
+    expect(controller.runtimeDisconnected).toBe(false);
     expect(controller.ready).toBe(true);
     expect(controller.draft).toBe('Keep this draft');
     expect(

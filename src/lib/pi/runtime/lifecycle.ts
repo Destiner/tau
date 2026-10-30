@@ -126,7 +126,7 @@ async function retryCompactionRefresh(
     compactionRefreshWatches.has(controller.key) ||
     controller.disposed ||
     !controller.ready ||
-    controller.remoteDisconnected
+    controller.runtimeDisconnected
   )
     return;
   try {
@@ -285,6 +285,7 @@ async function startController(
   discardControllerDialogs(controller);
   void refreshModelScope(controller, project, parentContext);
 
+  let startedGeneration: number | undefined;
   try {
     if (project.connectionString) {
       controller.generation = await invokeTraced<number>(
@@ -310,6 +311,7 @@ async function startController(
         parentContext,
       );
     }
+    startedGeneration = controller.generation;
     if (
       controller.disposed ||
       (project.connectionString && !controller.connectingRemote)
@@ -319,6 +321,12 @@ async function startController(
     }
     await requestBootstrap(controller, parentContext);
   } catch {
+    if (
+      controller.disposed ||
+      (startedGeneration !== undefined &&
+        controller.generation !== startedGeneration)
+    )
+      return;
     clearRemoteConnectionWatch(controller);
     setControllerLifecycle(
       controller,
@@ -332,10 +340,8 @@ async function startController(
     if (controller.pendingPrompt) {
       cancelPendingPrompt(controller, message, !project.connectionString);
     }
-    if (project.connectionString && controller.reconnectingRemote) {
-      controller.reconnectingRemote = false;
-      controller.remoteDisconnected = true;
-      setControllerError(controller, remoteReconnectFailureMessage);
+    if (controller.recoveringRuntime || controller.runtimeDisconnected) {
+      failRuntimeRecovery(controller, parentContext);
     } else if (project.connectionString) {
       presentRemoteConnectionError(controller, message);
     } else setControllerError(controller, message);
@@ -368,16 +374,19 @@ async function requestBootstrap(
   controller: SessionController,
   parentContext?: TraceContext,
 ): Promise<void> {
+  const snapshot = captureRpcDispatchSnapshot(controller);
   await rpc(
     controller,
     { id: nextRequestId('models'), type: 'get_available_models' },
     parentContext,
   );
+  if (!rpcDispatchStillCurrent(controller, snapshot)) return;
   await rpc(
     controller,
     { id: nextRequestId('commands'), type: 'get_commands' },
     parentContext,
   );
+  if (!rpcDispatchStillCurrent(controller, snapshot)) return;
   const stateRequestId = nextRequestId('state');
   controller.bootstrapStateRequestId = stateRequestId;
   if (controller.pendingPrompt) {
@@ -432,6 +441,13 @@ function cleanupRejectedRpcDispatch(
 ): void {
   if (!rpcDispatchStillCurrent(controller, snapshot, method)) return;
 
+  if (
+    controller.recoveringRuntime &&
+    (controller.bootstrapStateRequestId === requestId ||
+      controller.startMessagesRequestId === requestId)
+  ) {
+    failRuntimeRecovery(controller);
+  }
   if (method === 'get_messages') failCompactionRefresh(controller, requestId);
   if (controller.bootstrapStateRequestId === requestId) {
     controller.bootstrapStateRequestId = '';
@@ -612,6 +628,15 @@ async function rpc(
         method,
         span.context,
         () => {
+          if (
+            rpcDispatchStillCurrent(controller, snapshot, method) &&
+            controller.recoveringRuntime &&
+            (controller.bootstrapStateRequestId === requestId ||
+              controller.startMessagesRequestId === requestId)
+          ) {
+            cleanupRejectedRpcDispatch(controller, requestId, method, snapshot);
+            return;
+          }
           // Span expiry must also settle an unanswered reconciliation read.
           if (
             !rpcDispatchStillCurrent(controller, snapshot, method) ||
@@ -662,11 +687,9 @@ async function rpc(
   }
 }
 
-const piConnectionFailureMessage =
-  'The Pi connection failed. Select the session again to reconnect.';
+const piConnectionFailureMessage = 'The Pi connection failed. Try again.';
 
-const piProcessExitMessage =
-  'The Pi process stopped unexpectedly. Select the session again to reconnect.';
+const piProcessExitMessage = 'The Pi process stopped unexpectedly. Try again.';
 
 const remotePiConnectionFailureMessage =
   'The remote Pi connection failed. Check the connection and try again.';
@@ -674,10 +697,34 @@ const remotePiConnectionFailureMessage =
 const remotePiProcessExitMessage =
   'The remote Pi process stopped unexpectedly. Check the connection and try again.';
 
-const remoteDisconnectedMessage = 'The connection was lost.';
+const runtimeDisconnectedMessage = 'The connection was lost.';
 
 const remoteReconnectFailureMessage =
   'The remote connection failed. Try reconnecting again.';
+
+function failRuntimeRecovery(
+  controller: SessionController,
+  parentContext?: TraceContext,
+): void {
+  const remote =
+    controller.connectingRemote ||
+    state.workspace?.projects.find(
+      (project) => project.path === controller.projectPath,
+    )?.connectionString;
+  controller.recoveringRuntime = false;
+  controller.runtimeDisconnected = true;
+  setControllerLifecycle(
+    controller,
+    { ready: false, starting: false, syncing: false, connectingRemote: false },
+    'controller_start_failed',
+    parentContext,
+  );
+  setControllerError(
+    controller,
+    remote ? remoteReconnectFailureMessage : piConnectionFailureMessage,
+  );
+  void stopControllerProcess(controller, parentContext, false);
+}
 
 const remoteConnectionTimeoutMessage =
   'The remote connection timed out. Check the connection and try again.';
@@ -710,9 +757,9 @@ function watchRemoteConnection(controller: SessionController): void {
       if (controller.pendingPrompt) {
         cancelPendingPrompt(controller, remoteConnectionTimeoutMessage, false);
       }
-      if (controller.reconnectingRemote) {
-        controller.reconnectingRemote = false;
-        controller.remoteDisconnected = true;
+      if (controller.recoveringRuntime) {
+        controller.recoveringRuntime = false;
+        controller.runtimeDisconnected = true;
         setControllerLifecycle(
           controller,
           { starting: false, connectingRemote: false, syncing: false },
@@ -1107,7 +1154,7 @@ async function registerConnectedSession(
   // registration itself as the probe. Local Pi returns a row only when a
   // session file backs it, so the answer comes back either way.
   probeMaterialization = false,
-): Promise<void> {
+): Promise<boolean | void> {
   if (!probeMaterialization && !canRegisterConnectedSession(controller)) return;
   const identity = captureConnectedSessionIdentity(controller);
   const identityHolds = (): boolean =>
@@ -1143,7 +1190,10 @@ async function registerConnectedSession(
     );
   } catch (error) {
     if (error === staleRegistration) return;
-    setControllerError(controller, errorCopy.sessionRegistration);
+    if (controller.recoveringRuntime)
+      failRuntimeRecovery(controller, parentContext);
+    else setControllerError(controller, errorCopy.sessionRegistration);
+    return false;
   } finally {
     finishRegistrationMutation(mutation);
   }
@@ -1368,7 +1418,7 @@ async function discardReleasedEmptySession(
     !ephemeral ||
     workspaceContainsSession(controller) ||
     controller.materializationVerified ||
-    controller.remoteDisconnected ||
+    controller.runtimeDisconnected ||
     controller.setupFailure ||
     controller.commandRefreshFailed ||
     controller.draft.trim() ||
@@ -1435,10 +1485,15 @@ async function stopControllerProcess(
       parentContext,
     );
   } catch {
-    setControllerError(controller, errorCopy.closePi);
+    if (controller.generation !== generation || controller.disposed) return;
+    if (controller.runtimeDisconnected) {
+      controller.recoveryStopFailed = true;
+      controller.recoveringRuntime = false;
+    } else setControllerError(controller, errorCopy.closePi);
     return;
   }
   if (controller.generation !== generation) return;
+  controller.recoveryStopFailed = false;
   // Pi replaces a session on a live runtime without starting a new process, so
   // the generation check above cannot see it. A stop authorised while the
   // predecessor sat idle must not be read as permission to drop the successor
@@ -1521,8 +1576,9 @@ export {
   piProcessExitMessage,
   remotePiConnectionFailureMessage,
   remotePiProcessExitMessage,
-  remoteDisconnectedMessage,
+  runtimeDisconnectedMessage,
   remoteReconnectFailureMessage,
+  failRuntimeRecovery,
   remoteConnectionTimeoutMessage,
   remoteConnectionTimeoutMs,
   settingRequestTimeoutMs,

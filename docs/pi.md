@@ -64,7 +64,7 @@ Orderly runtime stops, including app exit and frontend ownership replacement, cl
 
 Remote Pi runtimes use dedicated SSH connections with 15-second server-alive probes and a count limit of three. Connection sharing is disabled for these runtimes, so an unresponsive peer normally makes OpenSSH exit after approximately 45 seconds without affecting an existing shared SSH master. Short-lived remote inspection commands keep their existing timeout policy.
 
-When an established remote connection exits, Tau keeps the session, draft, and interrupted transcript, clears live activity, and offers a session-local **Reconnect** action. Selecting the session does not reconnect it, and reconnecting never resends a prompt or extension response. A responsive SSH server cannot reveal a Pi process that is itself hung, and reopening restores Pi's persisted history rather than lost in-memory extension continuations.
+After a local Pi connection fails or an established remote connection exits, Tau keeps the session, draft, and interrupted transcript, clears live activity, and offers a session-local **Retry** or **Reconnect** action. Recovery waits for the old process to exit; selecting the session does not restart it. Recovery never resends prompts, queued work, or extension responses. Verified session files restore persisted history; unwritten sessions start fresh without replay. Initial local launch and setup failures retain their separate handling. A responsive SSH server cannot reveal a Pi process that is itself hung, and reopening cannot restore lost in-memory extension continuations.
 
 ### Live ownership of saved sessions
 

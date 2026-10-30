@@ -95,7 +95,11 @@ function createLifecycle(
         ({ payload }) => {
           void handleBridgeEvent(payload).catch(() => {
             const controller = controllerByRuntimeId(payload.runtimeId);
-            if (!controller || controller.generation !== payload.generation) {
+            if (
+              !controller ||
+              controller.generation !== payload.generation ||
+              controller.runtimeDisconnected
+            ) {
               return;
             }
             setControllerLifecycle(

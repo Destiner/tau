@@ -1,16 +1,22 @@
 import { errorCopy } from '../../lib/error-copy';
-import { cancelPendingPrompt, startController } from '../../lib/pi/runtime';
+import {
+  cancelPendingPrompt,
+  registerConnectedSession,
+  startController,
+  stopControllerProcess,
+} from '../../lib/pi/runtime';
 import { invokeTraced } from '../../lib/telemetry';
 import {
   activeController,
   activeProject,
   projectActionsDisabled,
   applyRemoteDirectoryListing,
-  canReconnectRemote,
+  canRecoverRuntime,
   clearRemoteDirectoryBrowser,
   clearRemoteRetry,
   controllerByKey,
   state,
+  workspaceContainsSession,
   type ProjectSummary,
   type RemoteDirectoryChoice,
   type RemoteDirectoryListing,
@@ -191,17 +197,45 @@ async function retryRemoteConnection(): Promise<void> {
   }
 }
 
-async function reconnectRemoteSession(): Promise<void> {
+async function recoverSession(): Promise<void> {
   if (projectActionsDisabled.value) return;
   const controller = activeController.value;
   const project = activeProject.value;
-  if (!controller || !project || !canReconnectRemote.value) return;
+  if (!controller || !project || !canRecoverRuntime.value) return;
 
-  controller.reconnectingRemote = true;
+  controller.recoveringRuntime = true;
+  if (controller.recoveryStopFailed) {
+    await stopControllerProcess(controller, undefined, false);
+    if (controller.generation || controller.disposed) {
+      controller.recoveringRuntime = false;
+      return;
+    }
+  }
+  if (
+    !project.connectionString &&
+    controller.sessionPath &&
+    !workspaceContainsSession(controller)
+  ) {
+    const verified = await registerConnectedSession(
+      controller,
+      undefined,
+      true,
+      true,
+    );
+    if (verified === false) return;
+  }
+  if (
+    controller.disposed ||
+    controller.generation !== 0 ||
+    !controller.recoveringRuntime
+  )
+    return;
   await startController(
     controller,
     project,
-    controller.sessionPath || undefined,
+    project.connectionString || workspaceContainsSession(controller)
+      ? controller.sessionPath || undefined
+      : undefined,
     true,
   );
 }
@@ -211,5 +245,5 @@ export {
   closeRemoteProjectDialog,
   submitRemoteConnection,
   createRemote,
-  reconnectRemoteSession,
+  recoverSession,
 };

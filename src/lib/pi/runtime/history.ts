@@ -192,6 +192,7 @@ function mergeLiveStreamSuffix(
 function mergeReconnectedStream(
   hydrated: TranscriptEntry[],
   previous: TranscriptEntry[],
+  unwrittenSession = false,
 ): TranscriptEntry[] {
   const sourceKey = (entry: TranscriptEntry): string | undefined =>
     entry.source ? `${entry.source.message}:${entry.source.block}` : undefined;
@@ -204,7 +205,11 @@ function mergeReconnectedStream(
   const toolIds = new Set(
     hydrated.map((entry) => entry.toolCallId).filter(Boolean),
   );
-  const live = liveStreamSuffix(previous, 0);
+  const live = unwrittenSession
+    ? previous.filter(
+        (entry) => entry.kind !== 'notice' && entry.anchor === undefined,
+      )
+    : liveStreamSuffix(previous, 0);
   const liveText = new Map<string, string>();
   for (const entry of live) {
     const key = sourceKey(entry);

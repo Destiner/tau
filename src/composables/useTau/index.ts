@@ -19,7 +19,7 @@ import {
   queueBusy,
   queueFeedback,
   queueFailedDrafts,
-  canReconnectRemote,
+  canRecoverRuntime,
   canRenameSession,
   acknowledgeFeedback,
   commands,
@@ -74,7 +74,7 @@ import {
   closeRemoteProjectDialog,
   submitRemoteConnection,
   createRemote,
-  reconnectRemoteSession,
+  recoverSession,
 } from './remote';
 import createSessions from './sessions';
 import { selectModel, renameSession, selectEffort } from './settings';
@@ -147,7 +147,7 @@ function useTau() {
     queueFailedDrafts,
     extensionCommandDraft,
     dismissQueueFeedback,
-    canReconnectRemote,
+    canRecoverRuntime,
     canRenameSession,
     sessionLoading,
     initialize,
@@ -187,7 +187,7 @@ function useTau() {
     sendMessage,
     clearQueue,
     recoverQueueDraft,
-    reconnectRemoteSession,
+    recoverSession,
     stop,
     loadEarlierHistory,
     submitExtensionDialog,

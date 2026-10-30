@@ -555,7 +555,7 @@ describe('local feedback source ordering', () => {
             );
       const ids = c.messages.slice(c.historyPrefixLength).map((e) => e.id);
       c.generation = 2;
-      c.reconnectingRemote = true;
+      c.recoveringRuntime = true;
       const id = nextRequestId('start-messages');
       c.startMessagesRequestId = id;
       await rpc(c, { id, type: 'get_messages' });
@@ -652,7 +652,7 @@ describe('local feedback source ordering', () => {
         });
       }
       c.generation++;
-      c.reconnectingRemote = true;
+      c.recoveringRuntime = true;
       const id = nextRequestId('start-messages');
       c.startMessagesRequestId = id;
       await rpc(c, { id, type: 'get_messages' });
