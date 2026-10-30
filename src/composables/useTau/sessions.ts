@@ -27,7 +27,7 @@ import {
   isSessionSelected,
   nextControllerKey,
   projectSessions,
-  reopenRemoteFeedback,
+  reopenRecoveryFeedback,
   runtimeAvailable,
   setActiveSessionView,
   setControllerError,
@@ -207,12 +207,13 @@ function createSessions() {
           void retryCompactionRefresh(controller);
           if (controller.commandRefreshFailed && controller.generation)
             void syncAfterCommand(controller);
-          if (controller.remoteDisconnected) reopenRemoteFeedback(controller);
+          if (controller.runtimeDisconnected)
+            reopenRecoveryFeedback(controller);
           if (
             !controller.phantom &&
             !controller.ready &&
             !controller.starting &&
-            !controller.remoteDisconnected
+            !controller.runtimeDisconnected
           ) {
             readSavedSession(project, session, controller);
             await startController(
@@ -236,7 +237,7 @@ function createSessions() {
         controller.messages.length
       )
         cancelSavedPreview();
-      if (controller.remoteDisconnected) reopenRemoteFeedback(controller);
+      if (controller.runtimeDisconnected) reopenRecoveryFeedback(controller);
       controller.unread = false;
       void retryCompactionRefresh(controller);
       if (controller.commandRefreshFailed && controller.generation)
@@ -254,7 +255,7 @@ function createSessions() {
         controller.phantom ||
         controller.ready ||
         controller.starting ||
-        controller.remoteDisconnected
+        controller.runtimeDisconnected
       )
         return;
       readSavedSession(project, session, controller);

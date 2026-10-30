@@ -53,7 +53,7 @@ import {
   piProcessExitMessage,
   remotePiConnectionFailureMessage,
   remotePiProcessExitMessage,
-  remoteDisconnectedMessage,
+  runtimeDisconnectedMessage,
   remoteReconnectFailureMessage,
   clearRemoteConnectionWatch,
   clearSettingRequestWatch,
@@ -133,23 +133,24 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
       (item) => item.path === controller.projectPath,
     );
     const message = project?.connectionString
-      ? controller.reconnectingRemote
+      ? controller.recoveringRuntime
         ? remoteReconnectFailureMessage
         : controller.connectingRemote
           ? remotePiConnectionFailureMessage
-          : remoteDisconnectedMessage
+          : runtimeDisconnectedMessage
       : piConnectionFailureMessage;
     if (controller.connectingRemote) {
       clearRemoteConnectionWatch(controller);
       if (controller.pendingPrompt)
         cancelPendingPrompt(controller, message, false);
-      if (controller.reconnectingRemote) {
+      if (controller.recoveringRuntime) {
         setControllerError(controller, remoteReconnectFailureMessage);
       } else {
         presentRemoteConnectionError(controller, message);
       }
       return;
     }
+    controller.runtimeDisconnected = true;
     controller.pendingEffort = '';
     controller.pendingSettingRequestId = '';
     clearSettingRequestWatch(controller);
@@ -190,7 +191,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     );
     const remoteProject = Boolean(project?.connectionString);
     const initialRemoteConnectionFailed =
-      (controller.connectingRemote && !controller.reconnectingRemote) ||
+      (controller.connectingRemote && !controller.recoveringRuntime) ||
       state.remoteRetry?.controllerKey === controller.key;
     if (initialRemoteConnectionFailed) {
       discardControllerDialogs(controller, event.generation);
@@ -204,15 +205,16 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
       presentRemoteConnectionError(controller, failure);
       return;
     }
-    const recoverableRemoteExit = remoteProject;
-    const message = recoverableRemoteExit
-      ? controller.reconnectingRemote
+    const recoverableExit =
+      remoteProject || controller.runtimeDisconnected || event.code !== 0;
+    const message = remoteProject
+      ? controller.recoveringRuntime
         ? remoteReconnectFailureMessage
-        : remoteDisconnectedMessage
-      : event.code === 0
-        ? ''
-        : piProcessExitMessage;
-    if (recoverableRemoteExit) {
+        : runtimeDisconnectedMessage
+      : recoverableExit
+        ? piProcessExitMessage
+        : '';
+    if (recoverableExit) {
       recoverControllerDialogDrafts(controller, event.generation);
     }
     discardControllerDialogs(controller, event.generation);
@@ -224,7 +226,12 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     for (const entry of controller.messages) {
       if (entry.kind === 'tool' && entry.toolRunning) entry.toolRunning = false;
     }
-    if (recoverableRemoteExit && !controller.remoteDisconnected) {
+    if (
+      remoteProject &&
+      !controller.messages.some(
+        (entry) => entry.id === `remote-interruption-${event.generation}`,
+      )
+    ) {
       controller.messages.push({
         id: `remote-interruption-${event.generation}`,
         kind: 'notice',
@@ -268,11 +275,12 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     cancelSetup(controller);
     controller.generation = 0;
     controller.provisionalReplacement = undefined;
-    controller.remoteDisconnected = recoverableRemoteExit;
-    controller.reconnectingRemote = false;
+    controller.runtimeDisconnected = recoverableExit;
+    controller.recoveringRuntime = false;
+    controller.recoveryStopFailed = false;
     controller.retry = undefined;
     if (message) setControllerError(controller, message);
-    if (recoverableRemoteExit && !isControllerSelected(controller)) {
+    if (recoverableExit && !isControllerSelected(controller)) {
       controller.unread = true;
     }
     await discardReleasedEmptySession(controller);

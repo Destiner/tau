@@ -241,8 +241,338 @@ describe('runtime failures and recovery', () => {
     expect(JSON.stringify(controller)).not.toContain('RAW_');
   });
 
+  it.each([1, undefined])(
+    'makes a direct local exit (%s) recoverable without an SSH notice',
+    async (code) => {
+      const { handleBridgeEvent } = await import('./index');
+      const controller = makeController({
+        draft: 'Newer draft',
+        streaming: true,
+        working: true,
+        messages: [
+          { id: 'partial', kind: 'assistant', text: 'Partial answer' },
+          { id: 'tool', kind: 'tool', text: 'Inspecting', toolRunning: true },
+        ],
+      });
+      state.controllers.push(controller);
+      await handleBridgeEvent({
+        runtimeId: controller.runtimeId,
+        generation: 1,
+        kind: 'exited',
+        code,
+      });
+      expect(controller).toMatchObject({
+        generation: 0,
+        ready: false,
+        streaming: false,
+        working: false,
+        runtimeDisconnected: true,
+        recoveringRuntime: false,
+        draft: 'Newer draft',
+      });
+      expect(controller.messages).toEqual([
+        expect.objectContaining({ id: 'partial', text: 'Partial answer' }),
+        expect.objectContaining({ id: 'tool', toolRunning: false }),
+      ]);
+      expect(
+        controller.feedback.filter((entry) => !entry.acknowledged),
+      ).toEqual([
+        expect.objectContaining({
+          action: 'reconnect',
+          message: 'The Pi process stopped unexpectedly. Try again.',
+        }),
+      ]);
+    },
+  );
+
+  it('retains local recovery when a transport failure is followed by exit zero', async () => {
+    const { handleBridgeEvent } = await import('./index');
+    const controller = makeController();
+    state.controllers.push(controller);
+    await handleBridgeEvent({
+      runtimeId: controller.runtimeId,
+      generation: 1,
+      kind: 'error',
+    });
+    expect(controller.runtimeDisconnected).toBe(true);
+    await handleBridgeEvent({
+      runtimeId: controller.runtimeId,
+      generation: 1,
+      kind: 'exited',
+      code: 0,
+    });
+    expect(controller.runtimeDisconnected).toBe(true);
+    expect(controller.feedback.filter((entry) => !entry.acknowledged)).toEqual([
+      expect.objectContaining({
+        action: 'reconnect',
+        message: 'The Pi process stopped unexpectedly. Try again.',
+      }),
+    ]);
+  });
+
+  it('does not restart a failed runtime selected while its idle stop is pending', async () => {
+    const { canRecoverRuntime, canCompose } =
+      await import('../../../composables/state');
+    const { canReleaseRuntime, handleBridgeEvent, releaseRuntime } =
+      await import('./index');
+    const { invokeTraced } = await import('../../telemetry');
+    const controller = makeController({ draft: 'Keep this draft' });
+    state.controllers.push(controller);
+    state.workspace = {
+      activeProjectPath: controller.projectPath,
+      piPath: '/usr/bin/pi',
+      projects: [
+        {
+          path: controller.projectPath,
+          name: 'Project',
+          workingDirectory: controller.projectPath,
+          collapsed: false,
+          selected: true,
+          sessions: [],
+        },
+      ],
+    };
+    let resolveStop!: () => void;
+    vi.mocked(invokeTraced).mockImplementation(async (command) => {
+      if (command === 'stop_pi') {
+        await new Promise<void>((resolve) => {
+          resolveStop = resolve;
+        });
+      }
+      if (command === 'start_pi') return 2;
+      return undefined;
+    });
+    expect(canReleaseRuntime(controller)).toBe(true);
+    releaseRuntime(controller);
+    await handleBridgeEvent({
+      runtimeId: controller.runtimeId,
+      generation: 1,
+      kind: 'error',
+    });
+    expect(canReleaseRuntime(controller)).toBe(false);
+    state.activeControllerKey = controller.key;
+    state.activeProjectPath = controller.projectPath;
+    state.activeSessionId = controller.sessionId;
+    state.activeSessionPath = controller.sessionPath;
+    resolveStop();
+    await vi.waitFor(() => expect(controller.generation).toBe(0));
+    expect(controller).toMatchObject({
+      ready: false,
+      runtimeDisconnected: true,
+      recoveringRuntime: false,
+      draft: 'Keep this draft',
+    });
+    expect(
+      vi.mocked(invokeTraced).mock.calls.map(([command]) => command),
+    ).not.toContain('start_pi');
+    expect(canRecoverRuntime.value).toBe(true);
+    expect(canCompose.value).toBe(false);
+  });
+
+  it('does not turn a clean local exit into a recovery incident', async () => {
+    const { handleBridgeEvent } = await import('./index');
+    const controller = makeController();
+    state.controllers.push(controller);
+    await handleBridgeEvent({
+      runtimeId: controller.runtimeId,
+      generation: 1,
+      kind: 'exited',
+      code: 0,
+    });
+    expect(controller.generation).toBe(0);
+    expect(controller.runtimeDisconnected).toBe(false);
+    expect(feedbackMessage(controller)).toBe('');
+  });
+
+  it.each(['get_state', 'get_messages'] as const)(
+    'keeps local recovery retryable after a failed %s response',
+    async (command) => {
+      const { handleResponse, rpc } = await import('./index');
+      const controller = makeController({
+        ready: false,
+        starting: true,
+        runtimeDisconnected: true,
+        recoveringRuntime: true,
+        bootstrapStateRequestId: command === 'get_state' ? 'recovery-read' : '',
+        startMessagesRequestId:
+          command === 'get_messages' ? 'recovery-read' : '',
+        draft: 'Keep draft',
+      });
+      state.controllers.push(controller);
+      await rpc(controller, { id: 'recovery-read', type: command });
+      await handleResponse(controller, {
+        id: 'recovery-read',
+        command,
+        success: false,
+      });
+      await vi.waitFor(() => expect(controller.generation).toBe(0));
+      expect(controller).toMatchObject({
+        ready: false,
+        starting: false,
+        runtimeDisconnected: true,
+        recoveringRuntime: false,
+        draft: 'Keep draft',
+      });
+      expect(
+        controller.feedback.filter((entry) => !entry.acknowledged),
+      ).toEqual([
+        expect.objectContaining({
+          action: 'reconnect',
+          message: 'The Pi connection failed. Try again.',
+        }),
+      ]);
+      expect(state.remoteDialogOpen).toBe(false);
+    },
+  );
+
+  it('does not probe an unwritten predecessor when recovery bootstrap reports a fresh identity', async () => {
+    const { invokeTraced } = await import('../../telemetry');
+    const { handleResponse, rpc } = await import('./index');
+    const controller = makeController({
+      ready: false,
+      starting: true,
+      runtimeDisconnected: true,
+      recoveringRuntime: true,
+      bootstrapStateRequestId: 'unwritten-bootstrap',
+      bootstrapSessionPath: '',
+      postSettlementHydration: true,
+      settledAssistantActivity: true,
+      draft: 'Keep the newer draft',
+      messages: [
+        {
+          id: 'history-user',
+          kind: 'user',
+          text: 'Earlier question',
+          source: { message: 'previous-user', block: 0, offset: 0 },
+        },
+        {
+          id: 'history-assistant',
+          kind: 'assistant',
+          text: 'Earlier answer',
+          source: { message: 'previous-assistant', block: 0, offset: 0 },
+        },
+        {
+          id: 'stream-assistant-1',
+          kind: 'assistant',
+          text: 'Interrupted reply',
+        },
+      ],
+    });
+    state.controllers.push(controller);
+    state.activeControllerKey = controller.key;
+    state.activeProjectPath = controller.projectPath;
+    state.activeSessionId = controller.sessionId;
+    state.activeSessionPath = controller.sessionPath;
+    const transcript = [...controller.messages];
+    await rpc(controller, { id: 'unwritten-bootstrap', type: 'get_state' });
+
+    await handleResponse(controller, {
+      id: 'unwritten-bootstrap',
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: 'fresh-session',
+        sessionFile: '/tmp/project/fresh-session.jsonl',
+        isStreaming: false,
+      },
+    });
+
+    expect(controller).toMatchObject({
+      sessionId: 'fresh-session',
+      sessionPath: '/tmp/project/fresh-session.jsonl',
+      draft: 'Keep the newer draft',
+    });
+    expect(controller.messages).toEqual(transcript);
+    expect(controller.startMessagesRequestId).not.toBe('');
+    expect(state.activeSessionId).toBe('fresh-session');
+    expect(state.activeSessionPath).toBe('/tmp/project/fresh-session.jsonl');
+    expect(
+      vi
+        .mocked(invokeTraced)
+        .mock.calls.filter(([command]) => command === 'register_session'),
+    ).toEqual([]);
+    expect(
+      mockInvoke.mock.calls.filter(
+        ([command]) => command === 'register_session',
+      ),
+    ).toEqual([]);
+    expect(controller.feedback.filter((entry) => !entry.acknowledged)).toEqual(
+      [],
+    );
+    expect(state.workspaceFeedback).toEqual([]);
+  });
+
+  it.each(['get_state', 'get_messages'] as const)(
+    'retains runtime ownership and the recovery incident when failed %s cleanup cannot stop Pi',
+    async (command) => {
+      const { invokeTraced } = await import('../../telemetry');
+      const { handleResponse, rpc, stopControllerProcess } =
+        await import('./index');
+      const controller = makeController({
+        ready: false,
+        starting: true,
+        runtimeDisconnected: true,
+        recoveringRuntime: true,
+        bootstrapStateRequestId:
+          command === 'get_state' ? 'failed-recovery' : '',
+        startMessagesRequestId:
+          command === 'get_messages' ? 'failed-recovery' : '',
+        draft: 'Keep this draft',
+        messages: [
+          { id: 'partial', kind: 'assistant', text: 'Keep this reply' },
+        ],
+      });
+      state.controllers.push(controller);
+      vi.mocked(invokeTraced).mockRejectedValueOnce(
+        new Error('RAW_STOP_FAILURE'),
+      );
+      await rpc(controller, { id: 'failed-recovery', type: command });
+      await handleResponse(controller, {
+        id: 'failed-recovery',
+        command,
+        success: false,
+      });
+      await vi.waitFor(() => expect(controller.recoveryStopFailed).toBe(true));
+      expect(controller).toMatchObject({
+        generation: 1,
+        ready: false,
+        starting: false,
+        runtimeDisconnected: true,
+        recoveringRuntime: false,
+        recoveryStopFailed: true,
+        draft: 'Keep this draft',
+      });
+      expect(controller.messages).toEqual([
+        { id: 'partial', kind: 'assistant', text: 'Keep this reply' },
+      ]);
+      expect(
+        controller.feedback.filter((entry) => !entry.acknowledged),
+      ).toEqual([
+        expect.objectContaining({
+          action: 'reconnect',
+          message: 'The Pi connection failed. Try again.',
+        }),
+      ]);
+      expect(state.workspaceFeedback).toEqual([]);
+      expect(JSON.stringify(controller)).not.toContain('RAW_STOP_FAILURE');
+      expect(invokeTraced).toHaveBeenCalledWith(
+        'stop_pi',
+        expect.objectContaining({ runtimeId: controller.runtimeId }),
+        undefined,
+      );
+
+      await stopControllerProcess(controller, undefined, false);
+      expect(controller.generation).toBe(0);
+      expect(controller.recoveryStopFailed).toBe(false);
+      expect(controller.runtimeDisconnected).toBe(true);
+      expect(feedbackMessage(controller)).toBe(
+        'The Pi connection failed. Try again.',
+      );
+    },
+  );
+
   it('turns an established remote exit into session-local recovery state', async () => {
-    const { handleBridgeEvent, remoteDisconnectedMessage } =
+    const { handleBridgeEvent, runtimeDisconnectedMessage } =
       await import('./index');
     const controller = makeController({
       ready: true,
@@ -291,11 +621,11 @@ describe('runtime failures and recovery', () => {
       working: false,
       syncing: false,
       connectingRemote: false,
-      remoteDisconnected: true,
-      reconnectingRemote: false,
+      runtimeDisconnected: true,
+      recoveringRuntime: false,
       draft: 'Keep this newer draft',
     });
-    expect(feedbackMessage(controller)).toBe(remoteDisconnectedMessage);
+    expect(feedbackMessage(controller)).toBe(runtimeDisconnectedMessage);
     expect(controller.messages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ kind: 'assistant', text: 'Partial reply' }),
@@ -321,8 +651,8 @@ describe('runtime failures and recovery', () => {
       ready: false,
       starting: true,
       connectingRemote: true,
-      remoteDisconnected: true,
-      reconnectingRemote: true,
+      runtimeDisconnected: true,
+      recoveringRuntime: true,
     });
     state.workspace = {
       activeProjectPath: controller.projectPath,
@@ -357,8 +687,8 @@ describe('runtime failures and recovery', () => {
       generation: 0,
       starting: false,
       connectingRemote: false,
-      remoteDisconnected: true,
-      reconnectingRemote: false,
+      runtimeDisconnected: true,
+      recoveringRuntime: false,
     });
     expect(feedbackMessage(controller)).toBe(remoteReconnectFailureMessage);
     expect(state.remoteDialogOpen).toBe(false);
@@ -372,8 +702,8 @@ describe('runtime failures and recovery', () => {
       ready: false,
       starting: true,
       connectingRemote: true,
-      remoteDisconnected: true,
-      reconnectingRemote: true,
+      runtimeDisconnected: true,
+      recoveringRuntime: true,
       bootstrapStateRequestId: 'reconnect-state',
     });
     state.controllers.push(controller);
@@ -389,8 +719,8 @@ describe('runtime failures and recovery', () => {
     expect(controller).toMatchObject({
       ready: false,
       starting: false,
-      remoteDisconnected: true,
-      reconnectingRemote: false,
+      runtimeDisconnected: true,
+      recoveringRuntime: false,
     });
     expect(feedbackMessage(controller)).toBe(remoteReconnectFailureMessage);
     expect(state.remoteDialogOpen).toBe(false);

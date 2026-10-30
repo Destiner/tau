@@ -434,8 +434,8 @@ const REQUIRED_NATIVE_COUNTS = {
   },
   'saved-session-prompt-process-exit': {
     load_workspace: 1,
-    read_model_scope: 2,
-    register_session: 3,
+    read_model_scope: 3,
+    register_session: 4,
     set_active_session: 6,
   },
 } as const;
@@ -1358,7 +1358,7 @@ function expectedRegisteredSession(
     return expected;
   }
   if (scenarioName === 'saved-session-prompt-process-exit') {
-    const sequence = [MAIN_SESSION, BACKUP_SESSION, MAIN_SESSION];
+    const sequence = [MAIN_SESSION, BACKUP_SESSION, MAIN_SESSION, MAIN_SESSION];
     const expected = sequence[invocation - 1];
     if (!expected) throw new Error('register_session ran too many times.');
     return expected;
@@ -1421,6 +1421,13 @@ function scenarioRuntimeKey(
     }
     return count === 1 ? 'failed-bootstrap' : 'recovered-main';
   }
+  if (scenarioName === 'saved-session-prompt-process-exit') {
+    if (sessionPath === SESSION_PATH && count <= 2) {
+      return count === 1 ? 'main' : 'recovered-main';
+    }
+    if (sessionPath === BACKUP_SESSION.path && count === 1) return 'backup';
+    throw new Error('Prompt recovery used an unexpected runtime start.');
+  }
   if (scenarioName === 'saved-session-extension-prompt-project-switching') {
     if (count > 1) throw new Error('A scenario session started twice.');
     return sessionPath === SECOND_PROJECT_SESSION.path
@@ -1428,7 +1435,6 @@ function scenarioRuntimeKey(
       : 'main';
   }
   if (
-    scenarioName === 'saved-session-prompt-process-exit' ||
     scenarioName === 'saved-session-extension-prompt-cycling' ||
     scenarioName === 'saved-session-notice-boundaries' ||
     scenarioName === 'saved-session-command-replacement' ||

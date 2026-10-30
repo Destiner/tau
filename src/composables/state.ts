@@ -289,9 +289,10 @@ interface SessionController {
   abortProbeRequestId: string;
   connectingRemote: boolean;
 
-  remoteDisconnected: boolean;
+  runtimeDisconnected: boolean;
 
-  reconnectingRemote: boolean;
+  recoveringRuntime: boolean;
+  recoveryStopFailed?: boolean;
   remoteConnectionTimedOut: boolean;
   syncing: boolean;
   lastActiveSequence: number;
@@ -609,7 +610,7 @@ function controllerCanQueue(controller: SessionController): boolean {
     !controller.submittedPrompt &&
     !controller.queueClearing &&
     !controllerHasPendingDialog(controller) &&
-    !controller.remoteDisconnected,
+    !controller.runtimeDisconnected,
   );
 }
 const canQueue = computed(() =>
@@ -678,12 +679,13 @@ const sessionLoading = computed(() => {
   return !controller.ready || controller.starting || controller.syncing;
 });
 
-const canReconnectRemote = computed(() => {
+const canRecoverRuntime = computed(() => {
   const controller = activeController.value;
   return Boolean(
-    activeProject.value?.connectionString &&
-    controller?.remoteDisconnected &&
-    !controller.reconnectingRemote &&
+    activeProject.value &&
+    controller?.runtimeDisconnected &&
+    (controller.generation === 0 || controller.recoveryStopFailed) &&
+    !controller.recoveringRuntime &&
     !controller.starting &&
     !controller.disposed &&
     !projectActionsDisabled.value,
@@ -712,6 +714,7 @@ const canCompose = computed(() => {
     controller.queueSubmissions.length > 0 ||
     controller.promptSubmitting ||
     admittingOrdinaryPrompt ||
+    controller.runtimeDisconnected ||
     controllerHasPendingDialog(controller) ||
     projectActionsDisabled.value
   )
@@ -1177,8 +1180,8 @@ function createController(
     replacementProbeRequestId: '',
     abortProbeRequestId: '',
     connectingRemote: false,
-    remoteDisconnected: false,
-    reconnectingRemote: false,
+    runtimeDisconnected: false,
+    recoveringRuntime: false,
     remoteConnectionTimedOut: false,
     syncing: false,
     lastActiveSequence: (activitySequence += 1),
@@ -1209,7 +1212,7 @@ function controllerForSession(
 
 function sessionOwnerRank(controller: SessionController): number {
   if (
-    !controller.remoteDisconnected &&
+    !controller.runtimeDisconnected &&
     (controller.ready ||
       controller.starting ||
       controller.connectingRemote ||
@@ -1220,7 +1223,7 @@ function sessionOwnerRank(controller: SessionController): number {
       controller.generation > 0)
   )
     return 2;
-  return controller.remoteDisconnected ? 1 : 0;
+  return controller.runtimeDisconnected ? 1 : 0;
 }
 
 // Identity adoption, not navigation or a late event, decides between live
@@ -1499,6 +1502,8 @@ function feedbackAction(message: string): FeedbackAction | undefined {
     return 'reload';
   if (
     message === 'The connection was lost.' ||
+    message === 'The Pi connection failed. Try again.' ||
+    message === 'The Pi process stopped unexpectedly. Try again.' ||
     message.startsWith('The remote connection')
   )
     return 'reconnect';
@@ -1571,14 +1576,14 @@ function acknowledgeFeedback(incident: FeedbackIncident): void {
   incident.acknowledged = true;
 }
 
-function reopenRemoteFeedback(controller: SessionController): void {
+function reopenRecoveryFeedback(controller: SessionController): void {
   const incident = [...controller.feedback]
     .reverse()
     .find((candidate) => candidate.action === 'reconnect');
   if (incident) incident.acknowledged = false;
 }
 
-function resolveRemoteFeedback(controller: SessionController): void {
+function resolveRecoveryFeedback(controller: SessionController): void {
   for (const incident of controller.feedback) {
     if (incident.action === 'reconnect') incident.acknowledged = true;
   }
@@ -1754,7 +1759,7 @@ export {
   canDraft,
   sessionLoading,
   canCompose,
-  canReconnectRemote,
+  canRecoverRuntime,
   sessionTitle,
   currentModelLabel,
   currentEffortLabel,
@@ -1815,8 +1820,8 @@ export {
   clearControllerFeedback,
   setWorkspaceError,
   acknowledgeFeedback,
-  reopenRemoteFeedback,
-  resolveRemoteFeedback,
+  reopenRecoveryFeedback,
+  resolveRecoveryFeedback,
   classifyControllerLifecycle,
   setControllerLifecycle,
   sessionWorkInProgress,

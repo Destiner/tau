@@ -53,7 +53,7 @@ describe('canonical session owner', () => {
     });
     const disconnected = testController({
       key: 'remote',
-      remoteDisconnected: true,
+      runtimeDisconnected: true,
       sessionOwnerSequence: 200,
     });
     const disposed = testController({
@@ -82,7 +82,7 @@ describe('canonical session owner', () => {
       activeController,
       activeExtensionDialog,
     } = await import('./state');
-    const stale = testController({ key: 'stale', remoteDisconnected: true });
+    const stale = testController({ key: 'stale', runtimeDisconnected: true });
     const owner = testController({ key: 'owner', ready: true, generation: 2 });
     state.controllers = [stale, owner];
     state.activeProjectPath = stale.projectPath;
@@ -113,7 +113,7 @@ describe('canonical session owner', () => {
       draft: 'unfinished answer',
     });
     expect(state.extensionDialogs).toHaveLength(1);
-    expect(stale.remoteDisconnected).toBe(true);
+    expect(stale.runtimeDisconnected).toBe(true);
   });
 
   it('uses identity adoption rather than navigation when both runtimes are live or starting', async () => {
@@ -486,7 +486,7 @@ describe('fallback feedback', () => {
     const {
       acknowledgeFeedback,
       activeFeedback,
-      reopenRemoteFeedback,
+      reopenRecoveryFeedback,
       setControllerError,
       state,
     } = await import('./state');
@@ -517,7 +517,7 @@ describe('fallback feedback', () => {
 
     acknowledgeFeedback(activeFeedback.value!);
     expect(activeFeedback.value).toBeUndefined();
-    reopenRemoteFeedback(stored);
+    reopenRecoveryFeedback(stored);
     expect(activeFeedback.value?.id).toBe(incidentId);
   });
 });
@@ -570,7 +570,7 @@ describe('compaction queue admission', () => {
     { starting: true },
     { promptSubmitting: true },
     { queueClearing: true },
-    { remoteDisconnected: true },
+    { runtimeDisconnected: true },
   ] satisfies Partial<SessionController>[])(
     'automatic compaction does not bypass the admission guard %j',
     async (flags) => {

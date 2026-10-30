@@ -121,7 +121,7 @@
         :class="{
           'empty-session': sessionIsEmpty,
           'loading-session': sessionLoading,
-          'has-queue': queueVisible && !remoteReconnectFeedback,
+          'has-queue': queueVisible && !recoveryFeedback,
         }"
       >
         <SessionHeader
@@ -187,7 +187,7 @@
         session is waiting on an answer, so there is nothing to send.
       -->
         <MessageQueue
-          v-if="queueVisible && !sessionLoading && !remoteReconnectFeedback"
+          v-if="queueVisible && !sessionLoading && !recoveryFeedback"
           ref="messageQueue"
           :queue="activeQueue"
           :feedback="queueFeedback"
@@ -199,15 +199,16 @@
           @dismiss="dismissQueueFeedback"
         />
         <footer
-          v-if="!sessionLoading && !activeExtensionDialog"
+          v-if="recoveryFeedback || (!sessionLoading && !activeExtensionDialog)"
           class="composer-area"
         >
           <ReconnectStatus
-            v-if="remoteReconnectFeedback"
-            :message="remoteReconnectFeedback.message"
+            v-if="recoveryFeedback"
+            :message="recoveryFeedback.message"
             :busy="feedbackActionBusy"
-            :disabled="!activeController?.remoteDisconnected"
-            @reconnect="handleRemoteReconnect"
+            :disabled="!canRecoverRuntime"
+            :remote="Boolean(activeProject?.connectionString)"
+            @reconnect="recoverSession"
           />
           <ComposerBar
             v-else
@@ -414,7 +415,7 @@ const {
   archiveSession,
   unarchiveSession,
   canArchiveSession,
-  canReconnectRemote,
+  canRecoverRuntime,
   canRenameSession,
   canCompose,
   canQueue,
@@ -449,7 +450,7 @@ const {
   chooseRemoteDirectory,
   newSession,
   sendMessage,
-  reconnectRemoteSession,
+  recoverSession,
   loadEarlierHistory,
   submitExtensionDialog,
   cancelExtensionDialog,
@@ -1093,10 +1094,13 @@ register(
 );
 register(
   'remote.reconnect',
-  'Reconnect Remote Session',
+  () =>
+    activeProject.value?.connectionString
+      ? 'Reconnect Remote Session'
+      : 'Retry Session',
   'Mod+Shift+C',
-  (ctx) => currentSession(ctx) && canReconnectRemote.value,
-  () => reconnectRemoteSession(),
+  (ctx) => currentSession(ctx) && canRecoverRuntime.value,
+  () => recoverSession(),
   'Session',
 );
 register(
@@ -1341,7 +1345,7 @@ async function selectPaletteRow(id: string): Promise<void> {
   }
 }
 
-const remoteReconnectFeedback = computed(() =>
+const recoveryFeedback = computed(() =>
   activeFeedback.value?.action === 'reconnect'
     ? activeFeedback.value
     : undefined,
@@ -1349,7 +1353,7 @@ const remoteReconnectFeedback = computed(() =>
 const feedbackDialogOpen = computed(
   () =>
     Boolean(activeFeedback.value) &&
-    !remoteReconnectFeedback.value &&
+    !recoveryFeedback.value &&
     quitRequest.value === null &&
     !state.remoteDialogOpen &&
     !state.projectRename &&
@@ -1368,7 +1372,7 @@ const feedbackActionBusy = computed(() => {
       return state.initializing;
     case 'reconnect':
       return Boolean(
-        activeController.value?.reconnectingRemote ||
+        activeController.value?.recoveringRuntime ||
         activeController.value?.starting,
       );
     default:
@@ -1549,8 +1553,32 @@ watch(activeFeedback, (incident, previous) => {
       focused instanceof HTMLElement ? focused : undefined;
     return;
   }
-  if (!incident && previous?.action === 'reconnect' && !paletteOpen.value) {
-    void nextTick(() => composerBar.value?.focus());
+  if (
+    !incident &&
+    previous?.action === 'reconnect' &&
+    previous.controllerKey === state.activeControllerKey
+  ) {
+    const controllerKey = state.activeControllerKey;
+    const focused = document.activeElement;
+    const recoveryOwnedFocus =
+      focused === document.body ||
+      (focused instanceof Element &&
+        Boolean(focused.closest('.reconnect-status')));
+    void nextTick(() => {
+      if (
+        recoveryOwnedFocus &&
+        controllerKey === state.activeControllerKey &&
+        (document.activeElement === focused ||
+          document.activeElement === document.body) &&
+        !navigationBlockingSurface() &&
+        !paletteOpen.value &&
+        !state.remoteDialogOpen &&
+        !activeExtensionDialog.value &&
+        !activeFeedback.value &&
+        !fullscreenViewerOpen.value
+      )
+        composerBar.value?.focus();
+    });
   }
 });
 
@@ -1671,15 +1699,11 @@ function feedbackReturnFocus(): HTMLElement | undefined {
   );
 }
 
-async function handleRemoteReconnect(): Promise<void> {
-  await reconnectRemoteSession();
-}
-
 async function handleFeedbackAction(): Promise<void> {
   const incident = activeFeedback.value;
   if (!incident?.action) return;
   if (incident.action === 'reconnect') {
-    await handleRemoteReconnect();
+    await recoverSession();
     return;
   }
   acknowledgeFeedback(incident);

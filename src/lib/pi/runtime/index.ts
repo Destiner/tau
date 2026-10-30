@@ -37,7 +37,7 @@ export {
   piConnectionFailureMessage,
   piProcessExitMessage,
   remotePiProcessExitMessage,
-  remoteDisconnectedMessage,
+  runtimeDisconnectedMessage,
   remoteReconnectFailureMessage,
   remoteConnectionTimeoutMessage,
   remoteConnectionTimeoutMs,

@@ -140,6 +140,57 @@ describe('command-created session durability — registration', () => {
     };
   }
 
+  it('ignores an old registration rejection after explicit recovery starts a new generation', async () => {
+    const { invokeTraced } = await import('../../telemetry');
+    const { handleBridgeEvent, registerConnectedSession } =
+      await import('./index');
+    const { recoverSession } =
+      await import('../../../composables/useTau/remote');
+    const controller = makeController();
+    state.controllers.push(controller);
+    state.workspace = registeredWorkspace(controller, 'Saved session');
+    state.activeControllerKey = controller.key;
+    state.activeProjectPath = controller.projectPath;
+    state.activeSessionId = controller.sessionId;
+    state.activeSessionPath = controller.sessionPath;
+    let rejectRegistration!: (error: Error) => void;
+    vi.mocked(invokeTraced).mockImplementation(async (command) => {
+      if (command === 'register_session') {
+        return new Promise<never>((_resolve, reject) => {
+          rejectRegistration = reject;
+        });
+      }
+      if (command === 'start_pi') return 2;
+      return undefined;
+    });
+    const pending = registerConnectedSession(controller);
+    await handleBridgeEvent({
+      runtimeId: controller.runtimeId,
+      generation: 1,
+      kind: 'exited',
+      code: 1,
+    });
+    await recoverSession();
+    expect(controller).toMatchObject({
+      generation: 2,
+      recoveringRuntime: true,
+    });
+
+    rejectRegistration(new Error('Old registration failed'));
+    await pending;
+
+    expect(controller).toMatchObject({
+      generation: 2,
+      recoveringRuntime: true,
+    });
+    expect(
+      vi.mocked(invokeTraced).mock.calls.map(([command]) => command),
+    ).not.toContain('stop_pi');
+    expect(controller.feedback.filter((entry) => !entry.acknowledged)).toEqual([
+      expect.objectContaining({ action: 'reconnect' }),
+    ]);
+  });
+
   it('merges only the registered row after unrelated workspace edits', async () => {
     const telemetry = await import('../../telemetry');
     const { registerConnectedSession } = await import('./index');
