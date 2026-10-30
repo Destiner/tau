@@ -1189,7 +1189,12 @@ async function registerConnectedSession(
       parentContext,
     );
   } catch (error) {
-    if (error === staleRegistration) return;
+    if (
+      error === staleRegistration ||
+      !identityHolds() ||
+      !registrationMutationIsCurrent(mutation)
+    )
+      return;
     if (controller.recoveringRuntime)
       failRuntimeRecovery(controller, parentContext);
     else setControllerError(controller, errorCopy.sessionRegistration);
@@ -1382,6 +1387,7 @@ function removeProjectUiState(projectPath: string): void {
 function canReleaseRuntime(controller: SessionController): boolean {
   return (
     !isControllerSelected(controller) &&
+    !controller.runtimeDisconnected &&
     controller.ready &&
     !controller.streaming &&
     !controller.working &&
@@ -1552,7 +1558,8 @@ async function stopControllerProcess(
     (replacedDuringStop ||
       (restartSelected && isControllerSelected(controller))) &&
     !controller.disposed &&
-    !controller.phantom
+    !controller.phantom &&
+    !controller.runtimeDisconnected
   ) {
     const project = state.workspace?.projects.find(
       (item) => item.path === controller.projectPath,

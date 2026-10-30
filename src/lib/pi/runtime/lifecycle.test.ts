@@ -310,6 +310,65 @@ describe('runtime failures and recovery', () => {
     ]);
   });
 
+  it('does not restart a failed runtime selected while its idle stop is pending', async () => {
+    const { canRecoverRuntime, canCompose } =
+      await import('../../../composables/state');
+    const { canReleaseRuntime, handleBridgeEvent, releaseRuntime } =
+      await import('./index');
+    const { invokeTraced } = await import('../../telemetry');
+    const controller = makeController({ draft: 'Keep this draft' });
+    state.controllers.push(controller);
+    state.workspace = {
+      activeProjectPath: controller.projectPath,
+      piPath: '/usr/bin/pi',
+      projects: [
+        {
+          path: controller.projectPath,
+          name: 'Project',
+          workingDirectory: controller.projectPath,
+          collapsed: false,
+          selected: true,
+          sessions: [],
+        },
+      ],
+    };
+    let resolveStop!: () => void;
+    vi.mocked(invokeTraced).mockImplementation(async (command) => {
+      if (command === 'stop_pi') {
+        await new Promise<void>((resolve) => {
+          resolveStop = resolve;
+        });
+      }
+      if (command === 'start_pi') return 2;
+      return undefined;
+    });
+    expect(canReleaseRuntime(controller)).toBe(true);
+    releaseRuntime(controller);
+    await handleBridgeEvent({
+      runtimeId: controller.runtimeId,
+      generation: 1,
+      kind: 'error',
+    });
+    expect(canReleaseRuntime(controller)).toBe(false);
+    state.activeControllerKey = controller.key;
+    state.activeProjectPath = controller.projectPath;
+    state.activeSessionId = controller.sessionId;
+    state.activeSessionPath = controller.sessionPath;
+    resolveStop();
+    await vi.waitFor(() => expect(controller.generation).toBe(0));
+    expect(controller).toMatchObject({
+      ready: false,
+      runtimeDisconnected: true,
+      recoveringRuntime: false,
+      draft: 'Keep this draft',
+    });
+    expect(
+      vi.mocked(invokeTraced).mock.calls.map(([command]) => command),
+    ).not.toContain('start_pi');
+    expect(canRecoverRuntime.value).toBe(true);
+    expect(canCompose.value).toBe(false);
+  });
+
   it('does not turn a clean local exit into a recovery incident', async () => {
     const { handleBridgeEvent } = await import('./index');
     const controller = makeController();
