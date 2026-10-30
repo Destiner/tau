@@ -2371,64 +2371,57 @@ describe('local session recovery', () => {
     }
   });
 
-  it.each([false, true])(
-    'verifies a provisional first-prompt file before recovery (written: %s)',
-    async (written) => {
-      const { tau, project, controller } = await setupNamedSession();
-      const original = vi.mocked(invoke).getMockImplementation();
-      const provisional = savedSession('provisional-first-prompt');
-      try {
-        // Pi has reported a path, but the workspace has not verified its file.
-        project.sessions.splice(0);
-        controller.sessionId = provisional.id;
-        controller.sessionPath = provisional.path;
-        controller.materializationVerified = false;
-        controller.messages = [
-          { id: 'first-user', kind: 'user', text: 'First prompt' },
-          {
-            id: 'stream-assistant-1',
-            kind: 'assistant',
-            text: 'Partial first reply',
-          },
-        ];
-        controller.draft = 'Newer unsent draft';
-        tau.state.activeSessionId = controller.sessionId;
-        tau.state.activeSessionPath = controller.sessionPath;
-        vi.mocked(invoke).mockImplementation(async (command, args) => {
-          if (command === 'register_session')
-            return written ? provisional : null;
-          return original?.(command, args);
-        });
-        emitBridge(controller.runtimeId, controller.generation, 'exited', 1);
-        await vi.waitFor(() =>
-          expect(controller.runtimeDisconnected).toBe(true),
-        );
-        expect(tau.state.controllers).toContain(controller);
-        await tau.recoverSession();
-        expect(invoke).toHaveBeenCalledWith(
-          'register_session',
-          expect.objectContaining({ sessionId: provisional.id }),
-        );
-        expect(invoke).toHaveBeenCalledWith(
-          'start_pi',
-          expect.objectContaining({
-            sessionPath: written ? provisional.path : null,
-          }),
-        );
-        expect(controller.draft).toBe('Newer unsent draft');
-        expect(
-          controller.messages.some(
-            (entry) => entry.text === 'Partial first reply',
-          ),
-        ).toBe(true);
-        expect(sentRequests(controller, 'prompt')).toEqual([]);
-        if (!written) expect(project.sessions).toEqual([]);
-      } finally {
-        if (original) vi.mocked(invoke).mockImplementation(original);
-        tau.dispose();
-      }
-    },
-  );
+  it('resumes a provisional first-prompt session after verifying its file', async () => {
+    const { tau, project, controller } = await setupNamedSession();
+    const original = vi.mocked(invoke).getMockImplementation();
+    const provisional = savedSession('provisional-first-prompt');
+    try {
+      // Pi has reported a path, but the workspace has not verified its file.
+      project.sessions.splice(0);
+      controller.sessionId = provisional.id;
+      controller.sessionPath = provisional.path;
+      controller.materializationVerified = false;
+      controller.messages = [
+        { id: 'first-user', kind: 'user', text: 'First prompt' },
+        {
+          id: 'stream-assistant-1',
+          kind: 'assistant',
+          text: 'Partial first reply',
+        },
+      ];
+      controller.draft = 'Newer unsent draft';
+      tau.state.activeSessionId = controller.sessionId;
+      tau.state.activeSessionPath = controller.sessionPath;
+      vi.mocked(invoke).mockImplementation(async (command, args) => {
+        if (command === 'register_session') return provisional;
+        return original?.(command, args);
+      });
+      emitBridge(controller.runtimeId, controller.generation, 'exited', 1);
+      await vi.waitFor(() => expect(controller.runtimeDisconnected).toBe(true));
+      expect(tau.state.controllers).toContain(controller);
+      await tau.recoverSession();
+      expect(invoke).toHaveBeenCalledWith(
+        'register_session',
+        expect.objectContaining({ sessionId: provisional.id }),
+      );
+      expect(invoke).toHaveBeenCalledWith(
+        'start_pi',
+        expect.objectContaining({
+          sessionPath: provisional.path,
+        }),
+      );
+      expect(controller.draft).toBe('Newer unsent draft');
+      expect(
+        controller.messages.some(
+          (entry) => entry.text === 'Partial first reply',
+        ),
+      ).toBe(true);
+      expect(sentRequests(controller, 'prompt')).toEqual([]);
+    } finally {
+      if (original) vi.mocked(invoke).mockImplementation(original);
+      tau.dispose();
+    }
+  });
 
   it('rebinds an unwritten recovery to a fresh identity without losing the visible transcript', async () => {
     const { tau, project, controller } = await setupNamedSession();

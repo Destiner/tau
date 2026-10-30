@@ -208,7 +208,7 @@
             :busy="feedbackActionBusy"
             :disabled="!canRecoverRuntime"
             :remote="Boolean(activeProject?.connectionString)"
-            @reconnect="handleRecovery"
+            @reconnect="recoverSession"
           />
           <ComposerBar
             v-else
@@ -1699,15 +1699,11 @@ function feedbackReturnFocus(): HTMLElement | undefined {
   );
 }
 
-async function handleRecovery(): Promise<void> {
-  await recoverSession();
-}
-
 async function handleFeedbackAction(): Promise<void> {
   const incident = activeFeedback.value;
   if (!incident?.action) return;
   if (incident.action === 'reconnect') {
-    await handleRecovery();
+    await recoverSession();
     return;
   }
   acknowledgeFeedback(incident);

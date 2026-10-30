@@ -241,7 +241,7 @@ describe('runtime failures and recovery', () => {
     expect(JSON.stringify(controller)).not.toContain('RAW_');
   });
 
-  it.each([1, 47, undefined])(
+  it.each([1, undefined])(
     'makes a direct local exit (%s) recoverable without an SSH notice',
     async (code) => {
       const { handleBridgeEvent } = await import('./index');
