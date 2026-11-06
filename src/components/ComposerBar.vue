@@ -59,7 +59,7 @@
         :model-value="`${currentModelProvider}/${currentModelId}`"
         :models="models"
         :fallback-label="currentModelLabel"
-        :disabled="settingsDisabled || Boolean(reloadStatus)"
+        :disabled="settingsDisabled"
         aria-label="Model"
         @select="handleModelChange"
       />
@@ -68,9 +68,7 @@
         :model-value="currentEffort"
         :options="effortOptions"
         :fallback-label="currentEffortLabel"
-        :disabled="
-          settingsDisabled || Boolean(reloadStatus) || efforts.length === 0
-        "
+        :disabled="settingsDisabled || efforts.length === 0"
         aria-label="Thinking Effort"
         :max-width="110"
         @update:model-value="handleEffortChange"
@@ -117,9 +115,7 @@
             class="send-button"
             size="sm"
             variant="fill"
-            :disabled="
-              !canQueue || extensionCommandDraft || Boolean(reloadStatus)
-            "
+            :disabled="!canQueue || extensionCommandDraft"
             label="Queue Message"
             @click="sendSteer"
           >
@@ -153,7 +149,7 @@
           class="send-button"
           size="sm"
           variant="fill"
-          :disabled="!canCompose || !draft.trim() || Boolean(reloadStatus)"
+          :disabled="!canCompose || !draft.trim()"
           label="Send Message"
           @click="sendSteer"
         >

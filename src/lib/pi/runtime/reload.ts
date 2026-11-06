@@ -18,12 +18,14 @@ import {
 } from './lifecycle';
 import { restoreSubmittedDraft } from './prompts';
 
-type ReloadRead =
-  | 'get_state'
-  | 'get_commands'
-  | 'get_available_models'
-  | 'get_available_thinking_levels'
-  | 'get_messages';
+const RELOAD_RESOURCES = [
+  'get_commands',
+  'get_available_models',
+  'get_available_thinking_levels',
+  'get_messages',
+] as const;
+const RELOAD_READS = ['get_state', ...RELOAD_RESOURCES] as const;
+type ReloadRead = (typeof RELOAD_READS)[number];
 interface ReloadOperation {
   generation: number;
   requestId: string;
@@ -261,13 +263,7 @@ async function refreshReloadAfterReplacement(
   operation.reads = {};
   const fence = Number(nextRequestId('reload-replacement').split('-').at(-1));
   controller.reloadFence = Object.fromEntries(
-    [
-      'get_state',
-      'get_commands',
-      'get_available_models',
-      'get_available_thinking_levels',
-      'get_messages',
-    ].map((method) => [method, fence]),
+    RELOAD_READS.map((method) => [method, fence]),
   );
   await read(controller, 'get_state');
 }
@@ -278,16 +274,6 @@ function reloadAllowsResponse(
   response: Record<string, unknown>,
 ): boolean {
   const method = String(response.command);
-  if (
-    ![
-      'get_commands',
-      'get_available_models',
-      'get_available_thinking_levels',
-      'get_messages',
-      'get_state',
-    ].includes(method)
-  )
-    return true;
   if (
     controller.reloadFence?.[method] &&
     Number(String(response.id).split('-').at(-1)) <
@@ -350,14 +336,7 @@ async function handleReloadResponse(
   }
   if (method === 'get_state') {
     await Promise.all(
-      (
-        [
-          'get_commands',
-          'get_available_models',
-          'get_available_thinking_levels',
-          'get_messages',
-        ] as const
-      ).map((resource) => read(controller, resource)),
+      RELOAD_RESOURCES.map((resource) => read(controller, resource)),
     );
   }
   if (!Object.keys(operation.reads).length && !operation.failed) {
