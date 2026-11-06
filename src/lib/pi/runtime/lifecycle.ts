@@ -65,6 +65,7 @@ import {
   selectRegisteredSession,
   canRegisterConnectedSession,
 } from './registration';
+import { clearReload, resumeReloadDeadline } from './reload';
 import { cancelSetup, failPendingSetup } from './setup';
 
 const materializationVerificationRetryDelays = [250, 750, 1_500];
@@ -141,6 +142,7 @@ async function retryCompactionRefresh(
 
 function commandHasPendingWork(controller: SessionController): boolean {
   return Boolean(
+    controller.reload ||
     controller.pendingPrompt ||
     controller.submittedPrompt ||
     controller.promptSubmitting ||
@@ -223,6 +225,8 @@ async function startController(
   parentContext?: TraceContext,
 ): Promise<void> {
   if (controller.starting || controller.disposed) return;
+  clearReload(controller, true);
+  controller.reloadFence = undefined;
   cancelSetup(controller);
   resetQueue(controller, controller.generation > 0);
   setControllerLifecycle(
@@ -576,6 +580,32 @@ async function rpc(
 ): Promise<void> {
   const requestId = stringValue(request.id);
   const method = stringValue(request.type);
+  if (
+    controller.reload &&
+    !(
+      method === 'prompt' &&
+      requestId &&
+      requestId === controller.reload.requestId &&
+      controller.reload.phase === 'dispatch'
+    ) &&
+    [
+      'prompt',
+      'steer',
+      'follow_up',
+      'clear_queue',
+      'set_model',
+      'set_thinking_level',
+      'set_session_name',
+      'new_session',
+      'switch_session',
+      'fork',
+      'compact',
+      'abort',
+    ].includes(method)
+  ) {
+    throw new Error('Runtime reload owns mutations');
+  }
+  if (method === 'extension_ui_response') resumeReloadDeadline(controller);
   if (method === 'get_messages') {
     if (controller.startMessagesRequestId) {
       controller.startMessagesRequestId = requestId;
@@ -1348,6 +1378,7 @@ function removeEphemeralSession(
   if (removeController) {
     const controller = controllerByKey(session.controllerKey);
     if (controller) {
+      clearReload(controller, true);
       controller.disposed = true;
       controller.provisionalReplacement = undefined;
       controller.retry = undefined;
@@ -1370,6 +1401,7 @@ function removeProjectUiState(projectPath: string): void {
   );
   for (const controller of state.controllers) {
     if (controller.projectPath !== projectPath) continue;
+    clearReload(controller, true);
     controller.disposed = true;
     controller.provisionalReplacement = undefined;
     controller.retry = undefined;
@@ -1427,6 +1459,7 @@ async function discardReleasedEmptySession(
     controller.runtimeDisconnected ||
     controller.setupFailure ||
     controller.commandRefreshFailed ||
+    controller.reload ||
     controller.draft.trim() ||
     queueHasWork(controller.queue, controller.queueSubmissions) ||
     controller.queueFailedDrafts.length > 0 ||
@@ -1508,6 +1541,8 @@ async function stopControllerProcess(
   clearSessionReplacementWatch(controller);
   clearSessionNameRefresh(controller);
   clearCommandRefreshWatch(controller);
+  clearReload(controller, true);
+  controller.reloadFence = undefined;
   controller.commandPromptRequestId = '';
   controller.commandRefreshFailed = false;
   clearMaterializationVerificationWatch(controller);

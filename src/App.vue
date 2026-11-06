@@ -210,12 +210,21 @@
             :remote="Boolean(activeProject?.connectionString)"
             @reconnect="recoverSession"
           />
-          <ComposerBar
-            v-else
-            ref="composerBar"
-            :header-element="() => sessionHeader?.header"
-            @send="dispatchComposerSend"
-          />
+          <template v-else>
+            <UiButton
+              v-if="activeController?.reload?.status === 'unknown'"
+              :disabled="activeController.stopping"
+              @click="recoverActiveReload"
+            >
+              Recover Pi Runtime
+            </UiButton>
+            <ComposerBar
+              ref="composerBar"
+              :reload-status="activeController?.reload?.status"
+              :header-element="() => sessionHeader?.header"
+              @send="dispatchComposerSend"
+            />
+          </template>
         </footer>
       </main>
     </template>
@@ -337,6 +346,7 @@ import {
 } from './lib/app-commands/binding';
 import { paletteLayerOpen } from './lib/app-commands/surface';
 import appVersion from './lib/app-version';
+import { recoverReload } from './lib/pi/runtime/reload';
 import {
   preferredSessionPickerId,
   resolveSessionPickerTarget,
@@ -366,6 +376,10 @@ const transcriptSearch = ref<InstanceType<typeof TranscriptSearch>>();
 const projectSidebar = ref<InstanceType<typeof ProjectSidebar>>();
 const sessionHeader = ref<InstanceType<typeof SessionHeader>>();
 const composerBar = ref<InstanceType<typeof ComposerBar>>();
+
+async function recoverActiveReload(): Promise<void> {
+  await recoverReload(activeController.value);
+}
 const messageQueue = ref<InstanceType<typeof MessageQueue>>();
 const firstRunProjectMenuOpen = ref(false);
 const firstRunLocalProjectButton = ref<InstanceType<typeof UiButton>>();

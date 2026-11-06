@@ -1,4 +1,5 @@
 import { errorCopy } from '../../lib/error-copy';
+import { isReloadCommand } from '../../lib/pi/extension-command';
 import {
   appendOptimisticPrompt,
   clearAbortWatch,
@@ -15,6 +16,7 @@ import {
   submitQueuedMessage,
   watchAbort,
 } from '../../lib/pi/runtime';
+import { startReload } from '../../lib/pi/runtime/reload';
 import { startActionSpan } from '../../lib/telemetry';
 import {
   activeController,
@@ -104,6 +106,11 @@ function createComposer(
           command,
           actionSpan.context,
         );
+        return;
+      }
+
+      if (isReloadCommand(message)) {
+        await startReload(controller, submittedDraft);
         return;
       }
 
