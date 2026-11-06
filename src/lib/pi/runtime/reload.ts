@@ -192,10 +192,12 @@ async function recoverReload(
     (item) => item.path === controller.projectPath,
   );
   if (!project) return;
+  controller.recoveringRuntime = true;
   controller.stopping = true;
   await stopControllerProcess(controller, undefined, false);
   if (controller.generation || controller.disposed) {
     controller.stopping = false;
+    controller.recoveringRuntime = false;
     return;
   }
   await startController(
@@ -232,8 +234,45 @@ async function startReload(
   else await read(controller, 'get_commands');
 }
 
-// Called before ordinary response reduction; only this operation's exact reads
-// may change catalogues once reload starts. The fence survives completion.
+function transferReloadRead(
+  controller: SessionController,
+  method: string,
+  requestId: string,
+): void {
+  const operation = controller.reload;
+  if (!operation) return;
+  const pending = Object.keys(operation.reads).filter(
+    (id) => operation.reads[id] === method,
+  );
+  if (!pending.length) return;
+  for (const id of pending) delete operation.reads[id];
+  operation.reads[requestId] = method as ReloadRead;
+  controller.reloadFence ??= {};
+  controller.reloadFence[method] = Number(requestId.split('-').at(-1));
+}
+
+async function refreshReloadAfterReplacement(
+  controller: SessionController,
+): Promise<void> {
+  const operation = controller.reload;
+  if (!operation || operation.phase !== 'refresh') return;
+  // All outstanding reads belong to the outgoing identity. Reconcile only;
+  // never replay the command that caused the replacement.
+  operation.reads = {};
+  const fence = Number(nextRequestId('reload-replacement').split('-').at(-1));
+  controller.reloadFence = Object.fromEntries(
+    [
+      'get_state',
+      'get_commands',
+      'get_available_models',
+      'get_available_thinking_levels',
+      'get_messages',
+    ].map((method) => [method, fence]),
+  );
+  await read(controller, 'get_state');
+}
+
+// Called before ordinary response reduction. The fence survives completion.
 function reloadAllowsResponse(
   controller: SessionController,
   response: Record<string, unknown>,
@@ -347,5 +386,7 @@ export {
   handleReloadResponse,
   reloadExtensionError,
   resumeReloadDeadline,
+  transferReloadRead,
+  refreshReloadAfterReplacement,
   type ReloadOperation,
 };

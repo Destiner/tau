@@ -2,7 +2,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PiBridgeEvent } from '../../lib/pi/bridge';
+import { TAU_RELOAD_COMMAND } from '../../lib/pi/extension-command';
 import { frontendOwnership, OwnershipClaimError } from '../../lib/pi/ownership';
+import { recoverReload, startReload } from '../../lib/pi/runtime/reload';
 import { nextRequestId, state } from '../state';
 import type {
   ProjectSummary,
@@ -2536,6 +2538,109 @@ describe('local session recovery', () => {
       tau.dispose();
     }
   });
+
+  it.each(['start_pi', 'get_state', 'get_messages'] as const)(
+    'retries unknown reload recovery after %s fails without replay',
+    async (failure) => {
+      const { tau, session, controller } = await setupNamedSession();
+      const original = vi.mocked(invoke).getMockImplementation();
+      try {
+        controller.commandsLoaded = true;
+        controller.commands = [
+          {
+            name: TAU_RELOAD_COMMAND,
+            source: 'extension',
+            description: 'private',
+          },
+        ];
+        vi.mocked(invoke).mockImplementation(async (command, args) => {
+          if (
+            command === 'send_pi' &&
+            (args as { request?: { type?: string } })?.request?.type ===
+              'prompt'
+          )
+            throw new Error('reload outcome unknown');
+          return original?.(command, args);
+        });
+        await startReload(controller, '/reload');
+        expect(controller.reload?.status).toBe('unknown');
+        controller.draft = 'Keep my newer draft';
+        vi.mocked(invoke).mockImplementation(async (command, args) => {
+          if (failure === 'start_pi' && command === 'start_pi')
+            throw new Error('start failed');
+          return original?.(command, args);
+        });
+        await recoverReload(controller);
+        if (failure !== 'start_pi') {
+          if (failure === 'get_messages') {
+            emitRpc(controller, {
+              id: controller.bootstrapStateRequestId,
+              type: 'response',
+              command: 'get_state',
+              success: true,
+              data: {
+                sessionId: session.id,
+                sessionFile: session.path,
+                isStreaming: false,
+              },
+            });
+            await vi.waitFor(() =>
+              expect(controller.startMessagesRequestId).not.toBe(''),
+            );
+          }
+          emitRpc(controller, {
+            id:
+              failure === 'get_state'
+                ? controller.bootstrapStateRequestId
+                : controller.startMessagesRequestId,
+            type: 'response',
+            command: failure,
+            success: false,
+          });
+        }
+        await vi.waitFor(() => expect(tau.canRecoverRuntime.value).toBe(true));
+        expect(controller.recoveringRuntime).toBe(false);
+        expect(controller.draft).toBe('Keep my newer draft');
+        expect(sentRequests(controller, 'prompt')).toHaveLength(1);
+
+        if (original) vi.mocked(invoke).mockImplementation(original);
+        await tau.recoverSession();
+        expect(controller.recoveringRuntime).toBe(true);
+        expect(tau.canRecoverRuntime.value).toBe(false);
+        emitRpc(controller, {
+          id: controller.bootstrapStateRequestId,
+          type: 'response',
+          command: 'get_state',
+          success: true,
+          data: {
+            sessionId: session.id,
+            sessionFile: session.path,
+            isStreaming: false,
+          },
+        });
+        await vi.waitFor(() =>
+          expect(controller.startMessagesRequestId).not.toBe(''),
+        );
+        emitRpc(controller, {
+          id: controller.startMessagesRequestId,
+          type: 'response',
+          command: 'get_messages',
+          success: true,
+          data: { messages: [] },
+        });
+        await vi.waitFor(() =>
+          expect(controller.recoveringRuntime).toBe(false),
+        );
+        expect(tau.canRecoverRuntime.value).toBe(false);
+        expect(controller.ready).toBe(true);
+        expect(controller.draft).toBe('Keep my newer draft');
+        expect(sentRequests(controller, 'prompt')).toHaveLength(1);
+      } finally {
+        if (original) vi.mocked(invoke).mockImplementation(original);
+        tau.dispose();
+      }
+    },
+  );
 
   it('retries failed recovery cleanup before launching another runtime', async () => {
     const { tau, session, controller } = await setupNamedSession();

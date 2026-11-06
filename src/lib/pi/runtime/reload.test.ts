@@ -423,6 +423,11 @@ describe('session-owned Pi reload', () => {
     });
     expect(c.sessionId).toBe('replacement');
     expect(state.extensionDialogs).toHaveLength(1);
+    await answer(c, 'get_state', {
+      sessionId: c.sessionId,
+      sessionFile: c.sessionPath,
+      isStreaming: false,
+    });
     await answer(c, 'get_commands', { commands: [helper] });
     await answer(c, 'get_available_models', { models: [] });
     await answer(c, 'get_available_thinking_levels', { levels: ['off'] });
@@ -430,6 +435,96 @@ describe('session-owned Pi reload', () => {
     expect(c.reload).toBeUndefined();
     expect(state.extensionDialogs[0]?.requestId).toBe('new-hook-dialog');
   });
+
+  it.each(['settlement', 'replacement'] as const)(
+    'reconciles overlapping %s reads without accepting outgoing hydration',
+    async (overlap) => {
+      const c = controller();
+      await startReload(c, '/reload');
+      await acknowledge(c);
+      await answer(c, 'get_state', {
+        sessionId: c.sessionId,
+        sessionFile: c.sessionPath,
+        isStreaming: false,
+      });
+      const staleReads = { ...c.reload!.reads };
+      if (overlap === 'settlement') {
+        await handleRpc(c, { type: 'agent_settled' });
+        await handleResponse(c, {
+          id: c.materializationStateRequestId,
+          command: 'get_state',
+          success: true,
+          data: {
+            sessionId: c.sessionId,
+            sessionFile: c.sessionPath,
+            isStreaming: false,
+          },
+        });
+      } else {
+        const id = nextRequestId('replacement-probe');
+        c.replacementProbeRequestId = id;
+        await rpc(c, { id, type: 'get_state' });
+        await handleResponse(c, {
+          id,
+          command: 'get_state',
+          success: true,
+          data: {
+            sessionId: 'replacement',
+            sessionFile: '/tmp/project/replacement.json',
+            isStreaming: false,
+          },
+        });
+      }
+      for (const [id, command] of Object.entries(staleReads)) {
+        if (overlap === 'settlement' && command !== 'get_messages') continue;
+        await handleResponse(c, {
+          id,
+          command,
+          success: true,
+          data: {
+            messages: [{ role: 'user', content: 'Outgoing transcript' }],
+            levels: ['stale'],
+            commands: [{ name: 'stale', source: 'extension' }],
+            models: [{ provider: 'test', id: 'stale' }],
+          },
+        });
+      }
+      expect(c.reload).toBeDefined();
+      expect(c.messages).toEqual([]);
+      expect(c.efforts).not.toContain('stale');
+      expect(c.commands.some((command) => command.name === 'stale')).toBe(
+        false,
+      );
+      expect(c.models.some((model) => model.id === 'stale')).toBe(false);
+      if (overlap === 'replacement') {
+        await answer(c, 'get_state', {
+          sessionId: c.sessionId,
+          sessionFile: c.sessionPath,
+          isStreaming: false,
+        });
+      }
+      await answer(c, 'get_commands', { commands: [helper] });
+      await answer(c, 'get_available_models', { models: [] });
+      await answer(c, 'get_available_thinking_levels', { levels: ['off'] });
+      await answer(c, 'get_messages', { messages: [] });
+      expect(c.reload).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(c.reload).toBeUndefined();
+      expect(
+        c.feedback.some((entry) => entry.message.includes('unknown')),
+      ).toBe(false);
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.filter(
+            ([name, args]) =>
+              name === 'send_pi' &&
+              (args as { request?: { type?: string } })?.request?.type ===
+                'prompt',
+          ),
+      ).toHaveLength(1);
+    },
+  );
 
   it('does not dispatch if Pi becomes busy before discovery completes', async () => {
     const c = controller({ commandsLoaded: false });

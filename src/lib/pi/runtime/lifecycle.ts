@@ -65,7 +65,11 @@ import {
   selectRegisteredSession,
   canRegisterConnectedSession,
 } from './registration';
-import { clearReload, resumeReloadDeadline } from './reload';
+import {
+  clearReload,
+  resumeReloadDeadline,
+  transferReloadRead,
+} from './reload';
 import { cancelSetup, failPendingSetup } from './setup';
 
 const materializationVerificationRetryDelays = [250, 750, 1_500];
@@ -606,6 +610,7 @@ async function rpc(
     throw new Error('Runtime reload owns mutations');
   }
   if (method === 'extension_ui_response') resumeReloadDeadline(controller);
+  transferReloadRead(controller, method, requestId);
   if (method === 'get_messages') {
     if (controller.startMessagesRequestId) {
       controller.startMessagesRequestId = requestId;

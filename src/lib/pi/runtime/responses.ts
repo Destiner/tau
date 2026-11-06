@@ -86,7 +86,11 @@ import {
   rebindEphemeralSession,
   materializePendingSession,
 } from './registration';
-import { handleReloadResponse, reloadAllowsResponse } from './reload';
+import {
+  handleReloadResponse,
+  reloadAllowsResponse,
+  refreshReloadAfterReplacement,
+} from './reload';
 import {
   clearPendingSetupWatch,
   failPendingSetup,
@@ -99,11 +103,20 @@ async function handleResponse(
   response: Record<string, unknown>,
 ): Promise<void> {
   const operation = controller.reload;
+  const sessionId = controller.sessionId;
+  const sessionPath = controller.sessionPath;
   const applied = await reduceResponse(controller, response);
   if (operation && controller.reload === operation && operation.setupFailure) {
     controller.setupFailure = operation.setupFailure;
   }
-  if (applied || response.success !== true) {
+  if (
+    operation &&
+    controller.reload === operation &&
+    (controller.sessionId !== sessionId ||
+      controller.sessionPath !== sessionPath)
+  ) {
+    await refreshReloadAfterReplacement(controller);
+  } else if (applied || response.success !== true) {
     await handleReloadResponse(controller, response, true);
   }
 }
